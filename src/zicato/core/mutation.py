@@ -144,8 +144,8 @@ class Patch:
         New text for ``"replace"`` ops; ``None`` otherwise.
     new_numeric:
         New numeric value for ``"set_numeric"`` ops; ``None`` otherwise.
-        Floats cover both int- and float-typed mutation points; the
-        applier formats them according to adapter-supplied metadata.
+        Integer payloads retain their exact value; the applier renders
+        floating-point values as integers when they have no fractional part.
     new_enum:
         New enum value for ``"set_enum"`` ops; ``None`` otherwise.
     rationale:
@@ -158,6 +158,6 @@ class Patch:
     mutation_id: str
     op: PatchOpKind
     new_content: str | None
-    new_numeric: float | None
+    new_numeric: int | float | None
     new_enum: str | None
     rationale: str

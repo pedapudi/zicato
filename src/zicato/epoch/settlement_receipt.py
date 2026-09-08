@@ -183,7 +183,6 @@ def decode_settlement_receipt(
         intent,
         "field settlement receipt",
         expected_version=SETTLEMENT_INTENT_FORMAT_VERSION,
-        allow_missing=False,
     )
     epoch_id = _required_string(intent, "epoch_id")
     round_index = _required_int(intent, "round_index")

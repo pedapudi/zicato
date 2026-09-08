@@ -107,21 +107,6 @@ def test_replicate_events_resolve_real_event_and_runtime_identities(tmp_path: Pa
     assert locate_events_file(paths) == r1
 
 
-def test_match_id_prefers_legacy_nested_rung_over_replicate_loss(tmp_path: Path) -> None:
-    """A top-level loss tag must not shadow its legacy nested-rung transcript."""
-    paths = WorkspacePaths(tmp_path)
-    run = WorkspaceLayout(tmp_path).run_dir(EPOCH, GEN, ENTRY)
-    run.mkdir(parents=True)
-    canonical = run / "events.jsonl"
-    canonical.write_text(json.dumps({"runId": "canonical"}) + "\n")
-    (run / "loss.json").write_text(json.dumps({"run_id": "canonical", "match_id": "rung0"}))
-    nested = run / "rung0" / "events.jsonl"
-    nested.parent.mkdir()
-    nested.write_text(json.dumps({"runId": "nested-rung"}) + "\n")
-
-    assert resolve_transcript_events(paths, EPOCH, GEN, ENTRY, match_id="rung0") == nested
-
-
 def test_run_id_index_does_not_reparse_identified_files_on_append(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -53,7 +53,7 @@ def search_workspace(tmp_path: Path) -> Path:
             "id": "waffles_single",
             "kind": "single_turn",
             "input": "Make a deck about waffles.",
-            "budget_s": 1,
+            "wall_clock_budget_seconds": 1,
             "expectation": {"kind": "predicate", "spec": "pkg:check"},
             "judges": [
                 {
@@ -68,13 +68,13 @@ def search_workspace(tmp_path: Path) -> Path:
             "id": "q3_metrics_outline",
             "kind": "single_turn",
             "input": "Outline a deck on quarterly metrics for Q3.",
-            "budget_s": 1,
+            "wall_clock_budget_seconds": 1,
             "expectation": {"kind": "predicate", "spec": "pkg:check"},
         },
         {
             "id": "picky_stakeholder_emulated",
             "kind": "multi_turn_emulated",
-            "budget_s": 1,
+            "wall_clock_budget_seconds": 1,
             "max_turns": 2,
             "user_persona": {"goal": "Review the deck.", "constraints": "", "stop_when": "Done."},
             "expectation": {"kind": "predicate", "spec": "pkg:check"},

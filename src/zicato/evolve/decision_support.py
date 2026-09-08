@@ -514,7 +514,7 @@ def _render_loss_summary(losses: list[Any], priorities: Any = None) -> str:
         _mean_named_terms(losses, priorities.judges, _judge_loss_values),
     )
     parts.extend(
-        _mean_named_terms(losses, priorities.namespace_metrics, _unified_metric_values),
+        _mean_named_terms(losses, priorities.namespace_metrics, _metric_values),
     )
     return ", ".join(parts) or "(the terms this contract scores have no measurement yet)"
 
@@ -534,12 +534,9 @@ def _judge_loss_values(loss: Any) -> dict[str, float]:
     }
 
 
-def _unified_metric_values(loss: Any) -> dict[str, float]:
+def _metric_values(loss: Any) -> dict[str, float]:
     """One run's merged namespaced metric view, by metric name."""
-    metrics = getattr(loss, "unified_metrics", None)
-    if metrics is None:
-        return {}
-    return {str(mc.name): float(mc.count) for mc in metrics()}
+    return {mc.name: mc.count for mc in loss.scoring_metrics()}
 
 
 def _mean_named_terms(
@@ -630,9 +627,7 @@ def build_metric_priorities(board: list[Any], weights: Any, losses: list[Any]) -
 
     observed: set[str] = set()
     for loss in losses:
-        metrics = getattr(loss, "unified_metrics", None)
-        if metrics is not None:
-            observed.update(str(mc.name) for mc in metrics())
+        observed.update(mc.name for mc in loss.scoring_metrics())
     namespace_metrics: list[Any] = []
     for namespace, weight in namespace_weights.items():
         # ``drift:`` and ``judge:`` are already advertised above, per kind and

@@ -204,9 +204,7 @@ class ReflectionPlan:
         """Accept one plan without coercing flags or filling stored omissions."""
         if not isinstance(data, dict):
             raise RecordError("reflection plan: expected a JSON object")
-        check_record_format(
-            data, "reflection plan", expected_version=PLAN_FORMAT_VERSION, allow_missing=False
-        )
+        check_record_format(data, "reflection plan", expected_version=PLAN_FORMAT_VERSION)
         for name in ("reflection_id", "epoch_id"):
             if not isinstance(data.get(name), str) or not data[name]:
                 raise RecordError(f"reflection plan: {name} must be a nonempty string")

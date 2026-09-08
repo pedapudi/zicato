@@ -7,10 +7,7 @@ from jsonschema import Draft202012Validator
 
 from zicato.core.configuration import ConfigurationError, dataclass_schema, dataclass_to_jsonable
 from zicato.core.scoring_config import ScoringWeights
-from zicato.workspace_loader import (
-    historical_scoring_weights_from_dict,
-    scoring_weights_from_dict,
-)
+from zicato.workspace_loader import scoring_weights_from_dict
 
 
 @pytest.mark.parametrize(
@@ -84,12 +81,3 @@ def test_declared_mapping_extensions_keep_valid_values():
         "structure": "racing",
         "params": raw["tournament"]["params"],
     }
-
-
-def test_historical_record_decoder_keeps_compatible_conversions_explicit():
-    historical = historical_scoring_weights_from_dict(
-        {"promote_mragin": 0.7, "overfitting": "disabled", "proposer_quality": {"best_of_n": 2.8}}
-    )
-    assert historical.promote_margin == ScoringWeights().promote_margin
-    assert historical.overfitting == ScoringWeights().overfitting
-    assert historical.proposer_quality.best_of_n == 2

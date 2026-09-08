@@ -72,9 +72,8 @@ def initialize_workspace(
     reconstructible from the workspace's other files.
 
     Force REPLACES ``config.json``: only ``generation_source_backend``
-    carries across, so a registration's ``contract`` / ``mutable_trees`` /
-    ``source_roots`` / ``adk_entrypoint`` are dropped and must be written
-    again. To change only the source backend on a workspace that already
+    carries across. The adapter and contract registration must be written again.
+    To change only the source backend on a workspace that already
     exists, use ``zicato repair generation-source-backend`` instead — it
     merges one key and leaves the rest of the config and the lineage alone.
 

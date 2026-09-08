@@ -902,29 +902,6 @@ def test_canon_board_folds_meta_into_canonical_form(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_resolve_contract_inputs_reads_config(tmp_path: Path) -> None:
-    workspace = tmp_path / ".zicato"
-    workspace.mkdir()
-    (workspace / "config.json").write_text(
-        json.dumps(
-            {
-                "adk_entrypoint": "pkg.mod:agent",
-                "mutable_trees": ["/abs/agent"],
-                "contract": {
-                    "board_path": "/abs/board.jsonl",
-                    "brief_path": "/abs/brief.md",
-                    "scoring_path": "/abs/scoring.json",
-                },
-            }
-        )
-    )
-    inputs = resolve_contract_inputs(workspace)
-    assert inputs.entrypoint == "pkg.mod:agent"
-    assert inputs.mutable_trees == ("/abs/agent",)
-    assert inputs.board_path == Path("/abs/board.jsonl")
-    assert inputs.brief_path == Path("/abs/brief.md")
-
-
 def test_resolve_contract_inputs_reads_nested_adk_adapter(tmp_path: Path) -> None:
     workspace = tmp_path / ".zicato"
     workspace.mkdir()
@@ -1190,33 +1167,6 @@ def test_declared_adapter_factory_without_hashable_source_is_refused(tmp_path: P
         compute_contract_hash(inputs)
 
 
-def test_resolve_contract_inputs_accepts_legacy_rubric_path_key(
-    tmp_path: Path,
-) -> None:
-    """A workspace registered before the rename stored ``rubric_path``.
-
-    ``resolve_contract_inputs`` still resolves the proposer brief from
-    the legacy ``contract.rubric_path`` key.
-    """
-    workspace = tmp_path / ".zicato"
-    workspace.mkdir()
-    (workspace / "config.json").write_text(
-        json.dumps(
-            {
-                "adk_entrypoint": "pkg.mod:agent",
-                "mutable_trees": [],
-                "contract": {
-                    "board_path": "/abs/board.jsonl",
-                    "rubric_path": "/abs/legacy.md",
-                    "scoring_path": "/abs/scoring.json",
-                },
-            }
-        )
-    )
-    inputs = resolve_contract_inputs(workspace)
-    assert inputs.brief_path == Path("/abs/legacy.md")
-
-
 def test_resolve_contract_inputs_raises_without_config(tmp_path: Path) -> None:
     import pytest
 
@@ -1229,12 +1179,10 @@ def test_resolve_contract_inputs_raises_without_config(tmp_path: Path) -> None:
 def test_resolve_contract_inputs_defaults_when_no_contract_key(
     tmp_path: Path,
 ) -> None:
-    """A workspace registered before auto-epoching uses the default paths."""
+    """An omitted contract block selects the documented default paths."""
     workspace = tmp_path / ".zicato"
     workspace.mkdir()
-    (workspace / "config.json").write_text(
-        json.dumps({"adk_entrypoint": "pkg.mod:agent", "mutable_trees": []})
-    )
+    (workspace / "config.json").write_text(json.dumps({}))
     inputs = resolve_contract_inputs(workspace)
     # Defaults sit next to the workspace dir (the operator's project root).
     assert inputs.board_path == (tmp_path / "board.jsonl").resolve()
@@ -1458,8 +1406,6 @@ def test_resolve_contract_inputs_reads_proposer_path(tmp_path: Path) -> None:
     (workspace / "config.json").write_text(
         json.dumps(
             {
-                "adk_entrypoint": "pkg.mod:agent",
-                "mutable_trees": [],
                 "contract": {
                     "board_path": "/abs/board.jsonl",
                     "brief_path": "/abs/brief.md",
@@ -1478,9 +1424,7 @@ def test_resolve_contract_inputs_proposer_path_absent_is_none(tmp_path: Path) ->
     """No ``contract.proposer_path`` ⇒ the built-in default proposer (None)."""
     workspace = tmp_path / ".zicato"
     workspace.mkdir()
-    (workspace / "config.json").write_text(
-        json.dumps({"adk_entrypoint": "pkg.mod:agent", "mutable_trees": []})
-    )
+    (workspace / "config.json").write_text(json.dumps({}))
     inputs = resolve_contract_inputs(workspace)
     assert inputs.proposer_path is None
 

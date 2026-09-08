@@ -246,7 +246,7 @@ const FIX = {
       { generation_id: 'v0', parent_generation_id: '', outcome: { decision: 'baseline' } },
       { generation_id: 'v1', parent_generation_id: 'v0', outcome: { decision: 'rejected' } },
     ],
-    board: [{ id: 'waffles_single', kind: 'single_turn', budget_s: 180, weight: 1 }],
+    board: [{ id: 'waffles_single', kind: 'single_turn', wall_clock_budget_seconds: 180, weight: 1 }],
   },
   '/api/tournaments': { epoch_id: EPOCH_ID, champion_lineage: ['v0'], matchups: [
     { champion: 'v0', challenger: 'v1', decision: 'rejected', delta_scalar: 5.0 },

@@ -30,7 +30,6 @@ from zicato.core.board import ExpectationKind
 from zicato.core.loss import ExpectationResult, LossProfile
 from zicato.core.tournament import TournamentDecision
 from zicato.core.types import (
-    DriftMovementActual,
     Experiment,
     HypothesisSpec,
     MetricMovementActual,
@@ -60,25 +59,17 @@ ALL_TOKENS = ("promoted", "rejected", "deferred")
 def _record(decision: TournamentDecision = TournamentDecision.PROMOTED) -> OutcomeRecord:
     return OutcomeRecord(
         ran_at="2026-04-08T12:30:00+00:00",
-        drift_movements=(
-            DriftMovementActual(
-                kind="off_topic",
-                from_rate=0.7,
-                to_rate=0.2,
-                hypothesis_match=True,
-            ),
-        ),
         pass_rate_delta=0.05,
         drift_loss_delta=-0.18,
-        scalar_score_delta=-0.20,
+        scalar_score_delta=-0.2,
         tournament_decision=decision,
         rejection_reason="",
         metric_movements=(
             MetricMovementActual(
-                metric_name="rubric:clarity",
-                from_value=0.4,
-                to_value=0.7,
-                hypothesis_match=True,
+                metric_name="drift:off_topic", from_value=0.7, to_value=0.2, hypothesis_match=True
+            ),
+            MetricMovementActual(
+                metric_name="rubric:clarity", from_value=0.4, to_value=0.7, hypothesis_match=True
             ),
         ),
     )
@@ -100,7 +91,7 @@ def _experiment(outcome: OutcomeRecord | None) -> Experiment:
             core_idea="Tighten the researcher prompt.",
             modulating=("researcher.instruction",),
             why="Confabulation fires on research-tagged entries.",
-            expected_drift_movements=(),
+            expected_metric_movements=(),
             expected_pass_rate_delta="+0.0 to +0.15",
         ),
         patches=(),
@@ -128,51 +119,8 @@ def test_journal_read_experiment_yields_enum_member(
     assert loaded == in_process
 
 
-def test_journal_outcome_from_dict_absent_decision_reads_as_none() -> None:
-    """A body naming no decision hydrates with ``tournament_decision`` unset."""
-    hydrated = _outcome_from_dict({})
-    assert hydrated is not None
-    assert hydrated.tournament_decision is None
-
-
-@pytest.mark.parametrize("token", ["bogus", "deferred_infra", ""])
-def test_journal_outcome_from_dict_keeps_unrecognised_token(token: str) -> None:
-    """Unrecognised tokens are preserved verbatim, exactly as before.
-
-    This path has no narrowing guard, so coercing unconditionally would
-    raise on a hand-edited or future-format record accepted by the decoder.
-    The token is kept as-is (and still compares unequal to every member),
-    rather than inventing a verdict the record does not carry.
-    """
-    hydrated = _outcome_from_dict({"tournament_decision": token})
-    assert hydrated is not None
-    assert hydrated.tournament_decision == token
-    assert not isinstance(hydrated.tournament_decision, TournamentDecision)
-    assert hydrated.tournament_decision != TournamentDecision.PROMOTED
-    assert hydrated.tournament_decision != TournamentDecision.REJECTED
-    assert hydrated.tournament_decision != TournamentDecision.DEFERRED
-
-
-@pytest.mark.parametrize(
-    "value",
-    [None, 3, 1.5, ["promoted"], {"a": 1}, b"promoted"],
-    ids=["null", "int", "float", "list", "dict", "bytes"],
-)
-def test_journal_outcome_from_dict_non_string_decision_reads_as_none(value: Any) -> None:
-    """A structurally wrong value is not a decision token, and never raises.
-
-    ``recorded_decision_token`` accepts a string and nothing else, so a
-    decision key holding a number, a container or bytes carries no token
-    at all and the record reads back under the same rule as a record
-    naming no decision: ``None``. The unhashable cases are the ones worth
-    pinning — a value that cannot be looked up in the enum must not
-    surface as an uncaught ``TypeError`` out of a read path that cannot
-    otherwise fail, and must not be carried into a field the dataclass
-    declares as a :class:`TournamentDecision`.
-    """
-    hydrated = _outcome_from_dict({"tournament_decision": value})
-    assert hydrated is not None
-    assert hydrated.tournament_decision is None
+def test_journal_outcome_absence_is_null() -> None:
+    assert _outcome_from_dict(None) is None
 
 
 # ---------------------------------------------------------------------------
@@ -186,7 +134,7 @@ def _loss_profile(kind: ExpectationKind) -> LossProfile:
         entry_id="e1",
         generation_id="v1",
         epoch_id="2026-04-08_test",
-        drift_counts=(),
+        metric_counts=(),
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=1200,

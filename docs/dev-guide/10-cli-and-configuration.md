@@ -73,8 +73,8 @@ them.
 Operations have edit semantics as well as value types. A nullable argument may
 mean no edit, and a mapping may replace an entire mapping. Read the owning
 signature before changing a caller; do not assume an update merges nested
-values. Use the strict authored decoder for editable scoring. Historical
-records use their explicit historical decoder.
+values. Editable and frozen scoring use the same strict configuration decoder.
+Do not add another acceptance policy in an operation.
 
 ## 10.3 Estimating evaluation cost
 
@@ -157,21 +157,22 @@ an invocation.
 
 The invocation binds configuration and the selected execution contract after
 publication recovery. Rounds reuse those captured inputs until an intentional
-roll. Historical loading verifies retained identity; it does not bless changed
-live executable bytes or rewrite an archived record to match current defaults.
+roll. Loading verifies the supported captured configuration and required hash.
+Changed live executable bytes cannot replace the selected epoch's bindings.
 
-## 10.7 Field declarations and compatibility
+## 10.7 Field declarations and complete configuration
 
-Scoring dataclasses own defaults, persisted names, constraints, descriptions,
-and canonical omission metadata. Their registry feeds hashing and generated
-configuration inspection. Runtime settings use their corresponding domain
-records and explicit configuration carrier (§10.10).
+Scoring dataclasses own defaults, persisted names, constraints, and descriptions.
+`core.configuration` supplies the shared strict decoder and complete dataclass
+serializer. Authored and frozen scoring use the same declarations. Every
+effective value participates in contract identity, including nested defaults.
+Runtime settings use their domain records and the invocation carrier (§10.10).
 
-Changing a constructor default is not permission to change a recorded
-contract. Historical decoding and recorded-hash verification preserve the
-meaning of retained values, including omitted fields where the persisted
-format defined their meaning. Test sparse and expanded authored forms that
-resolve identically, and archived forms separately.
+An omitted authored value and its explicit default decode identically.
+Unknown fields and invalid values are refused. Saved configuration contains
+all effective fields; there is no historical-default decoder or omission
+metadata. Selected epochs require captured `execution.json` and a valid
+64-character lowercase hexadecimal contract hash.
 
 ## 10.8 Adding or changing a contract field
 
@@ -181,8 +182,8 @@ resolve identically, and archived forms separately.
    validate the supplied value before converting or comparing it.
 3. Update schedule cost or advisory checks where the field changes them.
 4. Verify malformed input refusal, a meaningful non-default consumer case,
-   serialization, and contract identity. Include archived records if persisted
-   semantics change.
+   complete serialization, and contract identity. Reject unsupported record
+   shapes rather than introducing a second decoder.
 5. Regenerate affected configuration artifacts and command help from their
    owning declarations.
 
@@ -217,9 +218,8 @@ The authored `config.json` root is `workspace.config_schema.WorkspaceDeclaration
 It composes runtime, health, integration, dashboard, model, proposer, adapter,
 and contract-source declarations. The file owner validates unknown keys, exact
 JSON types, ranges, and relationships before returning typed values or publishing
-an edit. Scoring is a separate document owned by `ScoringWeights`; authored edits
-use the strict decoder, while frozen historical records use their explicit
-historical decoder.
+an edit. Scoring is a separate document owned by `ScoringWeights`. Authored and
+frozen scoring use the same strict decoder and complete serializer.
 
 Operational field declarations live in `core/settings.py`. `zicato.config`
 exports the domain records, immutable `InvocationOverlay`, and
@@ -275,7 +275,7 @@ an explicit configuration over defaults and holds no process-wide overrides.
 ### 10.10.2 Environment inspection describes process boundaries
 
 `zicato inspect environment` reads `describe_env_vars()`. Entries describe the
-scratch-directory compatibility, child context inheritance, credentials, worker
+child context inheritance, credentials, worker
 environment construction, and operating-system inputs. The module/function
 inventory in `ENVIRONMENT_BOUNDARIES` is checked against parsed Python access
 sites by `tools/check_environment_boundaries.py`; new undeclared access fails.
@@ -283,7 +283,10 @@ Credential values are read only by their named boundary owners.
 
 Telemetry endpoints are invocation values, selected from explicit integration
 settings, inherited context, or the workspace service record. Browser and native
-addresses travel together in `WorkerRuntimeContext`. A worker sets one internal
+addresses and required run coordinates travel together in `WorkerRuntimeContext`.
+Harnesses read their scratch directory from `config.run_context.scratch_dir`.
+Nested target processes read that same record through `inherited_runtime_context()`.
+A worker sets one internal
 `ZICATO_RUNTIME_CONTEXT` pointer to its own argument file before target imports;
 nested processes inherit that pointer. A configured missing or malformed pointer
 raises an error. Coordinators never set it, and each argument file must survive
@@ -507,4 +510,4 @@ build can still run the hook.
 - [Installation profiles](../design/INSTALL-PROFILES.md): optional interfaces
   and runtime integrations.
 - [Contract field registry](../design/CONTRACT-FIELD-REGISTRY.md): declared
-  defaults, serialization, and historical identity.
+  defaults, complete serialization, and contract identity.

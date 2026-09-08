@@ -757,7 +757,7 @@ def _dry_run_and_exit(
         "Edit the live tournament structure before execution. The validated edit "
         "participates in the contract hash and can open an epoch. With --dry-run, "
         "the edit is checked in memory. Cannot be combined with --epoch. "
-        "Unset reads scoring.json (gauntlet when absent). The experimental structures single_elim, "
+        "Unset reads scoring.json (racing when absent). The experimental structures single_elim, "
         "double_elim and swiss are selected in scoring.json alongside "
         "experimental.tournament_structures = true, which admits them."
     ),

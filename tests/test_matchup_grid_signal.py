@@ -44,7 +44,7 @@ def _write_loss(
     passes: bool | None = None,
     score: float | None = None,
     replicate: int = 0,
-    drift_counts: tuple = (),
+    metric_counts: tuple = (),
 ) -> None:
     """Write ONE per-replicate loss profile exactly as the worker emits it."""
     from zicato.telemetry import reducer  # noqa: PLC0415
@@ -54,7 +54,7 @@ def _write_loss(
         entry_id=entry,
         generation_id=gen,
         epoch_id=EPOCH,
-        drift_counts=drift_counts,
+        metric_counts=metric_counts,
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=1000,
@@ -110,7 +110,13 @@ def test_scored_no_drift_board_resolves_on_score(workspace: Path) -> None:
 
 def test_drift_only_board_keeps_the_drift_verdicts(workspace: Path) -> None:
     """A board with no continuous score falls through to drift, lower-is-better."""
-    _write_loss(workspace, "v0", "a", drift=105.5, drift_counts=(("tool_swap", 1, "minor"),))
+    _write_loss(
+        workspace,
+        "v0",
+        "a",
+        drift=105.5,
+        metric_counts=({"name": "drift:tool_swap", "count": 1.0, "severity": "info"},),
+    )
     _write_loss(workspace, "v1", "a", drift=60.5)
     _write_loss(workspace, "v0", "b", drift=60.5)
     _write_loss(workspace, "v1", "b", drift=642.5)
@@ -211,7 +217,12 @@ def test_standard_error_is_the_sample_sd_over_root_n() -> None:
 def test_drift_present_is_true_when_a_run_recorded_a_drift_event(workspace: Path) -> None:
     """A zero loss WITH a recorded observation is a real reading, not an absent channel."""
     _write_loss(
-        workspace, "v0", "a", drift=0.0, score=0.5, drift_counts=(("tool_swap", 0, "minor"),)
+        workspace,
+        "v0",
+        "a",
+        drift=0.0,
+        score=0.5,
+        metric_counts=({"name": "drift:tool_swap", "count": 0.0, "severity": "info"},),
     )
     _write_loss(workspace, "v1", "a", drift=0.0, score=0.6)
 

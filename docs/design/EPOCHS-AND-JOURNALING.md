@@ -185,11 +185,9 @@ directory.
       analysis.html
 ```
 
-The proposer-brief filename is `brief.md`; archived workspaces containing
-only the retired `rubric.md` filename are unsupported. The authored source
-path can still be set explicitly in workspace `config.json` under
-`contract.brief_path` or `contract.rubric_path`. These settings select the
-source copied into an epoch's `brief.md`; they do not enable filename fallback.
+The proposer brief is stored as `brief.md` within each epoch. Set
+`contract.brief_path` in workspace `config.json` to choose the source file
+copied into that epoch.
 
 A few specifics:
 
@@ -241,16 +239,14 @@ sub-object:
 
     "why": "Pattern observed across rounds 3-5: confabulation_risk fires on 70% of entries tagged `[research]` and 0% on entries tagged `[summarise]`. The researcher's current instruction does not require source citations.",
 
-    "expected_drift_movements": [
-      {"kind": "confabulation_risk", "direction": "decrease", "magnitude": "medium"},
-      {"kind": "tool_error", "direction": "increase", "magnitude": "small"}
+    "expected_metric_movements": [
+      {"metric_name": "drift:confabulation_risk", "direction": "decrease", "magnitude": "medium"},
+      {"metric_name": "drift:tool_error", "direction": "increase", "magnitude": "small"}
     ],
 
     "expected_pass_rate_delta": "+0.00 to +0.15",
 
-    "risks": "Tighter prompt may slow the researcher (more tool calls per turn); if sources are unavailable the researcher may refuse instead of approximating.",
-
-    "expected_metric_movements": []
+    "risks": "Tighter prompt may slow the researcher (more tool calls per turn); if sources are unavailable the researcher may refuse instead of approximating."
   },
   "patch_ids": [
     "be4c8de0b5234ec4a8d8db4e8af3f8f0",
@@ -273,10 +269,9 @@ The hypothesis fields in detail (the `HypothesisSpec` dataclass):
 | `core_idea` | `string` (one sentence) | What is being modulated, in plain language. The journal cites this. |
 | `modulating` | `list[string]` | Mutation-point ids this hypothesis touches. Every id must resolve in the live mutation manifest; the proposer may list ids it is not patching this round, but all must exist. |
 | `why` | `string` | The pattern observation that motivated the change. |
-| `expected_drift_movements` | `list[{kind, direction, magnitude}]` | Per drift kind, predicted `direction` (`decrease` / `increase` / `neutral` / `decrease_or_neutral` / `increase_or_neutral`) and `magnitude` (`small` / `medium` / `large`). |
 | `expected_pass_rate_delta` | `string` (free text) | Predicted pass-rate band as free text, e.g. `"+0.00 to +0.15"`. Free text rather than a typed range because the proposer expresses uncertainty differently per hypothesis. |
 | `risks` | `string` (optional) | One-paragraph description of failure modes the proposer anticipates. Defaults to the empty string. |
-| `expected_metric_movements` | `list[{metric_name, direction, magnitude}]` | Generalised predictions over any namespaced metric (`drift:`, `cost:`, `rubric:`, ...). At least one of `expected_drift_movements` / `expected_metric_movements` must be non-empty. |
+| `expected_metric_movements` | `list[{metric_name, direction, magnitude}]` | Predictions keyed by measured metric name, including `drift:<kind>`, `judge:<name>`, and `cost:tokens_spent`. A proposal requires at least one. |
 
 The schema is enforced at proposer-output time (a JSON Schema pass
 plus a cross-check pass in `zicato.proposer.structured`). The proposer
@@ -349,16 +344,15 @@ file.
   "patch_ids": [ ... ],
   "outcome": {
     "ran_at": "2026-04-08T14:38:42Z",
-    "drift_movements": [
-      {"kind": "confabulation_risk", "from_rate": 0.70, "to_rate": 0.40, "hypothesis_match": true, "note": ""},
-      {"kind": "tool_error", "from_rate": 0.10, "to_rate": 0.10, "hypothesis_match": false, "note": "predicted small increase, observed flat"}
+    "metric_movements": [
+      {"metric_name": "drift:confabulation_risk", "from_value": 0.70, "to_value": 0.40, "hypothesis_match": true, "note": ""},
+      {"metric_name": "drift:tool_error", "from_value": 0.10, "to_value": 0.10, "hypothesis_match": false, "note": "predicted small increase, observed flat"}
     ],
     "pass_rate_delta": 0.05,
     "drift_loss_delta": -0.18,
     "scalar_score_delta": 0.12,
     "tournament_decision": "promoted",
-    "rejection_reason": "",
-    "metric_movements": []
+    "rejection_reason": ""
   }
 }
 ```
@@ -372,13 +366,12 @@ The fields (the `OutcomeRecord` dataclass):
 | Field | Meaning |
 |---|---|
 | `ran_at` | ISO-8601 UTC timestamp when the experiment finished evaluating. |
-| `drift_movements` | Per-kind realized movements. Each carries `from_rate` (parent per-run mean), `to_rate` (child per-run mean), `hypothesis_match` (whether the realized movement matched the prediction within the magnitude bucket), and an optional `note`. |
+| `metric_movements` | Named metric movements. Each carries `from_value` (parent value), `to_value` (child value), `hypothesis_match` (whether the realized movement matched the prediction within the magnitude bucket), and an optional `note`. |
 | `pass_rate_delta` | Candidate's board-wide pass-rate minus parent's. Range `[-1.0, 1.0]`. |
 | `drift_loss_delta` | Change in mean drift loss across the board. Negative = improvement. |
 | `scalar_score_delta` | Change in the combined tournament scalar; its sign gates `tournament_decision`. |
 | `tournament_decision` | `"promoted"`, `"rejected"`, or `"deferred"`. |
 | `rejection_reason` | Symbolic reason when rejected (e.g. `"insufficient margin: ..."`); empty string otherwise. |
-| `metric_movements` | Realized movements over any namespaced metric — the generalised superset of `drift_movements`. |
 
 The per-movement `hypothesis_match` flag is the load-bearing signal.
 Patches that
@@ -978,17 +971,18 @@ so spurious edits do not roll the epoch:
 
 | Component | Canonicalization |
 |---|---|
-| board | `load_board()`, sort entries by id, serialize each to a sorted-key JSON dict (including its `expectations` and `judges`), join; the board's `disable_drift` set sorts into the same canonical form — as the sorted, de-duplicated **kind set**, so changing *which* kinds are disabled rolls the epoch while reordering them does not (an empty set canonicalizes to `false`, the historic byte-form, so a board that disables nothing never re-hashes). Semantic content only — reordering rows or reformatting the JSONL is a no-op. |
+| board | `load_board()`, sort entries by id, serialize each to a sorted-key JSON dict (including its `expectations` and `judges`), join; the board's `disable_drift` set sorts into the same canonical form — as the sorted, de-duplicated **kind set**, so changing *which* kinds are disabled rolls the epoch while reordering them does not (an empty set canonicalizes to `false`, representing no disabled kinds). Semantic content only — reordering rows or reformatting the JSONL is a no-op. |
 | proposer brief | Read text, normalize line endings to `\n`, strip trailing whitespace per line, strip leading/trailing blank lines. CRLF churn and re-indentation are no-ops. |
-| scoring | Parse into a fully-defaulted `ScoringWeights` — **including the `tournament` structure block** (§9) — preserve every parsed runtime numeric value, then `json.dumps(sort_keys=True)`. Partial and full documents agree, and equivalent JSON spellings of the same number are no-ops. A distinct numeric value, structure, or parameter rolls the epoch. An enabled integration may add system-owned implementation identity before hashing. |
+| scoring | Parse into a fully-defaulted `ScoringWeights` — **including the `tournament` structure block** (§9) — preserve every parsed runtime numeric value, then `json.dumps(sort_keys=True)`. A sparse authored document and its fully expanded defaults agree, and equivalent JSON spellings of the same typed number are no-ops. Every effective field is serialized and hashed. A distinct numeric value, structure, or parameter rolls the epoch. An enabled integration may add system-owned implementation identity before hashing. |
 | evaluator_revision | Serialize the explicit Zicato evaluator revision. Increment it only when measurement or tournament-decision semantics change. |
 | adapter | Remove `mutable_trees` from the validated worker reconstruction document, recursively normalize its JSON values, sort object keys and integration names, and add source hashes for adapter implementations outside the mutable trees. An ADK entry point is one field in its worker document. Normalize the operator's declared `adapter` block the same way, and hash alongside the worker document every declared field that document does not already state, because an adapter built by operator code decides its own worker document and need not report what it was declared with. A field the worker document repeats verbatim is dropped, so an adapter that reports its declaration faithfully — every ADK registration among them — adds nothing and keeps the component it had. A declared factory whose defining module has no readable source stops the hash with an error rather than hashing as a bare name. |
 | mutable_trees | Sorted tuple of normalized, never filesystem-resolved path strings. Registration order is a no-op. |
 | proposer | Resolve the proposer dir (or the builtin default) to a `ProposerSpec` and serialize sorted-key: `agent_id`, sorted `tools`, per-skill normalized-body hashes sorted by name, and the custom `agent.py` source hash. Each skill body is normalized in the same way as the proposer brief, so a whitespace-only skill edit is a no-op; a semantic skill edit (or adding / removing / renaming a skill, or editing `agent.py`) rolls the epoch. The builtin default canonicalizes to a stable form, so a workspace that never registers a proposer keeps a stable hash. |
 
-The canonical forms are concatenated and hashed. Missing files are
-treated as the empty string for that component (so a board-less
-workspace still hashes deterministically) — a warning is logged.
+The canonical forms are concatenated and hashed. The low-level canonicalizers
+can represent an absent file as an empty component, but that does not authorize
+execution. Epoch preparation validates its inputs, and loading a selected
+epoch requires frozen board, brief, scoring, and captured execution bindings.
 
 A whitespace-only proposer-brief edit, a whitespace-only skill edit, a
 reordered board, or an equivalent numeric spelling in `scoring.json` leaves
@@ -1046,14 +1040,17 @@ mutable trees.
 The cross-epoch link is recorded in `lineage.json` as the new epoch's
 `v0_parent`, pointing back at the closed predecessor.
 
-### 10.6 An epoch that records no contract hash
+### 10.6 Required contract identity
 
-`EpochConfig.contract_hash` is `None` when the epoch's `config.json`
-records no hash; an empty string on disk reads back as `None`, so the
-absent case has exactly one in-memory representation. An epoch with no
-recorded hash is treated as **always matching**, so `evolve` never rolls
-it. The operator keeps full manual control through `zicato epoch new`
-until an epoch carrying a hash is created.
+`EpochConfig.contract_hash` is required and contains exactly 64 lowercase
+hexadecimal characters. Missing, null, empty, uppercase, or malformed values
+are refused. Loading a selected epoch also requires its captured
+`execution.json`; live workspace declarations cannot replace missing bindings.
+An explicit epoch selection must satisfy its recorded execution contract.
+
+Epoch configuration carries the owner's required integer `format_version`.
+The shared record guard refuses missing, Boolean, floating-point, and
+incompatible stamps before configuration can authorize execution.
 
 ### 10.7 Auto-epoch naming
 

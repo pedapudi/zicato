@@ -51,6 +51,9 @@ from typing import Any
 
 import pytest
 
+from zicato.core.run_context import RunContext
+from zicato.core.runtime_context import WorkerRuntimeContext
+from zicato.runtime.context import RUNTIME_CONTEXT_ENV
 from zicato_examples.target_1_presentation.agent import agent as A
 
 pytestmark = pytest.mark.usefixtures("_pinned_env")
@@ -74,12 +77,28 @@ def _pinned_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("ZICATO_TARGET1_MEASUREMENT_MODE", raising=False)
 
 
+def _bind_scratch(monkeypatch: pytest.MonkeyPatch, scratch: Path) -> None:
+    context = WorkerRuntimeContext(
+        run=RunContext(
+            workspace_root=scratch.parent / ".zicato",
+            epoch_id="epoch",
+            generation_id="v0",
+            run_id=scratch.name,
+            snapshot_root=scratch.parent / "snapshot",
+            scratch_dir=scratch,
+        )
+    )
+    args_path = scratch / "worker-args.json"
+    args_path.write_text(json.dumps({"runtime_context": context.to_json()}))
+    monkeypatch.setenv(RUNTIME_CONTEXT_ENV, str(args_path))
+
+
 @pytest.fixture
 def base(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     """Point the target's output base at a private scratch directory."""
     scratch = tmp_path / "scratch"
     scratch.mkdir()
-    monkeypatch.setenv("ZICATO_RUN_SCRATCH_DIR", str(scratch))
+    _bind_scratch(monkeypatch, scratch)
     return scratch / "output"
 
 
@@ -442,7 +461,7 @@ def test_every_run_gets_the_note_not_just_the_first_in_the_process(
 
     next_run = tmp_path / "scratch2"
     next_run.mkdir()
-    monkeypatch.setenv("ZICATO_RUN_SCRATCH_DIR", str(next_run))
+    _bind_scratch(monkeypatch, next_run)
     A.write_webpage("Quantum Computing", "<html>q</html>", "css", "js")
 
     assert (next_run / "output" / "MEASUREMENT_MODE").exists()
@@ -490,7 +509,7 @@ def test_the_deck_history_is_bounded_by_the_run_scratch_dir(
     """History accumulates per run, not across runs.
 
     Growth is unbounded in turns but the tree lives under
-    ``ZICATO_RUN_SCRATCH_DIR``, which the tournament worker discards when
+    the worker context's scratch directory, which the worker discards when
     the run ends — so a long campaign cannot accrete snapshots. Pinned
     because the same reasoning is what keeps run output out of the
     generation snapshot in the first place.
@@ -500,7 +519,7 @@ def test_the_deck_history_is_bounded_by_the_run_scratch_dir(
 
     next_run = tmp_path / "scratch2"
     next_run.mkdir()
-    monkeypatch.setenv("ZICATO_RUN_SCRATCH_DIR", str(next_run))
+    _bind_scratch(monkeypatch, next_run)
     A.write_webpage("Quantum Computing", "<html>q</html>", "css", "js")
 
     assert sorted(p.name for p in (next_run / "output" / "deck_history").iterdir()) == ["turn_0"]
@@ -519,7 +538,7 @@ def test_the_salvage_write_provenance_does_not_survive_the_run(
 
     next_run = tmp_path / "scratch2"
     next_run.mkdir()
-    monkeypatch.setenv("ZICATO_RUN_SCRATCH_DIR", str(next_run))
+    _bind_scratch(monkeypatch, next_run)
     A.salvage_deck_from_response(None, _response(json.dumps({"html_content": "<h1>S</h1>"})))
 
     assert (next_run / "output" / "presentation" / "index.html").read_text() == "<h1>S</h1>"

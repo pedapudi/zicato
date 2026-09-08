@@ -72,8 +72,8 @@ function liveUxFixture() {
         { generation_id: 'v1', parent_generation_id: 'v0', outcome: {} },
       ],
       board: [
-        { entry_id: 'b0', kind: 'single_turn', budget_s: 180, weight: 1 },
-        { entry_id: 'b1', kind: 'single_turn', budget_s: 180, weight: 1 },
+        { entry_id: 'b0', kind: 'single_turn', wall_clock_budget_seconds: 180, weight: 1 },
+        { entry_id: 'b1', kind: 'single_turn', wall_clock_budget_seconds: 180, weight: 1 },
       ],
     },
     '/api/lineage': { generations: [

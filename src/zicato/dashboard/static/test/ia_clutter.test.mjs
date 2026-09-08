@@ -17,7 +17,7 @@ import { installDom, test, run, assert, assertEqual, assertDeep } from './harnes
 installDom();
 
 const {
-  router, tree, ui, EPOCH_ID, FIXTURE, installFetch, installFixtureMap, freshState, allByClass,
+  router, tree, ui, data, EPOCH_ID, FIXTURE, installFetch, installFixtureMap, freshState, allByClass,
 } = await import('./fixtures.mjs');
 
 const CTX = { navigate() {}, href: router.href };
@@ -238,7 +238,7 @@ test('clutter: the board trellis cell collapses its two dim lines to one', async
   const { hasHovercard } = await import('../js/hovercard.js');
 
   const cap = boards.trellisCaption({
-    entry_id: 'waffles_single', kind: 'single_turn', budget_s: 450, weight: 1,
+    entry_id: 'waffles_single', kind: 'single_turn', wall_clock_budget_seconds: 450, weight: 1,
     tags: ['smoke', 'topic_waffles'], input_preview: 'Make a presentation about waffles.',
   });
   assertEqual(allByClass(cap, 'dn-figcap-lead')[0].textContent, '450s budget · w 1.0',
@@ -249,9 +249,35 @@ test('clutter: the board trellis cell collapses its two dim lines to one', async
   assert(mark && hasHovercard(mark), 'prompt + tags moved onto the "?"');
 
   // an entry with neither prompt nor tags has nothing to hide → no "?".
-  const bare = boards.trellisCaption({ entry_id: 'x', budget_s: 360, weight: 0.5, tags: [] });
+  const bare = boards.trellisCaption({ entry_id: 'x', wall_clock_budget_seconds: 360, weight: 0.5, tags: [] });
   assertEqual(bare.textContent, '360s budget · w 0.5', 'the key line stands alone');
   assertEqual(allByClass(bare, 'dn-figcap-more').length, 0, 'and it needs no "?"');
 });
+
+for (const view of ['board', 'boards', 'epoch']) {
+  test(`board budget: ${view} preserves no-op DOM and repaints a changed budget`, async () => {
+    freshState();
+    const fixture = JSON.parse(JSON.stringify(FIXTURE));
+    const definition = fixture['/api/epoch'].board[0];
+    definition.wall_clock_budget_seconds = 180;
+    installFixtureMap(fixture);
+    const renderer = await import(`../js/views/${view}.js`);
+    const host = document.createElement('div');
+    const params = { epochId: EPOCH_ID, entry: definition.entry_id };
+    await renderer.render(host, CTX, params);
+    const panel = view === 'board' ? host.querySelector('[data-node="board-upper"]') : host;
+    const first = panel.firstChild;
+    const digest = panel.getAttribute('data-t-digest');
+    if (view !== 'epoch') assert(host.textContent.includes('180s'), 'the recorded budget renders');
+    await renderer.render(host, CTX, params);
+    assert(panel.firstChild === first, 'an unchanged budget preserves DOM identity');
+    definition.wall_clock_budget_seconds = 181;
+    data.invalidate();
+    await renderer.render(host, CTX, params);
+    assert(panel.getAttribute('data-t-digest') !== digest, 'a changed budget invalidates the view');
+    assert(panel.firstChild !== first, 'a changed budget repaints the panel');
+    if (view !== 'epoch') assert(host.textContent.includes('181s'), 'the updated budget renders');
+  });
+}
 
 run();

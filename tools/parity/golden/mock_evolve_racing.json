@@ -7,7 +7,6 @@
       "generation_id": "v0",
       "hypothesis": {
         "core_idea": "baseline seed",
-        "expected_drift_movements": [],
         "expected_metric_movements": [],
         "expected_pass_rate_delta": "",
         "modulating": [],
@@ -27,7 +26,6 @@
       "generation_id": "v1",
       "hypothesis": {
         "core_idea": "Tag the topic_slugify_logic literal for candidate v1.",
-        "expected_drift_movements": [],
         "expected_metric_movements": [
           {
             "direction": "neutral",
@@ -46,7 +44,6 @@
       "outcome": {
         "champion_eval_mode": "full",
         "drift_loss_delta": -1.6,
-        "drift_movements": [],
         "eliminated_in_round": null,
         "evidence": {
           "confirmation_status": "disabled",
@@ -114,7 +111,6 @@
       "generation_id": "v2",
       "hypothesis": {
         "core_idea": "Tag the topic_slugify_logic literal for candidate v2.",
-        "expected_drift_movements": [],
         "expected_metric_movements": [
           {
             "direction": "neutral",
@@ -133,7 +129,6 @@
       "outcome": {
         "champion_eval_mode": "full",
         "drift_loss_delta": 0.0,
-        "drift_movements": [],
         "eliminated_in_round": null,
         "evidence": null,
         "final_rank": 3,
@@ -178,7 +173,6 @@
       "generation_id": "v3",
       "hypothesis": {
         "core_idea": "Tag the topic_slugify_logic literal for candidate v3.",
-        "expected_drift_movements": [],
         "expected_metric_movements": [
           {
             "direction": "neutral",
@@ -197,7 +191,6 @@
       "outcome": {
         "champion_eval_mode": "full",
         "drift_loss_delta": 0.0,
-        "drift_movements": [],
         "eliminated_in_round": null,
         "evidence": null,
         "final_rank": 4,
@@ -236,7 +229,6 @@
       "generation_id": "v4",
       "hypothesis": {
         "core_idea": "Tag the topic_slugify_logic literal for candidate v4.",
-        "expected_drift_movements": [],
         "expected_metric_movements": [
           {
             "direction": "neutral",
@@ -255,7 +247,6 @@
       "outcome": {
         "champion_eval_mode": "full",
         "drift_loss_delta": 0.0,
-        "drift_movements": [],
         "eliminated_in_round": null,
         "evidence": null,
         "final_rank": 5,
@@ -514,6 +505,7 @@
       "drift_loss_mean": 2.0,
       "entry_count": 5,
       "expectation_count": 5,
+      "format_version": 1,
       "generation_id": "v0",
       "mean_score": 1.0,
       "namespace_aggregates": {
@@ -580,6 +572,7 @@
       "drift_loss_mean": 0.4,
       "entry_count": 5,
       "expectation_count": 5,
+      "format_version": 1,
       "generation_id": "v1",
       "mean_score": 1.0,
       "namespace_aggregates": {
@@ -646,6 +639,7 @@
       "drift_loss_mean": 0.8,
       "entry_count": 4,
       "expectation_count": 4,
+      "format_version": 1,
       "generation_id": "v2",
       "mean_score": 1.0,
       "namespace_aggregates": {
@@ -706,6 +700,7 @@
       "drift_loss_mean": 1.2,
       "entry_count": 2,
       "expectation_count": 2,
+      "format_version": 1,
       "generation_id": "v3",
       "mean_score": 1.0,
       "namespace_aggregates": {
@@ -754,6 +749,7 @@
       "drift_loss_mean": 1.6,
       "entry_count": 2,
       "expectation_count": 2,
+      "format_version": 1,
       "generation_id": "v4",
       "mean_score": 1.0,
       "namespace_aggregates": {
@@ -861,7 +857,7 @@
     "0/round_log.jsonl": [
       {
         "payload": {
-          "contract_hash": "a4a2fb4e06703500560e94d2889f7e642d1934d6acb6ab4493bf389ba5626383"
+          "contract_hash": "9d61e8a4bbd6ea6a3a0601defd013d9687da88fe2575e407fabef006fd2af352"
         },
         "scope": {},
         "seq": 1,

@@ -202,7 +202,11 @@ def test_rejected_creation_preserves_live_contract_and_predecessor(contract_file
         if invalid == "duplicate-source":
             for source in sources:
                 source.mkdir(parents=True)
-        config["mutable_trees"] = [str(source) for source in sources]
+        config["adapter"] = {
+            "kind": "import",
+            "factory": "tests._stub_adapter:make_stub_adapter",
+            "mutable_trees": [str(source) for source in sources],
+        }
         write_workspace_config(root, config)
     paths = [root / "config.json", root / "epochs" / previous / "config.json"]
     paths += [root.parent / filename for filename in ("board.jsonl", "brief.md", "scoring.json")]

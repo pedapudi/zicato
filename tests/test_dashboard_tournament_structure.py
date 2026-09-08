@@ -26,6 +26,7 @@ from starlette.testclient import TestClient
 
 from zicato.core import TournamentDecision
 from zicato.dashboard.server import create_app
+from zicato.index.schema import apply_schema
 from zicato.query import (
     WorkspacePaths,
     build_bracket,
@@ -50,30 +51,19 @@ SWISS_TOURN = f"{EPOCH}:v0->v1"
 def _build_index(path: Path, *, structure: str) -> None:
     """A v3 index with one structure-aware tournaments row."""
     conn = sqlite3.connect(path)
-    conn.executescript(
-        """
-        CREATE TABLE generations(epoch_id TEXT, generation_id TEXT,
-            parent_generation_id TEXT, promoted INTEGER, created_at TEXT,
-            PRIMARY KEY(epoch_id, generation_id));
-        CREATE TABLE experiments(epoch_id TEXT, generation_id TEXT,
-            hypothesis_core_idea TEXT, PRIMARY KEY(epoch_id, generation_id));
-        CREATE TABLE tournaments(tournament_id TEXT PRIMARY KEY, epoch_id TEXT,
-            parent_generation_id TEXT, child_generation_id TEXT, decision TEXT,
-            parent_scalar REAL, child_scalar REAL, delta_scalar REAL,
-            rejection_reason TEXT, ran_at TEXT,
-            structure TEXT, structure_params_json TEXT, competitors_json TEXT,
-            rounds_json TEXT, standings_json TEXT);
-        """
-    )
+    apply_schema(conn)
     conn.executemany(
-        "INSERT INTO generations VALUES(?,?,?,?,?)",
+        (
+            "INSERT INTO generations(epoch_id, generation_id, parent_generation_id,"
+            " promoted, created_at) VALUES(?,?,?,?,?)"
+        ),
         [
             (EPOCH, "v0", None, 1, "2026-06-01T00:00:00Z"),
             (EPOCH, "v1", "v0", 1, "2026-06-01T00:10:00Z"),
         ],
     )
     conn.execute(
-        "INSERT INTO experiments VALUES(?,?,?)",
+        "INSERT INTO experiments(epoch_id, generation_id, hypothesis_core_idea) VALUES(?,?,?)",
         (EPOCH, "v1", "Tighten the planner."),
     )
     rounds = [
@@ -112,7 +102,13 @@ def _build_index(path: Path, *, structure: str) -> None:
         },
     ]
     conn.execute(
-        "INSERT INTO tournaments VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            "INSERT INTO tournaments(tournament_id, epoch_id, parent_generation_id,"
+            " child_generation_id, decision, parent_scalar, child_scalar, "
+            "delta_scalar, rejection_reason, ran_at, structure, "
+            "structure_params_json, competitors_json, rounds_json, standings_json) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+        ),
         (
             SWISS_TOURN,
             EPOCH,
@@ -227,7 +223,7 @@ def test_bracket_adds_structure_and_tournaments(swiss_workspace: Path) -> None:
     assert t["standings"][0]["status"] == "champion"
 
 
-def test_bracket_gauntlet_legacy_byte_identical(gauntlet_workspace: Path) -> None:
+def test_bracket_gauntlet_contains_champion_lineage_and_matchups(gauntlet_workspace: Path) -> None:
     b = build_bracket(WorkspacePaths(gauntlet_workspace))
     # the gauntlet rows carry no structure internals ⇒ structure stays gauntlet
     assert b["structure"] == "gauntlet"
@@ -257,25 +253,6 @@ def test_structure_reader_from_index(swiss_workspace: Path) -> None:
     assert st["standings"][0]["generation_id"] == "v1"
 
 
-def test_structure_reader_loss_file_fallback(tmp_path: Path) -> None:
-    # No index → reconstruct a degenerate single match from gen_score.json.
-    ws = tmp_path / ".zicato"
-    (ws / "runtime").mkdir(parents=True)
-    (ws / "current_epoch").write_text(EPOCH, encoding="utf-8")
-    gens = ws / "epochs" / EPOCH / "generations"
-    _write_json(gens / "v0" / "gen_score.json", {"scalar": 0.5})
-    _write_json(gens / "v1" / "gen_score.json", {"scalar": 0.4})
-    st = build_tournament_structure(WorkspacePaths(ws), EPOCH, SWISS_TOURN)
-    assert st["source"] == "loss_files"
-    # the crowning pair was decoded from the tournament id convention
-    ids = [c["generation_id"] for c in st["competitors"]]
-    assert ids == ["v0", "v1"]
-    match = st["rounds"][0]["matches"][0]
-    assert match["competitors"] == ["v0", "v1"]
-    # delta = challenger - champion = 0.4 - 0.5 = -0.1
-    assert match["delta_scalar"] == pytest.approx(-0.1)
-
-
 def test_structure_reader_unknown_tournament_empty(swiss_workspace: Path) -> None:
     st = build_tournament_structure(WorkspacePaths(swiss_workspace), EPOCH, "no_such_tourn")
     # not in index, not the active record, id does not decode ⇒ empty gauntlet
@@ -286,7 +263,7 @@ def test_structure_reader_unknown_tournament_empty(swiss_workspace: Path) -> Non
     assert st["field_status"] == []
 
 
-def test_structure_reader_pre_v5_index_field_status_empty(swiss_workspace: Path) -> None:
+def test_structure_reader_with_no_field_status_reads_empty(swiss_workspace: Path) -> None:
     """The hand-built swiss index has no ``field_status_json`` column (a
     pre-v5 shape); the reader degrades it to an empty list rather than
     failing the resolution."""
@@ -461,23 +438,12 @@ def _index_no_tournament_rows(path: Path) -> None:
     """A v3 index whose ``tournaments`` table has NO rows for the epoch — the
     state a run torn down before any bracket completed leaves behind."""
     conn = sqlite3.connect(path)
-    conn.executescript(
-        """
-        CREATE TABLE generations(epoch_id TEXT, generation_id TEXT,
-            parent_generation_id TEXT, promoted INTEGER, created_at TEXT,
-            PRIMARY KEY(epoch_id, generation_id));
-        CREATE TABLE experiments(epoch_id TEXT, generation_id TEXT,
-            hypothesis_core_idea TEXT, PRIMARY KEY(epoch_id, generation_id));
-        CREATE TABLE tournaments(tournament_id TEXT PRIMARY KEY, epoch_id TEXT,
-            parent_generation_id TEXT, child_generation_id TEXT, decision TEXT,
-            parent_scalar REAL, child_scalar REAL, delta_scalar REAL,
-            rejection_reason TEXT, ran_at TEXT,
-            structure TEXT, structure_params_json TEXT, competitors_json TEXT,
-            rounds_json TEXT, standings_json TEXT);
-        """
-    )
+    apply_schema(conn)
     conn.executemany(
-        "INSERT INTO generations VALUES(?,?,?,?,?)",
+        (
+            "INSERT INTO generations(epoch_id, generation_id, parent_generation_id,"
+            " promoted, created_at) VALUES(?,?,?,?,?)"
+        ),
         [
             (EPOCH, "v0", None, 1, "2026-06-01T00:00:00Z"),
             (EPOCH, "v3", "v0", 0, "2026-06-01T00:10:00Z"),
@@ -541,18 +507,7 @@ def _build_field_index_with_patches(
     per-challenger mutation-id sets the diversity block summarises.
     """
     conn = sqlite3.connect(path)
-    conn.executescript(
-        """
-        CREATE TABLE tournaments(tournament_id TEXT PRIMARY KEY, epoch_id TEXT,
-            parent_generation_id TEXT, child_generation_id TEXT, decision TEXT,
-            parent_scalar REAL, child_scalar REAL, delta_scalar REAL,
-            rejection_reason TEXT, ran_at TEXT,
-            structure TEXT, structure_params_json TEXT, competitors_json TEXT,
-            rounds_json TEXT, standings_json TEXT, field_status_json TEXT);
-        CREATE TABLE patches(patch_id TEXT PRIMARY KEY, epoch_id TEXT,
-            generation_id TEXT, mutation_id TEXT, op TEXT, rationale TEXT);
-        """
-    )
+    apply_schema(conn)
     competitors: list[dict[str, object]] = [{"generation_id": "v0", "seed": 1, "role": "champion"}]
     for i, f in enumerate(field_status):
         competitors.append(
@@ -563,7 +518,13 @@ def _build_field_index_with_patches(
             }
         )
     conn.execute(
-        "INSERT INTO tournaments VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            "INSERT INTO tournaments(tournament_id, epoch_id, parent_generation_id,"
+            " child_generation_id, decision, parent_scalar, child_scalar, "
+            "delta_scalar, rejection_reason, ran_at, structure, "
+            "structure_params_json, competitors_json, rounds_json, standings_json, "
+            "field_status_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+        ),
         (
             FIELD_TOURN,
             EPOCH,
@@ -587,7 +548,13 @@ def _build_field_index_with_patches(
     for gid, mutation_ids in patches.items():
         for k, mid in enumerate(mutation_ids):
             rows.append((f"{gid}_p{k}", EPOCH, gid, mid, "replace", "r"))
-    conn.executemany("INSERT INTO patches VALUES(?,?,?,?,?,?)", rows)
+    conn.executemany(
+        (
+            "INSERT INTO patches(patch_id, epoch_id, generation_id, mutation_id, "
+            "op, rationale) VALUES(?,?,?,?,?,?)"
+        ),
+        rows,
+    )
     conn.commit()
     conn.close()
 

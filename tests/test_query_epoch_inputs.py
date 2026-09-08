@@ -42,7 +42,7 @@ def test_home_champion_uses_selected_epoch_and_served_evidence(tmp_path: Path) -
             layout,
             epoch_id,
             "v1",
-            experiment=experiment_record("v1", parent_generation_id="v0"),
+            experiment=experiment_record("v1", epoch_id=epoch_id, parent_generation_id="v0"),
         )
         lineage.append(
             {
@@ -150,6 +150,7 @@ def test_candidate_reuses_record_and_contract_after_interleaved_rewrite(
     write_generation(layout, "selected", "v0")
     body = experiment_record(
         "v1",
+        epoch_id="selected",
         parent_generation_id="v0",
         hypothesis={"core_idea": "Observed hypothesis", "why": "Measured reason"},
         outcome={"operator_override": True, "operator_override_reason": "Observed reason"},
@@ -172,7 +173,10 @@ def test_candidate_reuses_record_and_contract_after_interleaved_rewrite(
                 if path == layout.scoring("selected"):
                     write_json(path, {"promote_margin": 0.75})
                 elif path == layout.experiment("selected", "v1"):
-                    write_json(path, experiment_record("v1", parent_generation_id="v9"))
+                    write_json(
+                        path,
+                        experiment_record("v1", epoch_id="selected", parent_generation_id="v9"),
+                    )
         return text
 
     monkeypatch.setattr(Path, "read_text", rewrite_after_read)
@@ -269,7 +273,12 @@ def test_epoch_overview_uses_one_generation_observation_for_its_components(
         if path in watched:
             counts[path] += 1
             if path == layout.experiment("selected", "v0"):
-                write_json(path, experiment_record("v0", proposed_at="2030-01-01T00:00:00Z"))
+                write_json(
+                    path,
+                    experiment_record(
+                        "v0", epoch_id="selected", proposed_at="2030-01-01T00:00:00Z"
+                    ),
+                )
         return text
 
     monkeypatch.setattr(Path, "read_text", replace_after_read)
@@ -306,8 +315,7 @@ def test_mutation_count_uses_selected_epoch_without_changing_process_syntax(
         "declared",
         scoring={
             "mutation_surface": {".specimen": {"leaders": ["#"]}},
-            # Frozen records retain the historical fractional-to-integer conversion.
-            "proposer_quality": {"best_of_n": 2.8},
+            "proposer_quality": {"best_of_n": 2},
         },
         current=True,
     )

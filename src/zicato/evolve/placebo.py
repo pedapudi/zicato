@@ -138,15 +138,18 @@ def build_placebo_experiment(
     """
     hypothesis = HypothesisSpec(
         core_idea=(
-            f"{PLACEBO_HYPOTHESIS_MARKER} no-op re-emission of {point.id!r} — "
-            "a control arm the tournament gate must reject"
+            f"{PLACEBO_HYPOTHESIS_MARKER}"
+            " no-op re-emission of "
+            f"{point.id!r}"
+            " — a control arm the tournament gate must reject"
         ),
         modulating=(point.id,),
         why=(
-            "OVERFITTING.md #7: a semantics-preserving no-op measures the gate's "
-            "discrimination — a promoted placebo means the loop is promoting noise"
+            "OVERFITTING.md #7: a semantics-preserving no-op measures the "
+            "gate's discrimination — a promoted placebo means the loop is "
+            "promoting noise"
         ),
-        expected_drift_movements=(),
+        expected_metric_movements=(),
         expected_pass_rate_delta="0 (no-op by construction)",
         risks="none — the tree is behaviourally identical to the champion",
     )

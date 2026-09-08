@@ -99,9 +99,7 @@ class JudgeAdjudication:
         """Accept one verdict, retaining absent protocol fields as stale evidence."""
         if not isinstance(data, dict):
             raise RecordError("adjudication: expected a JSON object")
-        check_record_format(
-            data, "adjudication", expected_version=ADJUDICATION_FORMAT_VERSION, allow_missing=False
-        )
+        check_record_format(data, "adjudication", expected_version=ADJUDICATION_FORMAT_VERSION)
         for key in ("judge_name", "run_ref"):
             if not isinstance(data.get(key), str) or not data[key]:
                 raise RecordError(f"adjudication: {key} must be a nonempty string")

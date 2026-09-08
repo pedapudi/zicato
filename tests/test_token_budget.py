@@ -37,7 +37,7 @@ from tests._orchestrator_harness import (
     run_evolve_once,
 )
 from zicato.core.runtime import RoundTokenLedger, RuntimeConfig
-from zicato.core.types import DriftCount, LossProfile, TournamentStructure
+from zicato.core.types import LossProfile, MetricCount, TournamentStructure
 from zicato.core.workspace import run_id_for_unit
 from zicato.epoch.journal import write_seed_experiment
 from zicato.epoch.lifecycle import new_epoch
@@ -74,8 +74,6 @@ def _bootstrap_multi_entry_workspace(
     runtime_block = {
         "parallelism": 1,
         "preflight_gate": "off",
-        "target_call_llm": "tests._orchestrator_harness:target_call_llm",
-        "evaluation_call_llm": "tests._orchestrator_harness:evaluation_call_llm",
         **(runtime or {}),
     }
     (workspace / "config.json").write_text(
@@ -87,6 +85,14 @@ def _bootstrap_multi_entry_workspace(
                 "generation_source_backend": "directory",
                 "adapter": {"kind": "import", "factory": "tests._stub_adapter:make_stub_adapter"},
                 "runtime": runtime_block,
+                "models": {
+                    "engines": {
+                        "target": {"call_llm": "tests._orchestrator_harness:target_call_llm"},
+                        "evaluation": {
+                            "call_llm": "tests._orchestrator_harness:evaluation_call_llm"
+                        },
+                    }
+                },
             }
         )
     )
@@ -161,7 +167,7 @@ def _install_token_heavy_run_single(
             entry_id=entry.id,
             generation_id=generation.id,
             epoch_id=epoch_id,
-            drift_counts=(DriftCount(kind="off_topic", severity="info", count=0),),
+            metric_counts=(MetricCount(name="drift:off_topic", severity="info", count=0),),
             plan_revisions=0,
             task_failure_ratio=0.0,
             runtime_ms=100,

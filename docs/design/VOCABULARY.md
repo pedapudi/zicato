@@ -582,7 +582,7 @@ and [SCORING.md §5](SCORING.md#5-the-tournament-promotion-gate).
 The half of an [experiment](#experiment) written before the run. Six
 required fields: `core_idea` (one sentence), `modulating` (the mutation
 points the patches address), `why` (the pattern observation behind it),
-`expected_drift_movements` (direction and magnitude per kind),
+`expected_metric_movements` (direction and magnitude per kind),
 `expected_pass_rate_delta` (a low–high band), and `risks`. A proposal
 whose hypothesis fails the schema is rejected and the proposer is
 re-prompted with the error. The hypothesis is written before the run and

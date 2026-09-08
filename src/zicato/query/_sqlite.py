@@ -1,8 +1,4 @@
-"""The SQLite analytical index: read-only connections and tolerant row reads.
-
-One connection lifecycle for every reader, plus the accessors that read a
-column a stale index may not carry.
-"""
+"""Supported read-only index connections and nullable value decoding."""
 
 from __future__ import annotations
 
@@ -12,6 +8,8 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
+
+from zicato.index.query import IndexNotBuiltError, open_index
 
 # ---------------------------------------------------------------------------
 # SQLite analytical index — bracket / matchup / health
@@ -40,11 +38,10 @@ def with_index_not_built_note(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _open_index(path: Path) -> sqlite3.Connection:
-    if not path.exists():
-        raise _IndexAbsent
-    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-    conn.row_factory = sqlite3.Row
-    return conn
+    try:
+        return open_index(path)
+    except IndexNotBuiltError:
+        raise _IndexAbsent from None
 
 
 @contextmanager
@@ -88,43 +85,10 @@ def open_index_ro_or_none(path: Path) -> Iterator[sqlite3.Connection | None]:
         conn.close()
 
 
-# ---------------------------------------------------------------------------
-# Tolerant row accessors — THE declared set for schema-additive columns
-# ---------------------------------------------------------------------------
-#
-# The analytical index is migrated forward additively; a stale (pre-migration
-# or hand-built fixture) database may lack a column a newer reader selects.
-# Every reader tolerates that absence through these four accessors — absence
-# reads as ``None`` / ``False``, never an error — so an old index loads
-# unchanged instead of blanking a whole payload.
-
-
-def _row_keys(row: Any) -> Any:
-    """The row's column names, or ``()`` for a non-Row (tuple fixture) value."""
-    try:
-        return row.keys()
-    except AttributeError:
-        return ()
-
-
-def _rget(row: Any, key: str) -> Any:
-    """``row[key]`` when the column exists, else ``None`` (stale index)."""
-    return row[key] if key in _row_keys(row) else None
-
-
 def _opt_str(row: Any, key: str) -> str | None:
-    """A non-empty string column, or ``None`` (absent column / NULL / '')."""
-    if key not in _row_keys(row):
-        return None
+    """A nonempty string column, or None for a null or empty value."""
     value = row[key]
     return value if isinstance(value, str) and value else None
-
-
-def _row_bool(row: Any, key: str) -> bool:
-    """A boolean column read tolerantly: absent column / NULL ⇒ ``False``."""
-    if key not in _row_keys(row):
-        return False
-    return bool(row[key]) if row[key] is not None else False
 
 
 def _query(conn: sqlite3.Connection, sql: str, params: tuple[Any, ...]) -> list[sqlite3.Row]:

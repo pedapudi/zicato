@@ -8,7 +8,7 @@ format.
 The rules under test are the ones that make the numbers usable rather than
 merely present — a null is never a zero, a sample count rides every rate, a
 thin sample is marked — plus the two structural claims the scorecard rests on:
-that A1–A4 classification reads a stamped code rather than parsing prose, and
+that failure classification reads a stamped name rather than parsing prose, and
 that nothing board-shaped can reach a record.
 """
 
@@ -139,34 +139,39 @@ def test_cost_per_acceptance_is_null_when_nothing_promoted(tmp_path: Path) -> No
 
 
 def test_validator_failures_classify_by_stamped_code(tmp_path: Path) -> None:
-    """A1–A4 rates come from the code the validator stamps, per ATTEMPT."""
-    _write(tmp_path, 0, _round(errors=("A4: dropped top-level imports: os",)))
-    _write(tmp_path, 1, _round(errors=("A1: syntax error", "A4: dropped imports: json")))
+    """Each failure rate counts attempts carrying the validator's stamped name."""
+    _write(tmp_path, 0, _round(errors=("removed_import: dropped top-level imports: os",)))
+    _write(
+        tmp_path,
+        1,
+        _round(errors=("invalid_source: syntax error", "removed_import: dropped imports: json")),
+    )
     _write(tmp_path, 2, _round(errors=()))
     card = read_epoch_scorecard(tmp_path, EPOCH)
 
     assert card.proposals == 3
     # The attempt that hit BOTH checks counts once for each — a rate over
     # attempts, not a tally of error strings.
-    assert card.validator_failure_rates["A4"] == Rate(k=2, n=3)
-    assert card.validator_failure_rates["A1"] == Rate(k=1, n=3)
-    assert card.validator_failure_rates["A2"] == Rate(k=0, n=3)
+    assert card.validator_failure_rates["removed_import"] == Rate(k=2, n=3)
+    assert card.validator_failure_rates["invalid_source"] == Rate(k=1, n=3)
+    assert card.validator_failure_rates["missing_mutation"] == Rate(k=0, n=3)
     assert card.validation_failure_rate == Rate(k=2, n=3)
 
 
 def test_an_attempt_hitting_one_check_twice_counts_once(tmp_path: Path) -> None:
-    _write(tmp_path, 0, _round(errors=("A4: dropped os", "A4: dropped json")))
+    _write(
+        tmp_path, 0, _round(errors=("removed_import: dropped os", "removed_import: dropped json"))
+    )
     card = read_epoch_scorecard(tmp_path, EPOCH)
-    assert card.validator_failure_rates["A4"] == Rate(k=1, n=1)
+    assert card.validator_failure_rates["removed_import"] == Rate(k=1, n=1)
 
 
 def test_uncoded_errors_land_in_unclassified_not_a_check(tmp_path: Path) -> None:
     """An error with no recognised code is never attributed to a check.
 
-    This is the back-compatibility case AND the foreign-error case: a round log
-    written before the codes existed, and a best-of-N slot that recorded a
-    credential lapse, both look like this. Charging either to A1 would invent a
-    validator failure that never happened.
+    Proposal parsing and credential failures may happen before validation.
+    Their messages must count as failed attempts without claiming a source
+    check ran.
     """
     _write(tmp_path, 0, _round(errors=("proposer returned invalid JSON",)))
     card = read_epoch_scorecard(tmp_path, EPOCH)
@@ -221,10 +226,10 @@ def test_a_reran_round_counts_one_gate_and_every_attempt(tmp_path: Path) -> None
     improve exactly when the proposer did worst.
     """
     log = RoundLog(tmp_path, EPOCH, 0)
-    # Attempt 1: the proposer failed A4, then the round died.
+    # Attempt 1: the proposer failed removed_import, then the round died.
     for event in [
         RoundOpened(contract_hash="c"),
-        ProposalAttempted(errors=("A4: dropped top-level imports: os",)),
+        ProposalAttempted(errors=("removed_import: dropped top-level imports: os",)),
         GateEvaluated(decision="promoted", champion_scalar=0.5, challenger_scalar=0.1),
     ]:
         log.append(event)
@@ -249,9 +254,9 @@ def test_a_reran_round_counts_one_gate_and_every_attempt(tmp_path: Path) -> None
     assert card.margins.n == 1
     assert card.promote_rate == Rate(k=0, n=1)
     # Proposal facts: EVERY attempt. Both were real proposer calls, and one
-    # really did fail A4.
+    # really did fail removed_import.
     assert card.proposals == 2
-    assert card.validator_failure_rates["A4"] == Rate(k=1, n=2)
+    assert card.validator_failure_rates["removed_import"] == Rate(k=1, n=2)
     assert card.cost.proposal_attempts == 2
 
 
@@ -306,7 +311,7 @@ def test_only_the_named_winner_gets_the_site_promotion_credit(tmp_path: Path) ->
                     core_idea="idea",
                     modulating=(site,),
                     why="why",
-                    expected_drift_movements=(),
+                    expected_metric_movements=(),
                     expected_pass_rate_delta="+0.0 to +0.1",
                     risks="none",
                 ),
@@ -382,11 +387,14 @@ def test_no_entry_identity_reaches_the_card(tmp_path: Path) -> None:
 
 
 def test_classify_reads_the_prefix_and_admits_nothing_else() -> None:
-    assert classify_post_apply_error("A3: required placeholder missing") == "A3"
+    assert (
+        classify_post_apply_error("missing_placeholder: required placeholder missing")
+        == "missing_placeholder"
+    )
     assert classify_post_apply_error("Post-apply syntax error in x.py") is None
     assert classify_post_apply_error("A9: not a real check") is None
     # A bare code with no separator is not a stamped error.
-    assert classify_post_apply_error("A1") is None
+    assert classify_post_apply_error("invalid_source") is None
 
 
 # ---------------------------------------------------------------------------
@@ -395,14 +403,14 @@ def test_classify_reads_the_prefix_and_admits_nothing_else() -> None:
 
 
 def test_scorecard_cli_renders_counts_beside_every_rate(tmp_path: Path) -> None:
-    _write(tmp_path, 0, _round(errors=("A4: dropped imports: os",)))
+    _write(tmp_path, 0, _round(errors=("removed_import: dropped imports: os",)))
     result = CliRunner().invoke(
         proposer_grp,
         ["scorecard", "--workspace", str(tmp_path), "--epoch", EPOCH, "--no-trend"],
     )
     assert result.exit_code == 0, result.output
     assert "(1/1)" in result.output
-    assert "A4" in result.output
+    assert "removed_import" in result.output
     # The legend states the two rules the table depends on.
     assert "NOT zero" in result.output
 

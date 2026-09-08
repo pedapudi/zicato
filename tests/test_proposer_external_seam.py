@@ -98,7 +98,12 @@ def _inputs(tmp_path: Path, external: ExternalProposerConfig | None = None) -> C
 
 def test_config_is_none_without_the_key() -> None:
     assert external_proposer_config({}) is None
-    assert external_proposer_config({"runtime": {"evaluation_call_llm": "pkg:fn"}}) is None
+    assert (
+        external_proposer_config(
+            {"runtime": {}, "models": {"engines": {"evaluation": {"call_llm": "pkg:fn"}}}}
+        )
+        is None
+    )
 
 
 def test_config_reads_the_runtime_block() -> None:

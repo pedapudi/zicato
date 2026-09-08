@@ -280,7 +280,7 @@ def recent_prediction_accuracy(ctx: ProposerContext) -> float | None:
 def _carries_expected_movements(experiment: Experiment) -> bool:
     """Whether the candidate's hypothesis states falsifiable movements."""
     hyp = experiment.hypothesis
-    return bool(hyp.expected_drift_movements or hyp.expected_metric_movements)
+    return bool(hyp.expected_metric_movements)
 
 
 def _targets_observed_failure(experiment: Experiment, ctx: ProposerContext) -> bool:

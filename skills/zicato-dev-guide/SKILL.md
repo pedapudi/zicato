@@ -1,11 +1,11 @@
 ---
 name: zicato-dev-guide
-description: The entry point for CHANGING zicato's own source (not operating a workspace). Routes to the full 14-chapter development guide under docs/dev-guide/ (~23k lines, code-grounded), and inlines the non-negotiables an agent must never skip — the 10 Golden Rules, the chapter map (which chapter owns which surface), the pre-commit verification ladder, and the twelve shipped bugs with the one-line tell for each. Use whenever you edit orchestrator/proposer/tournament/selection/scoring/runtime/storage/supervisor/dashboard/CLI code, add a contract knob, touch the evaluation statistics or the overfitting envelope, or write tests. The operator skills (zicato-evolve, zicato-design-boards, …) teach how to RUN the loop; this teaches how to safely CHANGE it.
+description: Use when changing zicato's implementation or tests. Routes to the 14-chapter development guide and includes its Golden Rules, chapter map, verification policy, and failure examples. Operator skills describe running the loop; this skill describes changing its implementation.
 ---
 
 # Contributing to zicato
 
-**The authoritative reference is the development guide: [`docs/dev-guide/`](../../docs/dev-guide/)** (14 chapters, ~23k lines).
+**The authoritative reference is the development guide: [`docs/dev-guide/`](../../docs/dev-guide/)** (14 chapters).
 Start at **[`docs/dev-guide/00-INDEX.md`](../../docs/dev-guide/00-INDEX.md)** — it
 has the how-to-read path, the chapter map, the master invariant index, and the
 recipe index. It is a *reference book rather than a tutorial*: read the Golden Rules
@@ -34,7 +34,7 @@ because breaking it caused a real failure.
 - **G3 — No live model run without explicit operator go-ahead.** The deterministic `examples/zicato_examples/target_0_convergence/RUN.md` is the sanctioned e2e vehicle. Every live run also reports its dashboard URL.
 - **G4 — The two oracles pass in complete validation.** `tests/test_convergence_known_answer.py` (the loop converges to an exact floor) + `tests/test_decision_procedure_power.py` (the decision procedure's measured operating characteristics).
 - **G5 — Parity, import contracts and JavaScript pass in complete validation.** `make check` runs their shared verification commands.
-- **G6 — Omit-at-default.** A new default-off contract field MUST declare `metadata=_knob(omit_at_default=True)` — `_SCORING_OMIT_AT_DEFAULT_FIELDS` is DERIVED from that flag — or every workspace spuriously rolls its epoch (`03-contract-and-epochs.md`).
+- **G6 — Complete configuration identity.** The shared dataclass serializer writes every effective scoring field, including defaults. The contract hash includes those values, and authored and frozen configuration use one strict decoder. Selected epochs require a valid hash and captured `execution.json` (`03-contract-and-epochs.md`).
 - **G7 — Reserved replicate-base ledger.** Duels `0..`, calibration `1000`, preflight `2000`, screening `3000/3001`, evidence `4000`. Squatting a base corrupts the unit cache — this was bugs #1 and #8 (`04-evaluation-statistics.md`).
 - **G8 — Restricted-visibility envelope.** Nothing entry-identifying (entry ids, task text, holdout data, raw per-entry outcomes) reaches the proposer; every channel is banded/aggregated/anonymized/redacted (`05-proposer.md`).
 - **G9 — Module-level callables only across the worker boundary.** Closures are rejected by `_callable_dotted_path`; scripted proposers/harnesses are module-level functions + module state + `reset()` (`06-tournament-and-selection.md`).

@@ -17,5 +17,12 @@
   },
   "plan_revision_weight": 0.5,
   "promote_margin": 0.01,
-  "pass_rate_monotonicity": true
+  "pass_rate_monotonicity": true,
+  "tournament": {
+    "structure": "gauntlet",
+    "params": {}
+  },
+  "proposer_quality": {
+    "screen_entries": 0
+  }
 }

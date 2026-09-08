@@ -96,7 +96,7 @@ def _loss(entry_id: str, replicate_index: int) -> LossProfile:
         entry_id=entry_id,
         generation_id="v1",
         epoch_id="e1",
-        drift_counts=(),
+        metric_counts=(),
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=1,
@@ -499,7 +499,7 @@ async def _run_fast_mode(
     weights = deterministic_weights()
     epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
     parent_score = {"generation_id": "v0", "scalar": 1.0, "base_seed": None}
-    record_tournament_score(tmp_path, epoch_id, "v0", parent_score)
+    parent_score = record_tournament_score(tmp_path, epoch_id, "v0", parent_score)
     await runner.run_fast_mode(
         adapter=None,
         child_gen=replace(_generation("v1"), epoch_id=epoch_id),

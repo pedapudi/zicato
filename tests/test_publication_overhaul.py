@@ -18,7 +18,9 @@ from pathlib import Path
 
 import pytest
 
+from tests._workspace_support import experiment_record, write_epoch
 from zicato.analyzer.report import (
+    assemble_report_markdown,
     parse_prose_from_markdown,
     regenerate_epoch_report_deterministic,
 )
@@ -32,6 +34,7 @@ from zicato.analyzer.report_sections import (
 from zicato.core.mutation import MutationPoint
 from zicato.core.workspace import analysis_path
 from zicato.mutation.inventory import write_mutation_inventory
+from zicato.workspace.layout import WorkspaceLayout
 
 
 def _write(path: Path, payload: object) -> None:
@@ -45,13 +48,15 @@ def _base_epoch(tmp_path: Path, *, scoring: dict[str, object], closed: bool = Fa
     epoch = "2026-07-12_pub"
     edir = ws / "epochs" / epoch
     edir.mkdir(parents=True)
-    _write(
-        edir / "config.json",
-        {
+    write_epoch(
+        WorkspaceLayout.from_root(ws),
+        epoch,
+        scoring=scoring,
+        config={
             "id": epoch,
             "name": "Publication Fixture",
             "created_at": "2026-07-12T00:00:00Z",
-            "contract_hash": "feedfacecafebabe",
+            "contract_hash": "feedfacecafebabe" * 4,
             "closed": closed,
             "closed_at": "2026-07-12T09:00:00Z" if closed else "",
         },
@@ -62,7 +67,6 @@ def _base_epoch(tmp_path: Path, *, scoring: dict[str, object], closed: bool = Fa
         '"expectation": {"kind": "predicate", "spec": "ok"}}\n',
         encoding="utf-8",
     )
-    _write(edir / "scoring.json", scoring)
     write_mutation_inventory(
         edir / "mutations.json",
         [
@@ -80,30 +84,42 @@ def _base_epoch(tmp_path: Path, *, scoring: dict[str, object], closed: bool = Fa
     )
     _write(
         edir / "generations" / "v0" / "experiment.json",
-        {
-            "generation_id": "v0",
-            "parent_generation_id": "",
-            "proposed_at": "2026-07-12T01:00:00Z",
-            "hypothesis": {"core_idea": "baseline"},
-        },
+        experiment_record(
+            **{
+                "epoch_id": epoch,
+                "round_index": 0,
+                **{
+                    "generation_id": "v0",
+                    "parent_generation_id": None,
+                    "proposed_at": "2026-07-12T01:00:00Z",
+                    "hypothesis": {"core_idea": "baseline"},
+                },
+            }
+        ),
     )
     _write(
         edir / "generations" / "v1" / "experiment.json",
-        {
-            "generation_id": "v1",
-            "parent_generation_id": "v0",
-            "proposed_at": "2026-07-12T02:00:00Z",
-            "hypothesis": {
-                "core_idea": "tighten prompt",
-                "expected_pass_rate_delta": "+0.05 to +0.15",
-            },
-            "outcome": {
-                "pass_rate_delta": 0.10,
-                "drift_loss_delta": -0.20,
-                "scalar_score_delta": -0.20,
-                "tournament_decision": "promoted",
-            },
-        },
+        experiment_record(
+            **{
+                "epoch_id": epoch,
+                "round_index": 1,
+                **{
+                    "generation_id": "v1",
+                    "parent_generation_id": "v0",
+                    "proposed_at": "2026-07-12T02:00:00Z",
+                    "hypothesis": {
+                        "core_idea": "tighten prompt",
+                        "expected_pass_rate_delta": "+0.05 to +0.15",
+                    },
+                    "outcome": {
+                        "pass_rate_delta": 0.10,
+                        "drift_loss_delta": -0.20,
+                        "scalar_score_delta": -0.20,
+                        "tournament_decision": "promoted",
+                    },
+                },
+            }
+        ),
     )
     return ws
 
@@ -119,11 +135,13 @@ def test_method_renders_configured_structure_dialect_and_proposer(tmp_path: Path
         scoring={
             "promote_margin": 0.02,
             "telemetry_dialect": "goldfive",
-            "tournament_structure": {"structure": "racing", "params": {"rungs": 3}},
+            "tournament": {"structure": "racing", "params": {"rungs": 3}},
             "proposer_quality": {
                 "best_of_n": 4,
                 "critique_enabled": True,
                 "screen_entries": 2,
+            },
+            "experimental": {
                 "genealogy": 3,
                 "recombine": True,
                 "recombine_merge": "llm",
@@ -141,14 +159,14 @@ def test_method_renders_configured_structure_dialect_and_proposer(tmp_path: Path
     assert "pre-tournament screen | 2" in md
 
 
-def test_method_honest_degrade_on_defaults(tmp_path: Path) -> None:
+def test_method_reports_effective_defaults(tmp_path: Path) -> None:
     ws = _base_epoch(tmp_path, scoring={"promote_margin": 0.01})
     data = gather_epoch_report_data(ws, "2026-07-12_pub")
     md = render_methodology_section(data)
-    # No structure / proposer_quality configured ⇒ honest default notices,
-    # never a fabricated param table.
-    assert "default **gauntlet** structure" in md
-    assert "built-in defaults" in md
+    assert "Tournament structure: **racing**" in md
+    assert "| best_of_n | 3 (slate) |" in md
+    assert "| self-critique | on |" in md
+    assert "| pre-tournament screen | 2 entries" in md
 
 
 # ---------------------------------------------------------------------------
@@ -254,13 +272,15 @@ def test_deterministic_refresh_preserves_prose_and_is_digest_noop(tmp_path: Path
     # Seed a persisted report carrying real LLM prose.
     md_path = analysis_path(ws, epoch)
     md_path.parent.mkdir(parents=True, exist_ok=True)
-    seeded = (
-        "<!-- EYEBROW -->\nZicato\n\n# Publication Fixture\n\n"
-        "## Abstract\n\nThis campaign cut off-topic drift by a fifth.\n\n"
-        "## Introduction\n\nThe target agent drifts off topic.\n\n"
-        "## Methodology\n\nstale\n\n"
-        "## Analysis — What Worked and What Didn't\n\nThe prompt clause held.\n\n"
-        "## Conclusion & Next Directions\n\nKeep the clause; widen the board.\n"
+    seeded = assemble_report_markdown(
+        gather_epoch_report_data(ws, epoch),
+        {
+            "ABSTRACT": "This campaign cut off-topic drift by a fifth.",
+            "INTRODUCTION": "The target agent drifts off topic.",
+            "ANALYSIS": "The prompt clause held.",
+            "CONCLUSION": "Keep the clause; widen the board.",
+        },
+        "## Methodology\n\nstale",
     )
     md_path.write_text(seeded, encoding="utf-8")
 
@@ -282,12 +302,11 @@ def test_deterministic_refresh_preserves_prose_and_is_digest_noop(tmp_path: Path
 
 
 def test_parse_prose_from_markdown_skips_placeholders(tmp_path: Path) -> None:
-    md = (
-        "# T\n\n## Abstract\n\nreal abstract\n\n"
-        "## Introduction\n\n_(prose section unavailable — the evaluation LLM "
-        "did not return it this round.)_\n\n"
-        "## Methodology\n\nnot prose\n\n"
-        "## Conclusion & Next Directions\n\nreal conclusion\n\n---\n\nfooter\n"
+    ws = _base_epoch(tmp_path, scoring={"promote_margin": 0.01})
+    md = assemble_report_markdown(
+        gather_epoch_report_data(ws, "2026-07-12_pub"),
+        {"ABSTRACT": "real abstract", "CONCLUSION": "real conclusion"},
+        "## Methodology\n\nnot prose",
     )
     prose = parse_prose_from_markdown(md)
     assert prose["ABSTRACT"] == "real abstract"
@@ -354,41 +373,6 @@ def test_prose_fences_survive_structural_lines_through_two_refreshes(tmp_path: P
     assert md_path.read_bytes() == after_first
 
 
-def test_unfenced_legacy_report_upgrades_to_fences_without_prose_loss(tmp_path: Path) -> None:
-    """A pre-fix ``analysis.md`` WITHOUT fences must not lose prose: the parse
-    falls back to the old heuristic, splices what it captured verbatim, and
-    the assembler re-emits WITH fences so the document self-heals on the first
-    refresh (a fenced no-op thereafter)."""
-    ws = _base_epoch(tmp_path, scoring={"promote_margin": 0.01})
-    epoch = "2026-07-12_pub"
-    md_path = analysis_path(ws, epoch)
-    md_path.parent.mkdir(parents=True, exist_ok=True)
-
-    legacy = (
-        "<!-- EYEBROW -->\nZicato\n\n# Publication Fixture\n\n"
-        "## Abstract\n\nLegacy abstract prose.\n\n"
-        "## Introduction\n\nLegacy intro prose.\n\n"
-        "## Methodology\n\nstale\n\n"
-        "## Analysis — What Worked and What Didn't\n\nLegacy analysis prose.\n\n"
-        "## Conclusion & Next Directions\n\nLegacy conclusion prose.\n"
-    )
-    assert "<!-- PROSE:" not in legacy  # genuinely unfenced
-    md_path.write_text(legacy, encoding="utf-8")
-
-    assert regenerate_epoch_report_deterministic(ws, epoch) is True
-    upgraded = md_path.read_text(encoding="utf-8")
-    # Prose preserved through the heuristic fallback...
-    assert "Legacy abstract prose." in upgraded
-    assert "Legacy analysis prose." in upgraded
-    assert "Legacy conclusion prose." in upgraded
-    # ...and the document self-healed — it now carries the fences.
-    assert "<!-- PROSE:ABSTRACT -->" in upgraded
-    assert "<!-- /PROSE:CONCLUSION -->" in upgraded
-
-    # Now fenced, a second refresh is a no-op.
-    assert regenerate_epoch_report_deterministic(ws, epoch) is False
-
-
 # ---------------------------------------------------------------------------
 # LIVING DRAFT clears on explicit `zicato epoch close`
 # ---------------------------------------------------------------------------
@@ -403,18 +387,19 @@ def test_epoch_close_clears_living_draft_and_preserves_prose(tmp_path: Path) -> 
     ws = _base_epoch(tmp_path, scoring={"promote_margin": 0.01}, closed=False)
     epoch = "2026-07-12_pub"
     edir = ws / "epochs" / epoch
-    # The strict close-path loader (`load_epoch`) requires the frozen
-    # board/brief paths the minimal fixture config omits; add them.
+    # Exercise closure with explicitly recorded relative board and brief paths.
     (edir / "brief.md").write_text("## Goal\n\nHold the line.\n", encoding="utf-8")
-    _write(
-        edir / "config.json",
-        {
+    write_epoch(
+        WorkspaceLayout.from_root(ws),
+        epoch,
+        scoring={"promote_margin": 0.01},
+        config={
             "id": epoch,
             "name": "Publication Fixture",
             "created_at": "2026-07-12T00:00:00Z",
             "board_path": "board.jsonl",
             "brief_path": "brief.md",
-            "contract_hash": "feedfacecafebabe",
+            "contract_hash": "feedfacecafebabe" * 4,
             "closed": False,
             "closed_at": "",
         },
@@ -422,11 +407,16 @@ def test_epoch_close_clears_living_draft_and_preserves_prose(tmp_path: Path) -> 
     md_path = analysis_path(ws, epoch)
     md_path.parent.mkdir(parents=True, exist_ok=True)
     md_path.write_text(
-        "<!-- EYEBROW -->\nZicato\n\n# Publication Fixture\n\n"
-        "## Abstract\n\nDurable abstract prose.\n\n"
-        "## Introduction\n\nDurable intro prose.\n\n"
-        "## Analysis — What Worked and What Didn't\n\nDurable analysis prose.\n\n"
-        "## Conclusion & Next Directions\n\nDurable conclusion prose.\n",
+        assemble_report_markdown(
+            gather_epoch_report_data(ws, epoch),
+            {
+                "ABSTRACT": "Durable abstract prose.",
+                "INTRODUCTION": "Durable intro prose.",
+                "ANALYSIS": "Durable analysis prose.",
+                "CONCLUSION": "Durable conclusion prose.",
+            },
+            "## Methodology\n\nstale",
+        ),
         encoding="utf-8",
     )
     # A mid-epoch refresh makes this a LIVING DRAFT (epoch still open).

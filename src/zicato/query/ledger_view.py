@@ -34,7 +34,6 @@ from typing import Any
 from zicato.query._sqlite import (
     _IndexAbsent,
     _query,
-    _rget,
     open_index_ro,
     with_index_not_built_note,
 )
@@ -42,7 +41,7 @@ from zicato.query.decisions import canonical_decision, promoted_tristate
 from zicato.query.paths import WorkspacePaths, _resolve_epoch_id
 
 #: What a row's ``round_index`` sorts as when the birth round was never
-#: stamped (a pre-v7 index): AFTER every stamped round, so the known
+#: recorded: AFTER every known round, so the known
 #: sequence still reads top-to-bottom and the unstamped tail follows in
 #: generation order rather than jumping the queue at round 0.
 _UNSTAMPED_ROUND = float("inf")
@@ -112,11 +111,6 @@ def build_experiments_ledger(paths: WorkspacePaths, epoch_id: str | None = None)
 
 def _ledger_rows(conn: sqlite3.Connection, epoch_id: str) -> list[dict[str, Any]]:
     """The joined, round-ordered experiment rows for one epoch."""
-    # ``SELECT *`` rather than a named column list is required on
-    # ``generations``: ``round_index`` arrived in schema v7 and an older index
-    # may not carry it, and naming a missing column fails the WHOLE query and
-    # blanks the ledger. The tolerant ``_rget`` accessor instead reads the
-    # absence as a null round.
     gen_rows = _query(
         conn,
         "SELECT * FROM generations WHERE epoch_id = ? ORDER BY created_at, generation_id",
@@ -126,14 +120,14 @@ def _ledger_rows(conn: sqlite3.Connection, epoch_id: str) -> list[dict[str, Any]
     rounds: dict[str, int | None] = {}
     parents: dict[str, str | None] = {}
     for position, row in enumerate(gen_rows):
-        gid = _opt_text(_rget(row, "generation_id"))
+        gid = _opt_text(row["generation_id"])
         if gid is None:
             continue
         order[gid] = position
-        raw_round = _rget(row, "round_index")
+        raw_round = row["round_index"]
         stamped = isinstance(raw_round, int) and not isinstance(raw_round, bool)
         rounds[gid] = int(raw_round) if stamped else None
-        parents[gid] = _opt_text(_rget(row, "parent_generation_id"))
+        parents[gid] = _opt_text(row["parent_generation_id"])
 
     sites: dict[str, list[str]] = {}
     for row in _query(
@@ -142,8 +136,8 @@ def _ledger_rows(conn: sqlite3.Connection, epoch_id: str) -> list[dict[str, Any]
         "ORDER BY generation_id, mutation_id",
         (epoch_id,),
     ):
-        gid = _opt_text(_rget(row, "generation_id"))
-        mid = _opt_text(_rget(row, "mutation_id"))
+        gid = _opt_text(row["generation_id"])
+        mid = _opt_text(row["mutation_id"])
         if gid is None or mid is None:
             continue
         touched = sites.setdefault(gid, [])
@@ -154,10 +148,10 @@ def _ledger_rows(conn: sqlite3.Connection, epoch_id: str) -> list[dict[str, Any]
 
     rows: list[dict[str, Any]] = []
     for row in _query(conn, "SELECT * FROM experiments WHERE epoch_id = ?", (epoch_id,)):
-        gid = _opt_text(_rget(row, "generation_id"))
+        gid = _opt_text(row["generation_id"])
         if gid is None:
             continue
-        raw_decision = _opt_text(_rget(row, "tournament_decision"))
+        raw_decision = _opt_text(row["tournament_decision"])
         rows.append(
             {
                 "generation_id": gid,
@@ -168,14 +162,14 @@ def _ledger_rows(conn: sqlite3.Connection, epoch_id: str) -> list[dict[str, Any]
                 # because it never faced one — reads as in-flight forever.
                 "parent_generation_id": parents.get(gid),
                 "round_index": rounds.get(gid),
-                "core_idea": _opt_text(_rget(row, "hypothesis_core_idea")),
+                "core_idea": _opt_text(row["hypothesis_core_idea"]),
                 "mutation_ids": sites.get(gid, []),
                 "decision": canonical_decision(raw_decision),
                 "promoted": promoted_tristate(raw_decision),
-                "rejection_reason": _opt_text(_rget(row, "rejection_reason")),
-                "scalar_score_delta": _opt_float(_rget(row, "scalar_score_delta")),
-                "drift_loss_delta": _opt_float(_rget(row, "drift_loss_delta")),
-                "pass_rate_delta": _opt_float(_rget(row, "pass_rate_delta")),
+                "rejection_reason": _opt_text(row["rejection_reason"]),
+                "scalar_score_delta": _opt_float(row["scalar_score_delta"]),
+                "drift_loss_delta": _opt_float(row["drift_loss_delta"]),
+                "pass_rate_delta": _opt_float(row["pass_rate_delta"]),
             }
         )
 

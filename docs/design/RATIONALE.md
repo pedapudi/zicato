@@ -91,7 +91,7 @@ is that v7 vs v6 in epoch A is precise.
 
 **Chosen.** The proposer's output is `Experiment = hypothesis +
 patches`. The hypothesis has mandatory structured fields
-(`core_idea`, `modulating`, `why`, `expected_drift_movements`,
+(`core_idea`, `modulating`, `why`, `expected_metric_movements`,
 `expected_pass_rate_delta`, `risks`). Schema-invalid responses are
 rejected and re-prompted. See
 [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) §3.

@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import math
 
-from zicato.core.types import DriftCount, LossProfile, ScoringWeights
+from zicato.core.types import LossProfile, MetricCount, ScoringWeights
 from zicato.scoring.builtins import builtin_drift_loss, builtin_scalar
 
 # Two aggregators share the name; both are on the served path, so both are
@@ -58,7 +58,7 @@ def _loss(entry_id: str, drift_loss: float, *, pass_fail: bool | None = True) ->
         entry_id=entry_id,
         generation_id="v1",
         epoch_id="e0",
-        drift_counts=(),
+        metric_counts=(),
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=0,
@@ -106,9 +106,11 @@ def test_the_scalar_is_the_exact_sum_of_its_components() -> None:
 def test_the_per_run_drift_loss_is_the_exact_sum_of_its_counts() -> None:
     """Ten drift events at weight 0.1 charge exactly 1.0."""
     weights = ScoringWeights(severity_weights={"info": _TENTH}, plan_revision_weight=0.0)
-    counts = tuple(DriftCount(kind=f"k{i}", severity="info", count=1) for i in range(_TEN))
+    counts = tuple(
+        MetricCount(name="drift:" + f"k{i}", severity="info", count=1) for i in range(_TEN)
+    )
 
-    loss = builtin_drift_loss(drift_counts=counts, plan_revisions=0, weights=weights)
+    loss = builtin_drift_loss(metric_counts=counts, plan_revisions=0, weights=weights)
 
     assert loss == 1.0
 

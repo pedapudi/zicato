@@ -363,7 +363,7 @@ file it wrote, and does not have to be re-sent the round's whole evidence.
 |---|---|---|---|
 | an edit outside every declared point | `validate_patches`, via the projection | the path and line range of each offender | a turn; past the retries, `ProposerBlocked("edit-outside-mutation-point")` |
 | a copy that changed nothing | `validate_patches` | "change a declared point before returning, or report a block" | a turn; past the retries, `ProposerBlocked("no-groundable-mutation-point")` |
-| a patch set that fails the linter (A1–A4) | `validate_patches`, via `zicato.proposer.validate` | one finding per problem | a turn; past the retries, blocked |
+| a patch set that fails the linter (post-apply checks) | `validate_patches`, via `zicato.proposer.validate` | one finding per problem | a turn; past the retries, blocked |
 | a hypothesis predicting no movement | the runtime, at the value boundary (`HYPOTHESIS_SCHEMA`'s `anyOf`) | the schema violation | a turn |
 | a hypothesis naming an undeclared judge | `parse_experiment_json`, after the episode | — | `ProposerError` |
 | a patch touching a forbidden id | `enforce_forbidden`, after the episode | — | `ProposerError` |
@@ -640,93 +640,44 @@ messages (`"empty response: …"` vs `"could not extract a JSON object …"`), s
 the repair prompt can target the failure mode (the empty case triggers the
 "skip all reasoning" variant, §5.3.1).
 
-### 5.4.2 Pass 1 — the JSON schema
+### 5.4.2 Schema and cross-checks
 
-`EXPERIMENT_JSON_SCHEMA` (draft 2020-12) enforces required keys, types, and
-enum domains. Direction enum: `decrease | increase | neutral |
-decrease_or_neutral | increase_or_neutral`; magnitude: `small | medium |
-large`. `additionalProperties` is left unset on most subobjects by design —
-the proposer may attach commentary keys; the parser reads only documented keys
-and ignores the rest. A violation renders the JSON-pointer path into the
-error: `schema violation at hypothesis/modulating: …`.
+The response parser and episode runtime share the hypothesis schema in
+`EXPERIMENT_JSON_SCHEMA`. A proposal requires a nonempty
+`expected_metric_movements` list. Each prediction carries `metric_name`,
+`direction`, and `magnitude`; additional prediction and hypothesis fields
+are refused. Directions are `decrease`, `increase`, `neutral`,
+`decrease_or_neutral`, and `increase_or_neutral`. Magnitudes are `small`,
+`medium`, and `large`. Schema failures name the field the proposer must fix.
 
-> ⚠️ TRAP — the "at least one of `expected_drift_movements` /
-> `expected_metric_movements`" rule is enforced by the PARSER rather than the schema
-> (a JSON-Schema `anyOf` obscures error messages in the retry path). If you
-> extend the hypothesis shape, follow that split: schema for shape, parser for
-> anything whose error message a model must act on.
+The parser then checks facts that depend on the selected contract:
 
-### 5.4.3 Pass 2 — cross-checks the schema cannot express
+- Every modulated mutation identifier must exist in the supplied manifest.
+- A patch supplies exactly the value its operation requires: `new_content`
+  for `replace`, `new_numeric` for `set_numeric`, or `new_enum` for `set_enum`.
+- Numeric values satisfy declared bounds; enum values belong to the declared
+  domain.
+- `drift:<kind>` names a registered drift kind. `judge:<name>` names a judge
+  declared by the board. Other metrics retain their measured namespace.
 
-| Cross-check | Rule | Error shape |
-|---|---|---|
-| `patches[*].mutation_id` resolves | must be a key of the live `mutations_by_id` manifest | `patch[i]: unknown mutation_id '…' (must match an id from the supplied mutation manifest)` |
-| op ⇄ `new_*` discrimination | see the op table below | `patch[i]: op='replace' requires a non-empty string 'new_content' field`, `… must not set 'new_numeric'`, … |
-| `set_numeric` range | value inside any `min`/`max` in `MutationPoint.metadata`; malformed metadata fails OPEN (the applier re-checks) | `patch[i]: new_numeric=… below min=… for mutation '…'` |
-| `set_enum` domain | value in the metadata's comma-separated `enum` domain (absent domain ⇒ any string) | `patch[i]: new_enum='…' not in declared enum domain […]` |
-| `hypothesis.modulating` ids resolve | every listed id must exist in the manifest (the proposer MAY list ids it is not patching, but the journal must never lie about what was touched) | `hypothesis.modulating: id '…' does not match any known mutation point` |
-| drift kinds | every `expected_drift_movements[i].kind` ∈ `GOLDFIVE_DRIFT_KINDS` | `…: unknown drift kind '…'` |
-| drift-namespaced metric names | see §5.4.5 | the long "unknown drift kind … Declared board judges: …" teaching message |
+A judge metric is weighted loss, so lower values are better. The prompt names
+that unit and recommends `judge:<name>`, exactly as the validator accepts it.
+The same declared judge set must reach both `parse_experiment_json` and
+`render_evidence`.
 
-**The patch-op table** (the exact discriminated union weaker agents get wrong
-most often):
+### 5.4.3 Hypotheses and outcomes
 
-| `op` | REQUIRED field | FORBIDDEN fields | Extra gate |
-|---|---|---|---|
-| `replace` | `new_content` (non-empty **string**) | `new_numeric`, `new_enum` | for a span point, `new_content` is ONLY the replacement text of the one string literal — no signatures, no imports, no `# zicato:mutable` marker (the system prompt spells this out; the post-apply validator catches violations) |
-| `set_numeric` | `new_numeric` (number) | `new_content`, `new_enum` | metadata `min`/`max` range check |
-| `set_enum` | `new_enum` (non-empty string) | `new_content`, `new_numeric` | metadata `enum` domain check |
+`HypothesisSpec` carries the idea, rationale, targeted mutation identifiers,
+risks, a free-text pass-rate prediction, and named metric predictions. Drift,
+cost, latency, and judge predictions use the same representation. Recombination
+keeps the first parent's prediction when both parents address the same metric.
 
-On success the parser mints
-`Experiment(id=f"exp_{epoch_id}_{new_gen}", …, outcome=None,
-proposed_at=<UTC now>)` with `patches` as a frozen tuple, each `Patch` given a
-fresh `uuid4().hex` id. `outcome` stays `None` — the tournament fills it in.
-
-### 5.4.4 `HypothesisSpec` — falsifiable predictions
-
-The hypothesis object (`src/zicato/core/experiment.py::HypothesisSpec`)
-carries: `core_idea` (one sentence), `modulating` (the targeted mutation ids —
-non-empty), `why` (pattern-driven rationale), `expected_pass_rate_delta`
-(free-text uncertainty band, e.g. `"+0.05 to +0.15"` — intentionally NOT a
-number), `risks` (optional), and the two movement lists:
-
-- `expected_drift_movements` — back-compat: registered goldfive drift kinds
-  only (`{"kind": "off_topic", "direction": "decrease", "magnitude":
-  "medium"}`);
-- `expected_metric_movements` — the generalized namespaced path
-  (`drift:off_topic`, `cost:tokens_spent`, `rubric:slide_structure`,
-  `latency:p95_turn_ms`, `schema:failures`, or a declared judge's BARE name).
-
-At least one list must be present and non-empty. Movements are the
-**falsifiable** core of a hypothesis: they are graded after the tournament
-(§5.4.6), so a hypothesis that predicts nothing concrete earns no calibration
-credit.
-
-### 5.4.5 Declared-judge metric names and the prefix normalizer
-
-A custom board judge emits its goldfive signal under the single `"custom"`
-drift kind but is addressed **by its own bare name** in a hypothesis. Models
-that know the implementation detail naturally mangle this
-(`drift:file_findability`, `custom:file_findability`,
-`drift:custom:file_findability`). The validator strips the known prefixes
-(`_JUDGE_METRIC_PREFIXES = ("drift:custom:", "drift:", "custom:")` — longest
-first, repeatedly) and accepts the movement iff the recovered bare token is a
-built-in drift kind OR a declared judge name; an unknown kind still
-fails, with a teaching message that enumerates the declared judges and the
-built-in kinds.
-
-The prompt side keeps this in lockstep: `render_metric_targets_block`
-(`src/zicato/proposer/prompts.py`) renders a `## Valid expectation targets`
-section from the SAME `custom_judge_names` set the validator receives, telling
-the model exactly which bare names and `drift:<kind>` forms will validate —
-"the prompt and the gate agree by construction."
-
-> ✅ ALWAYS thread `custom_judge_names` to BOTH `parse_experiment_json` and
-> `render_evidence` from the same source
-> (`_declared_custom_judge_names(board, weights)` in the orchestrator). If the
-> two drift apart, the proposer is told a name that then fails validation —
-> a retry-loop tax on every round. Tests:
-> `tests/test_proposer_structured_metric_movements.py`.
+The proposer produces an experiment with `outcome=None`. The outcome is recorded
+after execution; an absent outcome never implies rejection. An outcome's
+`metric_movements` records each metric's parent value, child value, prediction
+verdict, and explanatory note. Journal readers require the format the writer
+emits, including explicit nullable lifecycle fields. They reject string outcomes,
+decision aliases, numeric strings, and malformed complete records.
 
 ### 5.4.6 The prediction-accuracy grading loop
 
@@ -813,7 +764,7 @@ Two rendering rules worth internalizing:
 > the instructions would move it every round and roll the epoch every time.
 > That is why `## This episode` names the trees rather than the charter
 > doing it. Any change here must run `tests/test_proposer_prompts.py`
-> (section ordering, banding, the omit-at-default properties) and
+> (section ordering, banding, and empty channel omission) and
 > `tests/test_proposer_contract_identity.py` (what does and does not move
 > the fingerprint).
 
@@ -1344,11 +1295,10 @@ Points where the trace changes under non-default knobs:
 
 ### 5.6.9 `ProposerQualityConfig` — the knobs in one table
 
-(`src/zicato/core/scoring_config.py`; all contract fields — non-default
-values roll the epoch; `screen_entries`, `screen_veto_only`,
-`process_exemplars`, `recombine`, `recombine_merge` and `genealogy` are
-omitted-at-default from the canonical form so old epochs never roll
-retroactively.)
+`src/zicato/core/scoring_config.py` declares these settings. Their effective
+values, including defaults, are serialized and hashed with the complete scoring
+configuration. A changed value changes the contract; disabled prompt behavior
+is verified separately.
 
 | Knob | Default | Effect | Inert when |
 |---|---|---|---|
@@ -1507,7 +1457,7 @@ filter), so this closes the holdout-leak and preserves context-is-the-envelope.
 
 **Merge modes — `mechanical` (default) vs `llm`.**
 `experimental.recombine_merge` chooses HOW the slot composes the union
-(design: PROPOSER.md §2.6.1; omit-at-default, `"llm"` rolls). `"mechanical"` is
+(design: PROPOSER.md §2.6.1; changing the effective value rolls the epoch). `"mechanical"` is
 everything above. `"llm"` instead issues ONE evaluation merge call — the DEPTH
 refinement role (`BestOfNProposerAgent._depth_call_llm`, exactly as the
 self-critique call), so it SUBSTITUTES the slot's own sample call (cost:
@@ -1928,7 +1878,7 @@ result.
 | Tool | Reads | Sandbox / caps | Failure behaviour |
 |---|---|---|---|
 | `mutation_usage(mutation_id)` | where the point's symbol (the trailing `__`-segment of its id) and short single-line literal value are referenced across the snapshot | delegates to `grep_mutable` with `re.escape`, so the containment guard + match cap apply unchanged | `ValueError` on an id outside the round's manifest |
-| `validate_patches(patches_json)` | nothing — it WRITES the working copy's projected patch set into a throwaway `ztw-pvalidate-*` scratch copy of the parent snapshot and reports what broke, as `{"ok", "errors", "tiers"}` | three tiers, stopping at the first failure: structure (incl. the `content_hash` pre-image guard) + apply + A1–A4; the contract-declared static-check delta; the sandboxed `adapter.load` probe. Per-check timeouts (120s / 60s), output capped at 4 000 chars, scratch tree removed in a `finally` | `ValueError` on an argument that is not a usable patch array; a check that could not run is a NOTE (never `ok: false`) |
+| `validate_patches(patches_json)` | nothing — it WRITES the working copy's projected patch set into a throwaway `ztw-pvalidate-*` scratch copy of the parent snapshot and reports what broke, as `{"ok", "errors", "stages"}` | stages that validate structure (incl. the `content_hash` pre-image guard) + apply + post-apply checks; the contract-declared static-check delta; the sandboxed `adapter.load` probe. Per-check timeouts (120s / 60s), output capped at 4 000 chars, scratch tree removed in a `finally` | `ValueError` on an argument that is not a usable patch array; a check that could not run is a NOTE (never `ok: false`) |
 
 `grep_mutable(pattern)` is not itself served to an episode — Foe's own `grep`
 is. It is the search `mutation_usage` is built from: a regex over every file
@@ -1969,7 +1919,7 @@ applier writes only what an id covers.
 > `"the proposer's patch validator has no path to the board"` import-linter
 > contract and by the runtime closure test in
 > `tests/test_proposer_validate.py`. Two structural details exist to keep that
-> pin satisfiable, and must survive any refactor: the tier-3 probe lives in
+> pin satisfiable, and must survive any refactor: the harness load probe lives in
 > `zicato/proposer/_load_probe.py` and is reached by SPAWNING a subprocess (so
 > the adapters stay on the forbidden list), and the contextvar plumbing lives
 > in `zicato/proposer/tool_context.py` (so reaching `_active_context` does not
@@ -1978,7 +1928,7 @@ applier writes only what an id covers.
 **The pre-image guard is the only reader of `MutationPoint.content_hash`.**
 The enumerator writes the field, the CLI and the dashboard render it, and the
 applier does not read it — despite that field's docstring having long claimed
-otherwise. Tier 1 of `validate_patches` is the one check that reads it: it
+otherwise. The structural check in `validate_patches` is the one check that reads it: it
 compares `content_hash` between the manifest bound on the tool context (what
 the proposal was drafted against) and a fresh enumeration of the parent
 snapshot, so a point rewritten under the proposer is caught while a fix is
@@ -2068,14 +2018,14 @@ BEFORE being rejected.
 
 ### 5.10.3 Cross-epoch memory (opt-in) and its separation rules
 
-`experimental.cross_epoch_memory: true` (`ExperimentalConfig` — a contract
-field, omitted-at-default from the canonical form so old contracts never roll
-retroactively). The rules, all enforced in
+`experimental.cross_epoch_memory` is a contract field on `ExperimentalConfig`.
+Its effective value, including the false default, participates in identity.
+Enabling it is subject to the rules enforced in
 `_cross_contract_settled_rows` / `_cross_contract_entries`:
 
 | Rule | Enforcement |
 |---|---|
-| only epochs sharing the CURRENT epoch's **non-empty** `contract_hash` | the SQL join on `epochs.contract_hash`; an epoch with an empty hash is never treated as transferable |
+| only epochs sharing the selected epoch's valid `contract_hash` | the join on `epochs.contract_hash`; canonical epoch loading refuses missing or malformed hashes |
 | a DIFFERENT contract hash is never surfaced, knob or no knob | same predicate |
 | cross entries are clearly flagged | `same_contract=False`; rendered in their OWN separated block ("From PRIOR epochs under the same contract … directions only, deltas do not transfer") with epoch-tagged labels `epoch::generation` |
 | **no numbers transfer** | `scalar_score_delta=None` forced at the reader ("the restricted-visibility envelope must not depend on the renderer"); `prediction_accuracy=None` (calibration is same-epoch diagnostics) |
@@ -2193,12 +2143,11 @@ content with its own design doc).
    redacted material, prepend a banner restating the redaction contract (the
    process-exemplars precedent) so the model reads it as anonymized
    mechanism rather than named evidence.
-7. **Contract accounting**: if the channel changes what the proposer can
-   learn, it needs a knob on `ProposerQualityConfig` (or `OverfittingConfig`),
-   omitted-at-default from the canonical form (`epoch/contract.py`'s
-   `_SCORING_OMIT_AT_DEFAULT_FIELDS` pattern) so existing epochs never roll
-   retroactively — and a non-default value MUST roll the epoch. Add the field
-   to `tests/test_contract_serializer_completeness.py`'s expectations.
+7. **Contract accounting:** declare a setting on the owning scoring record
+   when the channel changes what the proposer can learn. The shared serializer
+   and canonicalizer include its effective value, including its default.
+   Verify complete serialization and the resulting contract identity alongside
+   the channel's visibility constraints.
 8. **Tests — all four kinds or it does not ship**:
    - *byte-identical-at-default*: knob off ⇒ prompts byte-equal to the same
      round assembled without the field (`tests/test_proposer_prompts.py` has
@@ -2229,7 +2178,7 @@ content with its own design doc).
 ## 5.12 Cross-references
 
 - 03-contract-and-epochs.md §3.2.6 — `_canon_proposer` and skill
-  normalization; §3.4 — the omitted-at-default fields.
+  normalization; §3.4 — complete effective configuration.
 - 04-evaluation-statistics.md §5 — the Ladder budget that governs holdout
   queries; the slice everything in §5.8 hangs off is
   `docs/design/OVERFITTING.md` §3.
@@ -2349,7 +2298,7 @@ Where to add (and what will catch) a regression, by concern:
 | the outcome vocabulary and its round-log / scorecard readers | `tests/test_proposer_episode_outcomes.py` |
 | salvage + two-pass validation, op discrimination, ranges/domains | `tests/test_proposer_structured.py` |
 | judge-name normalization + metric movements | `tests/test_proposer_structured_metric_movements.py` |
-| task sections, ordering, banding, omit-at-default | `tests/test_proposer_prompts.py` |
+| task sections, ordering, banding, and empty channel omission | `tests/test_proposer_prompts.py` |
 | brief parsing + forbidden enforcement | `tests/test_proposer_brief.py` |
 | skills / frontmatter / spec resolution | `tests/test_proposer_skills.py` |
 | what the builder resolves, and what it refuses | `tests/test_proposer_agent.py` |

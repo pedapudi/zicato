@@ -157,10 +157,12 @@ class OutcomeMarginalSummary:
 
 def _looping(loss: Any) -> bool:
     """True iff this run recorded any looping drift event."""
-    for dc in getattr(loss, "drift_counts", ()) or ():
-        kind = getattr(dc, "kind", "")
-        count = getattr(dc, "count", 0)
-        if kind in _LOOPING_DRIFT_KINDS and count:
+    for metric in loss.metric_counts:
+        if (
+            metric.name.startswith("drift:")
+            and metric.name.removeprefix("drift:") in _LOOPING_DRIFT_KINDS
+            and metric.count
+        ):
             return True
     return False
 

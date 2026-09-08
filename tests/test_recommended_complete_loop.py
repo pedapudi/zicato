@@ -21,6 +21,7 @@ from zicato.core.measurement import (
     measurement_artifact_path,
 )
 from zicato.core.runtime import RoundTokenLedger
+from zicato.core.runtime_context import WorkerRuntimeContext
 from zicato.core.workspace import field_tournament_path, journal_path
 from zicato.epoch.genstore import default_generation_store
 from zicato.epoch.git_genstore import GitGenerationStore
@@ -60,10 +61,11 @@ def measured_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
         process = await spawn(*args, **kwargs)
         if "zicato._tournament_worker" in args:
             payload = json.loads(Path(args[-1]).read_text())
+            context = WorkerRuntimeContext.from_json(payload["runtime_context"])
             report["workers"].append(
                 {
                     "pid": process.pid,
-                    "generation": payload["generation_id"],
+                    "generation": context.run.generation_id,
                     "entry": payload["entry"]["id"],
                     "measurement": payload["measurement"],
                 }

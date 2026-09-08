@@ -69,7 +69,7 @@ test('tree sidebar: renders Environment → Epoch → {Rounds, Boards, Evals, In
   const model = {
     epochs: [{ id: EPOCH_ID, current: true }],
     byEpoch: { [EPOCH_ID]: {
-      gens: [{ id: 'v0', promoted: true, parent: null }, { id: 'v1', promoted: false, parent: 'v0' }, { id: 'v2', promoted: false, parent: 'v0' }],
+      gens: [{ id: 'v0', promoted: true, currentChampion: true, parent: null }, { id: 'v1', promoted: false, parent: 'v0' }, { id: 'v2', promoted: false, parent: 'v0' }],
       boards: [{ id: 'waffles_single' }, { id: 'picky_stakeholder_emulated' }],
     } },
   };
@@ -1058,7 +1058,7 @@ for (const structure of ['swiss', 'single_elim']) {
         epoch_id: EPOCH_ID, closed: false, goal: 'g',
         tournament: { structure, params: {} },
         experiments: [{ generation_id: 'v0', parent_generation_id: '', outcome: { decision: 'baseline' } }],
-        board: [{ entry_id: 'waffles_single', kind: 'single_turn', input_preview: 'x', budget_s: 180, weight: 1 }],
+        board: [{ entry_id: 'waffles_single', kind: 'single_turn', input_preview: 'x', wall_clock_budget_seconds: 180, weight: 1 }],
       },
       '/api/lineage': { generations: [
         { generation_id: 'v0', epoch_id: EPOCH_ID, parent_generation_id: '', promoted: true },

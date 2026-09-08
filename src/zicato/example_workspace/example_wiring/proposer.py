@@ -150,7 +150,7 @@ class OneDefectPerRound:
                 core_idea=core_idea,
                 modulating=(POLICY_MUTATION_ID,),
                 why=why,
-                expected_drift_movements=(),
+                expected_metric_movements=(),
                 expected_pass_rate_delta=pass_rate_delta,
             ),
             patches=(patch,),

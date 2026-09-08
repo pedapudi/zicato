@@ -642,15 +642,12 @@ async def _run_single(
             )
             from zicato.runtime.lock import pid_start_time  # noqa: PLC0415
 
+            _hg_url = _resolve_harmonograf_url(workspace_root, config)
+            _hg_grpc = _resolve_harmonograf_grpc(workspace_root, _hg_url, config)
             args_payload = {
                 "measurement": MeasurementDraw.from_index(
                     _entry_replicate_index(entry), base_seed=config.seed
                 ).to_json(),
-                "workspace_root": str(workspace_root),
-                "epoch_id": epoch_id,
-                "generation_id": generation.id,
-                "snapshot_root": str(ephemeral_snapshot),
-                "scratch_dir": str(scratch_dir),
                 "entry": entry_dict,
                 "adapter": adapter_spec,
                 "driver_imports": config.driver_imports.document(),
@@ -661,18 +658,11 @@ async def _run_single(
                 # The parent is the ONE producer of the run id: it stamps the
                 # active_runs record the supervisor polices, so the worker must
                 # not re-derive it from its own view of the entry (issue #250).
-                "run_id": run_id,
                 "producer_pid": os.getpid(),
                 "producer_start_time": pid_start_time(os.getpid()),
                 "sink_events_path": str(sink_path),
                 "loss_path": str(loss_path),
                 "result_path": str(result_path),
-                "instance_id": config.instance_id,
-                "seed": config.seed,
-                "harmonograf_url": (_hg_url := _resolve_harmonograf_url(workspace_root, config)),
-                "harmonograf_grpc": (
-                    _hg_grpc := _resolve_harmonograf_grpc(workspace_root, _hg_url, config)
-                ),
                 "harmonograf_metadata": harmonograf_metadata,
                 "weights": _weights_spec(weights),
                 "configuration": _configuration_spec(config),
@@ -687,14 +677,6 @@ async def _run_single(
                         scratch_dir,
                     ),
                 ).to_json(),
-                # Board-reflection capture knobs (runtime-only, never
-                # contract-hashed; default True = always-on with an
-                # opt-out). The worker owns both writers — result.json
-                # beside loss.json and the judge_io.jsonl sidecar — so
-                # the knobs cross the process boundary in the args file,
-                # alongside the selected configuration.
-                "persist_run_results": bool(config.persist_run_results),
-                "persist_judge_io": bool(config.persist_judge_io),
                 # The invocation's operator-log stream path (LOGGING.md §2):
                 # the worker APPENDS its structured records to the SAME file
                 # the orchestrator installed, so worker logs reach the one
@@ -704,7 +686,6 @@ async def _run_single(
                 "log_stream_path": (
                     str(_lsp) if (_lsp := current_log_stream_path()) is not None else None
                 ),
-                "log_level": config.log_level,
             }
             args_path.write_text(json.dumps(args_payload), encoding="utf-8")
         except (ValueError, OSError) as exc:

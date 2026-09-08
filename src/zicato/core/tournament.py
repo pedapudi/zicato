@@ -55,57 +55,14 @@ class ConfirmationStatus(StrEnum):
     INCOMPLETE = "incomplete"
 
 
-#: The keys a recorded ``outcome`` object may carry its decision token
-#: under, in the order a reader tries them.
-#:
-#: * ``decision`` — the shortest spelling, and the one a body written from
-#:   a dashboard-shaped payload carries.
-#: * ``tournament_decision`` — the field name
-#:   :class:`~zicato.core.experiment.OutcomeRecord` serialises to, and the
-#:   only one every current writer emits.
-#: * ``verdict`` — a spelling that appears on workspaces recorded before
-#:   the field settled on its current name.
-#:
-#: The order is a precedence, not a preference: a body carrying two of
-#: them resolves to the first in this tuple. No writer emits more than
-#: one, so the order only decides hand-edited and hand-written records.
-OUTCOME_DECISION_KEYS: tuple[str, ...] = ("decision", "tournament_decision", "verdict")
-
-
 def recorded_decision_token(outcome: Any) -> str | None:
-    """The decision token a record's ``outcome`` field carries, or ``None``.
-
-    THE one place that knows how a tournament decision is spelled on
-    disk. Both the typed decoder that rebuilds
-    :class:`~zicato.core.experiment.OutcomeRecord` from a stored body and
-    the classifier the dashboard serves resolve a token through here, so
-    the same bytes cannot yield two different decisions.
-
-    Four shapes carry a token or its absence; anything else carries none:
-
-    * ``None`` — no outcome recorded (the run is in flight, or the
-      generation never raced). Returns ``None``.
-    * a bare string — the outcome IS the decision token.
-    * a mapping carrying one of :data:`OUTCOME_DECISION_KEYS` with a
-      string value — that value, first key in that tuple wins.
-    * a mapping carrying none of them — returns ``None``.
-
-    The token is returned exactly as recorded: unstripped, uncased, and
-    never widened into a verdict the record does not carry. Mapping a
-    token onto the canonical ``promoted`` / ``rejected`` / ``deferred``
-    vocabulary is a separate step. Both readers carry ``None`` through
-    unchanged: the typed record stores it in
-    :attr:`~zicato.core.experiment.OutcomeRecord.tournament_decision`
-    and the classifier returns it.
-    """
-    if isinstance(outcome, str):
-        return outcome
-    if isinstance(outcome, Mapping):
-        for key in OUTCOME_DECISION_KEYS:
-            value = outcome.get(key)
-            if isinstance(value, str):
-                return value
-    return None
+    """Read the recorded tournament decision, preserving an absent outcome."""
+    if outcome is None:
+        return None
+    if not isinstance(outcome, Mapping):
+        raise ValueError("outcome must be an object or null")
+    value = outcome["tournament_decision"]
+    return None if value is None else TournamentDecision(value).value
 
 
 class Side(StrEnum):
@@ -144,9 +101,7 @@ class Side(StrEnum):
 #:
 #: There is intentionally no ``"off"`` token: ``off`` is already expressed
 #: by ``pass_rate_monotonicity=False``. Keeping the on/off switch a bool
-#: and the granularity a separate field means existing ``scoring.json``
-#: documents are byte-identical (the new field defaults to ``"per_entry"``)
-#: and the contract hash is unchanged for every epoch already on disk.
+#: and the granularity a separate field gives each setting one purpose.
 PassRateMonotonicityScope = Literal["per_entry", "aggregate"]
 
 
@@ -201,6 +156,13 @@ def experimental_structure_refusal(structure: str) -> str:
 #: ``replicates`` is how many times a duel is re-run and averaged, so fewer
 #: than one is not a cheaper tournament but no measurement at all.
 TOURNAMENT_PARAM_CONSTRAINTS: Mapping[str, KnobConstraint] = {
+    "promote_confidence_threshold": KnobConstraint(
+        minimum=0,
+        maximum=1,
+        exclusive_maximum=True,
+        allow_none=True,
+        label='tournament params["promote_confidence_threshold"]',
+    ),
     "replicates": KnobConstraint(
         minimum=1,
         maximum=measurement_range(MeasurementPurpose.TOURNAMENT).span,
@@ -218,55 +180,25 @@ TOURNAMENT_PARAM_CONSTRAINTS: Mapping[str, KnobConstraint] = {
 DEFAULT_PROMOTE_CONFIDENCE_THRESHOLD: float = 0.8
 DEFAULT_CONFIRMATION_BUDGET: int = 32
 
-#: Historical fallback when ``promote_confidence_replicates`` is unset:
-#: three fresh paired confirmation draws. Each draw evaluates both contestants;
-#: its execution cost depends on the board. Exhaustion leaves required
-#: confirmation incomplete.
-DEFAULT_REPLICATE_BUDGET: int = 3
-
 
 def read_promote_confidence_threshold(params: Mapping[str, Any]) -> float | None:
-    """Read an explicit probability requirement, or return None when disabled.
-
-    The shared scoring default supplies a threshold. Explicit empty params,
-    null, or zero disable confirmation. Recorded invalid values retain the
-    historical reader behavior and return None. A threshold alone cannot
-    establish credible independent evidence; the adjusted interval must also
-    lie above zero.
-    """
-    raw = params.get("promote_confidence_threshold", None)
-    if raw is None:
-        return None
-    try:
-        value = float(raw)
-    except (TypeError, ValueError):
-        return None
-    if value <= 0.0 or value >= 1.0:
-        return None
-    return value
+    """Read a finite probability requirement; absence, null, and zero disable it."""
+    raw = params.get("promote_confidence_threshold")
+    TOURNAMENT_PARAM_CONSTRAINTS["promote_confidence_threshold"].check(
+        "promote_confidence_threshold", raw
+    )
+    return None if raw is None or raw == 0 else float(raw)
 
 
 def read_replicate_budget(params: Mapping[str, Any]) -> int:
-    """The defer→replicate budget for the pre-gate loop.
-
-    Reads ``params["promote_confidence_replicates"]`` — how many extra
-    fresh crowning-pair replicates the driver may spend before the
-    verdict goes terminal (``inconclusive``). Absent / non-integer / negative ⇒
-    :data:`DEFAULT_REPLICATE_BUDGET`. Zero is honoured (defer once, then go
-    inconclusive immediately) so an operator can disable replication while still
-    using the deferred verdict.
-    """
-    raw = params.get("promote_confidence_replicates", None)
+    """Read the supported confirmation budget; zero permits no extra measurements."""
+    raw = params.get("promote_confidence_replicates")
     if raw is None:
-        return DEFAULT_REPLICATE_BUDGET
-    try:
-        value = int(raw)
-    except (TypeError, ValueError):
-        return DEFAULT_REPLICATE_BUDGET
-    if value < 0:
-        return DEFAULT_REPLICATE_BUDGET
-    validate_measurement_interval(EVIDENCE_REPLICATE_BASE, value, allow_empty=True)
-    return value
+        return DEFAULT_CONFIRMATION_BUDGET
+    if type(raw) is not int or raw < 0:
+        raise ValueError("promote_confidence_replicates must be a nonnegative integer")
+    validate_measurement_interval(EVIDENCE_REPLICATE_BASE, raw, allow_empty=True)
+    return raw
 
 
 @dataclass(frozen=True, slots=True)
@@ -355,6 +287,15 @@ class TournamentStructure:
         for key, constraint in TOURNAMENT_PARAM_CONSTRAINTS.items():
             if key in self.params:
                 constraint.check(key, self.params[key])
+        if read_promote_confidence_threshold(self.params) is not None:
+            object.__setattr__(
+                self,
+                "params",
+                {
+                    **self.params,
+                    "promote_confidence_replicates": read_replicate_budget(self.params),
+                },
+            )
 
     @classmethod
     def gauntlet(cls) -> TournamentStructure:

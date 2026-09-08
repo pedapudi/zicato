@@ -7,7 +7,7 @@ feed (``build_lineage_view``) and the tournament standings
 rating to their rows, and ``elo_for_epoch`` / ``generations_for_epoch`` carry
 ``elo_se`` as a null field without independent measurement provenance.
 Everything is best-effort by contract
-(DQ3): an absent / cold / pre-v10 index attaches the null triple — present
+(DQ3): an absent or incompatible index attaches the null triple — present
 keys, ``None`` values (DQ2: one snake_case spelling on the wire) — and never
 raises. The rating is visibility-only; nothing here feeds the gate.
 """
@@ -49,6 +49,7 @@ def _workspace(tmp_path: Path) -> WorkspaceLayout:
             gid,
             experiment=experiment_record(
                 gid,
+                epoch_id=EPOCH,
                 parent_generation_id=parent,
                 proposed_at=f"2026-06-01T00:0{0 if gid == 'v0' else 5}:00Z",
                 decision=decision,
@@ -57,7 +58,7 @@ def _workspace(tmp_path: Path) -> WorkspaceLayout:
     return layout
 
 
-def _generation_rows(*, with_se_column: bool) -> list[dict[str, Any]]:
+def _generation_rows() -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = [
         {
             "epoch_id": EPOCH,
@@ -94,14 +95,10 @@ def _generation_rows(*, with_se_column: bool) -> list[dict[str, Any]]:
             "elo_games": None,
         },
     ]
-    if with_se_column:
-        return rows
-    # A pre-v12 index has no elo_se column at all, and the unplayed leaf
-    # postdates it, so the older fixture carries the two rated rows only.
-    return [{k: v for k, v in row.items() if k != "elo_se"} for row in rows[:2]]
+    return rows
 
 
-def _build_index(layout: WorkspaceLayout, *, with_se_column: bool = True) -> None:
+def _build_index(layout: WorkspaceLayout) -> None:
     """A real-schema index carrying rated generations + one structure row."""
     standings = [
         {
@@ -141,7 +138,7 @@ def _build_index(layout: WorkspaceLayout, *, with_se_column: bool = True) -> Non
     seed_index(
         layout,
         {
-            "generations": _generation_rows(with_se_column=with_se_column),
+            "generations": _generation_rows(),
             "tournaments": [
                 {
                     "tournament_id": TOURN,
@@ -167,7 +164,6 @@ def _build_index(layout: WorkspaceLayout, *, with_se_column: bool = True) -> Non
                 }
             ],
         },
-        without_columns=() if with_se_column else (("generations", "elo_se"),),
     )
 
 
@@ -190,15 +186,6 @@ def test_rating_map_degrades_without_an_index(tmp_path: Path) -> None:
     assert rating_by_generation(WorkspacePaths(layout.root), EPOCH) == {}
 
 
-def test_rating_map_tolerates_a_pre_v12_index(tmp_path: Path) -> None:
-    # elo/elo_games present, elo_se column absent (v10/v11): the SE reads
-    # None; the older cells still surface.
-    layout = _workspace(tmp_path)
-    _build_index(layout, with_se_column=False)
-    ratings = rating_by_generation(WorkspacePaths(layout.root), EPOCH)
-    assert ratings[(EPOCH, "v1")] == {"elo": 1534.0, "elo_se": None, "elo_games": 1}
-
-
 # ---------------------------------------------------------------------------
 # elo_for_epoch / generations_for_epoch — the index selectors
 # ---------------------------------------------------------------------------
@@ -213,20 +200,6 @@ def test_elo_for_epoch_suppresses_unproven_uncertainty(tmp_path: Path) -> None:
     assert rows["v1"]["elo_se"] is None
     # Tolerant of NULL: the unplayed leaf reads present-but-null.
     assert rows["v2"]["elo_se"] is None
-
-
-def test_elo_for_epoch_tolerates_a_pre_v12_index(tmp_path: Path) -> None:
-    # The elo_se column is absent (v10/v11 index): the selector emits
-    # NULL AS elo_se, so the field is present-but-null on every row.
-    from zicato.index.query import elo_for_epoch  # noqa: PLC0415
-
-    layout = _workspace(tmp_path)
-    _build_index(layout, with_se_column=False)
-    rows = elo_for_epoch(layout.index_db_path, EPOCH)
-    assert rows
-    for r in rows:
-        assert "elo_se" in r.keys()  # noqa: SIM118 — sqlite3.Row has no __contains__
-        assert r["elo_se"] is None
 
 
 def test_generations_for_epoch_suppresses_unproven_uncertainty(tmp_path: Path) -> None:

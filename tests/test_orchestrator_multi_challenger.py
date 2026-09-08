@@ -87,10 +87,14 @@ def _bootstrap_swiss_workspace(
                 # achievable-signal pre-flight (issue #84) legitimately runs the
                 # champion for its A/A floor, which would pollute that run
                 # tracking — so opt out of the orthogonal probe here.
-                "runtime": {
-                    "preflight_gate": "off",
-                    "target_call_llm": "tests._orchestrator_harness:target_call_llm",
-                    "evaluation_call_llm": "tests._orchestrator_harness:evaluation_call_llm",
+                "runtime": {"preflight_gate": "off"},
+                "models": {
+                    "engines": {
+                        "target": {"call_llm": "tests._orchestrator_harness:target_call_llm"},
+                        "evaluation": {
+                            "call_llm": "tests._orchestrator_harness:evaluation_call_llm"
+                        },
+                    }
                 },
             }
         )

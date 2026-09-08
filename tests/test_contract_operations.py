@@ -670,7 +670,7 @@ def test_validate_reads_measured_floor_off_the_epoch_record(tmp_path) -> None:
     ws.mkdir()
     board = tmp_path / "board.jsonl"
     board.write_text(
-        '{"id": "e1", "kind": "single_turn", "budget_s": 60, "input": "hi"}\n',
+        '{"id": "e1", "kind": "single_turn", "wall_clock_budget_seconds": 60, "input": "hi"}\n',
         encoding="utf-8",
     )
     brief = tmp_path / "brief.md"
@@ -1068,13 +1068,13 @@ def test_cost_evidence_gate_confirm_budget_is_priced() -> None:
     # It IS the largest line on the meter.
     assert confirm[0].runs == max(line.runs for line in est.breakdown)
 
-    # Unset budget defaults to the evidence gate's own default (3).
+    # An omitted budget uses the shared recommendation of 32 paired sweeps.
     ops.set_param(draft, "promote_confidence_replicates", None)
     est_default = ops.estimate_cost(draft)
     confirm_default = next(
         line for line in est_default.breakdown if "crowning-confirm" in line.label
     )
-    assert confirm_default.runs == 3 * 2 * 10
+    assert confirm_default.runs == 32 * 2 * 10
 
 
 def test_cost_best_of_n_evaluation_line_excluded_from_headline() -> None:

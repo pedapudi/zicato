@@ -37,6 +37,7 @@ def _scoring(threshold: float | None) -> dict[str, object]:
         params["promote_confidence_threshold"] = threshold
     return {
         "promote_margin": 0.01,
+        "experimental": {"tournament_structures": True},
         "tournament": {"structure": "swiss", "params": params},
     }
 
@@ -122,6 +123,7 @@ def test_confirmation_requires_requested_generation_and_parent(
         ws / "epochs" / EPOCH_ID / "generations" / "v1" / "experiment.json",
         experiment_record(
             record_generation,
+            epoch_id=EPOCH_ID,
             parent_generation_id=record_parent,
             outcome={"evidence": evidence},
         ),
@@ -312,6 +314,7 @@ def test_gate_breakdown_carries_rating_block(tmp_path: Path) -> None:
         _write_json(
             ws / "epochs" / EPOCH_ID / "generations" / gid / "gen_score.json",
             {
+                "format_version": 1,
                 "scalar": scalar,
                 "pass_rate": 1.0,
                 "per_entry": {"e1": {"drift_loss": scalar, "pass_fail": True}},

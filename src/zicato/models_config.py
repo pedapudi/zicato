@@ -201,7 +201,6 @@ class ModelsConfig:
     engines: tuple[tuple[str, RoleSpec], ...] = ()
     assignments: tuple[tuple[str, str], ...] = ()
     guide: Any = None
-    named: bool = False
 
     def role(self, name: str) -> RoleSpec:
         """Return the :class:`RoleSpec` for ``name`` (one of :data:`MODEL_ROLES`)."""
@@ -211,49 +210,38 @@ class ModelsConfig:
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize the configured schema."""
-        if self.named:
-            out = {
-                "engines": {name: spec.to_dict() for name, spec in self.engines},
-                "roles": dict(self.assignments),
-            }
-            if self.guide is not None:
-                out["_guide"] = self.guide
-            return out
+        out = {
+            "engines": {name: spec.to_dict() for name, spec in self.engines},
+            "roles": dict(self.assignments),
+        }
         if self.guide is not None:
-            return {"engines": {}, "roles": {}, "_guide": self.guide}
-        legacy: dict[str, Any] = {}
-        for name in MODEL_ROLES:
-            spec = self.role(name)
-            if not spec.is_empty:
-                legacy[name] = spec.to_dict()
-        return legacy
+            out["_guide"] = self.guide
+        return out
 
     def to_public_dict(self) -> dict[str, Any]:
         """Serialize engine definitions and effective role provenance."""
-        if self.named:
-            return {
-                "engines": {name: spec.to_public_dict() for name, spec in self.engines},
-                "roles": dict(self.assignments),
-                "_guide": self.guide,
-                "effective": {
-                    role: {
-                        "engine": self.engine_for(role),
-                        "inherited": role not in dict(self.assignments),
-                        "source": (
-                            role
-                            if role in dict(self.assignments)
-                            else (
-                                "proposer"
-                                if role in {"proposer_generate", "proposer_review"}
-                                and "proposer" in dict(self.assignments)
-                                else "evaluation"
-                            )
-                        ),
-                    }
-                    for role in PUBLIC_MODEL_ROLES
-                },
-            }
-        return {name: self.role(name).to_public_dict() for name in MODEL_ROLES}
+        return {
+            "engines": {name: spec.to_public_dict() for name, spec in self.engines},
+            "roles": dict(self.assignments),
+            "_guide": self.guide,
+            "effective": {
+                role: {
+                    "engine": self.engine_for(role),
+                    "inherited": role not in dict(self.assignments),
+                    "source": (
+                        role
+                        if role in dict(self.assignments)
+                        else (
+                            "proposer"
+                            if role in {"proposer_generate", "proposer_review"}
+                            and "proposer" in dict(self.assignments)
+                            else "evaluation"
+                        )
+                    ),
+                }
+                for role in PUBLIC_MODEL_ROLES
+            },
+        }
 
     def engine_for(self, public_role: str) -> str | None:
         """Return the named engine selected by a public role."""
@@ -295,7 +283,6 @@ def models_config_from_dict(raw: Any) -> ModelsConfig:
             engines=tuple(engines.items()),
             assignments=tuple(assignments.items()),
             guide=raw.get("_guide"),
-            named=True,
         )
     raise ValueError(
         "direct models.<role> configuration is no longer supported; move each "
@@ -311,18 +298,12 @@ def load_models_config(workspace_config: Mapping[str, Any]) -> ModelsConfig:
 def capture_execution_roles(workspace_config: Mapping[str, Any]) -> bytes:
     """Capture effective role inheritance and nonsecret worker transport settings."""
     models = load_models_config(workspace_config)
-    runtime = workspace_config.get("runtime") or {}
     roles = {}
     captured: dict[RoleSpec, dict[str, Any]] = {}
     for role in (*MODEL_ROLES, "proposer"):
         spec = getattr(models, role)
         if spec.is_empty:
-            dotted = runtime.get(f"{role}_call_llm")
-            if dotted is None and role not in {"target", "evaluation"}:
-                dotted = runtime.get("evaluation_call_llm")
-            if not dotted:
-                continue
-            spec = RoleSpec(call_llm=dotted)
+            continue
         if spec not in captured:
             document = {"models_role": spec.to_worker_spec()}
             if spec.model and not spec.endpoint and not spec.api_key_env:
@@ -402,8 +383,6 @@ def execution_roles_for_runtime(config: Any) -> bytes:
 
 def resolve_worker_role(document: Mapping[str, Any], *, role: str, lazy: bool = False) -> CallLLM:
     """Reconstruct one captured worker role through the model configuration owner."""
-    if "models_role" not in document and "dotted" in document:
-        document = {"models_role": {"call_llm": document["dotted"]}}
     spec = _captured_role_spec(document)
     resolve = lazy_text_call_llm if lazy else resolve_text_call_llm
     return resolve(spec, role=role, transport=document.get("transport"))

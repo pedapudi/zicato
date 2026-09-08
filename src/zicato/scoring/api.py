@@ -33,7 +33,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from zicato.core import DriftCount, ScoringWeights
+from zicato.core import MetricCount, ScoringWeights
 
 # Provenance marker threaded out of each dispatcher. An unconfigured seam
 # emits ``"builtin"`` (the default formula produced the value). A declarative
@@ -59,7 +59,7 @@ class DriftContext:
 
     Fields
     ------
-    drift_counts:
+    metric_counts:
         Per ``(kind, severity)`` drift counts for the run.
     plan_revisions:
         Count of plan-revision events.
@@ -79,7 +79,7 @@ class DriftContext:
         the fields above — the default a wrapping plugin starts from.
     """
 
-    drift_counts: tuple[DriftCount, ...]
+    metric_counts: tuple[MetricCount, ...]
     plan_revisions: int
     task_failure_ratio: float
     runtime_ms: int

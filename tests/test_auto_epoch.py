@@ -89,9 +89,11 @@ def _bootstrap(tmp_path: Path) -> tuple[Path, dict[str, Path]]:
             {
                 "instance_id": "test",
                 "generation_source_backend": "directory",
-                "adk_entrypoint": "pkg.mod:agent",
-                "mutable_trees": [str(tmp_path / "agent")],
-                "source_roots": [str(tmp_path / "agent")],
+                "adapter": {
+                    "kind": "adk",
+                    "entrypoint": "pkg.mod:agent",
+                    "mutable_trees": [str(tmp_path / "agent")],
+                },
                 "contract": {
                     "board_path": str(board),
                     "brief_path": str(brief),
@@ -265,41 +267,18 @@ def test_contract_change_message_names_component(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_legacy_epoch_treated_as_matching(tmp_path: Path) -> None:
-    """A legacy on-disk contract_hash "" must not trigger a spurious roll.
-
-    The reader normalises the legacy empty string to ``None``; the
-    epoching "never rolls" rule is an ``is None`` check, so a pre-feature
-    epoch is treated as always-matching.
-    """
-    workspace, files = _bootstrap(tmp_path)
-    from zicato.core.types import ScoringWeights
-    from zicato.epoch.lifecycle import new_epoch
-
-    # Create an epoch the old way — new_epoch with no entrypoint/trees
-    # still computes a hash, so we forcibly blank it to simulate a
-    # pre-auto-epoch workspace.
-    cfg = new_epoch(
-        workspace,
-        name="legacy",
-        board_source=files["board"],
-        brief_source=files["brief"],
-        weights=ScoringWeights(),
-        auto_close_previous=False,
+def test_epoch_without_valid_identity_cannot_be_reused(tmp_path: Path) -> None:
+    workspace, _ = _bootstrap(tmp_path)
+    epoch_id = asyncio.run(
+        ensure_epoch_for_contract(workspace, auto_epoch=True, aux_call_llm=_aux_llm)
     )
-    config_path = workspace / "epochs" / cfg.id / "config.json"
+    config_path = workspace / "epochs" / epoch_id / "config.json"
     raw = json.loads(config_path.read_text())
     raw["contract_hash"] = ""
     config_path.write_text(json.dumps(raw))
-
-    # Even with a wildly different contract, a legacy epoch is treated
-    # as always-matching → no roll.
-    files["brief"].write_text("# totally different proposer brief content\n")
-    resolved = asyncio.run(
-        ensure_epoch_for_contract(workspace, auto_epoch=True, aux_call_llm=_aux_llm)
-    )
-    assert resolved == cfg.id
-    assert len(list_epochs(workspace)) == 1
+    with pytest.raises(ValueError, match="contract_hash"):
+        asyncio.run(ensure_epoch_for_contract(workspace, auto_epoch=True, aux_call_llm=_aux_llm))
+    assert (workspace / "current_epoch").read_text().strip() == epoch_id
 
 
 # ---------------------------------------------------------------------------
@@ -371,13 +350,13 @@ def test_explicit_epoch_contract_check_rejects_adapter_and_tree_drift(tmp_path: 
 
     config_path = workspace / "config.json"
     config = json.loads(config_path.read_text())
-    config["adk_entrypoint"] = "pkg.changed:agent"
+    config["adapter"]["entrypoint"] = "pkg.changed:agent"
     config_path.write_text(json.dumps(config))
     assert "frozen_epoch_contract_mismatch" in _frozen_contract_codes(workspace, epoch_id)
 
-    config["adk_entrypoint"] = "pkg.mod:agent"
+    config["adapter"]["entrypoint"] = "pkg.mod:agent"
     (tmp_path / "another-tree").mkdir()
-    config["mutable_trees"].append(str(tmp_path / "another-tree"))
+    config["adapter"]["mutable_trees"].append(str(tmp_path / "another-tree"))
     config_path.write_text(json.dumps(config))
     assert "frozen_epoch_contract_mismatch" in _frozen_contract_codes(workspace, epoch_id)
 
@@ -433,7 +412,6 @@ def test_frozen_contract_validator_aggregates_adapter_factory_failures(tmp_path:
     )
     config_path = workspace / "config.json"
     config = json.loads(config_path.read_text())
-    config.pop("adk_entrypoint")
     config["adapter"] = {
         "kind": "import",
         "factory": "tests.test_auto_epoch:_raise_adapter_factory",
@@ -446,11 +424,11 @@ def test_generic_adapter_configuration_changes_auto_roll_the_epoch(tmp_path: Pat
     workspace, _ = _bootstrap(tmp_path)
     config_path = workspace / "config.json"
     config = json.loads(config_path.read_text())
-    config.pop("adk_entrypoint")
     config["adapter"] = {
         "kind": "import",
         "factory": "tests.test_epoch_contract:_make_contract_adapter",
         "args": ["one", []],
+        "mutable_trees": [str(tmp_path / "agent")],
     }
     config_path.write_text(json.dumps(config))
     first = asyncio.run(

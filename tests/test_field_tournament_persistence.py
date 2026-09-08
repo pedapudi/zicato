@@ -33,6 +33,7 @@ from zicato.evolve.dashboard_projection import (
     _serialise_standings,
 )
 from zicato.index.ingest import ingest_field_tournament, rebuild_index
+from zicato.index.schema import apply_schema
 from zicato.query import (
     WorkspacePaths,
     build_bracket,
@@ -117,6 +118,7 @@ def _settle_swiss(structure: str = "swiss"):
 def _field_record(strategy, decision, competitors, *, epoch_id: str, structure: str) -> dict:
     return {
         "tournament_id": f"{epoch_id}:field:v1",
+        "state": "settled",
         "epoch_id": epoch_id,
         "structure": structure,
         "structure_params": {"field_size": 4},
@@ -315,22 +317,10 @@ def _completed_swiss_workspace(tmp_path: Path, structure: str = "swiss") -> Path
     (ws / "epochs" / "e1").mkdir(parents=True)
     db = ws / "index.db"
     conn = sqlite3.connect(str(db))
-    conn.executescript(
-        """
-        CREATE TABLE generations(epoch_id TEXT, generation_id TEXT,
-            parent_generation_id TEXT, promoted INT);
-        CREATE TABLE experiments(epoch_id TEXT, generation_id TEXT,
-            hypothesis_core_idea TEXT);
-        CREATE TABLE tournaments(tournament_id TEXT PRIMARY KEY, epoch_id TEXT,
-            parent_generation_id TEXT, child_generation_id TEXT, decision TEXT,
-            parent_scalar REAL, child_scalar REAL, delta_scalar REAL,
-            rejection_reason TEXT, ran_at TEXT, structure TEXT,
-            structure_params_json TEXT, competitors_json TEXT, rounds_json TEXT,
-            standings_json TEXT, field_status_json TEXT);
-        """
-    )
+    apply_schema(conn)
     conn.executemany(
-        "INSERT INTO generations VALUES(?,?,?,?)",
+        "INSERT INTO generations(epoch_id, generation_id, parent_generation_id, promoted) "
+        "VALUES(?,?,?,?)",
         [
             ("e1", "v0", None, 1),
             ("e1", "v1", "v0", 0),
@@ -349,7 +339,11 @@ def _completed_swiss_workspace(tmp_path: Path, structure: str = "swiss") -> Path
     # structure view and suppress the per-challenger ones.
     for child in ("v1", "v2", "v3", "v4"):
         conn.execute(
-            "INSERT INTO tournaments VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO tournaments(tournament_id, epoch_id, parent_generation_id, "
+            "child_generation_id, decision, parent_scalar, child_scalar, delta_scalar, "
+            "rejection_reason, ran_at, structure, structure_params_json, competitors_json, "
+            "rounds_json, standings_json, field_status_json) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 f"e1:v0->{child}",
                 "e1",
@@ -370,7 +364,11 @@ def _completed_swiss_workspace(tmp_path: Path, structure: str = "swiss") -> Path
             ),
         )
     conn.execute(
-        "INSERT INTO tournaments VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO tournaments(tournament_id, epoch_id, parent_generation_id, "
+        "child_generation_id, decision, parent_scalar, child_scalar, delta_scalar, "
+        "rejection_reason, ran_at, structure, structure_params_json, competitors_json, "
+        "rounds_json, standings_json, field_status_json) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
             "e1:field:v1",
             "e1",

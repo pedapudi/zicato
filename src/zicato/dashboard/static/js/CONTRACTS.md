@@ -503,7 +503,7 @@ blocks. One experiment record's shape:
 ```jsonc
 { "generation_id", "parent_generation_id",
   "hypothesis": { "core_idea", "why", "modulating": [],
-      "expected_pass_rate_delta", "expected_drift_movements": [], "risks" },
+      "expected_pass_rate_delta", "expected_metric_movements": [], "risks" },
   "patches": { "<mutId>": { "mutation_id", "op", "rationale",
       "new_content" | "new_numeric" | "new_enum" } },
   "outcome": { "ran_at", "tournament_decision", "scalar_score_delta",

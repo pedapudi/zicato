@@ -445,7 +445,7 @@ The benchmark runs offline:
    the labeled ideal:
    - `core_idea` similarity (via evaluation LLM judge).
    - `modulating` overlap (exact mutation-point id match).
-   - `expected_drift_movements` direction match.
+   - `expected_metric_movements` direction match.
    - `risks` quality, judged on whether the listed risks are plausible.
 3. The aggregate similarity score is the loss for the round.
 
@@ -510,7 +510,7 @@ Annotated in zicato's own code:
 The default emulator prompt template is **mutable**, but every patch to
 it must preserve the answer-leak refusal section. The post-apply check
 that declared required placeholders survive enforces this — check code
-`A3` in [MUTATION-SURFACE.md](MUTATION-SURFACE.md) §6, driven by the
+`missing_placeholder` in [MUTATION-SURFACE.md](MUTATION-SURFACE.md) §6, driven by the
 point's `required_placeholders` metadata. Removing the refusal section
 would break the emulator's collusion-proof construction.
 

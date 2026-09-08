@@ -396,7 +396,7 @@ def _checkout_run_snapshot(
 
     1. **Run output is routed to a per-run scratch directory** — the
        checkout carries one. A target reads the scratch path from
-       :data:`zicato.epoch.snapshot_scope.SCRATCH_DIR_ENV` and writes
+       :attr:`zicato.core.run_context.RunContext.scratch_dir` and writes
        there, *outside* its own source tree. That is the primary fix.
     2. **The ephemeral checkout itself** — a stray write that ignores
        the scratch directory and lands next to the agent's own code
@@ -558,22 +558,7 @@ def scrubbed_worker_env(
 
 
 def adapter_worker_spec(adapter: Any) -> dict[str, Any]:
-    """Serialise a harness adapter into a JSON-friendly spec dict.
-
-    The worker reconstructs the adapter from this dict (see
-    :func:`zicato._tournament_worker.build_adapter`). Resolution order:
-
-    1. If the adapter exposes a ``worker_spec()`` method, its return
-       value is validated and returned — the adapter knows best how to
-       make itself re-constructible in a subprocess. This is the
-       extensibility hook for non-ADK adapters.
-    2. Otherwise the :class:`~zicato.adapters.adk.ADKHarnessAdapter`
-       shape is recognised by its ``name == "adk"`` plus the private
-       ``_entrypoint`` attribute and the public ``mutable_trees`` list.
-
-    Raises :class:`ValueError` when neither path applies; ``_run_single``
-    turns that into an aborted run rather than crashing the tournament.
-    """
+    """Return the adapter's declared subprocess reconstruction settings."""
     worker_spec = getattr(adapter, "worker_spec", None)
     if callable(worker_spec):
         spec = worker_spec()
@@ -583,24 +568,7 @@ def adapter_worker_spec(adapter: Any) -> dict[str, Any]:
             f"adapter {adapter!r}.worker_spec() returned {type(spec).__name__}, expected a dict"
         )
 
-    name = getattr(adapter, "name", None)
-    entrypoint = getattr(adapter, "_entrypoint", None)
-    if name != "adk" or not entrypoint:
-        raise ValueError(
-            f"cannot serialise adapter {adapter!r} for subprocess execution: "
-            "only the 'adk' adapter shape (or an adapter exposing a "
-            "worker_spec() method) is supported"
-        )
-    trees = [str(Path(p)) for p in getattr(adapter, "mutable_trees", []) or []]
-    return _validated_adapter_worker_spec(
-        adapter,
-        {
-            "kind": "adk",
-            "entrypoint": str(entrypoint),
-            "mutable_trees": trees,
-            "integrations": ["goldfive"],
-        },
-    )
+    raise ValueError(f"adapter {adapter!r} must expose worker_spec() for subprocess execution")
 
 
 def _validated_adapter_worker_spec(adapter: Any, spec: dict[str, Any]) -> dict[str, Any]:
@@ -800,7 +768,6 @@ def _aborted_loss_profile(
         entry_id=entry.id,
         generation_id=generation_id,
         epoch_id=epoch_id,
-        drift_counts=(),
         plan_revisions=0,
         task_failure_ratio=1.0,
         runtime_ms=runtime_ms,

@@ -26,7 +26,7 @@ from pathlib import Path
 import pytest
 
 from tests._contract_pins import deterministic_weights
-from zicato.core import DriftCount, LossProfile, ScoringWeights
+from zicato.core import LossProfile, MetricCount, ScoringWeights
 from zicato.core.types import Experiment, ExperimentalConfig, HypothesisSpec, Patch
 from zicato.epoch.contract import scoring_to_canon
 from zicato.scoring.builtins import builtin_scalar, diff_complexity_component
@@ -50,7 +50,7 @@ def _loss(entry_id: str, *, drift_loss: float = 0.0, pass_fail: bool | None = Tr
         entry_id=entry_id,
         generation_id="v1",
         epoch_id="e0",
-        drift_counts=(DriftCount(kind="off_topic", severity="info", count=0),),
+        metric_counts=(MetricCount(name="drift:off_topic", severity="info", count=0),),
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=1000,
@@ -86,7 +86,7 @@ def _experiment(*patches: Patch) -> Experiment:
             core_idea="idea",
             modulating=(),
             why="why",
-            expected_drift_movements=(),
+            expected_metric_movements=(),
             expected_pass_rate_delta="+0.0",
         ),
         patches=tuple(patches),
@@ -261,9 +261,9 @@ def test_ceiling_off_and_weight_off_is_byte_identical() -> None:
     assert "diff_size" not in agg_none
 
 
-def test_canon_omits_ceiling_at_default_and_rolls_when_set() -> None:
+def test_canon_records_default_ceiling_and_rolls_when_set() -> None:
     off = scoring_to_canon(ScoringWeights())
-    assert "diff_complexity_ceiling" not in off
+    assert off["experimental"]["diff_complexity_ceiling"] == 0.0
     on = scoring_to_canon(
         ScoringWeights(experimental=ExperimentalConfig(diff_complexity_ceiling=10.0))
     )
@@ -299,9 +299,9 @@ def test_diff_size_evidence_empty_when_off() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_canon_omits_field_at_default() -> None:
+def test_canon_records_default_weight() -> None:
     canon = scoring_to_canon(ScoringWeights())
-    assert "diff_complexity_weight" not in canon
+    assert canon["experimental"]["diff_complexity_weight"] == 0.0
 
 
 def test_canon_includes_and_rolls_when_set() -> None:

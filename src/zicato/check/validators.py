@@ -81,7 +81,7 @@ def _module_importable(name: str) -> bool:
 _IMPORT_PROBE = """
 import json, sys
 from pathlib import Path
-from zicato.adapter_factory import make_adapter_from_spec, uses_legacy_run
+from zicato.adapter_factory import make_adapter_from_spec, validate_harness_run
 from zicato.core.adapter_config import DriverImportContext
 from zicato.driver_imports import driver_import_scope, imported_sources
 from zicato.import_path import import_dotted_path
@@ -94,7 +94,7 @@ with driver_import_scope(context, snapshot_root=root):
         resolver = getattr(adapter, "mutable_subpaths", None)
         if callable(resolver):
             resolver(root)
-        uses_legacy_run(adapter.load(root))
+        validate_harness_run(adapter.load(root))
         imported_sources(context, root)
     elif spec.get("kind") == "adk":
         import_dotted_path(spec["entrypoint"], label="harness entrypoint")

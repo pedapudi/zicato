@@ -75,10 +75,13 @@ def _standalone(tmp_path):
     from zicato.runtime_factory import make_runtime_config
 
     authored = {
-        "runtime": {
-            "target_call_llm": "tests._subprocess_worker_support:target_call_llm",
-            "evaluation_call_llm": "tests._subprocess_worker_support:evaluation_call_llm",
-        }
+        "runtime": {},
+        "models": {
+            "engines": {
+                "target": {"call_llm": "tests._subprocess_worker_support:target_call_llm"},
+                "evaluation": {"call_llm": "tests._subprocess_worker_support:evaluation_call_llm"},
+            }
+        },
     }
     inputs = _configured_inputs(tmp_path, authored)
     workspace = tmp_path / ".zicato"
@@ -99,7 +102,7 @@ def test_execution_role_mapping_order_does_not_change_contract(tmp_path):
     workspace, epoch, runtime, _adapter = _standalone(tmp_path)
     from zicato.epoch.execution import load_epoch_execution_contract
 
-    selected = load_epoch_execution_contract(workspace, epoch.id, workspace_config={})
+    selected = load_epoch_execution_contract(workspace, epoch.id)
     inputs = selected._inputs()
     roles = json.loads(inputs.execution_roles)
     reordered = json.dumps(dict(reversed(tuple(roles.items())))).encode()
@@ -117,7 +120,7 @@ def test_durable_tournament_refuses_unprepared_or_conflicting_runtime(
     from zicato.tournament.runner import run_tournament
 
     workspace, epoch, runtime, adapter = _standalone(tmp_path)
-    selected = load_epoch_execution_contract(workspace, epoch.id, workspace_config={})
+    selected = load_epoch_execution_contract(workspace, epoch.id)
     runtime = (
         replace(runtime, target_call_llm=alternate_call_llm) if change == "runtime" else runtime
     )
@@ -152,7 +155,7 @@ def test_prepared_standalone_runtime_uses_real_workers_then_reuses_their_measure
     from zicato.tournament.runner import run_tournament
 
     workspace, epoch, runtime, adapter = _standalone(tmp_path)
-    selected = load_epoch_execution_contract(workspace, epoch.id, workspace_config={})
+    selected = load_epoch_execution_contract(workspace, epoch.id)
     source = tmp_path / "source"
     source.mkdir()
     (source / "target.py").write_text("VALUE = 1\n")
@@ -193,12 +196,12 @@ def test_selected_epoch_refuses_callable_override_before_auxiliary_or_proposal_w
     workspace = workspace_fixture.__wrapped__(tmp_path)
     path = workspace / "config.json"
     configuration = json.loads(path.read_bytes())
-    configuration["runtime"].update(
-        {
-            "target_call_llm": "tests._subprocess_worker_support:target_call_llm",
-            "evaluation_call_llm": "tests._subprocess_worker_support:evaluation_call_llm",
+    configuration["models"] = {
+        "engines": {
+            "target": {"call_llm": "tests._subprocess_worker_support:target_call_llm"},
+            "evaluation": {"call_llm": "tests._subprocess_worker_support:evaluation_call_llm"},
         }
-    )
+    }
     path.write_text(json.dumps(configuration))
     selected = _selected(workspace)
 

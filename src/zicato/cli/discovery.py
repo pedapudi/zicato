@@ -41,7 +41,7 @@ def _advanced_groups() -> tuple[click.Group, ...]:
     from zicato.cli.commands.analyze_telemetry import analyze_telemetry_cmd
     from zicato.cli.commands.board import board_grp
     from zicato.cli.commands.config import config_env_cmd, inspect_config_cmd
-    from zicato.cli.commands.epoch import epoch_grp, repair_epoch_goals_cmd
+    from zicato.cli.commands.epoch import epoch_grp
     from zicato.cli.commands.logs import logs_cmd
     from zicato.cli.commands.mutations import mutations_cmd
     from zicato.cli.commands.propose import propose_cmd
@@ -52,12 +52,10 @@ def _advanced_groups() -> tuple[click.Group, ...]:
     from zicato.cli.commands.reindex import (
         reindex_cmd,
         reindex_generations_cmd,
-        repair_tournament_fk_cmd,
     )
     from zicato.cli.commands.repair_generation_source_backend import (
         repair_generation_source_backend_cmd,
     )
-    from zicato.cli.commands.repair_judge_losses import repair_judge_losses_cmd
     from zicato.cli.commands.repair_v0_baseline import repair_v0_baseline_cmd
     from zicato.cli.commands.setup import setup_cmd
     from zicato.cli.commands.tournament import tournament_cmd
@@ -92,9 +90,6 @@ def _advanced_groups() -> tuple[click.Group, ...]:
             {
                 "index": reindex_cmd,
                 "generations": reindex_generations_cmd,
-                "tournament-fk": repair_tournament_fk_cmd,
-                "epoch-goals": repair_epoch_goals_cmd,
-                "judge-losses": repair_judge_losses_cmd,
                 "v0-baseline": repair_v0_baseline_cmd,
                 "generation-source-backend": repair_generation_source_backend_cmd,
                 "report": regenerate_report_cmd,

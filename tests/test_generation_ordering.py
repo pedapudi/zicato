@@ -13,6 +13,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from tests._workspace_support import experiment_record
+from zicato.telemetry.reducer import write_loss_profile
+from zicato.testing import make_loss_profile
 from zicato.workspace import (
     WorkspaceLayout,
     generation_round_number,
@@ -52,7 +55,8 @@ def test_epoch_experiments_are_read_in_round_number_order(tmp_path: Path) -> Non
     gens_root = _make_generations(workspace, "e0")
     for gen_id in ELEVEN:
         (gens_root / gen_id / "experiment.json").write_text(
-            json.dumps({"generation_id": gen_id}), encoding="utf-8"
+            json.dumps(experiment_record(gen_id, epoch_id="e0", round_index=int(gen_id[1:]))),
+            encoding="utf-8",
         )
 
     experiments, unreadable = read_epoch_experiments(workspace, "e0")
@@ -103,14 +107,14 @@ def test_epoch_health_inputs_read_generations_in_round_number_order(tmp_path: Pa
     for gen_id in ELEVEN:
         path = loss_profile_path(workspace, "e0", gen_id, "entry_a")
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            json.dumps(
-                {
+        write_loss_profile(
+            make_loss_profile(
+                **{
                     "run_id": f"r-{gen_id}",
                     "entry_id": "entry_a",
                     "generation_id": gen_id,
                     "epoch_id": "e0",
-                    "drift_counts": [],
+                    "metric_counts": [],
                     "plan_revisions": 0,
                     "task_failure_ratio": 0.0,
                     "runtime_ms": 100,
@@ -120,7 +124,7 @@ def test_epoch_health_inputs_read_generations_in_round_number_order(tmp_path: Pa
                     "pass_fail": True,
                 }
             ),
-            encoding="utf-8",
+            path,
         )
 
     board = [BoardEntry(id="entry_a", kind="single_turn", wall_clock_budget_seconds=60, input="hi")]

@@ -3,11 +3,10 @@ its namespace-specific wrappers (cost, rubric, drift)."""
 
 from __future__ import annotations
 
-from zicato.core import BoardEntry, DriftCount, LossProfile, MetricCount
+from zicato.core import BoardEntry, LossProfile, MetricCount
 from zicato.patterns import (
     DetectorInput,
     detect_cost_outliers,
-    detect_drift_kind_frequency,
     detect_metric_frequency,
     detect_rubric_score_movement,
 )
@@ -26,7 +25,6 @@ def _loss(
     *,
     run_id: str,
     entry_id: str = "e1",
-    drift_counts: tuple[DriftCount, ...] = (),
     metric_counts: tuple[MetricCount, ...] = (),
 ) -> LossProfile:
     return LossProfile(
@@ -34,7 +32,6 @@ def _loss(
         entry_id=entry_id,
         generation_id="g0",
         epoch_id="ep0",
-        drift_counts=drift_counts,
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=1000,
@@ -47,39 +44,7 @@ def _loss(
 
 
 # ---------------------------------------------------------------------------
-# Back-compat: detect_drift_kind_frequency is now a wrapper but identical shape
 # ---------------------------------------------------------------------------
-
-
-def test_drift_namespace_wrapper_matches_legacy_shape() -> None:
-    """detect_drift_kind_frequency emits ``drift_kind_frequency`` patterns
-    with the historical detail keys (``drift_kind``, ``hits``, ...)."""
-    losses = [
-        _loss(
-            run_id=f"r{i}",
-            drift_counts=(DriftCount(kind="off_topic", severity="warning", count=1),)
-            if i < 3
-            else (),
-        )
-        for i in range(10)
-    ]
-    inp = DetectorInput(losses=losses, entries={"e1": _entry()}, events_paths={})
-
-    legacy = detect_drift_kind_frequency(inp)
-    generic = detect_metric_frequency(inp, namespace="drift:")
-
-    assert len(legacy) == 1
-    assert legacy[0].kind == "drift_kind_frequency"
-    # Back-compat detail keys.
-    assert legacy[0].detail["drift_kind"] == "off_topic"
-    assert legacy[0].detail["hits"] == "3"
-    assert legacy[0].detail["max_severity"] == "warning"
-
-    # The generic version emits the same logical findings but with the
-    # default ``drift_metric_frequency`` Pattern.kind.
-    assert len(generic) == 1
-    assert generic[0].kind == "drift_metric_frequency"
-    assert generic[0].detail["metric_name"] == "drift:off_topic"
 
 
 # ---------------------------------------------------------------------------
@@ -174,8 +139,8 @@ def test_detect_metric_frequency_filters_to_requested_namespace_only() -> None:
         losses.append(
             _loss(
                 run_id=f"r{i}",
-                drift_counts=(DriftCount(kind="off_topic", severity="info", count=1),),
                 metric_counts=(
+                    MetricCount(name="drift:off_topic", severity="info", count=1),
                     MetricCount(name="cost:tokens_spent", count=100.0),
                     MetricCount(name="rubric:slide_structure", count=3.0),
                 ),
@@ -200,8 +165,10 @@ def test_detect_metric_frequency_empty_namespace_matches_all() -> None:
         losses.append(
             _loss(
                 run_id=f"r{i}",
-                drift_counts=(DriftCount(kind="off_topic", severity="info", count=1),),
-                metric_counts=(MetricCount(name="cost:tokens_spent", count=10.0),),
+                metric_counts=(
+                    MetricCount(name="drift:off_topic", severity="info", count=1),
+                    MetricCount(name="cost:tokens_spent", count=10.0),
+                ),
             )
         )
     inp = DetectorInput(losses=losses, entries={"e1": _entry()}, events_paths={})

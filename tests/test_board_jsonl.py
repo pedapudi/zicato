@@ -451,7 +451,9 @@ def test_judge_only_absent_parses_false(tmp_path: Path) -> None:
         board_file,
         [
             json.dumps({"board_meta": True, "disable_drift": ["off_topic"]}),
-            json.dumps({"id": "e", "kind": "single_turn", "input": "i", "budget_s": 30}),
+            json.dumps(
+                {"id": "e", "kind": "single_turn", "input": "i", "wall_clock_budget_seconds": 30}
+            ),
         ],
     )
     _entries, _disable, parsed_judge_only = load_board_with_meta(board_file)
@@ -480,7 +482,9 @@ def test_judge_only_non_bool_value_raises(tmp_path: Path) -> None:
         board_file,
         [
             json.dumps({"board_meta": True, "judge_only": "yes"}),
-            json.dumps({"id": "e", "kind": "single_turn", "input": "i", "budget_s": 30}),
+            json.dumps(
+                {"id": "e", "kind": "single_turn", "input": "i", "wall_clock_budget_seconds": 30}
+            ),
         ],
     )
     with pytest.raises(ValueError, match="judge_only.*must be a JSON boolean"):

@@ -31,7 +31,7 @@ from typing import Any
 
 import pytest
 
-from zicato.core import DriftCount, LossProfile, ScoringWeights
+from zicato.core import LossProfile, MetricCount, ScoringWeights
 from zicato.tournament.gate import evaluate_gate
 from zicato.tournament.scoring import aggregate_generation_score
 
@@ -42,7 +42,7 @@ def _loss(entry_id: str, *, passed: bool, drift_loss: float = 0.0) -> LossProfil
         entry_id=entry_id,
         generation_id="v1",
         epoch_id="e0",
-        drift_counts=(DriftCount(kind="off_topic", severity="info", count=0),),
+        metric_counts=(MetricCount(name="drift:off_topic", severity="info", count=0),),
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=1000,

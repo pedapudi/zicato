@@ -3,8 +3,7 @@
 Pure, additive projection over the stamped predicted-vs-actual movement
 verdict. That verdict (``hypothesis_match``) is computed once, at
 outcome-write time, onto each
-:class:`zicato.core.experiment.DriftMovementActual` /
-:class:`~zicato.core.experiment.MetricMovementActual`. These readers
+:class:`zicato.core.experiment.MetricMovementActual`. These readers
 **lift that stamped flag verbatim** — they NEVER re-derive a match from
 the raw ``from``/``to`` values — so no dashboard surface can disagree
 with the outcome persisted on disk.
@@ -43,20 +42,6 @@ from zicato.query.paths import (
 from zicato.tournament.detail import PLATEAU_EPSILON
 
 
-def _as_opt_float(value: Any) -> float | None:
-    """Coerce a JSON value to ``float``; non-numeric / ``None`` -> ``None``."""
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int | float):
-        return float(value)
-    if isinstance(value, str):
-        try:
-            return float(value)
-        except ValueError:
-            return None
-    return None
-
-
 def _observed_direction(from_value: float | None, to_value: float | None) -> str | None:
     """Label the realised direction of a movement for display.
 
@@ -76,92 +61,29 @@ def _observed_direction(from_value: float | None, to_value: float | None) -> str
 
 
 def _expected_index(hypothesis: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    """``{target: {kind, predicted_direction, predicted_magnitude}}``.
-
-    Indexes the proposer's falsifiable movement claims. Both namespaced
-    metric movements (``expected_metric_movements``, keyed by
-    ``metric_name``) and drift movements (``expected_drift_movements``,
-    keyed by ``kind``) are folded into one target → claim map. When the
-    same target appears in both, the metric-movement claim wins (it is the
-    superset surface), matching the grader's precedence — the first writer
-    for a target is kept.
-    """
-    out: dict[str, dict[str, Any]] = {}
-    for mv in hypothesis.get("expected_metric_movements", []) or []:
-        if not isinstance(mv, dict):
-            continue
-        name = mv.get("metric_name")
-        if isinstance(name, str) and name:
-            out.setdefault(
-                name,
-                {
-                    "kind": "metric",
-                    "predicted_direction": str(mv.get("direction", "")),
-                    "predicted_magnitude": str(mv.get("magnitude", "")),
-                },
-            )
-    for mv in hypothesis.get("expected_drift_movements", []) or []:
-        if not isinstance(mv, dict):
-            continue
-        kind = mv.get("kind")
-        if isinstance(kind, str) and kind:
-            out.setdefault(
-                kind,
-                {
-                    "kind": "drift",
-                    "predicted_direction": str(mv.get("direction", "")),
-                    "predicted_magnitude": str(mv.get("magnitude", "")),
-                },
-            )
-    return out
+    """Index accepted predictions by their measured metric name."""
+    return {
+        mv["metric_name"]: {
+            "kind": "metric",
+            "predicted_direction": mv["direction"],
+            "predicted_magnitude": mv["magnitude"],
+        }
+        for mv in hypothesis["expected_metric_movements"]
+    }
 
 
 def _actual_index(outcome: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    """``{target: {kind, from, to, hypothesis_match, note}}``.
-
-    Indexes the realised movements off the stamped outcome. ``from``/``to``
-    are the per-run aggregates; ``hypothesis_match`` is the STAMPED verdict
-    lifted verbatim (``None`` only if the persisted record omitted it).
-    Metric movements (keyed by ``metric_name``) and drift movements (keyed
-    by ``kind``) fold into one target map, metric-first like the expected
-    index so the two join on the same key space.
-    """
-    out: dict[str, dict[str, Any]] = {}
-    for mv in outcome.get("metric_movements", []) or []:
-        if not isinstance(mv, dict):
-            continue
-        name = mv.get("metric_name")
-        if not isinstance(name, str) or not name:
-            continue
-        match = mv.get("hypothesis_match")
-        out.setdefault(
-            name,
-            {
-                "kind": "metric",
-                "from": _as_opt_float(mv.get("from_value")),
-                "to": _as_opt_float(mv.get("to_value")),
-                "hypothesis_match": bool(match) if isinstance(match, bool) else None,
-                "note": str(mv.get("note", "")),
-            },
-        )
-    for mv in outcome.get("drift_movements", []) or []:
-        if not isinstance(mv, dict):
-            continue
-        kind = mv.get("kind")
-        if not isinstance(kind, str) or not kind:
-            continue
-        match = mv.get("hypothesis_match")
-        out.setdefault(
-            kind,
-            {
-                "kind": "drift",
-                "from": _as_opt_float(mv.get("from_rate")),
-                "to": _as_opt_float(mv.get("to_rate")),
-                "hypothesis_match": bool(match) if isinstance(match, bool) else None,
-                "note": str(mv.get("note", "")),
-            },
-        )
-    return out
+    """Index accepted measurements, preserving the recorded prediction verdict."""
+    return {
+        mv["metric_name"]: {
+            "kind": "metric",
+            "from": mv["from_value"],
+            "to": mv["to_value"],
+            "hypothesis_match": mv["hypothesis_match"],
+            "note": mv["note"],
+        }
+        for mv in outcome["metric_movements"]
+    }
 
 
 def _scorecard_from_experiment(experiment: dict[str, Any]) -> dict[str, Any]:
@@ -178,8 +100,8 @@ def _scorecard_from_experiment(experiment: dict[str, Any]) -> dict[str, Any]:
     outcome = experiment.get("outcome")
     outcome = outcome if isinstance(outcome, dict) else {}
 
-    expected = _expected_index(hypothesis)
-    actual = _actual_index(outcome)
+    expected = _expected_index(hypothesis) if hypothesis else {}
+    actual = _actual_index(outcome) if outcome else {}
 
     claims: list[dict[str, Any]] = []
     hits = 0
@@ -254,7 +176,7 @@ def _scorecard_from_experiment(experiment: dict[str, Any]) -> dict[str, Any]:
     # movement claims rather than inside hits/total. ``predicted`` is the
     # proposer's free text; ``observed`` is the realised board-wide delta.
     pred_pr = hypothesis.get("expected_pass_rate_delta")
-    observed_pr = _as_opt_float(outcome.get("pass_rate_delta")) if outcome else None
+    observed_pr = outcome["pass_rate_delta"] if outcome else None
     pass_rate = {
         "predicted": str(pred_pr) if isinstance(pred_pr, str) else "",
         "observed": observed_pr,
@@ -273,9 +195,8 @@ def build_hypothesis_accuracy(
     """``GET /api/hypothesis-accuracy/{epoch}/{gen}`` — per-experiment scorecard.
 
     Reads ``epochs/{epoch}/generations/{gen}/experiment.json`` and joins the
-    proposer's falsifiable movement claims (``expected_metric_movements`` /
-    ``expected_drift_movements``) against the realised movements
-    (``metric_movements`` / ``drift_movements``). Each claim lifts the
+    proposer's named predictions against the realised metric movements
+    (``metric_movements``). Each claim lifts the
     ``hypothesis_match`` verdict STAMPED on the movement at outcome-write
     time, verbatim; the endpoint never recomputes it, so no reader of this
     scorecard can disagree with the persisted outcome.
@@ -332,23 +253,6 @@ def build_hypothesis_accuracy(
         "generation_id": generation_id,
         **card,
     }
-
-
-def _round_index_of(experiment: dict[str, Any]) -> int | None:
-    """Read a generation's birth round off ``experiment.json`` (int only).
-
-    ``None`` when the stamp is absent or non-integer: a record written
-    before the ``round_index`` stamp existed carries none, and this read is
-    as tolerant of that as the lineage reader is.
-    """
-    raw = experiment.get("round_index")
-    if isinstance(raw, bool):
-        return None
-    if isinstance(raw, int):
-        return raw
-    if isinstance(raw, str) and raw.strip().lstrip("-").isdigit():
-        return int(raw.strip())
-    return None
 
 
 def build_calibration_trend(paths: WorkspacePaths, epoch_id: str | None = None) -> dict[str, Any]:
@@ -413,7 +317,7 @@ def build_calibration_trend(paths: WorkspacePaths, epoch_id: str | None = None) 
             {
                 "generation_id": generation_id,
                 "epoch_id": resolved,
-                "round_index": _round_index_of(experiment),
+                "round_index": experiment["round_index"],
                 "score_fraction": fraction,
                 "total_claims": total,
                 "decision": decision,

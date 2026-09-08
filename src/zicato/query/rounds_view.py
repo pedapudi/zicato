@@ -1,25 +1,13 @@
-"""The epoch ROUND TIMELINE, joined server-side.
+"""The epoch's recorded rounds, active proposal status and loss-floor waterfall.
 
-Within ONE epoch the outer evolve loop runs N ROUNDS. Each round =
-(an incoming CHAMPION, carried from the prior round) + (a freshly-minted
-FIELD of challengers) -> a TOURNAMENT -> a GATE (one challenger may be
-promoted). The epoch is therefore a CHAMPION SPINE threaded through the
-rounds.
+An experiment's integer birth-round stamp assigns its generation to a field.
+The seed and each promoted champion carry forward into later fields. Lineage
+supplies parentage and promotion decisions; tournament records identify the
+champion and gate winner within each field.
 
-This reader owns the join of the four feeds that model spans — the epoch
-record, the lineage, the score trajectory, and the tournaments.
-``GET /api/epoch/{id}/round-timeline`` serves the SETTLED rounds, the LIVE
-in-flight round, and the loss-floor waterfall, so the client only renames
-fields for its renderer.
-
-SOURCE PRIORITY (degrades gracefully when ``round_index`` is absent):
-  (1) per-generation ``round_index`` (the authoritative birth-round stamp);
-  (2) the per-round FIELD-TOURNAMENT records, one per round;
-  (3) the gauntlet matchups, round-ordered by ``ran_at``;
-  (4) nothing -> the whole epoch is a single round 0.
-Racing persists BOTH a per-round field record and per-challenger rows;
-without a round-index stamp a racing epoch is a single round (its figure
-is the racing-field ladder, served by :mod:`racing_view`).
+Unapplied proposals have no experiment stamp. The active tournament supplies
+those proposals and their statuses until publication assigns a birth round.
+An epoch without applied challengers has no settled rounds.
 """
 
 from __future__ import annotations
@@ -180,7 +168,7 @@ def build_round_timeline(paths: WorkspacePaths, epoch_id: str | None = None) -> 
                         "promoted": _promoted_of(gid),
                     }
                 )
-            round_index = int(r["round_index"]) if _is_num(r.get("round_index")) else i
+            round_index = r["round_index"]
             ref = r.get("tournament_ref")
             tournament_id = (
                 str(ref.get("tournament_id"))
@@ -352,94 +340,27 @@ def build_round_timeline(paths: WorkspacePaths, epoch_id: str | None = None) -> 
             "waterfall": _waterfall(rounds),
         }
 
-    # ── (1) per-gen round_index — the authoritative birth round ─────────
-    if any(_is_num(g.get("round_index")) for g in gens):
-        buckets: dict[int, list[str]] = {}
-        for g in gens:
-            gid = g.get("generation_id")
-            if gid is None:
-                continue
-            ri_raw = g.get("round_index")
-            # The seed champion is carried rather than minted, so it has NO birth round
-            # — whatever it is stamped with. Guarding only on an ABSENT stamp
-            # would let a numerically-stamped seed through, and it carries
-            # ``round_index: 0`` by default. It would then form a bucket of
-            # its own: a phantom round 0 whose only member is dropped again
-            # downstream, because the carried champion is never a minted
-            # challenger. That leaves a round with an empty field.
-            if str(gid) == str(seed_id) and not g.get("parent_generation_id"):
-                # The seed test is PARENTAGE, the same rule the writer's base
-                # computation uses, and never the id alone. ``seed_id`` prefers
-                # the lineage root, and a lineage whose root is a MINTED
-                # generation (an unpromoted or absent v0) must not have that
-                # real round dropped from its bucket.
-                continue
-            ri = int(ri_raw) if isinstance(ri_raw, int | float) else 0
-            buckets.setdefault(ri, []).append(str(gid))
-        per_round = [
-            {
-                "round_index": ri,
-                "challenger_ids": buckets[ri],
-                "tournament_ref": _match_tournament_for_field(tournaments, buckets[ri]),
-            }
-            for ri in sorted(buckets)
-        ]
-        return _payload(_build_rounds(per_round, "round_index"), "round_index")
-
-    # RACING is persisted per CHALLENGER — its records/matchups are not
-    # distinct rounds. Without a round_index stamp it is a SINGLE round.
-    if structure != "racing":
-        # ── (2) per-round FIELD-TOURNAMENT records ────────────────────────
-        field_records = [t for t in tournaments if _competitor_ids(t)]
-        if field_records:
-            seen: set[str] = set()
-            per_round = []
-            for i, t in enumerate(field_records):
-                comps = _competitor_ids(t)
-                fresh = [c for c in comps if c not in seen]
-                seen.update(comps)
-                per_round.append(
-                    {
-                        "round_index": i,
-                        "challenger_ids": fresh if fresh else comps,
-                        "tournament_ref": t,
-                    }
-                )
-            return _payload(_build_rounds(per_round, "field"), "field")
-
-        # ── (3) gauntlet matchups — each its own single-challenger round ──
-        matchups = bracket.get("matchups")
-        matchups = (
-            [m for m in matchups if isinstance(m, dict)] if isinstance(matchups, list) else []
-        )
-        matchups.sort(key=lambda m: str(m.get("ran_at") or ""))
-        if matchups:
-            per_round = [
-                {
-                    "round_index": i,
-                    "challenger_ids": [str(m.get("challenger"))],
-                    "tournament_ref": None,
-                }
-                for i, m in enumerate(matchups)
-                if m.get("challenger") is not None
-            ]
-            return _payload(_build_rounds(per_round, "matchups"), "matchups")
-
-    # ── (4) single round 0 — every scored/promoted challenger, one round ──
-    challenger_ids = [
-        str(g["generation_id"])
-        for g in gens
-        if g.get("generation_id") is not None
-        and str(g["generation_id"]) != str(seed_id)
-        and (_scalar_of(str(g["generation_id"])) is not None or g.get("promoted"))
+    buckets: dict[int, list[str]] = {}
+    for generation in gens:
+        generation_id = generation.get("generation_id")
+        round_index = generation.get("round_index")
+        # Unapplied proposals have no birth round; their status belongs to
+        # the active tournament projection below.
+        if generation_id is None or type(round_index) is not int:
+            continue
+        # A parentless seed is carried into the field, never minted by it.
+        if str(generation_id) == str(seed_id) and not generation.get("parent_generation_id"):
+            continue
+        buckets.setdefault(round_index, []).append(str(generation_id))
+    per_round = [
+        {
+            "round_index": round_index,
+            "challenger_ids": buckets[round_index],
+            "tournament_ref": _match_tournament_for_field(tournaments, buckets[round_index]),
+        }
+        for round_index in sorted(buckets)
     ]
-    single_ref = (
-        next((t for t in tournaments if _competitor_ids(t)), None)
-        if structure != "racing"
-        else None
-    )
-    per_round = [{"round_index": 0, "challenger_ids": challenger_ids, "tournament_ref": single_ref}]
-    return _payload(_build_rounds(per_round, "single"), "single")
+    return _payload(_build_rounds(per_round, "round_index"), "round_index")
 
 
 def _waterfall(rounds: list[dict[str, Any]]) -> list[dict[str, Any]]:

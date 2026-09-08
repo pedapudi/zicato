@@ -165,7 +165,14 @@ def test_baseline_recovery_preserves_source_and_surviving_runs(
 ) -> None:
     root, board, source = workspace
     epoch = create_epoch(root, board)
-    config = {"generation_source_backend": backend, "source_roots": [str(source)]}
+    config = {
+        "generation_source_backend": backend,
+        "adapter": {
+            "kind": "import",
+            "factory": "tests._stub_adapter:make_stub_adapter",
+            "mutable_trees": [str(source)],
+        },
+    }
     write_workspace_config(root, config)
     factory = DirectoryGenerationStore if backend == "directory" else GitGenerationStore
     boundaries = {
@@ -215,8 +222,11 @@ def test_automatic_roll_retains_promoted_source_and_coordinates(workspace, monke
     scoring.write_text("{}\n")
     config = {
         "generation_source_backend": backend,
-        "source_roots": [str(source)],
-        "mutable_trees": [str(source)],
+        "adapter": {
+            "kind": "import",
+            "factory": "tests._stub_adapter:make_stub_adapter",
+            "mutable_trees": [str(source)],
+        },
         "contract": {
             "board_path": str(board),
             "brief_path": str(brief),
@@ -315,7 +325,14 @@ def test_preparation_rejects_invalid_inputs_before_reconciliation(workspace, inv
 def test_git_seed_recovery_materializes_published_tag_without_reseeding(workspace, monkeypatch):
     root, board, source = workspace
     epoch = create_epoch(root, board)
-    config = {"generation_source_backend": "git", "source_roots": [str(source)]}
+    config = {
+        "generation_source_backend": "git",
+        "adapter": {
+            "kind": "import",
+            "factory": "tests._stub_adapter:make_stub_adapter",
+            "mutable_trees": [str(source)],
+        },
+    }
     write_workspace_config(root, config)
     with acquire_workspace_lock(root, "publication-test") as writer:
         with monkeypatch.context() as fault:
@@ -354,17 +371,3 @@ def test_invalid_publication_record_cannot_change_current_epoch(workspace, body)
     assert lifecycle.current_epoch_id(root) == previous.id
     assert not lifecycle.load_epoch(root, previous.id).closed
     assert record.read_text() == body
-
-
-def test_closing_epoch_preserves_historical_proposer_provenance(workspace):
-    import json
-
-    root, board, _ = workspace
-    epoch = create_epoch(root, board)
-    path = root / "epochs" / epoch.id / "config.json"
-    record = json.loads(path.read_text())
-    assert "applied_proposer_recommendations" not in record
-    record["applied_proposer_recommendations"] = ["accepted-edit"]
-    path.write_text(json.dumps(record))
-    lifecycle._close_epoch_prelude(root, epoch.id)
-    assert json.loads(path.read_text())["applied_proposer_recommendations"] == ["accepted-edit"]

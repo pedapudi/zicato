@@ -59,12 +59,9 @@ class WorkspaceConfig:
     #: The ``contract`` block — the recorded paths of the live board, brief,
     #: scoring and proposer sources, and the declared static checks.
     contract: Mapping[str, Any] = field(default_factory=dict)
-    #: The ``source_roots`` key: the mutable source trees ``zicato epoch
-    #: register`` recorded.
+    #: The mutable source trees declared in the adapter block.
     source_roots: tuple[str, ...] = ()
-    #: The model id forwarded to the evaluation LLM, from the top-level
-    #: ``evaluation_model`` key or the ``runtime`` block's, in that order.
-    #: Empty when neither is set.
+    #: The model name from the named evaluation engine, empty for callable engines.
     evaluation_model: str = ""
     #: The ``generation_source_backend`` key — which store holds the
     #: generation source trees. Empty is what
@@ -128,8 +125,12 @@ def read_workspace_config(workspace_root: Path) -> WorkspaceConfig:
         raw=raw,
         runtime=runtime,
         contract=raw.get("contract", {}),
-        source_roots=values.source_roots,
-        evaluation_model=values.evaluation_model or values.runtime.evaluation_model,
+        source_roots=values.adapter.mutable_trees if values.adapter is not None else (),
+        evaluation_model=(
+            values.models.engines[values.models.selected_name("evaluation")].model or ""
+            if values.models.selected_name("evaluation") in values.models.engines
+            else ""
+        ),
         generation_source_backend=values.generation_source_backend,
     )
 

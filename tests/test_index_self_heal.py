@@ -18,15 +18,18 @@ that a rebuild would not have produced.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import shutil
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from tests._workspace_support import experiment_record, write_epoch, write_lineage
 from zicato.core.workspace import loss_profile_path
 from zicato.index.ingest import (
     _epoch_signals,
@@ -37,7 +40,8 @@ from zicato.index.ingest import (
     rebuild_index,
     validate_index,
 )
-from zicato.index.schema import SCHEMA_VERSION, IndexSchemaNewerError, apply_schema
+from zicato.index.schema import SCHEMA_VERSION, apply_schema
+from zicato.workspace.layout import WorkspaceLayout
 
 # The one cell outside the convergence pin: a wall clock, normalised exactly as
 # the REINDEX-DUMP parity gate already normalises every ISO timestamp it dumps.
@@ -55,15 +59,14 @@ def _write_json(path: Path, payload: Any) -> None:
 
 
 def _experiment(epoch_id: str, generation_id: str, parent: str) -> dict[str, Any]:
-    return {
-        "epoch_id": epoch_id,
-        "generation_id": generation_id,
-        "parent_generation_id": parent,
-        "proposed_at": "2026-01-01T00:00:00Z",
-        "hypothesis": {"core_idea": f"idea for {generation_id}", "why": "because"},
-        "patch_ids": [],
-        "outcome": None,
-    }
+    return experiment_record(
+        generation_id,
+        epoch_id=epoch_id,
+        parent_generation_id=parent,
+        proposed_at="2026-01-01T00:00:00Z",
+        round_index=int(generation_id[1:]),
+        hypothesis={"core_idea": f"idea for {generation_id}", "why": "because"},
+    )
 
 
 def _make_workspace(root: Path, epoch_ids: tuple[str, ...] = ("e1",)) -> Path:
@@ -79,9 +82,10 @@ def _make_workspace(root: Path, epoch_ids: tuple[str, ...] = ("e1",)) -> Path:
         # A config the canonical loader actually accepts — otherwise the
         # epoch falls through to the thin lineage-only branch and the
         # config-bearing half of the walk is never exercised.
-        _write_json(
-            ws / "epochs" / epoch_id / "config.json",
-            {
+        write_epoch(
+            WorkspaceLayout.from_root(ws),
+            epoch_id,
+            config={
                 "id": epoch_id,
                 "name": epoch_id,
                 "created_at": "2026-01-01T00:00:00Z",
@@ -89,7 +93,7 @@ def _make_workspace(root: Path, epoch_ids: tuple[str, ...] = ("e1",)) -> Path:
                 "brief_path": "brief.md",
                 "scoring": {},
                 "closed": False,
-                "contract_hash": f"hash-of-{epoch_id}",
+                "contract_hash": hashlib.sha256(f"hash-of-{epoch_id}".encode()).hexdigest(),
                 "goal": f"goal of {epoch_id}",
             },
         )
@@ -122,7 +126,7 @@ def _make_workspace(root: Path, epoch_ids: tuple[str, ...] = ("e1",)) -> Path:
                 ],
             }
         )
-    _write_json(ws / "lineage.json", {"epochs": lineage_epochs})
+    write_lineage(WorkspaceLayout.from_root(ws), {"epochs": lineage_epochs})
     return ws
 
 
@@ -225,25 +229,6 @@ def test_an_unreadable_index_is_rebuilt(tmp_path: Path) -> None:
 
     assert actions == ["built:unreadable"]
     assert len(_table_rows(db, "generations")) == 2
-
-
-def test_a_newer_index_raises_rather_than_being_deleted(tmp_path: Path) -> None:
-    """Auto-deleting a newer database is forbidden — the recovery is the operator's."""
-    ws = _make_workspace(tmp_path)
-    db = ws / "index.db"
-    db.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(db))
-    apply_schema(conn)
-    conn.execute("INSERT INTO epochs(epoch_id) VALUES('from-the-future')")
-    conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION + 5}")
-    conn.commit()
-    conn.close()
-
-    with pytest.raises(IndexSchemaNewerError, match="newer than this build"):
-        ensure_index(ws)
-
-    # Untouched: the row the newer writer left is still there.
-    assert {r[0] for r in _table_rows(db, "epochs")} == {"from-the-future"}
 
 
 def test_a_failed_build_leaves_the_existing_index_intact(
@@ -905,7 +890,7 @@ def test_the_epoch_scoped_delete_reaches_every_table(tmp_path: Path) -> None:
     conn.close()
 
 
-def test_a_pre_v14_index_reads_as_wholly_diverged_then_heals(tmp_path: Path) -> None:
+def test_missing_cursors_mark_every_epoch_for_reprojection(tmp_path: Path) -> None:
     """An empty cursor table is the correct conservative answer, and self-corrects."""
     ws = _make_workspace(tmp_path, ("e1", "e2"))
     db = rebuild_index(ws)
@@ -1025,7 +1010,7 @@ def test_an_indexed_epoch_with_no_cursor_and_no_directory_is_still_healed(
     conn.close()
     # ... and e2 is gone from the workspace.
     shutil.rmtree(ws / "epochs" / "e2")
-    _write_json(ws / "lineage.json", {"epochs": [{"id": "e1", "generations": []}]})
+    write_lineage(WorkspaceLayout.from_root(ws), {"epochs": [{"id": "e1", "generations": []}]})
 
     assert "e2" in validate_index(ws)
     assert "e2" in heal_index(ws)
@@ -1097,14 +1082,18 @@ def test_heal_refolds_the_cross_epoch_elo_columns(tmp_path: Path) -> None:
     # A SETTLED experiment is what puts a duel in the match ledger for the
     # fold to rate — an unresolved one writes no tournaments row at all.
     settled = _experiment("e1", "v1", "v0")
-    settled["outcome"] = {
-        "tournament_decision": "promoted",
-        "rejection_reason": None,
-        "scalar_score_delta": 0.4,
-        "drift_loss_delta": -0.1,
-        "pass_rate_delta": 0.1,
-        "ran_at": "2026-01-01T00:02:00Z",
-    }
+    settled["outcome"] = experiment_record(
+        "v1",
+        epoch_id="e1",
+        outcome={
+            "tournament_decision": "promoted",
+            "rejection_reason": "",
+            "scalar_score_delta": 0.4,
+            "drift_loss_delta": -0.1,
+            "pass_rate_delta": 0.1,
+            "ran_at": "2026-01-01T00:02:00Z",
+        },
+    )["outcome"]
     _write_json(ws / "epochs" / "e1" / "generations" / "v1" / "experiment.json", settled)
     db = rebuild_index(ws)
 
@@ -1171,14 +1160,18 @@ def test_proposer_memory_repairs_missing_and_same_count_changed_records(tmp_path
     db = rebuild_index(ws)
     # Resolve v1's experiment so it becomes a settled prior experiment...
     settled = _experiment("e1", "v1", "v0")
-    settled["outcome"] = {
-        "tournament_decision": "rejected",
-        "rejection_reason": "worse drift",
-        "scalar_score_delta": -0.2,
-        "drift_loss_delta": 0.1,
-        "pass_rate_delta": 0.0,
-        "ran_at": "2026-01-01T00:02:00Z",
-    }
+    settled["outcome"] = experiment_record(
+        "v1",
+        epoch_id="e1",
+        outcome={
+            "tournament_decision": "rejected",
+            "rejection_reason": "worse drift",
+            "scalar_score_delta": -0.2,
+            "drift_loss_delta": 0.1,
+            "pass_rate_delta": 0.0,
+            "ran_at": "2026-01-01T00:02:00Z",
+        },
+    )["outcome"]
     _write_json(ws / "epochs" / "e1" / "generations" / "v1" / "experiment.json", settled)
     # ...and corrupt the index behind its back, as a crashed dual-write would.
     conn = sqlite3.connect(str(db))
@@ -1241,35 +1234,15 @@ def test_the_dashboard_startup_repairs_an_unreadable_index(tmp_path: Path) -> No
         conn.close()
 
 
-def test_a_newer_index_is_reported_at_warning_not_buried(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
-    """The one index failure with an action attached must reach the operator.
-
-    A downgrade means no build and no heal for the whole run, and the
-    proposer's experiment memory thins silently every round. The evolve
-    preflight is wrapped in ``best_effort``, which logs at DEBUG — so without
-    a specific catch this produces zero output at INFO. The run still
-    continues: a stale index is a degraded read, never a reason to stop.
-    """
-    import logging
-
+def test_invocation_rebuilds_an_incompatible_index(tmp_path):
     from zicato.evolve.ingest import index_preflight
 
     ws = _make_workspace(tmp_path)
     db = rebuild_index(ws)
-    conn = sqlite3.connect(str(db))
-    conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION + 1}")
-    conn.commit()
-    conn.close()
-
-    with caplog.at_level(logging.WARNING, logger="zicato.orchestrator"):
-        line = index_preflight(ws)
-
-    assert "SKIPPED" in line and "newer zicato" in line
-    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
-    assert warnings, "a downgrade must not be silent at WARNING"
-    assert "repair index" in warnings[0].getMessage(), "the message must name the recovery"
+    with sqlite3.connect(db) as conn:
+        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION + 1}")
+    assert index_preflight(ws) == "index: built fresh (stale-schema)"
+    assert len(_table_rows(db, "generations")) == 2
 
 
 def test_the_dashboard_startup_skips_while_an_evolve_holds_the_lock(
@@ -1336,3 +1309,126 @@ def test_a_stale_lock_does_not_block_the_dashboard_build(tmp_path: Path) -> None
     _ensure_index_at_startup(_resolve_workspace(ws))
 
     assert (ws / "index.db").exists()
+
+
+def test_incompatible_index_is_rebuilt_from_canonical_records(tmp_path):
+    ws = _make_workspace(tmp_path)
+    canonical = {p: p.read_bytes() for p in ws.rglob("*") if p.is_file()}
+    db = ensure_index(ws)
+    expected = _table_rows(db, "generations")
+    with sqlite3.connect(db) as conn:
+        conn.execute("DELETE FROM generations")
+        conn.execute("INSERT INTO generations(epoch_id, generation_id) VALUES ('foreign', 'v99')")
+        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION + 1}")
+    actions = []
+    ensure_index(ws, action_out=actions)
+    assert actions == ["built:stale-schema"]
+    assert _table_rows(db, "generations") == expected
+    assert all(path.read_bytes() == contents for path, contents in canonical.items())
+
+
+def test_index_query_connection_cannot_write(tmp_path):
+    from zicato.index.query import open_index
+
+    ws = _make_workspace(tmp_path)
+    db = ensure_index(ws)
+    with closing(open_index(db)) as conn:
+        with pytest.raises(sqlite3.OperationalError, match="readonly"):
+            conn.execute("DELETE FROM generations")
+
+
+def test_reading_incompatible_index_returns_no_partial_rows(tmp_path):
+    from zicato.index.query import generations_for_epoch
+
+    ws = _make_workspace(tmp_path)
+    db = ensure_index(ws)
+    with sqlite3.connect(db) as conn:
+        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION - 1}")
+    before = db.read_bytes()
+    assert generations_for_epoch(db, "e1") == []
+    assert db.read_bytes() == before
+
+
+def test_incremental_index_heals_to_complete_canonical_projection(tmp_path):
+    ws = _make_workspace(tmp_path, ("e1", "e2"))
+    db = ws / "index.db"
+    ingest_experiment(ws, db, "e1", "v1")
+    assert {row[0] for row in _table_rows(db, "epochs")} == {"e1"}
+    ensure_index(ws)
+    heal_index(ws)
+    expected = {
+        table: _table_rows(db, table)
+        for table in (
+            "epochs",
+            "generations",
+            "experiments",
+            "runs",
+            "loss_profiles",
+            "metric_counts",
+        )
+    }
+    rebuild_index(ws)
+    assert {table: _table_rows(db, table) for table in expected} == expected
+
+
+def test_incremental_ingestion_preserves_incompatible_index(tmp_path):
+    ws = _make_workspace(tmp_path)
+    db = ensure_index(ws)
+    with sqlite3.connect(db) as conn:
+        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION - 1}")
+    before = db.read_bytes()
+    with pytest.raises(sqlite3.DatabaseError, match="run `zicato repair index`"):
+        ingest_experiment(ws, db, "e1", "v1")
+    assert db.read_bytes() == before
+
+
+def test_dashboard_index_connection_refuses_incompatible_schema(tmp_path):
+    from zicato.query._sqlite import open_index_ro, open_index_ro_or_none
+
+    ws = _make_workspace(tmp_path)
+    db = ensure_index(ws)
+    with sqlite3.connect(db) as conn:
+        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION + 1}")
+    before = db.read_bytes()
+    with pytest.raises(sqlite3.DatabaseError, match="run `zicato repair index`"):
+        with open_index_ro(db):
+            pytest.fail("an incompatible connection must not reach a reader")
+    with open_index_ro_or_none(db) as conn:
+        assert conn is None
+    assert db.read_bytes() == before
+
+
+@pytest.mark.parametrize("round_index", [None, 7])
+def test_generations_repair_uses_complete_canonical_lineage(tmp_path, round_index):
+    from zicato.index.ingest import backfill_generations
+
+    ws = _make_workspace(tmp_path)
+    path = ws / "lineage.json"
+    lineage = json.loads(path.read_text())
+    lineage["epochs"][0]["generations"][0]["round_index"] = round_index
+    path.write_text(json.dumps(lineage))
+    canonical = path.read_bytes()
+    db = ensure_index(ws)
+    expected = _table_rows(db, "generations")
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "UPDATE generations SET parent_generation_id = 'v99', promoted = 0, "
+            "created_at = 'wrong', round_index = 99 WHERE generation_id = 'v0'"
+        )
+    assert backfill_generations(ws)["updated"] == 1
+    assert _table_rows(db, "generations") == expected
+    assert backfill_generations(ws)["updated"] == 0
+    assert path.read_bytes() == canonical
+
+
+def test_generations_repair_requires_exclusive_workspace_ownership(tmp_path):
+    from zicato.index.ingest import backfill_generations
+    from zicato.runtime.lock import WorkspaceLockHeld, acquire_workspace_lock
+
+    ws = _make_workspace(tmp_path)
+    db = ensure_index(ws)
+    before = db.read_bytes()
+    with acquire_workspace_lock(ws, "test"):
+        with pytest.raises(WorkspaceLockHeld):
+            backfill_generations(ws)
+    assert db.read_bytes() == before

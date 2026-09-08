@@ -12,7 +12,7 @@ is a scripted callable) for both a ``single_turn`` and a
 REAL reducer and assert:
 
 1. a declared judge that finds a violation produces a ``custom:<name>``
-   :class:`~zicato.core.types.DriftCount` on the run's loss — i.e. it was
+   :class:`~zicato.core.types.MetricCount` on the run's loss — i.e. it was
    actually invoked (the fix);
 2. a declared judge that finds nothing produces NO ``custom:<name>`` count —
    the harness distinguishes "ran and passed" from "never invoked"; and
@@ -137,8 +137,8 @@ def _drive_and_reduce(entry: BoardEntry, config: RuntimeConfig, tmp_path: Path) 
 
 def _custom_judge_names(loss: object) -> set[str]:
     names: set[str] = set()
-    for count in getattr(loss, "drift_counts", ()):  # type: ignore[attr-defined]
-        is_custom, judge_name = split_judge_attributed_kind(count.kind)
+    for count in getattr(loss, "metric_counts", ()):  # type: ignore[attr-defined]
+        is_custom, judge_name = split_judge_attributed_kind(count.name.removeprefix("drift:"))
         if is_custom and judge_name:
             names.add(judge_name)
     return names

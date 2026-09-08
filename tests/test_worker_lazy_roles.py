@@ -35,6 +35,15 @@ from pathlib import Path
 import pytest
 
 from zicato._tournament_worker import _resolve_role_call_llm
+from zicato.config import resolve_configuration
+from zicato.core.adapter_config import DriverImportContext
+from zicato.core.measurement import (
+    MeasurementDraw,
+    artifact_replicate_index,
+    measurement_artifact_path,
+)
+from zicato.core.run_context import RunContext
+from zicato.core.runtime_context import WorkerRuntimeContext
 from zicato.models_config import lazy_text_call_llm, role_spec_from_dict
 
 _MODEL_SPEC = {
@@ -169,7 +178,9 @@ def test_worker_main_exits_nonzero_when_a_deferred_role_failed(
     """
     import zicato._tournament_worker as worker
     import zicato.models_config as models_config
+    from zicato.runtime.context import RUNTIME_CONTEXT_ENV
 
+    monkeypatch.setenv(RUNTIME_CONTEXT_ENV, "")
     args_path = tmp_path / "args.json"
     args_path.write_text("{}", encoding="utf-8")
 
@@ -288,10 +299,8 @@ async def test_target_model_resolved_after_active_run_and_heartbeat(
         return None
 
     class _FakeSession:
-        async def run(self, entry: object, sink_path: Path) -> None:
-            del entry
-            sink_path.parent.mkdir(parents=True, exist_ok=True)
-            sink_path.write_text("", encoding="utf-8")
+        async def run(self, entry: object, sinks: object, config: object) -> None:
+            del entry, sinks, config
 
     class _FakeAdapter:
         def load(self, generation_root: object) -> _FakeSession:
@@ -312,10 +321,6 @@ async def test_target_model_resolved_after_active_run_and_heartbeat(
     workspace.mkdir()
     (workspace / "snap").mkdir()
     args = {
-        "workspace_root": str(workspace),
-        "epoch_id": "e0",
-        "generation_id": "v0",
-        "snapshot_root": str(workspace / "snap"),
         "entry": {
             "id": "entry_a",
             "kind": "single_turn",
@@ -323,18 +328,57 @@ async def test_target_model_resolved_after_active_run_and_heartbeat(
             "input": "hello",
         },
         "adapter": {"kind": "adk", "entrypoint": "unused:unused"},
-        # Endpoint-shaped, so a real (unmocked) resolve would import ADK —
-        # the fake above just records the call instead.
         "target_role": {"models_role": dict(_MODEL_SPEC)},
-        "evaluation_role": {"dotted": "tests._subprocess_worker_support:evaluation_call_llm"},
-        "run_id": run_id_for_unit("v0", "entry_a"),
-        "sink_events_path": str(events_jsonl_path(workspace, "e0", "v0", "entry_a")),
-        "loss_path": str(loss_profile_path(workspace, "e0", "v0", "entry_a")),
+        "evaluation_role": {
+            "models_role": {"call_llm": "tests._subprocess_worker_support:evaluation_call_llm"}
+        },
+        "sink_events_path": str(
+            measurement_artifact_path(
+                events_jsonl_path(workspace, "e0", "v0", "entry_a").parent,
+                "events",
+                0,
+                base_seed=None,
+            )
+        ),
+        "loss_path": str(
+            measurement_artifact_path(
+                loss_profile_path(workspace, "e0", "v0", "entry_a").parent,
+                "loss",
+                0,
+                base_seed=None,
+            )
+        ),
         "result_path": str(tmp_path / "result.json"),
-        "instance_id": "test",
-        "seed": None,
-        "harmonograf_url": "",
         "weights": {},
+        "runtime_context": WorkerRuntimeContext(
+            run=RunContext(
+                Path(str(workspace)),
+                "e0",
+                "v0",
+                run_id_for_unit("v0", "entry_a"),
+                Path(str(workspace / "snap")),
+                None,
+            )
+        ).to_json(),
+        "configuration": resolve_configuration(
+            {"runtime": {"instance_id": "test", "seed": None}}
+        ).to_json(),
+        "driver_imports": DriverImportContext().document(),
+        "measurement": MeasurementDraw.from_index(
+            artifact_replicate_index(
+                Path(
+                    str(
+                        measurement_artifact_path(
+                            loss_profile_path(workspace, "e0", "v0", "entry_a").parent,
+                            "loss",
+                            0,
+                            base_seed=None,
+                        )
+                    )
+                ).name
+            ),
+            base_seed=None,
+        ).to_json(),
     }
 
     await worker._run(args)
@@ -401,13 +445,13 @@ def _write_target_model_gate_args(
     """
     from zicato.core.workspace import events_jsonl_path, loss_profile_path, run_id_for_unit
 
-    sink_path = events_jsonl_path(workspace, "e0", "v0", "entry_a")
-    loss_path = loss_profile_path(workspace, "e0", "v0", "entry_a")
+    sink_path = measurement_artifact_path(
+        events_jsonl_path(workspace, "e0", "v0", "entry_a").parent, "events", 0, base_seed=None
+    )
+    loss_path = measurement_artifact_path(
+        loss_profile_path(workspace, "e0", "v0", "entry_a").parent, "loss", 0, base_seed=None
+    )
     payload = {
-        "workspace_root": str(workspace),
-        "epoch_id": "e0",
-        "generation_id": "v0",
-        "snapshot_root": str(generation_snapshot),
         "entry": {
             "id": "entry_a",
             "kind": "single_turn",
@@ -418,8 +462,6 @@ def _write_target_model_gate_args(
             "kind": "import",
             "factory": "tests._subprocess_worker_support:make_stub_adapter",
         },
-        # Endpoint-shaped: exactly the live-validation shape that forces
-        # ``build_adk_model`` to import ``google.adk`` when it IS resolved.
         "target_role": {
             "models_role": {
                 "model": "openai/fake-model",
@@ -427,15 +469,30 @@ def _write_target_model_gate_args(
                 "api_key_env": "ZICATO_TEST_UNSET_KEY_GATE",
             }
         },
-        "evaluation_role": {"dotted": "tests._subprocess_worker_support:evaluation_call_llm"},
-        "run_id": run_id_for_unit("v0", "entry_a"),
+        "evaluation_role": {
+            "models_role": {"call_llm": "tests._subprocess_worker_support:evaluation_call_llm"}
+        },
         "sink_events_path": str(sink_path),
         "loss_path": str(loss_path),
         "result_path": str(result_path),
-        "instance_id": "test",
-        "seed": None,
-        "harmonograf_url": "",
         "weights": {},
+        "runtime_context": WorkerRuntimeContext(
+            run=RunContext(
+                Path(str(workspace)),
+                "e0",
+                "v0",
+                run_id_for_unit("v0", "entry_a"),
+                Path(str(generation_snapshot)),
+                None,
+            )
+        ).to_json(),
+        "configuration": resolve_configuration(
+            {"runtime": {"instance_id": "test", "seed": None}}
+        ).to_json(),
+        "driver_imports": DriverImportContext().document(),
+        "measurement": MeasurementDraw.from_index(
+            artifact_replicate_index(Path(str(loss_path)).name), base_seed=None
+        ).to_json(),
     }
     args_path.write_text(json.dumps(payload), encoding="utf-8")
 

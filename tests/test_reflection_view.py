@@ -15,7 +15,8 @@ from pathlib import Path
 import pytest
 
 from tests._reflection_support import finding_body, scorecard_body
-from zicato.core import DriftCount, JudgeLoss, LossProfile, ScoringWeights
+from tests._workspace_support import write_epoch, write_lineage
+from zicato.core import JudgeLoss, LossProfile, MetricCount, ScoringWeights
 from zicato.core.workspace import (
     reflection_adjudication_path,
     reflection_dir,
@@ -29,6 +30,7 @@ from zicato.query import reflection_view as rv
 from zicato.query.paths import WorkspacePaths
 from zicato.reflection.corpus import ingest_lineage, write_corpus
 from zicato.tournament.unit_cache import _unit_loss_path, unit_result_path
+from zicato.workspace import WorkspaceLayout
 
 EPOCH = "epoch-1"
 REFL = "refl-20260701000000-view0001"
@@ -47,7 +49,9 @@ def _write_loss(workspace: Path, gen: str, entry: str, *, drift: float, replicat
         entry_id=entry,
         generation_id=gen,
         epoch_id=EPOCH,
-        drift_counts=((DriftCount(kind="custom:j", severity="warning", count=1),) if drift else ()),
+        metric_counts=(
+            (MetricCount(name="drift:custom:j", severity="warning", count=1),) if drift else ()
+        ),
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=10,
@@ -144,13 +148,12 @@ def _write_reflection_meta(
 
 def _epoch_config(workspace: Path) -> None:
     (workspace / "epochs" / EPOCH).mkdir(parents=True, exist_ok=True)
-    (workspace / "epochs" / EPOCH / "config.json").write_text(
-        json.dumps({"id": EPOCH, "name": EPOCH, "created_at": "2026-07-01", "closed": False}),
-        encoding="utf-8",
+    write_epoch(
+        WorkspaceLayout(workspace),
+        EPOCH,
+        config={"id": EPOCH, "name": EPOCH, "created_at": "2026-07-01", "closed": False},
     )
-    (workspace / "lineage.json").write_text(
-        json.dumps({"epochs": [{"id": EPOCH, "generations": []}]}), encoding="utf-8"
-    )
+    write_lineage(WorkspaceLayout(workspace), {"epochs": [{"id": EPOCH, "generations": []}]})
 
 
 def test_list_reflections_index_first(tmp_path: Path) -> None:
@@ -388,21 +391,19 @@ def test_entry_candidate_matrix_parity(tmp_path: Path) -> None:
     _write_loss(workspace, "v1", "entryA", drift=6.0, replicate=0)
     # v1/entryB intentionally absent -> a None cell.
     # Register the generations in lineage so the index walk sees them.
-    (workspace / "lineage.json").write_text(
-        json.dumps(
-            {
-                "epochs": [
-                    {
-                        "id": EPOCH,
-                        "generations": [
-                            {"id": "v0", "parent_id": None, "promoted": True, "created_at": "1"},
-                            {"id": "v1", "parent_id": "v0", "promoted": False, "created_at": "2"},
-                        ],
-                    }
-                ]
-            }
-        ),
-        encoding="utf-8",
+    write_lineage(
+        WorkspaceLayout(workspace),
+        {
+            "epochs": [
+                {
+                    "id": EPOCH,
+                    "generations": [
+                        {"id": "v0", "parent_id": None, "promoted": True, "created_at": "1"},
+                        {"id": "v1", "parent_id": "v0", "promoted": False, "created_at": "2"},
+                    ],
+                }
+            ]
+        },
     )
     rebuild_index(workspace)
 

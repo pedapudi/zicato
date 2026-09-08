@@ -117,7 +117,7 @@ ZICATO=${ZICATO:?set ZICATO to your zicato checkout}
 EX=$ZICATO/examples/zicato_examples/target_2_goldfive_steering
 python -m zicato.cli epoch new t2_smoke --workspace .zicato \
     --board   $EX/board.jsonl \
-    --rubric  $EX/rubric.md \
+    --brief  $EX/rubric.md \
     --scoring $EX/scoring.json
 ```
 

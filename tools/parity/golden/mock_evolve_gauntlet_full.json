@@ -7,7 +7,6 @@
       "generation_id": "v0",
       "hypothesis": {
         "core_idea": "baseline seed",
-        "expected_drift_movements": [],
         "expected_metric_movements": [],
         "expected_pass_rate_delta": "",
         "modulating": [],
@@ -27,7 +26,6 @@
       "generation_id": "v1",
       "hypothesis": {
         "core_idea": "Tag the topic_slugify_logic literal for candidate v1.",
-        "expected_drift_movements": [],
         "expected_metric_movements": [
           {
             "direction": "neutral",
@@ -46,7 +44,6 @@
       "outcome": {
         "champion_eval_mode": "full",
         "drift_loss_delta": -1.6,
-        "drift_movements": [],
         "eliminated_in_round": null,
         "evidence": {
           "confirmation_status": "disabled",
@@ -104,6 +101,7 @@
       "drift_loss_mean": 2.0,
       "entry_count": 2,
       "expectation_count": 2,
+      "format_version": 1,
       "generation_id": "v0",
       "mean_score": 1.0,
       "namespace_aggregates": {
@@ -152,6 +150,7 @@
       "drift_loss_mean": 0.4,
       "entry_count": 2,
       "expectation_count": 2,
+      "format_version": 1,
       "generation_id": "v1",
       "mean_score": 1.0,
       "namespace_aggregates": {
@@ -226,7 +225,7 @@
     "0/round_log.jsonl": [
       {
         "payload": {
-          "contract_hash": "2744699221a13ed8a303c3d9da552a64d1f2e439b499948315b59503db0b1410"
+          "contract_hash": "76b5bf7a933769eb64fbc1fd0481777e56be2b21f99f636c808c94699ca9848f"
         },
         "scope": {},
         "seq": 1,

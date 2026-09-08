@@ -635,7 +635,7 @@ def staleness_episodes(
 
 def _drift_count(signals: Any, kind: str) -> int:
     """Summed drift count for one kind across all severities (``0`` if absent)."""
-    return sum(int(dc.count) for dc in signals.drift_counts if dc.kind == kind)
+    return sum(int(mc.count) for mc in signals.metric_counts if mc.name == f"drift:{kind}")
 
 
 def _imported_episode(
@@ -948,11 +948,11 @@ def _scoring_weights(paths: Any, epoch_id: str) -> Any:
 
     try:
         from zicato.query.paths import _read_json_value, layout_of  # noqa: PLC0415
-        from zicato.workspace_loader import historical_scoring_weights_from_dict  # noqa: PLC0415
+        from zicato.workspace_loader import scoring_weights_from_dict  # noqa: PLC0415
 
         raw = _read_json_value(layout_of(paths).epoch_dir(epoch_id) / "scoring.json")
         if isinstance(raw, dict):
-            return historical_scoring_weights_from_dict(raw)
+            return scoring_weights_from_dict(raw)
     except Exception:  # noqa: BLE001 — a missing/bad scoring.json → defaults
         pass
     return ScoringWeights()

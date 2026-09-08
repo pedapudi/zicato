@@ -41,21 +41,13 @@ def _board_input_preview(entry: dict[str, Any]) -> str | None:
     turns = entry.get("turns")
     if isinstance(turns, list):
         for turn in turns:
-            if isinstance(turn, str):
-                return _preview(turn)
-            if isinstance(turn, dict):
-                for key in ("input", "text", "content"):
-                    val = turn.get(key)
-                    if isinstance(val, str):
-                        return _preview(val)
-    persona = entry.get("persona")
+            if isinstance(turn, dict) and isinstance(turn.get("user"), str):
+                return _preview(turn["user"])
+    persona = entry.get("user_persona")
     if isinstance(persona, dict):
         goal = persona.get("goal")
         if isinstance(goal, str):
             return _preview(goal)
-    goal = entry.get("goal")
-    if isinstance(goal, str):
-        return _preview(goal)
     return None
 
 
@@ -67,8 +59,6 @@ def _project_board(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         expectation = obj.get("expectation")
         expectation_kind = expectation.get("kind") if isinstance(expectation, dict) else None
         budget = obj.get("wall_clock_budget_seconds")
-        if budget is None:
-            budget = obj.get("budget_s")
         tags = obj.get("tags")
         tags_list = [t for t in tags if isinstance(t, str)] if isinstance(tags, list) else []
         entries.append(
@@ -79,7 +69,7 @@ def _project_board(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "kind": obj.get("kind"),
                 "input_preview": _board_input_preview(obj),
                 "expectation_kind": expectation_kind if isinstance(expectation_kind, str) else None,
-                "budget_s": coerce_float(budget),
+                "wall_clock_budget_seconds": coerce_float(budget),
                 "weight": float(obj["weight"])
                 if isinstance(obj.get("weight"), int | float)
                 else None,
@@ -175,10 +165,8 @@ def _read_harness(paths: WorkspacePaths) -> dict[str, Any] | None:
     cfg = loaded.raw
     adapter = cfg.get("adapter")
     adapter = adapter if isinstance(adapter, dict) else {}
-    entrypoint = adapter.get("entrypoint") or cfg.get("adk_entrypoint") or cfg.get("entrypoint")
+    entrypoint = adapter.get("entrypoint")
     trees = adapter.get("mutable_trees")
-    if trees is None:
-        trees = cfg.get("mutable_trees")
     mutable_trees = [t for t in trees if isinstance(t, str)] if isinstance(trees, list) else []
     return {
         "entrypoint": entrypoint if isinstance(entrypoint, str) else None,

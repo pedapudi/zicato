@@ -602,12 +602,13 @@ it reports the measurements.**
 
 ## 6. The config sketch (NOT implemented)
 
-The endorsed shape is **one nested frozen block** on the contract, layered
-under the existing `tournament_structure`, rather than a top-level structure
-or four independent knobs. It follows the omit-at-default discipline
-(`03-contract-and-epochs.md` §"The omit-at-default discipline"; `SCORING.md §2.5`) so that
-**an absent `cascade` block canonicalizes byte-for-byte identically to
-today** and no existing epoch rolls:
+The proposed configuration is a nested frozen block under
+`tournament_structure`. If implemented, every field, including defaults, would
+be serialized and hashed through the shared configuration owner. An omitted
+authored block would use its declared defaults. Introducing the block would
+change configuration identity; it would not preserve a hash from a shape that
+lacks the block. See the development guide's contract chapter §3.4 and
+`SCORING.md §2.5`.
 
 ```jsonc
 // FUTURE / SPECULATIVE — no loader, strategy, or test reads this today.
@@ -632,12 +633,10 @@ today** and no existing epoch rolls:
 
 Design properties this sketch commits to:
 
-- **`cascade` is a nested frozen dataclass**, so it recurses through
-  `scoring_to_canon` in the same way as the shipped `overfitting` / `ladder` /
-  `tournament_structure` blocks (`03-contract-and-epochs.md §3.2`), and the
-  same omit-at-default check applies to each field. **It rolls the epoch on
-  change** — a cascade edits *what a promotion means*, the same rationale
-  as any `tournament_structure` change (`TOURNAMENT-STRUCTURES.md §4.1`).
+- **`cascade` would be a nested frozen dataclass.** The shared configuration
+  serializer would include every field in the scoring canonical form. Changing
+  the effective block would roll the epoch because it changes the promotion
+  procedure (`TOURNAMENT-STRUCTURES.md §4.1`).
 - **Default = empty stage list ⇒ today's behavior**: the screen, racing,
   gate, and holdout run as they do now, independently configured.
   The cascade block is purely additive opt-in.
@@ -671,9 +670,9 @@ Unification is therefore a **configuration and accounting**
 change — one ordered spec, one budget ledger, one reserved-base
 allocation, and one place that scales the terminal evidence with upstream
 selectivity — over four mechanisms that already exist and already compose
-pairwise. It **absorbs** their independent wiring; it **deprecates
-nothing** operators rely on, because the empty default is byte-identical to
-today. Nothing here weakens the protected-incumbent invariant, the noise
+pairwise. The proposed empty stage list preserves their execution behavior;
+adding the configuration block still changes contract identity. The design
+must preserve the protected-incumbent invariant, the noise
 doctrine, or the overfitting boundary — a cascade that tried to would fail
 Experiment B's null bar (§4.3) and never ship.
 
@@ -736,4 +735,4 @@ Experiment B's null bar (§4.3) and never ship.
 | Train/holdout split, the Ladder, restricted proposer visibility | [`OVERFITTING.md`](OVERFITTING.md) |
 | The noise doctrine, A/A floors, evidence gate, placebo, reserved bases, the power-harness methodology | dev-guide `04-evaluation-statistics.md` |
 | The candidate screen's veto-first / confirm-before-veto doctrine | `src/zicato/epoch/screen.py`, `04-evaluation-statistics.md §3.3` |
-| The contract hash + omit-at-default discipline the config sketch follows | `03-contract-and-epochs.md`, [`EPOCHS-AND-JOURNALING.md`](EPOCHS-AND-JOURNALING.md) |
+| Complete configuration serialization and contract identity | `03-contract-and-epochs.md`, [`EPOCHS-AND-JOURNALING.md`](EPOCHS-AND-JOURNALING.md) |

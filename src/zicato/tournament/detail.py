@@ -13,8 +13,8 @@ Design rules encoded here:
   a run may be missing its ``loss_profiles`` row, an experiment row may
   carry a ``NULL`` ``outcome_json``. Every function degrades gracefully:
   it returns a record with empty / ``None`` sub-fields rather than
-  raising. The *only* hard error is a missing database file — that is an
-  operator-actionable condition (run ``zicato repair index``).
+  raising for absent rows. A missing or incompatible database requires
+  rebuilding through ``zicato repair index``.
 * **Frozen dataclasses out.** All return shapes are
   ``frozen=True, slots=True`` dataclasses (or dicts of JSON-native
   values) so the supervisor / CLI can ``asdict`` and emit them straight
@@ -23,7 +23,7 @@ Design rules encoded here:
 The SQLite contract (tables ``epochs``, ``generations``, ``experiments``,
 ``patches``, ``runs``, ``loss_profiles``, ``metric_counts``,
 ``tournaments``) is owned by the index ingester. This module only reads
-it; if a column is absent the row-projection helpers default it.
+it. Connections require the supported schema; nullable values remain unknown.
 
 The bracket model
 -----------------
@@ -311,77 +311,26 @@ class MutationStat:
 # ---------------------------------------------------------------------------
 
 
-def _try_import_open_index() -> Any:
-    """Return ``zicato.index.query.open_index`` if importable, else ``None``.
-
-    The index package is built by a sibling component and may not be
-    present (or may lack type stubs) in every environment; the dynamic
-    lookup keeps this module's hard dependency surface to stdlib only.
-    """
-    try:
-        import importlib
-
-        module = importlib.import_module("zicato.index.query")
-    except Exception:  # noqa: BLE001 — any import failure → fall back.
-        return None
-    return getattr(module, "open_index", None)
-
-
 def _open(db_path: str | Path) -> sqlite3.Connection:
-    """Open the analytical index.
+    """Open the supported analytical index through its connection owner."""
+    from zicato.index.query import open_index  # noqa: PLC0415
 
-    Prefers ``zicato.index.query.open_index`` when it is importable at
-    runtime (so the index package can layer connection pooling / pragmas
-    on top); otherwise opens the SQLite file directly with stdlib.
-
-    Raises :class:`IndexUnavailableError` if the database file does not
-    exist — the caller should be pointed at ``zicato repair index``.
-    """
     path = Path(db_path)
     if not path.exists():
         raise IndexUnavailableError(
-            f"analytical index not found at {path} — run `zicato repair index` "
-            f"to build it before querying tournament detail"
+            f"analytical index not found at {path}; run `zicato repair index` first"
         )
-    open_index = _try_import_open_index()
-    if open_index is None:
-        conn = sqlite3.connect(str(path))
-    else:
-        # zicato.index.query.open_index expects a Path (it calls
-        # .exists()); pass the Path object rather than its string form.
-        conn = open_index(path)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
-def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
-    """Return the set of column names for ``table`` (empty if absent)."""
-    try:
-        cur = conn.execute(f"PRAGMA table_info({table})")
-    except sqlite3.Error:
-        return set()
-    return {str(row[1]) for row in cur.fetchall()}
+    return open_index(path)
 
 
 def _query(conn: sqlite3.Connection, sql: str, params: tuple[Any, ...] = ()) -> list[sqlite3.Row]:
-    """Run a SELECT, returning ``[]`` on any operational error.
-
-    Tolerates a missing table / column so a partially-populated index
-    never crashes a detail query.
-    """
-    try:
-        cur = conn.execute(sql, params)
-        return list(cur.fetchall())
-    except sqlite3.Error:
-        return []
+    """Read the supported index; no matching rows yields an empty list."""
+    return list(conn.execute(sql, params).fetchall())
 
 
 def _row_get(row: sqlite3.Row, key: str, default: Any = None) -> Any:
-    """Safe accessor for a :class:`sqlite3.Row` that may lack ``key``."""
-    try:
-        value = row[key]
-    except (IndexError, KeyError):
-        return default
+    """Read a declared column, substituting the caller's default only for null."""
+    value = row[key]
     return default if value is None else value
 
 
@@ -640,43 +589,17 @@ def _entry_verdict(parent_loss: float | None, child_loss: float | None) -> str:
 
 
 def scalar_breakdown(db_path: str | Path, epoch_id: str, generation_id: str) -> dict[str, Any]:
-    """Per-namespace contribution to each side's scalar score.
+    """Read indexed matchup scalars, deltas, and observed namespace means.
 
-    The challenger ``generation_id`` is compared against its parent
-    champion. For each side we surface:
-
-    * ``scalar`` — the combined tournament scalar (from ``outcome_json``'s
-      child/parent scalar, falling back to the experiment scalar columns).
-    * ``components`` — ``{component_name: contribution}`` parsed from the
-      stored ``scalar_components`` block when present.
-    * ``namespace_aggregates`` — ``{namespace: weighted_aggregate}`` when
-      the outcome recorded it.
-
-    Also derives ``namespace_metric_means`` directly from the index
-    ``metric_counts`` / ``loss_profiles`` rows so the scoring math is
-    visible even when ``outcome_json`` is sparse.
-
-    Returns a JSON-native dict. A generation with no resolved outcome
-    yields a dict whose ``parent`` / ``child`` blocks have ``scalar:
-    None`` and empty component maps — never raises.
+    Absolute values come only from the tournament row. An absent row or
+    null scalar remains unknown. Namespace means use the indexed measured
+    counts; they do not reconstruct weighted scalar components.
     """
     conn = _open(db_path)
     try:
         exp = _experiment_row(conn, epoch_id, generation_id)
         parent_gen = _parent_of(conn, epoch_id, generation_id)
-        outcome = _loads(_row_get(exp, "outcome_json")) if exp is not None else {}
-
-        child_block = _scalar_side(outcome, "child")
-        parent_block = _scalar_side(outcome, "parent")
-
-        # Fall back to the tournaments table for the raw scalars.
-        if child_block["scalar"] is None or parent_block["scalar"] is None:
-            trow = _tournament_row(conn, epoch_id, generation_id)
-            if trow is not None:
-                if child_block["scalar"] is None:
-                    child_block["scalar"] = _as_float(_row_get(trow, "child_scalar"))
-                if parent_block["scalar"] is None:
-                    parent_block["scalar"] = _as_float(_row_get(trow, "parent_scalar"))
+        tournament = _tournament_row(conn, epoch_id, generation_id)
 
         return {
             "epoch_id": epoch_id,
@@ -691,8 +614,14 @@ def scalar_breakdown(db_path: str | Path, epoch_id: str, generation_id: str) -> 
             "pass_rate_delta": (
                 _as_float(_row_get(exp, "pass_rate_delta")) if exp is not None else None
             ),
-            "child": child_block,
-            "parent": parent_block,
+            "child": {
+                "scalar": _as_float(tournament["child_scalar"]) if tournament is not None else None,
+            },
+            "parent": {
+                "scalar": _as_float(tournament["parent_scalar"])
+                if tournament is not None
+                else None,
+            },
             "child_namespace_metric_means": _namespace_metric_means(conn, epoch_id, generation_id),
             "parent_namespace_metric_means": (
                 _namespace_metric_means(conn, epoch_id, parent_gen)
@@ -702,48 +631,6 @@ def scalar_breakdown(db_path: str | Path, epoch_id: str, generation_id: str) -> 
         }
     finally:
         conn.close()
-
-
-def _scalar_side(outcome: dict[str, Any], side: str) -> dict[str, Any]:
-    """Project one side (``"child"`` / ``"parent"``) out of an outcome dict.
-
-    The outcome JSON shape is whatever the ingester stored from the
-    tournament runner. We probe several conventional layouts:
-
-    * ``outcome[side]`` is itself a dict with ``scalar`` /
-      ``scalar_components`` / ``namespace_aggregates``.
-    * ``outcome[f"{side}_scalar"]`` / ``outcome[f"{side}_components"]``.
-    * a top-level ``scalar`` (treated as the child's).
-    """
-    block: dict[str, Any] = {
-        "scalar": None,
-        "components": {},
-        "namespace_aggregates": {},
-    }
-    nested = outcome.get(side)
-    if isinstance(nested, dict):
-        block["scalar"] = _as_float(nested.get("scalar"))
-        comps = nested.get("scalar_components")
-        if isinstance(comps, dict):
-            block["components"] = {k: _as_float(v) for k, v in comps.items()}
-        ns = nested.get("namespace_aggregates")
-        if isinstance(ns, dict):
-            block["namespace_aggregates"] = {k: _as_float(v) for k, v in ns.items()}
-
-    if block["scalar"] is None:
-        block["scalar"] = _as_float(outcome.get(f"{side}_scalar"))
-    if not block["components"]:
-        comps = outcome.get(f"{side}_scalar_components") or outcome.get(f"{side}_components")
-        if isinstance(comps, dict):
-            block["components"] = {k: _as_float(v) for k, v in comps.items()}
-    if not block["namespace_aggregates"]:
-        ns = outcome.get(f"{side}_namespace_aggregates")
-        if isinstance(ns, dict):
-            block["namespace_aggregates"] = {k: _as_float(v) for k, v in ns.items()}
-
-    if side == "child" and block["scalar"] is None:
-        block["scalar"] = _as_float(outcome.get("scalar"))
-    return block
 
 
 def _namespace_metric_means(
@@ -964,10 +851,9 @@ def _gate_reasoning(
 def hypothesis_ledger(db_path: str | Path, epoch_id: str) -> list[HypothesisGrade]:
     """Grade every challenger's predictions against the realised outcome.
 
-    For each challenger we read the proposer's ``expected_metric_movements``
-    (preferred) or ``expected_drift_movements`` from ``hypothesis_json`` and
+    For each challenger, read the named predictions from ``hypothesis_json`` and
     join them against the realised movements in ``outcome_json``
-    (``metric_movements`` / ``drift_movements``).
+    (``metric_movements``).
 
     Match semantics (see :data:`MAGNITUDE_SMALL_MAX` /
     :data:`MAGNITUDE_LARGE_MIN`):
@@ -1007,7 +893,7 @@ def hypothesis_ledger(db_path: str | Path, epoch_id: str) -> list[HypothesisGrad
             if not core:
                 core = str(hjson.get("core_idea", ""))
             expected = _expected_movements(hjson)
-            actual = _actual_movements(ojson)
+            actual = _actual_movements(ojson) if ojson else {}
             movements = [
                 _grade_movement(metric, direction, magnitude, actual.get(metric), ranges)
                 for metric, (direction, magnitude) in expected.items()
@@ -1044,48 +930,18 @@ def proposer_calibration_rate(grades: list[HypothesisGrade]) -> float:
 
 
 def _expected_movements(hjson: dict[str, Any]) -> dict[str, tuple[str, str]]:
-    """Extract ``{metric_name: (direction, magnitude)}`` from a hypothesis.
-
-    Prefers ``expected_metric_movements`` (namespaced) and falls back to
-    ``expected_drift_movements`` (drift kind, lifted into the ``drift:``
-    namespace) so older journal rows still grade.
-    """
-    out: dict[str, tuple[str, str]] = {}
-    for mv in hjson.get("expected_metric_movements", []) or []:
-        if not isinstance(mv, dict):
-            continue
-        name = str(mv.get("metric_name", ""))
-        if name:
-            out[name] = (str(mv.get("direction", "")), str(mv.get("magnitude", "")))
-    for mv in hjson.get("expected_drift_movements", []) or []:
-        if not isinstance(mv, dict):
-            continue
-        kind = str(mv.get("kind", ""))
-        if not kind:
-            continue
-        name = kind if ":" in kind else f"drift:{kind}"
-        out.setdefault(name, (str(mv.get("direction", "")), str(mv.get("magnitude", ""))))
-    return out
+    """Index named predictions by their metric name."""
+    return {
+        mv["metric_name"]: (mv["direction"], mv["magnitude"])
+        for mv in hjson["expected_metric_movements"]
+    }
 
 
-def _actual_movements(ojson: dict[str, Any]) -> dict[str, tuple[float | None, float | None]]:
-    """Extract ``{metric_name: (from_value, to_value)}`` from an outcome."""
-    out: dict[str, tuple[float | None, float | None]] = {}
-    for mv in ojson.get("metric_movements", []) or []:
-        if not isinstance(mv, dict):
-            continue
-        name = str(mv.get("metric_name", ""))
-        if name:
-            out[name] = (_as_float(mv.get("from_value")), _as_float(mv.get("to_value")))
-    for mv in ojson.get("drift_movements", []) or []:
-        if not isinstance(mv, dict):
-            continue
-        kind = str(mv.get("kind", ""))
-        if not kind:
-            continue
-        name = kind if ":" in kind else f"drift:{kind}"
-        out.setdefault(name, (_as_float(mv.get("from_rate")), _as_float(mv.get("to_rate"))))
-    return out
+def _actual_movements(ojson: dict[str, Any]) -> dict[str, tuple[float, float]]:
+    """Index recorded parent and child values by metric name."""
+    return {
+        mv["metric_name"]: (mv["from_value"], mv["to_value"]) for mv in ojson["metric_movements"]
+    }
 
 
 def _metric_ranges(conn: sqlite3.Connection, epoch_id: str) -> dict[str, float]:
@@ -1215,10 +1071,8 @@ def grade_hypothesis_predictions(
     FUNCTIONALITY-RECOMMENDATIONS.md §4.2) can score its prediction accuracy
     without re-opening the index or re-querying the whole epoch.
 
-    Joins the hypothesis's expected movements (``expected_metric_movements``
-    preferred, ``expected_drift_movements`` as fallback — same precedence as
-    the ledger) against the realised movements in the outcome
-    (``metric_movements`` / ``drift_movements``). A movement *matches* iff
+    Join the named predictions against the realised metric movements in the outcome
+    (``metric_movements``). A movement *matches* iff
     both its sign and its (range-normalised) magnitude bucket agree with the
     prediction — identical semantics to :func:`hypothesis_ledger`.
 
@@ -1299,24 +1153,12 @@ def optimization_trajectory(db_path: str | Path, epoch_id: str) -> Trajectory:
 
 
 def _resolve_scalar(conn: sqlite3.Connection, epoch_id: str, generation_id: str) -> float | None:
-    """Resolve one generation's combined scalar from the index.
-
-    Probes, in order: the ``tournaments`` row's ``child_scalar``, the
-    ``experiments`` ``outcome_json`` child scalar, and (for the seed,
-    which never has a tournament row) the next generation's
-    ``parent_scalar``.
-    """
+    """Read a generation's indexed scalar, including its measurement as a parent."""
     trow = _tournament_row(conn, epoch_id, generation_id)
     if trow is not None:
         scalar = _as_float(_row_get(trow, "child_scalar"))
         if scalar is not None:
             return scalar
-    exp = _experiment_row(conn, epoch_id, generation_id)
-    if exp is not None:
-        outcome = _loads(_row_get(exp, "outcome_json"))
-        side = _scalar_side(outcome, "child")
-        if side["scalar"] is not None:
-            return float(side["scalar"])
     # Seed generation: borrow its scalar from a child's parent_scalar.
     child_rows = _query(
         conn,

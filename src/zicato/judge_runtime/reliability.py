@@ -203,7 +203,7 @@ async def test_retest(
     -----
     The drift-emission flag is the quantity compared — it is the bit that
     becomes (or does not become) a ``custom:<judge_name>``
-    :class:`DriftCount` on a real run's loss, so its test–retest delta is
+    :class:`MetricCount` on a real run's loss, so its test–retest delta is
     exactly the noise the judge injects into the scalar. Calls are
     sequential (not gathered) so a stateful scripted double sees a
     deterministic call order.

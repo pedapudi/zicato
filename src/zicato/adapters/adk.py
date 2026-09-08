@@ -1492,6 +1492,15 @@ class ADKHarnessAdapter:
         else:
             self.mutable_trees = [Path(p).resolve() for p in mutable_trees]
 
+    def worker_spec(self) -> dict[str, Any]:
+        """Declare the adapter and integration reconstructed in each worker."""
+        return {
+            "kind": "adk",
+            "entrypoint": self._entrypoint,
+            "mutable_trees": [str(tree) for tree in self.mutable_trees],
+            "integrations": ["goldfive"],
+        }
+
     def mutable_subpaths(self, generation_root: Path) -> list[Path]:
         """Re-base the adapter's mutable trees onto a concrete snapshot root.
 

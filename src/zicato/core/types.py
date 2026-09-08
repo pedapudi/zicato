@@ -33,8 +33,8 @@ Design rules encoded here:
 * **Open-ended kind strings where forward-compat matters** —
   :class:`BoardEntry`'s ``kind`` field is a closed :class:`Literal` for
   the v0 surface, but :class:`Pattern.kind` and the drift-kind strings
-  on :class:`DriftCount` / :class:`ExpectedDriftMovement` /
-  :class:`DriftMovementActual` are bare ``str`` validated against a
+  on :class:`MetricCount` / :class:`ExpectedMetricMovement` /
+  :class:`MetricMovementActual` are bare ``str`` validated against a
   registered set (see :mod:`zicato.core.drift_kinds`). This is the
   forward-compatible posture required by the dogfood-target plan.
 
@@ -68,7 +68,6 @@ from zicato.core.board import (
     BoardEntry,
     BoardEntryKind,
     Expectation,
-    ExpectationFiresOn,
     ExpectationKind,
     JudgeMode,
     JudgeSpec,
@@ -83,14 +82,12 @@ from zicato.core.epoch import (
 )
 from zicato.core.experiment import (
     EXPERIMENT_MEMORY_MAX_ENTRIES,
-    DriftDirection,
-    DriftMagnitude,
-    DriftMovementActual,
-    ExpectedDriftMovement,
     ExpectedMetricMovement,
     Experiment,
     HypothesisSpec,
     MetricMovementActual,
+    MovementDirection,
+    MovementMagnitude,
     OutcomeRecord,
     PriorExperiment,
 )
@@ -105,7 +102,6 @@ from zicato.core.lineage import (
 # aliases mark them as explicit re-exports for the type checker.
 from zicato.core.loss import BUDGET_ABORT_CAUSE as BUDGET_ABORT_CAUSE
 from zicato.core.loss import (
-    DriftCount,
     ExpectationResult,
     JudgeError,
     JudgeLoss,
@@ -167,7 +163,6 @@ __all__ = [
     "BoardEntryKind",
     "ExpectationKind",
     "OutputScope",
-    "ExpectationFiresOn",
     "Expectation",
     "JudgeMode",
     "JudgeSpec",
@@ -176,7 +171,6 @@ __all__ = [
     "BoardEntry",
     "validate_board_entry",
     # Telemetry / loss
-    "DriftCount",
     "MetricCount",
     "MetricSeverity",
     "JudgeLoss",
@@ -188,12 +182,10 @@ __all__ = [
     "ArtifactSet",
     "RunResult",
     # Hypothesis / experiment
-    "DriftDirection",
-    "DriftMagnitude",
-    "ExpectedDriftMovement",
+    "MovementDirection",
+    "MovementMagnitude",
     "ExpectedMetricMovement",
     "HypothesisSpec",
-    "DriftMovementActual",
     "MetricMovementActual",
     "TournamentDecision",
     "Side",

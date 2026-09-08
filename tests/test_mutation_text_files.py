@@ -335,7 +335,7 @@ def test_region_patch_cannot_escape_or_eat_its_markers(tmp_path: Path) -> None:
 
 
 def test_whole_file_patch_that_drops_its_marker_is_caught_post_apply(tmp_path: Path) -> None:
-    """A ``:file`` point CAN delete its own marker; A2 rejects the result."""
+    """A ``:file`` point CAN delete its own marker; missing_mutation rejects the result."""
 
     src, dst = tmp_path / "src", tmp_path / "dst"
     _write(src / "prompt.md", '<!-- zicato:mutable:file id="whole" -->\nbody\n')
@@ -558,7 +558,7 @@ def test_declared_typescript_region_cannot_eat_its_markers(
 
 
 def test_required_placeholders_survive_the_text_path(tmp_path: Path) -> None:
-    """A3 is format-agnostic and still fires on a markdown region."""
+    """missing_placeholder is format-agnostic and still fires on a markdown region."""
 
     src, dst = tmp_path / "src", tmp_path / "dst"
     _write(

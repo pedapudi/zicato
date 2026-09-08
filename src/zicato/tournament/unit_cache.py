@@ -80,7 +80,6 @@ def _skipped_unit_loss(
         entry_id=entry.id,
         generation_id=generation.id,
         epoch_id=epoch_id,
-        drift_counts=(),
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=0,
@@ -313,9 +312,7 @@ def run_result_from_payload(payload: object) -> dict[str, Any]:
     """
     if not isinstance(payload, dict):
         raise RecordError("result capture must be an object")
-    check_record_format(
-        payload, "result capture", expected_version=RUN_RESULT_FORMAT_VERSION, allow_missing=False
-    )
+    check_record_format(payload, "result capture", expected_version=RUN_RESULT_FORMAT_VERSION)
     for name in ("run_id", "entry_id", "final_output", "abort_reason"):
         if not isinstance(payload.get(name), str):
             raise RecordError(f"result capture {name} must be text")

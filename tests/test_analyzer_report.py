@@ -42,13 +42,16 @@ from zicato.analyzer.report_sections import (
     render_score_trajectory_table,
 )
 from zicato.core.mutation import MutationPoint
+from zicato.core.types import JudgeLoss, MetricCount
 from zicato.core.workspace import analysis_path
 from zicato.mutation.inventory import write_mutation_inventory
+from zicato.telemetry.reducer import write_loss_profile
+from zicato.testing import make_loss_profile
+from zicato.tournament.scoring import write_gen_score
 
 
-@pytest.mark.parametrize("historical", [False, True])
 def test_methodology_reports_retained_experimental_proposer_settings(
-    epoch_workspace: tuple[Path, str], historical: bool
+    epoch_workspace: tuple[Path, str],
 ) -> None:
     workspace, epoch = epoch_workspace
     quality = {"best_of_n": 3, "screen_entries": 2}
@@ -58,11 +61,7 @@ def test_methodology_reports_retained_experimental_proposer_settings(
         "recombine": True,
         "recombine_merge": "mechanical",
     }
-    scoring = (
-        {"proposer_quality": {**quality, **experimental}}
-        if historical
-        else {"proposer_quality": quality, "experimental": experimental}
-    )
+    scoring = {"proposer_quality": quality, "experimental": experimental}
     path = workspace / "epochs" / epoch / "scoring.json"
     path.write_text(json.dumps(scoring))
     original = path.read_bytes()
@@ -81,6 +80,25 @@ def test_methodology_reports_retained_experimental_proposer_settings(
 
 def _write(path: Path, payload: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    if path.name == "gen_score.json":
+        write_gen_score(path.parents[4], path.parents[2].name, path.parent.name, payload)
+        return
+    if path.name == "experiment.json":
+        from tests._workspace_support import experiment_record
+
+        payload = experiment_record(
+            **{
+                "epoch_id": path.parents[2].name,
+                "generation_id": path.parent.name,
+                **payload,
+                "parent_generation_id": payload.get("parent_generation_id") or None,
+            }
+        )
+    elif path.parent.name == "patches":
+        from zicato.epoch.journal import patch_body
+        from zicato.testing import make_patch
+
+        payload = patch_body(make_patch(**payload))
     path.write_text(json.dumps(payload), encoding="utf-8")
 
 
@@ -179,24 +197,28 @@ def epoch_workspace(tmp_path: Path) -> tuple[Path, str]:
                 "why": "off-topic drift traced to a loose instruction",
                 "risks": "may overconstrain creative slides",
                 "expected_pass_rate_delta": "+0.05 to +0.15",
-                "expected_drift_movements": [
-                    {"kind": "off_topic", "direction": "decrease", "magnitude": "moderate"}
+                "expected_metric_movements": [
+                    {
+                        "metric_name": "drift:off_topic",
+                        "direction": "decrease",
+                        "magnitude": "medium",
+                    }
                 ],
             },
             "patch_ids": ["p1"],
             "outcome": {
                 "ran_at": "2026-05-18T02:30:00Z",
-                "drift_movements": [
+                "metric_movements": [
                     {
-                        "kind": "off_topic",
-                        "from_rate": 0.40,
-                        "to_rate": 0.10,
+                        "metric_name": "drift:off_topic",
+                        "from_value": 0.4,
+                        "to_value": 0.1,
                         "hypothesis_match": True,
                     }
                 ],
-                "pass_rate_delta": 0.10,
-                "drift_loss_delta": -0.30,
-                "scalar_score_delta": -0.250,
+                "pass_rate_delta": 0.1,
+                "drift_loss_delta": -0.3,
+                "scalar_score_delta": -0.25,
                 "tournament_decision": "promoted",
                 "rejection_reason": "",
             },
@@ -233,10 +255,10 @@ def epoch_workspace(tmp_path: Path) -> tuple[Path, str]:
             "patch_ids": ["p2"],
             "outcome": {
                 "ran_at": "2026-05-18T03:30:00Z",
-                "drift_movements": [],
+                "metric_movements": [],
                 "pass_rate_delta": -0.05,
                 "drift_loss_delta": 0.12,
-                "scalar_score_delta": 0.140,
+                "scalar_score_delta": 0.14,
                 "tournament_decision": "rejected",
                 "rejection_reason": "scalar regressed past promote margin",
             },
@@ -244,7 +266,14 @@ def epoch_workspace(tmp_path: Path) -> tuple[Path, str]:
     )
     _write(
         edir / "generations" / "v2" / "patches" / "p2.json",
-        {"id": "p2", "mutation_id": "temp", "op": "set_numeric", "rationale": "0.7 -> 0.95"},
+        {
+            "id": "p2",
+            "mutation_id": "temp",
+            "op": "set_numeric",
+            "new_content": None,
+            "new_numeric": 0.95,
+            "rationale": "0.7 -> 0.95",
+        },
     )
     return ws, epoch
 
@@ -275,7 +304,7 @@ def test_data_gather_renders_outcome_without_decision_as_pending(
             "patch_ids": [],
             "outcome": {
                 "ran_at": "2026-05-18T04:30:00Z",
-                "drift_movements": [],
+                "metric_movements": [],
                 "pass_rate_delta": 0.0,
                 "drift_loss_delta": 0.0,
                 "scalar_score_delta": 0.0,
@@ -1069,14 +1098,13 @@ def test_inline_figures_use_theme_aware_colors() -> None:
             risks="",
             modulating=(),
             expected_pass_rate_delta="",
-            expected_drift_movements=(),
+            expected_metric_movements=(),
             decision=decision,
             rejection_reason="",
             scalar_score_delta=scalar,
             drift_loss_delta=0.0,
             pass_rate_delta=0.0,
-            drift_movements=drift,
-            metric_movements=(),
+            metric_movements=drift + (),
             patches=(),
             gen_score=gen_score or {},
             cumulative_scalar=cumulative,
@@ -1571,7 +1599,7 @@ def test_generation_ordering_is_numeric_aware_and_content_preserved(tmp_path: Pa
                 "scalar_score_delta": delta,
                 "pass_rate_delta": 0.0,
                 "drift_loss_delta": 0.0,
-                "drift_movements": [],
+                "metric_movements": [],
             }
         _write(edir / "generations" / gid / "experiment.json", exp)
         if parent:
@@ -1581,12 +1609,19 @@ def test_generation_ordering_is_numeric_aware_and_content_preserved(tmp_path: Pa
             )
         # A per-run loss with a per-judge attribution unique to this gen so a
         # mis-joined runs/ read would surface the wrong total.
-        _write(
+        write_loss_profile(
+            make_loss_profile(
+                epoch_id=epoch,
+                generation_id=gid,
+                run_id=f"{gid}--t1",
+                entry_id="t1",
+                metric_counts=(
+                    MetricCount(name=f"drift:custom:judge-{gid}", severity="info", count=1.0),
+                ),
+                per_judge_loss=(JudgeLoss(f"judge-{gid}", 1.0, 1.0, 1.0),),
+                runtime_ms=0,
+            ),
             edir / "generations" / gid / "runs" / "t1" / "loss.json",
-            {
-                "entry_id": "t1",
-                "per_judge_loss": [{"judge_name": f"judge-{gid}", "weighted_loss": 1.0}],
-            },
         )
 
     data = gather_epoch_report_data(ws, epoch)
@@ -1683,14 +1718,13 @@ def _cv_gen(gid: str, parent: str, decision: str, delta: float = 0.0) -> Generat
         risks="",
         modulating=(),
         expected_pass_rate_delta="",
-        expected_drift_movements=(),
+        expected_metric_movements=(),
         decision=decision,
         rejection_reason="below promote_margin" if decision == "rejected" else "",
         scalar_score_delta=delta,
         drift_loss_delta=0.0,
         pass_rate_delta=0.0,
-        drift_movements=(),
-        metric_movements=(),
+        metric_movements=() + (),
         patches=(),
     )
 

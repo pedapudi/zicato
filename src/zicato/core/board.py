@@ -85,9 +85,6 @@ class ExpectationKind(StrEnum):
 class OutputScope(StrEnum):
     """Which slice of a run an :class:`Expectation` reads.
 
-    Replaces the older free ``fires_on`` string. A :class:`~enum.StrEnum`
-    for the same JSON-friendliness as :class:`ExpectationKind`.
-
     * :attr:`FINAL` — the last assistant turn's user-facing output. The
       single-turn-friendly default.
     * :attr:`TRANSCRIPT` — the full conversation transcript. Used when the
@@ -97,13 +94,6 @@ class OutputScope(StrEnum):
 
     FINAL = "final_output"
     TRANSCRIPT = "conversation_end"
-
-
-#: Compatibility alias. The expectation field is spelled ``reads`` and its
-#: value type is the :class:`OutputScope` enum; this alias keeps
-#: :data:`ExpectationFiresOn` importable for a downstream module that
-#: refers to it by that name. Write :class:`OutputScope` in new code.
-ExpectationFiresOn = OutputScope
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,7 +124,7 @@ class Expectation:
         through JSON without nested objects.
     reads:
         Which slice of the run the expectation is evaluated against (see
-        :class:`OutputScope`). Renamed from the former ``fires_on``.
+        :class:`OutputScope`).
     """
 
     kind: ExpectationKind
@@ -455,10 +445,7 @@ def validate_board_entry(d: Mapping[str, Any]) -> BoardEntry:
     if expectation_dict is None:
         expectation = None
     else:
-        # ``reads`` is the current key; ``fires_on`` is the pre-rename
-        # name. Accept both on input so a board mid-migration still
-        # loads, preferring the new key when both are present.
-        raw_reads = expectation_dict.get("reads", expectation_dict.get("fires_on", "final_output"))
+        raw_reads = expectation_dict.get("reads", "final_output")
         expectation = Expectation(
             kind=_coerce_enum(ExpectationKind, expectation_dict["kind"], "expectation kind"),
             spec=expectation_dict["spec"],

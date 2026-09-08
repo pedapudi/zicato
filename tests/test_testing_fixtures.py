@@ -9,14 +9,14 @@ import pytest
 
 from zicato.core.types import (
     BoardEntry,
-    DriftCount,
-    DriftMovementActual,
     EpochConfig,
     Expectation,
     Experiment,
     Generation,
     HypothesisSpec,
     LossProfile,
+    MetricCount,
+    MetricMovementActual,
     MutationPoint,
     OutcomeRecord,
     Patch,
@@ -30,14 +30,14 @@ from zicato.core.types import (
 from zicato.core.workspace import assert_distinct_callables
 from zicato.testing.fixtures import (
     make_board_entry,
-    make_drift_count,
-    make_drift_movement_actual,
     make_epoch_config,
     make_expectation,
     make_experiment,
     make_generation,
     make_hypothesis_spec,
     make_loss_profile,
+    make_metric_count,
+    make_metric_movement_actual,
     make_mutation_point,
     make_outcome_record,
     make_patch,
@@ -75,10 +75,10 @@ def test_make_scripted_turn_default() -> None:
     assert t.user == "hi"
 
 
-def test_make_drift_count_default() -> None:
-    d = make_drift_count()
-    assert isinstance(d, DriftCount)
-    assert d.kind == "off_topic"
+def test_make_metric_count_default() -> None:
+    d = make_metric_count()
+    assert isinstance(d, MetricCount)
+    assert d.name == "drift:off_topic"
     assert d.severity == "warning"
     assert d.count == 1
 
@@ -93,7 +93,7 @@ def test_make_run_result_default() -> None:
 def test_make_loss_profile_default() -> None:
     lp = make_loss_profile()
     assert isinstance(lp, LossProfile)
-    assert lp.drift_counts == ()
+    assert lp.metric_counts == ()
     assert lp.drift_loss == 0.0
     assert lp.pass_fail is None
 
@@ -102,7 +102,7 @@ def test_make_hypothesis_spec_default() -> None:
     hs = make_hypothesis_spec()
     assert isinstance(hs, HypothesisSpec)
     assert len(hs.modulating) >= 1
-    assert len(hs.expected_drift_movements) >= 1
+    assert len(hs.expected_metric_movements) >= 1
 
 
 def test_make_experiment_default() -> None:
@@ -133,7 +133,7 @@ def test_make_patch_default() -> None:
 def test_make_pattern_default() -> None:
     p = make_pattern()
     assert isinstance(p, Pattern)
-    assert p.kind == "drift_kind_frequency"
+    assert p.kind == "drift_metric_frequency"
     assert p.severity == "warning"
 
 
@@ -157,9 +157,9 @@ def test_make_generation_default() -> None:
     assert g.parent_id is None
 
 
-def test_make_drift_movement_actual_default() -> None:
-    dm = make_drift_movement_actual()
-    assert isinstance(dm, DriftMovementActual)
+def test_make_metric_movement_actual_default() -> None:
+    dm = make_metric_movement_actual()
+    assert isinstance(dm, MetricMovementActual)
     assert dm.hypothesis_match is True
 
 

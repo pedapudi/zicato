@@ -19,12 +19,10 @@ next step.
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 from zicato.board.jsonl import load_board, load_board_with_meta
-from zicato.core.scoring_config import _reject_retired_scoring_keys
 from zicato.core.scoring_config import scoring_weights_from_dict as scoring_weights_from_dict
 from zicato.core.types import (
     BoardEntry,
@@ -131,23 +129,12 @@ def load_current_scoring(workspace_root: Path) -> ScoringWeights:
             f"scoring.json not found at {path}; the current epoch is incomplete"
         )
     raw = json.loads(path.read_text(encoding="utf-8"))
-    return historical_scoring_weights_from_dict(raw)
+    return scoring_weights_from_dict(raw)
 
 
 def load_current_tournament(workspace_root: Path) -> TournamentStructure:
-    """Load the current epoch's frozen :class:`TournamentStructure`.
-
-    Reads the ``tournament`` block out of the epoch's frozen
-    ``scoring.json`` (where the structure lives — see the data-model
-    design). Defaults to the gauntlet for epochs that predate the field
-    or never set it, so the loader is safe against old workspaces.
-    """
-    eid = _resolve_current_epoch(workspace_root)
-    path = scoring_path(workspace_root, eid)
-    if not path.exists():
-        return TournamentStructure.gauntlet()
-    raw = json.loads(path.read_text(encoding="utf-8"))
-    return tournament_structure_from_dict(raw.get("tournament"))
+    """Read the tournament specification from the epoch's scoring settings."""
+    return load_current_scoring(workspace_root).tournament_structure
 
 
 def load_current_brief(workspace_root: Path) -> ProposerBrief:
@@ -159,72 +146,22 @@ def load_current_brief(workspace_root: Path) -> ProposerBrief:
     return load_brief(path)
 
 
-def historical_scoring_weights_from_dict(d: Mapping[str, Any]) -> ScoringWeights:
-    """Decode frozen scoring records using the persisted compatibility rules."""
-    from zicato.epoch.contract_serde import historical_scoring_from_json  # noqa: PLC0415
-
-    _reject_retired_scoring_keys(d)
-    return historical_scoring_from_json(d)
-
-
 def overfitting_config_from_dict(raw: Any) -> OverfittingConfig:
-    """Parse the ``overfitting`` block of a ``scoring.json`` into a config.
+    """Validate the supplied settings using their field declarations."""
+    from zicato.core.configuration import authored_dataclass_from_json  # noqa: PLC0415
 
-    Absent (``None``) or a non-mapping ⇒ the fully-defaulted (default-on)
-    :class:`~zicato.core.types.OverfittingConfig` — so every epoch on disk
-    today, and every operator who never touches the knob, gets the
-    anti-overfitting machine on, with a safe auto-degrade on small boards.
-
-    A present block forwards each recognised key field-by-field via the
-    single field-enumerating parser
-    :func:`zicato.epoch.contract_serde.historical_dataclass_from_json` (so a new
-    :class:`OverfittingConfig` field is covered automatically and cannot
-    desync from the contract canonicalizer — the defect class behind issue
-    #13); unknown keys are ignored, absent keys fall back to the dataclass
-    default, and the nested ``ladder`` block recurses. Range/validity is
-    enforced by ``OverfittingConfig``'s ``__post_init__``.
-    """
-    from zicato.epoch.contract_serde import historical_dataclass_from_json  # noqa: PLC0415
-
-    if not isinstance(raw, Mapping):
-        return OverfittingConfig.defaults()
-    _refuse_partial_ladder_increment(raw.get("ladder"))
-    return historical_dataclass_from_json(OverfittingConfig, raw)
+    return authored_dataclass_from_json(
+        OverfittingConfig, {} if raw is None else raw, path="scoring.overfitting"
+    )
 
 
 def ladder_config_from_dict(raw: Any) -> LadderConfig:
-    """Parse the ``overfitting.ladder`` block into a :class:`LadderConfig`.
+    """Validate the supplied settings using their field declarations."""
+    from zicato.core.configuration import authored_dataclass_from_json  # noqa: PLC0415
 
-    Absent (``None``) or a non-mapping ⇒ the fully-defaulted (default-on)
-    :class:`~zicato.core.types.LadderConfig`, so an epoch that never spells
-    the block out still gets the Ladder governor on, with a safe auto-degrade
-    on an empty holdout. A present block forwards each recognised key;
-    unknown keys are ignored. ``threshold`` is ``None`` (derive from
-    ``promote_margin``) unless explicitly set. Range/validity is enforced by
-    ``LadderConfig``'s ``__post_init__``. Folds into the contract hash through
-    :class:`OverfittingConfig` automatically (the canonicalizer recurses into
-    nested frozen dataclasses), so a ``ladder`` change rolls the epoch.
-
-    Parses field-by-field via the single field-enumerating parser
-    :func:`zicato.epoch.contract_serde.historical_dataclass_from_json`, so a new
-    :class:`LadderConfig` field is covered automatically (issue #13);
-    absent keys fall back to the dataclass default.
-    """
-    from zicato.epoch.contract_serde import historical_dataclass_from_json  # noqa: PLC0415
-
-    if not isinstance(raw, Mapping):
-        return LadderConfig.defaults()
-    _refuse_partial_ladder_increment(raw)
-    return historical_dataclass_from_json(LadderConfig, raw)
-
-
-def _refuse_partial_ladder_increment(raw: Any) -> None:
-    """The retired release rule needs the complete record's promotion margin."""
-    if isinstance(raw, Mapping) and "noise_scale" in raw:
-        raise ValueError(
-            "recorded ladder.noise_scale requires historical_scoring_weights_from_dict "
-            "with the complete scoring record to preserve its release threshold"
-        )
+    return authored_dataclass_from_json(
+        LadderConfig, {} if raw is None else raw, path="scoring.overfitting.ladder"
+    )
 
 
 def overfitting_config_to_dict(cfg: OverfittingConfig) -> dict[str, Any]:
@@ -232,38 +169,22 @@ def overfitting_config_to_dict(cfg: OverfittingConfig) -> dict[str, Any]:
 
     The inverse of :func:`overfitting_config_from_dict`; field-enumerating
     (and recursive over the nested ``ladder``) via
-    :func:`zicato.epoch.contract_serde.dataclass_to_jsonable`, so every
+    :func:`zicato.core.configuration.dataclass_to_jsonable`, so every
     field is written and a newly-added field is covered automatically
     (issue #13) — the on-disk form is complete and round-trips cleanly.
     """
-    from zicato.epoch.contract_serde import dataclass_to_jsonable  # noqa: PLC0415
+    from zicato.core.configuration import dataclass_to_jsonable  # noqa: PLC0415
 
     return dataclass_to_jsonable(cfg)
 
 
 def tournament_structure_from_dict(raw: Any) -> TournamentStructure:
-    """Parse the ``tournament`` block of a ``scoring.json`` into a spec.
+    """Validate the supplied settings using their field declarations."""
+    from zicato.core.configuration import authored_dataclass_from_json  # noqa: PLC0415
 
-    Absent (``None``) or a non-mapping ⇒ the fully-defaulted gauntlet
-    spec — the back-compat contract: every epoch on disk today, and every
-    operator who never touches the knob, gets the gauntlet.
-
-    A present block must carry a valid ``structure`` token (validated by
-    :class:`~zicato.core.types.TournamentStructure`'s ``__post_init__``,
-    which lists the valid tokens on error) and an optional ``params``
-    object. ``params`` is stored verbatim as an opaque mapping; per-key
-    semantics are the selection strategy's responsibility.
-
-    This compatibility reader is used for frozen tournament records.
-    Authored scoring uses :func:`scoring_weights_from_dict`, which rejects
-    malformed blocks before constructing the nested contract records.
-    """
-    if not isinstance(raw, Mapping):
-        return TournamentStructure.gauntlet()
-    structure = str(raw.get("structure", "gauntlet"))
-    raw_params = raw.get("params", {})
-    params: dict[str, Any] = dict(raw_params) if isinstance(raw_params, Mapping) else {}
-    return TournamentStructure(structure=structure, params=params)
+    return authored_dataclass_from_json(
+        TournamentStructure, {} if raw is None else raw, path="scoring.tournament"
+    )
 
 
 def activate_mutation_surface(workspace_root: Path) -> tuple[str, ...]:
@@ -303,7 +224,6 @@ __all__ = [
     "activate_mutation_surface",
     "load_workspace_config",
     "scoring_weights_from_dict",
-    "historical_scoring_weights_from_dict",
     "load_current_epoch_config",
     "load_current_board",
     "load_current_board_with_meta",

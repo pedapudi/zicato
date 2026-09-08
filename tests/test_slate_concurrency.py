@@ -57,7 +57,7 @@ def _experiment(slot: int, content: str) -> Experiment:
             core_idea=f"slot {slot}",
             modulating=("style_rules",),
             why="because",
-            expected_drift_movements=(),
+            expected_metric_movements=(),
             expected_pass_rate_delta="+0.05",
         ),
         patches=(
@@ -579,7 +579,7 @@ def test_concurrent_derive_scratch_is_disjoint_and_intact(tmp_path: Path, backen
     # No scratch tree entered the generation namespace — only v0 exists.
     assert store.list_generations(epoch_id) == ["v0"]  # type: ignore[attr-defined]
     # The parent tree is untouched (still the seed, no defect tokens dropped).
-    parent_line = _policy_style_line(store.materialize_snapshot(epoch_id, "v0"))  # type: ignore[attr-defined]
+    parent_line = _policy_style_line(store.materialize_snapshot(epoch_id, ("v0")))  # type: ignore[attr-defined]
     for content in contents:
         assert content not in parent_line
 

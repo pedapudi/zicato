@@ -675,17 +675,17 @@ def drift_count_snapshot_from_profile(profile: Any) -> dict[str, int]:
 
     Pinned contract for :attr:`ActiveTournamentEntry.drift_count_snapshot`
     — the per-drift-kind total event count, **summed across severity
-    buckets**, keyed by the verbatim :class:`~zicato.core.types.DriftCount`
+    buckets**, keyed by the verbatim :class:`~zicato.core.types.MetricCount`
     ``kind`` wire string (including ``custom:<judge_name>`` namespaced
     custom-judge kinds). Drift kinds with no events are absent from the
     mapping.
     """
     snapshot: dict[str, int] = {}
-    for dc in getattr(profile, "drift_counts", ()) or ():
-        kind = str(getattr(dc, "kind", ""))
-        if not kind:
+    for metric in profile.metric_counts:
+        if not metric.name.startswith("drift:"):
             continue
-        snapshot[kind] = snapshot.get(kind, 0) + int(getattr(dc, "count", 0) or 0)
+        kind = metric.name.removeprefix("drift:")
+        snapshot[kind] = snapshot.get(kind, 0) + int(metric.count)
     return snapshot
 
 

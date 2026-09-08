@@ -26,7 +26,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from itertools import combinations
 
-from zicato.core.types import ExpectedDriftMovement, ExpectedMetricMovement, Patch
+from zicato.core.types import ExpectedMetricMovement, Patch
 
 #: Elo scale midpoint that default-fills a candidate whose rating the fold has
 #: not produced (a fresh reject, or an index-absent workspace). 1500 is the
@@ -80,7 +80,7 @@ class ParentCandidate:
         :data:`DEFAULT_ELO` in the summed-Elo ranking key).
     patches:
         The reconstructed patch tuple (minter input only).
-    core_idea / expected_drift_movements / expected_metric_movements:
+    core_idea / expected_metric_movements:
         The hypothesis text the minter composes the recombined hypothesis
         from (minter input only).
     """
@@ -96,7 +96,6 @@ class ParentCandidate:
     elo: float | None
     patches: tuple[Patch, ...]
     core_idea: str
-    expected_drift_movements: tuple[ExpectedDriftMovement, ...] = ()
     expected_metric_movements: tuple[ExpectedMetricMovement, ...] = ()
 
 

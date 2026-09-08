@@ -52,8 +52,8 @@ def _valid_payload() -> dict:
             "core_idea": "tighten router",
             "modulating": ["router__sp"],
             "why": "off_topic dominates",
-            "expected_drift_movements": [
-                {"kind": "off_topic", "direction": "decrease", "magnitude": "medium"}
+            "expected_metric_movements": [
+                {"metric_name": "drift:off_topic", "direction": "decrease", "magnitude": "medium"}
             ],
             "expected_pass_rate_delta": "+0.05",
         },
@@ -87,8 +87,8 @@ def test_parse_accepts_valid_payload() -> None:
     assert exp.id == "exp_e1_v1"
     assert exp.hypothesis.core_idea == "tighten router"
     assert exp.hypothesis.modulating == ("router__sp",)
-    assert len(exp.hypothesis.expected_drift_movements) == 1
-    assert exp.hypothesis.expected_drift_movements[0].kind == "off_topic"
+    assert len(exp.hypothesis.expected_metric_movements) == 1
+    assert exp.hypothesis.expected_metric_movements[0].metric_name == "drift:off_topic"
     assert exp.hypothesis.risks == ""  # defaults when omitted
     assert len(exp.patches) == 1
     assert exp.patches[0].op == "replace"
@@ -212,13 +212,13 @@ def test_parse_rejects_invalid_op() -> None:
 
 def test_parse_rejects_invalid_direction() -> None:
     p = _valid_payload()
-    p["hypothesis"]["expected_drift_movements"][0]["direction"] = "sideways"
+    p["hypothesis"]["expected_metric_movements"][0]["direction"] = "sideways"
     _expect_parse_error(p, "sideways")
 
 
 def test_parse_rejects_invalid_magnitude() -> None:
     p = _valid_payload()
-    p["hypothesis"]["expected_drift_movements"][0]["magnitude"] = "huge"
+    p["hypothesis"]["expected_metric_movements"][0]["magnitude"] = "huge"
     _expect_parse_error(p, "huge")
 
 
@@ -290,8 +290,8 @@ def test_parse_rejects_set_enum_not_in_domain() -> None:
 
 def test_parse_rejects_unknown_drift_kind() -> None:
     p = _valid_payload()
-    p["hypothesis"]["expected_drift_movements"] = [
-        {"kind": "mystery_kind", "direction": "decrease", "magnitude": "small"}
+    p["hypothesis"]["expected_metric_movements"] = [
+        {"metric_name": "drift:mystery_kind", "direction": "decrease", "magnitude": "small"}
     ]
     _expect_parse_error(p, "mystery_kind")
 

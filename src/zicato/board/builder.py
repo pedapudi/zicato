@@ -13,11 +13,8 @@ spelled out. This module exposes two surfaces:
   :meth:`Board.save` / :meth:`Board.load` JSONL methods so the in-Python
   builder can hand off to the same on-disk format used by the CLI.
 
-The friendly ``budget_s`` name is the alias preferred by Python authors;
-the on-the-dataclass field stays ``wall_clock_budget_seconds`` so the
-core type doesn't have to change. The JSONL writer prefers the short
-form on output and accepts both on input (see
-:mod:`zicato.board.jsonl`).
+The builder and JSONL format use the same ``wall_clock_budget_seconds``
+field as :class:`~zicato.core.BoardEntry`.
 """
 
 from __future__ import annotations
@@ -186,7 +183,7 @@ class Entry:
     keeps the call site as compact as possible::
 
         Entry(id="e1", input="What is 2+2?",
-              evaluate=Predicate.contains("4"), budget_s=60)
+              evaluate=Predicate.contains("4"), wall_clock_budget_seconds=60)
 
     Auto-detection rules
     --------------------
@@ -215,7 +212,7 @@ class Entry:
         persona: UserPersona | None = None,
         evaluate: Expectation | None = None,
         judges: tuple[JudgeSpec, ...] | list[JudgeSpec] = (),
-        budget_s: int = 300,
+        wall_clock_budget_seconds: int = 300,
         weight: float = 1.0,
         tags: tuple[str, ...] | list[str] = (),
         context: dict[str, str] | None = None,
@@ -266,7 +263,7 @@ class Entry:
         entry = BoardEntry(
             id=id,
             kind=inferred_kind,
-            wall_clock_budget_seconds=int(budget_s),
+            wall_clock_budget_seconds=int(wall_clock_budget_seconds),
             weight=float(weight),
             tags=tuple(tags),
             context=dict(context) if context else {},

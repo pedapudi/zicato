@@ -60,7 +60,7 @@ def _run(coro):
 
 
 def _write_loss(workspace: Path, gen: str, entry: str, replicate: int, *, drift: bool) -> Path:
-    from zicato.core import DriftCount, JudgeLoss, LossProfile
+    from zicato.core import JudgeLoss, LossProfile, MetricCount
     from zicato.telemetry import reducer
 
     loss = LossProfile(
@@ -68,7 +68,9 @@ def _write_loss(workspace: Path, gen: str, entry: str, replicate: int, *, drift:
         entry_id=entry,
         generation_id=gen,
         epoch_id=EPOCH,
-        drift_counts=((DriftCount(kind="custom:j", severity="warning", count=1),) if drift else ()),
+        metric_counts=(
+            (MetricCount(name="drift:custom:j", severity="warning", count=1),) if drift else ()
+        ),
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=10,

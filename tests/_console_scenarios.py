@@ -18,6 +18,7 @@ what the recorded responses are captured against.
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -29,25 +30,27 @@ from tests._workspace_support import (
     workspace,
     write_epoch,
     write_generation,
-    write_json,
     write_lineage,
     write_text,
     write_tournament,
     write_workspace_config,
 )
 from zicato.core.experiment import (
-    DriftMovementActual,
-    ExpectedDriftMovement,
+    ExpectedMetricMovement,
     Experiment,
     HypothesisSpec,
     MatchOutcome,
+    MetricMovementActual,
     OutcomeRecord,
     Patch,
 )
+from zicato.core.tournament import EXPERIMENTAL_TOURNAMENT_STRUCTURES
 from zicato.core.types import JudgeLoss, LossProfile
 from zicato.epoch.journal import write_experiment
 from zicato.index.ingest import rebuild_index
 from zicato.telemetry.reducer import write_loss_profile
+from zicato.tournament.records import decode_field_tournament_record, write_field_tournament_record
+from zicato.tournament.scoring import write_gen_score
 from zicato.workspace import WorkspaceLayout
 
 #: The epoch id the shared browser fixture map (``fixtures.mjs``) names.
@@ -126,7 +129,7 @@ def _run(
         entry_id=entry_id,
         generation_id=generation_id,
         epoch_id=epoch_id,
-        drift_counts=(),
+        metric_counts=(),
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=runtime_ms,
@@ -157,8 +160,10 @@ def _gen_score(
     mean_score: float | None = None,
 ) -> None:
     """Write the cached per-generation aggregate the gate and the stats read."""
-    write_json(
-        layout.gen_score(epoch_id, generation_id),
+    write_gen_score(
+        layout.root,
+        epoch_id,
+        generation_id,
         {
             "drift_loss_mean": components.get("drift"),
             "pass_rate": pass_rate,
@@ -170,7 +175,6 @@ def _gen_score(
             "per_entry": {k: dict(v) for k, v in per_entry.items()},
             "scalar_components": dict(components),
         },
-        indent=2,
     )
 
 
@@ -190,8 +194,8 @@ def _challenger(
     round_index: int,
     structure: str = "gauntlet",
     match_record: Sequence[MatchOutcome] = (),
-    movements: Sequence[DriftMovementActual] = (),
-    expected: Sequence[ExpectedDriftMovement] = (),
+    movements: Sequence[MetricMovementActual] = (),
+    expected: Sequence[ExpectedMetricMovement] = (),
 ) -> None:
     """Write one challenger's experiment record through the journal writer."""
     write_experiment(
@@ -208,17 +212,17 @@ def _challenger(
                 core_idea=core_idea,
                 modulating=tuple(p.mutation_id for p in patches),
                 why=why,
-                expected_drift_movements=tuple(expected),
+                expected_metric_movements=tuple(expected),
                 expected_pass_rate_delta="+0.00 to +0.10",
             ),
             patches=tuple(patches),
             outcome=OutcomeRecord(
                 ran_at=ran_at,
-                drift_movements=tuple(movements),
+                metric_movements=tuple(movements),
                 pass_rate_delta=0.0,
                 drift_loss_delta=scalar_delta,
                 scalar_score_delta=scalar_delta,
-                tournament_decision=decision,  # type: ignore[arg-type]
+                tournament_decision=decision,
                 structure=structure,
                 match_record=tuple(match_record),
             ),
@@ -233,7 +237,9 @@ def _seed(layout: WorkspaceLayout, epoch_id: str, proposed_at: str) -> None:
         layout,
         epoch_id,
         "v0",
-        experiment=experiment_record("v0", parent_generation_id=None, proposed_at=proposed_at),
+        experiment=experiment_record(
+            "v0", epoch_id=epoch_id, parent_generation_id=None, proposed_at=proposed_at
+        ),
         indent=2,
     )
 
@@ -283,7 +289,7 @@ def build_console_workspace(
             "created_at": "2026-05-30T00:00:00Z",
             "closed": False,
             "goal": "Make the presentation agent crisper.",
-            "contract_hash": "hash-console",
+            "contract_hash": hashlib.sha256(b"hash-console").hexdigest(),
         },
         brief="# Brief\n\n## Goal\n\nMake the presentation agent crisper.\n",
         scoring={"promote_margin": 0.01, "tournament": {"structure": "gauntlet", "params": {}}},
@@ -325,10 +331,14 @@ def build_console_workspace(
         proposed_at="2026-05-30T00:30:00Z",
         ran_at="2026-05-30T01:00:00Z",
         round_index=0,
-        expected=(ExpectedDriftMovement(kind="omission", direction="decrease", magnitude="small"),),
+        expected=(
+            ExpectedMetricMovement(
+                metric_name="drift:omission", direction="decrease", magnitude="small"
+            ),
+        ),
         movements=(
-            DriftMovementActual(
-                kind="omission", from_rate=0.5, to_rate=0.75, hypothesis_match=False
+            MetricMovementActual(
+                metric_name="drift:omission", from_value=0.5, to_value=0.75, hypothesis_match=False
             ),
         ),
     )
@@ -355,9 +365,15 @@ def build_console_workspace(
         proposed_at="2026-05-30T01:30:00Z",
         ran_at="2026-05-30T02:00:00Z",
         round_index=1,
-        expected=(ExpectedDriftMovement(kind="omission", direction="decrease", magnitude="small"),),
+        expected=(
+            ExpectedMetricMovement(
+                metric_name="drift:omission", direction="decrease", magnitude="small"
+            ),
+        ),
         movements=(
-            DriftMovementActual(kind="omission", from_rate=0.5, to_rate=0.4, hypothesis_match=True),
+            MetricMovementActual(
+                metric_name="drift:omission", from_value=0.5, to_value=0.4, hypothesis_match=True
+            ),
         ),
     )
 
@@ -495,8 +511,8 @@ class Gen:
     flag ``lineage.json`` records; ``None`` there is a generation still being
     scored. ``entries`` are ``(entry_id, drift_loss, pass_fail)`` runs, and
     ``scalar`` writes the cached aggregate the gate compares. ``round_index``
-    of ``None`` writes a record with no round stamp, which is what a journal
-    written before the stamp existed holds.
+    of ``None`` leaves an unapplied proposal without an experiment record.
+    Settled candidates carry their recorded birth round.
     """
 
     id: str
@@ -543,7 +559,13 @@ class EpochSpec:
     closed: bool = False
     goal: str = "g"
     board: Sequence[Any] = (
-        {"id": "b1", "kind": "single_turn", "input": "Draft.", "weight": 1.0, "budget_s": 1},
+        {
+            "id": "b1",
+            "kind": "single_turn",
+            "input": "Draft.",
+            "weight": 1.0,
+            "wall_clock_budget_seconds": 1,
+        },
     )
 
 
@@ -564,12 +586,17 @@ def _write_epoch_spec(layout: WorkspaceLayout, spec: EpochSpec) -> dict[str, Any
             "created_at": spec.created_at,
             "closed": spec.closed,
             "goal": spec.goal,
-            "contract_hash": f"hash-{spec.id}",
+            "contract_hash": hashlib.sha256(f"hash-{spec.id}".encode()).hexdigest(),
         },
         brief=f"# Brief {spec.id}\n\n## Goal\n\n{spec.goal}\n",
         scoring={
             "promote_margin": 0.01,
             "tournament": {"structure": spec.structure, "params": dict(spec.params or {})},
+            **(
+                {"experimental": {"tournament_structures": True}}
+                if spec.structure in EXPERIMENTAL_TOURNAMENT_STRUCTURES
+                else {}
+            ),
         },
         board=list(spec.board),
         indent=2,
@@ -582,43 +609,22 @@ def _write_epoch_spec(layout: WorkspaceLayout, spec: EpochSpec) -> dict[str, Any
                 spec.id,
                 gen.id,
                 experiment=experiment_record(
-                    gen.id, parent_generation_id=None, proposed_at=proposed_at
+                    gen.id, epoch_id=spec.id, parent_generation_id=None, proposed_at=proposed_at
                 ),
                 indent=2,
             )
         elif gen.round_index is None:
-            outcome = (
-                {
-                    "tournament_decision": gen.decision,
-                    "scalar_score_delta": gen.scalar_delta,
-                    "ran_at": _stamp(spec.created_at, 10 * i + 5),
-                    "structure": gen.structure,
-                }
-                if gen.decision is not None
-                else None
-            )
-            write_generation(
-                layout,
-                spec.id,
-                gen.id,
-                experiment=experiment_record(
-                    gen.id,
-                    parent_generation_id=gen.parent,
-                    proposed_at=proposed_at,
-                    outcome=outcome,
-                    hypothesis={"core_idea": gen.core_idea or f"Idea {gen.id}."},
-                ),
-                indent=2,
-            )
+            assert gen.decision is None, "settled proposals require a recorded birth round"
+            layout.generation_dir(spec.id, gen.id).mkdir(parents=True, exist_ok=True)
         else:
             outcome = (
                 OutcomeRecord(
                     ran_at=_stamp(spec.created_at, 10 * i + 5),
-                    drift_movements=(),
+                    metric_movements=(),
                     pass_rate_delta=0.0,
                     drift_loss_delta=gen.scalar_delta,
                     scalar_score_delta=gen.scalar_delta,
-                    tournament_decision=gen.decision,  # type: ignore[arg-type]
+                    tournament_decision=gen.decision,
                     structure=gen.structure,
                     match_record=tuple(gen.matches),
                     champion_eval_mode=gen.champion_eval_mode,
@@ -640,7 +646,7 @@ def _write_epoch_spec(layout: WorkspaceLayout, spec: EpochSpec) -> dict[str, Any
                         core_idea=gen.core_idea or f"Idea {gen.id}.",
                         modulating=("site",),
                         why="The prior round's losses point at this site.",
-                        expected_drift_movements=(),
+                        expected_metric_movements=(),
                         expected_pass_rate_delta="+0.00 to +0.10",
                     ),
                     patches=(
@@ -689,32 +695,38 @@ def _write_epoch_spec(layout: WorkspaceLayout, spec: EpochSpec) -> dict[str, Any
                 },
             )
     for field in spec.fields:
-        write_json(
-            layout.field_tournament(spec.id, field.first_challenger),
-            {
-                "tournament_id": f"{spec.id}:field:{field.first_challenger}",
-                "epoch_id": spec.id,
-                "structure": field.structure,
-                "structure_params": dict(field.structure_params or spec.params or {}),
-                "competitors": [dict(c) for c in field.competitors],
-                "rounds": [dict(r) for r in field.rounds],
-                "standings": [dict(r) for r in field.standings],
-                "field_status": [],
-                "promoted_generation_id": field.promoted,
-                "champion_generation_id": field.champion,
-                "decision": field.decision,
-                "reason": "",
-                "delta_scalar": None,
-                "state": field.state,
-                "ran_at": field.ran_at,
-            },
-            indent=2,
+        record = {
+            "tournament_id": f"{spec.id}:field:{field.first_challenger}",
+            "epoch_id": spec.id,
+            "structure": field.structure,
+            "structure_params": dict(field.structure_params or spec.params or {}),
+            "competitors": [dict(c) for c in field.competitors],
+            "rounds": [dict(r) for r in field.rounds],
+            "standings": [dict(r) for r in field.standings],
+            "field_status": [],
+            "promoted_generation_id": field.promoted,
+            "champion_generation_id": field.champion,
+            "decision": field.decision,
+            "reason": "",
+            "delta_scalar": None,
+            "state": field.state,
+            "ran_at": field.ran_at,
+        }
+        write_field_tournament_record(
+            layout.root,
+            epoch_id=spec.id,
+            first_challenger_id=field.first_challenger,
+            record=decode_field_tournament_record(record),
         )
-    return _lineage_epoch(
+    lineage = _lineage_epoch(
         spec.id,
         [(g.id, g.parent, g.lineage_promoted) for g in spec.gens],  # type: ignore[misc]
         spec.created_at,
     )
+    for i, gen in enumerate(spec.gens):
+        if gen.parent is not None and gen.round_index is None:
+            lineage["generations"][i]["created_at"] = _stamp(spec.created_at, 10 * i)
+    return lineage
 
 
 def build_scenario(tmp_path: Path, *epochs: EpochSpec, current: str | None = None) -> Path:
@@ -1366,8 +1378,12 @@ def _swiss_with_field_status(tmp_path: Path, field_status: Sequence[dict[str, An
             params={"rounds": 2},
         ),
     )
-    layout = WorkspaceLayout.from_root(root)
-    write_json(layout.field_tournament(CONSOLE_EPOCH, "v1"), record, indent=2)
+    write_field_tournament_record(
+        root,
+        epoch_id=CONSOLE_EPOCH,
+        first_challenger_id="v1",
+        record=decode_field_tournament_record(record),
+    )
     rebuild_index(root)
     return root
 
@@ -1676,7 +1692,7 @@ def build_racing_round_live_workspace(tmp_path: Path) -> Path:
 
 
 def build_gauntlet_one_round_workspace(tmp_path: Path) -> Path:
-    """The shared epoch with one rejected challenger and no round stamps."""
+    """The shared epoch with one rejected challenger in its first round."""
     return build_scenario(
         tmp_path,
         EpochSpec(
@@ -1686,14 +1702,14 @@ def build_gauntlet_one_round_workspace(tmp_path: Path) -> Path:
                     "v0",
                     lineage_promoted=True,
                     entries=(("waffles_single", 60.5, False),),
-                    round_index=None,
+                    round_index=0,
                 ),
                 Gen(
                     "v1",
                     "v0",
                     "rejected",
                     entries=(("waffles_single", 60.5, False),),
-                    round_index=None,
+                    round_index=0,
                     scalar_delta=75.71,
                 ),
             ),
@@ -1722,7 +1738,7 @@ def build_identity_workspace(tmp_path: Path) -> Path:
             "created_at": "2026-08-01T00:00:00Z",
             "closed": True,
             "goal": "Identity.",
-            "contract_hash": "hash-identity",
+            "contract_hash": hashlib.sha256(b"hash-identity").hexdigest(),
         },
         brief="# Brief\n\n## Goal\n\nIdentity.\n",
         scoring={
@@ -1737,7 +1753,7 @@ def build_identity_workspace(tmp_path: Path) -> Path:
                     "id": e,
                     "kind": "single_turn",
                     "input": f"Task {e}.",
-                    "budget_s": 1,
+                    "wall_clock_budget_seconds": 1,
                     "expectation": {"kind": "predicate", "spec": "ok"},
                     "weight": 1.0,
                 }
@@ -1765,9 +1781,9 @@ def build_identity_workspace(tmp_path: Path) -> Path:
                     "The judge flags narrative drift whenever the agent starts "
                     "writing paragraphs first."
                 ),
-                expected_drift_movements=(
-                    ExpectedDriftMovement(
-                        kind="off_topic", direction="decrease", magnitude="medium"
+                expected_metric_movements=(
+                    ExpectedMetricMovement(
+                        metric_name="drift:off_topic", direction="decrease", magnitude="medium"
                     ),
                 ),
                 expected_pass_rate_delta="+0.10 to +0.20",
@@ -1795,9 +1811,12 @@ def build_identity_workspace(tmp_path: Path) -> Path:
             ),
             outcome=OutcomeRecord(
                 ran_at="2026-08-01T01:00:00Z",
-                drift_movements=(
-                    DriftMovementActual(
-                        kind="off_topic", from_rate=0.5, to_rate=0.3, hypothesis_match=True
+                metric_movements=(
+                    MetricMovementActual(
+                        metric_name="drift:off_topic",
+                        from_value=0.5,
+                        to_value=0.3,
+                        hypothesis_match=True,
                     ),
                 ),
                 pass_rate_delta=-0.25,
@@ -1858,8 +1877,8 @@ def build_identity_workspace(tmp_path: Path) -> Path:
 def build_field_count_workspace(tmp_path: Path) -> Path:
     """A swiss epoch with two scored challengers and one unscored orphan, v9.
 
-    The records carry no round stamp, so the timeline falls back to the
-    tournament records, which the orphan has none of.
+    The settled challengers carry consecutive birth rounds. The orphan has
+    no experiment or tournament record.
     """
     return build_scenario(
         tmp_path,
@@ -1873,7 +1892,7 @@ def build_field_count_workspace(tmp_path: Path) -> Path:
                     "rejected",
                     structure="swiss",
                     entries=(("b1", 60.0, True),),
-                    round_index=None,
+                    round_index=0,
                 ),
                 Gen(
                     "v2",
@@ -1881,7 +1900,7 @@ def build_field_count_workspace(tmp_path: Path) -> Path:
                     "rejected",
                     structure="swiss",
                     entries=(("b1", 55.0, True),),
-                    round_index=None,
+                    round_index=1,
                 ),
                 Gen("v9", "v0", None, lineage_promoted=None, round_index=None),
             ),
@@ -1944,19 +1963,19 @@ def build_model_round_stamps_workspace(tmp_path: Path) -> Path:
 
 
 def build_model_field_records_workspace(tmp_path: Path) -> Path:
-    """Two swiss field records and no round stamps: v2 promoted, then v3 and v4 minted.
+    """Two swiss fields: v2 is promoted in round 0, then v3 and v4 are minted in round 1.
 
     A field record is indexed only with three or more competitors, so each
     round fields two challengers against its champion.
     """
     gens = (
-        _scored("v0", None, None, 100.0, promoted=True, round_index=None),
+        _scored("v0", None, None, 100.0, promoted=True, round_index=0),
         Gen(
             "v1",
             "v0",
             "rejected",
             entries=(("b1", 110.0, True),),
-            round_index=None,
+            round_index=0,
             structure="swiss",
         ),
         Gen(
@@ -1965,7 +1984,7 @@ def build_model_field_records_workspace(tmp_path: Path) -> Path:
             "promoted",
             lineage_promoted=True,
             entries=(("b1", 80.0, True),),
-            round_index=None,
+            round_index=0,
             structure="swiss",
         ),
         Gen(
@@ -1973,7 +1992,7 @@ def build_model_field_records_workspace(tmp_path: Path) -> Path:
             "v2",
             "rejected",
             entries=(("b1", 90.0, True),),
-            round_index=None,
+            round_index=1,
             structure="swiss",
         ),
         Gen(
@@ -1981,7 +2000,7 @@ def build_model_field_records_workspace(tmp_path: Path) -> Path:
             "v2",
             "rejected",
             entries=(("b1", 95.0, True),),
-            round_index=None,
+            round_index=1,
             structure="swiss",
         ),
     )
@@ -2008,14 +2027,14 @@ def build_model_field_records_workspace(tmp_path: Path) -> Path:
 
 
 def build_model_matchups_workspace(tmp_path: Path) -> Path:
-    """Two rejected gauntlet duels with no round stamps."""
+    """Two rejected gauntlet duels in consecutive recorded rounds."""
     return build_scenario(
         tmp_path,
         _model(
             (
                 _scored("v0", None, None, 70.0, promoted=True, round_index=None),
-                _scored("v1", "v0", "rejected", 146.0, round_index=None),
-                _scored("v2", "v0", "rejected", 72.0, round_index=None),
+                _scored("v1", "v0", "rejected", 146.0, round_index=0),
+                _scored("v2", "v0", "rejected", 72.0, round_index=1),
             )
         ),
     )

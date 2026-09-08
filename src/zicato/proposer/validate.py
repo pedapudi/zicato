@@ -402,9 +402,9 @@ def _coerce_patch_array(patches_json: str) -> list[Any]:
     return data
 
 
-def _report(errors: Sequence[str], tiers: Mapping[str, Any]) -> str:
+def _report(errors: Sequence[str], stages: Mapping[str, Any]) -> str:
     """Render the tool's JSON verdict. ``ok`` is exactly "no errors"."""
-    return json.dumps({"ok": not errors, "errors": list(errors), "tiers": dict(tiers)}, indent=2)
+    return json.dumps({"ok": not errors, "errors": list(errors), "stages": dict(stages)}, indent=2)
 
 
 def _validate_against_context(
@@ -413,7 +413,7 @@ def _validate_against_context(
 ) -> str:
     """Validate parsed patches against the active proposal context."""
     mutations_by_id = {mp.id: mp for mp in ctx.mutations}
-    tiers: dict[str, Any] = {}
+    stages: dict[str, Any] = {}
 
     # Validate patch structure and captured parent identity before application.
     structure_errors: list[str] = []
@@ -440,9 +440,9 @@ def _validate_against_context(
         except (OSError, ValueError) as exc:
             structure_errors.append(str(exc))
 
-    tiers["structure"] = {"ran": True, "errors": structure_errors, "notes": []}
+    stages["structure"] = {"ran": True, "errors": structure_errors, "notes": []}
     if structure_errors:
-        return _report(structure_errors, tiers)
+        return _report(structure_errors, stages)
     assert policy is not None
 
     # Apply to a scratch copy and verify source constraints.
@@ -459,8 +459,8 @@ def _validate_against_context(
             )
         except (FileNotFoundError, ValueError, KeyError) as exc:
             apply_errors = [f"the patch set does not apply: {exc}"]
-            tiers["apply"] = {"ran": True, "errors": apply_errors, "notes": []}
-            return _report(apply_errors, tiers)
+            stages["apply"] = {"ran": True, "errors": apply_errors, "notes": []}
+            return _report(apply_errors, stages)
 
         apply_errors = validate_post_apply(
             scratch_root,
@@ -469,9 +469,9 @@ def _validate_against_context(
             enumeration_roots=policy.roots_in(scratch_root),
         )
         apply_errors.extend(policy.check_child(scratch_root))
-        tiers["apply"] = {"ran": True, "errors": apply_errors, "notes": []}
+        stages["apply"] = {"ran": True, "errors": apply_errors, "notes": []}
         if apply_errors:
-            return _report(apply_errors, tiers)
+            return _report(apply_errors, stages)
 
         # Compare declared static checks against the unpatched source.
         names = (
@@ -481,7 +481,7 @@ def _validate_against_context(
         )
         static_errors: list[str] = []
         if not names:
-            tiers["static_checks"] = {
+            stages["static_checks"] = {
                 "ran": False,
                 "reason": "no checks declared in contract.proposer_static_checks",
                 "errors": [],
@@ -489,7 +489,7 @@ def _validate_against_context(
             }
         else:
             static_errors, static_notes = run_static_checks(names, parent_root, scratch_root)
-            tiers["static_checks"] = {
+            stages["static_checks"] = {
                 "ran": True,
                 "declared": list(names),
                 "errors": static_errors,
@@ -506,11 +506,11 @@ def _validate_against_context(
                 else {}
             ),
         )
-        tiers["load_probe"] = {"ran": True, "errors": probe_errors, "notes": probe_notes}
+        stages["load_probe"] = {"ran": True, "errors": probe_errors, "notes": probe_notes}
     finally:
         shutil.rmtree(parent, ignore_errors=True)
 
-    return _report([*static_errors, *probe_errors], tiers)
+    return _report([*static_errors, *probe_errors], stages)
 
 
 def validate_patches(patches_json: str) -> str:
@@ -523,8 +523,8 @@ def validate_patches(patches_json: str) -> str:
     and nothing else; there is no extra field to supply and no digest to
     compute.
 
-    The report is ``{"ok": bool, "errors": [...], "tiers": {...}}``.
-    ``errors`` is the flat list to act on; ``tiers`` says which stage each
+    The report is ``{"ok": bool, "errors": [...], "stages": {...}}``.
+    ``errors`` is the flat list to act on; ``stages`` says which stage each
     finding came from and which stages ran. Structure and application
     failures stop validation. Static checks and the load probe both run
     after successful application:

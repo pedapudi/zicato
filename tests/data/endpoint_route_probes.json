@@ -82,7 +82,7 @@
   "matchup_grid/rejected": "/api/matchup-grid/e1/v0/bad~id",
   "gate": "/api/round/e1/v0/v1/gate",
   "gate/rejected": "/api/round/e1/v0/bad~id/gate",
-  "drift_movements": "/api/drift-movements/v0",
+  "metric_movements": "/api/drift-movements/v0",
   "drift_movements/rejected": "/api/drift-movements/bad~id",
   "reflection_summary": "/api/reflection/r1/summary",
   "reflection_summary/rejected": "/api/reflection/bad~id/summary",

@@ -67,7 +67,7 @@ async def probe(workspace: Path, *, invocation: bool = False) -> None:
         captured["proc"] = proc
         captured["start_time"] = pid_start_time(proc.pid)
         payload = json.loads(Path(args[-1]).read_text())
-        captured["snapshot"] = Path(payload["snapshot_root"])
+        captured["snapshot"] = Path(payload["runtime_context"]["run"]["snapshot_root"])
         return proc
 
     child_pid = None

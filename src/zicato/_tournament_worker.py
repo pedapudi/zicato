@@ -61,7 +61,7 @@ import os
 import sys
 import time
 from collections.abc import Mapping
-from dataclasses import asdict, replace
+from dataclasses import asdict, fields, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -80,8 +80,8 @@ from zicato.core.measurement import (
     artifact_replicate_index,
     recorded_artifact_measurement,
 )
-from zicato.core.run_context import RunContext
-from zicato.import_path import import_dotted_path
+from zicato.core.runtime_context import WorkerRuntimeContext
+from zicato.core.settings import RuntimeSettings
 from zicato.judge_runtime.error_register import judge_error_snapshot
 from zicato.util import best_effort, now_iso
 
@@ -107,50 +107,11 @@ TERMINAL_REASON_WALL_CLOCK = "wall_clock_budget_exceeded"
 # ---------------------------------------------------------------------------
 
 
-def _import_callable(dotted: str) -> Any:
-    """Resolve a ``pkg.mod:attr`` or ``pkg.mod.attr`` dotted path to a callable.
-
-    Delegates to :func:`zicato.import_path.import_dotted_path` so the
-    colon-separated (entry-point style) and dot-separated forms are handled
-    by the single shared implementation.
-    """
-    obj: Any = import_dotted_path(dotted, label="call_llm dotted path")
-    if not callable(obj):
-        raise ValueError(f"call_llm dotted path {dotted!r} did not resolve to a callable")
-    return obj
-
-
 def _resolve_role_call_llm(spec: Any, *, role: str) -> Any:
-    """Resolve one role's worker spec to a text call_llm in this interpreter.
+    """Reconstruct the captured role without importing its model backend eagerly."""
+    from zicato.models_config import resolve_worker_role
 
-    The runner forwards each captured role from the selected execution contract:
-
-    * ``{"dotted": "module:qualname"}`` — re-import the callable (a role
-      configured by dotted path, or one left unconfigured); or
-    * ``{"models_role": {...}}`` — a workspace ``models.<role>`` spec, which
-      this worker re-resolves with the same machinery the runtime factory
-      uses (reading any ``api_key_env`` from the worker's OWN os.environ).
-
-    The model-spec form resolves through
-    :func:`zicato.models_config.lazy_text_call_llm`, so the ADK import graph
-    (measured at 0.80 s / 88 MB per worker — RUNTIME.md §5.5.8) is paid on the
-    role's FIRST CALL rather than at worker startup. A unit that never
-    exercises a role — an entry with no LLM judge, a run that never reaches
-    the evaluation side — therefore never pays for it, and a unit that does
-    exercise it pays exactly the same cost, just later. The spec *shape* is
-    still validated eagerly, so a malformed ``models`` block fails fast here.
-    """
-    if not isinstance(spec, dict):
-        raise ValueError(f"{role} role spec must be a JSON object, got {type(spec).__name__}")
-    dotted = spec.get("dotted")
-    if dotted:
-        return _import_callable(str(dotted))
-    raw_role = spec.get("models_role")
-    if isinstance(raw_role, dict):
-        from zicato.models_config import resolve_worker_role  # noqa: PLC0415
-
-        return resolve_worker_role(spec, role=role, lazy=True)
-    raise ValueError(f"{role} role spec has neither 'dotted' nor 'models_role': {spec!r}")
+    return resolve_worker_role(spec, role=role, lazy=True)
 
 
 def _resolve_target_model_from_role(spec: Any) -> Any:
@@ -189,48 +150,15 @@ def _goldfive_config_for_adapter(
 
 
 def _load_args(args_path: Path) -> dict[str, Any]:
-    """Read and minimally validate the worker's JSON args file.
-
-    The args file shape (one run)::
-
-        {
-          "workspace_root": "<abs path to .zicato dir>",
-          "epoch_id": "<epoch id>",
-          "generation_id": "<generation id>",
-          "snapshot_root": "<abs path to a per-run code-snapshot working copy>",
-          "scratch_dir": "<abs path to a per-run scratch dir OUTSIDE the snapshot>",
-          "entry": { ...BoardEntry as a dict (validate_board_entry shape)... },
-          "adapter": {
-            "kind": "adk",
-            "entrypoint": "module.path:agent_symbol",
-            "mutable_trees": ["<abs path>", ...],
-            "integrations": ["goldfive"]
-          },
-          "target_role":   {"dotted": "pkg.module:callable"} | {"models_role": {...}},
-          "evaluation_role": {"dotted": "pkg.module:callable"} | {"models_role": {...}},
-          "judge_role":     {"dotted": "pkg.module:callable"} | {"models_role": {...}},
-          "sink_events_path": "<abs path to events.jsonl>",
-          "loss_path": "<abs path to loss.json>",
-          "result_path": "<abs path the worker writes its result JSON to>",
-          "instance_id": "default",
-          "seed": null,
-          "harmonograf_url": "",
-          "persist_run_results": true,   # optional; ABSENT => true
-          "persist_judge_io": true       # optional; ABSENT => true
-        }
-
-    ``persist_run_results`` / ``persist_judge_io`` are the board-reflection
-    capture knobs (runtime-only, never contract-hashed): result.json beside
-    loss.json and the judge_io.jsonl sidecar. An args file that omits either
-    key defaults it to True — always-on with an opt-out.
-    """
+    """Read one worker payload with captured execution and operational inputs."""
     with open(args_path, encoding="utf-8") as f:
         args: dict[str, Any] = json.load(f)
     required = (
-        "workspace_root",
-        "epoch_id",
-        "generation_id",
-        "snapshot_root",
+        "runtime_context",
+        "configuration",
+        "driver_imports",
+        "measurement",
+        "weights",
         "entry",
         "adapter",
         "target_role",
@@ -533,19 +461,10 @@ async def _drive_session(
     *,
     session: Any,
     entry: BoardEntry,
-    events_path: Path,
     sinks: list[Any],
     config: RuntimeConfig,
 ) -> tuple[RunResult | None, int, bool]:
-    """Drive one ``session.run`` and return (result, runtime_ms, budget_exceeded).
-
-    Identical dispatch logic to the in-process runner's old
-    ``_drive_session``: synthetic kinds bypass the adapter session,
-    a bare ``run(entry, sink_path)`` stub is detected by parameter
-    name, and the rich ``run(entry, sinks, config)`` shape is the
-    default. This is the one implementation of that dispatch, so a worker
-    run and an in-process run cannot diverge in how they call a target.
-    """
+    """Drive a harness or synthetic entry and report its duration and abort state."""
     started = time.monotonic()
 
     if entry.kind in ("synthetic_adversarial", "synthetic_clean"):
@@ -570,15 +489,9 @@ async def _drive_session(
         )
         return result, runtime_ms, budget_exceeded
 
-    from zicato.adapter_factory import uses_legacy_run
+    from zicato.adapter_factory import validate_harness_run
 
-    legacy = uses_legacy_run(session)
-
-    if legacy:
-        await session.run(entry, events_path)
-        runtime_ms = int((time.monotonic() - started) * 1000)
-        return None, runtime_ms, False
-
+    validate_harness_run(session)
     result = await session.run(entry, sinks, config)
     runtime_ms = (
         result.runtime_ms
@@ -674,72 +587,29 @@ def _write_result(
 # ---------------------------------------------------------------------------
 
 
-def _accepted_run_context(args: dict[str, Any]) -> RunContext:
-    """Accept one run record before importing target code or creating run state."""
-    from dataclasses import fields
-
-    from zicato.core.runtime_context import WorkerRuntimeContext
-
-    legacy = RunContext(
-        Path(args["workspace_root"]),
-        str(args["epoch_id"]),
-        str(args["generation_id"]),
-        str(args["run_id"]),
-        Path(args["snapshot_root"]),
-        Path(args["scratch_dir"]) if args.get("scratch_dir") else None,
-    )
-    if "runtime_context" not in args:
-        return legacy
-    accepted = WorkerRuntimeContext.from_json(args["runtime_context"]).run
-    if accepted is None:
-        raise ValueError("a worker runtime_context must include its run coordinates")
-    mismatches = [
-        item.name
-        for item in fields(RunContext)
-        if getattr(accepted, item.name) != getattr(legacy, item.name)
-    ]
-    if mismatches:
-        raise ValueError(f"runtime_context.run disagrees with worker coordinates: {mismatches}")
-    return accepted
-
-
 async def _run(args: dict[str, Any]) -> None:
     from zicato.core.adapter_config import DriverImportContext
     from zicato.driver_imports import driver_import_scope
 
-    run_context = _accepted_run_context(args)
-    context = DriverImportContext.from_document(args.get("driver_imports", {}))
-    with driver_import_scope(context, snapshot_root=run_context.snapshot_root):
-        await _run_with_imports(args, run_context)
+    runtime_context = WorkerRuntimeContext.from_json(args["runtime_context"])
+    context = DriverImportContext.from_document(args["driver_imports"])
+    with driver_import_scope(context, snapshot_root=runtime_context.run.snapshot_root):
+        await _run_with_imports(args, runtime_context)
 
 
-async def _run_with_imports(args: dict[str, Any], run_context: RunContext) -> None:
+async def _run_with_imports(args: dict[str, Any], runtime_context: WorkerRuntimeContext) -> None:
     """Execute the single run described by ``args``.
 
     Writes the ``active_runs`` state file with the worker's own pid,
     drives the entry, reduces the loss, and writes ``loss.json`` plus the
     result file. Removes the ``active_runs`` file on a clean exit.
     """
-    from dataclasses import fields  # noqa: PLC0415
-
-    from zicato.config import ResolvedConfiguration, resolve_configuration  # noqa: PLC0415
-    from zicato.core.settings import RuntimeSettings  # noqa: PLC0415
+    from zicato.config import ResolvedConfiguration  # noqa: PLC0415
     from zicato.runtime import state as state_mod  # noqa: PLC0415
     from zicato.telemetry import reducer as reducer_mod  # noqa: PLC0415
 
-    configuration = (
-        ResolvedConfiguration.from_json(args["configuration"])
-        if "configuration" in args
-        else resolve_configuration(
-            {
-                "runtime": {
-                    item.name: args[item.name]
-                    for item in fields(RuntimeSettings)
-                    if item.name in args
-                }
-            }
-        )
-    )
+    configuration = ResolvedConfiguration.from_json(args["configuration"])
+    run_context = runtime_context.run
 
     workspace_root = run_context.workspace_root
     epoch_id = run_context.epoch_id
@@ -761,46 +631,19 @@ async def _run_with_imports(args: dict[str, Any], run_context: RunContext) -> No
     measurement = recorded_artifact_measurement(
         run_dir(workspace_root, epoch_id, generation_id, str(args["entry"]["id"])),
         loss_path,
-        MeasurementDraw.from_json(args["measurement"]) if "measurement" in args else None,
+        MeasurementDraw.from_json(args["measurement"]),
     )
-    if "measurement" in args and measurement != MeasurementDraw.from_index(
-        slot, base_seed=configuration.values.runtime.seed
-    ):
+    if measurement != MeasurementDraw.from_index(slot, base_seed=configuration.values.runtime.seed):
         raise ValueError("worker seed differs from the recorded measurement")
-    from zicato.core.runtime_context import (  # noqa: PLC0415
-        TelemetryEndpoints,
-        WorkerRuntimeContext,
-    )
-
-    runtime_context = (
-        WorkerRuntimeContext.from_json(args["runtime_context"])
-        if "runtime_context" in args
-        else WorkerRuntimeContext(
-            telemetry=TelemetryEndpoints(
-                str(args.get("harmonograf_url", "") or ""),
-                str(args.get("harmonograf_grpc", "") or ""),
-            )
-        )
-    )
     harmonograf_url = runtime_context.telemetry.web_url
     harmonograf_grpc = runtime_context.telemetry.grpc_target
     harmonograf_metadata = {
         str(key): str(value) for key, value in (args.get("harmonograf_metadata") or {}).items()
     }
 
-    # Export the per-run scratch directory so the system under test routes
-    # its run output OUTSIDE the generation snapshot. Without this a
-    # target writing next to its own code (e.g. the presentation agent's
-    # ``output/``) would pollute the snapshot, and the pollution would
-    # compound generation over generation. The runner supplies a fresh
-    # scratch dir per run; an args file that omits the key leaves the
-    # env var unset and the target falls back to its own default.
-    from zicato.epoch.snapshot_scope import SCRATCH_DIR_ENV  # noqa: PLC0415
-
     scratch_dir = run_context.scratch_dir
     if scratch_dir is not None:
         scratch_dir.mkdir(parents=True, exist_ok=True)
-        os.environ[SCRATCH_DIR_ENV] = str(scratch_dir)
 
     entry = validate_board_entry(args["entry"])
     if int(entry.context.get("replicate_index", "0")) != slot:
@@ -922,13 +765,11 @@ async def _run_with_imports(args: dict[str, Any], run_context: RunContext) -> No
     # ``RuntimeConfig.effective_judge_call_llm`` resolves to the evaluation callable.
     judge_call_llm = None
     judge_role = args.get("judge_role")
-    if isinstance(judge_role, dict) and (judge_role.get("dotted") or judge_role.get("models_role")):
+    if isinstance(judge_role, dict) and judge_role.get("models_role"):
         judge_call_llm = _resolve_role_call_llm(judge_role, role="judge")
     user_emulator_call_llm = None
     emulator_role = args.get("user_emulator_role")
-    if isinstance(emulator_role, dict) and (
-        emulator_role.get("dotted") or emulator_role.get("models_role")
-    ):
+    if isinstance(emulator_role, dict) and (emulator_role.get("models_role")):
         user_emulator_call_llm = _resolve_role_call_llm(emulator_role, role="user_emulator")
 
     # Capture knobs (board reflection's capture fix). Runtime-only,
@@ -970,7 +811,7 @@ async def _run_with_imports(args: dict[str, Any], run_context: RunContext) -> No
         target_model=target_model,
         judge_io_sink=judge_io_sink,
         goldfive=_goldfive_config_for_adapter(weights, adapter_spec),
-        driver_imports=DriverImportContext.from_document(args.get("driver_imports", {})),
+        driver_imports=DriverImportContext.from_document(args["driver_imports"]),
         run_context=run_context,
     )
 
@@ -1008,7 +849,6 @@ async def _run_with_imports(args: dict[str, Any], run_context: RunContext) -> No
             return await _drive_session(
                 session=session,
                 entry=entry,
-                events_path=events_path,
                 sinks=sinks,
                 config=config,
             )
@@ -1164,7 +1004,7 @@ async def _run_with_imports(args: dict[str, Any], run_context: RunContext) -> No
     # Attribute the worst-case penalty ``run_not_completed`` just bought
     # (issue #245): the reducer adds a heavy fixed term and floors
     # ``task_failure_ratio``, which lands as a large ``drift_loss`` next to an
-    # empty ``drift_counts``. The adapter's own reason is the only record of
+    # empty measured drift metrics. The adapter's own reason is the only record of
     # WHY, and it goes here rather than on ``abort_cause`` — that field
     # decides cache eligibility, and any non-budget value there would stop
     # this scored failure from being persisted at all.
@@ -1246,27 +1086,8 @@ async def _run_with_imports(args: dict[str, Any], run_context: RunContext) -> No
 
 
 def _weights_from_args(args: dict[str, Any]) -> ScoringWeights:
-    """Reconstruct :class:`ScoringWeights` from the serialised args.
-
-    The args file carries the serialised :class:`ScoringWeights` under the
-    ``weights`` key. A missing key falls back to the dataclass default — so a
-    caller that does not care about scoring weights (a stub-adapter test) can
-    omit the block entirely and still get a usable run.
-
-    Thin delegator to :meth:`ScoringWeights.from_json` — the inverse of the
-    SINGLE field-enumerating serde the runner serialises with
-    (:func:`zicato.tournament.runner._weights_spec` → :meth:`ScoringWeights.to_json`).
-    Because both sides share ONE ``dataclasses.fields()``-driven serde, a
-    field cannot be carried by the writer and dropped here (or the reverse).
-    Two hand-aligned field lists would let it, and the worker would then
-    score under defaults for the dropped field and say nothing — which is how
-    ``per_judge_weights``, ``pass_rate_monotonicity_scope`` and
-    ``drift_kind_aggregation`` each desynced.
-    ``from_json`` coerces every field to its declared type and
-    re-runs ``ScoringWeights.__post_init__``, so a malformed transform / scope
-    token in the args file fails fast or coerces, as it does at contract load.
-    """
-    return ScoringWeights.from_json(args.get("weights"))
+    """Decode the scoring document carried by every supported worker payload."""
+    return ScoringWeights.from_json(args["weights"])
 
 
 def _install_worker_log_stream_from_args(args: dict[str, Any]) -> None:
@@ -1282,17 +1103,16 @@ def _install_worker_log_stream_from_args(args: dict[str, Any]) -> None:
         path = args.get("log_stream_path")
         if not path:
             return
+        from zicato.config import ResolvedConfiguration  # noqa: PLC0415
         from zicato.logging_stream import install_worker_log_stream  # noqa: PLC0415
 
-        epoch_id = str(args.get("epoch_id") or "") or None
-        generation_id = str(args.get("generation_id") or "") or None
-        run_id = str(args.get("run_id") or "") or None
+        run = WorkerRuntimeContext.from_json(args["runtime_context"]).run
         install_worker_log_stream(
             path,
-            epoch_id=epoch_id,
-            generation_id=generation_id,
-            run_id=run_id,
-            level=str(args.get("log_level") or "INFO"),
+            epoch_id=run.epoch_id,
+            generation_id=run.generation_id,
+            run_id=run.run_id,
+            level=ResolvedConfiguration.from_json(args["configuration"]).values.runtime.log_level,
         )
     except Exception:  # noqa: BLE001 — logging setup never fails a run
         pass
@@ -1321,7 +1141,7 @@ def main(argv: list[str] | None = None) -> int:
         args = _load_args(args_path)
         from zicato.runtime.context import bind_worker_runtime_context  # noqa: PLC0415
 
-        bind_worker_runtime_context(args_path, has_context="runtime_context" in args)
+        bind_worker_runtime_context(args_path)
     except Exception as exc:  # noqa: BLE001 — surface as a clean non-zero exit
         print(f"zicato._tournament_worker: bad args file: {exc}", file=sys.stderr)
         return 2

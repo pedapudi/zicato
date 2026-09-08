@@ -12,7 +12,7 @@ from zicato.core.runtime_context import WorkerRuntimeContext
 
 
 @pytest.mark.parametrize("changed", ["epoch_id", "snapshot_root", "scratch_dir", "absent"])
-def test_conflicting_run_record_fails_before_driver_import_or_run_writes(
+def test_malformed_run_record_fails_before_driver_import_or_run_writes(
     tmp_path: Path, changed: str
 ) -> None:
     workspace, snapshot, scratch = (
@@ -27,14 +27,8 @@ def test_conflicting_run_record_fails_before_driver_import_or_run_writes(
     if changed == "absent":
         context["run"] = None
     else:
-        context["run"][changed] = "e1" if changed == "epoch_id" else str(tmp_path / "other")
+        context["run"][changed] = 7
     payload = {
-        "workspace_root": str(workspace),
-        "epoch_id": "e0",
-        "generation_id": "v0",
-        "run_id": "run",
-        "snapshot_root": str(snapshot),
-        "scratch_dir": str(scratch),
         "runtime_context": context,
         "driver_imports": {"roots": [str(tmp_path)], "mutable_packages": []},
         "adapter": {"kind": "import", "factory": "driver:make"},
@@ -57,12 +51,7 @@ def test_conflicting_run_record_fails_before_driver_import_or_run_writes(
         timeout=10,
     )
     assert result.returncode != 0
-    expected = (
-        "must include its run coordinates"
-        if changed == "absent"
-        else "disagrees with worker coordinates"
-    )
-    assert expected in result.stderr
+    assert "runtime_context.run" in result.stderr
     assert not marker.exists()
     assert not workspace.exists()
     assert not scratch.exists()

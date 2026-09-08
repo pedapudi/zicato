@@ -29,7 +29,7 @@ from zicato.core import (
     RuntimeConfig,
     ScoringWeights,
 )
-from zicato.core.types import DriftCount, ExpectationResult
+from zicato.core.types import ExpectationResult, MetricCount
 from zicato.core.workspace import loss_profile_path
 from zicato.epoch.journal import write_experiment
 from zicato.epoch.lifecycle import new_epoch
@@ -123,7 +123,7 @@ def test_run_matchup_threads_match_id_to_each_run(monkeypatch, tmp_path) -> None
                 entry_id=entry.id,
                 generation_id=generation.id,
                 epoch_id="e0",
-                drift_counts=(DriftCount(kind="off_topic", severity="info", count=0),),
+                metric_counts=(MetricCount(name="drift:off_topic", severity="info", count=0),),
                 plan_revisions=0,
                 task_failure_ratio=0.0,
                 runtime_ms=1000,
@@ -194,7 +194,7 @@ def test_run_matchup_stamps_judge_only_onto_each_entry(monkeypatch, tmp_path) ->
                 entry_id=entry.id,
                 generation_id="v0",
                 epoch_id="e0",
-                drift_counts=(DriftCount(kind="off_topic", severity="info", count=0),),
+                metric_counts=(MetricCount(name="drift:off_topic", severity="info", count=0),),
                 plan_revisions=0,
                 task_failure_ratio=0.0,
                 runtime_ms=1000,
@@ -255,7 +255,7 @@ def test_run_matchup_default_leaves_judge_only_unset(monkeypatch, tmp_path) -> N
                 entry_id=entry.id,
                 generation_id="v0",
                 epoch_id="e0",
-                drift_counts=(DriftCount(kind="off_topic", severity="info", count=0),),
+                metric_counts=(MetricCount(name="drift:off_topic", severity="info", count=0),),
                 plan_revisions=0,
                 task_failure_ratio=0.0,
                 runtime_ms=1000,
@@ -308,7 +308,7 @@ def test_run_single_stamps_match_id_onto_loss_json(monkeypatch, tmp_path) -> Non
         entry_id=entry_id,
         generation_id=gen_id,
         epoch_id=epoch_id,
-        drift_counts=(),
+        metric_counts=(),
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=10,
@@ -424,7 +424,7 @@ def _build_workspace_with_tagged_run(tmp_path: Path) -> tuple[Path, str]:
         entry_id="entry_a",
         generation_id="v1",
         epoch_id=eid,
-        drift_counts=(),
+        metric_counts=(),
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=1234,
@@ -442,7 +442,7 @@ def _build_workspace_with_tagged_run(tmp_path: Path) -> tuple[Path, str]:
         entry_id="entry_a",
         generation_id="v0",
         epoch_id=eid,
-        drift_counts=(),
+        metric_counts=(),
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=999,

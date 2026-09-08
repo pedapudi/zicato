@@ -66,8 +66,8 @@ from zicato.core import (
 )
 from zicato.core.measurement import MeasurementDraw, measurement_artifact_path
 from zicato.core.types import (
-    DriftCount,
     ExpectationResult,
+    MetricCount,
     ProposerQualityConfig,
     TournamentStructure,
 )
@@ -280,13 +280,21 @@ class _NoisyWorld:
     @staticmethod
     def profile(observation: DecisionObservation, *, epoch_id: str = "e0") -> LossProfile:
         return LossProfile(
-            run_id=f"{observation.generation_id}--{observation.entry_id}--r{observation.replicate_index}",
+            run_id=(
+                f"{observation.generation_id}"
+                "--"
+                f"{observation.entry_id}"
+                "--r"
+                f"{observation.replicate_index}"
+            ),
             entry_id=observation.entry_id,
             generation_id=observation.generation_id,
             epoch_id=epoch_id,
-            drift_counts=(
-                DriftCount(
-                    kind="unexpected_output", severity="info", count=int(observation.drift_loss)
+            metric_counts=(
+                MetricCount(
+                    name="drift:unexpected_output",
+                    severity="info",
+                    count=int(observation.drift_loss),
                 ),
             ),
             plan_revisions=0,
@@ -1161,7 +1169,7 @@ def _screen_truth_parent_losses() -> list[LossProfile]:
                 entry_id=entry.id,
                 generation_id="v0",
                 epoch_id="e0",
-                drift_counts=(),
+                metric_counts=(),
                 plan_revisions=0,
                 task_failure_ratio=0.0,
                 runtime_ms=1,
@@ -1238,7 +1246,7 @@ def _screen_experiment(exp_id: str) -> Any:
             core_idea=f"candidate {exp_id}",
             modulating=(),
             why="screen acceptance",
-            expected_drift_movements=(),
+            expected_metric_movements=(),
             expected_pass_rate_delta="+0.0",
         ),
         patches=(),
@@ -1637,7 +1645,7 @@ def test_heuristic_over_slate_starves_the_union(monkeypatch, tmp_path):
                 core_idea=exp_id,
                 modulating=tuple(p.mutation_id for p in patches),
                 why="",
-                expected_drift_movements=(),
+                expected_metric_movements=(),
                 expected_pass_rate_delta="",
             ),
             patches=patches,

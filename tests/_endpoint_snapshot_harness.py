@@ -144,7 +144,7 @@ ROUTE_PROBES: tuple[tuple[str, str], ...] = (
     ("matchup_grid/rejected", f"/api/matchup-grid/e1/v0/{REJECTED}"),
     ("gate", "/api/round/e1/v0/v1/gate"),
     ("gate/rejected", f"/api/round/e1/v0/{REJECTED}/gate"),
-    ("drift_movements", "/api/drift-movements/v0"),
+    ("metric_movements", "/api/drift-movements/v0"),
     ("drift_movements/rejected", f"/api/drift-movements/{REJECTED}"),
     # -- reflection reads ------------------------------------------------
     ("reflection_summary", "/api/reflection/r1/summary"),

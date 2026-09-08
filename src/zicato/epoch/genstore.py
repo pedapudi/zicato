@@ -95,7 +95,7 @@ EPHEMERAL_SNAPSHOT_PREFIX = "ztw-snap-"
 
 #: Basename of the per-run scratch directory inside the ephemeral
 #: checkout parent. The worker exports it to the harness under test via
-#: :data:`zicato.epoch.snapshot_scope.SCRATCH_DIR_ENV` so run output is
+#: :attr:`zicato.core.run_context.RunContext.scratch_dir` so run output is
 #: routed OUTSIDE the source tree.
 EPHEMERAL_SCRATCH_DIRNAME = "run-scratch"
 
@@ -147,7 +147,7 @@ class EphemeralCheckout:
     a triple rather than a bare ``(working_dir, cleanup)`` pair because
     the per-run scratch directory is part of the same contract: run
     output must be routed OUTSIDE the source tree (the
-    :data:`~zicato.epoch.snapshot_scope.SCRATCH_DIR_ENV` contract), the
+    :attr:`zicato.core.run_context.RunContext.scratch_dir` contract), the
     scratch directory's placement is backend-owned (it shares the
     checkout's crash-reapable ``ztw-snap-*`` parent so one cleanup — or
     the supervisor's reaper — removes both), and under a shared-tree
@@ -163,7 +163,7 @@ class EphemeralCheckout:
         the canonical tree.
     scratch_dir:
         The per-run scratch directory the worker exports via
-        :data:`~zicato.epoch.snapshot_scope.SCRATCH_DIR_ENV`. A sibling
+        :attr:`zicato.core.run_context.RunContext.scratch_dir`. A sibling
         of ``working_dir`` under the same ``ztw-snap-*`` parent.
     cleanup:
         Idempotent, best-effort teardown removing the whole checkout
@@ -517,7 +517,7 @@ class GenerationStore(Protocol):
           :meth:`snapshot_path`'s basename (``__file__``-derived paths
           look identical);
         * a per-run ``scratch_dir`` sibling is created for the
-          :data:`~zicato.epoch.snapshot_scope.SCRATCH_DIR_ENV` contract;
+          :attr:`zicato.core.run_context.RunContext.scratch_dir` contract;
         * concurrent checkouts of the SAME generation are mutually
           isolated;
         * ``cleanup()`` is idempotent and best-effort.

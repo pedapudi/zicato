@@ -40,7 +40,7 @@ from tests._orchestrator_harness import (
     install_telemetry_stubs,
     run_evolve_once,
 )
-from zicato.core import BoardEntry, DriftCount, ExpectationResult, LossProfile
+from zicato.core import BoardEntry, ExpectationResult, LossProfile, MetricCount
 from zicato.core.types import OverfittingConfig, ScoringWeights, TournamentStructure
 from zicato.epoch.journal import write_seed_experiment
 from zicato.epoch.lifecycle import new_epoch
@@ -104,7 +104,7 @@ def _install_per_entry_telemetry_stubs(
             entry_id=entry.id,
             generation_id=gid,
             epoch_id=epoch_id,
-            drift_counts=(DriftCount(kind="off_topic", severity="info", count=0),),
+            metric_counts=(MetricCount(name="drift:off_topic", severity="info", count=0),),
             plan_revisions=0,
             task_failure_ratio=0.0,
             runtime_ms=100,
@@ -145,11 +145,14 @@ def _bootstrap(
                 # tags this fixture never writes.
                 "generation_source_backend": "directory",
                 "adapter": {"kind": "import", "factory": "tests._stub_adapter:make_stub_adapter"},
-                "runtime": {
-                    "parallelism": 2,
-                    "propose_parallelism": 2,
-                    "target_call_llm": "tests._orchestrator_harness:target_call_llm",
-                    "evaluation_call_llm": "tests._orchestrator_harness:evaluation_call_llm",
+                "runtime": {"parallelism": 2, "propose_parallelism": 2},
+                "models": {
+                    "engines": {
+                        "target": {"call_llm": "tests._orchestrator_harness:target_call_llm"},
+                        "evaluation": {
+                            "call_llm": "tests._orchestrator_harness:evaluation_call_llm"
+                        },
+                    }
                 },
             }
         )

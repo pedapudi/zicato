@@ -34,7 +34,6 @@ from typing import Any
 import pytest
 
 from zicato.core import (
-    DriftCount,
     ExpectationResult,
     JudgeLoss,
     LossProfile,
@@ -70,7 +69,6 @@ def _loss(
         entry_id=entry_id,
         generation_id="v1",
         epoch_id="e0",
-        drift_counts=(DriftCount(kind="off_topic", severity="info", count=0),),
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=1000,
@@ -81,7 +79,10 @@ def _loss(
         score=score,
         metrics=metrics,
         tokens_spent=tokens_spent,
-        metric_counts=metric_counts,
+        metric_counts=(
+            *(MetricCount(name="drift:off_topic", severity="info", count=0),),
+            *metric_counts,
+        ),
         per_judge_loss=per_judge_loss,
     )
 
@@ -265,7 +266,7 @@ def test_folded_namespace_aggregate_matches_the_per_replicate_aggregate() -> Non
     """The load-bearing invariant behind the counter fold.
 
     In production the reducer ALWAYS populates ``metric_counts``, and
-    :meth:`LossProfile.unified_metrics` then reads it in preference to
+    :meth:`LossProfile.scoring_metrics` then reads it in preference to
     synthesising from the int scalars — so ``metric_counts`` is what the
     ``cost:`` namespace term of the scalar actually runs on. Folding it
     must be aggregate-preserving: the namespace aggregate over the ONE

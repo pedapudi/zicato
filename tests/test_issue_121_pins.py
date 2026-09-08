@@ -43,7 +43,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from zicato.core.types import BoardEntry, DriftCount, JudgeSpec, LossProfile
+from zicato.core.types import BoardEntry, JudgeSpec, LossProfile, MetricCount
 from zicato.health.diagnostics import detect_dead_judge
 from zicato.judge_runtime import judge_spec_to_goldfive
 
@@ -129,7 +129,7 @@ def _loss(entry_id: str, generation_id: str, **extra: Any) -> LossProfile:
         entry_id=entry_id,
         generation_id=generation_id,
         epoch_id="e1",
-        drift_counts=extra.pop("drift_counts", ()),
+        metric_counts=extra.pop("metric_counts", ()),
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=1000,
@@ -231,11 +231,11 @@ def test_health_distinguishes_an_erroring_judge_from_an_unmet_criterion() -> Non
     same finding.
     """
     board = [_board_entry("e1", ["lives", "broken"])]
-    fired = DriftCount(kind="custom:lives", severity="warning", count=1)
+    fired = MetricCount(name="drift:custom:lives", severity="warning", count=1)
 
     # Epoch A: 'broken' ran fine and its criterion was simply never met.
     # This half holds TODAY — it is what makes the contrast below a real one.
-    quiet = {"v0": [_loss("e1", "v0", drift_counts=(fired,))]}
+    quiet = {"v0": [_loss("e1", "v0", metric_counts=(fired,))]}
     quiet_findings = detect_dead_judge(quiet, board)
     assert [f.code for f in quiet_findings] == ["dead_judge"]
     assert quiet_findings[0].detail["dead_judges"] == ["broken"]
@@ -248,7 +248,7 @@ def test_health_distinguishes_an_erroring_judge_from_an_unmet_criterion() -> Non
             _loss(
                 "e1",
                 "v0",
-                drift_counts=(fired,),
+                metric_counts=(fired,),
                 judge_errors=(
                     JudgeError(
                         judge_name="broken",
@@ -274,12 +274,7 @@ def test_health_distinguishes_an_erroring_judge_from_an_unmet_criterion() -> Non
 
 
 def test_judge_errors_round_trip_through_loss_json(tmp_path: Any) -> None:
-    """The provenance has to survive the artifact, not just the process.
-
-    Also pins the back-compat half: a ``loss.json`` written before the field
-    existed carries no key and must still load.
-    """
-    import json
+    """Judge identity, invocation failures, and error type survive loss publication."""
 
     from zicato.core.types import JudgeError  # noqa: PLC0415 — local to the pin
     from zicato.telemetry.reducer import read_loss_profile, write_loss_profile
@@ -304,12 +299,6 @@ def test_judge_errors_round_trip_through_loss_json(tmp_path: Any) -> None:
     assert reloaded.judge_errors[0].judge_name == "broken"
     assert reloaded.judge_errors[0].errors == 34
     assert reloaded.judge_errors[0].last_error_type == "RuntimeError"
-
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    del payload["judge_errors"]
-    legacy = tmp_path / "legacy.json"
-    legacy.write_text(json.dumps(payload), encoding="utf-8")
-    assert read_loss_profile(legacy).judge_errors == ()
 
 
 def test_replicate_fold_sums_judge_errors_rather_than_meaning_them() -> None:
@@ -355,13 +344,13 @@ def test_a_partially_erroring_judge_is_broken_not_dead() -> None:
     from zicato.core.types import JudgeError  # noqa: PLC0415 — local to the pin
 
     board = [_board_entry("e1", ["flaky", "quiet"])]
-    fired = DriftCount(kind="custom:flaky", severity="warning", count=1)
+    fired = MetricCount(name="drift:custom:flaky", severity="warning", count=1)
     losses = {
         "v0": [
             _loss(
                 "e1",
                 "v0",
-                drift_counts=(fired,),
+                metric_counts=(fired,),
                 judge_errors=(
                     JudgeError(
                         judge_name="flaky",

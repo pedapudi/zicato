@@ -26,6 +26,7 @@ from zicato.reflection.adjudicator import run_ref_for
 from zicato.reflection.corpus import ingest_lineage, read_corpus, write_corpus
 from zicato.telemetry.reducer import write_loss_profile
 from zicato.testing.fixtures import make_loss_profile
+from zicato.tournament.scoring import write_gen_score
 from zicato.workspace import WorkspaceLayout, read_loss
 
 
@@ -113,7 +114,7 @@ def test_index_audits_all_seeds_and_projects_only_selected_seed(tmp_path: Path) 
         _write(tmp_path, seed)
     layout = WorkspaceLayout.from_root(tmp_path)
     score_path = layout.gen_score("e0", "v0")
-    score_path.write_text(json.dumps({"base_seed": 17, "generation_id": "v0", "scalar": 0.0}))
+    write_gen_score(tmp_path, "e0", "v0", {"base_seed": 17, "generation_id": "v0", "scalar": 0.0})
     database = tmp_path / "index.db"
     ingest_run(tmp_path, database, "e0", "v0", "entry")
     assert len(runs_for_generation(database, "e0", "v0")) == 4
@@ -127,7 +128,7 @@ def test_index_audits_all_seeds_and_projects_only_selected_seed(tmp_path: Path) 
     ]
 
     # The same draw count with a different selected seed replaces the aggregate row.
-    score_path.write_text(json.dumps({"base_seed": None, "generation_id": "v0", "scalar": 0.0}))
+    write_gen_score(tmp_path, "e0", "v0", {"base_seed": None, "generation_id": "v0", "scalar": 0.0})
     ingest_run(tmp_path, database, "e0", "v0", "entry")
     assert [row["run_id"] for row in loss_profiles_for_generation(database, "e0", "v0")] == [
         run_id_for_unit("v0", "entry", base_seed=None)
@@ -136,13 +137,13 @@ def test_index_audits_all_seeds_and_projects_only_selected_seed(tmp_path: Path) 
 
     actions: list[str] = []
     ensure_index(tmp_path, database, action_out=actions)
-    assert actions == ["built:stale-projection"]
+    assert actions == ["present"]
     actions.clear()
     ensure_index(tmp_path, database, action_out=actions)
     assert actions == ["present"]
 
     for invalid in ({"base_seed": 17}, {"base_seed": 17, "generation_id": "v2"}):
-        score_path.write_text(json.dumps({"scalar": 0.0, **invalid}))
+        score_path.write_text(json.dumps({"format_version": 1, "scalar": 0.0, **invalid}))
         ingest_run(tmp_path, database, "e0", "v0", "entry")
         assert loss_profiles_for_generation(database, "e0", "v0") == []
         assert cell_replicate_draws(paths, "e0", "v0", "entry") == []
@@ -248,10 +249,7 @@ def test_selected_conversation_uses_its_seed(tmp_path: Path, seed: int | None) -
     _write(tmp_path, UNKNOWN_SEED)
     selected = _write(tmp_path, seed)
     _write(tmp_path, 29)
-    layout = WorkspaceLayout.from_root(tmp_path)
-    layout.gen_score("e0", "v0").write_text(
-        json.dumps({"generation_id": "v0", "base_seed": seed, "scalar": 0.0})
-    )
+    write_gen_score(tmp_path, "e0", "v0", {"generation_id": "v0", "base_seed": seed, "scalar": 0.0})
     write_tournament(tmp_path, {"parent_generation_id": "v0", "entries": []})
     paths = WorkspacePaths(tmp_path)
     run_id = run_id_for_unit("v0", "entry", base_seed=seed)
@@ -264,7 +262,7 @@ def test_selected_conversation_uses_its_seed(tmp_path: Path, seed: int | None) -
         "events.jsonl"
     )
     assert resolve_conversation(
-        paths, "entry", gen="v0", entry="entry", epoch="e0"
+        paths, run_id, gen="v0", entry="entry", epoch="e0"
     ) == selected.with_name("events.jsonl")
 
 

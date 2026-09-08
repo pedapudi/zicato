@@ -322,7 +322,7 @@ def _judge_drift_event_pair(
     ``JudgementEmitted`` (``verdict_kind="drift"``, carrying ``judge_name``)
     IMMEDIATELY followed by a ``custom``-kind ``DriftDetected`` — the exact
     contiguous pair the reducer folds into a ``custom:<judge_name>``
-    :class:`~zicato.core.types.DriftCount` (see
+    :class:`~zicato.core.types.MetricCount` (see
     :func:`zicato.telemetry.reducer.reduce_loss`). This is what goldfive
     publishes on a real ADK run; the deterministic harness synthesises the
     identical wire shape so declared judges are exercised end-to-end with

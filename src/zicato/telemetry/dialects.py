@@ -34,7 +34,7 @@ from zicato.core import (
     DIALECT_GOLDFIVE,
     DIALECT_TRANSCRIPT,
     BoardEntry,
-    DriftCount,
+    MetricCount,
     ScoringWeights,
 )
 from zicato.telemetry.event_log import read_event_log
@@ -69,7 +69,7 @@ class DialectSignals:
 
     Fields
     ------
-    drift_counts:
+    metric_counts:
         Per ``(kind, severity)`` drift rows, ALREADY sorted (so map
         iteration order never leaks into the profile).
     plan_revisions:
@@ -100,7 +100,7 @@ class DialectSignals:
         mismatches) the reducer logs. Advisory only.
     """
 
-    drift_counts: tuple[DriftCount, ...] = ()
+    metric_counts: tuple[MetricCount, ...] = ()
     plan_revisions: int = 0
     task_started: int = 0
     task_failed: int = 0
@@ -287,7 +287,7 @@ def reduce_adk_events(events_jsonl_path: Path, entry: BoardEntry) -> DialectSign
     each event-log signal into the drift-signal vocabulary. Unknown event
     types are skipped; malformed lines are counted and surfaced as a
     warning; a missing field contributes nothing. Deterministic: the walk
-    is order-stable and ``drift_counts`` is sorted before it is frozen.
+    is order-stable and ``metric_counts`` is sorted before it is frozen.
     """
     objs, malformed = _iter_json_objects(events_jsonl_path)
 
@@ -347,8 +347,8 @@ def reduce_adk_events(events_jsonl_path: Path, entry: BoardEntry) -> DialectSign
     if transfer_events:
         drift_bucket[(_ADK_TRANSFER_KIND, _SEV_INFO)] = transfer_events
 
-    drift_counts = tuple(
-        DriftCount(kind=k, severity=s, count=n)  # type: ignore[arg-type]
+    metric_counts = tuple(
+        MetricCount(name=f"drift:{k}", severity=s, count=float(n))  # type: ignore[arg-type]
         for (k, s), n in sorted(drift_bucket.items())
     )
 
@@ -360,7 +360,7 @@ def reduce_adk_events(events_jsonl_path: Path, entry: BoardEntry) -> DialectSign
         )
 
     return DialectSignals(
-        drift_counts=drift_counts,
+        metric_counts=metric_counts,
         plan_revisions=0,
         task_started=task_started,
         task_failed=task_failed,
@@ -426,7 +426,7 @@ def reduce_transcript(events_jsonl_path: Path, entry: BoardEntry) -> DialectSign
         )
 
     return DialectSignals(
-        drift_counts=(),
+        metric_counts=(),
         plan_revisions=0,
         task_started=0,
         task_failed=0,

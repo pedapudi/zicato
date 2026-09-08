@@ -16,11 +16,11 @@ import math
 
 from zicato.board.matchers import evaluate_expectation
 from zicato.core import (
-    DriftCount,
     Expectation,
     ExpectationKind,
     ExpectationResult,
     LossProfile,
+    MetricCount,
     RunResult,
     ScoringWeights,
 )
@@ -54,7 +54,7 @@ def _loss(
         entry_id=entry_id,
         generation_id="v0",
         epoch_id="e0",
-        drift_counts=(DriftCount(kind="off_topic", severity="info", count=0),),
+        metric_counts=(MetricCount(name="drift:off_topic", severity="info", count=0),),
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=1000,

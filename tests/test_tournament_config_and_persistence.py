@@ -1,10 +1,4 @@
-"""Config parsing, contract-hash, and back-compat persistence tests.
-
-Covers the data-model half of the configurable-tournament-structures
-feature: the ``tournament`` block in ``scoring.json``, its fold into the
-contract hash, and the back-compat loading of gauntlet-era persisted
-records (ActiveTournament, OutcomeRecord/journal).
-"""
+"""Tournament configuration, contract identity, and persisted tournament records."""
 
 from __future__ import annotations
 
@@ -16,10 +10,10 @@ import pytest
 
 from zicato.core.types import OutcomeRecord, ScoringWeights, TournamentStructure
 from zicato.epoch.contract import ContractInputs, compute_contract_hash
-from zicato.epoch.journal import _outcome_from_dict
+from zicato.epoch.journal import _outcome_from_dict, experiment_body
 from zicato.runtime.state import ActiveTournament, ActiveTournamentEntry
+from zicato.testing import make_experiment
 from zicato.workspace_loader import (
-    historical_scoring_weights_from_dict,
     overfitting_config_from_dict,
     overfitting_config_to_dict,
     scoring_weights_from_dict,
@@ -36,13 +30,6 @@ def test_absent_tournament_block_defaults_to_gauntlet() -> None:
     spec = tournament_structure_from_dict(None)
     assert spec.structure == "gauntlet"
     assert spec.params == {}
-
-
-def test_historical_scoring_without_tournament_key_is_gauntlet() -> None:
-    w = historical_scoring_weights_from_dict({"pass_weight": 2.0})
-    assert w.tournament_structure.structure == "gauntlet"
-    assert w.tournament_structure.params == {}
-    assert w.proposer_quality.screen_entries == 0
 
 
 def test_scoring_parses_swiss_block_with_params() -> None:
@@ -346,36 +333,16 @@ def test_active_tournament_entry_with_match_id_round_trips() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Back-compat: OutcomeRecord / journal
+# OutcomeRecord / journal
 # ---------------------------------------------------------------------------
 
 
-def test_old_outcome_record_loads_with_gauntlet_defaults() -> None:
-    legacy = {
-        "ran_at": "2026-01-01T00:00:00Z",
-        "drift_movements": [],
-        "pass_rate_delta": 0.0,
-        "drift_loss_delta": 0.0,
-        "scalar_score_delta": -0.1,
-        "tournament_decision": "promoted",
-        "rejection_reason": "",
-    }
-    rec = _outcome_from_dict(legacy)
-    assert rec is not None
-    assert rec.structure == "gauntlet"
-    assert rec.final_rank is None
-    assert rec.eliminated_in_round is None
-    assert rec.match_record == ()
-
-
 def test_outcome_record_with_structure_fields_round_trips() -> None:
-    from dataclasses import asdict
-
     from zicato.core.types import MatchOutcome
 
     rec = OutcomeRecord(
         ran_at="2026-01-01T00:00:00Z",
-        drift_movements=(),
+        metric_movements=(),
         pass_rate_delta=0.0,
         drift_loss_delta=0.0,
         scalar_score_delta=-0.2,
@@ -387,7 +354,7 @@ def test_outcome_record_with_structure_fields_round_trips() -> None:
             MatchOutcome(match_id="WB-R0-0", opponent="v5", won=True, delta_scalar=-0.1),
         ),
     )
-    again = _outcome_from_dict(asdict(rec))
+    again = _outcome_from_dict(experiment_body(make_experiment(outcome=rec))["outcome"])
     assert again is not None
     assert again.structure == "single_elim"
     assert again.final_rank == 1

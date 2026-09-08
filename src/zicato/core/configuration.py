@@ -67,8 +67,6 @@ def _authored_values(cls: type[Any], raw: object, *, path: str, construct: bool)
     values: dict[str, Any] = {}
     for key, item in declared.items():
         location = f"{path}.{key}"
-        if key in raw and raw[key] is None and item.metadata.get("null_uses_default"):
-            continue
         if key not in raw:
             if construct and item.default is MISSING and item.default_factory is MISSING:
                 raise ConfigurationError(location, "missing", "required field is absent")
@@ -197,13 +195,9 @@ def dataclass_schema(cls: type[Any]) -> dict[str, Any]:
             continue
         key = persisted_key(item)
         schema = _type_schema(annotations[item.name])
-        if item.metadata.get("null_uses_default"):
-            schema = {"anyOf": [schema, {"type": "null"}]}
         description = item.metadata.get("description") or descriptions.get(item.name)
         if description:
             schema["description"] = description
-        if item.metadata.get("null_uses_default"):
-            schema["description"] = schema.get("description", "") + " Null selects the default."
         for metadata_key in ("scope", "rolls_epoch", "secret_reference", "cli"):
             if metadata_key in item.metadata:
                 schema[f"x-{metadata_key.replace('_', '-')}"] = item.metadata[metadata_key]

@@ -37,7 +37,7 @@ from zicato.core import (
     DIALECT_GOLDFIVE,
     DIALECT_TRANSCRIPT,
     BoardEntry,
-    DriftCount,
+    MetricCount,
 )
 from zicato.telemetry.dialects import DialectSignals
 from zicato.telemetry.event_log import EventRecord, read_event_log
@@ -162,9 +162,9 @@ class ImportedTrace:
 def _signals_to_json(signals: DialectSignals) -> dict[str, Any]:
     """Canonical JSON of a :class:`DialectSignals` (drift counts flattened)."""
     return {
-        "drift_counts": [
-            {"kind": dc.kind, "severity": dc.severity, "count": dc.count}
-            for dc in signals.drift_counts
+        "metric_counts": [
+            {"name": dc.name, "severity": dc.severity, "count": dc.count}
+            for dc in signals.metric_counts
         ],
         "plan_revisions": signals.plan_revisions,
         "task_started": signals.task_started,
@@ -185,17 +185,17 @@ def _signals_from_json(raw: Any) -> DialectSignals:
     """Rebuild a :class:`DialectSignals` from its JSON shape (tolerant)."""
     if not isinstance(raw, dict):
         return DialectSignals()
-    drift_counts = tuple(
-        DriftCount(
-            kind=str(dc.get("kind", "")),
+    metric_counts = tuple(
+        MetricCount(
+            name=dc["name"],
             severity=dc.get("severity", "info"),
-            count=int(dc.get("count", 0)),
+            count=float(dc["count"]),
         )
-        for dc in raw.get("drift_counts", [])
+        for dc in raw.get("metric_counts", [])
         if isinstance(dc, dict)
     )
     return DialectSignals(
-        drift_counts=drift_counts,
+        metric_counts=metric_counts,
         plan_revisions=int(raw.get("plan_revisions", 0)),
         task_started=int(raw.get("task_started", 0)),
         task_failed=int(raw.get("task_failed", 0)),

@@ -202,10 +202,10 @@ Their writer-and-reader migration is an independent issue #411 slice. The
 experiment owner supplies shared acceptance and decoding; lineage supplies
 immutable typed rows and a pure settlement comparison in its existing graph format.
 
-`check_record_format` accepts an explicit expected version and missing-stamp
-policy. Existing version-1 owners keep their unstamped-record policy. Receipts
-require integer format 3; an absent, Boolean, floating-point, or incompatible
-stamp is refused before progress can influence replay.
+`check_record_format` requires the owner's supported integer stamp on every
+present record. Receipts require integer format 3. Missing, Boolean,
+floating-point, and incompatible stamps are refused before progress can
+influence replay.
 
 Canonical writers retain the storage backend's sorted, indented JSON and newline
 behavior. Receipt and field snapshot codecs preserve optional-key omission,

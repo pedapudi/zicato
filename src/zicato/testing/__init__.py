@@ -20,14 +20,14 @@ from __future__ import annotations
 
 from zicato.testing.fixtures import (
     make_board_entry,
-    make_drift_count,
-    make_drift_movement_actual,
     make_epoch_config,
     make_expectation,
     make_experiment,
     make_generation,
     make_hypothesis_spec,
     make_loss_profile,
+    make_metric_count,
+    make_metric_movement_actual,
     make_mutation_point,
     make_outcome_record,
     make_patch,
@@ -56,8 +56,8 @@ __all__ = [
     "events_to_dicts",
     # fixtures
     "make_board_entry",
-    "make_drift_count",
-    "make_drift_movement_actual",
+    "make_metric_count",
+    "make_metric_movement_actual",
     "make_epoch_config",
     "make_expectation",
     "make_experiment",

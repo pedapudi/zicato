@@ -662,49 +662,19 @@ together with Finding 1's propose-side gather (which already needs
 apply/persist half — see Finding 1's closing note) rather than as a standalone
 relocation.
 
-## Finding 3 — The knob tax → declarative field metadata
+## Finding 3 — Configuration declarations and their consumers
 
-**Observed (traced end-to-end for the `genealogy` knob).** Adding one
-proposer/scoring knob touches a fixed set of hand-maintained registries.
-For `ProposerQualityConfig.genealogy` (`core/scoring_config.py`), the review
-found the same field mirrored across **seven** sites:
+Scoring dataclasses own their field types, defaults, descriptions, persisted
+names, and constraints. `contract_knobs()` derives the configuration registry
+from those declarations. `core.configuration` supplies the complete serializer,
+strict decoder, and generated schema. All effective scoring values enter the
+contract hash; there is no default-value omission registry.
 
-1. **The dataclass field** — `core/scoring_config.py`
-   `ProposerQualityConfig` (`genealogy: int = 0`).
-2. **The omit-at-default set** — `epoch/contract.py`
-   `_SCORING_OMIT_AT_DEFAULT_FIELDS` (adds `"genealogy"` so a default value
-   never rolls the contract hash).
-3. **The serializer-completeness guard table** —
-   `tests/test_contract_serializer_completeness.py`'s per-field non-default
-   value map (`"genealogy": 4`), which the `_all_fields_nondefault` /
-   round-trip tests iterate to prove no field is silently dropped.
-4. **The builder op** — `contract_draft/operations.py::set_proposer_quality`
-   (`genealogy: int | None = None` parameter + its validation/apply block).
-5. **The API dispatch** — `builder/api.py`
-   (`genealogy=_opt_int(args, "genealogy")`).
-6. **The copilot mirror** — `builder/copilot_tools.py::set_proposer_quality`
-   (the duplicated tool signature the chat copilot drives).
-7. **The GUI row + node test** — the builder settings row in
-   `dashboard/static/js/views/builder.js` (title/body/`numInput` →
-   `runOp('set_proposer_quality', { genealogy })`) and its assertion in
-   `dashboard/static/test/builder.test.mjs` (posts
-   `set_proposer_quality {genealogy:4}`).
-
-Miss any one and the knob half-works silently: e.g. omitting site 2 rolls
-every existing epoch's contract hash; omitting site 6 leaves the copilot
-unable to set it. `recombine_merge` traces to the identical seven sites.
-
-**Target.** Drive the mechanical registries from **declarative field
-metadata** on the dataclass — `dataclasses.field(metadata={...})` carrying
-the omit-at-default flag, the builder-op arg spec (type, bounds,
-epoch-rolling), and the GUI row descriptor. Generate the omit-list, the
-builder-op/copilot signatures, and the builder-row scaffold from that
-metadata so a new knob is *one* field declaration. **Retain the existing
-guard tables as the enforcement net** rather than the source: `contract_serde.py`
-is already field-enumerating (it derives from `dataclasses.fields()` and so
-covers new fields automatically), and
-`test_contract_serializer_completeness.py` stays as the red-on-drift check
-that a generated table and the dataclass never disagree.
+The remaining review obligation is at the consuming boundary. A declaration
+can serialize correctly while a worker or an operation ignores it. Verify a
+meaningful non-default value through binding, transport, and execution, and
+retain the independent contract and behavior comparisons. Adding another
+registry or generic record hierarchy does not establish that agreement.
 
 ## Finding 4 — Dual reader implementations (Python `query/` + Rust supervisor)
 
@@ -812,10 +782,10 @@ the reimplementation must **preserve** them, not "clean them up":
 - **Pure-core / IO-builder-at-the-edge.** Pure decision functions with IO
   constructed at the boundary — the shape finding 2 makes *explicit* as a
   stage graph rather than removes.
-- **Contract-hash epoch rolling.** A contract change rolls the epoch via the
-  canonicalized hash; the omit-at-default discipline (finding 3) exists to
-  keep that hash stable for default knobs, and it must be preserved
-  unchanged.
+- **Contract-hash epoch rolling.** The canonical hash includes complete
+  effective scoring, captured execution roles, and grading source identity.
+  Configuration changes must produce the intended epoch selection behavior;
+  checkout location and measured results do not redefine the contract.
 - **seq-driven SSE.** The monotonic `seq` liveness cursor
   (`dashboard/sse.py`) is the right change-detection primitive; finding 1
   protects its determinism rather than replacing it.
@@ -902,8 +872,8 @@ core/
   lineage.py        Epoch (NEW typed record), EpochContract (today's EpochConfig,
                     renamed), Generation, Lineage (a TYPED DAG replacing the
                     untyped lineage.json dicts), Experiment, HypothesisSpec,
-                    OutcomeRecord, Patch, ExpectedDriftMovement/MetricMovement,
-                    DriftMovementActual/MetricMovementActual, MatchOutcome,
+                    OutcomeRecord, Patch, ExpectedMetricMovement/MetricMovement,
+                    MetricMovementActual/MetricMovementActual, MatchOutcome,
                     PriorExperiment.
   tournament.py     Contestant, Matchup, MatchupResult, SelectionDecision,
                     Standing, RoundRecord, MatchRecord, GateOutcome
@@ -920,30 +890,21 @@ core/
   patterns.py       Pattern, DetectorInput.
   health.py         HealthFinding, LoopHealth.
   proposer.py       ProposerSkill, ProposerSpec, ProposerContext, ProposerBrief.
-  serde.py          THE single declarative (de)serializer (see below).
+  configuration.py  Shared strict configuration decoding, complete serialization, and schema.
 ```
 
-### The single serializer (`core/serde.py`)
+### Configuration serialization and domain record owners
 
-Generalize the existing field-enumerating `epoch/contract_serde.py` (already
-proven for the scoring dataclasses) into the *one* serde for every persisted
-frozen dataclass:
+`core.configuration.dataclass_to_jsonable` writes every declared configuration
+field. `authored_dataclass_from_json` validates the supported shape from the
+same declarations. Scoring adds its preparation rules through
+`scoring_weights_from_dict`; authored and frozen configuration share that path.
+Persisted names are field metadata, including `tournament_structure` written as
+`tournament`. There is no alias table or historical decoder.
 
-- `to_jsonable(obj)` / `from_jsonable(cls, data)` walk `dataclasses.fields()`,
-  recurse into nested dataclasses, tuples, and mappings, and render enums/IDs as
-  their string value. Deterministic key order, float rounding where the contract
-  hash needs it.
-- **One alias table** (`_LEGACY_ALIASES`) applied at the single read boundary —
-  the only place older on-disk keys are mapped (`tournament_structure`→`tournament`
-  is the sole alias that *survives* migration because it is the persisted contract
-  form; all others are removed by `zicato migrate`).
-- Replaces: the hand-written `Heartbeat/ActiveRun/ActiveTournament*.to_dict`
-  (`runtime/state.py`), the hand-written `LossProfile` serde (`reducer.py`), the
-  hand-written `Experiment/Hypothesis/Outcome/EpochConfig` serde (`epoch/journal.py`,
-  `epoch/lifecycle.py`), and `board/jsonl.py`'s hand serde (board keeps its JSONL
-  line framing + `board_meta` header, but each line body serializes via this).
-- **Closes the silent-drop bug**: because serde is field-complete by construction,
-  `expected_metric_movements` and `metric_movements` cannot be dropped.
+Other persisted records retain domain-owned codecs. Their owners define
+required fields, format stamps, atomic replacement, and append framing.
+Configuration helpers do not replace those record-specific acceptance rules.
 
 ### Identity & sentinels
 
@@ -951,12 +912,10 @@ frozen dataclass:
   take `epoch_id`/`generation_id`/… get real types instead of bare `str`.
 - Replace the load-bearing empty-string sentinels with `None`/enum:
   `parent_generation_id: GenerationId | None` (seed = None, not `""`);
-  `match_id: MatchId | None`; `contract_hash: str | None` (None = pre-hash epoch
-  — the never-rolls rule for an unhashed contract becomes an explicit `None`
-  check rather than a magic `""`, which removes the hazard of a corrupted
-  hash reading as unhashed);
-  `champion_eval_mode: ChampionEvalMode`. The migration writes these forms; the
-  serde maps old→new on read during the transition.
+  `match_id: MatchId | None`; `champion_eval_mode: ChampionEvalMode`.
+  Contract identity has no absence sentinel: `EpochConfig.contract_hash` is
+  required and contains exactly 64 lowercase hexadecimal characters. A selected
+  epoch also requires captured `execution.json`. Missing identity is refused.
 
 ## Target storage system
 
@@ -1011,9 +970,9 @@ The seam every consumer shares (this is roadmap Phase 1c, concretized):
 `read_board(epoch)`, `read_lineage()`, `read_epoch(epoch)`, `read_experiment(gen)`,
 `read_loss(gen, entry[, replicate])`, `read_gen_score(gen)`, `iter_events(run)`
 (the ONE camel/snake-tolerant reader, replacing 4), `promoted_spine(epoch)`.
-Each returns `core/` domain objects via `core/serde`. Writers are the symmetric
-set, all through the storage seam. dashboard, analyzer, telemetry, and index stop
-re-parsing files and stop re-implementing normalization.
+Each reader returns accepted values through the record's domain owner. Writers
+share that owner's codec and use the storage boundary. Consumers reuse those
+accepted values instead of parsing the same file independently.
 
 ### Index = pure projection (`index/project.py`, `index/query.py`)
 
@@ -1067,8 +1026,8 @@ contract. Each supported format has one spelling and one typed shape.
 
 - Phase 1c = `workspace/` (layout + readers/writers) + index-as-projection.
 - Phase 1d = the storage-seam collapse + single atomic primitive.
-- Phase 2a = the `core/` split + `core/serde` + enums + typed IDs + typed
-  `ActiveTournament`.
+- Configuration and record ownership: shared configuration declarations,
+  domain-owned codecs, enums, typed identifiers, and typed `ActiveTournament`.
 - Alias-code deletion follows the owning reader/writer consolidation and is gated
   like every other behavior change.
 

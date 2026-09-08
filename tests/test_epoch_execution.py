@@ -22,7 +22,6 @@ def workspace(tmp_path):
 
 def _selected(workspace):
     from zicato.epoch.execution import load_epoch_execution_contract
-    from zicato.workspace.config_io import read_workspace_config
 
     inputs = resolve_contract_inputs(workspace)
     epoch = new_epoch(
@@ -33,9 +32,7 @@ def _selected(workspace):
         ScoringWeights(pass_weight=3),
         contract=inputs,
     )
-    return load_epoch_execution_contract(
-        workspace, epoch.id, workspace_config=read_workspace_config(workspace).raw
-    )
+    return load_epoch_execution_contract(workspace, epoch.id)
 
 
 class PreparationObserved(Exception):
@@ -131,36 +128,26 @@ def test_captured_views_survive_live_edits_and_defensive_decoding(workspace):
     selected.verify_implementation()
 
 
-def test_historical_reconstruction_requires_matching_recorded_skills(workspace):
-    from zicato.epoch.execution import ExecutionContractError, load_epoch_execution_contract
-    from zicato.workspace.config_io import read_workspace_config
+def test_missing_execution_capture_is_refused(workspace):
+    from zicato.epoch.execution import load_epoch_execution_contract
 
     selected = _selected(workspace)
     record = workspace / "epochs" / selected.epoch_id / "execution.json"
-    record.rename(record.with_suffix(".retained"))
-    configuration = read_workspace_config(workspace).raw
-    reconstructed = load_epoch_execution_contract(
-        workspace, selected.epoch_id, workspace_config=configuration
-    )
-    assert reconstructed.contract_hash == selected.contract_hash
-    skills = workspace.parent / "proposers" / "tuned" / "skills"
-    skills.mkdir()
-    (skills / "changed.md").write_text("Unrecorded proposal instruction.\n")
-    with pytest.raises(ExecutionContractError, match="recorded contract"):
-        load_epoch_execution_contract(workspace, selected.epoch_id, workspace_config=configuration)
+    retained = record.with_suffix(".retained")
+    record.rename(retained)
+    with pytest.raises(FileNotFoundError, match="execution.json"):
+        load_epoch_execution_contract(workspace, selected.epoch_id)
+    assert retained.read_bytes() == selected.bindings_bytes
 
 
 def test_retained_execution_is_independent_of_workspace_location(workspace):
     from zicato.epoch.execution import load_epoch_execution_contract
-    from zicato.workspace.config_io import read_workspace_config
 
     selected = _selected(workspace)
     moved_project = workspace.parent.with_name(workspace.parent.name + "_moved")
     shutil.move(workspace.parent, moved_project)
     moved = moved_project / workspace.name
-    loaded = load_epoch_execution_contract(
-        moved, selected.epoch_id, workspace_config=read_workspace_config(moved).raw
-    )
+    loaded = load_epoch_execution_contract(moved, selected.epoch_id)
     assert loaded.contract_hash == selected.contract_hash
     assert loaded.board_bytes == selected.board_bytes
     assert loaded.external_proposer.workspace_root == moved
@@ -242,7 +229,6 @@ async def test_selected_driver_and_operational_settings_reach_runtime_after_live
 
 def test_changed_external_identity_and_missing_identity_refuse_execution(workspace, monkeypatch):
     from zicato.epoch.execution import ExecutionContractError, load_epoch_execution_contract
-    from zicato.workspace.config_io import read_workspace_config
 
     selected = _selected(workspace)
     monkeypatch.setattr(
@@ -255,10 +241,8 @@ def test_changed_external_identity_and_missing_identity_refuse_execution(workspa
     payload = json.loads(path.read_text())
     payload["contract_hash"] = None
     path.write_text(json.dumps(payload))
-    with pytest.raises(ExecutionContractError, match="no recorded contract identity"):
-        load_epoch_execution_contract(
-            workspace, selected.epoch_id, workspace_config=read_workspace_config(workspace).raw
-        )
+    with pytest.raises(ValueError, match="contract_hash"):
+        load_epoch_execution_contract(workspace, selected.epoch_id)
 
 
 def test_load_probe_uses_captured_adapter_declaration(workspace, tmp_path):

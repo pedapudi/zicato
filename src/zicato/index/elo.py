@@ -717,17 +717,8 @@ _TOURNAMENT_COLUMNS = (
 
 
 def _read_tournament_rows(conn: sqlite3.Connection) -> list[dict[str, Any]]:
-    """Read the Elo-relevant columns off every ``tournaments`` row.
-
-    Tolerant of a partially-built schema: a missing column reads as
-    ``NULL`` so an index at an earlier schema version still folds, yielding
-    fewer games.
-    """
-    present = {r[1] for r in conn.execute("PRAGMA table_info(tournaments)")}
-    if not present:
-        return []
-    select_terms = [c if c in present else f"NULL AS {c}" for c in _TOURNAMENT_COLUMNS]
-    sql = f"SELECT {', '.join(select_terms)} FROM tournaments"
+    """Read the rating calculation inputs from the supported tournament table."""
+    sql = f"SELECT {', '.join(_TOURNAMENT_COLUMNS)} FROM tournaments"
     rows: list[dict[str, Any]] = []
     for r in conn.execute(sql):
         rows.append({col: r[i] for i, col in enumerate(_TOURNAMENT_COLUMNS)})
@@ -736,9 +727,6 @@ def _read_tournament_rows(conn: sqlite3.Connection) -> list[dict[str, Any]]:
 
 def _read_lineage(conn: sqlite3.Connection) -> dict[str, LineageNode]:
     """Build the lineage map from the ``generations`` table."""
-    present = {r[1] for r in conn.execute("PRAGMA table_info(generations)")}
-    if not present:
-        return {}
     out: dict[str, LineageNode] = {}
     for r in conn.execute(
         "SELECT epoch_id, generation_id, parent_generation_id, created_at FROM generations"
@@ -774,26 +762,9 @@ def fold_elo_into_index(conn: sqlite3.Connection) -> dict[str, EloRating]:
     ratings and rewrites the same cells. Returns the computed ratings for the
     caller to inspect / log.
 
-    Schema tolerance: the ``elo`` / ``elo_games`` columns land in schema v10 and
-    ``elo_se`` in v12. On a stale schema missing ``elo`` / ``elo_games`` the
-    fold writes nothing (returns empty); on a v10/v11 index that has ``elo`` but
-    not yet ``elo_se`` it writes the two older columns and skips the SE (the
-    same additive guard the reader honours). A generation that played no game is
-    left NULL (it is absent from the fit output).
-
     Does **not** commit — the caller owns the transaction (the rebuild
-    path commits once at the end; ``reindex`` commits after the fold).
-    """
-    gen_cols = {r[1] for r in conn.execute("PRAGMA table_info(generations)")}
-    if "elo" not in gen_cols or "elo_games" not in gen_cols:
-        # The additive columns are missing (a pre-fold schema). Nothing to
-        # write; an apply_schema / migration adds them. Return empty so a
-        # caller on a stale schema degrades quietly.
-        return {}
-    # Match-ledger rows do not prove independent measurement provenance.
-    # Retain descriptive points/counts, and clear historical inferred errors.
-    if "elo_se" in gen_cols:
-        conn.execute("UPDATE generations SET elo_se = NULL")
+    path commits once at the end; ``reindex`` commits after the fold)."""
+    conn.execute("UPDATE generations SET elo_se = NULL")
 
     rows = _read_tournament_rows(conn)
     lineage = _read_lineage(conn)

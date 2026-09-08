@@ -93,7 +93,7 @@ def test_import_adk_known_answer() -> None:
     s = trace.signals
     # tool_call x2, one repeated ⇒ one looping_tool_call; two error responses ⇒
     # task_failed 2/2; three transfers ⇒ agent_transfer info 3; one error event.
-    drift = {(dc.kind, dc.severity): dc.count for dc in s.drift_counts}
+    drift = {(dc.name.removeprefix("drift:"), dc.severity): dc.count for dc in s.metric_counts}
     assert drift[("tool_error", "critical")] == 1
     assert drift[("looping_tool_call", "warning")] == 1
     assert drift[("agent_transfer", "info")] == 3
@@ -107,7 +107,7 @@ def test_import_transcript_known_answer() -> None:
     trace = import_trace_file(FIXTURES / "transcript_run.jsonl")
     assert trace.dialect == DIALECT_TRANSCRIPT
     # The floor: zero drift, reconstructed both sides.
-    assert trace.signals.drift_counts == ()
+    assert trace.signals.metric_counts == ()
     assert len(trace.user_turns) == 2
     assert len(trace.agent_turns) == 2
     assert trace.signals.agent_text_chars > 0

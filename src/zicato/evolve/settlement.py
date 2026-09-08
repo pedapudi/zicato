@@ -296,7 +296,7 @@ def _build_field_settlement(
                 challenger=challenger,
                 outcome=OutcomeRecord(
                     ran_at=_now_iso(),
-                    drift_movements=(),
+                    metric_movements=(),
                     pass_rate_delta=pass_rate_delta,
                     drift_loss_delta=drift_loss_delta,
                     scalar_score_delta=gen_scalar - parent_scalar,

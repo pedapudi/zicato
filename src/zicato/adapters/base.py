@@ -158,8 +158,8 @@ class HarnessAdapter(Protocol):
         Note this concerns *which source the proposer edits*; it is
         unrelated to *where the harness writes run output*. Run output
         goes to the per-run scratch directory the runner supplies via
-        the :data:`zicato.epoch.snapshot_scope.SCRATCH_DIR_ENV`
-        environment variable — never into a mutable sub-path and never
+        the :attr:`zicato.core.run_context.RunContext.scratch_dir`
+        runtime context — never into a mutable sub-path and never
         into the snapshot.
         """
         ...

@@ -23,12 +23,13 @@ def _challenger_drift_panels(
         if g.is_baseline:
             continue
         kinds: list[tuple[str, float | None, float | None]] = []
-        for mv in g.drift_movements:
-            kind = str(mv.get("kind", "")).strip()
-            if not kind:
+        for mv in g.metric_movements:
+            kind = str(mv.get("metric_name", "")).strip()
+            if not kind.startswith("drift:"):
                 continue
+            kind = kind.removeprefix("drift:")
             kinds.append(
-                (kind, _coerce_float(mv.get("from_rate")), _coerce_float(mv.get("to_rate")))
+                (kind, _coerce_float(mv.get("from_value")), _coerce_float(mv.get("to_value")))
             )
         if kinds:
             panels.append((g, kinds))

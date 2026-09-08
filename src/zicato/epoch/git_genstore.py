@@ -462,7 +462,7 @@ class GitGenerationStore:
         GCs — named with the generation id so the basename matches the
         shared worktree :meth:`materialize_snapshot` returns. A per-run
         ``run-scratch`` sibling preserves the
-        :data:`~zicato.epoch.snapshot_scope.SCRATCH_DIR_ENV` contract.
+        :attr:`zicato.core.run_context.RunContext.scratch_dir` contract.
 
         The checkout is immediately DETACHED from the repo: the
         worktree's ``.git`` pointer file is unlinked and the registration

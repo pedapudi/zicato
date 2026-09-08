@@ -339,15 +339,14 @@ above, including each feature's generalization conditions.
 
 ## 0. Why this campaign exists
 
-zicato's generator arsenal is almost entirely **default-off and unmeasured
-on live runs**. Every one of these knobs ships inert and rolls its own epoch
-the moment it is set to a non-default (`core/scoring_config.py`
-`ProposerQualityConfig`, all flagged `omit_at_default=True` except
-`best_of_n` / `critique_enabled`):
+The campaign evaluated the generator settings listed below. The table records
+the campaign's configuration, while its results retain the measured arm values.
+Supported scoring configuration serializes and hashes every effective field,
+including defaults. Changing an effective setting changes contract identity.
 
-| Knob | Default | Rolls epoch when set | Cost class |
+| Knob | Recorded campaign setting | Contract identity | Cost class |
 |---|---|---|---|
-| `proposer_quality.best_of_n` | `3` (ON) | yes (not omit-at-default) | aux propose calls `× best_of_n` |
+| `proposer_quality.best_of_n` | `3` (ON) | included | aux propose calls `× best_of_n` |
 | `proposer_quality.critique_enabled` | `True` (ON) | yes | one aux critique call when `best_of_n > 1` |
 | `proposer_quality.screen_entries` | `0` (OFF; scaffold writes `2`) | yes | board runs `proposes × best_of_n × panel` |
 | `proposer_quality.screen_veto_only` | `False` | yes | none (advisory) |
@@ -356,7 +355,7 @@ the moment it is set to a non-default (`core/scoring_config.py`
 | `proposer_quality.recombine_merge` | `"mechanical"` | yes | `"llm"` adds one aux merge call |
 | `proposer_quality.genealogy` | `0` (OFF) | yes | read-side; cost meter untouched |
 | `proposer_quality.calibration_feedback` | `0` (OFF) | yes | read-side; cost meter untouched |
-| breadth / depth ensemble **roles** | unset (both `None`) | **NO** — runtime infrastructure rather than a contract input | none on the board-run axis |
+| breadth / depth ensemble **roles** | unset (both `None`) | included through captured execution roles | none on the board-run axis |
 
 The scaffold (`ScoringWeights()` in `core/scoring_config.py`)
 already makes two of these choices *by taste*: it writes `screen_entries=2`
@@ -518,8 +517,8 @@ the sensitivity contrast.
   the rounds carry the power.
 
 Each arm's `scoring.json` delta is written verbatim below. Recall the
-on-disk key rename: `ScoringWeights.tournament_structure` serialises under
-`"tournament"` (`epoch/contract_serde.py`); `proposer_quality` keeps its
+declared persisted name: `ScoringWeights.tournament_structure` serializes under
+`"tournament"` through `core/configuration.py`; `proposer_quality` keeps its
 name. Only the fields that differ from the shared control are shown; the
 scaffold serializer writes every field, so the live file is the full
 effective contract.
@@ -1739,11 +1738,11 @@ that PAUSES the campaign if specificity fails, before any treatment arm is read.
 
 | Topic | Source |
 |---|---|
-| The knob defaults + validation + omit-at-default | `src/zicato/core/scoring_config.py` (`ProposerQualityConfig`, `ScoringWeights`) |
+| Field defaults, validation, and complete configuration | `src/zicato/core/scoring_config.py` (`ProposerQualityConfig`, `ScoringWeights`) |
 | Cost-meter semantics (board runs, aux calls, screen/recombine terms) | `src/zicato/contract_draft/operations.py::estimate_cost` |
 | The round event log + the `d` endpoint's source events | `src/zicato/epoch/round_log.py` (`GateEvaluated`, `HarnessLoaded`) |
 | **Round-completeness verification (§6.6)** | `src/zicato/epoch/round_integrity.py`, `zicato epoch rounds` |
-| Breadth/depth role wiring (why roles are runtime rather than contract) | `src/zicato/proposer/best_of_n.py`, `src/zicato/models_config.py` |
+| Breadth/depth role wiring and captured execution identity | `src/zicato/proposer/best_of_n.py`, `src/zicato/models_config.py` |
 | Noise doctrine, A/A floor, replication power, planted-delta method | dev-guide `04-evaluation-statistics.md` §§3,4,13 |
 | The live minimum-detectable-effect ladder that pins §3's two-sample numbers | `docs/design/EVAL-VIEW.md` §4 #3, `src/zicato/query/eval_view.py` |
 | Offline power-harness precedent + report style | `tests/test_decision_procedure_power.py`, `tools/cascade_oc.py` |

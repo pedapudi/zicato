@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._workspace_support import experiment_record
 from zicato.epoch._storage import RecordError
 from zicato.epoch.journal import read_epoch_experiments, read_experiment_if_present
 from zicato.tournament.scoring import read_gen_score
@@ -220,14 +221,14 @@ def test_read_board_lines_and_missing(tmp_path: Path) -> None:
     board.write_text(
         '{"board_meta": true, "disable_drift": []}\n'
         "\n"  # blank line skipped
-        '{"id": "t1", "kind": "single_turn", "input": "Task", "budget_s": 1}\n'
+        '{"id": "t1", "kind": "single_turn", "input": "Task", "wall_clock_budget_seconds": 1}\n'
     )
     layout = WorkspaceLayout.from_root(ws)
     lines = read_board(layout, "e0")
     assert lines is not None
     assert lines == [
         {"board_meta": True, "disable_drift": []},
-        {"id": "t1", "kind": "single_turn", "input": "Task", "budget_s": 1},
+        {"id": "t1", "kind": "single_turn", "input": "Task", "wall_clock_budget_seconds": 1},
     ]
     # Missing file -> None.
     assert read_board(layout, "missing") is None
@@ -238,7 +239,7 @@ def test_epoch_experiments_in_numeric_order(tmp_path: Path) -> None:
     for gid in ("v0", "v1", "v2", "v10"):
         _write(
             ws / "epochs" / "e0" / "generations" / gid / "experiment.json",
-            {"generation_id": gid},
+            experiment_record(gid, epoch_id="e0", round_index=int(gid[1:])),
         )
     # A generation with no experiment.json is an interrupted round, not a
     # defect: it is absent from the records and from the reasons alike.
@@ -260,7 +261,10 @@ def test_epoch_experiments_report_a_record_that_will_not_parse(tmp_path: Path) -
     epoch it is showing is short one generation and why.
     """
     ws = tmp_path / ".zicato"
-    _write(ws / "epochs" / "e0" / "generations" / "v0" / "experiment.json", {})
+    _write(
+        ws / "epochs" / "e0" / "generations" / "v0" / "experiment.json",
+        experiment_record("v0", epoch_id="e0"),
+    )
     gen_dir = ws / "epochs" / "e0" / "generations" / "v1"
     gen_dir.mkdir(parents=True)
     (gen_dir / "experiment.json").write_text("{ not json", encoding="utf-8")
@@ -284,12 +288,12 @@ def test_read_loss_and_gen_score(tmp_path: Path) -> None:
     _write(run / "loss.json", {"entry_id": "t1", "drift_loss": 0.5})
     _write(
         ws / "epochs" / "e0" / "generations" / "v1" / "gen_score.json",
-        {"scalar": 0.25},
+        {"format_version": 1, "scalar": 0.25},
     )
     layout = WorkspaceLayout.from_root(ws)
     assert read_loss(layout, "e0", "v1", "t1") == {"entry_id": "t1", "drift_loss": 0.5}
     assert read_loss(layout, "e0", "v1", "missing") is None
-    assert read_gen_score(layout, "e0", "v1").to_dict() == {"scalar": 0.25}
+    assert read_gen_score(layout, "e0", "v1").to_dict() == {"format_version": 1, "scalar": 0.25}
     assert read_gen_score(layout, "e0", "missing") is None
 
 

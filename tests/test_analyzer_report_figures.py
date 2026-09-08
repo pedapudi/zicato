@@ -21,6 +21,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._workspace_support import experiment_record
 from zicato.analyzer.report_data import (
     BoardEntryView,
     EpochReportData,
@@ -97,11 +98,11 @@ def _gen(
     scalar_score_delta: float = 0.0,
     drift_loss_delta: float = 0.0,
     pass_rate_delta: float = 0.0,
-    drift_movements: tuple[dict[str, object], ...] = (),
+    metric_movements: tuple[dict[str, object], ...] = (),
     gen_score: dict[str, object] | None = None,
     cumulative_scalar: float = 0.0,
     expected_pass_rate_delta: str = "",
-    expected_drift_movements: tuple[dict[str, str], ...] = (),
+    expected_metric_movements: tuple[dict[str, str], ...] = (),
     patches: tuple[dict[str, str], ...] = (),
 ) -> GenerationView:
     return GenerationView(
@@ -114,14 +115,13 @@ def _gen(
         risks="",
         modulating=(),
         expected_pass_rate_delta=expected_pass_rate_delta,
-        expected_drift_movements=expected_drift_movements,
+        expected_metric_movements=expected_metric_movements,
         decision=decision,
         rejection_reason="",
         scalar_score_delta=scalar_score_delta,
         drift_loss_delta=drift_loss_delta,
         pass_rate_delta=pass_rate_delta,
-        drift_movements=drift_movements,
-        metric_movements=(),
+        metric_movements=metric_movements + (),
         patches=patches,
         gen_score=gen_score or {},
         cumulative_scalar=cumulative_scalar,
@@ -245,24 +245,24 @@ def test_score_trajectory_value_labels_use_fixed_3dp() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_drift_movements_empty_returns_placeholder() -> None:
+def test_metric_movements_empty_returns_placeholder() -> None:
     svg = render_svg_drift_movements(_data())
     _assert_inline_svg(svg)
     assert "No drift" in svg
 
 
-def test_drift_movements_one_panel_per_challenger_with_drift() -> None:
+def test_metric_movements_one_panel_per_challenger_with_drift() -> None:
     g1_drift = (
-        {"kind": "off_topic", "from_rate": 0.40, "to_rate": 0.10},
-        {"kind": "tool_error", "from_rate": 0.50, "to_rate": 0.55},
+        {"metric_name": "drift:off_topic", "from_value": 0.4, "to_value": 0.1},
+        {"metric_name": "drift:tool_error", "from_value": 0.5, "to_value": 0.55},
     )
-    g2_drift = ({"kind": "off_topic", "from_rate": 0.10, "to_rate": 0.08},)
+    g2_drift = ({"metric_name": "drift:off_topic", "from_value": 0.1, "to_value": 0.08},)
     gens = (
         _gen(gid="v0", is_baseline=True, decision="baseline"),
-        _gen(gid="v1", parent="v0", decision="promoted", drift_movements=g1_drift),
-        _gen(gid="v2", parent="v1", decision="promoted", drift_movements=g2_drift),
+        _gen(gid="v1", parent="v0", decision="promoted", metric_movements=g1_drift),
+        _gen(gid="v2", parent="v1", decision="promoted", metric_movements=g2_drift),
         # A rejected generation with NO drift movements: no panel.
-        _gen(gid="v3", parent="v2", decision="rejected", drift_movements=()),
+        _gen(gid="v3", parent="v2", decision="rejected", metric_movements=()),
     )
     svg = render_svg_drift_movements(_data(gens))
     _assert_inline_svg(svg)
@@ -524,7 +524,7 @@ def test_lineage_compact_wraps_instead_of_piling_up_at_high_n() -> None:
             assert not overlaps, f"nodes overlap at n=21: {(ax, ay)} vs {(bx, by)}"
 
     # The canvas grew to hold the extra rows rather than cropping them.
-    height = float(re.search(r'viewBox="0 0 \d+ ([\d.]+)"', svg).group(1))  # type: ignore[union-attr]
+    height = float(re.search(('viewBox="0 0 \\d+ ([\\d.]+)"'), svg).group(1))  # type: ignore[union-attr]
     assert height > 160, "the wrapped layout widens the canvas height"
     assert max(y + h for _, y, _, h in boxes) <= height, "every node fits inside the viewBox"
 
@@ -566,7 +566,7 @@ def test_lineage_compact_canvas_only_ever_grows() -> None:
             for i in range(1, n)
         )
         svg = render_svg_lineage_compact(_data(gens))
-        h = float(re.search(r'viewBox="0 0 \d+ ([\d.]+)"', svg).group(1))  # type: ignore[union-attr]
+        h = float(re.search(('viewBox="0 0 \\d+ ([\\d.]+)"'), svg).group(1))  # type: ignore[union-attr]
         assert h >= 160, f"n={n} rendered a canvas shorter than the requested height: {h}"
         heights.append(h)
     assert heights == sorted(heights), f"canvas height is not monotone in n: {heights}"
@@ -676,9 +676,15 @@ def test_score_trajectory_golden_with_fixture_workspace(tmp_path: Path) -> None:
                 "scalar_score_delta": delta,
                 "drift_loss_delta": 0.0,
                 "pass_rate_delta": 0.0,
-                "drift_movements": [],
+                "metric_movements": [],
             }
-        (gd / "experiment.json").write_text(json.dumps(payload))
+        (gd / "experiment.json").write_text(
+            json.dumps(
+                experiment_record(
+                    epoch_id=epoch, **{**payload, "parent_generation_id": parent or None}
+                )
+            )
+        )
 
     data = gather_epoch_report_data(ws, epoch)
     svg = render_svg_score_trajectory(data)
@@ -715,11 +721,11 @@ def test_hypothesis_vs_outcome_renders_row_per_scored_generation() -> None:
             parent="v0",
             decision="promoted",
             scalar_score_delta=-0.2,
-            pass_rate_delta=0.10,
-            drift_loss_delta=-0.30,
+            pass_rate_delta=0.1,
+            drift_loss_delta=-0.3,
             expected_pass_rate_delta="+0.05 to +0.15",
-            expected_drift_movements=(
-                {"kind": "off_topic", "direction": "decrease", "magnitude": "moderate"},
+            expected_metric_movements=(
+                {"metric_name": "drift:off_topic", "direction": "decrease", "magnitude": "medium"},
             ),
             cumulative_scalar=-0.2,
         ),
@@ -782,11 +788,11 @@ def test_hypothesis_vs_outcome_lanes_have_independent_extents() -> None:
             gid="v1",
             parent="v0",
             decision="promoted",
-            pass_rate_delta=0.33,  # small absolute number
-            drift_loss_delta=-24.0,  # large absolute number
+            pass_rate_delta=0.33,
+            drift_loss_delta=-24.0,
             expected_pass_rate_delta="+0.10 to +0.25",
-            expected_drift_movements=(
-                {"kind": "off_topic", "direction": "decrease", "magnitude": "medium"},
+            expected_metric_movements=(
+                {"metric_name": "drift:off_topic", "direction": "decrease", "magnitude": "medium"},
             ),
         ),
     )
@@ -815,11 +821,11 @@ def test_hypothesis_vs_outcome_renders_hit_and_miss_glyphs() -> None:
             gid="v1",
             parent="v0",
             decision="promoted",
-            pass_rate_delta=0.10,
-            drift_loss_delta=-0.30,
+            pass_rate_delta=0.1,
+            drift_loss_delta=-0.3,
             expected_pass_rate_delta="+0.05 to +0.15",
-            expected_drift_movements=(
-                {"kind": "off_topic", "direction": "decrease", "magnitude": "moderate"},
+            expected_metric_movements=(
+                {"metric_name": "drift:off_topic", "direction": "decrease", "magnitude": "medium"},
             ),
         ),
         _gen(
@@ -889,12 +895,12 @@ def test_hypothesis_vs_outcome_renders_from_workspace_fixture(tmp_path: Path) ->
                 "scalar_score_delta": -14.4,
                 "drift_loss_delta": -13.7,
                 "pass_rate_delta": 0.0,
-                "drift_movements": [],
+                "metric_movements": [],
             },
             {
                 "core_idea": "Tighten the web developer's slide-structure instructions.",
                 "expected_pass_rate_delta": "+0.10 to +0.20",
-                "expected_drift_movements": [],
+                "expected_metric_movements": [],
             },
         ),
         (
@@ -906,17 +912,17 @@ def test_hypothesis_vs_outcome_renders_from_workspace_fixture(tmp_path: Path) ->
                 "scalar_score_delta": 10.1,
                 "drift_loss_delta": 9.6,
                 "pass_rate_delta": 0.17,
-                "drift_movements": [],
+                "metric_movements": [],
             },
             {
                 "core_idea": "Tighten researcher topical constraints.",
                 "expected_pass_rate_delta": "+0.05 to +0.15",
-                "expected_drift_movements": [
+                "expected_metric_movements": [
                     {
                         "direction": "decrease",
-                        "kind": "off_topic",
+                        "metric_name": "drift:off_topic",
                         "magnitude": "medium",
-                    },
+                    }
                 ],
             },
         ),
@@ -931,7 +937,13 @@ def test_hypothesis_vs_outcome_renders_from_workspace_fixture(tmp_path: Path) ->
         }
         if outcome:
             payload["outcome"] = outcome
-        (gd / "experiment.json").write_text(json.dumps(payload))
+        (gd / "experiment.json").write_text(
+            json.dumps(
+                experiment_record(
+                    epoch_id=epoch, **{**payload, "parent_generation_id": parent or None}
+                )
+            )
+        )
 
     data = gather_epoch_report_data(ws, epoch)
     svg = render_svg_hypothesis_vs_outcome(data)
@@ -993,7 +1005,7 @@ def test_predicted_drift_delta_sum_accepts_medium_magnitude() -> None:
     """Direct unit test for the magnitude vocabulary the proposer writes.
 
     Live workspaces routinely include ``magnitude: "medium"`` in their
-    expected_drift_movements entries; previously this token wasn't in
+    expected_metric_movements entries; previously this token wasn't in
     the ``_MAGNITUDE_MAP`` so the figure silently rendered ``(no
     prediction)`` even when the proposer DID record a forecast.
     """
@@ -1003,12 +1015,8 @@ def test_predicted_drift_delta_sum_accepts_medium_magnitude() -> None:
         gid="vX",
         parent="vP",
         decision="promoted",
-        expected_drift_movements=(
-            {
-                "direction": "decrease",
-                "kind": "off_topic",
-                "magnitude": "medium",
-            },
+        expected_metric_movements=(
+            {"direction": "decrease", "metric_name": "drift:off_topic", "magnitude": "medium"},
         ),
     )
     result = _predicted_drift_delta_sum(g)
@@ -1082,10 +1090,10 @@ def test_hypothesis_vs_outcome_handles_single_rejected_challenger() -> None:
             parent="v0",
             decision="rejected",
             pass_rate_delta=-0.05,
-            drift_loss_delta=0.10,
+            drift_loss_delta=0.1,
             expected_pass_rate_delta="+0.05",
-            expected_drift_movements=(
-                {"kind": "off_topic", "direction": "decrease", "magnitude": "small"},
+            expected_metric_movements=(
+                {"metric_name": "drift:off_topic", "direction": "decrease", "magnitude": "small"},
             ),
         ),
     )

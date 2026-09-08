@@ -11,9 +11,9 @@ from __future__ import annotations
 import pytest
 
 from zicato.core import (
-    DriftCount,
     ExpectationResult,
     LossProfile,
+    MetricCount,
     ScoringWeights,
 )
 from zicato.telemetry import aggregate_generation_score, combined_scalar
@@ -30,7 +30,7 @@ def _profile(
         entry_id=entry_id,
         generation_id="v0",
         epoch_id="ep1",
-        drift_counts=(),
+        metric_counts=(),
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=0,
@@ -127,13 +127,13 @@ def test_full_pipeline_mock_losses() -> None:
 
 
 def test_combined_scalar_smoke_with_drift_count_profiles() -> None:
-    """A profile with non-trivial drift_counts still feeds the aggregator correctly."""
+    """A profile with non-trivial metric_counts still feeds the aggregator correctly."""
     p1 = LossProfile(
         run_id="r1",
         entry_id="ent1",
         generation_id="v0",
         epoch_id="ep1",
-        drift_counts=(DriftCount(kind="off_topic", severity="warning", count=2),),
+        metric_counts=(MetricCount(name="drift:off_topic", severity="warning", count=2),),
         plan_revisions=1,
         task_failure_ratio=0.0,
         runtime_ms=1000,
@@ -147,7 +147,7 @@ def test_combined_scalar_smoke_with_drift_count_profiles() -> None:
         entry_id="ent2",
         generation_id="v0",
         epoch_id="ep1",
-        drift_counts=(),
+        metric_counts=(),
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=500,

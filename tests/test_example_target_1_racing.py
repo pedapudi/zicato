@@ -99,7 +99,7 @@ def _preseed_champion_cache(
                     entry_id=entry.id,
                     generation_id=champion_id,
                     epoch_id=epoch_id,
-                    drift_counts=(),
+                    metric_counts=(),
                     plan_revisions=0,
                     task_failure_ratio=0.0,
                     runtime_ms=100,
@@ -133,11 +133,11 @@ def _install_caching_telemetry_stubs(
     generation id of every run that actually executed, so a test can assert
     the champion side did NOT run under fast mode.
     """
-    import types as _types
+    import sys
 
     import zicato.tournament.runner as _runner_mod
     from zicato.core.measurement import MeasurementDraw
-    from zicato.core.types import DriftCount, ExpectationResult, LossProfile
+    from zicato.core.types import ExpectationResult, LossProfile, MetricCount
     from zicato.core.workspace import run_id_for_unit
     from zicato.telemetry.reducer import read_loss_profile, write_loss_profile
     from zicato.tournament.unit_cache import _unit_loss_path
@@ -177,7 +177,7 @@ def _install_caching_telemetry_stubs(
             entry_id=entry.id,
             generation_id=generation.id,
             epoch_id=epoch_id,
-            drift_counts=(DriftCount(kind="off_topic", severity="info", count=0),),
+            metric_counts=(MetricCount(name="drift:off_topic", severity="info", count=0),),
             plan_revisions=0,
             task_failure_ratio=0.0,
             runtime_ms=100,
@@ -199,12 +199,10 @@ def _install_caching_telemetry_stubs(
 
     monkeypatch.setattr(_runner_mod, "_run_single", _fake_run_single)
 
-    # The runner resolves the reducer lazily via _telemetry_helpers(); point
-    # its read_loss_profile at the REAL on-disk reader so cached champion
-    # profiles round-trip (the default stub's reader always raises).
-    _real_reducer = _types.SimpleNamespace(read_loss_profile=read_loss_profile)
-    _sink_mod = __import__("sys").modules["zicato.telemetry.sink"]
-    monkeypatch.setattr(_runner_mod, "_telemetry_helpers", lambda: (_sink_mod, _real_reducer))
+    # Cache reuse and index repair must read the same persisted measurements.
+    monkeypatch.setattr(
+        sys.modules["zicato.telemetry.reducer"], "read_loss_profile", read_loss_profile
+    )
 
 
 EXAMPLE_DIR = Path(_t1_pkg.__file__).resolve().parent
@@ -272,10 +270,14 @@ def bootstrap_example_workspace(
                 # behaviour; opt out of the default-on achievable-signal
                 # pre-flight (issue #84) whose A/A floor legitimately runs the
                 # champion and would otherwise pollute that run tracking.
-                "runtime": {
-                    "preflight_gate": "off",
-                    "target_call_llm": "tests._orchestrator_harness:target_call_llm",
-                    "evaluation_call_llm": "zicato_examples.target_1_presentation.mocks:aux_llm",
+                "runtime": {"preflight_gate": "off"},
+                "models": {
+                    "engines": {
+                        "target": {"call_llm": "tests._orchestrator_harness:target_call_llm"},
+                        "evaluation": {
+                            "call_llm": "zicato_examples.target_1_presentation.mocks:aux_llm"
+                        },
+                    }
                 },
             }
         )
@@ -445,7 +447,7 @@ def test_presentation_racing_field_rejects_when_no_arm_beats_champion(
 
 
 def test_fast_racing_reuses_cached_champion_and_records_provenance(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     """Fast mode under RACING reuses the champion's cached per-board scalars.
 
@@ -494,6 +496,8 @@ def test_fast_racing_reuses_cached_champion_and_records_provenance(
     gens = workspace / "epochs" / epoch_id / "generations"
     crowned_oc = json.loads((gens / crowned / "experiment.json").read_text())["outcome"]
     assert crowned_oc["champion_eval_mode"] == "fast"
+    assert "index repair required" not in caplog.text
+    assert "index self-heal preflight failed" not in caplog.text
 
 
 def test_fast_racing_degrades_to_full_without_cache(

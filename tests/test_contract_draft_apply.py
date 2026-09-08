@@ -34,8 +34,8 @@ def workspace(tmp_path: Path) -> Path:
 
     board = tmp_path / "board.jsonl"
     board.write_text(
-        '{"id": "e1", "kind": "single_turn", "budget_s": 60, "input": "hi"}\n'
-        '{"id": "e2", "kind": "single_turn", "budget_s": 60, "input": "bye"}\n',
+        '{"id": "e1", "kind": "single_turn", "wall_clock_budget_seconds": 60, "input": "hi"}\n'
+        '{"id": "e2", "kind": "single_turn", "wall_clock_budget_seconds": 60, "input": "bye"}\n',
         encoding="utf-8",
     )
     brief = tmp_path / "brief.md"
@@ -54,12 +54,14 @@ def workspace(tmp_path: Path) -> Path:
         {
             "instance_id": "default",
             "generation_source_backend": "directory",
-            "adk_entrypoint": "pkg.mod:agent",
-            "mutable_trees": [str(tmp_path / "src")],
-            "source_roots": [str(tmp_path / "src")],
+            "adapter": {
+                "kind": "adk",
+                "entrypoint": "pkg.mod:agent",
+                "mutable_trees": [str(tmp_path / "src")],
+            },
             "contract": {
                 "board_path": str(board.resolve()),
-                "rubric_path": str(brief.resolve()),
+                "brief_path": str(brief.resolve()),
                 "scoring_path": str(scoring.resolve()),
             },
         },
@@ -92,7 +94,8 @@ def test_unrelated_draft_edit_preserves_pending_live_contract_changes(workspace:
     board.write_text(
         '{"board_meta": true, "disable_drift": ["off_topic"], "judge_only": true}\n'
         + board.read_text()
-        + '{"id":"pending-task","kind":"single_turn","budget_s":60,"input":"pending task"}\n'
+        + '{"id":"pending-task","kind":"single_turn","wall_clock_budget_seconds":60,'
+        '"input":"pending task"}\n'
     )
     brief.write_text("# Pending operator brief\n")
     scoring.write_text(json.dumps({"promote_margin": 0.73, "task_failure_weight": 2.0}))
@@ -120,7 +123,7 @@ def test_live_contract_draft_loads_before_an_epoch_exists(tmp_path: Path) -> Non
     workspace = tmp_path / ".zicato"
     workspace.mkdir()
     (tmp_path / "board.jsonl").write_text(
-        '{"id":"pending-task","kind":"single_turn","budget_s":60,"input":"task"}\n'
+        '{"id":"pending-task","kind":"single_turn","wall_clock_budget_seconds":60,"input":"task"}\n'
     )
     (tmp_path / "brief.md").write_text("# First contract\n")
     (tmp_path / "scoring.json").write_text('{"promote_margin":0.73}')
@@ -148,6 +151,18 @@ def test_stale_editing_session_cannot_overwrite_another_apply(workspace: Path) -
     with pytest.raises(ValueError, match="scoring"):
         ops.apply(second, workspace, confirm=True)
     assert {path: path.read_bytes() for path in paths} == before
+
+
+def test_apply_records_the_default_brief_path(workspace: Path) -> None:
+    config = json.loads((workspace / "config.json").read_text())
+    del config["contract"]["brief_path"]
+    write_workspace_config(workspace, config)
+    draft = TournamentDraft.from_workspace(workspace)
+    ops.set_brief(draft, "# Changed brief\n")
+    ops.apply(draft, workspace, confirm=True)
+    published = json.loads((workspace / "config.json").read_text())
+    assert published["contract"]["brief_path"] == str(workspace.parent / "brief.md")
+    assert (workspace.parent / "brief.md").read_text() == "# Changed brief\n"
 
 
 def test_competing_apply_calls_preserve_the_successful_edit(workspace: Path) -> None:
@@ -456,8 +471,8 @@ def meta_workspace(tmp_path: Path) -> Path:
     board = tmp_path / "board.jsonl"
     board.write_text(
         '{"board_meta": true, "disable_drift": ["off_topic"], "judge_only": true}\n'
-        '{"id": "e1", "kind": "single_turn", "budget_s": 60, "input": "hi"}\n'
-        '{"id": "e2", "kind": "single_turn", "budget_s": 60, "input": "bye"}\n',
+        '{"id": "e1", "kind": "single_turn", "wall_clock_budget_seconds": 60, "input": "hi"}\n'
+        '{"id": "e2", "kind": "single_turn", "wall_clock_budget_seconds": 60, "input": "bye"}\n',
         encoding="utf-8",
     )
     brief = tmp_path / "brief.md"
@@ -469,12 +484,10 @@ def meta_workspace(tmp_path: Path) -> Path:
         ws,
         {
             "instance_id": "default",
-            "adk_entrypoint": "pkg.mod:agent",
-            "mutable_trees": [],
-            "source_roots": [],
+            "adapter": {"kind": "adk", "entrypoint": "pkg.mod:agent"},
             "contract": {
                 "board_path": str(board.resolve()),
-                "rubric_path": str(brief.resolve()),
+                "brief_path": str(brief.resolve()),
                 "scoring_path": str(scoring.resolve()),
             },
         },

@@ -63,21 +63,13 @@ def test_make_adapter_adk_without_mutable_trees(
     assert fake_adk_module["mutable_trees"] == []
 
 
-def test_make_adapter_legacy_register_keys(
-    fake_adk_module: dict[str, Any],
-) -> None:
-    """A config from `zicato epoch register` (pre-factory) still works."""
-    config = {
-        "adk_entrypoint": "my_pkg.agent:root",
-        "mutable_trees": ["/tmp/tree_a"],
-    }
-    make_adapter_from_config(config)
-    assert fake_adk_module["entrypoint"] == "my_pkg.agent:root"
-    assert fake_adk_module["mutable_trees"] == [Path("/tmp/tree_a")]
+def test_adapter_requires_declared_block() -> None:
+    with pytest.raises(ValueError, match="no 'adapter' registration"):
+        make_adapter_from_config({"adk_entrypoint": "my_pkg.agent:root", "mutable_trees": []})
 
 
 def test_make_adapter_missing_block_raises() -> None:
-    with pytest.raises(ValueError, match="no 'adapter' block"):
+    with pytest.raises(ValueError, match="no 'adapter' registration"):
         make_adapter_from_config({})
 
 
@@ -179,3 +171,15 @@ def test_make_adapter_import_non_callable_factory_raises() -> None:
                 }
             }
         )
+
+
+@pytest.mark.parametrize("arity", [2, 4])
+def test_probe_and_worker_interface_rejects_wrong_run_arity(arity: int) -> None:
+    from zicato.adapter_factory import validate_harness_run
+
+    namespace: dict[str, Any] = {}
+    parameters = ", ".join(f"arg{index}" for index in range(arity))
+    exec(f"async def run({parameters}): pass", namespace)
+    session = types.SimpleNamespace(run=namespace["run"])
+    with pytest.raises(ValueError, match=r"async run\(entry, sinks, config\)"):
+        validate_harness_run(session)

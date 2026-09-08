@@ -367,18 +367,11 @@ def test_board_jsonl_validates_via_validate_board_entry() -> None:
 
 
 def test_scoring_json_loads_into_scoring_weights() -> None:
-    """``scoring.json`` round-trips through the ScoringWeights dataclass.
-
-    The proposer reads this file at epoch creation time; a malformed
-    file would surface as a runtime error well after the operator
-    typed ``zicato epoch new``. Catch it here at lint time instead.
-    """
-    from zicato.core.types import ScoringWeights
+    """The example scoring file loads through the configuration reader."""
+    from zicato.core.scoring_config import scoring_weights_from_dict
 
     with SCORING_PATH.open() as f:
-        d = json.load(f)
-    sw = ScoringWeights(**d)
-    # Spot-check a couple of fields we know the rubric leans on.
+        sw = scoring_weights_from_dict(json.load(f))
     assert sw.namespace_weights["drift:"] == 1.0
     assert sw.pass_rate_monotonicity is True
     assert sw.severity_weights["critical"] >= sw.severity_weights["warning"]

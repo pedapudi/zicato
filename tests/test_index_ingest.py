@@ -36,9 +36,9 @@ from zicato.index.query import (
 )
 from zicato.telemetry.reducer import read_loss_profile, write_loss_profile
 from zicato.testing.fixtures import (
-    make_drift_count,
     make_experiment,
     make_loss_profile,
+    make_metric_count,
     make_outcome_record,
     make_patch,
     make_synthetic_events_jsonl,
@@ -262,7 +262,7 @@ def test_rebuild_index_metric_counts_are_pure_projection_of_loss_json(
         entry_id="e1",
         generation_id="v0",
         epoch_id=eid,
-        drift_counts=(make_drift_count("off_topic", "warning", 2),),
+        metric_counts=(make_metric_count("drift:off_topic", "warning", 2),),
     )
     write_loss_profile(profile, loss_profile_path(ws, eid, "v0", "e1"))
     # An events.jsonl with DIFFERENT drift, to prove it is never consulted.
@@ -277,7 +277,7 @@ def test_rebuild_index_metric_counts_are_pure_projection_of_loss_json(
     # The indexed metric_counts equal exactly the loss.json drift surface.
     expected = {
         (mc.name, mc.severity, mc.count)
-        for mc in read_loss_profile(loss_profile_path(ws, eid, "v0", "e1")).unified_metrics()
+        for mc in read_loss_profile(loss_profile_path(ws, eid, "v0", "e1")).scoring_metrics()
     }
     actual = {(m["name"], m["severity"], m["count"]) for m in rows}
     assert actual == expected
@@ -342,7 +342,6 @@ def test_rebuild_index_metric_counts_from_loss_profile_surface(
         entry_id="e1",
         generation_id="v0",
         epoch_id=eid,
-        drift_counts=(make_drift_count("tool_error", "critical", 1),),
         metric_counts=(
             MetricCount(name="drift:tool_error", severity="critical", count=1.0),
             MetricCount(name="cost:llm_calls", severity="", count=7.0),
@@ -1164,15 +1163,8 @@ def test_rebuild_index_round_index_round_trips(tmp_path: Path) -> None:
     assert rows["v2"]["round_index"] == 1
 
 
-def test_rebuild_index_legacy_generation_reads_null_round_index(tmp_path: Path) -> None:
-    """A lineage row that predates the round_index field reads as null.
-
-    Simulates a legacy ``lineage.json`` whose generation dicts have no
-    ``round_index`` key by writing the document directly, then rebuilding.
-    The index column must be ``NULL`` (birth round unknown), not coerced
-    to 0.
-    """
-    import json
+def test_rebuild_index_generation_without_birth_round_reads_null(tmp_path: Path) -> None:
+    """An unknown canonical birth round remains null after rebuilding."""
 
     ws = tmp_path / ".zicato"
     board = tmp_path / "board.jsonl"
@@ -1185,9 +1177,7 @@ def test_rebuild_index_legacy_generation_reads_null_round_index(tmp_path: Path) 
     cfg = new_epoch(ws, "alpha", board, rubric, ScoringWeights())
     eid = cfg.id
 
-    # Overwrite lineage.json with legacy-shaped rows (no round_index key).
-    lineage_path = ws / "lineage.json"
-    legacy = {
+    lineage = {
         "epochs": [
             {
                 "id": eid,
@@ -1212,7 +1202,10 @@ def test_rebuild_index_legacy_generation_reads_null_round_index(tmp_path: Path) 
             }
         ]
     }
-    lineage_path.write_text(json.dumps(legacy), encoding="utf-8")
+    from tests._workspace_support import write_lineage
+    from zicato.workspace import WorkspaceLayout
+
+    write_lineage(WorkspaceLayout(ws), lineage)
 
     db = rebuild_index(ws)
     rows = {r["generation_id"]: _row_dict(r) for r in generations_for_epoch(db, eid)}

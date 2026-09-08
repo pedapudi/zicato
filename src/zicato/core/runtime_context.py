@@ -25,8 +25,8 @@ class TelemetryEndpoints:
 class WorkerRuntimeContext:
     """Operational addresses and run coordinates that never enter evaluation hashes."""
 
+    run: RunContext
     telemetry: TelemetryEndpoints = TelemetryEndpoints()
-    run: RunContext | None = None
 
     def to_json(self) -> dict[str, Any]:
         return dataclass_to_jsonable(self)

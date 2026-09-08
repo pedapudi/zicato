@@ -44,7 +44,7 @@ function scopeFixture() {
     epoch_id: id, closed: id === SC_OLD, goal: 'g',
     experiments: gens.map((g) => ({ generation_id: g.generation_id, parent_generation_id: g.parent_generation_id,
       outcome: g.promoted === true ? { decision: 'promoted' } : g.promoted === false ? { decision: 'rejected' } : {} })),
-    board: [{ entry_id: 'waffles_single', kind: 'single_turn', budget_s: 180, weight: 1 }],
+    board: [{ entry_id: 'waffles_single', kind: 'single_turn', wall_clock_budget_seconds: 180, weight: 1 }],
   });
   const traj = (gens) => ({ points: gens.map((g, i) => ({ generation_id: g.generation_id, scalar: 40 + i })) });
   const oldGens = lineage.filter((g) => g.epoch_id === SC_OLD);
@@ -746,7 +746,7 @@ test('tree model (cross-epoch): EACH epoch crowns its OWN champion — a NON-CUR
   }
 });
 
-test('tree model (cross-epoch): an epoch with NO served pointer stamps NEITHER flag (legacy crown fallback, never all-former)', async () => {
+test('tree model (cross-epoch): an epoch with no served pointer leaves champion identity unknown', async () => {
   freshState();
   installFixtureMap(crownFixture({ oldPointerless: true }));
   coreState.state.heartbeat = { phase: 'idle' };
@@ -755,9 +755,7 @@ test('tree model (cross-epoch): an epoch with NO served pointer stamps NEITHER f
 
   const model = await shell.buildTreeModel(router.parseRoute(`#/e/${TWO_EP_NEW}`));
 
-  // e0's payload carries no pointer → it is UNKNOWN. Neither flag is stamped, so
-  // tree.js's `legacyChamp` path gives every promoted gen the solid crown; the
-  // one thing that must never happen is a promoted gen reading "former".
+  // A missing champion pointer supplies neither current nor former identity.
   for (const g of model.byEpoch[TWO_EP_OLD].gens) {
     assert(g.currentChampion === undefined, `${g.id}: no currentChampion stamp without a pointer`);
     assert(g.formerChampion === undefined, `${g.id}: no formerChampion stamp without a pointer`);

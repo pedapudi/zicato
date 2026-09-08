@@ -22,6 +22,7 @@ from pathlib import Path
 
 from starlette.testclient import TestClient
 
+from tests._workspace_support import experiment_record, write_epoch, write_lineage
 from zicato.core import LossProfile
 from zicato.core.measurement import MeasurementDraw
 from zicato.dashboard.server import create_app
@@ -66,7 +67,7 @@ def _write_run_loss(
         entry_id=entry,
         generation_id=gen,
         epoch_id=epoch,
-        drift_counts=(),
+        metric_counts=(),
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=runtime,
@@ -88,10 +89,17 @@ def _write_experiment(
     layout = WorkspaceLayout.from_root(workspace)
     path = layout.experiment(epoch, gen)
     path.parent.mkdir(parents=True, exist_ok=True)
-    record: dict = {"generation_id": gen, "parent_generation_id": parent}
-    if decision is not None:
-        record["outcome"] = {"tournament_decision": decision}
-    path.write_text(json.dumps(record), encoding="utf-8")
+    path.write_text(
+        json.dumps(
+            experiment_record(
+                gen,
+                epoch_id=epoch,
+                parent_generation_id=parent,
+                decision=decision,
+            )
+        ),
+        encoding="utf-8",
+    )
 
 
 def _lp_row(conn: sqlite3.Connection, epoch: str, gen: str, entry: str, **kw: object) -> None:
@@ -239,7 +247,7 @@ def _seed(workspace: Path, *, with_calibration: bool = True) -> None:
     config: dict = {"id": EPOCH, "created_at": "2026-07-01", "closed": False}
     if with_calibration:
         config["noise_floor"] = {"generation_id": "g0", "runs": 3, "max_abs_delta": 0.06}
-    (edir / "config.json").write_text(json.dumps(config), encoding="utf-8")
+    write_epoch(WorkspaceLayout(workspace), EPOCH, config=config)
     # holdout_fraction must be in (0, 1); the explicit ``holdout`` tag on entryC
     # wins outright (split_board rule 1), so only entryC is held regardless.
     (edir / "scoring.json").write_text(
@@ -258,22 +266,20 @@ def _seed(workspace: Path, *, with_calibration: bool = True) -> None:
         },
     ]
     (edir / "board.jsonl").write_text("\n".join(json.dumps(r) for r in board), encoding="utf-8")
-    (workspace / "lineage.json").write_text(
-        json.dumps(
-            {
-                "epochs": [
-                    {
-                        "id": EPOCH,
-                        "generations": [
-                            {"id": "g0", "parent_id": None, "promoted": None},
-                            {"id": "g1", "parent_id": "g0", "promoted": True},
-                            {"id": "g2", "parent_id": "g0", "promoted": False},
-                        ],
-                    }
-                ]
-            }
-        ),
-        encoding="utf-8",
+    write_lineage(
+        WorkspaceLayout(workspace),
+        {
+            "epochs": [
+                {
+                    "id": EPOCH,
+                    "generations": [
+                        {"id": "g0", "parent_id": None, "promoted": None},
+                        {"id": "g1", "parent_id": "g0", "promoted": True},
+                        {"id": "g2", "parent_id": "g0", "promoted": False},
+                    ],
+                }
+            ]
+        },
     )
     (workspace / "current_epoch").write_text(EPOCH, encoding="utf-8")
 
@@ -318,8 +324,10 @@ def _seed_dead(workspace: Path) -> None:
     """
     edir = workspace / "epochs" / DEAD_EP
     edir.mkdir(parents=True, exist_ok=True)
-    (edir / "config.json").write_text(
-        json.dumps({"id": DEAD_EP, "created_at": "2026-07-02", "closed": False}), encoding="utf-8"
+    write_epoch(
+        WorkspaceLayout(workspace),
+        DEAD_EP,
+        config={"id": DEAD_EP, "created_at": "2026-07-02", "closed": False},
     )
     (edir / "scoring.json").write_text(json.dumps({}), encoding="utf-8")
     board = [
@@ -328,24 +336,22 @@ def _seed_dead(workspace: Path) -> None:
         {"id": "entryE", "kind": "single_turn", "input": "e", "wall_clock_budget_seconds": 60},
     ]
     (edir / "board.jsonl").write_text("\n".join(json.dumps(r) for r in board), encoding="utf-8")
-    (workspace / "lineage.json").write_text(
-        json.dumps(
-            {
-                "epochs": [
-                    {
-                        "id": DEAD_EP,
-                        "generations": [
-                            {"id": "g0", "parent_id": None, "promoted": None},
-                            *(
-                                {"id": gid, "parent_id": "g0", "promoted": False}
-                                for gid in ("g1", "g2", "g3")
-                            ),
-                        ],
-                    }
-                ]
-            }
-        ),
-        encoding="utf-8",
+    write_lineage(
+        WorkspaceLayout(workspace),
+        {
+            "epochs": [
+                {
+                    "id": DEAD_EP,
+                    "generations": [
+                        {"id": "g0", "parent_id": None, "promoted": None},
+                        *(
+                            {"id": gid, "parent_id": "g0", "promoted": False}
+                            for gid in ("g1", "g2", "g3")
+                        ),
+                    ],
+                }
+            ]
+        },
     )
     (workspace / "current_epoch").write_text(DEAD_EP, encoding="utf-8")
 
@@ -413,22 +419,20 @@ def test_matrix_tristate_promoted_null(tmp_path: Path) -> None:
     # null — never a collapsed False (the Class-B bug), never on the spine.
     _seed(tmp_path)
     _write_experiment(tmp_path, EPOCH, "g2", "g0", None)  # overwrite g2 → undecided
-    (tmp_path / "lineage.json").write_text(
-        json.dumps(
-            {
-                "epochs": [
-                    {
-                        "id": EPOCH,
-                        "generations": [
-                            {"id": "g0", "parent_id": None, "promoted": None},
-                            {"id": "g1", "parent_id": "g0", "promoted": True},
-                            {"id": "g2", "parent_id": "g0", "promoted": None},
-                        ],
-                    }
-                ]
-            }
-        ),
-        encoding="utf-8",
+    write_lineage(
+        WorkspaceLayout(tmp_path),
+        {
+            "epochs": [
+                {
+                    "id": EPOCH,
+                    "generations": [
+                        {"id": "g0", "parent_id": None, "promoted": None},
+                        {"id": "g1", "parent_id": "g0", "promoted": True},
+                        {"id": "g2", "parent_id": "g0", "promoted": None},
+                    ],
+                }
+            ]
+        },
     )
     m = ev.build_eval_matrix(_paths(tmp_path), EPOCH)
     g2 = next(c for c in m["candidates"] if c["generation_id"] == "g2")
@@ -693,7 +697,7 @@ def test_health_mde_sizes_replicates_from_delta_std_when_the_contract_pins_none(
     edir = tmp_path / "epochs" / EPOCH
     config = json.loads((edir / "config.json").read_text(encoding="utf-8"))
     config["noise_floor"]["delta_std"] = 0.02
-    (edir / "config.json").write_text(json.dumps(config), encoding="utf-8")
+    write_epoch(WorkspaceLayout(tmp_path), EPOCH, config=config)
     scoring = json.loads((edir / "scoring.json").read_text(encoding="utf-8"))
     scoring["promote_margin"] = 0.05
     (edir / "scoring.json").write_text(json.dumps(scoring), encoding="utf-8")
@@ -830,22 +834,20 @@ def _seed_june_shaped(workspace: Path) -> None:
     for gid, parent in (("g0", None), ("g1", "g0"), ("g2", "g0")):
         _write_experiment(workspace, EPOCH, gid, parent, None)
     # lineage.json carries the settled truth: the seed reigns, g1 won, g2 lost.
-    (workspace / "lineage.json").write_text(
-        json.dumps(
-            {
-                "epochs": [
-                    {
-                        "id": EPOCH,
-                        "generations": [
-                            {"id": "g0", "parent_id": None, "promoted": True},
-                            {"id": "g1", "parent_id": "g0", "promoted": True},
-                            {"id": "g2", "parent_id": "g0", "promoted": False},
-                        ],
-                    }
-                ]
-            }
-        ),
-        encoding="utf-8",
+    write_lineage(
+        WorkspaceLayout(workspace),
+        {
+            "epochs": [
+                {
+                    "id": EPOCH,
+                    "generations": [
+                        {"id": "g0", "parent_id": None, "promoted": True},
+                        {"id": "g1", "parent_id": "g0", "promoted": True},
+                        {"id": "g2", "parent_id": "g0", "promoted": False},
+                    ],
+                }
+            ]
+        },
     )
 
 
@@ -873,22 +875,20 @@ def test_spine_includes_the_seed_when_every_challenger_was_rejected(tmp_path: Pa
     # spine — the seed alone — and a one-generation spine is a real trajectory.
     _seed_june_shaped(tmp_path)
     # Demote g1 so the seed is the only reigning generation.
-    (tmp_path / "lineage.json").write_text(
-        json.dumps(
-            {
-                "epochs": [
-                    {
-                        "id": EPOCH,
-                        "generations": [
-                            {"id": "g0", "parent_id": None, "promoted": True},
-                            {"id": "g1", "parent_id": "g0", "promoted": False},
-                            {"id": "g2", "parent_id": "g0", "promoted": False},
-                        ],
-                    }
-                ]
-            }
-        ),
-        encoding="utf-8",
+    write_lineage(
+        WorkspaceLayout(tmp_path),
+        {
+            "epochs": [
+                {
+                    "id": EPOCH,
+                    "generations": [
+                        {"id": "g0", "parent_id": None, "promoted": True},
+                        {"id": "g1", "parent_id": "g0", "promoted": False},
+                        {"id": "g2", "parent_id": "g0", "promoted": False},
+                    ],
+                }
+            ]
+        },
     )
     m = ev.build_eval_matrix(_paths(tmp_path), EPOCH)
     by_gen = {c["generation_id"]: c for c in m["candidates"]}
@@ -907,9 +907,7 @@ def test_seed_is_on_the_spine_even_with_nothing_promoted(tmp_path: Path) -> None
     # The seed anchors the reign whether or not anything recorded a promotion
     # for it: it is the champion the epoch started from.
     _seed_june_shaped(tmp_path)
-    (tmp_path / "lineage.json").write_text(
-        json.dumps({"epochs": [{"id": EPOCH, "generations": []}]}), encoding="utf-8"
-    )
+    write_lineage(WorkspaceLayout(tmp_path), {"epochs": [{"id": EPOCH, "generations": []}]})
     m = ev.build_eval_matrix(_paths(tmp_path), EPOCH)
     by_gen = {c["generation_id"]: c for c in m["candidates"]}
     assert by_gen["g0"]["promoted"] is None  # no decision was ever recorded
@@ -921,22 +919,20 @@ def test_empty_spine_panels_carry_distinct_reasons(tmp_path: Path) -> None:
     # cause — a seed that failed the entry reads differently from a spine that
     # never ran it.
     _seed_june_shaped(tmp_path)
-    (tmp_path / "lineage.json").write_text(
-        json.dumps(
-            {
-                "epochs": [
-                    {
-                        "id": EPOCH,
-                        "generations": [
-                            {"id": "g0", "parent_id": None, "promoted": True},
-                            {"id": "g1", "parent_id": "g0", "promoted": False},
-                            {"id": "g2", "parent_id": "g0", "promoted": False},
-                        ],
-                    }
-                ]
-            }
-        ),
-        encoding="utf-8",
+    write_lineage(
+        WorkspaceLayout(tmp_path),
+        {
+            "epochs": [
+                {
+                    "id": EPOCH,
+                    "generations": [
+                        {"id": "g0", "parent_id": None, "promoted": True},
+                        {"id": "g1", "parent_id": "g0", "promoted": False},
+                        {"id": "g2", "parent_id": "g0", "promoted": False},
+                    ],
+                }
+            ]
+        },
     )
     p = _paths(tmp_path)
 

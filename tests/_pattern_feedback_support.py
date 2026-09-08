@@ -4,7 +4,7 @@ from pathlib import Path
 
 from goldfive.sinks.persistence import JSONLPersistenceSink, _events_module
 
-from zicato.core import DriftCount, LossProfile, MetricCount, Pattern
+from zicato.core import LossProfile, MetricCount, Pattern
 from zicato.patterns import ALL_DETECTORS, DetectorInput
 
 
@@ -43,8 +43,8 @@ async def private_detector_patterns(
             entry_id=entry_id,
             generation_id="v0",
             epoch_id="epoch",
-            drift_counts=(DriftCount(kind="off_topic", severity="warning", count=1),),
             metric_counts=(
+                MetricCount(name="drift:off_topic", severity="warning", count=1),
                 MetricCount(name="cost:tokens_spent", count=100),
                 MetricCount(name=f"rubric:{identity}-dimension", count=1),
             ),

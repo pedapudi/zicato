@@ -276,7 +276,7 @@ def _record_experiment(ws: Path, generation_id: str, parent_id: str, patch: Patc
                 core_idea="rewrite the instruction",
                 modulating=("instr",),
                 why="test fixture",
-                expected_drift_movements=(),
+                expected_metric_movements=(),
                 expected_pass_rate_delta="+0.0",
             ),
             patches=(patch,),

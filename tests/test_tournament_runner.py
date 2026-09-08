@@ -36,10 +36,10 @@ from tests._runtime_builders import (
 )
 from zicato.core import (
     BoardEntry,
-    DriftCount,
     ExpectationResult,
     Generation,
     LossProfile,
+    MetricCount,
     RuntimeConfig,
     ScoringWeights,
 )
@@ -100,7 +100,7 @@ def _loss(
         entry_id=entry_id,
         generation_id=generation_id,
         epoch_id="e0",
-        drift_counts=(DriftCount(kind="off_topic", severity="info", count=0),),
+        metric_counts=(MetricCount(name="drift:off_topic", severity="info", count=0),),
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=1000,
@@ -466,7 +466,7 @@ def test_run_fast_mode_runs_only_child(monkeypatch: pytest.MonkeyPatch, tmp_path
     board = _make_board()
     weights = ScoringWeights(promote_margin=0.01)
     epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
-    record_tournament_score(tmp_path, epoch_id, "v0", parent_historical)
+    parent_historical = record_tournament_score(tmp_path, epoch_id, "v0", parent_historical)
     result = asyncio.run(
         run_fast_mode(
             adapter=object(),
@@ -527,7 +527,7 @@ def test_run_fast_mode_never_runs_the_champion(
     config = runtime_config(tmp_path)
     weights = ScoringWeights()
     epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
-    record_tournament_score(tmp_path, epoch_id, "v0", parent_historical)
+    parent_historical = record_tournament_score(tmp_path, epoch_id, "v0", parent_historical)
     asyncio.run(
         run_fast_mode(
             adapter=object(),
@@ -623,7 +623,7 @@ def test_run_fast_mode_honours_replicates(monkeypatch: pytest.MonkeyPatch, tmp_p
     weights = ScoringWeights(pass_weight=1.0)
     config = runtime_config(tmp_path)
     epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
-    record_tournament_score(tmp_path, epoch_id, "v0", parent_historical)
+    parent_historical = record_tournament_score(tmp_path, epoch_id, "v0", parent_historical)
     result = asyncio.run(
         run_fast_mode(
             adapter=object(),
@@ -707,7 +707,7 @@ def test_run_fast_mode_replicate_slots_reuse_the_unit_cache(
     weights = ScoringWeights(pass_weight=1.0)
     config = runtime_config(tmp_path)
     epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
-    record_tournament_score(tmp_path, epoch_id, "v0", parent_historical)
+    parent_historical = record_tournament_score(tmp_path, epoch_id, "v0", parent_historical)
 
     def _go(replicates: int) -> None:
         asyncio.run(
@@ -803,7 +803,7 @@ def test_run_fast_mode_stops_scheduling_slots_on_a_spent_token_budget(
     weights = ScoringWeights(pass_weight=1.0)
     config = dataclasses.replace(runtime_config(tmp_path), token_ledger=ledger)
     epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
-    record_tournament_score(tmp_path, epoch_id, "v0", parent_historical)
+    parent_historical = record_tournament_score(tmp_path, epoch_id, "v0", parent_historical)
     result = asyncio.run(
         run_fast_mode(
             adapter=object(),
@@ -858,7 +858,7 @@ def test_run_fast_mode_single_replicate_is_byte_identical(
     weights = ScoringWeights(promote_margin=0.01)
     config = runtime_config(tmp_path)
     epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
-    record_tournament_score(tmp_path, epoch_id, "v0", parent_historical)
+    parent_historical = record_tournament_score(tmp_path, epoch_id, "v0", parent_historical)
     result = asyncio.run(
         run_fast_mode(
             adapter=object(),
@@ -957,7 +957,7 @@ def test_run_fast_mode_respects_parallelism_bound(
     config = dataclasses.replace(runtime_config(tmp_path), parallelism=3)
     weights = ScoringWeights()
     epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
-    record_tournament_score(tmp_path, epoch_id, "v0", parent_historical)
+    parent_historical = record_tournament_score(tmp_path, epoch_id, "v0", parent_historical)
     result = asyncio.run(
         run_fast_mode(
             adapter=object(),
@@ -1584,7 +1584,7 @@ def test_board_disable_drift_excludes_suppressed_builtin_judge_end_to_end(
             {
                 "id": "entry_e2e",
                 "kind": "single_turn",
-                "budget_s": 60,
+                "wall_clock_budget_seconds": 60,
                 "input": "hello",
             }
         )
@@ -1922,7 +1922,7 @@ def test_fast_mode_persists_running_partial_aggregate(
     parent_historical["base_seed"] = config.seed
     weights = ScoringWeights()
     epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
-    record_tournament_score(tmp_path, epoch_id, "v0", parent_historical)
+    parent_historical = record_tournament_score(tmp_path, epoch_id, "v0", parent_historical)
     result = asyncio.run(
         run_fast_mode(
             adapter=object(),
@@ -2033,7 +2033,7 @@ def test_run_fast_mode_publishes_active_tournament(
     config = runtime_config(tmp_path)
     weights = ScoringWeights()
     epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
-    record_tournament_score(tmp_path, epoch_id, "v0", parent_historical)
+    parent_historical = record_tournament_score(tmp_path, epoch_id, "v0", parent_historical)
     asyncio.run(
         run_fast_mode(
             adapter=object(),
@@ -2150,7 +2150,7 @@ def test_run_fast_mode_challenger_progresses_through_running_then_completed(
     config = runtime_config(tmp_path)
     weights = ScoringWeights()
     epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
-    record_tournament_score(tmp_path, epoch_id, "v0", parent_historical)
+    parent_historical = record_tournament_score(tmp_path, epoch_id, "v0", parent_historical)
     asyncio.run(
         run_fast_mode(
             adapter=object(),

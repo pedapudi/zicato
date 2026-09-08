@@ -27,7 +27,7 @@ import math
 
 import pytest
 
-from zicato.core import DriftCount, ScoringWeights
+from zicato.core import MetricCount, ScoringWeights
 from zicato.scoring import (
     PROVENANCE_BUILTIN,
     DriftContext,
@@ -221,15 +221,15 @@ def test_pass_transform_linear_explicit_is_builtin() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _drift_ctx(weights: ScoringWeights, drift_counts: tuple[DriftCount, ...]):
+def _drift_ctx(weights: ScoringWeights, metric_counts: tuple[MetricCount, ...]):
     return DriftContext(
-        drift_counts=drift_counts,
+        metric_counts=metric_counts,
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=0,
         weights=weights,
         builtin_loss=builtin_drift_loss(
-            drift_counts=drift_counts,
+            metric_counts=metric_counts,
             plan_revisions=0,
             weights=weights,
         ),
@@ -237,7 +237,7 @@ def _drift_ctx(weights: ScoringWeights, drift_counts: tuple[DriftCount, ...]):
 
 
 def _old_harmonic_looping_loss(
-    drift_counts: tuple[DriftCount, ...], weights: ScoringWeights
+    metric_counts: tuple[MetricCount, ...], weights: ScoringWeights
 ) -> float:
     """The OLD unconditional ``looping_reasoning`` special-case, transcribed.
 
@@ -248,10 +248,10 @@ def _old_harmonic_looping_loss(
     """
     sev_w = weights.severity_weights
     loss = 0.0
-    for c in drift_counts:
+    for c in metric_counts:
         sev_mult = sev_w.get(c.severity, 0.0)
-        kind_mult = weights.per_kind_weights.get(c.kind, 1.0)
-        if c.kind == "looping_reasoning":
+        kind_mult = weights.per_kind_weights.get(c.name.removeprefix("drift:"), 1.0)
+        if c.name.removeprefix("drift:") == "looping_reasoning":
             shaped = sum(1.0 / k for k in range(1, int(c.count) + 1))
         else:
             shaped = c.count
@@ -261,8 +261,8 @@ def _old_harmonic_looping_loss(
 
 def test_drift_kind_harmonic_reproduces_old_looping_value() -> None:
     drift = (
-        DriftCount(kind="looping_reasoning", severity="warning", count=4),
-        DriftCount(kind="off_topic", severity="info", count=2),  # untouched, linear
+        MetricCount(name="drift:looping_reasoning", severity="warning", count=4),
+        MetricCount(name="drift:off_topic", severity="info", count=2),  # untouched, linear
     )
     weights = ScoringWeights(
         per_kind_weights={"looping_reasoning": 1.5},
@@ -278,7 +278,7 @@ def test_drift_kind_harmonic_reproduces_old_looping_value() -> None:
     # The harmonic-transformed loss is STRICTLY less than the linear builtin
     # for count>1 (diminishing returns), proving it actually reshaped.
     builtin = builtin_drift_loss(
-        drift_counts=drift,
+        metric_counts=drift,
         plan_revisions=0,
         weights=weights,
     )
@@ -291,10 +291,10 @@ def test_builtin_drift_loss_is_pure_linear_no_harmonic() -> None:
     A looping_reasoning count scores LINEARLY in the builtin; harmonic is now
     opt-in only via drift_kind_aggregation.
     """
-    drift = (DriftCount(kind="looping_reasoning", severity="warning", count=4),)
+    drift = (MetricCount(name="drift:looping_reasoning", severity="warning", count=4),)
     weights = ScoringWeights()  # no aggregation configured
     builtin = builtin_drift_loss(
-        drift_counts=drift,
+        metric_counts=drift,
         plan_revisions=0,
         weights=weights,
     )
@@ -307,7 +307,7 @@ def test_builtin_drift_loss_is_pure_linear_no_harmonic() -> None:
 
 
 def test_drift_kind_cap_bounds_a_kind() -> None:
-    drift = (DriftCount(kind="off_topic", severity="info", count=9),)
+    drift = (MetricCount(name="drift:off_topic", severity="info", count=9),)
     weights = ScoringWeights(drift_kind_aggregation={"off_topic": {"op": "cap", "max": 5.0}})
     loss, prov = resolve_drift_loss(_drift_ctx(weights, drift))
     sev = weights.severity_weights["info"]
@@ -317,13 +317,13 @@ def test_drift_kind_cap_bounds_a_kind() -> None:
 
 def test_drift_kind_neutral_defaults_are_builtin() -> None:
     drift = (
-        DriftCount(kind="off_topic", severity="warning", count=2),
-        DriftCount(kind="looping_reasoning", severity="info", count=3),
+        MetricCount(name="drift:off_topic", severity="warning", count=2),
+        MetricCount(name="drift:looping_reasoning", severity="info", count=3),
     )
     weights = ScoringWeights()  # nothing configured
     loss, prov = resolve_drift_loss(_drift_ctx(weights, drift))
     assert loss == builtin_drift_loss(
-        drift_counts=drift,
+        metric_counts=drift,
         plan_revisions=0,
         weights=weights,
     )
@@ -331,11 +331,11 @@ def test_drift_kind_neutral_defaults_are_builtin() -> None:
 
 
 def test_drift_kind_explicit_linear_is_builtin() -> None:
-    drift = (DriftCount(kind="off_topic", severity="warning", count=2),)
+    drift = (MetricCount(name="drift:off_topic", severity="warning", count=2),)
     weights = ScoringWeights(drift_kind_aggregation={"off_topic": {"op": "linear"}})
     loss, prov = resolve_drift_loss(_drift_ctx(weights, drift))
     assert loss == builtin_drift_loss(
-        drift_counts=drift,
+        metric_counts=drift,
         plan_revisions=0,
         weights=weights,
     )
@@ -344,13 +344,13 @@ def test_drift_kind_explicit_linear_is_builtin() -> None:
 
 def test_drift_kind_aggregation_only_touches_named_kind() -> None:
     """A configured kind absent from the run's drift counts changes nothing."""
-    drift = (DriftCount(kind="off_topic", severity="warning", count=2),)
+    drift = (MetricCount(name="drift:off_topic", severity="warning", count=2),)
     weights = ScoringWeights(
         drift_kind_aggregation={"looping_reasoning": {"op": "harmonic"}},  # no looping present
     )
     loss, prov = resolve_drift_loss(_drift_ctx(weights, drift))
     assert loss == builtin_drift_loss(
-        drift_counts=drift,
+        metric_counts=drift,
         plan_revisions=0,
         weights=weights,
     )
@@ -364,16 +364,12 @@ def test_drift_kind_aggregation_only_touches_named_kind() -> None:
 
 
 def test_legacy_pass_exponent_is_rejected_loudly() -> None:
-    """A retired ``pass_exponent`` key fails fast with the migration message,
-    rather than being silently ignored by the field-enumerating loader (which
-    would score linearly with no error, no warning, and no epoch roll)."""
+    """An unsupported scoring key is rejected before it can affect a run."""
     from zicato.workspace_loader import scoring_weights_from_dict
 
     with pytest.raises(ValueError, match="pass_exponent") as exc:
         scoring_weights_from_dict({"pass_weight": 2.0, "pass_exponent": 2.0})
-    # The message points the operator at the replacement.
-    assert "pass_transform" in str(exc.value)
-    assert "pow" in str(exc.value)
+    assert "scoring.pass_exponent: unknown field" in str(exc.value)
 
 
 def test_legacy_pass_exponent_rejected_via_lifecycle_path_too() -> None:

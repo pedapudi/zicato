@@ -1,66 +1,26 @@
-"""Running narrative + per-experiment persistence within an epoch.
+"""Canonical experiment and patch records, plus the human-readable journal.
 
-Two concerns share this module because they sit on the same on-disk
-seam (one generation directory):
+The experiment body references its patches by identifier; each patch occupies
+its own file. Writes publish patches before the experiment, using the storage
+backend's atomic writes. An absent outcome means execution has not recorded one.
 
-* **``journal.md``** — appended one section per experiment, both
-  before-the-run (the hypothesis landed) and after-the-run (the
-  tournament made a decision). Plain markdown so operators read it
-  directly in a terminal pager; ``zicato journal show`` is just
-  ``cat`` with a friendly name. The proposer's ``core_idea`` and ``why``
-  are recorded IN FULL: the file is append-only, so anything dropped
-  here is gone for good, and it is the only channel through which the
-  proposer reads its own prior reasoning. Consumers with a context
-  budget trim on read.
-* **``experiment.json`` + ``patches/{id}.json``** — the typed
-  :class:`Experiment` for one generation. The body of
-  ``experiment.json`` carries ``patch_ids: [...]``; each patch is
-  serialised to its own file. Write order is patches-first so a
-  partial write leaves orphan patch files (harmless) rather than a
-  dangling ``patch_ids`` reference.
-
-This module is the one owner of the ``experiment.json`` record. It holds
-the only encoder (:func:`experiment_body`), the only acceptance test for
-a stored body (:func:`_accepted_body`), and the only construction of the
-typed record from one (:func:`read_experiment_from_backend`); no reader
-elsewhere in the tree opens the file or decides what an unparseable one
-means. The record parses exactly one way — the split-file form above — so
-a body carrying anything else is a defect and raises
-:class:`ExperimentRecordError` rather than being half-understood.
-
-Readers come in two kinds, and which one a caller wants follows from what
-it is for. A consumer of the record's MEANING — resolved patches, coerced
-enum members, a normalised parent id — takes the typed
-:class:`~zicato.core.types.Experiment` from :func:`read_experiment`,
-:func:`read_experiment_if_present` or :func:`read_epoch_experiments`. A
-view that SERVES the record as JSON takes its stored body from
-:func:`read_experiment_body` or :func:`read_epoch_experiment_bodies`,
-which report what was recorded and never a value this module would have
-defaulted. Both kinds share the one acceptance test, so a record that
-refuses to parse refuses for both.
-
-Persistence is routed through :class:`zicato.storage.StorageBackend`
-(see :mod:`zicato.epoch._storage` and ``docs/design/STORAGE.md`` §5.1).
-Every public helper takes a ``workspace_root: Path``. Every write is
-atomic, so a crash mid-write cannot leave a truncated ``experiment.json``
-or a half-written per-patch file. That is what makes strict parsing
-sound: a reader observes either the previous complete record or the new
-one and never a partial body, so a parse failure means something bypassed
-the seam.
+All readers use this owner to accept the writer's complete record format.
+Missing records are distinct from malformed present records. Typed readers
+resolve patch references; body readers preserve the accepted JSON for views.
+The markdown journal records the full hypothesis and outcome, without trimming
+reasoning at publication time.
 """
 
 from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from typing import Any, TypeVar
 
-from zicato.core.tournament import recorded_decision_token
+from zicato.core.configuration import authored_dataclass_from_json
 from zicato.core.types import (
-    DriftMovementActual,
-    ExpectedDriftMovement,
     ExpectedMetricMovement,
     Experiment,
     HypothesisSpec,
@@ -68,7 +28,6 @@ from zicato.core.types import (
     MetricMovementActual,
     OutcomeRecord,
     Patch,
-    TournamentDecision,
 )
 from zicato.core.workspace import epoch_dir
 from zicato.epoch._storage import (
@@ -309,169 +268,50 @@ def patch_body(patch: Patch) -> dict[str, Any]:
     return coerced
 
 
+def _complete_fields(d: dict[str, Any], record_type: type[Any]) -> None:
+    """Require the fields emitted by the journal's dataclass encoder."""
+    expected = {field.name for field in fields(record_type)}
+    if not isinstance(d, dict) or set(d) != expected:
+        raise ValueError(f"{record_type.__name__} must carry exactly {sorted(expected)}")
+
+
 def _patch_from_dict(d: dict[str, Any]) -> Patch:
-    return Patch(
-        id=str(d["id"]),
-        mutation_id=str(d["mutation_id"]),
-        op=d["op"],
-        new_content=d.get("new_content"),
-        new_numeric=(float(d["new_numeric"]) if d.get("new_numeric") is not None else None),
-        new_enum=d.get("new_enum"),
-        rationale=str(d.get("rationale", "")),
-    )
+    _complete_fields(d, Patch)
+    patch = authored_dataclass_from_json(Patch, d, path="patch")
+    selected = {"replace": "new_content", "set_numeric": "new_numeric", "set_enum": "new_enum"}[
+        d["op"]
+    ]
+    for key in ("new_content", "new_numeric", "new_enum"):
+        if key != selected and d[key] is not None:
+            raise ValueError(f"patch {d['op']} cannot supply {key}")
+    if d[selected] is None:
+        raise ValueError(f"patch {d['op']} requires {selected}")
+    return patch
 
 
 def _hypothesis_from_dict(d: dict[str, Any]) -> HypothesisSpec:
-    movements = tuple(
-        ExpectedDriftMovement(
-            kind=str(m["kind"]),
-            direction=m["direction"],
-            magnitude=m["magnitude"],
-        )
-        for m in d.get("expected_drift_movements", [])
-    )
-    # Namespaced metric predictions (:class:`ExpectedMetricMovement`).
-    # The writer serialises them (``asdict`` over the whole hypothesis),
-    # but the reader historically dropped them silently — a round-trip lost
-    # every metric-space prediction, so the hypothesis-prediction grading
-    # never saw them. Read them back symmetrically; absent/older records
-    # yield ``()`` and deserialize unchanged.
-    metric_movements = tuple(
-        ExpectedMetricMovement(
-            metric_name=str(m["metric_name"]),
-            direction=m["direction"],
-            magnitude=m["magnitude"],
-        )
-        for m in d.get("expected_metric_movements", [])
-    )
-    return HypothesisSpec(
-        core_idea=str(d.get("core_idea", "")),
-        modulating=tuple(d.get("modulating", ())),
-        why=str(d.get("why", "")),
-        expected_drift_movements=movements,
-        expected_pass_rate_delta=str(d.get("expected_pass_rate_delta", "")),
-        risks=str(d.get("risks", "")),
-        expected_metric_movements=metric_movements,
-    )
+    _complete_fields(d, HypothesisSpec)
+    hypothesis = authored_dataclass_from_json(HypothesisSpec, d, path="hypothesis")
+    for m in d["expected_metric_movements"]:
+        _complete_fields(m, ExpectedMetricMovement)
+        if not m["metric_name"]:
+            raise ValueError("prediction must name a metric")
+    return hypothesis
 
 
-def _opt_float(value: Any) -> float | None:
-    """Coerce a JSON value to ``float``, preserving an absent/``None`` value.
-
-    Used for the optional per-generation loss fields (OVERFITTING.md §12 #5)
-    that are ``null`` whenever there was no holdout to measure against.
-    """
-    if value is None:
+def _outcome_from_dict(d: dict[str, Any] | None) -> OutcomeRecord | None:
+    """Decode a completed outcome; null means execution has no outcome yet."""
+    if d is None:
         return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _as_decision(value: Any) -> Any:
-    """Coerce a wire token to :class:`TournamentDecision`, or keep it as-is.
-
-    ``OutcomeRecord.tournament_decision`` declares the enum, and every
-    in-process construction site passes a member; a record rebuilt from
-    JSON must carry the same runtime type or ``isinstance`` / ``match``
-    silently disagree with an identical in-memory record (issue #132).
-
-    No guard narrows the token first, so an unrecognised value — a
-    hand-edited record, or one written by a future format — is returned
-    UNCHANGED rather than raising or being rewritten to a verdict the
-    record does not carry. It still compares unequal to all three members.
-    """
-    try:
-        return TournamentDecision(value)
-    except ValueError:
-        return value
-
-
-def _outcome_from_dict(recorded: Any) -> OutcomeRecord | None:
-    """Rebuild the typed outcome from a stored ``outcome`` field.
-
-    ``None`` in, ``None`` out: a generation with no recorded outcome has
-    no typed record either. A bare-string outcome names the decision and
-    nothing else, so every other field takes its default; any other
-    outcome is a mapping of outcome fields.
-    """
-    if recorded is None:
-        return None
-    d: dict[str, Any] = {} if isinstance(recorded, str) else recorded
-    movements = tuple(
-        DriftMovementActual(
-            kind=str(m["kind"]),
-            from_rate=float(m["from_rate"]),
-            to_rate=float(m["to_rate"]),
-            hypothesis_match=bool(m["hypothesis_match"]),
-            note=str(m.get("note", "")),
-        )
-        for m in d.get("drift_movements", [])
-    )
-    metric_movements = tuple(
-        MetricMovementActual(
-            metric_name=str(m["metric_name"]),
-            from_value=float(m["from_value"]),
-            to_value=float(m["to_value"]),
-            hypothesis_match=bool(m["hypothesis_match"]),
-            note=str(m.get("note", "")),
-        )
-        for m in d.get("metric_movements", [])
-    )
-    # Generalised tournament-structure fields (additive; every default
-    # reproduces the gauntlet reading so a journal written before the
-    # feature deserializes unchanged).
-    match_record = tuple(
-        MatchOutcome(
-            match_id=str(m.get("match_id", "")),
-            opponent=str(m.get("opponent", "")),
-            won=bool(m.get("won", False)),
-            delta_scalar=float(m.get("delta_scalar", 0.0)),
-        )
-        for m in d.get("match_record", [])
-    )
-    decision_token = recorded_decision_token(recorded)
-    raw_rank = d.get("final_rank")
-    raw_elim = d.get("eliminated_in_round")
-    return OutcomeRecord(
-        ran_at=str(d.get("ran_at", "")),
-        drift_movements=movements,
-        pass_rate_delta=float(d.get("pass_rate_delta", 0.0)),
-        drift_loss_delta=float(d.get("drift_loss_delta", 0.0)),
-        scalar_score_delta=float(d.get("scalar_score_delta", 0.0)),
-        # One reader of the on-disk spellings, shared with the classifier
-        # the dashboard serves, so the same bytes cannot resolve to two
-        # different decisions. A record naming no decision reads back as
-        # ``None``, the same answer the classifier gives for that body;
-        # an unrecognised string token is kept verbatim.
-        tournament_decision=None if decision_token is None else _as_decision(decision_token),
-        rejection_reason=str(d.get("rejection_reason", "")),
-        metric_movements=metric_movements,
-        structure=str(d.get("structure", "gauntlet")),
-        final_rank=int(raw_rank) if raw_rank is not None else None,
-        eliminated_in_round=int(raw_elim) if raw_elim is not None else None,
-        match_record=match_record,
-        champion_eval_mode=str(d.get("champion_eval_mode", "full")),
-        # Holdout + Ladder evidence (OVERFITTING.md §12 #2). Stored verbatim
-        # as a plain JSON dict; ``None`` / absent when no holdout was
-        # consulted (the byte-identical Phase-A degrade and older journals).
-        holdout=d.get("holdout"),
-        # Per-generation train/holdout loss + gap (OVERFITTING.md §12 #5).
-        # ``None`` / absent on older journals and the no-holdout degrade.
-        train_loss=_opt_float(d.get("train_loss")),
-        holdout_loss=_opt_float(d.get("holdout_loss")),
-        generalization_gap=_opt_float(d.get("generalization_gap")),
-        # Operator override. ``False`` / absent on every gate-decided round and
-        # on journals written before the control consumer was wired.
-        operator_override=bool(d.get("operator_override", False)),
-        operator_override_reason=str(d.get("operator_override_reason", "")),
-        # Evidence-gate resolution (rating block + ci_history). Stored
-        # verbatim as a plain JSON dict; ``None`` / absent when the pre-gate
-        # never reached a credible terminal (gate off, plain reject, or the
-        # fit never cleared the credibility floor) and on older journals.
-        evidence=d.get("evidence"),
-    )
+    _complete_fields(d, OutcomeRecord)
+    outcome = authored_dataclass_from_json(OutcomeRecord, d, path="outcome")
+    for m in d["metric_movements"]:
+        _complete_fields(m, MetricMovementActual)
+        if not m["metric_name"]:
+            raise ValueError("movement must name a metric")
+    for m in d["match_record"]:
+        _complete_fields(m, MatchOutcome)
+    return outcome
 
 
 def outcome_from_dict(d: dict[str, Any]) -> OutcomeRecord:
@@ -532,7 +372,6 @@ def write_seed_experiment(
             core_idea="baseline seed",
             modulating=(),
             why="",
-            expected_drift_movements=(),
             expected_pass_rate_delta="",
             risks="",
         ),
@@ -562,10 +401,7 @@ def experiment_body(experiment: Experiment) -> dict[str, Any]:
     both.
     """
     body: dict[str, Any] = {
-        # Record-format version: stamped at write, checked at read.
-        # Absent-on-read is treated as version 1 (pre-stamp records keep
-        # loading); a HIGHER version refuses with a clear error rather
-        # than misreading a future incompatible shape.
+        # Readers require this explicit format version before decoding the record.
         "format_version": RECORD_FORMAT_VERSION,
         "id": experiment.id,
         "epoch_id": experiment.epoch_id,
@@ -736,9 +572,7 @@ def _accepted_body(
             f"experiment.json for {where} (storage key {exp_key!r}) is a "
             f"{type(body).__name__}, not a JSON object"
         )
-    # Record-format guard: absent ⇒ version 1, so a record written before the
-    # stamp keeps loading; a future incompatible version refuses with
-    # :class:`RecordFormatError`, the sibling refusal under ``RecordError``.
+    # Missing or unsupported format stamps refuse before field validation.
     check_record_format(body, f"experiment.json ({where})")
 
     if "patches" in body:
@@ -751,6 +585,31 @@ def _accepted_body(
             f"inline 'patches' array; the record references its patches by id "
             f"through 'patch_ids' and sibling patches/{{id}}.json files"
         )
+    try:
+        for key in ("id", "epoch_id", "generation_id", "proposed_at"):
+            if not isinstance(body[key], str):
+                raise ValueError(f"{key} must be a string")
+        if body["epoch_id"] != epoch_id or body["generation_id"] != generation_id:
+            raise ValueError("experiment identity disagrees with its location")
+        if body["parent_generation_id"] is not None and not isinstance(
+            body["parent_generation_id"], str
+        ):
+            raise ValueError("parent_generation_id must be a string or null")
+        if type(body["round_index"]) is not int:
+            raise ValueError("round_index must be an integer")
+        if not isinstance(body["patch_ids"], list) or any(
+            not isinstance(x, str) for x in body["patch_ids"]
+        ):
+            raise ValueError("patch_ids must be a list of strings")
+        if "recombined_from" in body and (
+            not isinstance(body["recombined_from"], list)
+            or any(not isinstance(x, str) for x in body["recombined_from"])
+        ):
+            raise ValueError("recombined_from must be a list of generation identifiers")
+        _hypothesis_from_dict(body["hypothesis"])
+        _outcome_from_dict(body["outcome"])
+    except (AttributeError, KeyError, TypeError, ValueError) as exc:
+        raise ExperimentRecordError(f"experiment.json for {where} does not parse: {exc}") from exc
     return body
 
 
@@ -777,18 +636,11 @@ def _experiment_from_body(
     backend: StorageBackend, epoch_id: str, generation_id: str, body: dict[str, Any]
 ) -> Experiment:
     """Resolve one accepted body's declared patches and typed fields."""
-    exp_key = experiment_key(epoch_id, generation_id)
     where = f"{epoch_id}/{generation_id}"
 
     patches: list[Patch] = []
-    patch_ids = body.get("patch_ids")
-    if patch_ids is not None and not isinstance(patch_ids, list):
-        raise ExperimentRecordError(
-            f"experiment.json for {where} (storage key {exp_key!r}) carries a "
-            f"{type(patch_ids).__name__} patch_ids, not a list"
-        )
-    for pid in patch_ids or ():
-        pkey = patch_key(epoch_id, generation_id, str(pid))
+    for pid in body["patch_ids"]:
+        pkey = patch_key(epoch_id, generation_id, pid)
         try:
             patch_body = backend.read_json(pkey)
         except json.JSONDecodeError as exc:
@@ -807,38 +659,17 @@ def _experiment_from_body(
                 f"patch record for {where} (storage key {pkey!r}) does not " f"parse: {exc}"
             ) from exc
 
-    try:
-        hypothesis = _hypothesis_from_dict(body.get("hypothesis") or {})
-        outcome = _outcome_from_dict(body.get("outcome"))
-    except (AttributeError, KeyError, TypeError, ValueError) as exc:
-        raise ExperimentRecordError(
-            f"experiment.json for {where} (storage key {exp_key!r}) does not " f"parse: {exc}"
-        ) from exc
-
-    raw_round = body.get("round_index")
-    round_index = raw_round if isinstance(raw_round, int) and not isinstance(raw_round, bool) else 0
-    # "Absent" is ``None`` (the seed has no in-epoch parent). New writes
-    # emit JSON ``null``; an on-disk ``""`` is normalised to ``None`` here so
-    # every workspace loads uniformly.
-    raw_parent = body.get("parent_generation_id")
-    parent_generation_id = str(raw_parent) if raw_parent else None
-    # Recombination provenance. Absent on every non-recombined
-    # record and on every record written before the field existed ⇒ ().
-    raw_recombined = body.get("recombined_from")
-    recombined_from = (
-        tuple(str(x) for x in raw_recombined) if isinstance(raw_recombined, list) else ()
-    )
     return Experiment(
-        id=str(body.get("id", "")),
-        epoch_id=str(body.get("epoch_id", epoch_id)),
-        generation_id=str(body.get("generation_id", generation_id)),
-        parent_generation_id=parent_generation_id,
-        proposed_at=str(body.get("proposed_at", "")),
-        hypothesis=hypothesis,
+        id=body["id"],
+        epoch_id=body["epoch_id"],
+        generation_id=body["generation_id"],
+        parent_generation_id=body["parent_generation_id"],
+        proposed_at=body["proposed_at"],
+        hypothesis=_hypothesis_from_dict(body["hypothesis"]),
         patches=tuple(patches),
-        outcome=outcome,
-        round_index=round_index,
-        recombined_from=recombined_from,
+        outcome=_outcome_from_dict(body["outcome"]),
+        round_index=body["round_index"],
+        recombined_from=tuple(body.get("recombined_from", ())),
     )
 
 
@@ -849,17 +680,12 @@ def read_experiment_body(
 ) -> dict[str, Any] | None:
     """The generation record's stored body, or ``None`` if it has none yet.
 
-    For the views that serve the record itself as JSON. The body comes back
-    as the record states it, having passed the same acceptance test the
-    typed read applies, so a view reports what was recorded and never a
-    value this module would have defaulted: a record that names no
-    tournament decision is served as one that names none, and a record
-    carrying no round stamp is served without the key rather than with a
-    round it was not minted in.
+    JSON views receive the stored fields after the same validation used by
+    typed reads. An experiment awaiting execution has an explicit null
+    outcome; a recorded outcome may have an explicit null decision.
 
-    A caller that wants the record's meaning rather than its bytes —
-    resolved patches, coerced enum members, a normalised parent id — takes
-    :func:`read_experiment` or :func:`read_experiment_if_present`.
+    Use :func:`read_experiment` or :func:`read_experiment_if_present` for
+    typed fields and resolved patches.
 
     Absence and malformation split the same way as
     :func:`read_experiment_if_present`.

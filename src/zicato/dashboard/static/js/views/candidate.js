@@ -570,10 +570,7 @@ export function buildProposalModel(exp) {
   const text = (v) => (typeof v === 'string' && v.trim()) ? v.trim() : null;
   const list = (v) => (Array.isArray(v) ? v : []);
 
-  // The falsifiable claims, in the grader's own precedence: a namespaced
-  // metric movement wins over a drift movement naming the same target
-  // (query/hypothesis_view.py `_expected_index`), so this header can never
-  // show a claim the prediction scorecard scored under a different name.
+  // Metric names match the targets used by the prediction scorecard.
   const movements = [];
   const seen = new Set();
   for (const mv of list(hyp.expected_metric_movements)) {
@@ -581,12 +578,6 @@ export function buildProposalModel(exp) {
     if (!target || seen.has(target)) continue;
     seen.add(target);
     movements.push({ target, kind: 'metric', direction: mv.direction || null, magnitude: mv.magnitude || null });
-  }
-  for (const mv of list(hyp.expected_drift_movements)) {
-    const target = mv && text(mv.kind);
-    if (!target || seen.has(target)) continue;
-    seen.add(target);
-    movements.push({ target, kind: 'drift', direction: mv.direction || null, magnitude: mv.magnitude || null });
   }
 
   // The SITES: the patch records the experiment actually carries, keyed by

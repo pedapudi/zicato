@@ -42,7 +42,7 @@ def test_absent_models_block_is_all_default() -> None:
     for role in MODEL_ROLES:
         assert cfg.role(role).is_empty
     # And it serializes to an empty block (reads back as all-default).
-    assert cfg.to_dict() == {}
+    assert cfg.to_dict() == {"engines": {}, "roles": {}}
 
 
 def test_call_llm_form_roundtrips() -> None:
@@ -203,7 +203,7 @@ def test_to_dict_never_reads_or_emits_the_secret(
 def test_models_public_dict_emits_every_role() -> None:
     """The public view always emits all four roles (even unconfigured ones)."""
     pub = ModelsConfig().to_public_dict()
-    assert set(pub.keys()) == set(MODEL_ROLES)
+    assert set(pub["effective"]) == set(PUBLIC_MODEL_ROLES)
 
 
 # ---------------------------------------------------------------------------

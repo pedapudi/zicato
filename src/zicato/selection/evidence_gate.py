@@ -30,7 +30,6 @@ from zicato.core.measurement import MeasurementDraw
 from zicato.core.tournament import (
     DEFAULT_PROMOTE_CONFIDENCE_THRESHOLD as DEFAULT_PROMOTE_CONFIDENCE_THRESHOLD,
 )
-from zicato.core.tournament import DEFAULT_REPLICATE_BUDGET as DEFAULT_REPLICATE_BUDGET
 from zicato.core.tournament import ConfirmationStatus
 from zicato.core.tournament import (
     read_promote_confidence_threshold as read_promote_confidence_threshold,
@@ -423,7 +422,6 @@ __all__ = [
     "MIN_CREDIBLE_DUELS",
     "CI_Z",
     "DEFAULT_PROMOTE_CONFIDENCE_THRESHOLD",
-    "DEFAULT_REPLICATE_BUDGET",
     "EvidenceDecision",
     "RatingCI",
     "StrengthDifference",

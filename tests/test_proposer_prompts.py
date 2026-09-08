@@ -107,7 +107,7 @@ async def test_restricted_requests_project_every_real_detector(tmp_path: Path) -
 
     patterns = await private_detector_patterns(tmp_path)
     assert {pattern.kind for pattern in patterns} == {
-        "drift_kind_frequency",
+        "drift_metric_frequency",
         "cost_metric_frequency",
         "rubric_metric_frequency",
         "hot_task",
@@ -220,7 +220,7 @@ def test_metric_targets_block_enumerates_declared_judges_and_correct_shape() -> 
     assert "file_findability" in block
     # The CORRECT metric-movement shape uses the bare judge name as
     # metric_name — exactly what the validator accepts.
-    assert '"metric_name": "file_findability"' in block
+    assert '"metric_name": "judge:file_findability"' in block
     # And the prompt explicitly flags the mangles the model naturally
     # produces as WRONG, so it does not reach for them.
     assert "drift:custom:file_findability" in block
@@ -264,6 +264,6 @@ def test_evidence_includes_valid_expectation_targets_for_declared_judges() -> No
     assert "## Valid expectation targets" in rendered
     # The declared judge, the correct shape, and the drift-kind enumeration
     # all reach the model in the rendered prompt.
-    assert '"metric_name": "file_findability"' in rendered
+    assert '"metric_name": "judge:file_findability"' in rendered
     assert "drift:<kind>" in rendered
     assert "off_topic" in rendered

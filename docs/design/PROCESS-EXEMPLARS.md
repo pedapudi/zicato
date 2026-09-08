@@ -2,9 +2,8 @@
 
 > **Status.** Implemented. The channel comprises the extractor
 > (`zicato/analyzer/process_exemplars.py`), the opt-in contract knob
-> (`ExperimentalConfig.process_exemplars`, default **0 = off**,
-> omit-at-default), and the prompt block in both proposer engines. This
-> channel touches the overfitting boundary (OVERFITTING.md §11), so the
+> (`ExperimentalConfig.process_exemplars`, default **0 = off**), and the prompt
+> block in both proposer engines. This channel touches the overfitting boundary (OVERFITTING.md §11), so the
 > redaction rules below are the normative contract: **every rule maps to a
 > mechanical function with its own test — there is no LLM redactor.**
 > Section 5 is the operator runbook for detecting harm.
@@ -176,9 +175,9 @@ because tryouts are evaluation-side: they consume board runs but reveal
 only a veto. `process_exemplars` is **not in the scaffold** and defaults to
 0 because it widens the proposer-visibility channel, the boundary this
 codebase guards most strictly. The operator opts in with the §5 runbook in
-hand. Being omit-at-default, the knob never rolls an epoch that leaves it
-unset; setting any non-zero cap rolls the epoch, which is correct, because
-a proposer shown process windows proposes under a different rule.
+hand. The cap participates in the complete scoring configuration, including
+its zero default. Changing its effective value rolls the epoch because it
+changes the evidence available to the proposer.
 
 ## 5. The empirical harm-detection protocol (operator runbook)
 
@@ -222,15 +221,15 @@ silently.
   §3 rule is its own function with its own test.
 - **Contract:** `ExperimentalConfig.process_exemplars: int = 0`
   (0 = off; a positive value is the per-round cap), validated `>= 0`,
-  listed in `_SCORING_OMIT_AT_DEFAULT_FIELDS`, **not** set by the scaffold.
+  serialized and hashed with the other effective scoring values.
 - **Threading:** the orchestrator extracts **best-effort** (an extraction
   failure logs and renders nothing — it can never abort a round) →
   `ProposerContext.process_exemplars: str` (pre-rendered block body, empty
   = omit) → both engines splice a `## Process exemplars` section
   **directly after the failure-mode profile block**, headed by a banner
-  restating the redaction contract. An empty block is omitted, so the
-  knob-off prompt and contract hash are unaffected; both are pinned by
-  test.
+  restating the redaction contract. An empty block is omitted from the prompt.
+  Prompt equality when disabled and complete configuration identity are
+  separate test obligations.
 - **Cost:** extraction reads events already on disk and adds no board runs
   or model calls. Configure it through `experimental.process_exemplars`.
 - **RoundLog:** no entry. A process exemplar is prompt-side input rather

@@ -74,9 +74,10 @@ def test_omitted_epoch_retains_transcript_discovery(tmp_path: Path, identity: st
 
 def test_match_disambiguator_cannot_change_requested_epoch(tmp_path: Path) -> None:
     run = WorkspaceLayout.from_root(tmp_path).run_dir("available", "v0", "entry")
-    events = run / "rung0" / "events.jsonl"
+    events = run / "seed-none" / "events.r1.jsonl"
     events.parent.mkdir(parents=True)
     events.write_text('{"runId":"rung-run"}\n')
+    events.with_name("loss.r1.json").write_text(json.dumps({"match_id": "rung0"}))
     paths = WorkspacePaths(tmp_path)
 
     assert resolve_transcript_events(paths, "missing", "v0", "entry", match_id="rung0") is None
@@ -96,23 +97,18 @@ def test_epoch_only_lookup_separates_identical_run_ids(tmp_path: Path, identity:
     assert find_run_events_path(paths, run_id) == earlier
 
 
-@pytest.mark.parametrize("source", ["active", "alternate", "reused"])
-def test_epoch_filter_applies_to_run_id_fallbacks(tmp_path: Path, source: str) -> None:
+@pytest.mark.parametrize("source", ["active", "events"])
+def test_epoch_filter_applies_to_run_id_lookup(tmp_path: Path, source: str) -> None:
     run_id = "recorded-run"
     layout = WorkspaceLayout.from_root(tmp_path)
-    if source == "alternate":
-        events = layout.events("available", "v0", run_id)
-    else:
-        events = layout.events("available", "v0", "entry")
+    events = layout.events("available", "v0", "entry")
     events.parent.mkdir(parents=True)
-    events.write_text('{"runId":"original-run"}\n')
+    events.write_text(json.dumps({"runId": run_id}) + "\n")
     if source == "active":
         layout.active_runs_dir.mkdir(parents=True)
         (layout.active_runs_dir / f"{run_id}.json").write_text(
             json.dumps({"events_jsonl_path": str(events)})
         )
-    if source == "reused":
-        events.with_name("loss.json").write_text(json.dumps({"run_id": run_id}))
     paths = WorkspacePaths(tmp_path)
 
     assert resolve_conversation(paths, run_id) == events

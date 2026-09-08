@@ -202,13 +202,12 @@ def test_deleted_env_vars_absent_from_describe() -> None:
 
 
 def test_environment_report_describes_the_retained_boundary_values() -> None:
-    from zicato.epoch.snapshot_scope import SCRATCH_DIR_ENV
     from zicato.runtime.context import RUNTIME_CONTEXT_ENV
 
     infos = describe_env_vars()
     assert all(info.role and info.description for info in infos)
     by_name = {info.name: info for info in infos}
-    assert by_name[SCRATCH_DIR_ENV].role == "harness-contract"
+    assert "ZICATO_RUN_SCRATCH_DIR" not in by_name
     assert by_name[RUNTIME_CONTEXT_ENV].role == "internal-handoff"
     assert by_name["XDG_RUNTIME_DIR"].role == "operating-system"
     assert "ZICATO_HARMONOGRAF_URL" not in by_name
@@ -277,3 +276,27 @@ def test_every_sub_config_is_reachable_from_the_root() -> None:
     assert isinstance(cfg.integration, IntegrationConfig)
     assert isinstance(cfg.dashboard, DashboardConfig)
     assert isinstance(cfg.runtime, RuntimeTuningConfig)
+
+
+@pytest.mark.parametrize(
+    "raw, path",
+    [
+        ({"runtime": {"parallelism": None}}, "config.runtime.parallelism"),
+        ({"runtime": {"worker_env_passthrough": None}}, "config.runtime.worker_env_passthrough"),
+        (
+            {"adapter": {"kind": "import", "factory": "pkg:make", "args": None}},
+            "config.adapter.args",
+        ),
+    ],
+)
+def test_null_cannot_select_a_nonnullable_configuration_default(raw, path):
+    from jsonschema import Draft202012Validator
+
+    from zicato.core.configuration import ConfigurationError, dataclass_schema
+    from zicato.core.settings import resolve_configuration
+    from zicato.workspace.config_schema import WorkspaceDeclaration
+
+    with pytest.raises(ConfigurationError) as caught:
+        resolve_configuration(raw)
+    assert caught.value.path == path
+    assert list(Draft202012Validator(dataclass_schema(WorkspaceDeclaration)).iter_errors(raw))

@@ -40,7 +40,12 @@ from typing import Any
 
 import pytest
 
+from zicato.config import resolve_configuration
 from zicato.core import RunResult
+from zicato.core.adapter_config import DriverImportContext
+from zicato.core.measurement import MeasurementDraw, artifact_replicate_index
+from zicato.core.run_context import RunContext
+from zicato.core.runtime_context import WorkerRuntimeContext
 from zicato.core.workspace import (
     loss_profile_path,
     run_id_for_unit,
@@ -487,23 +492,21 @@ def _write_args(
     """Write a worker args file; returns the loss path it points at.
 
     ``knobs`` merges extra top-level keys (the capture knobs); OMITTED
-    keys exercise the legacy-args default (capture ON).
+    settings select capture through the resolved runtime configuration.
     """
     gen_snap = workspace / "snap" / "v0"
     gen_snap.mkdir(parents=True, exist_ok=True)
     loss = loss_path
     if loss is None:
-        loss = loss_profile_path(workspace, "e0", "v0", "entry_a")
-    from zicato.core.measurement import artifact_replicate_index, unit_artifact_name
+        loss = (
+            loss_profile_path(workspace, "e0", "v0", "entry_a").parent / "seed-none" / "loss.json"
+        )
+    from zicato.core.measurement import unit_artifact_name
 
     replicate = artifact_replicate_index(loss.name)
     assert replicate is not None
     sink_path = loss.with_name(unit_artifact_name("events", replicate))
     payload: dict[str, Any] = {
-        "workspace_root": str(workspace),
-        "epoch_id": "e0",
-        "generation_id": "v0",
-        "snapshot_root": str(gen_snap),
         "entry": {
             "id": "entry_a",
             "kind": "single_turn",
@@ -512,18 +515,52 @@ def _write_args(
             "context": {"replicate_index": str(replicate)},
         },
         "adapter": {"kind": "import", "factory": adapter_factory},
-        "target_role": {"dotted": "tests._subprocess_worker_support:target_call_llm"},
-        "evaluation_role": {"dotted": "tests._subprocess_worker_support:evaluation_call_llm"},
-        "run_id": run_id_for_unit("v0", "entry_a", replicate),
+        "target_role": {
+            "models_role": {"call_llm": "tests._subprocess_worker_support:target_call_llm"}
+        },
+        "evaluation_role": {
+            "models_role": {"call_llm": "tests._subprocess_worker_support:evaluation_call_llm"}
+        },
         "sink_events_path": str(sink_path),
         "loss_path": str(loss),
         "result_path": str(result_path),
-        "instance_id": "test",
-        "seed": None,
-        "harmonograf_url": "",
         "weights": {},
+        "runtime_context": WorkerRuntimeContext(
+            run=RunContext(
+                Path(str(workspace)),
+                "e0",
+                "v0",
+                run_id_for_unit("v0", "entry_a", replicate),
+                Path(str(gen_snap)),
+                None,
+            )
+        ).to_json(),
+        "configuration": resolve_configuration(
+            {"runtime": {"instance_id": "test", "seed": None}}
+        ).to_json(),
+        "driver_imports": DriverImportContext().document(),
+        "measurement": MeasurementDraw.from_index(
+            artifact_replicate_index(Path(str(loss)).name), base_seed=None
+        ).to_json(),
     }
-    payload.update(knobs or {})
+    knobs = dict(knobs or {})
+    seed = knobs.pop("seed", None)
+    payload["configuration"] = resolve_configuration(
+        {
+            "runtime": {
+                "instance_id": "test",
+                "seed": seed,
+                **{
+                    key: knobs.pop(key)
+                    for key in ("persist_run_results", "persist_judge_io")
+                    if key in knobs
+                },
+            }
+        }
+    ).to_json()
+    if "run_id" in knobs:
+        payload["runtime_context"]["run"]["run_id"] = knobs.pop("run_id")
+    payload.update(knobs)
     args_path.write_text(json.dumps(payload), encoding="utf-8")
     return loss
 
@@ -602,7 +639,9 @@ def test_worker_replicate_slot_gets_replicate_named_artifacts(tmp_path: Path) ->
     """A loss.r2.json unit writes result.r2.json + judge_io.r2.jsonl."""
     workspace = tmp_path / ".zicato"
     workspace.mkdir()
-    canonical = loss_profile_path(workspace, "e0", "v0", "entry_a")
+    canonical = (
+        loss_profile_path(workspace, "e0", "v0", "entry_a").parent / "seed-none" / "loss.json"
+    )
     loss_path = _write_args(
         tmp_path / "args.json",
         workspace=workspace,
@@ -747,7 +786,7 @@ def test_authoritative_worker_loss_write_failure_is_not_optional(tmp_path: Path)
     assert loss.is_dir()
 
 
-@pytest.mark.parametrize("invalid", [b"{", b"[]", b"{}", b'{"drift_counts": null}', b"\xff", None])
+@pytest.mark.parametrize("invalid", [b"{", b"[]", b"{}", b'{"metric_counts": null}', b"\xff", None])
 def test_capture_loss_distinguishes_absence_and_present_defects(
     tmp_path: Path, invalid: bytes | None
 ) -> None:

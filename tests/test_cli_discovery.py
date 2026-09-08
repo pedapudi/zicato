@@ -22,13 +22,10 @@ def test_moved_commands_have_one_location() -> None:
         "telemetry",
     }
     assert set(root.commands["repair"].commands) == {
-        "epoch-goals",
         "generation-source-backend",
         "generations",
         "index",
-        "judge-losses",
         "report",
-        "tournament-fk",
         "v0-baseline",
     }
     assert "register" in root.commands["epoch"].commands

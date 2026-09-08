@@ -74,7 +74,7 @@ def _experiment(patches: tuple[Patch, ...]) -> Experiment:
             core_idea="rewrite the researcher instruction",
             modulating=("researcher_instr",),
             why="test fixture",
-            expected_drift_movements=(),
+            expected_metric_movements=(),
             expected_pass_rate_delta="+0.0",
         ),
         patches=patches,

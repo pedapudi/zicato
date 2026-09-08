@@ -1377,7 +1377,7 @@ def synthesize(
        none to draft, never a crash.
     2. Resolve the evaluation callable ONLY when ``allow_llm`` (the LLM tier), the
        SAME way reflection's own aux resolution works (``models.evaluation`` first,
-       then the ``runtime.evaluation_call_llm`` dotted path). When no aux is
+       using the selected named engine). When no aux is
        configured the LLM tier is SKIPPED with a logged reason and the mechanical
        tier still runs — the ``--allow-llm`` help says the LLM tier needs the
        configured aux endpoint.
@@ -1403,7 +1403,7 @@ def synthesize(
         if aux is None:
             _LOG.info(
                 "synthesize: --allow-llm requested but no evaluation model/callable is "
-                "configured (models.evaluation / runtime.evaluation_call_llm); the LLM tier "
+                "configured (models.engines / models.roles.evaluation); the LLM tier "
                 "is skipped (mechanical tier only)."
             )
 
@@ -1502,11 +1502,11 @@ def _load_epoch_weights(workspace_root: Path | None, epoch_id: str | None) -> An
         return ScoringWeights()
     try:
         from zicato.core.workspace import scoring_path  # noqa: PLC0415
-        from zicato.workspace_loader import historical_scoring_weights_from_dict  # noqa: PLC0415
+        from zicato.workspace_loader import scoring_weights_from_dict  # noqa: PLC0415
 
         raw = json.loads(scoring_path(workspace_root, epoch_id).read_text(encoding="utf-8"))
         if isinstance(raw, dict):
-            return historical_scoring_weights_from_dict(raw)
+            return scoring_weights_from_dict(raw)
     except Exception:  # noqa: BLE001 — a missing / bad scoring.json → defaults
         pass
     return ScoringWeights()
@@ -1519,7 +1519,9 @@ def _to_surface_suggestion(
     proposed_op_reason: str | None = None
     if s.entry is not None:
         artifact_kind = surface.ARTIFACT_BOARD_ENTRY
-        draft_artifact = _entry_op_dict(s.entry)
+        from zicato.board.jsonl import entry_to_dict  # noqa: PLC0415
+
+        draft_artifact = entry_to_dict(s.entry)
         proposed_op: dict[str, Any] | None = {
             "op": "add_board_entry",
             "args": {"entry": draft_artifact},
@@ -1571,23 +1573,6 @@ def _to_surface_suggestion(
     )
 
 
-def _entry_op_dict(entry: BoardEntry) -> dict[str, Any]:
-    """The canonical entry JSON the ``add_board_entry`` op reconstructs.
-
-    :func:`~zicato.board.jsonl.entry_to_dict` emits the short ``budget_s`` key,
-    but the apply seam validates the op's entry with
-    :func:`~zicato.core.board.validate_board_entry`, which reads the canonical
-    ``wall_clock_budget_seconds``. Normalise the one key so the drafted entry
-    round-trips through the op exactly like a hand-authored board edit.
-    """
-    from zicato.board.jsonl import entry_to_dict  # noqa: PLC0415
-
-    d = entry_to_dict(entry)
-    if "budget_s" in d and "wall_clock_budget_seconds" not in d:
-        d["wall_clock_budget_seconds"] = d.pop("budget_s")
-    return d
-
-
 def _motivating_episode(
     provenance: dict[str, Any], episode_by_id: dict[str, MinedEpisode]
 ) -> MinedEpisode | None:
@@ -1629,44 +1614,18 @@ def _load_epoch_board(workspace_root: Path | None, epoch_id: str | None) -> list
 
 
 def _resolve_aux_call_llm(workspace_root: Path | None) -> CallLLM | None:
-    """Resolve the evaluation callable the LLM tier drafts through (or ``None``).
-
-    Mirrors reflection's own aux resolution: the unified ``models.evaluation``
-    role first, then the ``runtime.evaluation_call_llm`` dotted path. Any
-    resolution failure (no config, an unimportable path) degrades to ``None`` so
-    the LLM tier is skipped with a logged reason — never a crash, never a live
-    call the operator did not ask for.
-    """
+    """Resolve the named evaluation engine, skipping optional synthesis on failure."""
     if workspace_root is None:
         return None
     try:
-        from zicato.workspace.config_io import read_workspace_config  # noqa: PLC0415
+        from zicato.runtime_factory import resolve_role_call_llm
+        from zicato.workspace.config_io import read_workspace_config
 
         loaded = read_workspace_config(workspace_root).require()
-    except (OSError, ValueError):
+        return resolve_role_call_llm(loaded.raw, role="evaluation", workspace_root=workspace_root)
+    except Exception as exc:  # noqa: BLE001 — synthesis is optional
+        _LOG.info("synthesize: evaluation engine could not resolve (%s)", exc)
         return None
-
-    try:
-        from zicato.models_config import load_models_config, resolve_text_call_llm  # noqa: PLC0415
-
-        models = load_models_config(loaded.raw)
-        if not models.evaluation.is_empty:
-            return resolve_text_call_llm(models.evaluation, role="evaluation")
-    except Exception as exc:  # noqa: BLE001 — an unresolvable aux spec degrades, never crashes
-        _LOG.info("synthesize: models.evaluation did not resolve (%s); trying the legacy path", exc)
-
-    dotted = loaded.runtime.get("evaluation_call_llm")
-    if dotted:
-        try:
-            from zicato.import_path import import_dotted_path  # noqa: PLC0415
-
-            fn = import_dotted_path(str(dotted), label="runtime.evaluation_call_llm")
-        except Exception as exc:  # noqa: BLE001
-            _LOG.info("synthesize: runtime.evaluation_call_llm did not import (%s)", exc)
-            return None
-        if callable(fn):
-            return fn  # type: ignore[no-any-return]
-    return None
 
 
 def _route_mechanical(

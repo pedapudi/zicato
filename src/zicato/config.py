@@ -60,13 +60,6 @@ ENVIRONMENT_BOUNDARIES = (
         "The coordinator never sets this pointer in its own environment.",
     ),
     EnvironmentBoundary(
-        "zicato/_tournament_worker.py",
-        ("_run_with_imports",),
-        ("ZICATO_RUN_SCRATCH_DIR",),
-        "harness-contract",
-        "Compatibility scratch directory for targets that do not consume the typed RunContext.",
-    ),
-    EnvironmentBoundary(
         "zicato/models_config.py",
         (
             "RoleSpec.to_public_dict",

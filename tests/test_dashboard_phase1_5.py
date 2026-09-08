@@ -328,16 +328,18 @@ def test_run_header_skips_nested_loss_fields(tmp_path: Path) -> None:
         {
             "run_id": "r1",
             "drift_loss": 0.1,
-            "drift_counts": [{"kind": "off_topic", "count": 3}],  # nested list
-            "metric_counts": [{"name": "cost", "count": 1}],
+            "metric_counts": [
+                {"name": "drift:off_topic", "count": 3},
+                {"name": "cost", "count": 1},
+            ],
             "per_judge_loss": [],
         },
     )
     header = build_run_header(WorkspacePaths(ws), epoch_id, "v0", "x")
-    # ``drift_counts``/``metric_counts`` are not in the header key list,
+    # ``metric_counts``/``metric_counts`` are not in the header key list,
     # but a careless implementation that copied through every key would
     # leak the nested list. Ensure only the known scalar keys appear.
-    assert "drift_counts" not in header
+    assert "metric_counts" not in header
     assert "metric_counts" not in header
     assert header["drift_loss"] == pytest.approx(0.1)
 

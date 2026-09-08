@@ -29,7 +29,9 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
+from tests._workspace_support import experiment_record, write_epoch, write_lineage
 from zicato.dashboard.server import create_app
+from zicato.index.schema import apply_schema
 from zicato.query import (
     WorkspacePaths,
     build_epoch_view,
@@ -43,6 +45,9 @@ from zicato.query import (
 )
 from zicato.query.epoch_view import build_epochs_summary
 from zicato.query.judge_view import build_workspace_identity
+from zicato.telemetry.reducer import loss_profile_to_dict
+from zicato.testing import make_loss_profile
+from zicato.workspace import WorkspaceLayout
 
 
 def _write(path: Path, text: str) -> None:
@@ -110,9 +115,10 @@ def phase1_workspace(tmp_path: Path) -> Path:
         _write(epoch_dir / "board.jsonl", json.dumps({"id": "entry_alpha"}) + "\n")
         _write(epoch_dir / "brief.md", f"# brief\n\n## Goal\n\n{goal}\n")
         _write_json(epoch_dir / "scoring.json", {"weights": {"drift_loss": 1.0}})
-        _write_json(
-            epoch_dir / "config.json",
-            {"contract_hash": "h", "closed": False, "goal": goal},
+        write_epoch(
+            WorkspaceLayout(ws),
+            eid,
+            config={"contract_hash": "a" * 64, "closed": False, "goal": goal},
         )
 
     # Generations on e0: v0 (promoted baseline, from #173), v1
@@ -129,18 +135,20 @@ def phase1_workspace(tmp_path: Path) -> Path:
         gen_dir.mkdir(parents=True, exist_ok=True)
         _write_json(
             gen_dir / "experiment.json",
-            {
-                "parent_generation_id": parent,
-                "proposed_at": "2026-05-16T04:25:00Z",
-                "outcome": {
-                    "decision": decision,
+            experiment_record(
+                gid,
+                epoch_id=e0,
+                parent_generation_id=parent,
+                proposed_at="2026-05-16T04:25:00Z",
+                outcome={
+                    "tournament_decision": decision,
                     "scalar_score_delta": -0.05 if decision == "promoted" else 0.10,
                 },
-            },
+            ),
         )
 
-    _write_json(
-        ws / "lineage.json",
+    write_lineage(
+        WorkspaceLayout(ws),
         {
             "epochs": [
                 {
@@ -157,48 +165,21 @@ def phase1_workspace(tmp_path: Path) -> Path:
     )
 
     # Build the analytical index with judge_losses + tournament_id FK
-    # + epochs.goal + epochs.parent_epoch_id (the schema v2 shape).
+    # + epochs.goal + epochs.parent_epoch_id.
     _build_index(ws / "index.db", e0, e1, source_root)
     return ws
 
 
 def _build_index(path: Path, e0: str, e1: str, source_root: Path) -> None:
     conn = sqlite3.connect(path)
-    conn.executescript(
-        """
-        CREATE TABLE epochs(epoch_id TEXT PRIMARY KEY, contract_hash TEXT,
-            created_at TEXT, closed INTEGER, goal TEXT, parent_epoch_id TEXT);
-        CREATE TABLE generations(epoch_id TEXT, generation_id TEXT,
-            parent_generation_id TEXT, promoted INTEGER, created_at TEXT,
-            PRIMARY KEY(epoch_id, generation_id));
-        CREATE TABLE experiments(epoch_id TEXT, generation_id TEXT,
-            hypothesis_core_idea TEXT, hypothesis_why TEXT, hypothesis_json TEXT,
-            tournament_decision TEXT, rejection_reason TEXT, scalar_score_delta REAL,
-            drift_loss_delta REAL, pass_rate_delta REAL, outcome_json TEXT,
-            PRIMARY KEY(epoch_id, generation_id));
-        CREATE TABLE patches(patch_id TEXT PRIMARY KEY, epoch_id TEXT,
-            generation_id TEXT, mutation_id TEXT, op TEXT, rationale TEXT);
-        CREATE TABLE runs(run_id TEXT PRIMARY KEY, epoch_id TEXT, generation_id TEXT,
-            entry_id TEXT, started_at TEXT, ended_at TEXT, aborted INTEGER,
-            runtime_ms INTEGER, tournament_id TEXT);
-        CREATE TABLE loss_profiles(run_id TEXT PRIMARY KEY, epoch_id TEXT,
-            generation_id TEXT, entry_id TEXT, drift_loss REAL, pass_fail INTEGER,
-            runtime_ms INTEGER, wall_clock_budget_exceeded INTEGER, loss_json TEXT,
-            tournament_id TEXT);
-        CREATE TABLE metric_counts(run_id TEXT, namespace TEXT, name TEXT,
-            severity TEXT, count REAL);
-        CREATE TABLE tournaments(tournament_id TEXT PRIMARY KEY, epoch_id TEXT,
-            parent_generation_id TEXT, child_generation_id TEXT, decision TEXT,
-            parent_scalar REAL, child_scalar REAL, delta_scalar REAL,
-            rejection_reason TEXT, ran_at TEXT);
-        CREATE TABLE judge_losses(run_id TEXT, judge_name TEXT, weighted_loss REAL,
-            raw_loss REAL, weight REAL, PRIMARY KEY(run_id, judge_name));
-        """
-    )
+    apply_schema(conn)
 
     # Epoch rows — e1 is a child of e0.
     conn.executemany(
-        "INSERT INTO epochs VALUES(?,?,?,?,?,?)",
+        (
+            "INSERT INTO epochs(epoch_id, contract_hash, created_at, closed, goal, "
+            "parent_epoch_id) VALUES(?,?,?,?,?,?)"
+        ),
         [
             (
                 e0,
@@ -219,7 +200,10 @@ def _build_index(path: Path, e0: str, e1: str, source_root: Path) -> None:
         ],
     )
     conn.executemany(
-        "INSERT INTO generations VALUES(?,?,?,?,?)",
+        (
+            "INSERT INTO generations(epoch_id, generation_id, parent_generation_id,"
+            " promoted, created_at) VALUES(?,?,?,?,?)"
+        ),
         [
             (e0, "v0", None, 1, "2026-05-16T04:05:00Z"),
             (e0, "v1", "v0", 1, "2026-05-16T04:15:00Z"),
@@ -234,7 +218,11 @@ def _build_index(path: Path, e0: str, e1: str, source_root: Path) -> None:
         ("v1", "v2", "promoted"),
     ):
         conn.execute(
-            "INSERT INTO tournaments VALUES(?,?,?,?,?,?,?,?,?,?)",
+            (
+                "INSERT INTO tournaments(tournament_id, epoch_id, parent_generation_id,"
+                " child_generation_id, decision, parent_scalar, child_scalar, "
+                "delta_scalar, rejection_reason, ran_at) VALUES(?,?,?,?,?,?,?,?,?,?)"
+            ),
             (
                 f"{e0}:{parent}->{child}",
                 e0,
@@ -264,18 +252,52 @@ def _build_index(path: Path, e0: str, e1: str, source_root: Path) -> None:
         else:
             tournament_id = f"{e0}:v1->v2"
         conn.execute(
-            "INSERT INTO runs VALUES(?,?,?,?,?,?,?,?,?)",
+            (
+                "INSERT INTO runs(run_id, epoch_id, generation_id, entry_id, "
+                "started_at, ended_at, aborted, runtime_ms, tournament_id) "
+                "VALUES(?,?,?,?,?,?,?,?,?)"
+            ),
             (run_id, e0, gid, "entry_alpha", "", "", 0, 100, tournament_id),
         )
         conn.execute(
-            "INSERT INTO loss_profiles VALUES(?,?,?,?,?,?,?,?,?,?)",
-            (run_id, e0, gid, "entry_alpha", drift, 1, 100, 0, "{}", tournament_id),
+            (
+                "INSERT INTO loss_profiles(run_id, epoch_id, generation_id, entry_id, "
+                "drift_loss, pass_fail, runtime_ms, wall_clock_budget_exceeded, "
+                "loss_json, tournament_id) VALUES(?,?,?,?,?,?,?,?,?,?)"
+            ),
+            (
+                run_id,
+                e0,
+                gid,
+                "entry_alpha",
+                drift,
+                "pass",
+                100,
+                0,
+                json.dumps(
+                    loss_profile_to_dict(
+                        make_loss_profile(
+                            run_id=run_id,
+                            epoch_id=e0,
+                            generation_id=gid,
+                            entry_id="entry_alpha",
+                            drift_loss=drift,
+                            pass_fail=True,
+                            runtime_ms=100,
+                        )
+                    )
+                ),
+                tournament_id,
+            ),
         )
         # Each gen drives both judges; loss inverts roughly with drift.
         judge_rows.append((run_id, "critic_A", drift * 0.6, drift * 0.8, 0.75))
         judge_rows.append((run_id, "critic_B", drift * 0.4, drift * 0.5, 0.25))
     conn.executemany(
-        "INSERT INTO judge_losses VALUES(?,?,?,?,?)",
+        (
+            "INSERT INTO judge_losses(run_id, judge_name, weighted_loss, raw_loss, "
+            "weight) VALUES(?,?,?,?,?)"
+        ),
         judge_rows,
     )
     # Also drop a per-run loss.json on disk so the entry → run id
@@ -457,23 +479,6 @@ def unindexed_workspace(tmp_path: Path) -> Path:
     return ws
 
 
-@pytest.fixture
-def workspace_without_judge_losses(tmp_path: Path) -> Path:
-    """A workspace whose ``index.db`` exists but carries no ``judge_losses``.
-
-    The degrade note fires when the index QUERY raises, which a missing
-    table does and a missing file does not — a missing file reads as zero
-    rows. The two degrade to different payloads, so both are pinned.
-    """
-    ws = tmp_path / "no_judge_losses" / ".zicato"
-    ws.mkdir(parents=True)
-    conn = sqlite3.connect(ws / "index.db")
-    conn.execute("CREATE TABLE runs(run_id TEXT)")
-    conn.commit()
-    conn.close()
-    return ws
-
-
 def test_build_per_judge_trend_returns_judge_by_generation(
     phase1_workspace: Path, unindexed_workspace: Path
 ) -> None:
@@ -495,7 +500,7 @@ def test_build_per_judge_trend_returns_judge_by_generation(
 
 
 def test_build_per_judge_for_generation_returns_totals(
-    phase1_workspace: Path, unindexed_workspace: Path, workspace_without_judge_losses: Path
+    phase1_workspace: Path, unindexed_workspace: Path
 ) -> None:
     # ``run_count`` sits between raw_loss and weight; this is the only one
     # of the five readers that carries it.
@@ -509,12 +514,6 @@ def test_build_per_judge_for_generation_returns_totals(
     assert _served(
         build_per_judge_for_generation(WorkspacePaths(unindexed_workspace), E0, "v1")
     ) == ('{"epoch_id":"2026-05-16_e0","generation_id":"v1","judges":[]}')
-    assert _served(
-        build_per_judge_for_generation(WorkspacePaths(workspace_without_judge_losses), E0, "v1")
-    ) == (
-        '{"epoch_id":"2026-05-16_e0","generation_id":"v1","judges":[],'
-        '"note":"index not built; run zicato repair index"}'
-    )
 
 
 def test_build_per_entry_uses_tournament_id_fk(phase1_workspace: Path) -> None:
@@ -541,7 +540,7 @@ def test_build_per_entry_v0_has_no_tournament_id(phase1_workspace: Path) -> None
 
 
 def test_build_per_judge_comparison_picks_primary_driver(
-    phase1_workspace: Path, unindexed_workspace: Path, workspace_without_judge_losses: Path
+    phase1_workspace: Path, unindexed_workspace: Path
 ) -> None:
     assert _served(
         build_per_judge_comparison(WorkspacePaths(phase1_workspace), E0, "v1", "v2")
@@ -559,13 +558,6 @@ def test_build_per_judge_comparison_picks_primary_driver(
         '{"epoch_id":"2026-05-16_e0","champion":"v1","challenger":"v2",'
         '"judges":[],"primary_driver":null}'
     )
-    assert _served(
-        build_per_judge_comparison(WorkspacePaths(workspace_without_judge_losses), E0, "v1", "v2")
-    ) == (
-        '{"epoch_id":"2026-05-16_e0","champion":"v1","challenger":"v2",'
-        '"judges":[],"primary_driver":null,'
-        '"note":"index not built; run zicato repair index"}'
-    )
 
 
 def test_per_judge_comparison_signs_a_one_sided_judge(phase1_workspace: Path) -> None:
@@ -577,7 +569,10 @@ def test_per_judge_comparison_signs_a_one_sided_judge(phase1_workspace: Path) ->
     """
     conn = sqlite3.connect(phase1_workspace / "index.db")
     conn.executemany(
-        "INSERT INTO judge_losses VALUES(?,?,?,?,?)",
+        (
+            "INSERT INTO judge_losses(run_id, judge_name, weighted_loss, raw_loss, "
+            "weight) VALUES(?,?,?,?,?)"
+        ),
         [("run_v2", "critic_new", 0.5, 0.6, 0.5), ("run_v1", "critic_gone", 0.9, 1.0, 0.5)],
     )
     conn.commit()
@@ -591,7 +586,7 @@ def test_per_judge_comparison_signs_a_one_sided_judge(phase1_workspace: Path) ->
 
 
 def test_build_per_judge_for_run_returns_rows(
-    phase1_workspace: Path, unindexed_workspace: Path, workspace_without_judge_losses: Path
+    phase1_workspace: Path, unindexed_workspace: Path
 ) -> None:
     assert _served(build_per_judge_for_run(WorkspacePaths(phase1_workspace), "run_v1")) == (
         '{"run_id":"run_v1","judges":['
@@ -601,9 +596,6 @@ def test_build_per_judge_for_run_returns_rows(
     assert _served(build_per_judge_for_run(WorkspacePaths(unindexed_workspace), "run_v1")) == (
         '{"run_id":"run_v1","judges":[]}'
     )
-    assert _served(
-        build_per_judge_for_run(WorkspacePaths(workspace_without_judge_losses), "run_v1")
-    ) == ('{"run_id":"run_v1","judges":[],"note":"index not built; run zicato repair index"}')
 
 
 def test_build_per_judge_for_entry_decodes_the_loss_file(phase1_workspace: Path) -> None:
@@ -790,9 +782,15 @@ def timestamp_ordered_workspace(tmp_path: Path) -> Path:
     ):
         epoch_dir = ws / "epochs" / eid
         _write(epoch_dir / "brief.md", f"# brief\n\n## Goal\n\n{goal}\n")
-        _write_json(
-            epoch_dir / "config.json",
-            {"contract_hash": "h", "closed": False, "goal": goal, "created_at": created_at},
+        write_epoch(
+            WorkspaceLayout(ws),
+            eid,
+            config={
+                "contract_hash": "a" * 64,
+                "closed": False,
+                "goal": goal,
+                "created_at": created_at,
+            },
         )
     return ws
 

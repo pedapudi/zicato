@@ -6,13 +6,20 @@ import asyncio
 import json
 import os
 import sys
+from pathlib import Path
 
 import pytest
 
 from tests._runtime_builders import make_generation
 from tests._runtime_context_support import install_runtime_context
 from zicato.config import resolve_configuration
+from zicato.core.adapter_config import DriverImportContext
 from zicato.core.configuration import ConfigurationError
+from zicato.core.measurement import (
+    MeasurementDraw,
+    artifact_replicate_index,
+    measurement_artifact_path,
+)
 from zicato.core.run_context import RunContext
 from zicato.core.runtime_context import TelemetryEndpoints, WorkerRuntimeContext
 from zicato.core.workspace import events_jsonl_path, loss_profile_path
@@ -81,19 +88,14 @@ def test_interleaved_workers_and_real_nested_children_keep_distinct_contexts(tmp
         run_id = f"context-{index}"
         endpoints = TelemetryEndpoints(f"http://parent-{index}:8010", f"parent-{index}:8011")
         context = WorkerRuntimeContext(
-            endpoints,
-            RunContext(workspace, "e0", generation.id, run_id, generation.snapshot_root, None),
+            run=RunContext(workspace, "e0", generation.id, run_id, generation.snapshot_root, None),
+            telemetry=endpoints,
         )
         result_path = workspace / "worker-result.json"
         args_path = workspace / "worker-args.json"
         args_path.write_text(
             json.dumps(
                 {
-                    "workspace_root": str(workspace),
-                    "epoch_id": "e0",
-                    "generation_id": generation.id,
-                    "snapshot_root": str(generation.snapshot_root),
-                    "run_id": run_id,
                     "entry": {
                         "id": "probe",
                         "kind": "single_turn",
@@ -106,18 +108,54 @@ def test_interleaved_workers_and_real_nested_children_keep_distinct_contexts(tmp
                             "tests._subprocess_worker_support:make_nested_context_probe_adapter"
                         ),
                     },
-                    "target_role": {"dotted": "tests._subprocess_worker_support:target_call_llm"},
+                    "target_role": {
+                        "models_role": {
+                            "call_llm": "tests._subprocess_worker_support:target_call_llm"
+                        }
+                    },
                     "evaluation_role": {
-                        "dotted": "tests._subprocess_worker_support:evaluation_call_llm"
+                        "models_role": {
+                            "call_llm": "tests._subprocess_worker_support:evaluation_call_llm"
+                        }
                     },
                     "sink_events_path": str(
-                        events_jsonl_path(workspace, "e0", generation.id, "probe")
+                        measurement_artifact_path(
+                            events_jsonl_path(workspace, "e0", generation.id, "probe").parent,
+                            "events",
+                            0,
+                            base_seed=None,
+                        )
                     ),
-                    "loss_path": str(loss_profile_path(workspace, "e0", generation.id, "probe")),
+                    "loss_path": str(
+                        measurement_artifact_path(
+                            loss_profile_path(workspace, "e0", generation.id, "probe").parent,
+                            "loss",
+                            0,
+                            base_seed=None,
+                        )
+                    ),
                     "result_path": str(result_path),
                     "weights": {},
                     "configuration": resolve_configuration({}).to_json(),
                     "runtime_context": context.to_json(),
+                    "driver_imports": DriverImportContext().document(),
+                    "measurement": MeasurementDraw.from_index(
+                        artifact_replicate_index(
+                            Path(
+                                str(
+                                    measurement_artifact_path(
+                                        loss_profile_path(
+                                            workspace, "e0", generation.id, "probe"
+                                        ).parent,
+                                        "loss",
+                                        0,
+                                        base_seed=None,
+                                    )
+                                )
+                            ).name
+                        ),
+                        base_seed=None,
+                    ).to_json(),
                 }
             )
         )

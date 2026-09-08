@@ -81,8 +81,7 @@ cfg["adapter"] = {
     "factory": "zicato_examples.target_0_convergence.harness:make_adapter",
 }
 # The shell substitutes \$EX before python runs (unquoted heredoc).
-cfg["mutable_trees"] = ["$EX/agent"]
-cfg["source_roots"] = ["$EX/agent"]
+cfg["adapter"]["mutable_trees"] = ["$EX/agent"]
 # Which callable each model role runs on is a property of the
 # workspace; an engine naming a call_llm dotted path is the offline
 # form. `zicato evolve` takes no model options.

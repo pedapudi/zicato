@@ -91,7 +91,7 @@ export async function render(host, ctx, params) {
     },
     digest: (d) => JSON.stringify({
       epochId: d.epochId,
-      board: d.board.map((b) => [b.entry_id, b.kind, b.weight, b.budget_s]),
+      board: d.board.map((b) => [b.entry_id, b.kind, b.weight, b.wall_clock_budget_seconds]),
       gens: d.gens.map((g) => g.id),
       channel: d.channel,
       value: [...d.rowByGenEntry.entries()].map(([k, r]) => [k, svg.isNum(d.valueOf(r)) ? d.valueOf(r).toFixed(3) : null, r.pass_fail, !!r.wall_clock_budget_exceeded]).sort(),
@@ -141,7 +141,7 @@ export async function render(host, ctx, params) {
 // Exported so the collapse is testable without building the whole trellis.
 export function trellisCaption(b) {
   const lead = [
-    svg.isNum(b.budget_s) ? `${b.budget_s}s budget` : 'no budget',
+    svg.isNum(b.wall_clock_budget_seconds) ? `${b.wall_clock_budget_seconds}s budget` : 'no budget',
     svg.isNum(b.weight) ? `w ${svg.fmt(b.weight, 1)}` : 'w —',
   ].join(' · ');
   const prompt = typeof b.input_preview === 'string' ? b.input_preview.trim() : '';

@@ -93,7 +93,7 @@ def _record_experiment(ws: Path, gen_id: str, parent: str, patch: Patch) -> None
                 core_idea="gc test",
                 modulating=("instr",),
                 why="testing",
-                expected_drift_movements=(),
+                expected_metric_movements=(),
                 expected_pass_rate_delta="0",
             ),
             patches=(patch,),

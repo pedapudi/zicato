@@ -31,8 +31,8 @@ convergence point and a *dialect* is a named producer feeding it, chosen by
 
 Everything downstream of the reducer (scoring, the gate, the index, board
 reflection) reads `LossProfile` and never knows which dialect produced it. The
-knob is omitted from the contract hash at its `goldfive` default; setting it to
-anything else rolls the epoch.
+selected dialect is serialized with the complete effective scoring configuration.
+Changing it changes the contract hash and rolls the epoch.
 
 ## The two canonical per-run files
 
@@ -63,42 +63,36 @@ terminal event) is expected and tolerated — the reducer stamps
 
 ### Reading `loss.json` (the `LossProfile`)
 
-`loss.json` is a direct `asdict(LossProfile)` (`telemetry/reducer.py
-:_profile_to_dict`), so its keys are the `LossProfile` field names verbatim,
-tuples rendered as lists. The fields that matter most when tracing a run:
+`write_loss_profile` publishes the fields declared by `LossProfile` through
+the canonical loss codec, with enums rendered as strings and tuples as lists.
+The fields that matter most when tracing a run:
 
 | Field | Meaning |
 |---|---|
 | `entry_id`, `epoch_id`, `generation_id`, `run_id` | identity |
-| `drift_counts[].{kind,severity,count}` | one entry per `(kind, severity)` bucket; `kind` is the **lowercase wire-canonical** drift-kind string (`off_topic`, `confabulation_risk`, …); a fired custom judge appears as `kind: "custom:<judge_name>"` |
+| `metric_counts[].{name,severity,count}` | named measurements; drift uses `drift:<kind>` with the event severity, including `drift:custom:<judge_name>` for a fired custom judge |
 | `per_judge_loss[].{judge_name,raw_loss,weight,weighted_loss}` | the custom-judge attribution split — what scoring weights via `per_judge_weights`; empty when no custom judge fired |
 | `plan_revisions`, `task_failure_ratio`, `wall_clock_budget_exceeded` | other drift/loss features |
 | `drift_loss` | the weighted scalar the tournament scores on (computed in the reducer — the one place with both counts and weights; already includes the per-judge contributions) |
 | `pass_fail` | the entry's expectation verdict; `None` when there is no expectation |
 | `expectation_result.{kind,passed,detail,score,metrics}` | the matcher's record; `None` when no expectation was attached |
-| `score` | top-level **continuous** per-entry quality in `[0,1]`; `None` (pre-score profiles / no expectation) → downstream derives `1.0`/`0.0` from `pass_fail`, so a binary board is byte-identical to before |
+| `score` | continuous per-entry quality in `[0,1]`; if absent as an observation, scoring uses `pass_fail` when available and excludes entries with neither outcome |
 | `metrics` | optional per-entry decomposition a scorer exposed (e.g. `{"precision": .., "recall": ..}`), carried straight through so the proposer's failure-mode profile can read it without re-running the scorer |
-| `metric_counts[]` | the generalised namespaced-metric superset (`drift:…`, `cost:…`, `rubric:…`); `unified_metrics()` merges drift + metric counts |
 | `turns_completed`, `memory_failure_count`, `context_loss_count` | multi-turn features |
 | `runtime_ms`, `match_id`, `cached`/`source_epoch`/`source_run` | runtime + provenance |
 | `adk_session_id` | the harmonograf deep-link key (below) |
 
 Drift counts feed both the proposer (as hypothesis-shaped features) and the
-tournament (`drift_loss`, `pass_fail`). If `drift_counts` is identically empty
-across a whole epoch, the goldfive stream probably isn't reaching the reducer —
+tournament (`drift_loss`, `pass_fail`). If every profile has no `drift:` metrics
+across an epoch that uses drift telemetry, the event stream may not be reaching the reducer —
 that's the `flat_drift_signal` critical in
 [zicato-diagnose-health](../zicato-diagnose-health/SKILL.md).
 
-> **Provenance of the weights.** `per_judge_loss` is the per-run *attribution*,
-> but the weights that produced it (`per_judge_weights` / `default_judge_weight`
-> / `pass_rate_monotonicity_scope`) only score correctly because they now
-> survive the subprocess-worker transport — a serialize/deserialize symmetry
-> (`tournament/runner.py:_weights_spec` ↔ `_tournament_worker.py
-> :_weights_from_args`). A field present in-process but dropped from that
-> transport is silently reset to its default inside the worker (it once scored
-> all custom-judge drift at weight `1.0`), so a `per_judge_loss` whose weights
-> don't match `scoring.json` is the tell. Tracing provenance rather than tuning values
-> ([`zicato-tune-scoring`](../zicato-tune-scoring/SKILL.md)).
+Compare each `per_judge_loss` weight with the selected epoch's frozen scoring
+configuration. Worker transport uses the shared `ScoringWeights` codec, so
+`per_judge_weights` and `default_judge_weight` retain their effective values.
+A mismatch indicates a provenance error to investigate before tuning weights
+([zicato-tune-scoring](../zicato-tune-scoring/SKILL.md)).
 
 > **`tool_observed` events.** Beyond reasoning/decision envelopes, the stream
 > carries goldfive's tool ledger — one `kind == "tool_observed"` event per tool

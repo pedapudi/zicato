@@ -41,7 +41,7 @@ def _experiment(gen_id: str, modulating: tuple[str, ...], core_idea: str) -> Exp
             core_idea=core_idea,
             modulating=modulating,
             why="test",
-            expected_drift_movements=(),
+            expected_metric_movements=(),
             expected_pass_rate_delta="0.0",
             risks="",
         ),

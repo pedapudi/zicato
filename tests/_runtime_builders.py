@@ -27,7 +27,8 @@ from zicato.epoch.lifecycle import new_epoch, scoring_to_dict
 from zicato.epoch.lineage import append_to_lineage
 from zicato.models_config import execution_roles_for_runtime
 from zicato.runtime.lock import acquire_workspace_lock
-from zicato.tournament.scoring import write_gen_score
+from zicato.tournament.scoring import read_gen_score, write_gen_score
+from zicato.workspace import WorkspaceLayout
 
 
 async def empty_target_call(system: str, user: str, model: str) -> str:
@@ -71,10 +72,13 @@ def prepare_tournament_epoch(
 
 def record_tournament_score(
     workspace_root: Path, epoch_id: str, generation_id: str, aggregate: dict[str, Any]
-) -> None:
-    """Publish a fixture's historical score through its canonical writer."""
+) -> dict[str, Any]:
+    """Publish and read back the complete score used by a fixture."""
     with acquire_workspace_lock(workspace_root, "fixture-score"):
         write_gen_score(workspace_root, epoch_id, generation_id, aggregate)
+        score = read_gen_score(WorkspaceLayout.from_root(workspace_root), epoch_id, generation_id)
+        assert score is not None
+        return score.to_dict()
 
 
 def seed_baseline(workspace: Path, epoch_id: str) -> Generation:

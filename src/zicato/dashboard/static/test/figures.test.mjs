@@ -73,13 +73,13 @@ test('round model: groups generations by round_index — champion spine threads 
   assertEqual(model[1].gateOutcome.kind, 'held', 'round 1 holds (no promotion)');
 });
 
-// ---- the FIELD-RECORD fallback when round_index is ABSENT ----------
+// ---- Settled field records grouped by their recorded round ----------
 
-test('round model: degrades to the per-round FIELD records when round_index is absent', () => {
+test('round model: groups settled field records by recorded round_index', () => {
   // one swiss field record per round, each listing that round's competitors.
   const model = roundsModelFor('model_field_records', { structure: 'swiss', championId: 'v0' });
   assertEqual(model.length, 2, 'two rounds from the two field records');
-  assertEqual(model[0].source, 'field', 'the model derives from the field records');
+  assertEqual(model[0].source, 'round_index', 'the model groups the recorded round stamps');
   assertEqual(model[0].champion.id, 'v0', 'round 0 champion is v0');
   assertDeep(model[0].challengers.map((c) => c.id).sort(), ['v1', 'v2'], 'round 0 field minted {v1,v2}');
   // round 1: v2 carried (it appeared in round 0), only v3 and v4 are fresh.
@@ -87,10 +87,9 @@ test('round model: degrades to the per-round FIELD records when round_index is a
   assertDeep(model[1].challengers.map((c) => c.id).sort(), ['v3', 'v4'], 'round 1 field minted only the fresh v3 and v4 (v2 carried)');
 });
 
-test('round model: degrades to a SINGLE round 0 when neither round_index nor field records exist (--rounds 1, every run so far)', () => {
+test('round model: retains every challenger across recorded gauntlet rounds', () => {
   const model = roundsModelFor('model_matchups', { structure: 'gauntlet', championId: 'v0' });
-  // gauntlet matchups: each is its own single-challenger round (the spine reads
-  // r0 → r1), so two rounds — but a single-tournament epoch collapses to one.
+  // Each gauntlet matchup belongs to its recorded round.
   assert(model.length >= 1, 'at least one round is produced');
   assertEqual(model[0].champion.id, 'v0', 'round 0 champion is the seed');
   // every challenger is accounted for across the rounds.

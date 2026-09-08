@@ -27,7 +27,6 @@ from dataclasses import dataclass
 from typing import TypeVar
 
 from zicato.core.types import (
-    ExpectedDriftMovement,
     ExpectedMetricMovement,
     Experiment,
     HypothesisSpec,
@@ -83,8 +82,6 @@ class RecombinationPair:
     #: (PROPOSER.md §2.6.1). Unused by the mechanical mint.
     a_banded_outcome: str = ""
     b_banded_outcome: str = ""
-    a_expected_drift_movements: tuple[ExpectedDriftMovement, ...] = ()
-    b_expected_drift_movements: tuple[ExpectedDriftMovement, ...] = ()
     a_expected_metric_movements: tuple[ExpectedMetricMovement, ...] = ()
     b_expected_metric_movements: tuple[ExpectedMetricMovement, ...] = ()
 
@@ -172,10 +169,6 @@ def mint_recombined_experiment(
         "regression). Their patch sets touch disjoint mutation points, so "
         "the union applies both fixes intact."
     )
-    drift_movements = _dedup_first_wins(
-        (*pair.a_expected_drift_movements, *pair.b_expected_drift_movements),
-        key=lambda m: m.kind,
-    )
     metric_movements = _dedup_first_wins(
         (*pair.a_expected_metric_movements, *pair.b_expected_metric_movements),
         key=lambda m: m.metric_name,
@@ -191,12 +184,8 @@ def mint_recombined_experiment(
             core_idea=core_idea,
             modulating=modulating,
             why=why,
-            expected_drift_movements=drift_movements,
             expected_pass_rate_delta="",
-            risks=(
-                "The union's diff is larger than either parent's; the screen "
-                "and the tournament gate remain the arbiters."
-            ),
+            risks="The combined edits affect more source; evaluation must verify them.",
             expected_metric_movements=metric_movements,
         ),
         patches=tuple(merged),

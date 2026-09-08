@@ -25,8 +25,9 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
-from tests._workspace_support import write_tournament
+from tests._workspace_support import write_epoch, write_tournament
 from zicato.dashboard.server import create_app
+from zicato.index.schema import apply_schema
 from zicato.query import (
     WorkspacePaths,
     build_optimization_trajectory,
@@ -37,6 +38,7 @@ from zicato.query.loop_view import (
     _project_pipeline,
     build_round_pipeline,
 )
+from zicato.workspace.layout import WorkspaceLayout
 
 EPOCH = "2026-06_e0"
 
@@ -44,40 +46,6 @@ EPOCH = "2026-06_e0"
 # ---------------------------------------------------------------------------
 # Fixture workspace + seeded index
 # ---------------------------------------------------------------------------
-
-_SCHEMA = """
-CREATE TABLE generations (
-    epoch_id TEXT, generation_id TEXT, parent_generation_id TEXT, promoted INTEGER
-);
-CREATE TABLE experiments (
-    epoch_id TEXT, generation_id TEXT,
-    hypothesis_core_idea TEXT, hypothesis_why TEXT, hypothesis_json TEXT,
-    tournament_decision TEXT, rejection_reason TEXT,
-    scalar_score_delta REAL, drift_loss_delta REAL, pass_rate_delta REAL,
-    outcome_json TEXT
-);
-CREATE TABLE patches (
-    patch_id TEXT, epoch_id TEXT, generation_id TEXT,
-    mutation_id TEXT, op TEXT, rationale TEXT
-);
-CREATE TABLE runs (
-    run_id TEXT, epoch_id TEXT, generation_id TEXT, entry_id TEXT,
-    runtime_ms INTEGER, aborted INTEGER
-);
-CREATE TABLE loss_profiles (
-    run_id TEXT, epoch_id TEXT, generation_id TEXT, entry_id TEXT,
-    drift_loss REAL, pass_fail INTEGER, loss_json TEXT
-);
-CREATE TABLE metric_counts (
-    run_id TEXT, namespace TEXT, name TEXT, severity TEXT, count REAL
-);
-CREATE TABLE tournaments (
-    tournament_id TEXT, epoch_id TEXT,
-    parent_generation_id TEXT, child_generation_id TEXT,
-    decision TEXT, parent_scalar REAL, child_scalar REAL, delta_scalar REAL,
-    rejection_reason TEXT, ran_at TEXT
-);
-"""
 
 
 def _seed_index(db_path: Path, *, scalars: list[float], rejected: int = 1) -> None:
@@ -89,17 +57,20 @@ def _seed_index(db_path: Path, *, scalars: list[float], rejected: int = 1) -> No
     denominator larger than the promoted count.
     """
     conn = sqlite3.connect(db_path)
-    conn.executescript(_SCHEMA)
+    apply_schema(conn)
     gens = [f"v{i}" for i in range(len(scalars))]
     for i, gid in enumerate(gens):
         parent = gens[i - 1] if i > 0 else None
         conn.execute(
-            "INSERT INTO generations VALUES(?,?,?,?)",
+            "INSERT INTO generations(epoch_id,generation_id,parent_generation_id,"
+            "promoted) VALUES(?,?,?,?)",
             (EPOCH, gid, parent, 1 if i > 0 else 0),
         )
         if i > 0:
             conn.execute(
-                "INSERT INTO tournaments VALUES(?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO tournaments(tournament_id,epoch_id,parent_generation_id,"
+                "child_generation_id,decision,parent_scalar,child_scalar,delta_scalar,"
+                "rejection_reason,ran_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
                 (
                     f"t{i}",
                     EPOCH,
@@ -114,26 +85,35 @@ def _seed_index(db_path: Path, *, scalars: list[float], rejected: int = 1) -> No
                 ),
             )
             conn.execute(
-                "INSERT INTO experiments VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO experiments(epoch_id,generation_id,hypothesis_core_idea,"
+                "hypothesis_why,hypothesis_json,tournament_decision,rejection_reason,"
+                "scalar_score_delta,drift_loss_delta,pass_rate_delta,outcome_json) VALUES(?,"
+                "?,?,?,?,?,?,?,?,?,?)",
                 (EPOCH, gid, "idea", "why", "{}", "promoted", "", 0.0, 0.0, 0.0, "{}"),
             )
             conn.execute(
-                "INSERT INTO runs VALUES(?,?,?,?,?,?)",
+                "INSERT INTO runs(run_id,epoch_id,generation_id,entry_id,runtime_ms,"
+                "aborted) VALUES(?,?,?,?,?,?)",
                 (f"r{gid}", EPOCH, gid, "entry_a", 1000 * i, 0),
             )
     champion = gens[-1]
     for j in range(rejected):
         gid = f"v{len(gens) + j}"
         conn.execute(
-            "INSERT INTO generations VALUES(?,?,?,?)",
+            "INSERT INTO generations(epoch_id,generation_id,parent_generation_id,"
+            "promoted) VALUES(?,?,?,?)",
             (EPOCH, gid, champion, 0),
         )
         conn.execute(
-            "INSERT INTO experiments VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO experiments(epoch_id,generation_id,hypothesis_core_idea,"
+            "hypothesis_why,hypothesis_json,tournament_decision,rejection_reason,"
+            "scalar_score_delta,drift_loss_delta,pass_rate_delta,outcome_json) VALUES(?,"
+            "?,?,?,?,?,?,?,?,?,?)",
             (EPOCH, gid, "idea", "why", "{}", "rejected", "worse", 0.0, 0.0, 0.0, "{}"),
         )
         conn.execute(
-            "INSERT INTO runs VALUES(?,?,?,?,?,?)",
+            "INSERT INTO runs(run_id,epoch_id,generation_id,entry_id,runtime_ms,"
+            "aborted) VALUES(?,?,?,?,?,?)",
             (f"r{gid}", EPOCH, gid, "entry_a", 500, 1),
         )
     conn.commit()
@@ -142,13 +122,10 @@ def _seed_index(db_path: Path, *, scalars: list[float], rejected: int = 1) -> No
 
 def _workspace(tmp_path: Path, *, noise_floor: dict | None = None) -> Path:
     ws = tmp_path / ".zicato"
-    epoch_dir = ws / "epochs" / EPOCH
-    epoch_dir.mkdir(parents=True)
-    (ws / "current_epoch").write_text(EPOCH, encoding="utf-8")
-    cfg: dict = {"contract_hash": "h1", "closed": False}
+    config = {"closed": False}
     if noise_floor is not None:
-        cfg["noise_floor"] = noise_floor
-    (epoch_dir / "config.json").write_text(json.dumps(cfg), encoding="utf-8")
+        config["noise_floor"] = noise_floor
+    write_epoch(WorkspaceLayout.from_root(ws), EPOCH, config=config, current=True)
     return ws
 
 
@@ -259,11 +236,19 @@ def test_trajectory_in_flight_first_challenger_is_warming_up_not_stalled(tmp_pat
     """
     ws = _workspace(tmp_path)  # no floor
     conn = sqlite3.connect(ws / "index.db")
-    conn.executescript(_SCHEMA)
-    conn.execute("INSERT INTO generations VALUES(?,?,?,?)", (EPOCH, "v0", None, 0))
+    apply_schema(conn)
+    conn.execute(
+        "INSERT INTO generations(epoch_id,generation_id,parent_generation_id,"
+        "promoted) VALUES(?,?,?,?)",
+        (EPOCH, "v0", None, 0),
+    )
     # An applied, unresolved challenger: a generations row, and NO experiments
     # row, because nothing has been decided.
-    conn.execute("INSERT INTO generations VALUES(?,?,?,?)", (EPOCH, "v1", "v0", 0))
+    conn.execute(
+        "INSERT INTO generations(epoch_id,generation_id,parent_generation_id,"
+        "promoted) VALUES(?,?,?,?)",
+        (EPOCH, "v1", "v0", 0),
+    )
     conn.commit()
     conn.close()
 
@@ -282,7 +267,11 @@ def test_trajectory_settled_count_excludes_the_undecided(tmp_path: Path) -> None
     ws = _workspace(tmp_path)  # no floor
     _seed_index(ws / "index.db", scalars=[1.0], rejected=1)
     conn = sqlite3.connect(ws / "index.db")
-    conn.execute("INSERT INTO generations VALUES(?,?,?,?)", (EPOCH, "v9", "v0", 0))
+    conn.execute(
+        "INSERT INTO generations(epoch_id,generation_id,parent_generation_id,"
+        "promoted) VALUES(?,?,?,?)",
+        (EPOCH, "v9", "v0", 0),
+    )
     conn.commit()
     conn.close()
 

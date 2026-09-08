@@ -16,6 +16,14 @@ from tests._runtime_builders import make_generation
 from tests._runtime_context_support import install_runtime_context
 from zicato.config import IntegrationConfig, InvocationOverlay, resolve_configuration
 from zicato.core import BoardEntry, LossProfile, RuntimeConfig, ScoringWeights
+from zicato.core.adapter_config import DriverImportContext
+from zicato.core.measurement import (
+    MeasurementDraw,
+    artifact_replicate_index,
+    measurement_artifact_path,
+)
+from zicato.core.run_context import RunContext
+from zicato.core.runtime_context import WorkerRuntimeContext
 from zicato.runtime.lock import acquire_workspace_lock
 
 # ---------------------------------------------------------------------------
@@ -265,17 +273,23 @@ def test_worker_uses_configuration_from_args_file(tmp_path: Path) -> None:
     generation = make_generation(workspace)
     entry = _entry()
 
-    sink_path = events_jsonl_path(workspace, "e0", generation.id, entry.id)
-    loss_path = loss_profile_path(workspace, "e0", generation.id, entry.id)
+    sink_path = measurement_artifact_path(
+        events_jsonl_path(workspace, "e0", generation.id, entry.id).parent,
+        "events",
+        0,
+        base_seed=None,
+    )
+    loss_path = measurement_artifact_path(
+        loss_profile_path(workspace, "e0", generation.id, entry.id).parent,
+        "loss",
+        0,
+        base_seed=None,
+    )
     result_path = tmp_path / "result.json"
     args_path = tmp_path / "args.json"
     args_path.write_text(
         json.dumps(
             {
-                "workspace_root": str(workspace),
-                "epoch_id": "e0",
-                "generation_id": generation.id,
-                "snapshot_root": str(generation.snapshot_root),
                 "entry": {
                     "id": entry.id,
                     "kind": entry.kind,
@@ -286,20 +300,34 @@ def test_worker_uses_configuration_from_args_file(tmp_path: Path) -> None:
                     "kind": "import",
                     "factory": "tests._subprocess_worker_support:make_config_probe_adapter",
                 },
-                "target_role": {"dotted": "tests._subprocess_worker_support:target_call_llm"},
-                "evaluation_role": {
-                    "dotted": "tests._subprocess_worker_support:evaluation_call_llm"
+                "target_role": {
+                    "models_role": {"call_llm": "tests._subprocess_worker_support:target_call_llm"}
                 },
-                "run_id": run_id_for_unit(generation.id, entry.id),
+                "evaluation_role": {
+                    "models_role": {
+                        "call_llm": "tests._subprocess_worker_support:evaluation_call_llm"
+                    }
+                },
                 "sink_events_path": str(sink_path),
                 "loss_path": str(loss_path),
                 "result_path": str(result_path),
-                "instance_id": "test",
-                "seed": None,
-                "harmonograf_url": "",
                 "weights": {},
                 "configuration": resolve_configuration(
                     {}, overlay=InvocationOverlay.from_mapping({"aux": {"call_timeout_s": 7.5}})
+                ).to_json(),
+                "runtime_context": WorkerRuntimeContext(
+                    run=RunContext(
+                        Path(str(workspace)),
+                        "e0",
+                        generation.id,
+                        run_id_for_unit(generation.id, entry.id),
+                        Path(str(generation.snapshot_root)),
+                        None,
+                    )
+                ).to_json(),
+                "driver_imports": DriverImportContext().document(),
+                "measurement": MeasurementDraw.from_index(
+                    artifact_replicate_index(Path(str(loss_path)).name), base_seed=None
                 ).to_json(),
             }
         ),

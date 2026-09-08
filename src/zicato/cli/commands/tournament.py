@@ -130,9 +130,7 @@ def tournament_cmd(
         workspace_config = loader.load_workspace_config(workspace_root)
         from zicato.epoch.execution import load_epoch_execution_contract  # noqa: PLC0415
 
-        selected = load_epoch_execution_contract(
-            workspace_root, resolved_epoch_id, workspace_config=workspace_config
-        )
+        selected = load_epoch_execution_contract(workspace_root, resolved_epoch_id)
         workspace_config.update(selected.adapter_configuration)
         board, disable_drift, judge_only, weights = _load_epoch_contract(
             workspace_root, resolved_epoch_id
@@ -280,9 +278,9 @@ def _load_epoch_contract(
     raw_scoring = json.loads(selected_scoring_path.read_text(encoding="utf-8"))
     if not isinstance(raw_scoring, dict):
         raise ValueError(f"{selected_scoring_path}: expected a JSON object at top level")
-    from zicato.workspace_loader import historical_scoring_weights_from_dict  # noqa: PLC0415
+    from zicato.workspace_loader import scoring_weights_from_dict  # noqa: PLC0415
 
-    return board, disable_drift, judge_only, historical_scoring_weights_from_dict(raw_scoring)
+    return board, disable_drift, judge_only, scoring_weights_from_dict(raw_scoring)
 
 
 def _build_generation(workspace_root: Path, epoch_id: str, generation_id: str) -> Generation:

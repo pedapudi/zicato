@@ -93,8 +93,8 @@ class DriftSeverity(StrEnum):
     CRITICAL = "critical"
 
 
-#: All drift-kind strings zicato will accept inside :class:`DriftCount`,
-#: :class:`ExpectedDriftMovement`, :class:`DriftMovementActual`, and the
+#: All drift-kind strings zicato will accept inside :class:`MetricCount`,
+#: :class:`ExpectedMetricMovement`, :class:`MetricMovementActual`, and the
 #: ``required_drift_kinds`` field of synthetic-adversarial board entries.
 #:
 #: Sourced from ``goldfive/proto/goldfive/v1/types.proto`` (DriftKind enum)

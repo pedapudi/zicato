@@ -511,9 +511,14 @@ def test_evolve_once_threads_configured_proposer_skill_into_the_episode(
                 "adapter": {"kind": "import", "factory": "tests._stub_adapter:make_stub_adapter"},
                 "proposer": stand_in_proposer_block(tmp_path / "foe"),
                 "contract": {"proposer_path": str(proposer_dir)},
-                "runtime": {
-                    "target_call_llm": "tests._orchestrator_harness:target_call_llm",
-                    "evaluation_call_llm": "tests._orchestrator_harness:evaluation_call_llm",
+                "runtime": {},
+                "models": {
+                    "engines": {
+                        "target": {"call_llm": "tests._orchestrator_harness:target_call_llm"},
+                        "evaluation": {
+                            "call_llm": "tests._orchestrator_harness:evaluation_call_llm"
+                        },
+                    }
                 },
             }
         )

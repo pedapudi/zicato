@@ -300,37 +300,23 @@ async def _missing_aux_llm(_system: str, _user: str, _model: str) -> str:
 
     raise RuntimeError(
         "No evaluation LLM callable is registered. Wire one into the "
-        "workspace config under 'evaluation_call_llm' (dotted import path)."
+        "workspace config under models.engines / models.roles.evaluation."
     )
 
 
 def _resolve_aux_llm(config: WorkspaceConfig) -> Any:
-    """Look up the evaluation LLM callable from the workspace config.
+    """Resolve the named evaluation engine, retaining the explicit unconfigured stub."""
+    from zicato.models_config import load_models_config
+    from zicato.runtime_factory import resolve_role_call_llm
 
-    The config field ``"evaluation_call_llm"`` is a dotted import path
-    (e.g. ``"my_pkg.llms.aux_call_llm"``). If absent, the missing-stub
-    is returned so the command can still parse args and report state.
-    """
-
-    dotted = config.raw.get("evaluation_call_llm")
-    if not dotted:
+    if load_models_config(config.raw).evaluation.is_empty:
         return _missing_aux_llm
-    mod_name, _, attr = dotted.rpartition(".")
-    if not mod_name:
-        raise click.ClickException(
-            f"evaluation_call_llm config value is not a dotted path: {dotted!r}"
-        )
     try:
-        module = importlib.import_module(mod_name)
-    except ImportError as exc:
-        raise click.ClickException(
-            f"Could not import {mod_name!r} for evaluation_call_llm: {exc}"
-        ) from exc
-    if not hasattr(module, attr):
-        raise click.ClickException(
-            f"Module {mod_name!r} has no attribute {attr!r} for evaluation_call_llm"
+        return resolve_role_call_llm(
+            config.raw, role="evaluation", workspace_root=config.path.parent
         )
-    return getattr(module, attr)
+    except (ImportError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
 
 
 # ---------------------------------------------------------------------------

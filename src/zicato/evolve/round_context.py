@@ -268,10 +268,7 @@ def _build_recombination_pair(
             candidates.append(
                 ParentCandidate(
                     generation_id=exp.generation_id,
-                    # The pool admits only rejected outcomes, so the
-                    # empty fallback is unreachable; it keeps the field
-                    # a plain string.
-                    decision=(exp.outcome.tournament_decision or "") if exp.outcome else "",
+                    decision=exp.outcome.tournament_decision or "" if exp.outcome else "",
                     parent_generation_id=exp.parent_generation_id,
                     is_placebo=hyp.core_idea.startswith(PLACEBO_HYPOTHESIS_MARKER),
                     is_recombined=bool(exp.recombined_from),
@@ -281,7 +278,6 @@ def _build_recombination_pair(
                     elo=elo_by_gid.get(exp.generation_id),
                     patches=exp.patches,
                     core_idea=hyp.core_idea,
-                    expected_drift_movements=hyp.expected_drift_movements,
                     expected_metric_movements=hyp.expected_metric_movements,
                 )
             )
@@ -330,8 +326,6 @@ def _build_recombination_pair(
             combined_regressed_count=len(a.regressed_entry_ids | b.regressed_entry_ids),
             a_banded_outcome=_banded_outcome(a.generation_id),
             b_banded_outcome=_banded_outcome(b.generation_id),
-            a_expected_drift_movements=a.expected_drift_movements,
-            b_expected_drift_movements=b.expected_drift_movements,
             a_expected_metric_movements=a.expected_metric_movements,
             b_expected_metric_movements=b.expected_metric_movements,
         )

@@ -21,15 +21,9 @@ The default for a new read-side test
 
 Compose these builders. Do not hand-write ``CREATE TABLE`` for the current
 schema, and do not join ``"epochs"`` or any other layout segment into a path
-literal — ask the layout for it. A test that needs an index which PREDATES a
-column states that as :func:`seed_index`'s ``without_columns``, so the
-fixture is the real schema minus the named column rather than a second,
-unmaintained copy of the DDL.
-
-Two cases legitimately fall outside this. A test whose SUBJECT is the schema
-migration itself writes the historical DDL it migrates from, because that
-DDL no longer exists anywhere else. A test whose subject is one file's exact
-bytes writes those bytes directly.
+literal — ask the layout for it. Schema-refusal tests can construct an
+incompatible database directly. A test of exact record bytes writes those
+bytes explicitly.
 
 The builders are deliberately shallow: each writes what it is given and
 supplies a minimal default only where every caller wants the same one. A
@@ -44,7 +38,20 @@ from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from zicato.core.experiment import ExpectedMetricMovement, MetricMovementActual
+from zicato.core.types import ScoringWeights
+from zicato.epoch._storage import RECORD_FORMAT_VERSION
+from zicato.epoch.journal import experiment_body
+from zicato.epoch.lifecycle import _config_from_dict, _config_to_dict
+from zicato.epoch.lineage import decode_lineage
 from zicato.index.schema import apply_schema, table_columns
+from zicato.testing import (
+    make_epoch_config,
+    make_experiment,
+    make_hypothesis_spec,
+    make_outcome_record,
+)
+from zicato.tournament.scoring import decode_gen_score
 from zicato.workspace import WorkspaceLayout
 from zicato.workspace.config_io import CONFIG_FILENAME
 
@@ -121,7 +128,8 @@ def write_lineage(
     layout: WorkspaceLayout, lineage: Mapping[str, Any], *, indent: int | None = None
 ) -> Path:
     """Write the workspace-level ``lineage.json`` cross-epoch generation record."""
-    return write_json(layout.lineage_path, dict(lineage), indent=indent)
+    record = decode_lineage({"format_version": RECORD_FORMAT_VERSION, **lineage})
+    return write_json(layout.lineage_path, record.to_dict(), indent=indent)
 
 
 def write_epoch(
@@ -138,20 +146,26 @@ def write_epoch(
 ) -> Path:
     """Write one epoch's directory and return it.
 
-    ``config`` is written verbatim when given; omitted, it defaults to the
-    id, :data:`DEFAULT_CREATED_AT`, and an open epoch. Every other artifact
-    is written only when supplied, so the tree holds what the test's readers
-    actually open and nothing else. ``current`` also points the workspace's
-    ``current_epoch`` marker at this epoch.
+    ``config`` overrides a complete epoch fixture with the requested paths
+    and scoring. Its synthetic contract hash is for reader tests; execution
+    tests prepare an epoch through ``new_epoch``. Other artifacts are written
+    only when supplied. ``current`` selects the epoch in the workspace marker.
     """
     directory = layout.epoch_dir(epoch_id)
     directory.mkdir(parents=True, exist_ok=True)
+    settings = _config_to_dict(
+        make_epoch_config(
+            id=epoch_id,
+            name=epoch_id,
+            created_at=DEFAULT_CREATED_AT,
+            board_path=layout.board(epoch_id),
+            brief_path=layout.brief(epoch_id),
+            scoring=ScoringWeights.from_json(dict(scoring or {})),
+        )
+    )
+    settings.update(config or {})
     write_json(
-        layout.epoch_config(epoch_id),
-        dict(config)
-        if config is not None
-        else {"id": epoch_id, "created_at": DEFAULT_CREATED_AT, "closed": False},
-        indent=indent,
+        layout.epoch_config(epoch_id), _config_to_dict(_config_from_dict(settings)), indent=indent
     )
     if board is not None:
         write_jsonl(layout.board(epoch_id), board)
@@ -178,31 +192,63 @@ def set_current_epoch(layout: WorkspaceLayout, epoch_id: str, *, newline: bool =
 def experiment_record(
     generation_id: str,
     *,
+    epoch_id: str,
     parent_generation_id: str | None = None,
     proposed_at: str = DEFAULT_CREATED_AT,
     decision: str | None = None,
     outcome: Mapping[str, Any] | None = None,
     **extra: Any,
 ) -> dict[str, Any]:
-    """The ``experiment.json`` body for one generation.
+    """Build a complete experiment fixture through the canonical serializer.
 
-    The outcome block is omitted entirely for a generation that has not
-    settled, which is how the writers leave an in-flight round. Pass
-    ``decision`` for the common settled case, or ``outcome`` for a full
-    block; ``extra`` adds any further top-level key. The outcome lands last,
-    after ``extra``, mirroring the order the writers produce.
+    The supplied hypothesis and outcome values override empty fixture values.
+    A generation without an outcome carries explicit null. Invalid records
+    belong in a test's direct ``write_json`` call.
     """
-    record: dict[str, Any] = {
-        "generation_id": generation_id,
-        "parent_generation_id": parent_generation_id,
-        "proposed_at": proposed_at,
-    }
-    record.update(extra)
-    if outcome is not None:
-        record["outcome"] = dict(outcome)
-    elif decision is not None:
-        record["outcome"] = {"decision": decision}
-    return record
+    hypothesis = dict(extra.pop("hypothesis", {}))
+    hypothesis["expected_metric_movements"] = tuple(
+        ExpectedMetricMovement(**movement)
+        for movement in hypothesis.get("expected_metric_movements", ())
+    )
+    outcome_record = None
+    if outcome is not None or decision is not None:
+        values = dict(outcome or {})
+        values.setdefault("tournament_decision", decision)
+        values["metric_movements"] = tuple(
+            MetricMovementActual(**movement) for movement in values.get("metric_movements", ())
+        )
+        outcome_record = make_outcome_record(
+            **{
+                "ran_at": "",
+                "pass_rate_delta": 0.0,
+                "drift_loss_delta": 0.0,
+                "scalar_score_delta": 0.0,
+                **values,
+            }
+        )
+    body = experiment_body(
+        make_experiment(
+            id=extra.pop("id", f"exp_{epoch_id}_{generation_id}"),
+            epoch_id=epoch_id,
+            generation_id=generation_id,
+            parent_generation_id=parent_generation_id,
+            proposed_at=proposed_at,
+            round_index=extra.pop("round_index", 0),
+            hypothesis=make_hypothesis_spec(
+                **{
+                    "core_idea": "",
+                    "modulating": (),
+                    "why": "",
+                    "expected_pass_rate_delta": "",
+                    **hypothesis,
+                }
+            ),
+            patches=(),
+            outcome=outcome_record,
+        )
+    )
+    body.update(extra)
+    return body
 
 
 def write_generation(
@@ -221,13 +267,20 @@ def write_generation(
     """
     directory = layout.generation_dir(epoch_id, generation_id)
     directory.mkdir(parents=True, exist_ok=True)
+    values = dict(experiment or {})
+    values.setdefault("epoch_id", epoch_id)
+    values.setdefault("generation_id", generation_id)
+    if values["epoch_id"] != epoch_id or values["generation_id"] != generation_id:
+        raise ValueError("experiment fixture coordinates differ from the generation path")
     write_json(
-        layout.experiment(epoch_id, generation_id),
-        dict(experiment) if experiment is not None else experiment_record(generation_id),
-        indent=indent,
+        layout.experiment(epoch_id, generation_id), experiment_record(**values), indent=indent
     )
     if gen_score is not None:
-        write_json(layout.gen_score(epoch_id, generation_id), dict(gen_score), indent=indent)
+        score = decode_gen_score(
+            {"format_version": RECORD_FORMAT_VERSION, "generation_id": generation_id, **gen_score},
+            generation_id=generation_id,
+        )
+        write_json(layout.gen_score(epoch_id, generation_id), score.to_dict(), indent=indent)
     return directory
 
 
@@ -264,8 +317,6 @@ def write_run(
 def seed_index(
     layout: WorkspaceLayout,
     tables: Mapping[str, Sequence[Mapping[str, Any]]],
-    *,
-    without_columns: Sequence[tuple[str, str]] = (),
 ) -> Path:
     """Build the workspace's ``index.db`` at the current schema and fill it.
 
@@ -275,13 +326,6 @@ def seed_index(
     schema does not declare raises :class:`KeyError`, so a fixture cannot
     quietly seed a field the readers will never select.
 
-    ``without_columns`` names ``(table, column)`` pairs to drop after the
-    schema is applied, reproducing an index written before that column
-    existed. The readers detect an absent column through
-    ``PRAGMA table_info``, so a dropped column exercises the same degrade
-    path a genuinely older database takes, without a second copy of the
-    older DDL.
-
     Returns the database path.
     """
     db_path = layout.index_db_path
@@ -289,10 +333,6 @@ def seed_index(
     conn = sqlite3.connect(str(db_path))
     try:
         apply_schema(conn)
-        for table, column in without_columns:
-            if column not in table_columns(table):
-                raise KeyError(f"table {table!r} has no column {column!r} to drop")
-            conn.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
         for table, rows in tables.items():
             declared = table_columns(table)
             for row in rows:

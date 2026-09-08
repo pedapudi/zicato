@@ -185,8 +185,7 @@ engine forms, endpoint-only engines, unset named credentials at resolution,
 and target/evaluator engine reuse. These are configuration errors rather than
 silent fallbacks.
 
-A flat `models.<role>` shape, mapping a role name straight to a model, is
-rejected with a migration message; no compatibility alias accepts it. The
-separate `runtime.target_call_llm` and `runtime.evaluation_call_llm` fields are
-the low-level CLI and library callable seam for deterministic harnesses that do
-not configure `models`.
+Model connections are declared under `models.engines` and selected through
+`models.roles`. The runtime block contains execution controls. Library callers
+can supply resolved target and evaluation callables to `make_runtime_config`;
+persisted workspaces declare those callables as named engines.

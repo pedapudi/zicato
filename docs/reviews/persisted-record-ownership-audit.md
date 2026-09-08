@@ -1,33 +1,25 @@
-# Persisted record ownership audit
+# Historical audit of persisted record ownership
 
-This audit covers all 55 entries in the ownership map approved in
+This audit records the inspection of 55 stored-file categories for
 [issue #411](https://github.com/pedapudi/zicato/issues/411#issuecomment-5520548953).
-The record-owner source is tree `6118a0e4f05012841f32f41da34d0b1121c69083`.
-Process ownership is reviewed at tree `f7ce4107ce144208068983dd6ecf6f1b0da25d70`.
-Configuration and publication ownership are reviewed at composition tree
-`8256140d65d2f38d794c99fb0e3504cb72fae33d`; their integration remains separate.
-A shared writer does not establish shared decoding, and a dataclass without a
-reader does not complete a record's ownership.
+Its statuses describe the inspected source trees, before the shared readers
+and supported representations were integrated. They are not an outstanding
+work list. The development guide describes the implemented
+[configuration and epoch records](../dev-guide/03-contract-and-epochs.md).
 
-The status column distinguishes a shared codec from remaining raw readers,
-missing inverse codecs, and files that are projections or foreign output. A
-shared codec still needs its callers and corruption policy checked before the
-corresponding work can close. “Implemented extraction” means the writer,
-decoder, and identified consumers moved together with focused compatibility
-checks. “Existing protocol” records an owner without claiming its acceptance
-policy is complete. “Integration pending” identifies independently implemented
-work whose composed checks belong to another workstream. Open rows remain in
-issue #411; the inventory does not imply that the issue can close.
+The inspected source trees were:
 
-Paths are relative to the workspace root. A generation path begins with
-`epochs/<epoch>/generations/<generation>/`; a run path adds
-`runs/<entry>/` and any measurement identity directory declared by the run
-layout. Reflection paths begin with `epochs/<epoch>/reflections/<reflection>/`.
-Physical observation paths and seed-qualified run references belong to
-`core/measurement.py` and their existing layout owners. Measurement/capture
-status reflects seed tree `a61a08f83632a2afd8c78a9b3bdca9dc94467840` and capture
-delta tree `c99cd03df0bdc8c975299f9fe63ba36da1023e41`; their combined verification
-is separate from record/query/client tree `c84765e2f75749e257babec93b8c7375393dc58d`.
+- Record readers: `6118a0e4f05012841f32f41da34d0b1121c69083`.
+- Process ownership: `f7ce4107ce144208068983dd6ecf6f1b0da25d70`.
+- Configuration and publication: `8256140d65d2f38d794c99fb0e3504cb72fae33d`.
+- Measurement storage: `a61a08f83632a2afd8c78a9b3bdca9dc94467840`.
+- Captured results: `c99cd03df0bdc8c975299f9fe63ba36da1023e41`.
+- Record, query, and browser integration: `c84765e2f75749e257babec93b8c7375393dc58d`.
+
+Paths are relative to the workspace root. Generation files live under
+`epochs/<epoch>/generations/<generation>/`; run files add `runs/<entry>/`
+and the directories declared by the measurement layout. Reflection files
+live under `epochs/<epoch>/reflections/<reflection>/`.
 
 | # | Record, relative to workspace | Owner and evidence | Status | Remaining ownership work |
 | --- | --- | --- | --- | --- |
@@ -47,9 +39,9 @@ is separate from record/query/client tree `c84765e2f75749e257babec93b8c7375393dc
 | 14 | `runtime/control/*` and `runtime/control_log/*` | `runtime/channel.py` owns Event/Command records and claim/archive operations; `runtime/control.py` owns command meaning. | Existing protocol; audit open | Existing protocol: keep operator acknowledgement and claim authority. Validate record envelopes in the owner rather than duplicating command parsing at each consumer. |
 | 15 | `runtime/control/kill_requests/<run>` | `runtime/control.py` owns a cross-process scalar signal. | Existing scalar/report owner | Keep the simple marker contract; no JSON hierarchy is needed. |
 | 16 | `runtime/inconclusive/<generation>.json` | `selection/dead_letter.py` owns typed reading, list reading, inverse decoding, and validated publication. | Implemented extraction | Complete for this slice: the rating view uses accepted fields and checks epoch/champion before using generation-keyed records. Present corruption is explicit; nested evidence remains owned by selection. Historical field bytes and numeric types are preserved. |
-| 17 | `epochs/<epoch>/config.json` | `epoch/lifecycle.py::_config_to_dict` and `_config_from_dict` own frozen epoch serialization; the configuration composition deliberately retains this historical decoder. | Open | Open: consolidate remaining raw consumers and define strict canonical field acceptance. Do not mistake strict authored WorkspaceDeclaration decoding for a completed frozen-epoch record migration. |
+| 17 | `epochs/<epoch>/config.json` | `epoch/lifecycle.py` writes the full record with `core.configuration.dataclass_to_jsonable` and reads it with the shared strict decoder. | Shared configuration owner | Required format stamp and 64-character lowercase contract hash; missing required fields, invalid values, and unknown fields are refused. Captured execution also requires `execution.json`. |
 | 18 | `epochs/<epoch>/board.jsonl` and header | `board/jsonl.py` owns the board loader; `epoch/execution.py::EpochExecutionContract` captures frozen bytes in the invocation composition. | Integration pending | Integration pending plus open consumers: remove tolerant `workspace/reads.py::read_board` and `query/epoch_view.py::_parse_board` acceptance wherever still present. All composition readers must use one declared board acceptance rule. |
-| 19 | `epochs/<epoch>/scoring.json` | `epoch/contract_serde.py` owns scoring codecs; frozen execution composition explicitly uses its historical scoring decoder. | Integration pending | Integration pending: preserve historical frozen weights while authored declarations use strict configuration validation. Check remaining direct JSON consumers before declaring one read authority. |
+| 19 | `epochs/<epoch>/scoring.json` | `core/scoring_config.py` uses `core.configuration` for complete serialization and strict decoding; epoch loading and hashing share that owner. | Shared configuration owner | All effective values, including nested defaults, are saved and hashed. There is no historical-default decoder or omission registry. Grading plugin source identities remain part of canonicalization. |
 | 20 | `epochs/<epoch>/brief.md` | `proposer/brief.py` owns brief interpretation; `epoch/execution.py::EpochExecutionContract` captures its frozen bytes. | Integration pending | Integration pending: remove `query/epoch_view.py` fallback to `rubric.md` from the composed reader. Preview truncation remains a view concern; it must not choose an alternate contract. |
 | 21 | `epochs/<epoch>/journal.md` | `epoch/journal.py` renders typed experiments and atomically appends stable settlement identities. | Existing scalar/report owner | Existing rendering owner; preserve idempotent append behavior. |
 | 22 | `epochs/<epoch>/analysis.md` and `.html` | `epoch/analysis.py` and `analyzer/report.py` render Markdown and HTML reports. | Open | Open publication work: both still contain direct write_text calls. Use atomic output replacement; no inverse report codec or canonical decision record is needed. |

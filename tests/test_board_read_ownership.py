@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from zicato.board.jsonl import save_board
+from zicato.core.board import BoardEntry, ScriptedTurn, UserPersona
 from zicato.epoch._storage import RecordError
 from zicato.query import WorkspacePaths, build_epoch_view, build_search_results
 from zicato.query.epoch_view import build_epochs_summary
@@ -21,7 +23,7 @@ def workspace(tmp_path: Path) -> WorkspaceLayout:
     (layout.root / "current_epoch").write_text("e0")
     layout.board("e0").write_text(
         '{"board_meta": true, "disable_drift": ["tool_error"], "extension": 4}\n'
-        '{"id": "sample", "kind": "single_turn", "input": "Task", "budget_s": 1, '
+        '{"id": "sample", "kind": "single_turn", "input": "Task", "wall_clock_budget_seconds": 1, '
         '"judges": [{"name": "sample_judge", "mode": "inline", '
         '"body": "Check the answer", "severity": "warning"}]}\n'
     )
@@ -61,6 +63,8 @@ def test_board_is_read_once_per_response(workspace: WorkspaceLayout, monkeypatch
         assert view["judges"] == [{"name": "sample_judge", "match_kind": "substring"}]
     else:
         assert view["board"][0]["entry_id"] == "sample"
+        assert view["board"][0]["wall_clock_budget_seconds"] == 1.0
+        assert "budget_s" not in view["board"][0]
         assert view["board_meta"] == {"disable_drift": ["tool_error"], "judge_only": False}
         assert list(view["board_judges"]) == ["sample"]
     assert len(reads) == 1
@@ -74,6 +78,38 @@ def test_accepted_rows_preserve_source_values(workspace: WorkspaceLayout) -> Non
     assert read_board(workspace, "absent") is None
     path.write_text("")
     assert read_board(workspace, "e0") == []
+
+
+def test_epoch_preview_reads_published_board_inputs(workspace: WorkspaceLayout) -> None:
+    entries = [
+        BoardEntry(
+            id="single", kind="single_turn", input="First task", wall_clock_budget_seconds=30
+        ),
+        BoardEntry(
+            id="scripted",
+            kind="multi_turn_scripted",
+            turns=(ScriptedTurn(user="Opening request"), ScriptedTurn(user="Follow-up request")),
+            max_turns=2,
+            wall_clock_budget_seconds=60,
+        ),
+        BoardEntry(
+            id="emulated",
+            kind="multi_turn_emulated",
+            user_persona=UserPersona(
+                goal="Find the answer", constraints="Be brief", stop_when="Done"
+            ),
+            max_turns=3,
+            wall_clock_budget_seconds=90,
+        ),
+    ]
+    save_board(entries, workspace.board("e0"))
+    board = build_epoch_view(WorkspacePaths(workspace.root), "e0")["board"]
+    assert [row["input_preview"] for row in board] == [
+        "First task",
+        "Opening request",
+        "Find the answer",
+    ]
+    assert [row["wall_clock_budget_seconds"] for row in board] == [30.0, 60.0, 90.0]
 
 
 def test_retired_filename_does_not_supply_missing_brief(workspace: WorkspaceLayout) -> None:

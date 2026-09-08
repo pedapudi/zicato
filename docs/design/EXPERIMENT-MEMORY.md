@@ -226,8 +226,7 @@ this round and not yet run, so `scalar_score_delta` is `None` and
 
 The dataclass also carries `prediction_accuracy` — the fraction of a
 settled experiment's falsifiable predictions
-(`expected_drift_movements`, `expected_metric_movements`, and
-`expected_pass_rate_delta`) that the realized movements bore out, in
+(`expected_metric_movements` and `expected_pass_rate_delta`) that the realized movements bore out, in
 `[0.0, 1.0]`. It is `None` for an unsettled or in-flight entry and for an
 experiment that made no gradable prediction. It is an advisory
 calibration signal rendered in banded form alongside the rest of the
@@ -281,12 +280,11 @@ same-epoch history keeps priority; that is the mechanised form of
 "only when same-epoch history is sparse". The default behaviour is
 **same-epoch only**; cross-contract
 transfer is the opt-in `experimental.cross_epoch_memory` knob on the frozen
-contract (`ScoringWeights.experiment_memory`, omitted-at-default from the
-contract canonical form so existing epochs never roll; opting in rolls
-the epoch). Experiments from a *different* `contract_hash` are never
-surfaced, because their mutation ids and losses are not comparable, and
-an epoch that records no contract hash is never treated as
-transferable.
+contract (`ScoringWeights.experimental.cross_epoch_memory`). Its effective
+value, including the false default, participates in contract identity.
+Experiments from a different `contract_hash` are excluded because their mutation
+ids and losses are not comparable. Canonical epoch loading refuses a missing
+or malformed hash.
 
 ### 3.5 Where it lands in the prompt, and the rendered shape
 

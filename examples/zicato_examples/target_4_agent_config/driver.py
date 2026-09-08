@@ -78,7 +78,7 @@ from pathlib import Path
 from typing import Any
 
 from zicato.core import RunResult
-from zicato.epoch.snapshot_scope import SCRATCH_DIR_ENV
+from zicato.core.run_context import RunContext
 
 _log = logging.getLogger(__name__)
 
@@ -299,16 +299,10 @@ def tree_diff(before: Path, after: Path) -> str:
     return "".join(chunks)
 
 
-def _run_scratch_dir(run_id: str) -> Path:
-    """Per-run scratch directory, honouring the runner's scratch contract.
-
-    The runner exports :data:`~zicato.epoch.snapshot_scope.SCRATCH_DIR_ENV`
-    so run output lands OUTSIDE the generation snapshot. An ad-hoc drive
-    with no scratch dir exported gets a temp directory instead, which keeps
-    the snapshot clean either way.
-    """
-    base = os.environ.get(SCRATCH_DIR_ENV, "")
-    root = Path(base) if base else Path(tempfile.mkdtemp(prefix="zicato-t4-"))
+def _run_scratch_dir(run_id: str, context: RunContext | None) -> Path:
+    """Write within the worker's scratch directory or a standalone temporary directory."""
+    base = context.scratch_dir if context is not None else None
+    root = base if base is not None else Path(tempfile.mkdtemp(prefix="zicato-t4-"))
     scratch = root / run_id
     if scratch.exists():
         shutil.rmtree(scratch, ignore_errors=True)
@@ -341,13 +335,12 @@ class _AgentConfigSession:
 
     async def run(self, entry: Any, sinks: Any, config: Any) -> RunResult:
         """Drive one board entry and return its :class:`RunResult`."""
-        del config  # target 4 calls no model through zicato; the binary is the harness.
         started = time.monotonic()
         run_id = run_identifier(entry)
         sink_list = list(sinks or [])
         budget = float(getattr(entry, "wall_clock_budget_seconds", 0) or 0) or 600.0
 
-        scratch = _run_scratch_dir(run_id)
+        scratch = _run_scratch_dir(run_id, config.run_context)
         agent_dir = scratch / "agent-config"
         work = scratch / "work"
         fixture = fixture_root(entry)

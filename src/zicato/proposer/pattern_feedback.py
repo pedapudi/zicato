@@ -13,7 +13,6 @@ from zicato.core.patterns import Pattern
 _FREQUENCY_FIELDS = ("run_count", "hits"), ("frequency",)
 _MULTI_TURN_FIELDS = (("run_count", "positive_run_count", "max_count", "total_count"), ("rate",))
 _FIELDS = {
-    "drift_kind_frequency": ("Recurring drift", *_FREQUENCY_FIELDS),
     "drift_metric_frequency": ("Recurring drift", *_FREQUENCY_FIELDS),
     "cost_metric_frequency": ("Recorded resource use", *_FREQUENCY_FIELDS),
     "rubric_metric_frequency": ("Recorded rubric scores", *_FREQUENCY_FIELDS),
@@ -81,8 +80,6 @@ class PatternFeedback:
         if entries:
             statistics["entries_affected"] = len(entries)
         metric = pattern.detail.get("metric_name", "")
-        if not metric and pattern.detail.get("drift_kind") in GOLDFIVE_DRIFT_KINDS:
-            metric = "drift:" + pattern.detail["drift_kind"]
         return cls(
             kind=kind,
             severity=DriftSeverity(pattern.severity),

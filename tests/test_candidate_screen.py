@@ -78,7 +78,7 @@ def _experiment(exp_id: str) -> Experiment:
             core_idea=f"idea {exp_id}",
             modulating=(),
             why="because",
-            expected_drift_movements=(),
+            expected_metric_movements=(),
             expected_pass_rate_delta="+0.05",
         ),
         patches=(),

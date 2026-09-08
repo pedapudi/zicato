@@ -30,7 +30,7 @@ from zicato.analyzer.outcome_marginals import (
     run_operator_summarizer,
     sanitize_operator_marginals,
 )
-from zicato.core.types import DriftCount, ExpectationResult, LossProfile
+from zicato.core.types import ExpectationResult, LossProfile, MetricCount
 from zicato.proposer.prompts import (
     render_failure_mode_profile,
 )
@@ -59,9 +59,9 @@ def _loss(
     profile, none of it reaches the rendered marginal (the aggregator reads
     only scalar / count fields).
     """
-    drift_counts: tuple[DriftCount, ...] = ()
+    metric_counts: tuple[MetricCount, ...] = ()
     if looping:
-        drift_counts = (DriftCount(kind="looping_reasoning", severity="warning", count=3),)
+        metric_counts = (MetricCount(name="drift:looping_reasoning", severity="warning", count=3),)
     exp = (
         ExpectationResult(kind="predicate", passed=bool(pass_fail), score=score, metrics=metrics)
         if pass_fail is not None or score is not None
@@ -72,7 +72,7 @@ def _loss(
         entry_id=entry_id,
         generation_id="v1",
         epoch_id="epoch_test",
-        drift_counts=drift_counts,
+        metric_counts=metric_counts,
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=10,

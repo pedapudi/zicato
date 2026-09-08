@@ -240,23 +240,6 @@ def test_unstamped_round_sorts_last(tmp_path: Path) -> None:
     assert ledger["experiments"][-1]["round_index"] is None
 
 
-def test_legacy_decision_spellings_are_canonicalised(tmp_path: Path) -> None:
-    """The ledger speaks the ONE canonical verdict vocabulary."""
-    layout = _seed_workspace(tmp_path)
-    _seed_index(layout)
-    seed_index(
-        layout,
-        {
-            "generations": [_gen("v4", "v1", 1, "2026-07-04T00:00:00Z", 3)],
-            "experiments": [_exp("v4", "an old record", "accept")],
-        },
-    )
-
-    v4 = _by_gen(build_experiments_ledger(_paths(layout), EPOCH))["v4"]
-    assert v4["decision"] == "promoted"
-    assert v4["promoted"] is True
-
-
 # ---------------------------------------------------------------------------
 # Degrades
 # ---------------------------------------------------------------------------
@@ -283,33 +266,6 @@ def test_no_epoch_and_unknown_epoch_degrade_to_the_empty_ledger(tmp_path: Path) 
         "epoch_id": None,
         "experiments": [],
     }
-
-
-def test_legacy_index_without_round_index_still_reads(tmp_path: Path) -> None:
-    """A pre-v7 index (no ``round_index`` column) reads with null rounds.
-
-    The regression this guards: naming ``round_index`` in the SELECT would
-    fail the whole query on a legacy index and blank the ledger, rather than
-    degrading the ONE field that is genuinely absent.
-    """
-    layout = _seed_workspace(tmp_path)
-    legacy_generation = _gen("v1", "v0", 1, "2026-07-02T00:00:00Z", None)
-    del legacy_generation["round_index"]
-    seed_index(
-        layout,
-        {
-            "generations": [legacy_generation],
-            "experiments": [_exp("v1", "a legacy idea", "promoted", scalar=-0.05)],
-            "patches": [_patch("v1", "p1", "prompt.system")],
-        },
-        without_columns=(("generations", "round_index"),),
-    )
-
-    ledger = build_experiments_ledger(_paths(layout), EPOCH)
-    assert [r["generation_id"] for r in ledger["experiments"]] == ["v1"]
-    assert ledger["experiments"][0]["round_index"] is None
-    assert ledger["experiments"][0]["mutation_ids"] == ["prompt.system"]
-    assert ledger["experiments"][0]["scalar_score_delta"] == -0.05
 
 
 # ---------------------------------------------------------------------------

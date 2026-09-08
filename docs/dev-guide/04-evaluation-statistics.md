@@ -85,15 +85,21 @@ scalar is **Seam 1**. Its formula lives in
 ```python
 # src/zicato/scoring/builtins.py — builtin_drift_loss (core)
     sev_w = weights.severity_weights
-    loss = 0.0
-    for c in drift_counts:
-        if is_judge_attributed_kind(c.kind):
-            continue
-        sev_mult = sev_w.get(c.severity, 0.0)
-        kind_mult = _kind_multiplier(c.kind, weights)
-        loss += sev_mult * kind_mult * c.count
-    loss += weights.plan_revision_weight * plan_revisions
-    return max(0.0, float(loss))
+    # ``math.fsum`` over collected terms, never a running float: this term
+    # reaches every served scalar and every parity golden, and both the
+    # builtin ``sum`` (whose float behaviour changed in Python 3.12) and a
+    # running accumulator make the result depend on something other than the
+    # inputs — the interpreter version, or the order the counts arrive in.
+    terms = [
+        sev_w.get(c.severity, 0.0)
+        * _kind_multiplier(c.name.removeprefix("drift:"), weights)
+        * c.count
+        for c in metric_counts
+        if c.name.startswith("drift:")
+        and not is_judge_attributed_kind(c.name.removeprefix("drift:"))
+    ]
+    terms.append(weights.plan_revision_weight * plan_revisions)
+    return max(0.0, math.fsum(terms))
 ```
 
 Facts a change here must respect:
@@ -101,7 +107,7 @@ Facts a change here must respect:
 - This computes the `drift:` CHANNEL rather than the run's whole loss. Task
   failures and the not-completed charge are the `failure:` channel, wall-clock is
   `runtime:`, and custom judges are `judge:` — each derived from the profile
-  by `LossProfile.unified_metrics` and coefficiented by `namespace_weights`.
+  by `LossProfile.scoring_metrics` and coefficiented by `namespace_weights`.
   `builtin_drift_loss` sees `task_failure_ratio` / `runtime_ms` nowhere; the
   `DriftContext` still carries them so a drift PLUGIN can read the run's
   outcome.
@@ -203,16 +209,11 @@ Three more properties of Seam 2 that any extension must preserve:
   the appended scalar term and the surfaced `scalar_components` entry can
   never disagree.
 
-> ✅ ALWAYS follow the `diff_complexity` template when adding a scalar term:
-> (1) a `ScoringWeights` field defaulting to the inert value, (2) omitted from
-> the contract canonical form at that default (see 03-contract-and-epochs.md
-> §3.4, the omit-at-default discipline) so existing epochs never roll, (3) the component
-> computed by ONE shared function, (4) appended last, (5) a golden test that
-> proves byte-identity when off. If you skip (2), every existing workspace
-> auto-rolls its epoch on upgrade; if you skip (4), you shift every namespace
-> term's accumulated rounding and break the goldens; if you skip (5), you will
-> notice neither the spurious epoch roll nor the broken goldens until an
-> operator does.
+A scalar term needs a declared effective setting, one shared computation, and
+checks that its inactive value contributes nothing. The complete effective
+configuration is serialized and hashed (chapter 03 §3.4). Keep accumulation
+order explicit so adding a term cannot change rounding in other components.
+
 
 ### 1.4 `pass_rate` vs `mean_score` — the uniform outcome axis
 
@@ -288,7 +289,7 @@ unit *counts* statistically:
 | `wall_clock_budget_exceeded=True` / `abort_cause == BUDGET_ABORT_CAUSE` | a **deterministic** exhaustion: re-running re-hits the same cap. Cache-eligible (the one cacheable abort cause) and aggregates as a worst-case loss for its side. |
 | `abort_cause` set to anything else (`is_infra_abort_cause`) | an **infra blip** — worker crash, spawn failure, endpoint outage. NOT a measurement of the generation. Never cached as a result; consumers like the screen treat it as *no signal* (it can never veto). |
 | `not_completed=True` | any non-success terminal state. Charged in the `failure:` channel as `not_completed_weight` (an absolute contract magnitude) on top of `task_failure_weight × task_failure_ratio`, whose ratio is floored to 1.0 for such a run. Both the reducer and the runner's aborted-run synthesiser state the FACTS (`not_completed`, the floored ratio) and let the channel do the arithmetic — so the two paths cannot disagree. |
-| `per_judge_loss` | per-judge weighted-loss attribution. It IS the `judge:` channel — `LossProfile.unified_metrics` derives one `judge:<name>` metric per entry — and it is ALSO carried onto `ScalarContext` by `_per_judge_loss_aggregate` for plugin/provenance visibility. A scalar that adds the context copy on top of the channel double-counts. |
+| `per_judge_loss` | per-judge weighted-loss attribution. It IS the `judge:` channel — `LossProfile.scoring_metrics` derives one `judge:<name>` metric per entry — and it is ALSO carried onto `ScalarContext` by `_per_judge_loss_aggregate` for plugin/provenance visibility. A scalar that adds the context copy on top of the channel double-counts. |
 
 The distinction between the deterministic budget abort and the infra abort is
 load-bearing everywhere a loss is *classified* rather than summed. The
@@ -1231,9 +1232,7 @@ Aggregated:
 
 Pass-through from slot 0, and why each may be: `run_id` /
 `expectation_result` (raw provenance of the representative replicate — the fold
-is not a run and has no matcher verdict of its own); `drift_counts` (the
-`"drift:"` namespace is excluded from the namespace terms because `drift_loss`,
-which IS meaned, owns the drift axis); `runtime_ms` /
+is not a run and has no matcher verdict of its own);
 `abort_cause` / cache provenance and friends (they describe ONE execution and
 have no meaningful fold).
 
@@ -1796,7 +1795,7 @@ board's declarative `JudgeSpec` through the SAME builder every real run uses,
 then judge one frozen transcript `k` times (default `DEFAULT_RETEST_K = 3`).
 
 The compared quantity is the `drift_emitted` flag — the bit that becomes (or
-does not become) a `custom:<judge_name>` `DriftCount` on a real run, i.e.
+does not become) a `drift:custom:<judge_name>` `MetricCount` on a real run, i.e.
 the noise the judge injects into the scalar. The disagreement measure
 is pairwise and pure:
 
@@ -2040,7 +2039,7 @@ uv run pytest tests/test_decision_procedure_power.py tests/test_convergence_know
 1. Choose a namespace prefix with the trailing colon (`"mycost:"`) and emit
    `MetricCount(name="mycost:<metric>", count=...)` rows from the reducer (or
    an adapter-side emission the reducer folds through
-   `LossProfile.unified_metrics()`).
+   `LossProfile.scoring_metrics()`).
 2. Add the coefficient to the operator contract's
    `namespace_weights` — sign encodes direction (§1.5): positive =
    higher-is-worse. Zero means "tracked, never scored" — a legitimate first

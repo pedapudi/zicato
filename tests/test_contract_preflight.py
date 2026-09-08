@@ -301,12 +301,21 @@ def _bootstrap(
                 "proposer": stand_in_proposer_block(tmp_path / "foe"),
                 "created_at": "2026-07-01T00:00:00Z",
                 "generation_source_backend": "git",
-                "adapter": adapter_block or DETERMINISTIC_ADAPTER,
-                "runtime": {
-                    "target_call_llm": "zicato_examples.target_0_convergence.mocks:target_llm",
-                    "evaluation_call_llm": "zicato_examples.target_0_convergence.mocks:aux_llm",
+                "adapter": {
+                    **(adapter_block or DETERMINISTIC_ADAPTER),
+                    "mutable_trees": [str(agent_dir or AGENT_DIR)],
                 },
-                "mutable_trees": [str(agent_dir or AGENT_DIR)],
+                "runtime": {},
+                "models": {
+                    "engines": {
+                        "target": {
+                            "call_llm": "zicato_examples.target_0_convergence.mocks:target_llm"
+                        },
+                        "evaluation": {
+                            "call_llm": "zicato_examples.target_0_convergence.mocks:aux_llm"
+                        },
+                    }
+                },
                 **(extra_config or {}),
             }
         )
@@ -782,7 +791,7 @@ def test_preflight_voids_on_infra_abort_instead_of_persisting_a_poisoned_floor(
     import pytest
 
     import zicato.tournament.runner as _runner_mod
-    from zicato.core.types import DriftCount, LossProfile
+    from zicato.core.types import LossProfile, MetricCount
     from zicato.tournament.calibration import NoiseFloorInconclusive, measure_noise_floor
 
     async def _infra_abort_run_single(
@@ -804,7 +813,7 @@ def test_preflight_voids_on_infra_abort_instead_of_persisting_a_poisoned_floor(
             entry_id=entry.id,  # type: ignore[attr-defined]
             generation_id=generation.id,  # type: ignore[attr-defined]
             epoch_id=epoch_id,
-            drift_counts=(DriftCount(kind="off_topic", severity="info", count=0),),
+            metric_counts=(MetricCount(name="drift:off_topic", severity="info", count=0),),
             plan_revisions=0,
             task_failure_ratio=1.0,
             runtime_ms=100,

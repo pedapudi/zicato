@@ -83,22 +83,11 @@ except ImportError:  # pragma: no cover — adk extra optional at import time
 # that output forward into every derived generation, compounding without
 # bound until the disk fills.
 #
-# The zicato tournament worker exports ``ZICATO_RUN_SCRATCH_DIR``: a fresh
-# per-run scratch directory outside the snapshot, discarded when the run
-# ends. ``_output_base`` resolves the on-disk root every tool writes
-# under: the scratch directory when zicato supplied one, else an
-# ``output/`` directory next to this module for a bare standalone run
-# (a developer running the agent directly, with no zicato around).
+# The tournament worker supplies a runtime context with a fresh scratch
+# directory outside the snapshot, discarded when the run ends.
+# ``_output_base`` uses that scratch directory when supplied. Standalone
+# execution writes to an ``output/`` directory next to this module.
 #
-# The env var name is the contract pinned in
-# ``zicato/epoch/snapshot_scope.py`` (SCRATCH_DIR_ENV); it is duplicated
-# here as a bare string so this vendored target has no import dependency
-# on zicato internals.
-# ---------------------------------------------------------------------------
-
-_SCRATCH_DIR_ENV = "ZICATO_RUN_SCRATCH_DIR"
-
-
 def _output_base() -> str:
     """Return the directory run output is written under.
 
@@ -106,7 +95,14 @@ def _output_base() -> str:
     ``output/`` directory next to this module otherwise. The result
     always exists on return.
     """
-    scratch = os.environ.get(_SCRATCH_DIR_ENV)
+    # Standalone target execution does not require the tournament package.
+    try:
+        from zicato.runtime.context import inherited_runtime_context
+    except ImportError:
+        context = None
+    else:
+        context = inherited_runtime_context()
+    scratch = context.run.scratch_dir if context is not None else None
     if scratch:
         base = os.path.join(scratch, "output")
     else:

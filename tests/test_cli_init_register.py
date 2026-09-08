@@ -39,8 +39,8 @@ def test_init_creates_workspace(tmp_path: Path) -> None:
     lineage = json.loads(lineage_path.read_text())
     # The shape the lineage loader reads — a ``nodes``/``edges`` document
     # is rejected as malformed by ``load_lineage`` (issue #124 triage).
-    assert lineage == {"epochs": []}
-    assert load_lineage(workspace).to_dict() == {"epochs": []}
+    assert lineage == {"format_version": 1, "epochs": []}
+    assert load_lineage(workspace).to_dict() == {"format_version": 1, "epochs": []}
 
 
 def test_init_scaffolds_the_proposal_runtime_unfilled(tmp_path: Path) -> None:
@@ -198,8 +198,9 @@ def test_register_writes_entrypoint_and_trees(tmp_path: Path) -> None:
     assert config["instance_id"] == "default"
     assert "created_at" in config
     # register keys written:
-    assert config["adk_entrypoint"] == "my_pkg.agent:root_agent"
-    assert config["mutable_trees"] == [str(src_a), str(src_b)]
+    assert config["adapter"]["entrypoint"] == "my_pkg.agent:root_agent"
+    assert config["adapter"]["mutable_trees"] == [str(src_a), str(src_b)]
+    assert config["contract"]["brief_path"] == str(tmp_path / "brief.md")
     scoring = json.loads((tmp_path / "scoring.json").read_text())
     assert scoring["goldfive"] == {}
 
@@ -235,7 +236,7 @@ def test_register_with_no_mutable_trees(tmp_path: Path) -> None:
     )
     assert result.exit_code == 0, result.output
     config = json.loads((workspace / CONFIG_FILENAME).read_text())
-    assert config["mutable_trees"] == []
+    assert config["adapter"]["mutable_trees"] == []
 
 
 def test_register_writes_proposer_path(tmp_path: Path) -> None:

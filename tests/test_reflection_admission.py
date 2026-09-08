@@ -104,7 +104,7 @@ class _ScriptedRunner:
             entry_id=entry.id,
             generation_id=generation.id,
             epoch_id=epoch_id,
-            drift_counts=(),
+            metric_counts=(),
             plan_revisions=0,
             task_failure_ratio=0.0,
             runtime_ms=1,
@@ -155,7 +155,7 @@ def _settled(champ: str, child: str, decision: str = "promoted") -> dict:
     return {
         "generation_id": child,
         "parent_generation_id": champ,
-        "outcome": decision,
+        "outcome": {"tournament_decision": decision},
     }
 
 

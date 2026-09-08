@@ -3,16 +3,16 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
-from zicato.core.tournament import TournamentDecision
 from zicato.core.types import (
-    DriftMovementActual,
-    ExpectedDriftMovement,
+    ExpectedMetricMovement,
     Experiment,
     HypothesisSpec,
+    MetricMovementActual,
     OutcomeRecord,
     Patch,
 )
@@ -31,8 +31,8 @@ from zicato.epoch import (
     update_experiment_outcome,
     write_experiment,
 )
-from zicato.epoch.journal import read_experiment_contents
-from zicato.query.decisions import canonical_decision, experiment_decision
+from zicato.epoch.journal import read_experiment_body, read_experiment_contents
+from zicato.mutation.applier import apply_patches
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -87,11 +87,9 @@ def _experiment(
         core_idea=core_idea,
         modulating=modulating,
         why=why,
-        expected_drift_movements=(
-            ExpectedDriftMovement(
-                kind="off_topic",
-                direction="decrease",
-                magnitude="medium",
+        expected_metric_movements=(
+            ExpectedMetricMovement(
+                metric_name="drift:off_topic", direction="decrease", magnitude="medium"
             ),
         ),
         expected_pass_rate_delta="+0.0 to +0.15",
@@ -126,18 +124,15 @@ def _outcome(
 ) -> OutcomeRecord:
     return OutcomeRecord(
         ran_at="2026-04-08T12:30:00+00:00",
-        drift_movements=(
-            DriftMovementActual(
-                kind="off_topic",
-                from_rate=0.7,
-                to_rate=0.2,
-                hypothesis_match=True,
+        metric_movements=(
+            MetricMovementActual(
+                metric_name="drift:off_topic", from_value=0.7, to_value=0.2, hypothesis_match=True
             ),
         ),
         pass_rate_delta=0.05,
         drift_loss_delta=-0.18,
-        scalar_score_delta=-0.20,
-        tournament_decision=decision,  # type: ignore[arg-type]
+        scalar_score_delta=-0.2,
+        tournament_decision=decision,
         rejection_reason=rejection_reason,
     )
 
@@ -145,6 +140,28 @@ def _outcome(
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
+
+def test_numeric_patch_preserves_integer_through_record_and_apply(
+    epoch_root: tuple[Path, str], tmp_path: Path
+) -> None:
+    ws, eid = epoch_root
+    value = 2**53 + 1
+    patch = Patch("p1", "limit", "set_numeric", None, value, None, "Adjust limit")
+    write_experiment(ws, eid, "v1", replace(_experiment(), patches=(patch,)))
+    recorded = json.loads(patch_json_path(ws, eid, "v1", "p1").read_text())
+    assert recorded["new_numeric"] == value
+    loaded = read_experiment(ws, eid, "v1").patches
+    assert loaded[0].new_numeric == value
+    source, target = tmp_path / "source", tmp_path / "target"
+    source.mkdir()
+    (source / "config.py").write_text(
+        '# zicato:mutable id="limit"\nLIMIT_DOC = "limit"\nLIMIT = 5\n'
+    )
+    apply_patches(source, loaded, target)
+    assert (target / "config.py").read_text() == (
+        '# zicato:mutable id="limit"\nLIMIT_DOC = "limit"\nLIMIT = 9007199254740993\n'
+    )
 
 
 def test_append_journal_entry_creates_file(epoch_root: tuple[Path, str]) -> None:
@@ -381,164 +398,47 @@ def test_write_experiment_persists_round_index(
     assert read_experiment(ws, eid, "v1").round_index == 2
 
 
-def test_read_experiment_defaults_round_index_when_absent(
-    epoch_root: tuple[Path, str],
+@pytest.mark.parametrize(
+    "field, value",
+    [
+        ("round_index", "2"),
+        ("outcome", "promoted"),
+        ("outcome", {"decision": "promoted"}),
+        ("outcome", {"verdict": "promoted"}),
+    ],
+)
+def test_experiment_refuses_non_writer_record_shapes(
+    epoch_root: tuple[Path, str], field, value
 ) -> None:
-    """A pre-feature experiment.json with no round_index reads as 0 (no crash)."""
     ws, eid = epoch_root
     write_experiment(ws, eid, "v1", _experiment(outcome=_outcome()))
     path = experiment_json_path(ws, eid, "v1")
     body = json.loads(path.read_text())
-    body.pop("round_index", None)
+    body[field] = value
     path.write_text(json.dumps(body))
-    assert read_experiment(ws, eid, "v1").round_index == 0
-
-
-def test_read_experiment_refuses_an_inline_patches_body(
-    epoch_root: tuple[Path, str],
-) -> None:
-    """A body inlining its patches refuses by name rather than reading empty.
-
-    The record referenced its patches inline before they moved to one file
-    each. Under the current rules that key is not read, so the danger is
-    not a crash but a silent one: the experiment would load with no patches
-    at all and every downstream diff would show an empty mutation set. The
-    decode names the shape instead.
-    """
-    ws, eid = epoch_root
-    gdir = generation_dir(ws, eid, "v_inline")
-    gdir.mkdir(parents=True)
-
-    (gdir / "experiment.json").write_text(
-        json.dumps(
-            {
-                "id": "exp_inline",
-                "epoch_id": eid,
-                "generation_id": "v_inline",
-                "parent_generation_id": "v0",
-                "proposed_at": "2026-04-08T12:00:00+00:00",
-                "hypothesis": {
-                    "core_idea": "inline",
-                    "modulating": ["x"],
-                    "why": "history",
-                    "expected_drift_movements": [],
-                    "expected_pass_rate_delta": "+0.0",
-                    "risks": "",
-                },
-                "patches": [
-                    {
-                        "id": "p_inline",
-                        "mutation_id": "x",
-                        "op": "replace",
-                        "new_content": "hello",
-                        "new_numeric": None,
-                        "new_enum": None,
-                        "rationale": "inline",
-                    }
-                ],
-                "outcome": None,
-            }
-        )
-    )
-
-    with pytest.raises(ExperimentRecordError, match="inline 'patches' array"):
-        read_experiment(ws, eid, "v_inline")
-
-
-def _body_with_outcome(eid: str, generation_id: str, outcome: object) -> dict[str, object]:
-    """A minimal stored experiment body carrying one recorded ``outcome``."""
-    return {
-        "id": f"exp_{generation_id}",
-        "epoch_id": eid,
-        "generation_id": generation_id,
-        "parent_generation_id": "v0",
-        "proposed_at": "2026-04-08T12:00:00+00:00",
-        "hypothesis": {
-            "core_idea": "spelling",
-            "modulating": ["x"],
-            "why": "history",
-            "expected_drift_movements": [],
-            "expected_pass_rate_delta": "+0.0",
-            "risks": "",
-        },
-        "patch_ids": [],
-        "outcome": outcome,
-    }
-
-
-def _write_body(ws: Path, eid: str, generation_id: str, body: dict[str, object]) -> None:
-    gdir = generation_dir(ws, eid, generation_id)
-    gdir.mkdir(parents=True)
-    (gdir / "experiment.json").write_text(json.dumps(body))
+    with pytest.raises(ExperimentRecordError):
+        read_experiment(ws, eid, "v1")
+    with pytest.raises(ExperimentRecordError):
+        read_experiment_body(ws, eid, "v1")
 
 
 @pytest.mark.parametrize(
-    ("generation_id", "outcome"),
+    "field,value",
     [
-        ("v_nested_short_key", {"decision": "promoted"}),
-        ("v_nested_verdict_key", {"verdict": "promoted"}),
-        ("v_bare_string", "promoted"),
+        ("scalar_score_delta", "-0.5"),
+        ("operator_override", "false"),
+        ("tournament_decision", "accept"),
     ],
 )
-def test_typed_record_reads_every_on_disk_decision_spelling(
-    epoch_root: tuple[Path, str],
-    generation_id: str,
-    outcome: object,
-) -> None:
-    """A promotion stays a promotion however the record spells it.
-
-    Three spellings of a promotion reach the typed record: the short
-    ``decision`` key, the older ``verdict`` key, and a bare-string outcome
-    that IS the decision. All three resolve through
-    :func:`zicato.core.tournament.recorded_decision_token`, so the record
-    the tournament reads and the classifier the dashboard serves cannot
-    disagree about the same bytes.
-    """
+def test_outcome_refuses_coercion(epoch_root: tuple[Path, str], field, value) -> None:
     ws, eid = epoch_root
-    _write_body(ws, eid, generation_id, _body_with_outcome(eid, generation_id, outcome))
-
-    loaded = read_experiment(ws, eid, generation_id)
-    assert loaded.outcome is not None
-    assert loaded.outcome.tournament_decision is TournamentDecision.PROMOTED
-    assert experiment_decision({"outcome": outcome}) == "promoted"
-
-
-def test_typed_record_and_served_classifier_agree_on_one_body(
-    epoch_root: tuple[Path, str],
-) -> None:
-    """The two readers resolve one body to one decision.
-
-    The regression this pins: the typed decoder used to read only
-    ``tournament_decision`` and default an absent key to ``rejected``,
-    while the classifier read ``decision`` first — so a body recorded as
-    ``{"outcome": {"decision": "promoted"}}`` was a promotion on the wire
-    and a rejection in the typed record.
-    """
-    ws, eid = epoch_root
-    body = _body_with_outcome(eid, "v_agree", {"decision": "promoted", "ran_at": "2026-04-08"})
-    _write_body(ws, eid, "v_agree", body)
-
-    loaded = read_experiment(ws, eid, "v_agree")
-    assert loaded.outcome is not None
-    assert canonical_decision(experiment_decision(body)) == str(loaded.outcome.tournament_decision)
-
-
-def test_outcome_naming_no_decision_reads_as_none(
-    epoch_root: tuple[Path, str],
-) -> None:
-    """An outcome carrying no decision token reads back as ``None``.
-
-    The typed record and the classifier the dashboard serves give the
-    same answer for the same body: no decision was recorded. Neither
-    turns that absence into a rejection.
-    """
-    ws, eid = epoch_root
-    _write_body(ws, eid, "v_silent", _body_with_outcome(eid, "v_silent", {"ran_at": "2026-04-08"}))
-
-    loaded = read_experiment(ws, eid, "v_silent")
-    assert loaded.outcome is not None
-    assert loaded.outcome.tournament_decision is None
-    assert experiment_decision({"outcome": {"ran_at": "2026-04-08"}}) is None
+    write_experiment(ws, eid, "v1", _experiment(outcome=_outcome()))
+    path = experiment_json_path(ws, eid, "v1")
+    body = json.loads(path.read_text())
+    body["outcome"][field] = value
+    path.write_text(json.dumps(body))
+    with pytest.raises(ExperimentRecordError):
+        read_experiment(ws, eid, "v1")
 
 
 def test_typed_record_round_trips_no_decision(epoch_root: tuple[Path, str]) -> None:
@@ -598,7 +498,7 @@ def test_write_experiment_with_zero_patches_omits_patches_dir(
             core_idea="no-op",
             modulating=(),
             why="placeholder",
-            expected_drift_movements=(),
+            expected_metric_movements=(),
             expected_pass_rate_delta="+0.0",
         ),
         patches=(),
@@ -649,7 +549,6 @@ def test_hypothesis_metric_movements_round_trip(epoch_root: tuple[Path, str]) ->
             core_idea=exp.hypothesis.core_idea,
             modulating=exp.hypothesis.modulating,
             why=exp.hypothesis.why,
-            expected_drift_movements=exp.hypothesis.expected_drift_movements,
             expected_pass_rate_delta=exp.hypothesis.expected_pass_rate_delta,
             risks=exp.hypothesis.risks,
             expected_metric_movements=movements,
@@ -671,19 +570,6 @@ def test_hypothesis_metric_movements_round_trip(epoch_root: tuple[Path, str]) ->
     assert updated.hypothesis.expected_metric_movements == movements
 
 
-def test_hypothesis_metric_movements_absent_reads_empty(
-    epoch_root: tuple[Path, str],
-) -> None:
-    """A record written before the field (no key) reads as ``()``."""
-    ws, eid = epoch_root
-    write_experiment(ws, eid, "v1", _experiment())
-    body = json.loads(experiment_json_path(ws, eid, "v1").read_text())
-    del body["hypothesis"]["expected_metric_movements"]
-    experiment_json_path(ws, eid, "v1").write_text(json.dumps(body, indent=2, sort_keys=True))
-    re_read = read_experiment(ws, eid, "v1")
-    assert re_read.hypothesis.expected_metric_movements == ()
-
-
 # ---------------------------------------------------------------------------
 # Recombination provenance (WS-REC): the CONDITIONAL recombined_from key
 # ---------------------------------------------------------------------------
@@ -695,7 +581,7 @@ def test_recombined_from_round_trips(epoch_root: tuple[Path, str]) -> None:
     exp = Experiment(
         id=exp.id,
         epoch_id=exp.epoch_id,
-        generation_id=exp.generation_id,
+        generation_id="v3",
         parent_generation_id=exp.parent_generation_id,
         proposed_at=exp.proposed_at,
         hypothesis=exp.hypothesis,
@@ -737,33 +623,3 @@ def test_recombined_from_key_omitted_at_default(epoch_root: tuple[Path, str]) ->
         "outcome",
     }
     assert read_experiment(ws, eid, "v1").recombined_from == ()
-
-
-def test_recombined_from_absent_from_the_body_reads_empty(
-    epoch_root: tuple[Path, str],
-) -> None:
-    """``recombined_from`` is a conditional key; a body without it reads as ()."""
-    ws, eid = epoch_root
-    gen_dir = generation_dir(ws, eid, "v9")
-    gen_dir.mkdir(parents=True)
-    (gen_dir / "experiment.json").write_text(
-        json.dumps(
-            {
-                "id": "exp_plain",
-                "epoch_id": eid,
-                "generation_id": "v9",
-                "parent_generation_id": "v0",
-                "proposed_at": "2026-01-01T00:00:00+00:00",
-                "hypothesis": {
-                    "core_idea": "plain",
-                    "modulating": [],
-                    "why": "",
-                    "expected_drift_movements": [],
-                    "expected_pass_rate_delta": "",
-                },
-                "patch_ids": [],
-                "outcome": None,
-            }
-        )
-    )
-    assert read_experiment(ws, eid, "v9").recombined_from == ()

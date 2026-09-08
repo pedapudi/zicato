@@ -459,12 +459,14 @@ Two extension points:
    local cache, a replay log — works the same way.
 
 2. **Configure the evaluation callable in the workspace.** Edit
-   `.zicato/config.json` to add a `runtime` block:
+   `.zicato/config.json` to declare named engines:
 
    ```json
-   "runtime": {
-     "target_call_llm":   "pkg.module:target_call_llm",
-     "evaluation_call_llm": "pkg.module:aux_call_llm"
+   "models": {
+     "engines": {
+       "target": {"call_llm": "pkg.module:target_call_llm"},
+       "evaluation": {"call_llm": "pkg.module:aux_call_llm"}
+     }
    }
    ```
 

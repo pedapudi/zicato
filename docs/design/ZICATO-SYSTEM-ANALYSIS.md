@@ -103,7 +103,7 @@ Across many runs of that system under test, zicato:
    not regress on pre-existing pass-rate.
 ```
 
-Two design commitments make this loop legible rather than a black-box optimizer. First, edits are confined to an **annotated mutation surface** — only spans/files the operator marked `# zicato:mutable` are editable, so the search is "improve these strings" and never "rewrite the agent" (`docs/design/RATIONALE.md:13-38`). Second, every proposal is a structured **Experiment = hypothesis + patches**, with the hypothesis (`core_idea`, `why`, `expected_drift_movements`, `risks`, …) recorded *before* the run and matched against actuals *after*, so the journal captures the proposer's reasoning as well as what scored (`docs/design/RATIONALE.md:82-107`). **Epochs** group generations under a frozen evaluation contract (board + proposer brief's `## Forbidden` list + scoring weights) so within-epoch comparison is precise while operator contract changes become explicit epoch boundaries (`docs/design/VOCABULARY.md:83-90`).
+Two design commitments make this loop legible rather than a black-box optimizer. First, edits are confined to an **annotated mutation surface** — only spans/files the operator marked `# zicato:mutable` are editable, so the search is "improve these strings" and never "rewrite the agent" (`docs/design/RATIONALE.md:13-38`). Second, every proposal is a structured **Experiment = hypothesis + patches**, with the hypothesis (`core_idea`, `why`, `expected_metric_movements`, `risks`, …) recorded *before* the run and matched against actuals *after*, so the journal captures the proposer's reasoning as well as what scored (`docs/design/RATIONALE.md:82-107`). **Epochs** group generations under a frozen evaluation contract (board + proposer brief's `## Forbidden` list + scoring weights) so within-epoch comparison is precise while operator contract changes become explicit epoch boundaries (`docs/design/VOCABULARY.md:83-90`).
 
 ### The three pluggable seams
 
@@ -289,7 +289,7 @@ The orchestrator routes the duel's `GateOutcome` through the `SelectionStrategy`
     _gen_fields = _generalization_fields(child_scalar, tournament_result)
     outcome_record = OutcomeRecord(
         ran_at=_now_iso(),
-        drift_movements=(),  # detailed per-kind movements out-of-scope for v0
+        metric_movements=(),  # detailed per-kind movements out-of-scope for v0
         pass_rate_delta=tournament_result.outcome.delta_pass_rate,
         drift_loss_delta=(
             float(tournament_result.child_agg.get("drift_loss_mean", 0.0))
@@ -884,7 +884,7 @@ src/zicato/proposer/structured.py:164-181
 }
 ```
 
-The `HypothesisSpec` half additionally requires falsifiable predictions — `expected_drift_movements` / `expected_metric_movements` (direction + magnitude enums) and `expected_pass_rate_delta`. These *are* graded against actuals after a tournament settles: `grade_hypothesis_predictions` (`src/zicato/tournament/detail.py:1184`) joins the expected movements against the realised outcome by sign and range-normalised magnitude bucket, and the fraction is folded back into experiment memory as `PriorExperiment.prediction_accuracy` (`src/zicato/index/query.py:485,601`) and surfaced to the proposer as a banded `prediction:low|medium|high` annotation (`src/zicato/proposer/prompts.py:530,588`). What the band is not is **actionable**: it is displayed and never used to bias best-of-N selection, weight proposals, or gate anything, and a repository-wide search finds no reader of `prediction_accuracy` outside the display path. That advisory-only status, rather than a missing implementation, is the gap the recommendations below address.
+The `HypothesisSpec` half additionally requires falsifiable predictions — `expected_metric_movements` / `expected_metric_movements` (direction + magnitude enums) and `expected_pass_rate_delta`. These *are* graded against actuals after a tournament settles: `grade_hypothesis_predictions` (`src/zicato/tournament/detail.py:1184`) joins the expected movements against the realised outcome by sign and range-normalised magnitude bucket, and the fraction is folded back into experiment memory as `PriorExperiment.prediction_accuracy` (`src/zicato/index/query.py:485,601`) and surfaced to the proposer as a banded `prediction:low|medium|high` annotation (`src/zicato/proposer/prompts.py:530,588`). What the band is not is **actionable**: it is displayed and never used to bias best-of-N selection, weight proposals, or gate anything, and a repository-wide search finds no reader of `prediction_accuracy` outside the display path. That advisory-only status, rather than a missing implementation, is the gap the recommendations below address.
 
 ### The closed tool surface
 

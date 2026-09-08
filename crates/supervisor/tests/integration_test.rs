@@ -113,7 +113,7 @@ fn write_state(paths: &reader::WorkspacePaths) {
         "started_at": now,
         "last_progress": now,
         "phase": "running",
-        "progress": 0.25,
+        "reported_progress": 0.25,
     });
     std::fs::write(
         paths.active_runs_dir().join("run-1.json"),
@@ -164,6 +164,8 @@ async fn get_endpoints_return_state() {
         .await
         .unwrap();
     assert_eq!(r[0]["run_id"], "run-1");
+    assert_eq!(r[0]["reported_progress"], 0.25);
+    assert!(r[0]["progress"].is_null());
 
     let r: Value = client
         .get(format!("{base}/api/active-tournament"))
@@ -220,9 +222,9 @@ fn write_full_epoch(paths: &reader::WorkspacePaths, id: &str) {
             "expectation": {"kind": "predicate", "spec": "x:y"},
         }),
         serde_json::json!({
-            "id": "aliased_budget",
+            "id": "short_task",
             "kind": "single_turn",
-            "budget_s": 120,
+            "wall_clock_budget_seconds": 120,
             "weight": 0.5,
             "input": "short input",
         }),
@@ -244,10 +246,11 @@ fn write_full_epoch(paths: &reader::WorkspacePaths, id: &str) {
     ]);
     std::fs::write(dir.join("mutations.json"), muts.to_string()).unwrap();
 
-    let ws_cfg = serde_json::json!({
-        "adk_entrypoint": "kossel_run:root_agent",
+    let ws_cfg = serde_json::json!({"adapter": {
+        "kind": "adk",
+        "entrypoint": "kossel_run:root_agent",
         "mutable_trees": ["/abs/path/to/agent"],
-    });
+    }});
     std::fs::write(paths.workspace.join("config.json"), ws_cfg.to_string()).unwrap();
 }
 
@@ -280,15 +283,15 @@ async fn epoch_endpoint_returns_full_definition() {
     assert_eq!(board[0]["entry_id"], "waffles_single");
     assert_eq!(board[0]["kind"], "single_turn");
     assert_eq!(board[0]["expectation_kind"], "predicate");
-    assert_eq!(board[0]["budget_s"], 900.0);
+    assert_eq!(board[0]["wall_clock_budget_seconds"], 900.0);
     assert_eq!(board[0]["weight"], 1.0);
     assert_eq!(board[0]["tags"][0], "presentation");
     // input_preview is truncated.
     let preview = board[0]["input_preview"].as_str().unwrap();
     assert!(preview.ends_with("..."), "got: {preview}");
     assert!(preview.chars().count() <= 123);
-    // budget_s alias resolved; missing expectation -> null.
-    assert_eq!(board[1]["budget_s"], 120.0);
+    // A missing expectation remains null.
+    assert_eq!(board[1]["wall_clock_budget_seconds"], 120.0);
     assert!(board[1]["expectation_kind"].is_null());
 
     assert_eq!(r["brief"], "# full brief text\nbody");
@@ -535,32 +538,6 @@ async fn brief_post_writes_replacement_file() {
     let marker = paths.control_dir().join("rubric_replacement.txt");
     let got = std::fs::read_to_string(&marker).unwrap();
     assert_eq!(got, payload);
-
-    let _ = shutdown.send(());
-}
-
-#[tokio::test]
-async fn epoch_endpoint_brief_falls_back_to_legacy_rubric_md() {
-    let (_t, paths) = make_workspace();
-    write_full_epoch(&paths, "e_legacy");
-    // Pre-rename epoch on disk: replace `brief.md` with the legacy
-    // `rubric.md`. The endpoint must still surface it under `brief`.
-    let dir = paths.epochs.join("e_legacy");
-    std::fs::remove_file(dir.join("brief.md")).unwrap();
-    std::fs::write(dir.join("rubric.md"), "# legacy brief text").unwrap();
-    let (handle, shutdown) = start_server(paths.clone(), true).await;
-    let base = format!("http://{}", handle.addr);
-    let client = reqwest::Client::new();
-
-    let r: Value = client
-        .get(format!("{base}/api/epoch"))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-    assert_eq!(r["brief"], "# legacy brief text");
 
     let _ = shutdown.send(());
 }
@@ -825,7 +802,7 @@ fn write_active_run(
         "deadline": now + deadline_offset,
         "wall_clock_budget_seconds": 900.0,
         "phase": "running",
-        "progress": 0.5,
+        "reported_progress": 0.5,
     });
     std::fs::write(
         paths.active_runs_dir().join(format!("{run_id}.json")),
@@ -1942,7 +1919,10 @@ async fn diff_containment_quarantines_an_out_of_bounds_child_end_to_end() {
     // Harness: the only mutable tree is "agent".
     std::fs::write(
         paths.workspace.join("config.json"),
-        serde_json::json!({"adk_entrypoint": "m:a", "mutable_trees": ["/reg/agent"]}).to_string(),
+        serde_json::json!({"adapter": {
+            "kind": "adk", "entrypoint": "m:a", "mutable_trees": ["/reg/agent"]
+        }})
+        .to_string(),
     )
     .unwrap();
     std::fs::write(paths.current_epoch_marker(), "e1").unwrap();
@@ -2067,7 +2047,10 @@ async fn diff_containment_passes_an_in_bounds_child_end_to_end() {
     let (_t, paths) = make_workspace();
     std::fs::write(
         paths.workspace.join("config.json"),
-        serde_json::json!({"adk_entrypoint": "m:a", "mutable_trees": ["/reg/agent"]}).to_string(),
+        serde_json::json!({"adapter": {
+            "kind": "adk", "entrypoint": "m:a", "mutable_trees": ["/reg/agent"]
+        }})
+        .to_string(),
     )
     .unwrap();
     std::fs::write(paths.current_epoch_marker(), "e1").unwrap();

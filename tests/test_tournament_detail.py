@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 
+from zicato.index.schema import apply_schema
 from zicato.tournament.detail import (
     IndexUnavailableError,
     assemble_bracket,
@@ -40,41 +41,6 @@ EPOCH = "2026-05_e0"
 # Synthetic index fixture
 # ---------------------------------------------------------------------------
 
-_SCHEMA = """
-CREATE TABLE epochs (epoch_id TEXT, name TEXT, created_at TEXT);
-CREATE TABLE generations (
-    epoch_id TEXT, generation_id TEXT, parent_generation_id TEXT, promoted INTEGER
-);
-CREATE TABLE experiments (
-    epoch_id TEXT, generation_id TEXT,
-    hypothesis_core_idea TEXT, hypothesis_why TEXT, hypothesis_json TEXT,
-    tournament_decision TEXT, rejection_reason TEXT,
-    scalar_score_delta REAL, drift_loss_delta REAL, pass_rate_delta REAL,
-    outcome_json TEXT
-);
-CREATE TABLE patches (
-    patch_id TEXT, epoch_id TEXT, generation_id TEXT,
-    mutation_id TEXT, op TEXT, rationale TEXT
-);
-CREATE TABLE runs (
-    run_id TEXT, epoch_id TEXT, generation_id TEXT, entry_id TEXT,
-    runtime_ms INTEGER, aborted INTEGER
-);
-CREATE TABLE loss_profiles (
-    run_id TEXT, epoch_id TEXT, generation_id TEXT, entry_id TEXT,
-    drift_loss REAL, pass_fail INTEGER, loss_json TEXT
-);
-CREATE TABLE metric_counts (
-    run_id TEXT, namespace TEXT, name TEXT, severity TEXT, count REAL
-);
-CREATE TABLE tournaments (
-    tournament_id TEXT, epoch_id TEXT,
-    parent_generation_id TEXT, child_generation_id TEXT,
-    decision TEXT, parent_scalar REAL, child_scalar REAL, delta_scalar REAL,
-    rejection_reason TEXT, ran_at TEXT
-);
-"""
-
 
 def _hypothesis(core: str, movements: list[dict]) -> str:
     return json.dumps(
@@ -87,16 +53,11 @@ def _hypothesis(core: str, movements: list[dict]) -> str:
     )
 
 
-def _outcome(decision: str, movements: list[dict], child_scalar: float) -> str:
+def _outcome(decision: str, movements: list[dict]) -> str:
     return json.dumps(
         {
             "tournament_decision": decision,
             "metric_movements": movements,
-            "child": {
-                "scalar": child_scalar,
-                "scalar_components": {"drift": child_scalar * 0.6, "pass": child_scalar * 0.4},
-                "namespace_aggregates": {"drift:": child_scalar * 0.6},
-            },
         }
     )
 
@@ -105,13 +66,15 @@ def _seed_index(path: Path) -> None:
     """Create and populate the synthetic four-generation index."""
     conn = sqlite3.connect(str(path))
     try:
-        conn.executescript(_SCHEMA)
+        apply_schema(conn)
         conn.execute(
-            "INSERT INTO epochs VALUES (?, ?, ?)", (EPOCH, "e0", "2026-05-01T00:00:00+00:00")
+            "INSERT INTO epochs (epoch_id, created_at) VALUES (?,?)",
+            (EPOCH, "2026-05-01T00:00:00+00:00"),
         )
         # generations: v0 seed, v1 rejected, v2 promoted, v3 rejected
         conn.executemany(
-            "INSERT INTO generations VALUES (?, ?, ?, ?)",
+            "INSERT INTO generations (epoch_id, generation_id, parent_generation_id, "
+            "promoted) VALUES (?, ?, ?, ?)",
             [
                 (EPOCH, "v0", None, 1),
                 (EPOCH, "v1", "v0", 0),
@@ -122,7 +85,10 @@ def _seed_index(path: Path) -> None:
         # experiments — v1/v2/v3 are challengers; v1 makes a hand-built
         # prediction we grade in test_hypothesis_ledger.
         conn.execute(
-            "INSERT INTO experiments VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO experiments (epoch_id, generation_id, hypothesis_core_idea, "
+            "hypothesis_why, hypothesis_json, tournament_decision, rejection_reason, "
+            "scalar_score_delta, drift_loss_delta, pass_rate_delta, outcome_json) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (
                 EPOCH,
                 "v1",
@@ -161,12 +127,14 @@ def _seed_index(path: Path) -> None:
                             "to_value": 900.0,
                         },
                     ],
-                    child_scalar=1.30,
                 ),
             ),
         )
         conn.execute(
-            "INSERT INTO experiments VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO experiments (epoch_id, generation_id, hypothesis_core_idea, "
+            "hypothesis_why, hypothesis_json, tournament_decision, rejection_reason, "
+            "scalar_score_delta, drift_loss_delta, pass_rate_delta, outcome_json) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (
                 EPOCH,
                 "v2",
@@ -190,13 +158,15 @@ def _seed_index(path: Path) -> None:
                 _outcome(
                     "promoted",
                     [{"metric_name": "drift:off_topic", "from_value": 4.0, "to_value": 0.0}],
-                    child_scalar=0.60,
                 ),
             ),
         )
         # v3 — rejected, NULL outcome_json (partial-data case).
         conn.execute(
-            "INSERT INTO experiments VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO experiments (epoch_id, generation_id, hypothesis_core_idea, "
+            "hypothesis_why, hypothesis_json, tournament_decision, rejection_reason, "
+            "scalar_score_delta, drift_loss_delta, pass_rate_delta, outcome_json) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (
                 EPOCH,
                 "v3",
@@ -213,7 +183,8 @@ def _seed_index(path: Path) -> None:
         )
         # patches — mp_a patched by v1+v2, mp_b by v3 only.
         conn.executemany(
-            "INSERT INTO patches VALUES (?,?,?,?,?,?)",
+            "INSERT INTO patches (patch_id, epoch_id, generation_id, mutation_id, op, "
+            "rationale) VALUES (?,?,?,?,?,?)",
             [
                 ("p1", EPOCH, "v1", "mp_a", "replace", "tighten"),
                 ("p2", EPOCH, "v2", "mp_a", "replace", "add planning"),
@@ -222,7 +193,8 @@ def _seed_index(path: Path) -> None:
         )
         # runs — two board entries (e1, e2) per challenger generation.
         conn.executemany(
-            "INSERT INTO runs VALUES (?,?,?,?,?,?)",
+            "INSERT INTO runs (run_id, epoch_id, generation_id, entry_id, runtime_ms, "
+            "aborted) VALUES (?,?,?,?,?,?)",
             [
                 ("r_v0_e1", EPOCH, "v0", "e1", 1000, 0),
                 ("r_v0_e2", EPOCH, "v0", "e2", 1200, 0),
@@ -235,7 +207,8 @@ def _seed_index(path: Path) -> None:
         )
         # loss_profiles — v0 baseline, v2 improves e1 / regresses e2.
         conn.executemany(
-            "INSERT INTO loss_profiles VALUES (?,?,?,?,?,?,?)",
+            "INSERT INTO loss_profiles (run_id, epoch_id, generation_id, entry_id, "
+            "drift_loss, pass_fail, loss_json) VALUES (?,?,?,?,?,?,?)",
             [
                 ("r_v0_e1", EPOCH, "v0", "e1", 2.0, 1, "{}"),
                 ("r_v0_e2", EPOCH, "v0", "e2", 1.0, 1, "{}"),
@@ -246,7 +219,8 @@ def _seed_index(path: Path) -> None:
         )
         # metric_counts — give a range so magnitude bucketing has a denom.
         conn.executemany(
-            "INSERT INTO metric_counts VALUES (?,?,?,?,?)",
+            "INSERT INTO metric_counts (run_id, namespace, name, severity, count) "
+            "VALUES (?,?,?,?,?)",
             [
                 ("r_v0_e1", "drift:", "drift:off_topic", "info", 4.0),
                 ("r_v0_e2", "drift:", "drift:off_topic", "info", 8.0),
@@ -256,7 +230,9 @@ def _seed_index(path: Path) -> None:
         )
         # tournaments — v1 vs v0, v2 vs v0, v3 vs v2.
         conn.executemany(
-            "INSERT INTO tournaments VALUES (?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO tournaments (tournament_id, epoch_id, parent_generation_id, "
+            "child_generation_id, decision, parent_scalar, child_scalar, "
+            "delta_scalar, rejection_reason, ran_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
             [
                 ("t1", EPOCH, "v0", "v1", "rejected", 1.0, 1.30, 0.30, "scalar_regression", "x"),
                 ("t2", EPOCH, "v0", "v2", "promoted", 1.0, 0.60, -0.40, "", "x"),
@@ -376,7 +352,7 @@ def test_matchup_detail_null_outcome_graceful(index_db: Path) -> None:
     detail = matchup_detail(index_db, EPOCH, "v3")
     assert detail.challenger_generation_id == "v3"
     assert detail.gate_verdict.decision == "rejected"
-    # outcome_json was NULL -> child scalar falls back to tournaments row.
+    # Absolute scalars remain available when no outcome was recorded.
     assert detail.scalar_breakdown["child"]["scalar"] == 0.60
 
 
@@ -385,14 +361,30 @@ def test_matchup_detail_null_outcome_graceful(index_db: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_scalar_breakdown_components(index_db: Path) -> None:
-    """scalar_breakdown surfaces per-side scalar + components."""
+def test_scalar_breakdown_uses_indexed_measurements(index_db: Path) -> None:
+    """Only indexed tournament measurements supply absolute scalars."""
     breakdown = scalar_breakdown(index_db, EPOCH, "v2")
-    assert breakdown["child"]["scalar"] == 0.60
-    assert breakdown["parent"]["scalar"] == 1.0  # from tournaments parent_scalar
-    assert "drift" in breakdown["child"]["components"]
+    assert breakdown["child"] == {"scalar": 0.60}
+    assert breakdown["parent"] == {"scalar": 1.0}
     assert breakdown["scalar_score_delta"] == -0.40
     assert json.dumps(breakdown)
+
+    with sqlite3.connect(index_db) as conn:
+        conn.execute(
+            "UPDATE experiments SET outcome_json=? WHERE epoch_id=? AND generation_id=?",
+            (json.dumps({"child": {"scalar": 99.0}, "parent_scalar": 88.0}), EPOCH, "v2"),
+        )
+    assert scalar_breakdown(index_db, EPOCH, "v2") == breakdown
+
+    with sqlite3.connect(index_db) as conn:
+        conn.execute(
+            "UPDATE tournaments SET child_scalar=NULL, parent_scalar=NULL "
+            "WHERE epoch_id=? AND child_generation_id=?",
+            (EPOCH, "v2"),
+        )
+    missing = scalar_breakdown(index_db, EPOCH, "v2")
+    assert missing["child"] == {"scalar": None}
+    assert missing["parent"] == {"scalar": None}
 
 
 # ---------------------------------------------------------------------------
@@ -507,11 +499,12 @@ def test_optimization_trajectory_plateau_flag(tmp_path: Path) -> None:
     path = tmp_path / "flat.db"
     conn = sqlite3.connect(str(path))
     try:
-        conn.executescript(_SCHEMA)
-        conn.execute("INSERT INTO epochs VALUES (?,?,?)", (EPOCH, "e0", "x"))
+        apply_schema(conn)
+        conn.execute("INSERT INTO epochs (epoch_id, created_at) VALUES (?,?)", (EPOCH, "x"))
         # v0 seed + v1/v2/v3 all promoted, scalar never improves (1.0 flat).
         conn.executemany(
-            "INSERT INTO generations VALUES (?,?,?,?)",
+            "INSERT INTO generations (epoch_id, generation_id, parent_generation_id, "
+            "promoted) VALUES (?,?,?,?)",
             [
                 (EPOCH, "v0", None, 1),
                 (EPOCH, "v1", "v0", 1),
@@ -520,7 +513,9 @@ def test_optimization_trajectory_plateau_flag(tmp_path: Path) -> None:
             ],
         )
         conn.executemany(
-            "INSERT INTO tournaments VALUES (?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO tournaments (tournament_id, epoch_id, parent_generation_id, "
+            "child_generation_id, decision, parent_scalar, child_scalar, "
+            "delta_scalar, rejection_reason, ran_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
             [
                 ("t1", EPOCH, "v0", "v1", "promoted", 1.0, 1.0, 0.0, "", "x"),
                 ("t2", EPOCH, "v1", "v2", "promoted", 1.0, 1.0, 0.0, "", "x"),
@@ -542,10 +537,11 @@ def test_optimization_trajectory_improving_not_plateau(tmp_path: Path) -> None:
     path = tmp_path / "improving.db"
     conn = sqlite3.connect(str(path))
     try:
-        conn.executescript(_SCHEMA)
-        conn.execute("INSERT INTO epochs VALUES (?,?,?)", (EPOCH, "e0", "x"))
+        apply_schema(conn)
+        conn.execute("INSERT INTO epochs (epoch_id, created_at) VALUES (?,?)", (EPOCH, "x"))
         conn.executemany(
-            "INSERT INTO generations VALUES (?,?,?,?)",
+            "INSERT INTO generations (epoch_id, generation_id, parent_generation_id, "
+            "promoted) VALUES (?,?,?,?)",
             [
                 (EPOCH, "v0", None, 1),
                 (EPOCH, "v1", "v0", 1),
@@ -554,7 +550,9 @@ def test_optimization_trajectory_improving_not_plateau(tmp_path: Path) -> None:
             ],
         )
         conn.executemany(
-            "INSERT INTO tournaments VALUES (?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO tournaments (tournament_id, epoch_id, parent_generation_id, "
+            "child_generation_id, decision, parent_scalar, child_scalar, "
+            "delta_scalar, rejection_reason, ran_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
             [
                 ("t1", EPOCH, "v0", "v1", "promoted", 3.0, 2.5, -0.5, "", "x"),
                 ("t2", EPOCH, "v1", "v2", "promoted", 2.5, 2.0, -0.5, "", "x"),
@@ -601,14 +599,18 @@ def test_tournament_cost_no_promotions(tmp_path: Path) -> None:
     path = tmp_path / "norp.db"
     conn = sqlite3.connect(str(path))
     try:
-        conn.executescript(_SCHEMA)
-        conn.execute("INSERT INTO epochs VALUES (?,?,?)", (EPOCH, "e0", "x"))
+        apply_schema(conn)
+        conn.execute("INSERT INTO epochs (epoch_id, created_at) VALUES (?,?)", (EPOCH, "x"))
         conn.executemany(
-            "INSERT INTO generations VALUES (?,?,?,?)",
+            "INSERT INTO generations (epoch_id, generation_id, parent_generation_id, "
+            "promoted) VALUES (?,?,?,?)",
             [(EPOCH, "v0", None, 1), (EPOCH, "v1", "v0", 0)],
         )
         conn.execute(
-            "INSERT INTO experiments VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO experiments (epoch_id, generation_id, hypothesis_core_idea, "
+            "hypothesis_why, hypothesis_json, tournament_decision, rejection_reason, "
+            "scalar_score_delta, drift_loss_delta, pass_rate_delta, outcome_json) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (EPOCH, "v1", "x", "y", "{}", "rejected", "r", None, None, None, None),
         )
         conn.commit()
@@ -630,7 +632,7 @@ def test_empty_epoch_graceful(tmp_path: Path) -> None:
     path = tmp_path / "empty.db"
     conn = sqlite3.connect(str(path))
     try:
-        conn.executescript(_SCHEMA)
+        apply_schema(conn)
         conn.commit()
     finally:
         conn.close()

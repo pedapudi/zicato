@@ -20,7 +20,6 @@ from __future__ import annotations
 
 from zicato.core import (
     BoardEntry,
-    DriftCount,
     ExpectationResult,
     JudgeLoss,
     LossProfile,
@@ -88,7 +87,7 @@ def test_a_zeroed_judge_is_unadvertised_but_still_validator_accepted() -> None:
           "expected_pass_rate_delta": "+0",
           "risks": "",
           "expected_metric_movements": [
-            {"metric_name": "ignored_judge", "direction": "decrease",
+            {"metric_name": "judge:ignored_judge", "direction": "decrease",
              "magnitude": "medium"}]},
          "patches": [{"op": "replace", "mutation_id": "m1",
                       "new_content": "x", "rationale": "y"}]}
@@ -99,7 +98,7 @@ def test_a_zeroed_judge_is_unadvertised_but_still_validator_accepted() -> None:
         mutations_by_id={"m1": _MutationStub()},
         custom_judge_names=_declared_custom_judge_names([], _WEIGHTED),
     )
-    assert experiment.hypothesis.expected_metric_movements[0].metric_name == "ignored_judge"
+    assert experiment.hypothesis.expected_metric_movements[0].metric_name == "judge:ignored_judge"
 
 
 def test_pass_rate_is_named_and_not_ranked_against_drift() -> None:
@@ -140,7 +139,6 @@ def test_namespace_metric_names_come_from_the_round_s_own_losses() -> None:
         entry_id="e",
         generation_id="v0",
         epoch_id="e0",
-        drift_counts=(),
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=1,
@@ -175,7 +173,7 @@ def _loss_with(judge: str, judge_loss: float, drift_loss: float) -> LossProfile:
         entry_id="e",
         generation_id="v0",
         epoch_id="e0",
-        drift_counts=(DriftCount(kind="off_topic", severity="warning", count=1),),
+        metric_counts=(MetricCount(name="drift:off_topic", severity="warning", count=1),),
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=1,

@@ -233,11 +233,18 @@ def _bootstrap_t0(tmp_path: Path, *, every_n: int) -> tuple[Path, str]:
                 "adapter": {
                     "kind": "import",
                     "factory": "zicato_examples.target_0_convergence.harness:make_adapter",
+                    "mutable_trees": [str(AGENT_DIR)],
                 },
-                "mutable_trees": [str(AGENT_DIR)],
-                "runtime": {
-                    "target_call_llm": "zicato_examples.target_0_convergence.mocks:target_llm",
-                    "evaluation_call_llm": "zicato_examples.target_0_convergence.mocks:aux_llm",
+                "runtime": {},
+                "models": {
+                    "engines": {
+                        "target": {
+                            "call_llm": "zicato_examples.target_0_convergence.mocks:target_llm"
+                        },
+                        "evaluation": {
+                            "call_llm": "zicato_examples.target_0_convergence.mocks:aux_llm"
+                        },
+                    }
                 },
             }
         )
@@ -393,9 +400,14 @@ def _bootstrap_swiss_with_placebo(tmp_path: Path, *, field_size: int) -> tuple[P
                 "created_at": "2026-05-31T00:00:00Z",
                 "generation_source_backend": "directory",
                 "adapter": {"kind": "import", "factory": "tests._stub_adapter:make_stub_adapter"},
-                "runtime": {
-                    "target_call_llm": "tests._orchestrator_harness:target_call_llm",
-                    "evaluation_call_llm": "tests._orchestrator_harness:evaluation_call_llm",
+                "runtime": {},
+                "models": {
+                    "engines": {
+                        "target": {"call_llm": "tests._orchestrator_harness:target_call_llm"},
+                        "evaluation": {
+                            "call_llm": "tests._orchestrator_harness:evaluation_call_llm"
+                        },
+                    }
                 },
             }
         )

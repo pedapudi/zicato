@@ -23,8 +23,6 @@ class ContractSources:
         Board file. Null selects board.jsonl beside the workspace directory.
     brief_path:
         Proposer brief file. Null selects brief.md beside the workspace directory.
-    rubric_path:
-        Alternate persisted brief path used by existing registration commands.
     scoring_path:
         Scoring file. Null selects scoring.json beside the workspace directory.
     proposer_path:
@@ -35,7 +33,6 @@ class ContractSources:
 
     board_path: str | None = None
     brief_path: str | None = None
-    rubric_path: str | None = None
     scoring_path: str | None = None
     proposer_path: str | None = None
     proposer_static_checks: tuple[str, ...] = ()
@@ -70,7 +67,7 @@ class WorkspaceDeclaration(ZicatoConfig):
     Fields
     ------
     runtime:
-        Runtime controls and importable role declarations.
+        Runtime controls and external proposer selection.
     instance_id:
         Workspace label recorded by initialization.
     created_at:
@@ -88,25 +85,12 @@ class WorkspaceDeclaration(ZicatoConfig):
         explicitly configured external proposer class, when one is present.
     contract:
         Live board, brief, scoring, and proposer skill locations.
-    mutable_trees:
-        Candidate source directories recorded by workspace registration.
-    source_roots:
-        Source directories searched for mutation markers.
-    adk_entrypoint:
-        Entrypoint recorded by the existing built-in adapter registration command.
-    evaluation_call_llm:
-        Importable evaluation callable accepted by standalone reporting commands.
-    evaluation_model:
-        Model name for standalone evaluation and reporting calls.
     calibrate_noise_floor:
         Number of unchanged-system draws that estimate the epoch's noise floor.
         Null skips an explicit calibration request.
     contract_preflight:
         Explicit unchanged-system draw count for contract preflight. Null uses
         the runtime preflight mode and its default draw count.
-    harmonograf_url:
-        External telemetry URL accepted by existing workspace declarations.
-        The integration block supplies the corresponding invocation setting.
     storage_gc:
         Optional retention policy for rejected generation source trees.
     """
@@ -126,24 +110,12 @@ class WorkspaceDeclaration(ZicatoConfig):
         default_factory=ContractSources,
         metadata={"scope": "evaluation-contract", "rolls_epoch": True},
     )
-    mutable_trees: tuple[str, ...] = field(
-        default=(), metadata={"scope": "evaluation-contract", "rolls_epoch": True}
-    )
-    source_roots: tuple[str, ...] = field(
-        default=(), metadata={"scope": "evaluation-contract", "rolls_epoch": True}
-    )
-    adk_entrypoint: str = field(
-        default="", metadata={"scope": "evaluation-contract", "rolls_epoch": True}
-    )
-    evaluation_call_llm: str | None = None
-    evaluation_model: str = ""
     calibrate_noise_floor: int | None = field(
         default=None, metadata={"constraint": KnobConstraint(minimum=2, allow_none=True)}
     )
     contract_preflight: int | None = field(
         default=None, metadata={"constraint": KnobConstraint(minimum=2, allow_none=True)}
     )
-    harmonograf_url: str = ""
     storage_gc: SnapshotRetention = field(default_factory=SnapshotRetention)
 
 

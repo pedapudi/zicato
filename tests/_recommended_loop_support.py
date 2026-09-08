@@ -17,7 +17,6 @@ from zicato.core.measurement import MeasurementDraw, MeasurementPurpose
 from zicato.core.scoring_config import ScoringWeights
 from zicato.epoch.contract import scoring_to_canon
 from zicato.epoch.lifecycle import new_epoch
-from zicato.epoch.snapshot_scope import SCRATCH_DIR_ENV
 from zicato_examples.target_0_convergence.harness import DeterministicPolicyAdapter
 
 EXAMPLE_ROOT = Path(example.__file__).resolve().parent
@@ -51,7 +50,8 @@ class SourceRecordingSession:
             signal.write_text(json.dumps({"pid": os.getpid(), "generation": generation}))
             await asyncio.Event().wait()
         result = await self.inner.run(entry, sinks, config)
-        (Path(os.environ[SCRATCH_DIR_ENV]) / "evaluated-source.json").write_text(
+        assert config.run_context is not None and config.run_context.scratch_dir is not None
+        (config.run_context.scratch_dir / "evaluated-source.json").write_text(
             json.dumps({"source_digest": self.source_digest, "generation": generation})
         )
         return result
@@ -95,14 +95,14 @@ def bootstrap(workspace_parent: Path) -> tuple[Path, str, dict[str, Any]]:
                 "adapter": {
                     "kind": "import",
                     "factory": "tests._recommended_loop_support:make_adapter",
+                    "mutable_trees": [str(EXAMPLE_ROOT / "agent")],
                 },
-                "mutable_trees": [str(EXAMPLE_ROOT / "agent")],
-                "runtime": {
-                    "propose_parallelism": 2,
-                    "parallelism": 2,
-                    "seed": 17,
-                    "target_call_llm": "tests._best_of_n_slate_support:target_llm",
-                    "evaluation_call_llm": "tests._best_of_n_slate_support:slate_aux_llm",
+                "runtime": {"propose_parallelism": 2, "parallelism": 2, "seed": 17},
+                "models": {
+                    "engines": {
+                        "target": {"call_llm": "tests._best_of_n_slate_support:target_llm"},
+                        "evaluation": {"call_llm": "tests._best_of_n_slate_support:slate_aux_llm"},
+                    }
                 },
             }
         )

@@ -28,8 +28,8 @@ Honesty rules (the whole reason this is a typed reader and not a dict of floats)
 
 What each aggregate means
 -------------------------
-* **Validator-failure rates** — per post-apply check code (``A1``…``A4``, from
-  :data:`zicato.mutation.validator.POST_APPLY_CHECKS`), the fraction of
+* **Validator-failure rates** — for each failure name in
+  :data:`zicato.mutation.validator.POST_APPLY_CHECKS`, the fraction of
   PROPOSAL ATTEMPTS that hit that check. Classification is structural
   (:func:`~zicato.mutation.validator.classify_post_apply_error` reads the
   code the validator stamps); an error carrying no recognised code counts under
@@ -353,7 +353,7 @@ def _read_rounds(
       same way: a call spent on an attempt that later died was still spent.
 
     Reading the raw events also recovers what the fold discards: the per-attempt
-    grouping the A1–A4 rates are defined over (the fold flattens every attempt's
+    grouping the post-apply failure rates use (the fold flattens every attempt's
     errors into one tuple) and the ``revise`` flag that separates a re-sample
     from an ordinary slate slot (the fold folds its veto in with the slate's).
 
@@ -378,9 +378,8 @@ def _classify_attempts(
 ) -> tuple[dict[str, int], int]:
     """Count attempts hitting each check code; return ``(per_code, failed)``.
 
-    An attempt is counted at most ONCE per code however many errors of that
-    code it raised — the rate is "attempts that hit A4" rather than "A4
-    errors".
+    Each attempt counts at most once per failure name, even when several
+    error messages report that failure.
     """
     per_code: dict[str, int] = dict.fromkeys((*POST_APPLY_CHECKS, UNCLASSIFIED), 0)
     failed = 0

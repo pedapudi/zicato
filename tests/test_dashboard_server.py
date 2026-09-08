@@ -18,11 +18,18 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
-from tests._workspace_support import write_tournament
+from tests._workspace_support import experiment_record, write_epoch, write_lineage, write_tournament
+from zicato.core import ScoringWeights
 from zicato.core.mutation import MutationPoint
 from zicato.dashboard.server import create_app
+from zicato.epoch.journal import patch_body
+from zicato.index.schema import apply_schema
 from zicato.mutation.inventory import write_mutation_inventory
 from zicato.runtime.lock import acquire_workspace_lock
+from zicato.telemetry.reducer import loss_profile_to_dict
+from zicato.testing import make_loss_profile, make_patch
+from zicato.tournament.scoring import write_gen_score
+from zicato.workspace import WorkspaceLayout
 
 # ---------------------------------------------------------------------------
 # Fixture workspace
@@ -185,8 +192,8 @@ def _populate_workspace(ws: Path) -> Path:
     )
 
     # lineage.json
-    _write_json(
-        ws / "lineage.json",
+    write_lineage(
+        WorkspaceLayout(ws),
         {
             "epochs": [
                 {
@@ -214,11 +221,13 @@ def _populate_workspace(ws: Path) -> Path:
         (epoch_dir / "generations" / gen).mkdir(parents=True, exist_ok=True)
     _write_json(
         epoch_dir / "generations" / "v1" / "experiment.json",
-        {
-            "parent_generation_id": "v0",
-            "proposed_at": "2026-05-16T04:25:00Z",
-            "outcome": {"decision": "rejected"},
-        },
+        experiment_record(
+            "v1",
+            epoch_id=epoch_dir.name,
+            parent_generation_id="v0",
+            proposed_at="2026-05-16T04:25:00Z",
+            decision="rejected",
+        ),
     )
 
     # epoch contract files
@@ -238,8 +247,12 @@ def _populate_workspace(ws: Path) -> Path:
         + "\n",
     )
     _write(epoch_dir / "brief.md", "# Proposer brief\nBe clear.\n")
-    _write_json(epoch_dir / "scoring.json", {"weights": {"drift_loss": 1.0}})
-    _write_json(epoch_dir / "config.json", {"contract_hash": "h1", "closed": False})
+    _write_json(epoch_dir / "scoring.json", ScoringWeights().to_json())
+    write_epoch(
+        WorkspaceLayout(epoch_dir.parents[1]),
+        epoch_dir.name,
+        config={"contract_hash": "1" * 64, "closed": False},
+    )
     write_mutation_inventory(
         epoch_dir / "mutations.json",
         [
@@ -256,7 +269,8 @@ def _populate_workspace(ws: Path) -> Path:
         ],
     )
     _write_json(
-        ws / "config.json", {"adk_entrypoint": "mod:agent", "mutable_trees": ["/abs/agent"]}
+        ws / "config.json",
+        {"adapter": {"kind": "adk", "entrypoint": "mod:agent", "mutable_trees": ["/abs/agent"]}},
     )
 
     # loop-health report
@@ -285,35 +299,21 @@ def _populate_workspace(ws: Path) -> Path:
 
 def _build_index(path: Path, epoch_id: str) -> None:
     conn = sqlite3.connect(path)
-    conn.executescript(
-        """
-        CREATE TABLE generations(epoch_id TEXT, generation_id TEXT,
-            parent_generation_id TEXT, promoted INTEGER);
-        CREATE TABLE experiments(epoch_id TEXT, generation_id TEXT,
-            hypothesis_core_idea TEXT, hypothesis_why TEXT, hypothesis_json TEXT,
-            tournament_decision TEXT, rejection_reason TEXT, scalar_score_delta REAL,
-            drift_loss_delta REAL, pass_rate_delta REAL, outcome_json TEXT);
-        CREATE TABLE patches(patch_id TEXT, epoch_id TEXT, generation_id TEXT,
-            mutation_id TEXT, op TEXT, rationale TEXT);
-        CREATE TABLE loss_profiles(run_id TEXT, epoch_id TEXT, generation_id TEXT,
-            entry_id TEXT, drift_loss REAL, pass_fail TEXT, loss_json TEXT);
-        CREATE TABLE tournaments(tournament_id TEXT, epoch_id TEXT,
-            parent_generation_id TEXT, child_generation_id TEXT, decision TEXT,
-            parent_scalar REAL, child_scalar REAL, delta_scalar REAL,
-            rejection_reason TEXT, ran_at TEXT);
-        CREATE TABLE runs(run_id TEXT, epoch_id TEXT, generation_id TEXT,
-            entry_id TEXT, started_at TEXT, ended_at TEXT, aborted INTEGER,
-            runtime_ms INTEGER);
-        CREATE TABLE metric_counts(run_id TEXT, namespace TEXT, name TEXT,
-            severity TEXT, count REAL);
-        """
-    )
+    apply_schema(conn)
     conn.executemany(
-        "INSERT INTO generations VALUES(?,?,?,?)",
+        (
+            "INSERT INTO generations(epoch_id, generation_id, parent_generation_id,"
+            " promoted) VALUES(?,?,?,?)"
+        ),
         [(epoch_id, "v0", None, 1), (epoch_id, "v1", "v0", 0)],
     )
     conn.execute(
-        "INSERT INTO experiments VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            "INSERT INTO experiments(epoch_id, generation_id, hypothesis_core_idea,"
+            " hypothesis_why, hypothesis_json, tournament_decision, "
+            "rejection_reason, scalar_score_delta, drift_loss_delta, "
+            "pass_rate_delta, outcome_json) VALUES(?,?,?,?,?,?,?,?,?,?,?)"
+        ),
         (
             epoch_id,
             "v1",
@@ -329,18 +329,28 @@ def _build_index(path: Path, epoch_id: str) -> None:
         ),
     )
     conn.execute(
-        "INSERT INTO patches VALUES(?,?,?,?,?,?)",
+        (
+            "INSERT INTO patches(patch_id, epoch_id, generation_id, mutation_id, "
+            "op, rationale) VALUES(?,?,?,?,?,?)"
+        ),
         ("p1", epoch_id, "v1", "m1", "replace", "swap prompt"),
     )
     conn.executemany(
-        "INSERT INTO loss_profiles VALUES(?,?,?,?,?,?,?)",
+        (
+            "INSERT INTO loss_profiles(run_id, epoch_id, generation_id, entry_id, "
+            "drift_loss, pass_fail, loss_json) VALUES(?,?,?,?,?,?,?)"
+        ),
         [
             ("r0", epoch_id, "v0", "waffles_single", 0.5, "fail", "{}"),
             ("r1", epoch_id, "v1", "waffles_single", 0.2, "pass", "{}"),
         ],
     )
     conn.execute(
-        "INSERT INTO tournaments VALUES(?,?,?,?,?,?,?,?,?,?)",
+        (
+            "INSERT INTO tournaments(tournament_id, epoch_id, parent_generation_id,"
+            " child_generation_id, decision, parent_scalar, child_scalar, "
+            "delta_scalar, rejection_reason, ran_at) VALUES(?,?,?,?,?,?,?,?,?,?)"
+        ),
         (
             "t1",
             epoch_id,
@@ -357,7 +367,10 @@ def _build_index(path: Path, epoch_id: str) -> None:
     # runs feed the score-trajectory / drift-movements builders; one run
     # per loss-profile row.
     conn.executemany(
-        "INSERT INTO runs VALUES(?,?,?,?,?,?,?,?)",
+        (
+            "INSERT INTO runs(run_id, epoch_id, generation_id, entry_id, "
+            "started_at, ended_at, aborted, runtime_ms) VALUES(?,?,?,?,?,?,?,?)"
+        ),
         [
             ("r0", epoch_id, "v0", "waffles_single", "", "", 0, 100),
             ("r1", epoch_id, "v1", "waffles_single", "", "", 0, 100),
@@ -366,7 +379,10 @@ def _build_index(path: Path, epoch_id: str) -> None:
     # metric_counts: champion (v0) has one off_topic drift; challenger
     # (v1) has an off_topic AND a new tool_error — a clear worsening.
     conn.executemany(
-        "INSERT INTO metric_counts VALUES(?,?,?,?,?)",
+        (
+            "INSERT INTO metric_counts(run_id, namespace, name, severity, count) "
+            "VALUES(?,?,?,?,?)"
+        ),
         [
             ("r0", "drift", "drift:off_topic", "warning", 1.0),
             ("r1", "drift", "drift:off_topic", "warning", 1.0),
@@ -692,11 +708,23 @@ def test_lineage_round_index_read(tmp_path: Path) -> None:
     # v1 is minted in round 1 (stamped); v2 has no stamp (pre-feature).
     _write_json(
         epoch_dir / "generations" / "v1" / "experiment.json",
-        {"parent_generation_id": "v0", "round_index": 1, "outcome": {"decision": "rejected"}},
+        experiment_record(
+            "v1",
+            epoch_id=epoch_dir.name,
+            parent_generation_id="v0",
+            round_index=1,
+            decision="rejected",
+        ),
     )
     _write_json(
         epoch_dir / "generations" / "v2" / "experiment.json",
-        {"parent_generation_id": "v0", "outcome": {"decision": "rejected"}},
+        experiment_record(
+            "v2",
+            epoch_id=epoch_dir.name,
+            parent_generation_id="v0",
+            decision="rejected",
+            round_index=None,
+        ),
     )
     paths = WorkspacePaths(tmp_path)
     gens = {g["generation_id"]: g for g in build_lineage_view(paths)["generations"]}
@@ -819,7 +847,7 @@ def test_epoch_view(client: TestClient) -> None:
     assert r.status_code == 200
     body = r.json()
     assert body["epoch_id"] == "2026-05-16_e0"
-    assert body["contract_hash"] == "h1"
+    assert body["contract_hash"] == "1" * 64
     assert body["closed"] is False
     assert body["harness"]["entrypoint"] == "mod:agent"
     assert len(body["board"]) == 1
@@ -936,22 +964,28 @@ def test_epoch_view_includes_experiments_journal_analysis(workspace: Path) -> No
     # is not served as part of the generation.
     _write_json(
         patches_dir / "p_abc.json",
-        {
-            "id": "p_abc",
-            "mutation_id": "m1",
-            "op": "replace",
-            "rationale": "tighten planner prompt",
-            "new_content": "new-content-here",
-        },
+        patch_body(
+            make_patch(
+                **{
+                    "id": "p_abc",
+                    "mutation_id": "m1",
+                    "op": "replace",
+                    "rationale": "tighten planner prompt",
+                    "new_content": "new-content-here",
+                }
+            )
+        ),
     )
     _write_json(
         gen_dir / "experiment.json",
-        {
-            "parent_generation_id": "v0",
-            "proposed_at": "2026-05-16T04:25:00Z",
-            "outcome": {"decision": "rejected"},
-            "patch_ids": ["p_abc"],
-        },
+        experiment_record(
+            gen_dir.name,
+            epoch_id=epoch_dir.name,
+            parent_generation_id="v0",
+            proposed_at="2026-05-16T04:25:00Z",
+            decision="rejected",
+            patch_ids=["p_abc"],
+        ),
     )
     # Write journal and analysis markdown.
     _write(epoch_dir / "journal.md", "# Journal\n\n## v1\nRejected.\n")
@@ -1172,8 +1206,14 @@ def test_compute_epoch_delta_summary_skips_malformed_entries() -> None:
         # Wrong types — silently skipped.
         "not a dict",  # type: ignore[list-item]
         {"generation_id": None, "outcome": {"scalar_score_delta": -1.0}},
-        {"generation_id": "vNaN", "outcome": {"scalar_score_delta": float("nan")}},
-        {"generation_id": "vInf", "outcome": {"scalar_score_delta": float("inf")}},
+        {
+            "generation_id": "vNaN",
+            "outcome": {"tournament_decision": None, "scalar_score_delta": float("nan")},
+        },
+        {
+            "generation_id": "vInf",
+            "outcome": {"tournament_decision": None, "scalar_score_delta": float("inf")},
+        },
         _exp(gen="v1", parent="v0", decision="promoted", delta=-2.0),
         _exp(gen="v2", parent="v1", decision="promoted", delta=-1.0),
     ]
@@ -1198,14 +1238,15 @@ def test_build_epoch_view_carries_delta_scalar_summary(workspace: Path) -> None:
     ]:
         _write_json(
             epoch_dir / "generations" / gid / "experiment.json",
-            {
-                "generation_id": gid,
-                "parent_generation_id": parent,
-                "outcome": {
+            experiment_record(
+                gid,
+                epoch_id=epoch_dir.name,
+                parent_generation_id=parent,
+                outcome={
                     "tournament_decision": decision,
                     "scalar_score_delta": delta,
                 },
-            },
+            ),
         )
 
     view = build_epoch_view(WorkspacePaths(workspace))
@@ -1491,7 +1532,7 @@ def _seed_loss_files(workspace: Path) -> None:
                 "entry_id": entry,
                 "generation_id": gen,
                 "epoch_id": gens,
-                "drift_counts": [],
+                "metric_counts": [],
                 "plan_revisions": 0,
                 "task_failure_ratio": 0.0,
                 "runtime_ms": 1000,
@@ -1509,12 +1550,14 @@ def _seed_loss_files(workspace: Path) -> None:
                 / "runs"
                 / entry
                 / "loss.json",
-                loss,
+                loss_profile_to_dict(make_loss_profile(**loss)),
             )
     # gen_score.json aggregates — the orchestrator's cached per-generation
     # score (drift mean + scalar + the per-component composition).
-    _write_json(
-        workspace / "epochs" / epoch_id / "generations" / "v0" / "gen_score.json",
+    write_gen_score(
+        workspace,
+        epoch_id,
+        "v0",
         {
             "generation_id": "v0",
             "drift_loss_mean": 0.21,
@@ -1523,8 +1566,10 @@ def _seed_loss_files(workspace: Path) -> None:
             "scalar_components": {"drift": 0.21, "pass": 0.0},
         },
     )
-    _write_json(
-        workspace / "epochs" / epoch_id / "generations" / "v1" / "gen_score.json",
+    write_gen_score(
+        workspace,
+        epoch_id,
+        "v1",
         {
             "generation_id": "v1",
             "drift_loss_mean": 0.275,
@@ -1596,7 +1641,7 @@ def _seed_scored_loss_files(workspace: Path) -> None:
     The champion (v0) and challenger (v1) each ran one SCORED entry
     (``extract_invoice`` with a continuous score + precision/recall
     decomposition) and one BOOL-ONLY entry (``schema_response`` with no
-    ``score`` / ``metrics`` — the back-compat path). gen_score.json
+    continuous score or precision/recall observations). gen_score.json
     carries a per-generation ``mean_score`` for v0 and v1.
     """
     epoch_id = "2026-05-16_e0"
@@ -1628,7 +1673,7 @@ def _seed_scored_loss_files(workspace: Path) -> None:
                 "entry_id": entry,
                 "generation_id": gen,
                 "epoch_id": epoch_id,
-                "drift_counts": [],
+                "metric_counts": [],
                 "runtime_ms": 1000,
                 "wall_clock_budget_exceeded": False,
                 "adk_session_id": f"session-{gen}-{entry}",
@@ -1643,15 +1688,13 @@ def _seed_scored_loss_files(workspace: Path) -> None:
                 / "runs"
                 / entry
                 / "loss.json",
-                loss,
+                loss_profile_to_dict(make_loss_profile(**loss)),
             )
-    _write_json(
-        workspace / "epochs" / epoch_id / "generations" / "v0" / "gen_score.json",
-        {"generation_id": "v0", "scalar": 0.21, "mean_score": 0.62},
+    write_gen_score(
+        workspace, epoch_id, "v0", {"generation_id": "v0", "scalar": 0.21, "mean_score": 0.62}
     )
-    _write_json(
-        workspace / "epochs" / epoch_id / "generations" / "v1" / "gen_score.json",
-        {"generation_id": "v1", "scalar": 0.375, "mean_score": 0.81},
+    write_gen_score(
+        workspace, epoch_id, "v1", {"generation_id": "v1", "scalar": 0.375, "mean_score": 0.81}
     )
 
 
@@ -1699,7 +1742,7 @@ def test_matchup_grid_scalar_carries_mean_score(workspace: Path) -> None:
 
 
 def test_matchup_grid_no_mean_score_when_absent(workspace: Path) -> None:
-    """Back-compat: a gen_score.json without ``mean_score`` yields a
+    """An aggregate without a measured mean score yields a
     scalar block with no ``mean_score`` key (degrades to today's view)."""
     from zicato.query import WorkspacePaths, build_matchup_grid
 
@@ -1720,13 +1763,13 @@ def _build_per_entry_index(db: Path, loss_json_by_run: dict[str, str]) -> None:
     """Build a loss_profiles index with the full column set the per-entry
     reader queries, one v1 row per ``loss_json_by_run`` entry."""
     conn = sqlite3.connect(db)
-    conn.execute(
-        "CREATE TABLE loss_profiles(run_id TEXT, epoch_id TEXT, generation_id TEXT, "
-        "entry_id TEXT, drift_loss REAL, pass_fail TEXT, runtime_ms INTEGER, "
-        "wall_clock_budget_exceeded INTEGER, loss_json TEXT, tournament_id TEXT)"
-    )
+    apply_schema(conn)
     conn.executemany(
-        "INSERT INTO loss_profiles VALUES(?,?,?,?,?,?,?,?,?,?)",
+        (
+            "INSERT INTO loss_profiles(run_id, epoch_id, generation_id, entry_id, "
+            "drift_loss, pass_fail, runtime_ms, wall_clock_budget_exceeded, "
+            "loss_json, tournament_id) VALUES(?,?,?,?,?,?,?,?,?,?)"
+        ),
         [
             (
                 run,
@@ -1737,7 +1780,20 @@ def _build_per_entry_index(db: Path, loss_json_by_run: dict[str, str]) -> None:
                 "pass",
                 100,
                 0,
-                lj,
+                json.dumps(
+                    loss_profile_to_dict(
+                        make_loss_profile(
+                            run_id=run,
+                            epoch_id="2026-05-16_e0",
+                            generation_id="v1",
+                            entry_id="waffles_single",
+                            drift_loss=0.2,
+                            pass_fail=True,
+                            runtime_ms=100,
+                            **json.loads(lj),
+                        )
+                    )
+                ),
                 None,
             )
             for run, lj in loss_json_by_run.items()
@@ -1771,7 +1827,7 @@ def test_per_entry_for_generation_carries_score_from_loss_json(tmp_path: Path) -
         entry_id="waffles_single",
         generation_id="v1",
         epoch_id="2026-05-16_e0",
-        drift_counts=(),
+        metric_counts=(),
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=100,
@@ -1792,8 +1848,8 @@ def test_per_entry_for_generation_carries_score_from_loss_json(tmp_path: Path) -
     assert entry["metrics"] == {"precision": 0.9, "recall": 0.6}
 
 
-def test_per_entry_for_generation_back_compat_no_score(tmp_path: Path) -> None:
-    """An index whose ``loss_json`` is ``{}`` (the pre-score default)
+def test_per_entry_for_generation_without_score(tmp_path: Path) -> None:
+    """An indexed measurement with no continuous score
     yields ``score`` / ``metrics`` == None and ``mean_score`` == None."""
     from zicato.query import (
         WorkspacePaths,
@@ -1833,7 +1889,7 @@ def _build_facet_workspace(
             "entry_id": entry_id,
             "generation_id": "v1",
             "epoch_id": epoch_id,
-            "drift_counts": [],
+            "metric_counts": [],
             "plan_revisions": 0,
             "task_failure_ratio": 0.0,
             "runtime_ms": 1000,
@@ -1846,7 +1902,7 @@ def _build_facet_workspace(
             loss["score"] = score
         _write_json(
             ws / "epochs" / epoch_id / "generations" / "v1" / "runs" / entry_id / "loss.json",
-            loss,
+            loss_profile_to_dict(make_loss_profile(**loss)),
         )
     _write(
         ws / "epochs" / epoch_id / "board.jsonl",
@@ -1872,14 +1928,13 @@ def _build_facet_workspace(
     # The per-entry ROWS come from the index (the facet aggregate reads the run
     # files); build it too so `entries` is populated for tests that read it.
     conn = sqlite3.connect(ws / "index.db")
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS loss_profiles(run_id TEXT, epoch_id TEXT, "
-        "generation_id TEXT, entry_id TEXT, drift_loss REAL, pass_fail TEXT, "
-        "runtime_ms INTEGER, wall_clock_budget_exceeded INTEGER, loss_json TEXT, "
-        "tournament_id TEXT)"
-    )
+    apply_schema(conn)
     conn.executemany(
-        "INSERT INTO loss_profiles VALUES(?,?,?,?,?,?,?,?,?,?)",
+        (
+            "INSERT INTO loss_profiles(run_id, epoch_id, generation_id, entry_id, "
+            "drift_loss, pass_fail, runtime_ms, wall_clock_budget_exceeded, "
+            "loss_json, tournament_id) VALUES(?,?,?,?,?,?,?,?,?,?)"
+        ),
         [
             (
                 f"run_v1_{entry_id}",
@@ -1890,7 +1945,16 @@ def _build_facet_workspace(
                 None if pass_fail is None else ("pass" if pass_fail else "fail"),
                 1000,
                 0,
-                _json.dumps({} if score is None else {"score": score}),
+                (
+                    ws
+                    / "epochs"
+                    / epoch_id
+                    / "generations"
+                    / "v1"
+                    / "runs"
+                    / entry_id
+                    / "loss.json"
+                ).read_text(),
                 None,
             )
             for entry_id, pass_fail, score, drift_loss in runs
@@ -2323,20 +2387,24 @@ def test_matchup_grid_one_sided(workspace: Path) -> None:
         / "runs"
         / "extra_entry"
         / "loss.json",
-        {
-            "run_id": "v1--extra_entry",
-            "entry_id": "extra_entry",
-            "generation_id": "v1",
-            "epoch_id": "2026-05-16_e0",
-            "drift_counts": [],
-            "plan_revisions": 0,
-            "task_failure_ratio": 0.0,
-            "runtime_ms": 1000,
-            "wall_clock_budget_exceeded": False,
-            "expectation_result": None,
-            "drift_loss": 0.4,
-            "pass_fail": False,
-        },
+        loss_profile_to_dict(
+            make_loss_profile(
+                **{
+                    "run_id": "v1--extra_entry",
+                    "entry_id": "extra_entry",
+                    "generation_id": "v1",
+                    "epoch_id": "2026-05-16_e0",
+                    "metric_counts": [],
+                    "plan_revisions": 0,
+                    "task_failure_ratio": 0.0,
+                    "runtime_ms": 1000,
+                    "wall_clock_budget_exceeded": False,
+                    "expectation_result": None,
+                    "drift_loss": 0.4,
+                    "pass_fail": False,
+                }
+            )
+        ),
     )
     paths = WorkspacePaths(workspace)
     grid = build_matchup_grid(paths, "2026-05-16_e0", "v0", "v1")
@@ -2378,7 +2446,7 @@ def test_score_trajectory_endpoint(client: TestClient) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_drift_movements_endpoint(client: TestClient) -> None:
+def test_metric_movements_endpoint(client: TestClient) -> None:
     """``/api/drift-movements/:gen`` reports champion->challenger drift deltas."""
     r = client.get("/api/drift-movements/v1")
     assert r.status_code == 200
@@ -2399,7 +2467,7 @@ def test_drift_movements_endpoint(client: TestClient) -> None:
     assert body["movements"][0]["kind"] == "tool_error"
 
 
-def test_drift_movements_unknown_generation(client: TestClient) -> None:
+def test_metric_movements_unknown_generation(client: TestClient) -> None:
     """A generation with no tournament degrades to an empty movement list."""
     r = client.get("/api/drift-movements/v9")
     assert r.status_code == 200
@@ -2408,7 +2476,7 @@ def test_drift_movements_unknown_generation(client: TestClient) -> None:
     assert body["champion"] is None
 
 
-def test_drift_movements_invalid_id(client: TestClient) -> None:
+def test_metric_movements_invalid_id(client: TestClient) -> None:
     """A malformed generation id degrades to an empty matchup, no 500."""
     r = client.get("/api/drift-movements/bad%20id")
     assert r.status_code == 200
@@ -3002,68 +3070,6 @@ def test_conversation_resolves_by_run_id_not_dir_name(
         assert r2.json()["event_count"] == 2
 
 
-def test_conversation_reuse_run_id_falls_back_to_gen_entry_events(
-    workspace: Path, static_dir: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A successive-halving REUSE run_id resolves to its gen×entry transcript.
-
-    In racing the fixed champion (v0) is re-raced across rungs, so the
-    same gen×entry yields multiple per-rung run records — only one rung
-    actually executed and emitted ``events.jsonl``; the rest are
-    score-reuse records carrying a distinct ``run_id`` written into a
-    ``runs/<entry>/loss.json`` but with NO transcript of their own. The
-    reuse ``run_id`` must fall back to the gen×entry events file.
-
-    The fixture's ``v0/runs/waffles_single/`` already carries a real
-    ``events.jsonl``. We add a ``loss.json`` there stamping a distinct
-    reuse run id; resolving that reuse run id must land on the real
-    events file (whose own runId is absent / different).
-    """
-    _install_stub_transcript(monkeypatch)
-    reuse_run_id = "reuse_rung2_v0_waffles_0000"
-    _write_json(
-        workspace
-        / "epochs"
-        / "2026-05-16_e0"
-        / "generations"
-        / "v0"
-        / "runs"
-        / "waffles_single"
-        / "loss.json",
-        {"run_id": reuse_run_id, "entry_id": "waffles_single", "drift_loss": 60.5, "pass_fail": 0},
-    )
-    app = create_app(workspace, static_dir, read_only=True)
-    with TestClient(app) as c:
-        # The reuse run id has no events.jsonl of its own, but the loss.json
-        # in v0/runs/waffles_single points at the real gen×entry transcript.
-        r = c.get(f"/api/conversation/{reuse_run_id}")
-        assert r.status_code == 200, r.text
-        body = r.json()
-        # The champion v0 events file is the single-line fixture transcript.
-        assert body["event_count"] == 1
-
-
-def test_conversation_query_gen_entry_fallback_resolves_transcript(
-    workspace: Path, static_dir: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """``/api/conversation/{run_id}?gen=&entry=`` falls back to gen×entry.
-
-    The explicit, index-independent recovery path the dashboard's
-    champion side uses: a run_id with no resolvable events, plus the
-    candidate's known gen + entry, resolves directly to the gen×entry
-    ``events.jsonl``.
-    """
-    _install_stub_transcript(monkeypatch)
-    app = create_app(workspace, static_dir, read_only=True)
-    with TestClient(app) as c:
-        r = c.get(
-            "/api/conversation/no_such_reuse_run",
-            params={"gen": "v0", "entry": "waffles_single"},
-        )
-        assert r.status_code == 200, r.text
-        assert r.json()["event_count"] == 1
-
-
 def test_conversation_genuinely_absent_gen_entry_still_404(
     workspace: Path, static_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -3082,31 +3088,11 @@ def test_conversation_genuinely_absent_gen_entry_still_404(
         assert r.status_code == 404
 
 
-def test_run_transcript_gen_entry_primary_resolves_reuse_run_id_pair(
+def test_run_transcript_uses_explicit_generation_and_entry(
     workspace: Path, static_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The (epoch, gen, entry) route is PRIMARY: it resolves the gen×entry's
-    own events.jsonl directly, independent of how any run_id was minted.
-
-    The champion v0×waffles_single pair's per-entry run record is a
-    successive-halving REUSE record (a ``loss.json`` carrying a distinct
-    ``run_id`` with no events of its own). Resolving the transcript by the
-    deterministic triple must still land on the one real
-    ``v0/runs/waffles_single/events.jsonl`` (the 1-line fixture transcript),
-    never 404.
-    """
+    """The coordinate route resolves the selected entry's own transcript."""
     _install_stub_transcript(monkeypatch)
-    _write_json(
-        workspace
-        / "epochs"
-        / "2026-05-16_e0"
-        / "generations"
-        / "v0"
-        / "runs"
-        / "waffles_single"
-        / "loss.json",
-        {"run_id": "reuse_rung2_v0_0000", "entry_id": "waffles_single", "drift_loss": 60.5},
-    )
     app = create_app(workspace, static_dir, read_only=True)
     with TestClient(app) as c:
         r = c.get("/api/run/2026-05-16_e0/v0/waffles_single/transcript")
@@ -3117,41 +3103,33 @@ def test_run_transcript_gen_entry_primary_resolves_reuse_run_id_pair(
         assert body["entry_id"] == "waffles_single"
 
 
-def test_run_transcript_run_disambiguator_selects_specific_rung(
+def test_run_transcript_run_disambiguator_selects_specific_draw(
     workspace: Path, static_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """``?run=`` disambiguates when a gen×entry has MULTIPLE runs (re-races).
+    """An exact runtime id selects its seed and draw within the requested entry."""
+    from zicato.core.workspace import run_id_for_unit
 
-    Racing re-races a gen×entry across rungs; each rung lands in its own
-    nested sub-directory under ``runs/<entry>/``. The default resolves to
-    the entry's own ``runs/<entry>/events.jsonl``; ``?run=<rung-run-id>``
-    selects the nested rung whose loss.json carries that run id.
-    """
     _install_stub_transcript(monkeypatch)
     base = workspace / "epochs" / "2026-05-16_e0" / "generations" / "v1" / "runs" / "waffles_single"
-    # A nested rung directory with its OWN events.jsonl (2 lines) + a
-    # loss.json stamping the rung's run_id. The entry's own events.jsonl
-    # already exists in the fixture (3 lines).
-    rung = base / "rung3"
+    run_id = run_id_for_unit("v1", "waffles_single", 1, base_seed=None)
     _write(
-        rung / "events.jsonl",
+        base / "seed-none" / "events.r1.jsonl",
         "\n".join(
             [
-                json.dumps({"runId": "rung3_run", "sequence": "0", "runStarted": {}}),
-                json.dumps({"runId": "rung3_run", "sequence": "1", "steeringDecisionMade": {}}),
+                json.dumps({"runId": run_id, "sequence": "0", "runStarted": {}}),
+                json.dumps({"runId": run_id, "sequence": "1", "steeringDecisionMade": {}}),
             ]
         )
         + "\n",
     )
-    _write_json(rung / "loss.json", {"run_id": "rung3_run", "entry_id": "waffles_single"})
     app = create_app(workspace, static_dir, read_only=True)
     with TestClient(app) as c:
         # Default → the entry's own 3-line events.jsonl.
         r = c.get("/api/run/2026-05-16_e0/v1/waffles_single/transcript")
         assert r.status_code == 200, r.text
         assert r.json()["event_count"] == 3
-        # Disambiguated → the nested rung's 2-line events.jsonl.
-        r2 = c.get("/api/run/2026-05-16_e0/v1/waffles_single/transcript?run=rung3_run")
+        # The exact draw resolves its two-line capture.
+        r2 = c.get(f"/api/run/2026-05-16_e0/v1/waffles_single/transcript?run={run_id}")
         assert r2.status_code == 200, r2.text
         assert r2.json()["event_count"] == 2
 
@@ -3175,7 +3153,7 @@ def test_run_transcript_genuinely_absent_pair_is_honest_empty(
         assert body["event_count"] == 0
         assert body["turns"] == []
         # The conversation route 404s for a run with no events AND no real
-        # gen×entry — the honest hard-absence on the back-compat path.
+        # gen×entry.
         r2 = c.get(
             "/api/conversation/no_such_run",
             params={"gen": "v1", "entry": "no_such_entry"},
@@ -3183,15 +3161,10 @@ def test_run_transcript_genuinely_absent_pair_is_honest_empty(
         assert r2.status_code == 404
 
 
-def test_conversation_gen_entry_primary_prefers_triple_over_run_id(
+def test_conversation_unknown_run_does_not_borrow_entry_transcript(
     workspace: Path, static_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """``/api/conversation`` is gen×entry-FIRST when coordinates are known.
-
-    Even when the opaque run_id is unresolvable, supplying ``?gen=&entry=``
-    resolves straight to the gen×entry events.jsonl — the deterministic
-    triple is the primary key, the run_id only a disambiguator.
-    """
+    """An explicit run identifier must match a capture within its entry."""
     _install_stub_transcript(monkeypatch)
     app = create_app(workspace, static_dir, read_only=True)
     with TestClient(app) as c:
@@ -3199,9 +3172,8 @@ def test_conversation_gen_entry_primary_prefers_triple_over_run_id(
             "/api/conversation/totally_unknown_run",
             params={"gen": "v0", "entry": "waffles_single"},
         )
-        assert r.status_code == 200, r.text
-        # v0/runs/waffles_single/events.jsonl is the 1-line fixture.
-        assert r.json()["event_count"] == 1
+        assert r.status_code == 404, r.text
+        assert r.json() == {"error": "no events for run totally_unknown_run"}
 
 
 def test_matchup_conversations_endpoint(
@@ -3250,7 +3222,6 @@ def test_matchup_conversations_carries_loss_json_result_block(
             "entry_id": "waffles_single",
             "generation_id": "v1",
             "epoch_id": "2026-05-16_e0",
-            "drift_counts": [],
             "plan_revisions": 1,
             "task_failure_ratio": 1.0,
             "runtime_ms": 180000,
@@ -3701,7 +3672,7 @@ def _seed_second_epoch(ws: Path) -> str:
     epoch_dir = ws / "epochs" / epoch_id
     (epoch_dir / "generations" / "v0").mkdir(parents=True, exist_ok=True)
     _write(epoch_dir / "brief.md", "# brief\n\n## Goal\n\nIterate further.\n")
-    _write_json(epoch_dir / "config.json", {"closed": False})
+    write_epoch(WorkspaceLayout(epoch_dir.parents[1]), epoch_dir.name, config={"closed": False})
     return epoch_id
 
 
@@ -3749,7 +3720,7 @@ def test_build_workspace_view_closed_flag_reads_config(workspace: Path) -> None:
     from zicato.query import WorkspacePaths, build_workspace_view
 
     epoch_dir = workspace / "epochs" / "2026-05-16_e0"
-    _write_json(epoch_dir / "config.json", {"closed": True})
+    write_epoch(WorkspaceLayout(epoch_dir.parents[1]), epoch_dir.name, config={"closed": True})
 
     view = build_workspace_view(WorkspacePaths(workspace))
     row = next(r for r in view["epochs"] if r["epoch_id"] == "2026-05-16_e0")
@@ -3907,10 +3878,9 @@ def test_build_workspace_view_promoted_count_reads_experiments(workspace: Path) 
     gen_dir.mkdir(parents=True, exist_ok=True)
     _write_json(
         gen_dir / "experiment.json",
-        {
-            "generation_id": "v1",
-            "outcome": {"tournament_decision": "promoted"},
-        },
+        experiment_record(
+            "v1", epoch_id=epoch_dir.name, outcome={"tournament_decision": "promoted"}
+        ),
     )
 
     view = build_workspace_view(WorkspacePaths(workspace))
@@ -3951,12 +3921,16 @@ def _add_second_epoch(workspace: Path, epoch_id: str = "2026-05-17_e1") -> str:
         + "\n",
     )
     _write(epoch_dir / "brief.md", "# Second epoch brief\nDifferent goal.\n")
-    _write_json(epoch_dir / "scoring.json", {"weights": {"drift_loss": 1.0}})
-    _write_json(epoch_dir / "config.json", {"contract_hash": "h2", "closed": True})
+    _write_json(epoch_dir / "scoring.json", ScoringWeights().to_json())
+    write_epoch(
+        WorkspaceLayout(epoch_dir.parents[1]),
+        epoch_dir.name,
+        config={"contract_hash": "2" * 64, "closed": True},
+    )
 
     # lineage.json: both epochs share gen ids (v0/v1) — a leak would surface.
-    _write_json(
-        workspace / "lineage.json",
+    write_lineage(
+        WorkspaceLayout(workspace),
         {
             "epochs": [
                 {
@@ -3994,22 +3968,35 @@ def _add_second_epoch(workspace: Path, epoch_id: str = "2026-05-17_e1") -> str:
     # index rows for the second epoch (its own generations / tournament / runs).
     conn = sqlite3.connect(workspace / "index.db")
     conn.executemany(
-        "INSERT INTO generations VALUES(?,?,?,?)",
+        (
+            "INSERT INTO generations(epoch_id, generation_id, parent_generation_id,"
+            " promoted) VALUES(?,?,?,?)"
+        ),
         [(epoch_id, "v0", None, 1), (epoch_id, "v1", "v0", 1)],
     )
     conn.execute(
-        "INSERT INTO tournaments VALUES(?,?,?,?,?,?,?,?,?,?)",
+        (
+            "INSERT INTO tournaments(tournament_id, epoch_id, parent_generation_id,"
+            " child_generation_id, decision, parent_scalar, child_scalar, "
+            "delta_scalar, rejection_reason, ran_at) VALUES(?,?,?,?,?,?,?,?,?,?)"
+        ),
         ("t2", epoch_id, "v0", "v1", "promoted", 0.9, 0.4, -0.5, None, "2026-05-17T04:30:00Z"),
     )
     conn.executemany(
-        "INSERT INTO loss_profiles VALUES(?,?,?,?,?,?,?)",
+        (
+            "INSERT INTO loss_profiles(run_id, epoch_id, generation_id, entry_id, "
+            "drift_loss, pass_fail, loss_json) VALUES(?,?,?,?,?,?,?)"
+        ),
         [
             ("r2", epoch_id, "v0", "second_board_entry", 0.9, "fail", "{}"),
             ("r3", epoch_id, "v1", "second_board_entry", 0.4, "pass", "{}"),
         ],
     )
     conn.executemany(
-        "INSERT INTO runs VALUES(?,?,?,?,?,?,?,?)",
+        (
+            "INSERT INTO runs(run_id, epoch_id, generation_id, entry_id, "
+            "started_at, ended_at, aborted, runtime_ms) VALUES(?,?,?,?,?,?,?,?)"
+        ),
         [
             ("r2", epoch_id, "v0", "second_board_entry", "", "", 0, 100),
             ("r3", epoch_id, "v1", "second_board_entry", "", "", 0, 100),
@@ -4027,13 +4014,13 @@ def test_epoch_view_scoped_to_non_current_epoch(client: TestClient, workspace: P
     # omitted ⇒ current epoch (unchanged).
     current = client.get("/api/epoch").json()
     assert current["epoch_id"] == "2026-05-16_e0"
-    assert current["contract_hash"] == "h1"
+    assert current["contract_hash"] == "1" * 64
     assert current["board"][0]["entry_id"] == "waffles_single"
 
     # scoped ⇒ the SECOND epoch's own contract / board.
     scoped = client.get(f"/api/epoch?epoch={e1}").json()
     assert scoped["epoch_id"] == e1
-    assert scoped["contract_hash"] == "h2"
+    assert scoped["contract_hash"] == "2" * 64
     assert scoped["closed"] is True
     assert scoped["board"][0]["entry_id"] == "second_board_entry"
     assert scoped["board"][0]["entry_id"] != "waffles_single"

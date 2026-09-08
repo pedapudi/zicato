@@ -302,19 +302,8 @@ HARD_INFRA_MARKERS: frozenset[str] = frozenset(
 #: emitters. Pinned by ``test_epoch_round_integrity.py`` against the real
 #: templates, which is the check that actually catches a rename.
 #:
-#: A template stays here after its emitter is retired. This module is a
-#: reader over durable round logs, so logs written before a proposer was
-#: removed still carry its prose and must still classify. ``evaluation llm
-#: call timed out `` and ``proposer agent run raised `` have no live
-#: emitter — both belong to the ADK proposer that Foe replaced as the sole
-#: runtime — and are kept so those logs stay readable.
-#: ``test_epoch_round_integrity.py`` requires every other prefix to be found
-#: in the tree, which is what stops a retired template from passing as a
-#: live one.
 CALL_BOUNDARY_PREFIXES: tuple[str, ...] = (
     "evaluation llm call raised ",
-    "evaluation llm call timed out ",
-    "proposer agent run raised ",
     "the proposal episode could not start: ",
     "the proposal episode failed: ",
 )

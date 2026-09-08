@@ -22,11 +22,12 @@ Pins :func:`build_meta_loop_ledger` (and its surfacing as the
 from __future__ import annotations
 
 import json
-import sqlite3
 from pathlib import Path
 
+from tests._workspace_support import seed_index, write_epoch
 from zicato.query import WorkspacePaths, build_workspace_view
 from zicato.query.events_index import build_meta_loop_ledger
+from zicato.workspace.layout import WorkspaceLayout
 
 
 def _write_json(path: Path, value: object) -> None:
@@ -35,25 +36,25 @@ def _write_json(path: Path, value: object) -> None:
 
 
 def _build_index(path: Path, profiles: list[tuple[str, str, str, float]]) -> None:
-    """Seed a minimal index with just the ``loss_profiles`` the floor reads.
-
-    ``profiles`` is a list of ``(epoch_id, generation_id, entry_id,
-    drift_loss)`` rows. The floor / champion derive from the per-entry
-    mean drift loss, so one entry per generation is enough.
-    """
-    conn = sqlite3.connect(path)
-    conn.execute(
-        "CREATE TABLE loss_profiles(run_id TEXT PRIMARY KEY, epoch_id TEXT, "
-        "generation_id TEXT, entry_id TEXT, drift_loss REAL, pass_fail INTEGER, "
-        "runtime_ms INTEGER, tokens INTEGER, turns INTEGER, wall_clock_budget_exceeded INTEGER)"
+    """Seed the current index with the measured per-generation floor inputs."""
+    seed_index(
+        WorkspaceLayout.from_root(path.parent),
+        {
+            "loss_profiles": [
+                {
+                    "run_id": f"run_{i}",
+                    "epoch_id": epoch_id,
+                    "generation_id": gen_id,
+                    "entry_id": entry_id,
+                    "drift_loss": loss,
+                    "pass_fail": 0,
+                    "runtime_ms": 0,
+                    "wall_clock_budget_exceeded": 0,
+                }
+                for i, (epoch_id, gen_id, entry_id, loss) in enumerate(profiles)
+            ]
+        },
     )
-    for i, (epoch_id, gen_id, entry_id, loss) in enumerate(profiles):
-        conn.execute(
-            "INSERT INTO loss_profiles VALUES(?,?,?,?,?,?,?,?,?,?)",
-            (f"run_{i}", epoch_id, gen_id, entry_id, loss, 0, 0, 0, 0, 0),
-        )
-    conn.commit()
-    conn.close()
 
 
 def _make_epoch(
@@ -67,9 +68,9 @@ def _make_epoch(
 ) -> None:
     epoch_dir = ws / "epochs" / epoch_id
     epoch_dir.mkdir(parents=True, exist_ok=True)
-    _write_json(epoch_dir / "config.json", {"id": epoch_id, "closed": closed})
+    write_epoch(WorkspaceLayout.from_root(ws), epoch_id, config={"closed": closed})
     _write_json(epoch_dir / "contract_components.json", components)
-    scoring: dict[str, object] = {"weights": {"drift_loss": 1.0}}
+    scoring: dict[str, object] = {"experimental": {"tournament_structures": True}}
     if structure is not None:
         scoring["tournament"] = {"structure": structure, "params": {}}
     _write_json(epoch_dir / "scoring.json", scoring)

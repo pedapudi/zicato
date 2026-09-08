@@ -151,7 +151,7 @@ def test_publication_binds_reconstructed_selected_and_committed_source(
         "v1",
         "v0",
         "2026-01-01T00:00:00Z",
-        HypothesisSpec("Clarify the instruction.", ("unit",), "Reduce ambiguity.", (), "0"),
+        HypothesisSpec("Clarify the instruction.", ("unit",), "Reduce ambiguity.", "0"),
         (patch,),
         None,
     )

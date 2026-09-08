@@ -21,12 +21,17 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 import sqlite3
 from pathlib import Path
 
 import pytest
 
+from tests._workspace_support import write_generation, write_lineage
+from zicato.index.schema import apply_schema
 from zicato.query import WorkspacePaths, build_epoch_view, build_round_timeline
+from zicato.tournament.records import decode_field_tournament_record, write_field_tournament_record
+from zicato.workspace import WorkspaceLayout
 
 EPOCH = "2026-06-01_e0"
 
@@ -36,8 +41,20 @@ OTHER_MEMBER = "v2"
 
 
 def _write_json(path: Path, obj: object) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(obj), encoding="utf-8")
+    if path.name == "lineage.json":
+        assert isinstance(obj, dict)
+        write_lineage(WorkspaceLayout.from_root(path.parent), obj)
+    elif path.name == "experiment.json":
+        assert isinstance(obj, dict)
+        write_generation(
+            WorkspaceLayout.from_root(path.parents[4]),
+            path.parents[2].name,
+            path.parent.name,
+            experiment=obj,
+        )
+    else:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(obj), encoding="utf-8")
 
 
 def _competitors(champion: str, challengers: list[str]) -> str:
@@ -52,19 +69,28 @@ def _competitors(champion: str, challengers: list[str]) -> str:
 def _field_record(
     ws: Path, first_challenger: str, champion: str, challengers: list[str], head: str
 ) -> None:
-    """One round's durable field-tournament snapshot, as the runner writes it."""
-    _write_json(
-        ws / "epochs" / EPOCH / "tournaments" / f"field-{first_challenger}.json",
-        {
-            "tournament_id": f"{EPOCH}:field:{first_challenger}",
-            "epoch_id": EPOCH,
-            "structure": "swiss",
-            "competitors": json.loads(_competitors(champion, challengers)),
-            "promoted_generation_id": head,
-            "champion_generation_id": champion,
-            "decision": "promoted" if head else "held",
-            "state": "settled",
-        },
+    """Publish one round's complete snapshot through the canonical record owner."""
+    body = {
+        "tournament_id": f"{EPOCH}:field:{first_challenger}",
+        "epoch_id": EPOCH,
+        "structure": "swiss",
+        "competitors": json.loads(_competitors(champion, challengers)),
+        "promoted_generation_id": head,
+        "champion_generation_id": champion,
+        "decision": "promoted" if head else "rejected",
+        "state": "settled",
+        "structure_params": {},
+        "ran_at": "2026-06-01T00:00:00Z",
+        "reason": "",
+        "rounds": [],
+        "standings": [],
+        "field_status": [],
+    }
+    write_field_tournament_record(
+        ws,
+        epoch_id=EPOCH,
+        first_challenger_id=first_challenger,
+        record=decode_field_tournament_record(body),
     )
 
 
@@ -93,7 +119,11 @@ def _multi_promote_workspace(tmp_path: Path) -> Path:
     ):
         _write_json(
             gens / gid / "experiment.json",
-            {"parent_generation_id": parent, "outcome": {"tournament_decision": decision}},
+            {
+                "parent_generation_id": parent,
+                "round_index": 1 if gid == "v12" else 0,
+                "outcome": {"tournament_decision": decision},
+            },
         )
     _write_json(
         ws / "lineage.json",
@@ -114,23 +144,10 @@ def _multi_promote_workspace(tmp_path: Path) -> Path:
     )
 
     conn = sqlite3.connect(ws / "index.db")
-    conn.executescript(
-        """
-        CREATE TABLE generations(epoch_id TEXT, generation_id TEXT,
-            parent_generation_id TEXT, promoted INTEGER, created_at TEXT,
-            PRIMARY KEY(epoch_id, generation_id));
-        CREATE TABLE experiments(epoch_id TEXT, generation_id TEXT,
-            hypothesis_core_idea TEXT, PRIMARY KEY(epoch_id, generation_id));
-        CREATE TABLE tournaments(tournament_id TEXT PRIMARY KEY, epoch_id TEXT,
-            parent_generation_id TEXT, child_generation_id TEXT, decision TEXT,
-            parent_scalar REAL, child_scalar REAL, delta_scalar REAL,
-            rejection_reason TEXT, ran_at TEXT,
-            structure TEXT, structure_params_json TEXT, competitors_json TEXT,
-            rounds_json TEXT, standings_json TEXT);
-        """
-    )
+    apply_schema(conn)
     conn.executemany(
-        "INSERT INTO generations VALUES(?,?,?,?,?)",
+        "INSERT INTO generations(epoch_id,generation_id,parent_generation_id,promoted,created_at) "
+        "VALUES(?,?,?,?,?)",
         [
             (EPOCH, "v0", None, 1, "2026-06-01T00:00:00Z"),
             (EPOCH, "v1", "v0", 0, "2026-06-01T01:00:00Z"),
@@ -191,7 +208,7 @@ def _multi_promote_workspace(tmp_path: Path) -> Path:
                 EPOCH,
                 "",
                 "",
-                "held",
+                "rejected",
                 None,
                 "2026-06-01T02:06:00Z",
                 "swiss",
@@ -301,6 +318,12 @@ def test_head_falls_back_to_the_lineage_flags_without_any_record(tmp_path: Path)
     conn.execute("DELETE FROM tournaments WHERE tournament_id LIKE ?", (f"{EPOCH}:%v12",))
     conn.commit()
     conn.close()
+    shutil.rmtree(ws / "epochs" / EPOCH / "generations" / "v12")
+    lineage = json.loads((ws / "lineage.json").read_text())
+    lineage["epochs"][0]["generations"] = [
+        row for row in lineage["epochs"][0]["generations"] if row["id"] != "v12"
+    ]
+    write_lineage(WorkspaceLayout.from_root(ws), lineage)
     rounds = _rounds(ws)
     assert [r["round_index"] for r in rounds] == [0]
     assert rounds[0]["gate"] == {"kind": "promoted", "gen": OTHER_MEMBER}

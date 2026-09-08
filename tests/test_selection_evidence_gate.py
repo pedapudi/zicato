@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import pytest
 
+from zicato.core.tournament import DEFAULT_CONFIRMATION_BUDGET
 from zicato.selection.dead_letter import (
     InconclusiveRecord,
     list_inconclusive,
@@ -26,7 +27,6 @@ from zicato.selection.dead_letter import (
 )
 from zicato.selection.evidence_gate import (
     DEFAULT_PROMOTE_CONFIDENCE_THRESHOLD,
-    DEFAULT_REPLICATE_BUDGET,
     MIN_CREDIBLE_DUELS,
     evidence_verdict,
     rating_block,
@@ -76,16 +76,21 @@ def _audit(parent: str, child: str, *, child_wins: int, parent_wins: int) -> lis
 
 
 def test_threshold_reader_defaults_to_none() -> None:
-    # The gate is OPT-IN: an absent key (and an explicit null / 0) is off.
+    for value in (None, 0, 0.0):
+        assert read_promote_confidence_threshold({"promote_confidence_threshold": value}) is None
     assert read_promote_confidence_threshold({}) is None
-    assert read_promote_confidence_threshold({"promote_confidence_threshold": None}) is None
-    assert read_promote_confidence_threshold({"promote_confidence_threshold": 0.0}) is None
-    assert read_promote_confidence_threshold({"promote_confidence_threshold": -1}) is None
-    # Out of range / non-numeric ⇒ no pre-gate (safe degrade).
-    assert read_promote_confidence_threshold({"promote_confidence_threshold": 1.0}) is None
-    assert read_promote_confidence_threshold({"promote_confidence_threshold": "x"}) is None
-    # The RECOMMENDED bar the scaffolds write explicitly.
     assert DEFAULT_PROMOTE_CONFIDENCE_THRESHOLD == 0.8
+
+
+@pytest.mark.parametrize("value", [-1, 1.0, "x", True, float("nan"), float("inf")])
+def test_threshold_refuses_invalid_values(value: object) -> None:
+    from zicato.core.tournament import TournamentStructure
+
+    params = {"promote_confidence_threshold": value}
+    with pytest.raises(ValueError, match="promote_confidence_threshold"):
+        read_promote_confidence_threshold(params)
+    with pytest.raises(ValueError, match="promote_confidence_threshold"):
+        TournamentStructure(params=params)
 
 
 def test_threshold_reader_accepts_valid() -> None:
@@ -93,14 +98,12 @@ def test_threshold_reader_accepts_valid() -> None:
 
 
 def test_replicate_budget_reader() -> None:
-    assert read_replicate_budget({}) == DEFAULT_REPLICATE_BUDGET
+    assert read_replicate_budget({}) == DEFAULT_CONFIRMATION_BUDGET
     assert read_replicate_budget({"promote_confidence_replicates": 5}) == 5
     assert read_replicate_budget({"promote_confidence_replicates": 0}) == 0
-    # Bad values fall back to the default.
-    assert read_replicate_budget({"promote_confidence_replicates": -2}) == DEFAULT_REPLICATE_BUDGET
-    assert read_replicate_budget({"promote_confidence_replicates": "nope"}) == (
-        DEFAULT_REPLICATE_BUDGET
-    )
+    for invalid in (-2, "nope"):
+        with pytest.raises(ValueError, match="nonnegative integer"):
+            read_replicate_budget({"promote_confidence_replicates": invalid})
 
 
 # ---------------------------------------------------------------------------

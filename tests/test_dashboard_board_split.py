@@ -17,8 +17,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from tests._workspace_support import write_generation
 from zicato.query import WorkspacePaths, build_epoch_view
 from zicato.query.epoch_view import compute_board_split
+from zicato.workspace import WorkspaceLayout
 
 EPOCH = "2026-06-04_e0"
 
@@ -48,7 +50,7 @@ def _board_jsonl_rows() -> list[dict[str, object]]:
             "tags": e["tags"],
             "kind": "single_turn",
             "input": "Task",
-            "budget_s": 1,
+            "wall_clock_budget_seconds": 1,
         }
         for e in _board()
     ]
@@ -139,7 +141,7 @@ def _epoch_ws(tmp_path: Path, *, scoring: dict, experiments: list[dict] | None =
     (edir / "board.jsonl").write_text(board_lines + "\n", encoding="utf-8")
     for exp in experiments or []:
         gid = str(exp["generation_id"])
-        _write_json(edir / "generations" / gid / "experiment.json", exp)
+        write_generation(WorkspaceLayout.from_root(ws), EPOCH, gid, experiment=exp)
     return ws
 
 

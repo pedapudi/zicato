@@ -21,9 +21,9 @@ import pytest
 
 from zicato.core import (
     BoardEntry,
-    DriftCount,
     ExpectationResult,
     LossProfile,
+    MetricCount,
     ScoringWeights,
     UserPersona,
 )
@@ -52,7 +52,7 @@ def _failure_channel(profile: LossProfile, weights: ScoringWeights) -> float:
         mc.count
         * (weights.task_failure_weight if mc.name == "failure:tasks" else 1.0)
         * (weights.not_completed_weight if mc.name == "failure:not_completed" else 1.0)
-        for mc in profile.unified_metrics()
+        for mc in profile.scoring_metrics()
         if mc.name.startswith("failure:")
     )
 
@@ -107,7 +107,7 @@ def _default_weights() -> ScoringWeights:
 def test_compute_drift_loss_zero_when_empty() -> None:
     """Zero counts + zero ratio + zero runtime → zero loss."""
     loss = compute_drift_loss(
-        drift_counts=(),
+        metric_counts=(),
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=0,
@@ -120,14 +120,14 @@ def test_compute_drift_loss_severity_weights() -> None:
     """A CRITICAL drift weighs 10x an INFO under default severity weights."""
     weights = _default_weights()
     info = compute_drift_loss(
-        drift_counts=(DriftCount(kind="off_topic", severity="info", count=1),),
+        metric_counts=(MetricCount(name="drift:off_topic", severity="info", count=1),),
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=0,
         weights=weights,
     )
     critical = compute_drift_loss(
-        drift_counts=(DriftCount(kind="off_topic", severity="critical", count=1),),
+        metric_counts=(MetricCount(name="drift:off_topic", severity="critical", count=1),),
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=0,
@@ -142,7 +142,7 @@ def test_compute_drift_loss_per_kind_multiplier() -> None:
         per_kind_weights={"off_topic": 2.0},
     )
     loss = compute_drift_loss(
-        drift_counts=(DriftCount(kind="off_topic", severity="warning", count=3),),
+        metric_counts=(MetricCount(name="drift:off_topic", severity="warning", count=3),),
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=0,
@@ -160,7 +160,7 @@ def test_compute_drift_loss_excludes_the_run_outcome() -> None:
     """
     weights = _default_weights()
     loss = compute_drift_loss(
-        drift_counts=(),
+        metric_counts=(),
         plan_revisions=0,
         task_failure_ratio=1.0,
         runtime_ms=60_000,
@@ -173,7 +173,7 @@ def test_compute_drift_loss_plan_revision_term() -> None:
     """plan_revisions * plan_revision_weight contributes additively."""
     weights = ScoringWeights(plan_revision_weight=2.0)
     loss = compute_drift_loss(
-        drift_counts=(),
+        metric_counts=(),
         plan_revisions=4,
         task_failure_ratio=0.0,
         runtime_ms=0,
@@ -190,10 +190,10 @@ def test_compute_drift_loss_excludes_judge_attributed_drift() -> None:
     """
     weights = _default_weights()
     loss = compute_drift_loss(
-        drift_counts=(
-            DriftCount(kind="off_topic", severity="warning", count=1),
-            DriftCount(kind="custom:slide_quality", severity="critical", count=1),
-            DriftCount(kind="custom", severity="critical", count=1),
+        metric_counts=(
+            MetricCount(name="drift:off_topic", severity="warning", count=1),
+            MetricCount(name="drift:custom:slide_quality", severity="critical", count=1),
+            MetricCount(name="drift:custom", severity="critical", count=1),
         ),
         plan_revisions=0,
         weights=weights,
@@ -220,7 +220,7 @@ def test_reduce_loss_no_events(tmp_path: Path) -> None:
         wall_clock_budget_exceeded=False,
         weights=_default_weights(),
     )
-    assert profile.drift_counts == ()
+    assert not any(metric.name.startswith("drift:") for metric in profile.metric_counts)
     assert profile.plan_revisions == 0
     assert profile.task_failure_ratio == 0.0
     assert profile.drift_loss == 0.0
@@ -296,7 +296,11 @@ def test_reduce_loss_three_drifts_mixed_kind_severity(tmp_path: Path) -> None:
         weights=weights,
     )
     # Buckets: looping_reasoning|critical=1, off_topic|info=1, off_topic|warning=1
-    by_key = {(c.kind, c.severity): c.count for c in profile.drift_counts}
+    by_key = {
+        (c.name.removeprefix("drift:"), c.severity): c.count
+        for c in profile.metric_counts
+        if c.name.startswith("drift:")
+    }
     assert by_key == {
         ("looping_reasoning", "critical"): 1,
         ("off_topic", "info"): 1,
@@ -472,7 +476,7 @@ def test_loss_profile_round_trip_with_score_and_metrics(tmp_path: Path) -> None:
         entry_id="ent-score",
         generation_id="v0",
         epoch_id="ep1",
-        drift_counts=(),
+        metric_counts=(),
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=10,
@@ -494,14 +498,14 @@ def test_loss_profile_round_trip_with_score_and_metrics(tmp_path: Path) -> None:
     assert loaded == profile
 
 
-def test_loss_profile_round_trip_score_none_is_back_compat(tmp_path: Path) -> None:
-    """A profile written without score/metrics reads back with score=None (back-compat)."""
+def test_loss_profile_round_trip_absent_continuous_score(tmp_path: Path) -> None:
+    """A binary outcome retains an absent continuous score and metric decomposition."""
     profile = LossProfile(
         run_id="r-old",
         entry_id="ent-old",
         generation_id="v0",
         epoch_id="ep1",
-        drift_counts=(),
+        metric_counts=(),
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=10,
@@ -512,15 +516,6 @@ def test_loss_profile_round_trip_score_none_is_back_compat(tmp_path: Path) -> No
     )
     p = tmp_path / "loss.json"
     write_loss_profile(profile, p)
-    # Simulate a pre-feature loss.json: drop the score / metrics keys.
-    import json as _json
-
-    data = _json.loads(p.read_text(encoding="utf-8"))
-    data.pop("score", None)
-    data.pop("metrics", None)
-    data["expectation_result"].pop("score", None)
-    data["expectation_result"].pop("metrics", None)
-    p.write_text(_json.dumps(data), encoding="utf-8")
     loaded = read_loss_profile(p)
     assert loaded.score is None
     assert loaded.metrics is None
@@ -706,9 +701,9 @@ def test_loss_profile_round_trip(tmp_path: Path) -> None:
         entry_id="ent",
         generation_id="v0",
         epoch_id="ep1",
-        drift_counts=(
-            DriftCount(kind="off_topic", severity="warning", count=2),
-            DriftCount(kind="looping_reasoning", severity="critical", count=1),
+        metric_counts=(
+            MetricCount(name="drift:off_topic", severity="warning", count=2),
+            MetricCount(name="drift:looping_reasoning", severity="critical", count=1),
         ),
         plan_revisions=3,
         task_failure_ratio=0.25,
@@ -734,7 +729,7 @@ def test_loss_profile_round_trip_no_expectation(tmp_path: Path) -> None:
         entry_id="ent2",
         generation_id="v1",
         epoch_id="ep1",
-        drift_counts=(),
+        metric_counts=(),
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=10,
@@ -797,7 +792,11 @@ def test_reduce_loss_via_real_goldfive_replay(tmp_path: Path) -> None:
         wall_clock_budget_exceeded=False,
         weights=_default_weights(),
     )
-    by_key = {(c.kind, c.severity): c.count for c in profile.drift_counts}
+    by_key = {
+        (c.name.removeprefix("drift:"), c.severity): c.count
+        for c in profile.metric_counts
+        if c.name.startswith("drift:")
+    }
     assert by_key == {("off_topic", "warning"): 1}
     assert profile.run_id == "run-real"
 
@@ -868,14 +867,14 @@ def test_split_judge_attributed_kind_round_trip() -> None:
     assert split_judge_attributed_kind("custom:team:judge") == (True, "team:judge")
 
 
-def _judge_channel(drift_counts, weights: ScoringWeights) -> float:
+def _judge_channel(metric_counts, weights: ScoringWeights) -> float:
     """Total ``judge:`` channel value for a run's drift counts.
 
     The per-judge split IS the judge channel — each judge's weighted loss
     becomes one ``judge:<name>`` metric — so summing it is what the scalar
     sees.
     """
-    return sum(jl.weighted_loss for jl in compute_per_judge_loss(drift_counts, weights))
+    return sum(jl.weighted_loss for jl in compute_per_judge_loss(metric_counts, weights))
 
 
 def test_judge_channel_per_judge_weight_distinct_judges() -> None:
@@ -884,10 +883,10 @@ def test_judge_channel_per_judge_weight_distinct_judges() -> None:
         per_judge_weights={"judge_a": 2.0, "judge_b": 5.0},
     )
     loss_a = _judge_channel(
-        (DriftCount(kind="custom:judge_a", severity="warning", count=1),), weights
+        (MetricCount(name="drift:custom:judge_a", severity="warning", count=1),), weights
     )
     loss_b = _judge_channel(
-        (DriftCount(kind="custom:judge_b", severity="warning", count=1),), weights
+        (MetricCount(name="drift:custom:judge_b", severity="warning", count=1),), weights
     )
     # severity_weights["warning"] == 3.0; per_judge multiplier stacks.
     assert loss_a == pytest.approx(3.0 * 2.0)
@@ -904,7 +903,7 @@ def test_judge_channel_per_judge_weight_default_for_unknown_judge() -> None:
         default_judge_weight=4.0,
     )
     loss = _judge_channel(
-        (DriftCount(kind="custom:judge_unknown", severity="warning", count=1),), weights
+        (MetricCount(name="drift:custom:judge_unknown", severity="warning", count=1),), weights
     )
     assert loss == pytest.approx(3.0 * 4.0)
 
@@ -912,7 +911,7 @@ def test_judge_channel_per_judge_weight_default_for_unknown_judge() -> None:
 def test_judge_channel_bare_custom_uses_default_judge_weight() -> None:
     """An unattributed bare ``custom`` drift also scores at default_judge_weight."""
     weights = ScoringWeights(default_judge_weight=2.5)
-    loss = _judge_channel((DriftCount(kind="custom", severity="warning", count=1),), weights)
+    loss = _judge_channel((MetricCount(name="drift:custom", severity="warning", count=1),), weights)
     assert loss == pytest.approx(3.0 * 2.5)
 
 
@@ -925,10 +924,10 @@ def test_judge_channel_default_judge_weight_defaults_to_one() -> None:
     """
     weights = ScoringWeights()  # default_judge_weight == 1.0
     custom = _judge_channel(
-        (DriftCount(kind="custom:some_judge", severity="warning", count=1),), weights
+        (MetricCount(name="drift:custom:some_judge", severity="warning", count=1),), weights
     )
     first_class = compute_drift_loss(
-        drift_counts=(DriftCount(kind="off_topic", severity="warning", count=1),),
+        metric_counts=(MetricCount(name="drift:off_topic", severity="warning", count=1),),
         plan_revisions=0,
         weights=weights,
     )
@@ -942,10 +941,10 @@ def test_per_kind_and_per_judge_apply_to_their_own_channels() -> None:
         per_judge_weights={"judge_a": 7.0},
     )
     counts = (
-        DriftCount(kind="off_topic", severity="warning", count=1),
-        DriftCount(kind="custom:judge_a", severity="warning", count=1),
+        MetricCount(name="drift:off_topic", severity="warning", count=1),
+        MetricCount(name="drift:custom:judge_a", severity="warning", count=1),
     )
-    drift = compute_drift_loss(drift_counts=counts, plan_revisions=0, weights=weights)
+    drift = compute_drift_loss(metric_counts=counts, plan_revisions=0, weights=weights)
     judge = _judge_channel(counts, weights)
     # off_topic: 3.0 * 2.0 in drift: ; custom:judge_a: 3.0 * 7.0 in judge:
     assert drift == pytest.approx(3.0 * 2.0)
@@ -971,7 +970,11 @@ def test_reduce_loss_attributes_custom_drift_to_paired_judge(tmp_path: Path) -> 
         wall_clock_budget_exceeded=False,
         weights=_default_weights(),
     )
-    by_key = {(c.kind, c.severity): c.count for c in profile.drift_counts}
+    by_key = {
+        (c.name.removeprefix("drift:"), c.severity): c.count
+        for c in profile.metric_counts
+        if c.name.startswith("drift:")
+    }
     # The drift is bucketed under the namespaced custom kind, not bare "custom".
     assert by_key == {("custom:slide_quality", "warning"): 1}
 
@@ -998,7 +1001,11 @@ def test_reduce_loss_two_custom_judges_score_independently(tmp_path: Path) -> No
         wall_clock_budget_exceeded=False,
         weights=weights,
     )
-    by_key = {(c.kind, c.severity): c.count for c in profile.drift_counts}
+    by_key = {
+        (c.name.removeprefix("drift:"), c.severity): c.count
+        for c in profile.metric_counts
+        if c.name.startswith("drift:")
+    }
     assert by_key == {
         ("custom:judge_a", "warning"): 1,
         ("custom:judge_b", "critical"): 1,
@@ -1006,7 +1013,7 @@ def test_reduce_loss_two_custom_judges_score_independently(tmp_path: Path) -> No
     # judge channel: judge_a -> 3.0(warning) * 2.0 ; judge_b -> 10.0(critical) * 5.0.
     # The drift channel stays empty: every count here is judge-attributed.
     assert profile.drift_loss == pytest.approx(0.0)
-    assert _judge_channel(profile.drift_counts, weights) == pytest.approx(3.0 * 2.0 + 10.0 * 5.0)
+    assert _judge_channel(profile.metric_counts, weights) == pytest.approx(3.0 * 2.0 + 10.0 * 5.0)
 
 
 def test_reduce_loss_custom_drift_without_judgement_uses_default(tmp_path: Path) -> None:
@@ -1029,11 +1036,15 @@ def test_reduce_loss_custom_drift_without_judgement_uses_default(tmp_path: Path)
         wall_clock_budget_exceeded=False,
         weights=weights,
     )
-    by_key = {(c.kind, c.severity): c.count for c in profile.drift_counts}
+    by_key = {
+        (c.name.removeprefix("drift:"), c.severity): c.count
+        for c in profile.metric_counts
+        if c.name.startswith("drift:")
+    }
     assert by_key == {("custom", "warning"): 1}
     # judge channel: 3.0 (warning severity) * 3.0 (default_judge_weight) = 9.0
     assert profile.drift_loss == pytest.approx(0.0)
-    assert _judge_channel(profile.drift_counts, weights) == pytest.approx(9.0)
+    assert _judge_channel(profile.metric_counts, weights) == pytest.approx(9.0)
 
 
 def test_reduce_loss_non_drift_judgement_does_not_attribute(tmp_path: Path) -> None:
@@ -1065,7 +1076,11 @@ def test_reduce_loss_non_drift_judgement_does_not_attribute(tmp_path: Path) -> N
         wall_clock_budget_exceeded=False,
         weights=_default_weights(),
     )
-    by_key = {(c.kind, c.severity): c.count for c in profile.drift_counts}
+    by_key = {
+        (c.name.removeprefix("drift:"), c.severity): c.count
+        for c in profile.metric_counts
+        if c.name.startswith("drift:")
+    }
     # The rubric judgement must NOT have been mis-attributed: the custom
     # drift stays bare "custom".
     assert by_key == {("custom", "warning"): 1}
@@ -1092,7 +1107,11 @@ def test_reduce_loss_judgement_pairs_only_with_next_drift(tmp_path: Path) -> Non
         wall_clock_budget_exceeded=False,
         weights=_default_weights(),
     )
-    by_key = {(c.kind, c.severity): c.count for c in profile.drift_counts}
+    by_key = {
+        (c.name.removeprefix("drift:"), c.severity): c.count
+        for c in profile.metric_counts
+        if c.name.startswith("drift:")
+    }
     # First custom drift -> judge_a; second -> unattributed bare "custom".
     assert by_key == {
         ("custom:judge_a", "warning"): 1,
@@ -1122,7 +1141,11 @@ def test_reduce_loss_first_class_drift_consumes_pending_judgement(tmp_path: Path
         wall_clock_budget_exceeded=False,
         weights=_default_weights(),
     )
-    by_key = {(c.kind, c.severity): c.count for c in profile.drift_counts}
+    by_key = {
+        (c.name.removeprefix("drift:"), c.severity): c.count
+        for c in profile.metric_counts
+        if c.name.startswith("drift:")
+    }
     # off_topic stays first-class; the custom drift is NOT attributed to
     # judge_a (whose judgement was consumed by the off_topic drift).
     assert by_key == {
@@ -1168,7 +1191,11 @@ def test_reduce_loss_no_custom_judges_back_compat(tmp_path: Path) -> None:
         wall_clock_budget_exceeded=False,
         weights=_default_weights(),
     )
-    by_key = {(c.kind, c.severity): c.count for c in profile.drift_counts}
+    by_key = {
+        (c.name.removeprefix("drift:"), c.severity): c.count
+        for c in profile.metric_counts
+        if c.name.startswith("drift:")
+    }
     assert by_key == {
         ("off_topic", "warning"): 1,
         ("looping_reasoning", "critical"): 1,
@@ -1198,7 +1225,7 @@ def test_reduce_loss_custom_drift_appears_in_metric_counts(tmp_path: Path) -> No
         weights=_default_weights(),
     )
     names = {m.name for m in profile.metric_counts}
-    # MetricCount.from_drift_count prefixes "drift:" — the judge identity
+    # The named metric retains its drift prefix and judge identity
     # rides inside the kind segment.
     assert "drift:custom:slide_quality" in names
 
@@ -1249,7 +1276,11 @@ def test_reduce_loss_folds_camelcase_drift_verdicts(tmp_path: Path) -> None:
         wall_clock_budget_exceeded=False,
         weights=_default_weights(),
     )
-    by_key = {(c.kind, c.severity): c.count for c in profile.drift_counts}
+    by_key = {
+        (c.name.removeprefix("drift:"), c.severity): c.count
+        for c in profile.metric_counts
+        if c.name.startswith("drift:")
+    }
     assert by_key == {
         ("capability_mismatch", "critical"): 1,
         ("off_topic", "warning"): 1,
@@ -1294,7 +1325,11 @@ def test_reduce_loss_camelcase_judgement_attributes_custom_drift(tmp_path: Path)
         wall_clock_budget_exceeded=False,
         weights=_default_weights(),
     )
-    by_key = {(c.kind, c.severity): c.count for c in profile.drift_counts}
+    by_key = {
+        (c.name.removeprefix("drift:"), c.severity): c.count
+        for c in profile.metric_counts
+        if c.name.startswith("drift:")
+    }
     assert by_key == {("custom:slide_quality", "warning"): 1}
     assert profile.per_judge_loss[0].judge_name == "slide_quality"
     assert profile.per_judge_loss[0].weighted_loss > 0.0
@@ -1595,7 +1630,7 @@ def test_loss_profile_round_trip_with_adk_session_id(tmp_path: Path) -> None:
         entry_id="ent-adk",
         generation_id="v0",
         epoch_id="ep1",
-        drift_counts=(),
+        metric_counts=(),
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=10,
@@ -1613,33 +1648,3 @@ def test_loss_profile_round_trip_with_adk_session_id(tmp_path: Path) -> None:
     loaded = read_loss_profile(p)
     assert loaded == profile
     assert loaded.adk_session_id == "abc123def456"
-
-
-def test_read_loss_profile_back_compat_missing_adk_session_id(tmp_path: Path) -> None:
-    """An old ``loss.json`` without ``adk_session_id`` loads with the default ``""``."""
-    # Write a loss.json that predates the adk_session_id field.
-    import json as _json
-
-    old_loss = {
-        "run_id": "old-run",
-        "entry_id": "ent-old",
-        "generation_id": "v0",
-        "epoch_id": "ep1",
-        "drift_counts": [],
-        "plan_revisions": 0,
-        "task_failure_ratio": 0.0,
-        "runtime_ms": 100,
-        "wall_clock_budget_exceeded": False,
-        "expectation_result": None,
-        "drift_loss": 0.0,
-        "pass_fail": None,
-        "turns_completed": None,
-        "memory_failure_count": None,
-        "context_loss_count": None,
-        # intentionally omits adk_session_id
-    }
-    p = tmp_path / "loss.json"
-    p.write_text(_json.dumps(old_loss), encoding="utf-8")
-    loaded = read_loss_profile(p)
-    assert loaded.adk_session_id == ""
-    assert loaded.task_failure_ratio == pytest.approx(0.0)

@@ -1,11 +1,4 @@
-"""Index v11 — the board-reflection projection (reflections + judge_scorecards).
-
-The additive migration (v10 → v11 in place + a fresh build both carry the two
-new tables), the finalize-time + rebuild-time upsert writers, tolerant readers
-(``IndexNotBuiltError`` ⇒ ``[]`` / ``None``), and the reindex walk discovering a
-reflection directory. The generations ``elo`` / ``elo_games`` stubs are never
-touched.
-"""
+"""Canonical reflection projection, replacement, and read-only queries."""
 
 from __future__ import annotations
 
@@ -14,6 +7,7 @@ import sqlite3
 from pathlib import Path
 
 from tests._reflection_support import finding_body, scorecard_body
+from tests._workspace_support import write_epoch, write_lineage
 from zicato.core.workspace import (
     reflection_dir,
     reflection_findings_path,
@@ -23,6 +17,7 @@ from zicato.core.workspace import (
 from zicato.index import query as iq
 from zicato.index import schema
 from zicato.index.ingest import ingest_reflection, rebuild_index
+from zicato.workspace import WorkspaceLayout
 
 REFL = "refl-20260701000000-abcd1234"
 EPOCH = "epoch-1"
@@ -110,7 +105,7 @@ def _card(name: str, **kw: object) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def test_fresh_build_carries_v11_tables() -> None:
+def test_schema_contains_reflection_tables() -> None:
     conn = sqlite3.connect(":memory:")
     schema.apply_schema(conn)
     # v11 introduced the tables; the build is now stamped at the CURRENT
@@ -118,27 +113,6 @@ def test_fresh_build_carries_v11_tables() -> None:
     assert schema.read_schema_version(conn) >= 11
     tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert {"reflections", "judge_scorecards"} <= tables
-
-
-def test_in_place_migrate_v10_to_v11_adds_tables() -> None:
-    conn = sqlite3.connect(":memory:")
-    schema.apply_schema(conn)
-    # Simulate a v10 database: drop the v11 tables and re-stamp the version.
-    conn.execute("DROP TABLE reflections")
-    conn.execute("DROP TABLE judge_scorecards")
-    conn.execute("PRAGMA user_version = 10")
-    assert schema.read_schema_version(conn) == 10
-    schema.apply_schema(conn)  # in-place migrate (carries through to current)
-    assert schema.read_schema_version(conn) >= 11
-    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-    assert {"reflections", "judge_scorecards"} <= tables
-
-
-def test_migration_leaves_elo_stub_columns_untouched() -> None:
-    conn = sqlite3.connect(":memory:")
-    schema.apply_schema(conn)
-    cols = {r[1] for r in conn.execute("PRAGMA table_info(generations)")}
-    assert {"elo", "elo_games"} <= cols
 
 
 # ---------------------------------------------------------------------------
@@ -215,13 +189,12 @@ def test_reindex_discovers_reflection_dir(tmp_path: Path) -> None:
     workspace = tmp_path / ".zicato"
     # A minimal epoch so the rebuild walk visits the epoch (lineage + config).
     (workspace / "epochs" / EPOCH).mkdir(parents=True)
-    (workspace / "epochs" / EPOCH / "config.json").write_text(
-        json.dumps({"id": EPOCH, "name": EPOCH, "created_at": "", "closed": False}),
-        encoding="utf-8",
+    write_epoch(
+        WorkspaceLayout(workspace),
+        EPOCH,
+        config={"id": EPOCH, "name": EPOCH, "created_at": "", "closed": False},
     )
-    (workspace / "lineage.json").write_text(
-        json.dumps({"epochs": [{"id": EPOCH, "generations": []}]}), encoding="utf-8"
-    )
+    write_lineage(WorkspaceLayout(workspace), {"epochs": [{"id": EPOCH, "generations": []}]})
     _write_reflection_files(
         workspace,
         scorecards=[_card("j1")],
@@ -247,7 +220,7 @@ def test_readers_tolerate_missing_index(tmp_path: Path) -> None:
     assert iq.judge_scorecards_for_reflection(missing, REFL) == []
 
 
-def test_readers_tolerate_preexisting_index_without_v11_tables(tmp_path: Path) -> None:
+def test_readers_refuse_an_incompatible_reflection_index(tmp_path: Path) -> None:
     # A v10-shaped index with no reflections table: readers degrade, not raise.
     db = tmp_path / "index.db"
     conn = sqlite3.connect(str(db))

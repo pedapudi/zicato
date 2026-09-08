@@ -186,46 +186,26 @@ Values are bound by column name, so a column added to the DDL fails
 `tests/test_index_statements.py` at every writer that has not been taught to
 supply it, rather than reaching a database.
 
-One failure inside the index write path is raised rather than swallowed
-there, and it is a refusal rather than a crash of the loop — the outer
-dual-write `except Exception` still catches it and degrades:
+Incremental writers accept only the supported schema. An incompatible index
+raises `IndexSchemaError` before schema or row changes; the outer best-effort
+guard reports the indexing failure while canonical execution continues.
+A worker cannot rebuild the whole index while sibling workers are active.
 
-```python
-    current = read_schema_version(conn)
-    if current > SCHEMA_VERSION:
-        raise IndexSchemaNewerError(
-            f"index database schema is v{current}, newer than this build's "
-            f"v{SCHEMA_VERSION}; refusing to re-stamp it down. Upgrade "
-            "zicato, or delete the index database and run `zicato repair index` "
-            "(the index is derived — a rebuild loses nothing)."
-        )
-```
-— `src/zicato/index/schema.py`, `apply_schema`
+### 7.1.2 Repair rebuilds the supported index from canonical records
 
-An older writer must never re-stamp a newer database DOWN (D12). The
-recovery is always cheap because the index is derived (D1): delete the file,
-`zicato reindex`.
+`zicato repair index` calls `zicato.index.ingest.rebuild_index`. It acquires the
+workspace writer lease and projects canonical records into a private database.
+Publication replaces `index.db` only after the build commits and closes.
+Canonical workspace records are never rewritten by index repair.
 
-### 7.1.2 `zicato repair index` — the drop-and-rebuild
+`ensure_index` uses that same owner for missing, unreadable, or incompatible
+indexes. `SCHEMA_VERSION` identifies the supported SQLite layout and projection
+semantics. The supervisor's `EXPECTED_SCHEMA_VERSION` must match it. Readers
+open read-only and return unavailable results for incompatible indexes.
 
-```
-$ zicato repair index
-```
-
-Backed by `zicato.index.ingest.rebuild_index` (see
-`src/zicato/cli/commands/reindex.py`): drops `index.db`, applies the schema
-(`zicato.index.schema.apply_schema`, which stamps `SCHEMA_VERSION` into both
-`PRAGMA user_version` and the one-row `schema_meta` table), then walks the
-workspace re-deriving every row through zicato's own canonical readers
-(`load_lineage`, `read_experiment`, `read_loss_profile`, `iter_epochs`) — the
-index never re-implements a parse a canonical module already owns.
-
-`SCHEMA_VERSION` currently equals `10` (`src/zicato/index/schema.py`); the
-Rust supervisor pins the same number as `EXPECTED_SCHEMA_VERSION` in
-`crates/supervisor/src/index_db.rs`, with a test on each side that fails if
-they drift. If you change the index schema, you are changing a **two-language
-contract** — see 08-supervisor.md §8.9 (the read-only SQLite discipline) and
-the REINDEX-DUMP parity gate in 11-testing.md §11.7.
+Only full epoch projection creates an ingest cursor. Incremental writes refresh
+an existing cursor, so a partially populated epoch remains eligible for heal.
+The equality tests compare a healed index with a complete canonical rebuild.
 
 ---
 
@@ -636,7 +616,7 @@ throwaway checkout instead, with a contract shared by all backends
 - `working_dir`'s basename equals the canonical `snapshot_path`'s basename,
   so `__file__`-derived paths inside the agent look identical either way;
 - a sibling `run-scratch` dir (`EPHEMERAL_SCRATCH_DIRNAME`) is created for
-  the `SCRATCH_DIR_ENV` contract — run output routed OUTSIDE the source tree;
+  the `RunContext.scratch_dir` contract — run output routed OUTSIDE the source tree;
 - concurrent checkouts of the SAME generation are mutually isolated;
 - `cleanup()` is idempotent, best-effort, and crash-safety does NOT depend on
   it (the reaper handles orphans).
@@ -1484,48 +1464,17 @@ constructor that would reject it.
 
 ---
 
-## 7.11 `format_version` — refuse-on-newer for canonical records
+## 7.11 Required format stamps for canonical records
 
-Canonical JSON records (`experiment.json`, per-epoch `config.json`,
-`lineage.json`) are stamped at write time with
-`RECORD_FORMAT_VERSION` (currently `1`,
-`src/zicato/epoch/_storage.py`), and every reader runs
-`check_record_format` before interpreting the body:
+Canonical JSON records, including experiments, epoch configuration, and lineage,
+carry an explicit integer `format_version` equal to `RECORD_FORMAT_VERSION`.
+Their readers call `check_record_format` before interpreting the body. A missing
+stamp, a boolean, a non-integer value, or a different version raises
+`RecordFormatError`. Readers neither infer a version nor migrate canonical data.
 
-```python
-def check_record_format(body: dict[str, object], record_name: str) -> None:
-    """Refuse a canonical record whose ``format_version`` this build cannot read.
-
-    ``body`` is the parsed JSON record; ``record_name`` names it in the
-    error (e.g. ``"experiment.json"``). Absent ⇒ version 1 (pre-stamp
-    records — accepted this release); equal ⇒ fine; anything else raises
-    :class:`RecordFormatError` with the upgrade guidance.
-    """
-```
-— `src/zicato/epoch/_storage.py`
-
-The semantics, spelled out:
-
-- **Absent key ⇒ version 1** this release, so every pre-stamp workspace and
-  fixture keeps reading.
-- **Equal ⇒ fine.**
-- **Anything else ⇒ `RecordFormatError`** — the record was written by an
-  incompatible (likely newer) zicato; refusing beats silently misreading a
-  shape this build cannot promise to interpret (invariant D12).
-- **There are NO migration shims.** Bumping the constant is a format break by
-  design rather than a routine version tick.
-
-The same refuse-on-newer stance appears twice more in the system, one per
-derived store: `IndexSchemaNewerError` for `index.db` (§7.1.1 — an older
-writer never re-stamps a newer database down), and the Rust supervisor's
-`EXPECTED_SCHEMA_VERSION` mismatch → `StaleSchema` degrade
-(08-supervisor.md). Additive evolution is the default everywhere else:
-dataclass fields get defaults, serde fields get `#[serde(default)]`, JSONL
-event payloads tolerate unknown keys.
-
-> ✅ ALWAYS prefer an additive, defaulted field over a `format_version` bump.
-> The bump exists for the day an older reader cannot read a shape at all;
-> reserve it for that.
+The derived index follows its own rebuild policy (§7.1.2). Readers admit only
+the supported schema. The repair owner reconstructs an incompatible database
+from canonical workspace records without changing those records.
 
 ---
 

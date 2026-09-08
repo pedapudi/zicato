@@ -6,7 +6,7 @@ from dataclasses import replace
 import pytest
 
 from tests._reflection_support import scorecard_body
-from tests.test_reflection_index_v11 import EPOCH, REFL, _write_reflection_files
+from tests.test_reflection_index import EPOCH, REFL, _write_reflection_files
 from zicato.core.workspace import reflection_scorecards_path
 from zicato.epoch._storage import RecordError
 from zicato.index import query as iq

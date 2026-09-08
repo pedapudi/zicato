@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -34,10 +35,9 @@ def _build_adk(adapter_dict: Mapping[str, Any]) -> Any:
     if not entrypoint or not isinstance(entrypoint, str):
         raise ValueError("adapter kind='adk' requires a non-empty 'entrypoint' string")
     raw_trees = adapter_dict.get("mutable_trees", [])
-    if raw_trees is None:
-        trees: list[Path] | None = None
-    else:
-        trees = [Path(t) for t in raw_trees]
+    if not isinstance(raw_trees, list | tuple) or any(not isinstance(t, str) for t in raw_trees):
+        raise ValueError("adapter mutable_trees must be a list of paths")
+    trees = [Path(t) for t in raw_trees]
 
     # Lazy import so this factory module remains importable without
     # google-adk / goldfive being installed.
@@ -52,8 +52,6 @@ def _build_import(adapter_dict: Mapping[str, Any]) -> Any:
     if not factory_path or not isinstance(factory_path, str):
         raise ValueError("adapter kind='import' requires a non-empty 'factory' dotted path")
     raw_args = adapter_dict.get("args", [])
-    if raw_args is None:
-        raw_args = []
     if not isinstance(raw_args, Sequence) or isinstance(raw_args, str | bytes):
         raise ValueError(
             f"adapter kind='import' 'args' must be a list, got {type(raw_args).__name__}"
@@ -71,8 +69,6 @@ def _build_import(adapter_dict: Mapping[str, Any]) -> Any:
     options = adapter_dict.get("options", {})
     if not isinstance(options, Mapping):
         raise ValueError("adapter options must be an object of factory keyword arguments")
-    import inspect
-
     try:
         signature = inspect.signature(factory)
     except ValueError:
@@ -89,32 +85,18 @@ def make_adapter_from_spec(spec: Mapping[str, Any]) -> Any:
     """Reconstruct an adapter from its serializable worker specification."""
     kind = spec.get("kind")
     if kind == "adk":
-        from zicato.adapters.adk import ADKHarnessAdapter  # noqa: PLC0415
-
-        entrypoint = str(spec["entrypoint"])
-        raw_trees = spec.get("mutable_trees") or []
-        trees = [Path(t) for t in raw_trees] if raw_trees else None
-        return ADKHarnessAdapter(entrypoint=entrypoint, mutable_trees=trees)
+        return _build_adk(spec)
     if kind == "import":
         return _build_import(spec)
     raise ValueError(f"cannot reconstruct adapter kind {kind!r} from a worker spec")
 
 
-def uses_legacy_run(session: Any) -> bool:
-    """Validate the loaded run method and select its supported calling convention."""
-    import inspect
-
+def validate_harness_run(session: Any) -> None:
+    """Require the asynchronous harness interface used by probes and workers."""
     run = getattr(session, "run", None)
-    if not callable(run):
-        raise ValueError("adapter.load must return a harness with a callable run method")
-    signature = inspect.signature(run)
-    names = list(signature.parameters)
-    legacy = len(names) >= 2 and names[1] in ("sink_path", "events_path")
+    if not callable(run) or not inspect.iscoroutinefunction(run):
+        raise ValueError("loaded harness must expose async run(entry, sinks, config)")
     try:
-        signature.bind(*(object() for _ in range(2 if legacy else 3)))
-    except TypeError as exc:
-        raise ValueError(f"loaded harness run method has incompatible arguments: {exc}") from exc
-    return legacy
-
-
-__all__ = ["make_adapter_from_config", "make_adapter_from_spec"]
+        inspect.signature(run).bind(object(), object(), object())
+    except (TypeError, ValueError) as exc:
+        raise ValueError("loaded harness must expose async run(entry, sinks, config)") from exc

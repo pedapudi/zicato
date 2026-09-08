@@ -7,11 +7,15 @@ import subprocess
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import get_args
 
+from zicato.config import resolve_configuration
 from zicato.core.adapter_config import DriverImportContext
 from zicato.core.drift_kinds import DriftKind
 from zicato.core.measurement import MeasurementDraw, measurement_artifact_path
+from zicato.core.run_context import RunContext
+from zicato.core.runtime_context import WorkerRuntimeContext
 from zicato.core.workspace import run_dir, run_id_for_unit
 from zicato.models_config import capture_execution_roles
 from zicato.telemetry.reducer import read_loss_profile
@@ -223,12 +227,6 @@ def test_real_worker_preserves_captured_native_transport_and_tool_protocol(tmp_p
         ).parent
         unit.mkdir(parents=True)
         payload = {
-            "workspace_root": str(workspace),
-            "epoch_id": "e0",
-            "generation_id": "v0",
-            "run_id": run_id,
-            "snapshot_root": str(snapshot),
-            "scratch_dir": str(unit / "scratch"),
             "driver_imports": DriverImportContext((), ("local_target",)).document(),
             "adapter": adapter_worker_spec(ADKHarnessAdapter(entrypoint="local_target:agent")),
             "entry": {
@@ -244,10 +242,19 @@ def test_real_worker_preserves_captured_native_transport_and_tool_protocol(tmp_p
             "sink_events_path": str(unit / "events.jsonl"),
             "loss_path": str(unit / "loss.json"),
             "measurement": draw.to_json(),
-            "seed": 17,
             "weights": {"goldfive": {}},
             "result_path": str(unit / "worker.result.json"),
-            "harmonograf_url": "",
+            "runtime_context": WorkerRuntimeContext(
+                run=RunContext(
+                    Path(str(workspace)),
+                    "e0",
+                    "v0",
+                    run_id,
+                    Path(str(snapshot)),
+                    Path(str(unit / "scratch")),
+                )
+            ).to_json(),
+            "configuration": resolve_configuration({"runtime": {"seed": 17}}).to_json(),
         }
         args = unit / "args.json"
         args.write_text(json.dumps(payload))

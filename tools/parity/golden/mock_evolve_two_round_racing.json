@@ -7,7 +7,6 @@
       "generation_id": "v0",
       "hypothesis": {
         "core_idea": "baseline seed",
-        "expected_drift_movements": [],
         "expected_metric_movements": [],
         "expected_pass_rate_delta": "",
         "modulating": [],
@@ -27,7 +26,6 @@
       "generation_id": "v1",
       "hypothesis": {
         "core_idea": "Tag the topic_slugify_logic literal for candidate v1.",
-        "expected_drift_movements": [],
         "expected_metric_movements": [
           {
             "direction": "neutral",
@@ -46,7 +44,6 @@
       "outcome": {
         "champion_eval_mode": "full",
         "drift_loss_delta": -1.5999999999999999,
-        "drift_movements": [],
         "eliminated_in_round": null,
         "evidence": {
           "confirmation_status": "disabled",
@@ -108,7 +105,6 @@
       "generation_id": "v2",
       "hypothesis": {
         "core_idea": "Tag the topic_slugify_logic literal for candidate v2.",
-        "expected_drift_movements": [],
         "expected_metric_movements": [
           {
             "direction": "neutral",
@@ -127,7 +123,6 @@
       "outcome": {
         "champion_eval_mode": "full",
         "drift_loss_delta": 0.0,
-        "drift_movements": [],
         "eliminated_in_round": null,
         "evidence": null,
         "final_rank": 3,
@@ -166,7 +161,6 @@
       "generation_id": "v3",
       "hypothesis": {
         "core_idea": "Tag the topic_slugify_logic literal for candidate v3.",
-        "expected_drift_movements": [],
         "expected_metric_movements": [
           {
             "direction": "neutral",
@@ -185,7 +179,6 @@
       "outcome": {
         "champion_eval_mode": "full",
         "drift_loss_delta": 0.0,
-        "drift_movements": [],
         "eliminated_in_round": null,
         "evidence": null,
         "final_rank": 4,
@@ -224,7 +217,6 @@
       "generation_id": "v4",
       "hypothesis": {
         "core_idea": "Tag the topic_slugify_logic literal for candidate v4.",
-        "expected_drift_movements": [],
         "expected_metric_movements": [
           {
             "direction": "neutral",
@@ -243,7 +235,6 @@
       "outcome": {
         "champion_eval_mode": "full",
         "drift_loss_delta": 0.0,
-        "drift_movements": [],
         "eliminated_in_round": null,
         "evidence": null,
         "final_rank": 5,
@@ -282,7 +273,6 @@
       "generation_id": "v5",
       "hypothesis": {
         "core_idea": "Tag the topic_slugify_logic literal for candidate v5.",
-        "expected_drift_movements": [],
         "expected_metric_movements": [
           {
             "direction": "neutral",
@@ -301,7 +291,6 @@
       "outcome": {
         "champion_eval_mode": "full",
         "drift_loss_delta": -0.30000000000000004,
-        "drift_movements": [],
         "eliminated_in_round": null,
         "evidence": {
           "confirmation_status": "disabled",
@@ -363,7 +352,6 @@
       "generation_id": "v6",
       "hypothesis": {
         "core_idea": "Tag the topic_slugify_logic literal for candidate v6.",
-        "expected_drift_movements": [],
         "expected_metric_movements": [
           {
             "direction": "neutral",
@@ -382,7 +370,6 @@
       "outcome": {
         "champion_eval_mode": "full",
         "drift_loss_delta": 0.0,
-        "drift_movements": [],
         "eliminated_in_round": null,
         "evidence": null,
         "final_rank": 3,
@@ -421,7 +408,6 @@
       "generation_id": "v7",
       "hypothesis": {
         "core_idea": "Tag the topic_slugify_logic literal for candidate v7.",
-        "expected_drift_movements": [],
         "expected_metric_movements": [
           {
             "direction": "neutral",
@@ -440,7 +426,6 @@
       "outcome": {
         "champion_eval_mode": "full",
         "drift_loss_delta": 0.0,
-        "drift_movements": [],
         "eliminated_in_round": null,
         "evidence": null,
         "final_rank": 4,
@@ -479,7 +464,6 @@
       "generation_id": "v8",
       "hypothesis": {
         "core_idea": "Tag the topic_slugify_logic literal for candidate v8.",
-        "expected_drift_movements": [],
         "expected_metric_movements": [
           {
             "direction": "neutral",
@@ -498,7 +482,6 @@
       "outcome": {
         "champion_eval_mode": "full",
         "drift_loss_delta": 0.0,
-        "drift_movements": [],
         "eliminated_in_round": null,
         "evidence": null,
         "final_rank": 5,
@@ -920,6 +903,7 @@
       "drift_loss_mean": 2.0,
       "entry_count": 6,
       "expectation_count": 6,
+      "format_version": 1,
       "generation_id": "v0",
       "mean_score": 1.0,
       "namespace_aggregates": {
@@ -992,6 +976,7 @@
       "drift_loss_mean": 0.4000000000000001,
       "entry_count": 6,
       "expectation_count": 6,
+      "format_version": 1,
       "generation_id": "v1",
       "mean_score": 1.0,
       "namespace_aggregates": {
@@ -1064,6 +1049,7 @@
       "drift_loss_mean": 0.8000000000000002,
       "entry_count": 3,
       "expectation_count": 3,
+      "format_version": 1,
       "generation_id": "v2",
       "mean_score": 1.0,
       "namespace_aggregates": {
@@ -1118,6 +1104,7 @@
       "drift_loss_mean": 1.2,
       "entry_count": 3,
       "expectation_count": 3,
+      "format_version": 1,
       "generation_id": "v3",
       "mean_score": 1.0,
       "namespace_aggregates": {
@@ -1172,6 +1159,7 @@
       "drift_loss_mean": 1.6000000000000003,
       "entry_count": 3,
       "expectation_count": 3,
+      "format_version": 1,
       "generation_id": "v4",
       "mean_score": 1.0,
       "namespace_aggregates": {
@@ -1226,6 +1214,7 @@
       "drift_loss_mean": 0.10000000000000002,
       "entry_count": 6,
       "expectation_count": 6,
+      "format_version": 1,
       "generation_id": "v5",
       "mean_score": 1.0,
       "namespace_aggregates": {
@@ -1298,6 +1287,7 @@
       "drift_loss_mean": 0.20000000000000004,
       "entry_count": 3,
       "expectation_count": 3,
+      "format_version": 1,
       "generation_id": "v6",
       "mean_score": 1.0,
       "namespace_aggregates": {
@@ -1352,6 +1342,7 @@
       "drift_loss_mean": 0.25,
       "entry_count": 3,
       "expectation_count": 3,
+      "format_version": 1,
       "generation_id": "v7",
       "mean_score": 1.0,
       "namespace_aggregates": {
@@ -1406,6 +1397,7 @@
       "drift_loss_mean": 0.3,
       "entry_count": 3,
       "expectation_count": 3,
+      "format_version": 1,
       "generation_id": "v8",
       "mean_score": 1.0,
       "namespace_aggregates": {
@@ -1563,7 +1555,7 @@
     "0/round_log.jsonl": [
       {
         "payload": {
-          "contract_hash": "a4a2fb4e06703500560e94d2889f7e642d1934d6acb6ab4493bf389ba5626383"
+          "contract_hash": "9d61e8a4bbd6ea6a3a0601defd013d9687da88fe2575e407fabef006fd2af352"
         },
         "scope": {},
         "seq": 1,
@@ -2573,7 +2565,7 @@
     "1/round_log.jsonl": [
       {
         "payload": {
-          "contract_hash": "a4a2fb4e06703500560e94d2889f7e642d1934d6acb6ab4493bf389ba5626383"
+          "contract_hash": "9d61e8a4bbd6ea6a3a0601defd013d9687da88fe2575e407fabef006fd2af352"
         },
         "scope": {},
         "seq": 1,

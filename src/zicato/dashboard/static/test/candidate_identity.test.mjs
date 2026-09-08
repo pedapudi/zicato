@@ -46,7 +46,6 @@ function expFixture(overrides) {
       core_idea: 'Name the audience up front and demand a slide outline before prose',
       why: 'The judge flags narrative drift whenever the agent starts writing paragraphs first.',
       modulating: ['prompt.system'],
-      expected_drift_movements: [{ kind: 'off_topic', direction: 'decrease', magnitude: 'medium' }],
       expected_metric_movements: [
         { metric_name: 'drift:off_topic', direction: 'decrease', magnitude: 'large' },
         { metric_name: 'cost:tokens_spent', direction: 'increase', magnitude: 'small' },
@@ -76,27 +75,17 @@ test('buildProposalModel: lifts the proposer’s own words, claims, sites and di
   assertEqual(m.newLines, 3, 'the diff size counts the lines of NEW content the patches carry');
 });
 
-test('buildProposalModel: claims are keyed EXACTLY as the prediction grader keys them', () => {
-  // The grader (query/hypothesis_view.py `_expected_index`) keys a metric claim
-  // by its `metric_name` and a drift claim by its bare `kind`, into ONE target
-  // map — so "drift:off_topic" and "off_topic" are two targets rather than one, and
-  // this header must show the same three claims the scorecard will score.
+test('buildProposalModel: claims use the prediction scorecard metric names', () => {
   const m = cand.buildProposalModel(expFixture());
-  assertDeep(m.movements.map((mv) => mv.target), ['drift:off_topic', 'cost:tokens_spent', 'off_topic'],
-    'the namespaced claims lead, the bare drift kind follows — the grader’s own keying');
+  assertDeep(m.movements.map((mv) => mv.target), ['drift:off_topic', 'cost:tokens_spent'],
+    'the recorded metric names identify each prediction target');
+  assertEqual(m.movements[0].magnitude, 'large', 'the recorded magnitude is preserved');
 
-  // when the two DO collide on one name, the metric claim wins (same precedence).
-  const collide = expFixture();
-  collide.hypothesis.expected_metric_movements = [{ metric_name: 'off_topic', direction: 'decrease', magnitude: 'large' }];
-  const c = cand.buildProposalModel(collide);
-  assertDeep(c.movements.map((mv) => mv.target), ['off_topic'], 'one target, named once');
-  assertEqual(c.movements[0].magnitude, 'large', 'the metric claim wins the collision, as it does at grading time');
-
-  // a proposal that made only the OLD drift-shaped claim still surfaces it.
-  const legacy = expFixture();
-  legacy.hypothesis.expected_metric_movements = [];
-  assertDeep(cand.buildProposalModel(legacy).movements.map((mv) => mv.target), ['off_topic'],
-    'a drift-only hypothesis still reads');
+  const duplicate = expFixture();
+  duplicate.hypothesis.expected_metric_movements.push(
+    { metric_name: 'drift:off_topic', direction: 'increase', magnitude: 'small' });
+  assertDeep(cand.buildProposalModel(duplicate).movements.map((mv) => mv.target),
+    ['drift:off_topic', 'cost:tokens_spent'], 'each metric appears once');
 });
 
 test('buildProposalModel: DECLARED modulating ids stand in when no patch record was read back', () => {

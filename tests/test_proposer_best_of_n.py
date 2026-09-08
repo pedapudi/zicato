@@ -59,7 +59,7 @@ _MUTATIONS = (_mp("router__sp"), _mp("writer__sp"))
 def _pattern(affected: tuple[str, ...]) -> Pattern:
     return Pattern(
         id="pat1",
-        kind="drift_kind_frequency",
+        kind="drift_metric_frequency",
         summary="off_topic dominates",
         detail={"top_kind": "off_topic"},
         affected_mutation_ids=affected,
@@ -79,7 +79,7 @@ def _experiment(*, core_idea: str, mutation_id: str, new_content: str) -> Experi
             core_idea=core_idea,
             modulating=(mutation_id,),
             why="because",
-            expected_drift_movements=(),
+            expected_metric_movements=(),
             expected_pass_rate_delta="+0.05",
         ),
         patches=(
@@ -722,15 +722,17 @@ def _prediction_bearing(core_idea: str, *, diff_pad: str = "") -> Experiment:
     """A candidate whose hypothesis states a concrete expected movement."""
     from dataclasses import replace as _replace
 
-    from zicato.core.types import ExpectedDriftMovement
+    from zicato.core.types import ExpectedMetricMovement
 
     exp = _experiment(core_idea=core_idea, mutation_id="router__sp", new_content="x" + diff_pad)
     return _replace(
         exp,
         hypothesis=_replace(
             exp.hypothesis,
-            expected_drift_movements=(
-                ExpectedDriftMovement(kind="off_topic", direction="decrease", magnitude="medium"),
+            expected_metric_movements=(
+                ExpectedMetricMovement(
+                    metric_name="drift:off_topic", direction="decrease", magnitude="medium"
+                ),
             ),
         ),
     )

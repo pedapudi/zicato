@@ -12,8 +12,8 @@ tests pin:
 * determinism (re-reduce → byte-identical ``LossProfile``);
 * the config-validation story (fail-fast on an unknown dialect name;
   recommend-only capability warnings);
-* contract pinning (the dialect rolls the epoch both directions, and is
-  omitted-at-default so existing hashes are untouched).
+* contract identity (the selected dialect is always recorded and changing it
+  creates an epoch).
 
 The ``goldfive`` default byte-identity is proven by the whole rest of the
 suite staying green (``test_telemetry_reducer*`` etc.) plus the
@@ -90,10 +90,10 @@ def test_adk_events_known_answer(tmp_path: Path) -> None:
 
     * tool_call = 4 (search, fetch, fetch, summarize) → task_started
     * tool_response error = 2 → task_failed → ratio 2/4 = 0.5
-    * error event = 1 → DriftCount(tool_error, critical, 1) → 10*1*1 = 10
-    * retry loop (fetch/{url:a} repeats) = 1 → DriftCount(looping_tool_call,
+    * error event = 1 → MetricCount(tool_error, critical, 1) → 10*1*1 = 10
+    * retry loop (fetch/{url:a} repeats) = 1 → MetricCount(looping_tool_call,
       warning, 1) → 3*1*1 = 3
-    * agent_transfer = 1 → DriftCount(agent_transfer, info, 1) → 1*1*1 = 1
+    * agent_transfer = 1 → MetricCount(agent_transfer, info, 1) → 1*1*1 = 1
     * model_usage = 1 → llm_call_count 1; tokens 100+50 = 150
     * unknown event → skipped; trailing garbage line → malformed (skipped)
 
@@ -110,7 +110,11 @@ def test_adk_events_known_answer(tmp_path: Path) -> None:
 
     lp = reduce_loss(events, entry, "gen1", "ep1", None, 1234, False, weights)
 
-    assert [(c.kind, c.severity, c.count) for c in lp.drift_counts] == [
+    assert [
+        (c.name.removeprefix("drift:"), c.severity, c.count)
+        for c in lp.metric_counts
+        if c.name.startswith("drift:")
+    ] == [
         ("agent_transfer", "info", 1),
         ("looping_tool_call", "warning", 1),
         ("tool_error", "critical", 1),
@@ -158,7 +162,9 @@ def test_adk_events_retry_loop_ignores_arg_key_order(tmp_path: Path) -> None:
         ],
     )
     sig = reduce_adk_events(events, _single_turn_entry())
-    assert [(c.kind, c.count) for c in sig.drift_counts] == [("looping_tool_call", 1)]
+    assert [(c.name.removeprefix("drift:"), c.count) for c in sig.metric_counts] == [
+        ("looping_tool_call", 1)
+    ]
 
 
 def test_adk_events_malformed_lines_counted_not_fatal(tmp_path: Path) -> None:
@@ -173,7 +179,7 @@ def test_adk_events_malformed_lines_counted_not_fatal(tmp_path: Path) -> None:
     assert sig.malformed_line_count == 2
     assert sig.warnings and "malformed" in sig.warnings[0]
     # The well-formed events on either side of the garbage still reduced.
-    kinds = {c.kind for c in sig.drift_counts}
+    kinds = {c.name.removeprefix("drift:") for c in sig.metric_counts}
     assert kinds == {"tool_error", "agent_transfer"}
 
 
@@ -214,7 +220,7 @@ def test_adk_events_token_shapes_tolerated(tmp_path: Path) -> None:
 
 def test_adk_events_missing_file(tmp_path: Path) -> None:
     sig = reduce_adk_events(tmp_path / "nope.jsonl", _single_turn_entry())
-    assert sig.drift_counts == ()
+    assert sig.metric_counts == ()
     assert sig.malformed_line_count == 0
 
 
@@ -240,7 +246,7 @@ def test_transcript_known_answer_zero_drift(tmp_path: Path) -> None:
     lp = reduce_loss(events, entry, "g", "e", er, 500, False, weights)
 
     # Explicit zero-drift stance (§4.1): the drift term is structurally 0.
-    assert lp.drift_counts == ()
+    assert not any(metric.name.startswith("drift:") for metric in lp.metric_counts)
     assert lp.drift_loss == 0.0
     assert lp.task_failure_ratio == 0.0
     assert lp.tokens_spent == 0
@@ -376,16 +382,16 @@ def test_capability_warnings_adk_flags_only_judge_weights() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Contract pinning — the dialect rolls the epoch, omitted-at-default
+# Contract identity includes the selected dialect
 # ---------------------------------------------------------------------------
 
 
-def test_dialect_omitted_at_default_in_scoring_canon() -> None:
-    """Default 'goldfive' is omitted from the canonical scoring dict."""
+def test_default_dialect_is_recorded_in_scoring_canon() -> None:
+    """Canonical scoring records the selected dialect, including its default."""
     from zicato.epoch.contract import scoring_to_canon
 
     canon = scoring_to_canon(ScoringWeights())
-    assert "telemetry_dialect" not in canon
+    assert canon["telemetry_dialect"] == DIALECT_GOLDFIVE
 
 
 def test_non_default_dialect_pins_the_contract_both_directions() -> None:
@@ -393,7 +399,7 @@ def test_non_default_dialect_pins_the_contract_both_directions() -> None:
 
     default_canon = scoring_to_canon(ScoringWeights())
     adk_canon = scoring_to_canon(ScoringWeights(telemetry_dialect=DIALECT_ADK_EVENTS))
-    # A non-default dialect reintroduces the key and changes the canon.
+    # Changing the selected dialect changes the contract.
     assert adk_canon.get("telemetry_dialect") == DIALECT_ADK_EVENTS
     assert adk_canon != default_canon
     # Reverting to goldfive restores the byte-identical canonical form.

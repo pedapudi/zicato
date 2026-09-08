@@ -140,29 +140,6 @@ def _loss_twin(events_path: Path) -> Path | None:
     return events_path.with_name(unit_artifact_name("loss", replicate_index))
 
 
-def _nested_events_for_disambiguator(run_dir: Path, disambiguator: str) -> Path | None:
-    """Resolve one transcript in the nested-rung layout inside an entry run dir."""
-    direct = run_dir / disambiguator / "events.jsonl"
-    if direct.exists():
-        return direct
-    if not run_dir.is_dir():
-        return None
-    for child in sorted(run_dir.iterdir()):
-        if not child.is_dir():
-            continue
-        events = child / "events.jsonl"
-        if not events.exists():
-            continue
-        if _run_id_of_events_file(events) == disambiguator:
-            return events
-        loss = _read_json_value(child / "loss.json")
-        if isinstance(loss, dict) and (
-            loss.get("run_id") == disambiguator or loss.get("match_id") == disambiguator
-        ):
-            return events
-    return None
-
-
 def _build_run_id_index(paths: WorkspacePaths, *, epoch_id: str = "") -> dict[str, Path]:
     """Scan ``epochs/*/generations/*/runs/*/events.jsonl`` → ``{run_id: path}``.
 
@@ -225,88 +202,11 @@ def _find_run_events_in_index(
     return _build_run_id_index(paths, epoch_id=epoch_id).get(run_id)
 
 
-# Cache: workspace epochs dir → {run_id: gen×entry events.jsonl path}. In
-# successive-halving racing the fixed champion (e.g. v0) is RE-RACED / REUSED
-# across rungs, so the same gen×entry yields MULTIPLE per-rung run records —
-# but only ONE rung actually executed and emitted its own events.jsonl; the
-# rest are score-reuse records carrying a distinct ``run_id`` with NO
-# transcript of their own. Each such record is written as a
-# ``runs/<entry>/loss.json`` carrying both its ``run_id`` and the gen×entry it
-# belongs to (the run directory it lives under). Mapping every such ``run_id``
-# to its gen×entry ``events.jsonl`` lets a transcript-less reuse run_id resolve
-# to the real transcript for that measurement. File identity, modification
-# time, and size invalidate the cache when any canonical loss is replaced.
-_REUSE_RUN_ID_INDEX_CACHE: dict[
-    str, tuple[tuple[tuple[str, int, int, int], ...], dict[str, Path]]
-] = {}
-
-
-def _build_reuse_run_id_index(paths: WorkspacePaths, *, epoch_id: str = "") -> dict[str, Path]:
-    """Scan ``runs/<entry>/loss.json`` → ``{run_id: gen×entry events.jsonl}``.
-
-    Every per-entry ``loss.json`` carries the ``run_id`` of the record it
-    settles, and lives in the ``generations/<gen>/runs/<entry>/`` directory
-    whose ``events.jsonl`` is the gen×entry's one real transcript. A
-    successive-halving reuse record's ``run_id`` differs from the run id
-    inside that ``events.jsonl`` (the run that actually executed), so this
-    index maps the reuse ``run_id`` onto the real transcript file. Only
-    pairs whose ``events.jsonl`` actually exists are indexed, so a resolve
-    through this map always lands on a readable transcript. The cache tracks
-    each loss file, including seed-qualified paths.
-    """
-    epochs = paths.epochs
-    cache_key = str(epochs / epoch_id)
-    states: list[tuple[str, int, int, int]] = []
-    for run_dir in sorted(epochs.glob(f"{epoch_id or '*'}/generations/*/runs/*")):
-        for path in iter_measurement_artifacts(run_dir):
-            try:
-                stat = path.stat()
-            except OSError:
-                continue
-            states.append((str(path), stat.st_ino, stat.st_mtime_ns, stat.st_size))
-    fingerprint = tuple(states)
-    cached = _REUSE_RUN_ID_INDEX_CACHE.get(cache_key)
-    if cached is not None and cached[0] == fingerprint:
-        return cached[1]
-
-    index: dict[str, Path] = {}
-    if epochs.is_dir():
-        for path_text, *_ in states:
-            loss_path = Path(path_text)
-            from zicato.core.measurement import artifact_replicate_index  # noqa: PLC0415
-
-            index_value = artifact_replicate_index(loss_path.name)
-            assert index_value is not None
-            events_path = loss_path.with_name(unit_artifact_name("events", index_value))
-            if not events_path.exists():
-                continue
-            loss = _read_json_value(loss_path)
-            if not isinstance(loss, dict):
-                continue
-            rid = loss.get("run_id")
-            if isinstance(rid, str) and rid and rid not in index:
-                index[rid] = events_path
-    _REUSE_RUN_ID_INDEX_CACHE[cache_key] = (fingerprint, index)
-    return index
-
-
 def find_run_events_path(paths: WorkspacePaths, run_id: str, *, epoch_id: str = "") -> Path | None:
-    """Locate the ``events.jsonl`` for one run id.
+    """Locate an active run or match its recorded event identity in canonical runs.
 
-    Tries, in order:
-
-    1. The run's ``active_runs/{run_id}.json`` (``events_jsonl_path``).
-    2. A directory named ``run_id`` directly under
-       ``epochs/*/generations/*/runs/`` carrying an ``events.jsonl``
-       (an alternate layout some tooling uses).
-    3. The run-id index built by scanning every
-       ``epochs/*/generations/*/runs/*/events.jsonl`` and matching on the
-       ``runId`` field inside the file. This is the layout the board
-       runner actually writes: run directories are named by board ENTRY
-       id rather than run id, so the run id only appears inside the events.
-
-    A named epoch restricts every lookup and its cache to that epoch.
-    Returns ``None`` when nothing matches.
+    A named epoch confines the active-record path and the event index lookup.
+    Missing captures return None.
     """
     run_file = paths.active_runs_dir / f"{run_id}.json"
     run = _read_json_value(run_file)
@@ -319,30 +219,8 @@ def find_run_events_path(paths: WorkspacePaths, run_id: str, *, epoch_id: str = 
             ):
                 return candidate
 
-    layout = layout_of(paths)
-    epoch_ids = [epoch_id] if epoch_id else [epoch.id for epoch in iter_epochs(layout)]
-    for candidate_epoch in epoch_ids:
-        for generation_id in generation_ids(layout, candidate_epoch):
-            events = layout.events(candidate_epoch, generation_id, run_id)
-            if events.exists():
-                return events
-
-    # Fall back to the run-id → events.jsonl index (matches the canonical
-    # board-run layout, where the run directory is named by entry id).
     indexed = _find_run_events_in_index(paths, run_id, epoch_id=epoch_id)
-    if indexed is not None and indexed.exists():
-        return indexed
-
-    # Final fallback: a successive-halving REUSE run_id — the fixed
-    # champion re-raced across rungs emits a per-rung loss.json carrying
-    # this run_id but NO events.jsonl of its own; only its gen×entry has
-    # the one real transcript. Map the reuse run_id → that gen×entry
-    # events.jsonl so the champion side renders rather than reporting
-    # "could not be reconstructed".
-    reused = _build_reuse_run_id_index(paths, epoch_id=epoch_id).get(run_id)
-    if reused is not None and reused.exists():
-        return reused
-    return None
+    return indexed if indexed is not None and indexed.exists() else None
 
 
 def find_generation_entry_events(
@@ -366,27 +244,11 @@ def resolve_transcript_events(
     run_id: str | None = None,
     match_id: str | None = None,
 ) -> Path | None:
-    """PRIMARY transcript resolver: ``(epoch, gen, entry)`` → events.jsonl.
+    """Resolve a transcript within its requested epoch, generation, and entry.
 
-    The deterministic triple is the primary key. A ``run_id`` / ``match_id``
-    disambiguates both sibling replicate files (``events.rN.jsonl``) and the
-    nested directories used by successive-halving reruns. With no
-    disambiguator the canonical replicate-0 ``events.jsonl`` remains the
-    default.
-
-    Resolution, strict to this entry's own run directory (never a sibling's):
-
-    1. Locate ``generations/<gen>/runs/<entry>`` in the requested
-       ``epoch_id``. An omitted epoch searches in canonical epoch order.
-       A named epoch never falls back to another epoch.
-    2. Disambiguator: a ``match_id`` first selects the nested-rung
-       layout; a ``run_id`` first selects an exact sibling
-       ``events.rN.jsonl`` by validated runtime id, event ``runId``, or its
-       matching loss record. Each then falls back to the other layout.
-    3. An exact runtime identity resolves only its own seed and draw. A
-       missing exact transcript returns ``None``. Without an exact identity,
-       the generation score selects the seed for ordinary draw zero. Missing
-       selection provenance retains historical unqualified audit behavior.
+    A runtime run id selects its exact seed and draw. A match id selects the
+    capture whose paired loss names that matchup. An unmatched supplied id
+    returns None. Without an id, the generation score selects ordinary draw zero.
     """
     if not paths.epochs.is_dir():
         return None
@@ -404,17 +266,6 @@ def resolve_transcript_events(
 
     disambiguator = run_id or match_id
     if disambiguator:
-        # A match id is a rung coordinate. Prefer the nested-rung layout
-        # before looking at top-level loss metadata: the
-        # canonical replicate's loss can carry the same match id and must not
-        # shadow the rung's own transcript.
-        if match_id:
-            nested = _nested_events_for_disambiguator(run_dir, match_id)
-            if nested is not None:
-                return nested
-
-        # Replicates share the entry directory, so resolve their sibling file
-        # before considering the nested-directory layout used by racing.
         if run_id:
             measurement = measurement_from_run_id(generation_id, entry_id, run_id)
             if measurement is not None:
@@ -436,12 +287,7 @@ def resolve_transcript_events(
             ):
                 return events
 
-        if run_id:
-            nested = _nested_events_for_disambiguator(run_dir, run_id)
-            if nested is not None:
-                return nested
-        # Disambiguator did not match a specific rung — fall through to the
-        # entry's own canonical events file rather than 404-ing.
+        return None
 
     coordinates = run_coordinates_from_dir(run_dir)
     if coordinates is None:

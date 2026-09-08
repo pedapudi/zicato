@@ -939,7 +939,12 @@ def test_experiment_coordinates_must_match_the_receipt_before_replay(
     experiment[field] = replacement
     path.write_text(json.dumps(experiment), encoding="utf-8")
 
-    with pytest.raises(RuntimeError, match="does not match its experiment"):
+    message = (
+        "experiment identity disagrees with its location"
+        if field in {"epoch_id", "generation_id"}
+        else "does not match its experiment"
+    )
+    with pytest.raises(RuntimeError, match=message):
         prepare_resume(workspace, epoch_id)
     assert read_experiment(workspace, epoch_id, "v2").outcome is None
 

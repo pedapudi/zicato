@@ -43,7 +43,7 @@ from pathlib import Path
 #: * Run output — ``output`` is where the vendored presentation target
 #:   writes rendered pages; ``.zicato-scratch`` is the per-run scratch
 #:   directory name the runner hands agents (see
-#:   :data:`SCRATCH_DIR_ENV`). Neither is code.
+#:   :attr:`zicato.core.run_context.RunContext.scratch_dir`). Neither is code.
 #: * Tooling caches — reconstructable, never canonical.
 #:
 #: The set is small and conservative by design: every name here is
@@ -57,13 +57,6 @@ ARTIFACT_NAMES: frozenset[str] = frozenset(_SCOPE["artifact_names"])
 #: of the containing directory. ``.pyc`` is the common one — a stray
 #: ``.pyc`` outside a ``__pycache__`` dir is still not source.
 ARTIFACT_SUFFIXES: tuple[str, ...] = tuple(_SCOPE["artifact_suffixes"])
-
-#: Environment variable the tournament worker sets to a per-run scratch
-#: directory **outside** the generation snapshot. A target that needs to
-#: write run output reads this and writes there instead of next to its
-#: own source. See ``zicato/adapters/base.py`` for the adapter contract
-#: and ``examples/target_1_presentation/agent/agent.py`` for a consumer.
-SCRATCH_DIR_ENV: str = "ZICATO_RUN_SCRATCH_DIR"
 
 #: Basename of the per-run scratch directory the runner creates when an
 #: adapter does not otherwise specify one. Kept in :data:`ARTIFACT_NAMES`
@@ -143,7 +136,6 @@ def gitignore_lines(extra_names: Iterable[str] = ()) -> list[str]:
 __all__ = [
     "ARTIFACT_NAMES",
     "ARTIFACT_SUFFIXES",
-    "SCRATCH_DIR_ENV",
     "SCRATCH_DIR_NAME",
     "is_artifact",
     "copytree_ignore",
