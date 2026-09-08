@@ -44,6 +44,7 @@ from zicato.proposer.prompts import (
     render_prior_experiments_block,
     render_skills_block,
 )
+from zicato.proposer.structured import EXPERIMENT_JSON_SCHEMA
 
 if TYPE_CHECKING:  # pragma: no cover - typing-only imports
     from zicato.index.query import MutationTrackRecord
@@ -81,69 +82,8 @@ VALIDATE_PATCHES_DESCRIPTION = (
     "patch set is well-formed and the tree still loads."
 )
 
-#: The direction and magnitude vocabularies a predicted movement may use,
-#: which are the ones the journal grades against.
-_DIRECTIONS = [
-    "decrease",
-    "increase",
-    "neutral",
-    "decrease_or_neutral",
-    "increase_or_neutral",
-]
-_MAGNITUDES = ["small", "medium", "large"]
-
-
-def _movement_schema(name_key: str) -> dict[str, Any]:
-    return {
-        "type": "object",
-        "additionalProperties": False,
-        "required": [name_key, "direction", "magnitude"],
-        "properties": {
-            name_key: {"type": "string"},
-            "direction": {"enum": list(_DIRECTIONS)},
-            "magnitude": {"enum": list(_MAGNITUDES)},
-        },
-    }
-
-
-#: What a completed episode returns: the hypothesis, and only the
-#: hypothesis. The patches are read back from the working copy, so the
-#: model never restates an edit it has already made and the two can never
-#: disagree. The schema is in the subset ``foe/docs/config.md`` implements.
-#:
-#: The ``anyOf`` states the rule
-#: :func:`~zicato.proposer.structured.parse_experiment_json` enforces: a
-#: hypothesis predicts at least one movement, of either kind. It is
-#: written here as well as there because the runtime checks the returned
-#: value at the boundary, and a hypothesis the runtime accepts and zicato
-#: then rejects costs the whole episode rather than one turn.
-HYPOTHESIS_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "additionalProperties": False,
-    "required": ["core_idea", "modulating", "why", "expected_pass_rate_delta"],
-    "properties": {
-        "core_idea": {"type": "string", "minLength": 1},
-        "modulating": {"type": "array", "items": {"type": "string"}, "minItems": 1},
-        "why": {"type": "string", "minLength": 1},
-        "expected_pass_rate_delta": {"type": "string"},
-        "risks": {"type": "string"},
-        "expected_drift_movements": {"type": "array", "items": _movement_schema("kind")},
-        "expected_metric_movements": {
-            "type": "array",
-            "items": _movement_schema("metric_name"),
-        },
-    },
-    "anyOf": [
-        {
-            "required": ["expected_drift_movements"],
-            "properties": {"expected_drift_movements": {"minItems": 1}},
-        },
-        {
-            "required": ["expected_metric_movements"],
-            "properties": {"expected_metric_movements": {"minItems": 1}},
-        },
-    ],
-}
+# The host and response parser validate the same hypothesis contract.
+HYPOTHESIS_SCHEMA = EXPERIMENT_JSON_SCHEMA["properties"]["hypothesis"]
 
 #: The instructions every proposal episode runs under, before the epoch's
 #: own brief and skills are appended. Sections are keyed so Foe orders them

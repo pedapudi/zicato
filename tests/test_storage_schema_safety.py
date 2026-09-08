@@ -1,19 +1,8 @@
-"""Storage schema-safety guards (WS5 items 4-6).
-
-* the analytical index REFUSES to open a database stamped with a NEWER
-  ``user_version`` than this build's ``SCHEMA_VERSION`` (an older writer
-  must never silently re-stamp a newer database down);
-* the canonical JSON records (``experiment.json``, epoch ``config.json``,
-  ``lineage.json``) are stamped ``format_version: 1`` at write, treat an
-  ABSENT stamp as version 1 at read (pre-stamp workspaces/fixtures keep
-  loading), and refuse a FUTURE incompatible version with a clear error —
-  no shape-sniffing migration shims.
-"""
+"""Canonical records require explicit supported integer format stamps."""
 
 from __future__ import annotations
 
 import json
-import sqlite3
 from pathlib import Path
 
 import pytest
@@ -23,65 +12,6 @@ from zicato.epoch._storage import RECORD_FORMAT_VERSION, RecordFormatError
 from zicato.epoch.journal import read_experiment, write_experiment
 from zicato.epoch.lifecycle import _scoring_from_dict, load_epoch, new_epoch
 from zicato.epoch.lineage import append_to_lineage, load_lineage
-from zicato.index.schema import (
-    SCHEMA_VERSION,
-    IndexSchemaNewerError,
-    apply_schema,
-    read_schema_version,
-)
-
-# ---------------------------------------------------------------------------
-# Index: refuse-on-newer user_version
-# ---------------------------------------------------------------------------
-
-
-class TestIndexRefuseOnNewer:
-    def test_apply_schema_refuses_newer_database(self, tmp_path: Path) -> None:
-        db = tmp_path / "index.db"
-        conn = sqlite3.connect(str(db))
-        try:
-            conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION + 1}")
-            with pytest.raises(IndexSchemaNewerError) as excinfo:
-                apply_schema(conn)
-            message = str(excinfo.value)
-            assert f"v{SCHEMA_VERSION + 1}" in message
-            assert f"v{SCHEMA_VERSION}" in message
-            assert "repair index" in message
-            # The newer stamp was NOT overwritten down.
-            assert read_schema_version(conn) == SCHEMA_VERSION + 1
-        finally:
-            conn.close()
-
-    def test_apply_schema_still_carries_older_forward(self, tmp_path: Path) -> None:
-        db = tmp_path / "index.db"
-        conn = sqlite3.connect(str(db))
-        try:
-            conn.execute("PRAGMA user_version = 1")
-            apply_schema(conn)
-            assert read_schema_version(conn) == SCHEMA_VERSION
-        finally:
-            conn.close()
-
-    def test_rebuild_index_replaces_a_newer_database(self, tmp_path: Path) -> None:
-        # The canonical rebuild path deletes the file first, so a newer
-        # database is REPLACED (rebuild loses nothing — the index is
-        # derived), never downgrade-stamped in place.
-        from zicato.index.ingest import rebuild_index
-
-        workspace = tmp_path / ".zicato"
-        workspace.mkdir()
-        db = workspace / "index.db"
-        conn = sqlite3.connect(str(db))
-        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION + 7}")
-        conn.commit()
-        conn.close()
-        target = rebuild_index(workspace)
-        conn = sqlite3.connect(str(target))
-        try:
-            assert read_schema_version(conn) == SCHEMA_VERSION
-        finally:
-            conn.close()
-
 
 # ---------------------------------------------------------------------------
 # Canonical JSON records: format_version stamp + refusal
@@ -99,7 +29,7 @@ def _experiment(epoch_id: str, generation_id: str) -> Experiment:
             core_idea="idea",
             modulating=("m1",),
             why="why",
-            expected_drift_movements=(),
+            expected_metric_movements=(),
             expected_pass_rate_delta="0.0",
             risks="",
         ),
@@ -117,13 +47,14 @@ class TestExperimentFormatVersion:
         loaded = read_experiment(tmp_path, "e1", "v1")
         assert loaded.generation_id == "v1"
 
-    def test_absent_version_reads_as_v1(self, tmp_path: Path) -> None:
+    def test_absent_version_is_refused(self, tmp_path: Path) -> None:
         write_experiment(tmp_path, "e1", "v1", _experiment("e1", "v1"))
         exp_path = tmp_path / "epochs" / "e1" / "generations" / "v1" / "experiment.json"
         body = json.loads(exp_path.read_text())
-        del body["format_version"]  # a pre-stamp record
+        del body["format_version"]
         exp_path.write_text(json.dumps(body))
-        assert read_experiment(tmp_path, "e1", "v1").generation_id == "v1"
+        with pytest.raises(RecordFormatError):
+            read_experiment(tmp_path, "e1", "v1")
 
     def test_future_version_refuses_with_clear_error(self, tmp_path: Path) -> None:
         write_experiment(tmp_path, "e1", "v1", _experiment("e1", "v1"))
@@ -173,13 +104,14 @@ class TestEpochConfigFormatVersion:
         assert body["format_version"] == 1
         assert load_epoch(workspace, epoch_id).id == epoch_id
 
-    def test_absent_version_reads_as_v1(self, tmp_path: Path) -> None:
+    def test_absent_version_is_refused(self, tmp_path: Path) -> None:
         workspace, epoch_id = _bootstrap_epoch(tmp_path)
         config_path = workspace / "epochs" / epoch_id / "config.json"
         body = json.loads(config_path.read_text())
         del body["format_version"]
         config_path.write_text(json.dumps(body))
-        assert load_epoch(workspace, epoch_id).id == epoch_id
+        with pytest.raises(RecordFormatError):
+            load_epoch(workspace, epoch_id)
 
     def test_future_version_refuses_with_clear_error(self, tmp_path: Path) -> None:
         workspace, epoch_id = _bootstrap_epoch(tmp_path)
@@ -210,9 +142,17 @@ class TestLineageFormatVersion:
         data = load_lineage(tmp_path).to_dict()
         assert data["epochs"][0]["id"] == "e1"
 
-    def test_absent_version_reads_as_v1(self, tmp_path: Path) -> None:
+    def test_absent_version_is_refused(self, tmp_path: Path) -> None:
         (tmp_path / "lineage.json").write_text(json.dumps({"epochs": []}))
-        assert load_lineage(tmp_path).to_dict()["epochs"] == []
+        with pytest.raises(RecordFormatError):
+            load_lineage(tmp_path)
+
+    @pytest.mark.parametrize("version", [None, True, 1.0, "1"])
+    def test_noninteger_version_is_refused(self, tmp_path: Path, version: object) -> None:
+        path = tmp_path / "lineage.json"
+        path.write_text(json.dumps({"format_version": version, "epochs": []}))
+        with pytest.raises(RecordFormatError, match="expected integer 1"):
+            load_lineage(tmp_path)
 
     def test_future_version_refuses_loudly_not_empty(self, tmp_path: Path) -> None:
         # An INTACT record from a newer zicato must refuse — collapsing to

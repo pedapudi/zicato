@@ -13,18 +13,15 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
-from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from click.testing import CliRunner
 
-from zicato.cli.commands.repair_judge_losses import repair_judge_losses_cmd
 from zicato.core.types import (
     BoardEntry,
-    DriftCount,
     JudgeLoss,
     LossProfile,
+    MetricCount,
     ScoringWeights,
 )
 from zicato.core.workspace import (
@@ -147,8 +144,8 @@ def test_compute_per_judge_loss_unattributed_custom_drift_uses_default_weight() 
     weights = ScoringWeights(default_judge_weight=2.5)
     # Bare "custom" kind (no `:<judge_name>` suffix) is the unattributed
     # bucket the reducer keeps for drifts that lacked a paired judgement.
-    drift_counts = (DriftCount(kind="custom", severity="warning", count=2),)
-    result = compute_per_judge_loss(drift_counts, weights)
+    metric_counts = (MetricCount(name="drift:custom", severity="warning", count=2),)
+    result = compute_per_judge_loss(metric_counts, weights)
     assert len(result) == 1
     only = result[0]
     assert only.judge_name == ""
@@ -171,7 +168,7 @@ def test_loss_profile_round_trips_per_judge_loss(tmp_path: Path) -> None:
         entry_id="ent-RT",
         generation_id="v1",
         epoch_id="ep1",
-        drift_counts=(),
+        metric_counts=(),
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=100,
@@ -252,7 +249,7 @@ def test_ingest_run_populates_judge_losses_from_loss_json(tmp_path: Path) -> Non
         entry_id="e1",
         generation_id="v0",
         epoch_id=epoch_id,
-        drift_counts=(),
+        metric_counts=(),
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=10,
@@ -290,7 +287,7 @@ def _seed_runs_with_judge_losses(ws: Path, epoch_id: str) -> None:
         entry_id="e1",
         generation_id="v0",
         epoch_id=epoch_id,
-        drift_counts=(),
+        metric_counts=(),
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=10,
@@ -307,7 +304,7 @@ def _seed_runs_with_judge_losses(ws: Path, epoch_id: str) -> None:
         entry_id="e1",
         generation_id="v1",
         epoch_id=epoch_id,
-        drift_counts=(),
+        metric_counts=(),
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=10,
@@ -383,13 +380,13 @@ def _write_judge_scoring(ws: Path, epoch_id: str) -> None:
 
 
 def _unattributed_profile(epoch_id: str, run_id: str) -> LossProfile:
-    """A loss profile carrying neither drift_counts nor per_judge_loss."""
+    """A loss profile carrying neither metric_counts nor per_judge_loss."""
     return LossProfile(
         run_id=run_id,
         entry_id="e1",
         generation_id="v0",
         epoch_id=epoch_id,
-        drift_counts=(),
+        metric_counts=(),
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=10,
@@ -425,124 +422,6 @@ def _summary_counts(output: str) -> dict[str, tuple[int, int]]:
         if match:
             counts[match.group(1)] = (int(match.group(2)), int(match.group(3)))
     return counts
-
-
-def test_repair_judge_losses_subcommand_backfills_idempotently(tmp_path: Path) -> None:
-    """repair-judge-losses rewrites loss.json with populated per_judge_loss
-    and is idempotent across re-runs."""
-    ws, epoch_id = _build_min_workspace(tmp_path)
-    _write_judge_scoring(ws, epoch_id)
-    # Seed a loss.json carrying drift_counts attributed to "quality" but
-    # an empty per_judge_loss field (the pre-fix shape).
-    stale = LossProfile(
-        run_id="run_stale",
-        entry_id="e1",
-        generation_id="v0",
-        epoch_id=epoch_id,
-        drift_counts=(DriftCount(kind="custom:quality", severity="warning", count=2),),
-        plan_revisions=0,
-        task_failure_ratio=0.0,
-        runtime_ms=10,
-        wall_clock_budget_exceeded=False,
-        expectation_result=None,
-        drift_loss=24.0,
-        pass_fail=None,
-        per_judge_loss=(),
-    )
-    write_loss_profile(stale, loss_profile_path(ws, epoch_id, "v0", "e1"))
-
-    runner = CliRunner()
-    first = runner.invoke(repair_judge_losses_cmd, ["--workspace", str(ws)])
-    assert first.exit_code == 0, first.output
-    # After repair: the loss.json carries one JudgeLoss for "quality"
-    # with raw_loss = severity * count = 3.0 * 2 = 6.0, weight = 4.0.
-    profile_after = read_loss_profile(loss_profile_path(ws, epoch_id, "v0", "e1"))
-    by_name = {j.judge_name: j for j in profile_after.per_judge_loss}
-    assert set(by_name) == {"quality"}
-    assert by_name["quality"].raw_loss == pytest.approx(6.0)
-    assert by_name["quality"].weight == pytest.approx(4.0)
-    assert by_name["quality"].weighted_loss == pytest.approx(24.0)
-    # Re-ingest landed during the repair — judge_losses table has the row.
-    rows = judge_losses_for_run(ws / "index.db", "run_stale")
-    assert len(rows) == 1
-    assert rows[0]["weighted_loss"] == pytest.approx(24.0)
-    # Idempotency: running the repair again does not change the file.
-    before_second = (loss_profile_path(ws, epoch_id, "v0", "e1")).read_text(encoding="utf-8")
-    second = runner.invoke(repair_judge_losses_cmd, ["--workspace", str(ws)])
-    assert second.exit_code == 0
-    after_second = (loss_profile_path(ws, epoch_id, "v0", "e1")).read_text(encoding="utf-8")
-    assert before_second == after_second
-
-
-def test_repair_judge_losses_repairs_every_replicate_slot(tmp_path: Path) -> None:
-    """The repair covers every persisted loss slot a run directory holds, and
-    attributes each one from its OWN replicate-keyed events transcript."""
-    ws, epoch_id = _build_min_workspace(tmp_path)
-    _write_judge_scoring(ws, epoch_id)
-    run_dir = loss_profile_path(ws, epoch_id, "v0", "e1").parent
-    # The canonical duel slot, a further duel replicate, and a draw from the
-    # A/A calibration band — each with a different number of judge firings on
-    # its own transcript, so a slot attributed from another slot's events
-    # lands on the wrong numbers rather than passing by coincidence.
-    slots = (
-        ("loss.json", "events.jsonl", 1),
-        ("loss.r1.json", "events.r1.jsonl", 2),
-        ("loss.r1000.json", "events.r1000.jsonl", 3),
-    )
-    for loss_name, events_name, firings in slots:
-        write_loss_profile(_unattributed_profile(epoch_id, loss_name), run_dir / loss_name)
-        _write_events_jsonl(run_dir / events_name, _judge_drift_events("quality", firings))
-    # An attempt sibling records a superseded execution: never a scoring slot,
-    # so the repair must leave it exactly as it found it.
-    attempt = run_dir / "loss.a1.json"
-    write_loss_profile(_unattributed_profile(epoch_id, "attempt"), attempt)
-    attempt_before = attempt.read_text(encoding="utf-8")
-
-    result = CliRunner().invoke(repair_judge_losses_cmd, ["--workspace", str(ws)])
-    assert result.exit_code == 0, result.output
-
-    for loss_name, _events_name, firings in slots:
-        rows = read_loss_profile(run_dir / loss_name).per_judge_loss
-        assert [row.judge_name for row in rows] == ["quality"], loss_name
-        assert rows[0].raw_loss == pytest.approx(3.0 * firings), loss_name
-        assert rows[0].weight == pytest.approx(4.0), loss_name
-        assert rows[0].weighted_loss == pytest.approx(12.0 * firings), loss_name
-    assert attempt.read_text(encoding="utf-8") == attempt_before
-    assert _summary_counts(result.output)["repaired"] == (1, 2)
-
-
-def test_repair_judge_losses_reports_slots_it_cannot_re_derive(tmp_path: Path) -> None:
-    """A slot with neither drift counts nor a paired transcript is reported
-    with its reason, not silently skipped, and the pass still exits 0."""
-    ws, epoch_id = _build_min_workspace(tmp_path)
-    _write_judge_scoring(ws, epoch_id)
-    run_dir = loss_profile_path(ws, epoch_id, "v0", "e1").parent
-    # The canonical slot already carries the attribution its counts imply.
-    populated = replace(
-        _unattributed_profile(epoch_id, "run_canonical"),
-        drift_counts=(DriftCount(kind="custom:quality", severity="warning", count=2),),
-        per_judge_loss=(
-            JudgeLoss(judge_name="quality", raw_loss=6.0, weight=4.0, weighted_loss=24.0),
-        ),
-    )
-    write_loss_profile(populated, run_dir / "loss.json")
-    # A replicate slot from a workspace written before the events transcript
-    # was replicate-keyed: no events.r1.jsonl exists, and none ever will.
-    replicate = run_dir / "loss.r1.json"
-    write_loss_profile(_unattributed_profile(epoch_id, "run_replicate"), replicate)
-    replicate_before = replicate.read_text(encoding="utf-8")
-
-    result = CliRunner().invoke(repair_judge_losses_cmd, ["--workspace", str(ws)])
-    assert result.exit_code == 0, result.output
-
-    counts = _summary_counts(result.output)
-    assert counts["already populated"] == (1, 0)
-    assert counts["no drift counts and no events transcript"] == (0, 1)
-    assert counts["repaired"] == (0, 0)
-    # Both slots are untouched: the populated one already agreed, the other
-    # had nothing to re-derive from.
-    assert replicate.read_text(encoding="utf-8") == replicate_before
-    assert read_loss_profile(run_dir / "loss.json").per_judge_loss == populated.per_judge_loss
 
 
 # ---------------------------------------------------------------------------

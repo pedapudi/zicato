@@ -32,12 +32,12 @@ def _canonical_json(config: dict[str, object]) -> str:
     )
 
 
-def test_generic_scoring_omits_goldfive_configuration() -> None:
+def test_generic_scoring_records_absent_goldfive_configuration() -> None:
     """A generic adapter carries no irrelevant Goldfive contract block."""
     weights = ScoringWeights(telemetry_dialect="transcript")
     assert weights.goldfive is None
-    assert "goldfive" not in weights.to_json()
-    assert "goldfive" not in scoring_to_canon(weights)
+    assert weights.to_json()["goldfive"] is None
+    assert scoring_to_canon(weights)["goldfive"] is None
     assert ScoringWeights.from_json(weights.to_json()) == weights
 
 
@@ -59,7 +59,7 @@ def test_goldfive_implementation_identity_is_conditional_system_metadata() -> No
     generic = scoring_contract_to_canon(ScoringWeights())
     configured = scoring_contract_to_canon(ScoringWeights(goldfive={}))
 
-    assert "goldfive" not in generic
+    assert generic["goldfive"] is None
     assert (
         configured["goldfive"]["implementation_identity"]["goldfive_version"]
         == GOLDFIVE_IMPLEMENTATION_VERSION

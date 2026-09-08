@@ -7,10 +7,7 @@ importable, module-level objects the worker subprocess can resolve from
 a dotted path. This module provides exactly that, mock-driven and with
 no goldfive / real-LLM dependency.
 
-The stub adapter exposes a session with the *legacy* ``run(entry,
-sink_path)`` shape, which the worker's ``_drive_session`` detects by
-parameter name. The legacy path does not touch goldfive: the session
-just writes a minimal ``events.jsonl`` itself.
+The stub sessions accept the same sinks and runtime configuration as a registered harness.
 """
 
 from __future__ import annotations
@@ -36,17 +33,10 @@ async def evaluation_call_llm(system: str, user: str, model: str) -> str:
 
 
 class _StubSession:
-    """A loaded harness with the legacy ``run(entry, sink_path)`` shape.
+    """A harness that completes without emitting telemetry."""
 
-    Writes a single empty line to the events JSONL so the reducer has a
-    file to read; the reducer's JSON-fallback path tolerates a file with
-    no parseable events and produces an empty-walk loss profile.
-    """
-
-    async def run(self, entry: Any, sink_path: Path) -> None:
-        del entry
-        sink_path.parent.mkdir(parents=True, exist_ok=True)
-        sink_path.write_text("", encoding="utf-8")
+    async def run(self, entry: Any, sinks: Any, config: Any) -> None:
+        del entry, sinks, config
 
 
 class _SnapshotWritingSession:
@@ -57,23 +47,20 @@ class _SnapshotWritingSession:
     ``output/`` directory under the generation source root it was handed.
     The L3 isolation fix exists precisely so this write lands in a
     discarded per-run working copy, NOT in the canonical generation
-    snapshot. The session also writes the events JSONL so the reducer
-    has a file to read (the legacy ``run(entry, sink_path)`` shape).
+    snapshot. The worker owns the telemetry file.
     """
 
     def __init__(self, generation_root: Path) -> None:
         self._generation_root = Path(generation_root)
 
-    async def run(self, entry: Any, sink_path: Path) -> None:
-        del entry
+    async def run(self, entry: Any, sinks: Any, config: Any) -> None:
+        del entry, sinks, config
         # The pollution: write a runtime artifact under the snapshot root
         # the worker mounted — exactly what the presentation agent's
         # ``write_webpage`` does with ``os.path.dirname(__file__)/output``.
         output_dir = self._generation_root / "output" / "demo_topic"
         output_dir.mkdir(parents=True, exist_ok=True)
         (output_dir / "index.html").write_text("<html>runtime artifact</html>", encoding="utf-8")
-        sink_path.parent.mkdir(parents=True, exist_ok=True)
-        sink_path.write_text("", encoding="utf-8")
 
 
 class SnapshotWritingAdapter:
@@ -113,8 +100,8 @@ class _SleepingSession:
     exactly the wedged-run scenario the L3 layer exists for.
     """
 
-    async def run(self, entry: Any, sink_path: Path) -> None:
-        del entry, sink_path
+    async def run(self, entry: Any, sinks: Any, config: Any) -> None:
+        del entry, sinks, config
         time.sleep(3600.0)
 
 
@@ -126,10 +113,10 @@ class _CooperativeSleepSession:
     cancels the run cleanly — the worker self-aborts and exits 0.
     """
 
-    async def run(self, entry: Any, sink_path: Path) -> None:
+    async def run(self, entry: Any, sinks: Any, config: Any) -> None:
         import asyncio  # noqa: PLC0415
 
-        del entry, sink_path
+        del entry, sinks, config
         await asyncio.sleep(3600.0)
 
 
@@ -358,11 +345,11 @@ class _ArtifactWritingSession:
     """Write files with names known only at run time into the supplied scratch tree."""
 
     async def run(self, entry: Any, sinks: Any, config: Any) -> Any:
-        del sinks, config
+        del sinks
         from zicato.core import RunResult  # noqa: PLC0415
-        from zicato.epoch.snapshot_scope import SCRATCH_DIR_ENV  # noqa: PLC0415
 
-        scratch = Path(os.environ[SCRATCH_DIR_ENV])
+        assert config.run_context is not None and config.run_context.scratch_dir is not None
+        scratch = config.run_context.scratch_dir
         output = scratch / "reports" / entry.id
         output.mkdir(parents=True)
         (output / "summary.html").write_text("<h1>captured</h1>", encoding="utf-8")

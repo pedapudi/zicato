@@ -39,7 +39,9 @@ def harmonic_looping_reducer(ctx: DriftContext) -> float:
     looping term linearly), SUBTRACTS that linear looping contribution, and ADDS
     the harmonic one — wrapping the built-in shape. Pure, deterministic, no I/O.
     """
-    loop_count = sum(c.count for c in ctx.drift_counts if c.kind == "looping_reasoning")
+    loop_count = sum(
+        c.count for c in ctx.metric_counts if c.name.removeprefix("drift:") == "looping_reasoning"
+    )
     if loop_count <= 0:
         return ctx.builtin_loss
     # The built-in counted ``severity_weight × kind_weight × count`` linearly for
@@ -48,8 +50,8 @@ def harmonic_looping_reducer(ctx: DriftContext) -> float:
     kind_w = ctx.weights.per_kind_weights.get("looping_reasoning", 1.0)
     linear_term = sum(
         sev_w.get(c.severity, 0.0) * kind_w * c.count
-        for c in ctx.drift_counts
-        if c.kind == "looping_reasoning"
+        for c in ctx.metric_counts
+        if c.name.removeprefix("drift:") == "looping_reasoning"
     )
     harmonic_term = sum(1.0 / k for k in range(1, int(loop_count) + 1))
     return max(0.0, ctx.builtin_loss - linear_term + harmonic_term)

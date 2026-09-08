@@ -1,52 +1,16 @@
-"""The SQLite DDL for the zicato analytical index.
+"""The supported SQLite schema for the derived analytical index.
 
-This module is a **shared contract**. R9-2's analytics surface and the
-Rust supervisor both query ``.zicato/index.db`` directly, so the table
-and column shapes here must not change without coordinating with those
-consumers. The DDL is kept as plain SQL strings (rather than an ORM
-schema) so siblings in other languages can mirror it
-verbatim.
+Python readers and the supervisor share the table and column contract.
+SCHEMA_VERSION identifies both the table layout and projection semantics.
+It is stamped in PRAGMA user_version and mirrored in schema_meta.
 
-Schema versioning
------------------
-:data:`SCHEMA_VERSION` is stamped into the database two ways so a
-future migration is detectable from either a SQL client or the Python
-helpers:
+An empty database receives this schema. Every incompatible database is
+rebuilt from canonical workspace records by the index repair owner.
+Incremental writers and read-only queries never migrate a database.
 
-* The SQLite ``user_version`` pragma — readable with
-  ``PRAGMA user_version`` from any client, no table join needed.
-* A one-row ``schema_meta`` table — carries the version plus a
-  human-readable note, queryable with a normal ``SELECT``.
-
-:func:`apply_schema` writes both. :func:`read_schema_version` reads the
-pragma (the authoritative source). A consumer that opens a database
-whose ``user_version`` does not equal :data:`SCHEMA_VERSION` should
-treat the index as stale and ask the operator to run ``zicato
-reindex``.
-
-The tables are all derived from canonical workspace files:
-
-* ``epochs`` / ``generations`` — from ``lineage.json`` + per-epoch
-  ``config.json``.
-* ``experiments`` / ``patches`` — from each generation's
-  ``experiment.json`` (+ ``patches/*.json``).
-* ``runs`` / ``loss_profiles`` / ``metric_counts`` — from each run's
-  ``loss.json`` and ``events.jsonl``.
-* ``tournaments`` — from the resolved outcome on each experiment.
-* ``pareto_frontier`` — from each epoch's ``pareto_frontier.json``
-  (``docs/design/PARETO-FRONTIER.md``). Derived, read-only, and never
-  consulted by the loop.
-
-:class:`Table` builds one writer's insert and upsert from the columns
-declared below, so :mod:`zicato.index.ingest` writes out no column list of
-its own and a column added here reaches every statement that carries it.
-
-The single exception to "every table is derived from a canonical file" is
-``ingest_cursors`` (v14): it records what the WORKSPACE looked like when each
-epoch was last projected, which is the one fact the workspace itself does not
-carry. It exists so the index can notice its own staleness cheaply — see
-``docs/design/ANALYTICAL-INDEX.md`` §5.
-"""
+Table builds insert and upsert statements from the DDL's column lists.
+The ingest_cursors table records which epoch contents have been projected;
+canonical records remain the source for every analytical result."""
 
 from __future__ import annotations
 
@@ -58,27 +22,17 @@ from typing import Any
 #: Bump this whenever the table/column shape below changes. Stamped
 #: into ``PRAGMA user_version`` and the ``schema_meta`` table by
 #: :func:`apply_schema`.
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 
 
-class IndexSchemaNewerError(RuntimeError):
-    """The index database was written by a NEWER zicato than this build.
-
-    Raised by :func:`apply_schema` when ``PRAGMA user_version`` exceeds
-    :data:`SCHEMA_VERSION`: an older writer must never silently re-stamp
-    a newer database DOWN (the newer schema may carry columns/semantics
-    this build does not understand, and the down-stamp would corrupt the
-    version signal for the newer build). The index is derived and always
-    rebuildable, so the recovery is cheap — upgrade zicato, or delete the
-    database and run ``zicato repair index``.
-    """
+class IndexSchemaError(sqlite3.DatabaseError):
+    """The derived database does not use the supported index schema."""
 
 
 #: The canonical table DDL. Ordered so that ``CREATE TABLE`` statements
 #: precede the ``CREATE INDEX`` statements that reference them. Every
-#: statement is ``IF NOT EXISTS`` so :func:`apply_schema` is safe to run
-#: against a partially-built database, though the canonical build path
-#: (:func:`zicato.index.ingest.rebuild_index`) drops the file first.
+#: statement applies to an empty database. Rebuild constructs a separate
+#: database and publishes it only after the canonical projection succeeds.
 _TABLE_STATEMENTS: tuple[str, ...] = (
     """
     CREATE TABLE IF NOT EXISTS epochs (
@@ -264,9 +218,7 @@ _TABLE_STATEMENTS: tuple[str, ...] = (
     # The one table that is NOT a projection of a canonical file: it records
     # what the WORKSPACE looked like when each epoch was last projected, so
     # ``validate_index`` can spot a diverged epoch from four cheap directory
-    # counts instead of re-deriving every row. Appended LAST so its arrival
-    # leaves every earlier table's position in ``sqlite_master`` — and hence
-    # in the REINDEX-DUMP golden — unmoved. See ANALYTICAL-INDEX.md §5.2.
+    # counts instead of re-deriving every row. See ANALYTICAL-INDEX.md §5.2.
     """
     CREATE TABLE IF NOT EXISTS ingest_cursors (
       epoch_id TEXT PRIMARY KEY,
@@ -308,402 +260,40 @@ CREATE TABLE IF NOT EXISTS schema_meta (
 """
 
 
-#: Columns added in v2 that older v1 databases will be missing. Each
-#: entry is ``(table, column, ddl_type)``; :func:`_migrate_inplace`
-#: adds whichever of these are absent so an existing v1 file becomes
-#: queryable under v2 without a full rebuild. The full rebuild path
-#: (``zicato repair index``) drops the file and re-applies the v2 CREATE
-#: TABLE statements above, so this migration only matters on
-#: incremental opens against a pre-existing file.
-_V2_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
-    ("epochs", "goal", "TEXT"),
-    ("epochs", "parent_epoch_id", "TEXT"),
-    ("runs", "tournament_id", "TEXT"),
-    ("loss_profiles", "tournament_id", "TEXT"),
-)
-
-
-#: Columns added in v3 (the configurable-tournament-structure feature).
-#: Same incremental-open ALTER pattern as :data:`_V2_ADDED_COLUMNS`: a
-#: pre-existing v2 database gains these as ``NULL`` columns on open; a
-#: full ``zicato repair index`` drops the file and re-applies the v3 CREATE
-#: TABLE statement above, then re-derives the columns
-#: (``"gauntlet"`` for runs that predate the feature).
-_V3_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
-    ("tournaments", "structure", "TEXT"),
-    ("tournaments", "structure_params_json", "TEXT"),
-    ("tournaments", "competitors_json", "TEXT"),
-    ("tournaments", "rounds_json", "TEXT"),
-    ("tournaments", "standings_json", "TEXT"),
-)
-
-
-#: Columns added in v4 (per-board-run tournament provenance). A run
-#: carries the ``match_id`` of the matchup it executed within (e.g.
-#: ``"rung0_m2"``, ``"racing-final"``), so the dashboard can relate a
-#: board run to its rung/matchup. Same incremental-open ALTER pattern as
-#: the earlier waves: a pre-existing v3 database gains these as ``NULL``
-#: columns on open (a run ingested before the ALTER stays untagged — the
-#: field is simply absent), and a full ``zicato repair index`` re-derives
-#: what it can from each run's ``loss.json``, which carries ``match_id``.
-_V4_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
-    ("runs", "match_id", "TEXT"),
-    ("loss_profiles", "match_id", "TEXT"),
-)
-
-
-#: Columns added in v5 (the live proposing-step tracker). The
-#: per-challenger field-status records — applied vs rejected + reason —
-#: are persisted alongside the settled bracket so a completed epoch's
-#: candidate-generation step survives for post-hoc viewing (the same
-#: incremental-open ALTER pattern as the earlier columns; existing rows
-#: gain it as ``NULL``, and a full ``zicato repair index`` re-derives what
-#: it can).
-_V5_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
-    ("tournaments", "field_status_json", "TEXT"),
-)
-
-
-#: Columns added in v6 (champion self-containment / carried-over
-#: provenance). A materialised champion's per-board ``loss_profiles`` row
-#: carries ``cached`` (1 when the result was carried forward from a prior
-#: epoch rather than run live this epoch) plus ``source_epoch`` /
-#: ``source_run`` naming where the live evaluation happened, so a reader
-#: can show the champion as scored-but-cached and never double-count it as
-#: a fresh evaluation. Same incremental-open ALTER pattern as the earlier
-#: columns: a pre-existing v5 database gains these as ``NULL`` columns on
-#: open (an existing row reads as not-cached — ``cached IS NULL`` is treated
-#: as fresh), and a full ``zicato repair index`` re-derives them from each
-#: run's ``loss.json``, which carries the provenance for materialised runs.
-_V6_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
-    ("loss_profiles", "cached", "INTEGER"),
-    ("loss_profiles", "source_epoch", "TEXT"),
-    ("loss_profiles", "source_run", "TEXT"),
-)
-
-
-#: Columns added in v7 (per-generation evolve-round grouping). A
-#: generation row carries ``round_index`` — the evolve round that MINTED
-#: it (its birth round; the genesis seed ``v0`` is round 0). Consumers
-#: group an epoch's generations as ``Epoch -> Round -> {challengers minted
-#: that round}``. Same incremental-open ALTER pattern as the earlier
-#: columns: a pre-existing v6 database gains the column as ``NULL`` on open
-#: (an existing generation reads as ``round_index IS NULL`` — birth round
-#: unknown), and a full ``zicato repair index`` re-derives it from
-#: ``lineage.json``, which carries ``round_index`` per generation.
-_V7_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (("generations", "round_index", "INTEGER"),)
-
-
-#: Columns added in v8 (per-round champion evaluation provenance). A
-#: tournament row carries ``champion_eval_mode`` — how the champion
-#: (parent / left) side was evaluated that round (``"full"`` = run live,
-#: ``"fast"`` = cached per-board scalars reused, ``"fast-degraded"`` =
-#: fast requested but the cache had to be seeded by a single live run) —
-#: plus ``champion_run_ref``, a best-effort pointer at the champion's
-#: per-round run/output (the champion generation's directory). Source is
-#: the crowning matchup's OutcomeRecord (``champion_eval_mode`` defaults
-#: to ``"full"`` for journals that predate the field). Same incremental-
-#: open ALTER pattern as the earlier columns: a pre-existing v7 database
-#: gains these as ``NULL`` columns on open (an existing row reads as
-#: ``champion_eval_mode IS NULL`` — mode unknown, treat as ``"full"``),
-#: and a full ``zicato repair index`` re-derives them from each experiment's
-#: resolved outcome.
-_V8_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
-    ("tournaments", "champion_eval_mode", "TEXT"),
-    ("tournaments", "champion_run_ref", "TEXT"),
-)
-
-
-#: Columns added in v9 (abort-cause provenance). A run aborted by infra
-#: synthesises a worst-case ``loss_profiles`` row; ``abort_cause`` records
-#: WHY (``budget_exhausted`` = genuine wall-clock exhaustion, vs the infra
-#: causes ``parent_kill`` / ``gone_no_result`` / ``nonzero_exit:{code}`` /
-#: ``prepare_failed`` / ``result_unreadable``) so loop-health can distinguish
-#: an honest agent infinite-loop from a transient crash from our OWN watchdog
-#: over-firing — without re-parsing each row's ``loss_json`` blob. Same
-#: incremental-open ALTER pattern as the earlier columns: a pre-existing v8
-#: database gains the column as ``NULL`` on open (an existing row, and every
-#: cleanly-reduced non-aborted run, reads as ``abort_cause IS NULL``), and a
-#: full ``zicato repair index`` re-derives it from each run's ``loss.json``,
-#: which carries the cause for aborted runs.
-_V9_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (("loss_profiles", "abort_cause", "TEXT"),)
-
-
-#: Columns added in v10 (the read-only Elo analytics fold;
-#: FUNCTIONALITY-RECOMMENDATIONS.md §5). A generation row carries ``elo``
-#: (its folded Elo rating across the lineage's settled match ledger) and
-#: ``elo_games`` (how many settled duels contributed to it). These are
-#: **derived, read-only** analytics columns — Elo is for visibility, never
-#: for the promote decision — re-derived at index time by
-#: :func:`zicato.index.elo.fold_elo_into_index`. Same incremental-open
-#: ALTER pattern as the earlier waves: a pre-existing v9 database gains the
-#: columns as ``NULL`` on open (a generation reads as ``elo IS NULL`` —
-#: rating not yet computed), and a full ``zicato repair index`` re-derives them
-#: from the ingested ``tournaments`` rows after the tournaments land.
-_V10_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
-    ("generations", "elo", "REAL"),
-    ("generations", "elo_games", "INTEGER"),
-)
-
-
-#: Tables added in v11 (the board-reflection projection; BOARD-REFLECTION.md
-#: R4). ``reflections`` carries one row per reflection run (its four-pillar
-#: bill-of-health summary) and ``judge_scorecards`` one row per
-#: ``(reflection_id, judge_name)`` (the confusion-matrix scorecard). Unlike
-#: the earlier waves these are WHOLE NEW TABLES rather than new columns, so the
-#: ``CREATE TABLE IF NOT EXISTS`` pass in :func:`apply_schema` materialises
-#: them on any open — a pre-existing v10 database simply gains the two empty
-#: tables, and a full ``zicato repair index`` re-derives their rows from each
-#: reflection's persisted ``plan.json`` / ``scorecards.json`` / ``findings.json``
-#: (files canonical; the index is a projection, so a reflection is readable
-#: with no index at all). The generations ``elo`` / ``elo_games`` stubs are
-#: untouched. No ``_migrate_inplace`` column-ALTER entry is needed for a whole
-#: new table.
-_V11_ADDED_TABLES: tuple[str, ...] = ("reflections", "judge_scorecards")
-
-
-#: Columns added in v12 (the standard error of the Bradley--Terry rating fold).
-#: A generation row gains ``elo_se`` — the standard error of its ``elo`` on the
-#: same Elo scale, from the inverse Fisher information of the batch BT fit
-#: (:func:`zicato.index.elo.fold_elo_into_index`). Like ``elo`` / ``elo_games``
-#: it is a **derived, read-only, visibility-only** analytics column — the rating
-#: and its uncertainty never gate the promote decision — re-derived at index
-#: time from the ingested ``tournaments`` rows. Same incremental-open ALTER
-#: pattern as the earlier waves: a pre-existing v11 (or older) database gains
-#: the column as ``NULL`` on open (a generation reads as ``elo_se IS NULL`` —
-#: uncertainty not yet computed), and the next ``zicato repair index`` re-derives it
-#: after the tournaments land. The fold writes ``elo_se`` only when the column
-#: is present, so a v10/v11 index that has ``elo`` but not yet this column still
-#: folds its two older rating columns.
-_V12_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (("generations", "elo_se", "REAL"),)
-
-
-#: The table added in v14 (the self-healing index; ANALYTICAL-INDEX.md §5.2).
-#: ``ingest_cursors`` records, per epoch, what the last projection LEFT IN THE
-#: INDEX plus the workspace observations that have no index counterpart, so
-#: :func:`zicato.index.ingest.validate_index` can detect a diverged epoch from
-#: five cheap counts rather than re-deriving every row. The two families are
-#: not interchangeable and :func:`zicato.index.ingest._write_cursor` explains
-#: which column is which; the short version is that a column stamped from the
-#: WORKSPACE after a partial write declares unprojected data projected, which
-#: is the bug ``runs_count`` exists to make impossible. Like the v11 and v13
-#: waves this is a
-#: WHOLE NEW TABLE, so the ``CREATE TABLE IF NOT EXISTS`` pass in
-#: :func:`apply_schema` materialises it on any open and no column ALTER is
-#: needed — an existing v13 database simply gains the empty table.
-#:
-#: An empty cursor table reads as "every epoch diverged", which is the correct
-#: conservative answer for a database that predates the feature: the first
-#: heal re-projects each epoch once and writes its cursor, and every heal after
-#: that is a no-op. That is also why a v13 → v14 in-place open is safe even
-#: though :func:`zicato.index.ingest.ensure_index` would otherwise rebuild an
-#: older-version file wholesale — the incremental ``ingest_*`` writers still
-#: migrate in place, exactly as they have since v2.
-_V14_ADDED_TABLES: tuple[str, ...] = ("ingest_cursors",)
-
-
 def apply_schema(conn: sqlite3.Connection) -> None:
-    """Create every table + index + stamp the schema version.
+    """Create the supported schema in an empty database.
 
-    Idempotent — every statement is ``IF NOT EXISTS`` and the
-    ``schema_meta`` row is upserted, so running this against an
-    already-initialised database is a no-op. The canonical build path
-    drops the database file first (see
-    :func:`zicato.index.ingest.rebuild_index`), but ``ingest_run`` /
-    ``ingest_experiment`` call this on an existing file to be safe.
-
-    When the file pre-dates :data:`SCHEMA_VERSION` (e.g. a v1 database
-    opened by a v2-aware writer), the missing columns are added in
-    place via ``ALTER TABLE`` so the incremental writer can proceed
-    without forcing the operator to run ``zicato repair index`` first.
-
-    Both the ``user_version`` pragma and the ``schema_meta`` table are
-    stamped with :data:`SCHEMA_VERSION`.
-
-    Raises :class:`IndexSchemaNewerError` when the database's stamped
-    ``user_version`` EXCEEDS this build's :data:`SCHEMA_VERSION` —
-    re-stamping a newer database down would silently corrupt the version
-    signal for the newer writer. (In-place migration only ever carries an
-    OLDER database forward.)
+    An existing supported database needs no schema writes. Any other populated
+    database must be rebuilt from canonical records by the index repair owner.
     """
     current = read_schema_version(conn)
-    raise_if_newer(current)
-    # Step the v1 -> v2 migration first so an older file's CREATE TABLE
-    # statement (a no-op because the table already exists) does not skip
-    # adding the new columns. Then the IF-NOT-EXISTS statements below
-    # handle the fresh-database case.
-    _migrate_inplace(conn)
+    if current == SCHEMA_VERSION:
+        return
+    if current or conn.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchone():
+        require_schema(current)
     for stmt in _TABLE_STATEMENTS:
         conn.execute(stmt)
     for stmt in _INDEX_STATEMENTS:
         conn.execute(stmt)
     conn.execute(_SCHEMA_META_DDL)
-    # The pragma cannot take a bound parameter, so the literal is
-    # interpolated — SCHEMA_VERSION is a module-level int constant, never
-    # operator input, so this is not an injection surface.
-    conn.execute(f"PRAGMA user_version = {int(SCHEMA_VERSION)}")
-    conn.execute(
-        "INSERT INTO schema_meta(key, value) VALUES('schema_version', ?) "
-        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        (str(SCHEMA_VERSION),),
-    )
-    conn.execute(
-        "INSERT INTO schema_meta(key, value) VALUES('description', ?) "
-        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        ("zicato analytical index — derived, rebuildable from .zicato/ files",),
+    conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+    conn.executemany(
+        "INSERT INTO schema_meta(key, value) VALUES (?, ?)",
+        (
+            ("schema_version", str(SCHEMA_VERSION)),
+            ("description", "zicato analytical index — derived, rebuildable from .zicato/ files"),
+        ),
     )
     conn.commit()
 
 
-def raise_if_newer(current: int) -> None:
-    """Raise :class:`IndexSchemaNewerError` when ``current`` outranks this build.
-
-    The one place the downgrade refusal is worded. :func:`apply_schema` calls
-    it before touching a byte, and :func:`zicato.index.ingest.ensure_index`
-    calls it on the version it reads through a read-only handle — so the
-    auto-build path refuses a newer database with exactly the message the
-    write path has always used, rather than a second paraphrase of it.
-    """
-    if current > SCHEMA_VERSION:
-        raise IndexSchemaNewerError(
-            f"index database schema is v{current}, newer than this build's "
-            f"v{SCHEMA_VERSION}; refusing to re-stamp it down. Upgrade "
-            "zicato, or delete the index database and run `zicato repair index` "
-            "(the index is derived — a rebuild loses nothing)."
+def require_schema(current: int) -> None:
+    """Refuse an incompatible index before reading or incrementally writing it."""
+    if current != SCHEMA_VERSION:
+        raise IndexSchemaError(
+            f"index database schema is {current}; this build requires {SCHEMA_VERSION}; "
+            "run `zicato repair index` to rebuild it from canonical workspace records."
         )
-
-
-def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
-    row = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
-        (table,),
-    ).fetchone()
-    return row is not None
-
-
-def _column_names(conn: sqlite3.Connection, table: str) -> set[str]:
-    """Return the current column names of ``table`` (empty if absent)."""
-    try:
-        rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
-    except sqlite3.Error:
-        return set()
-    return {r[1] for r in rows}
-
-
-def _migrate_inplace(conn: sqlite3.Connection) -> None:
-    """Carry an older-schema database forward to :data:`SCHEMA_VERSION`.
-
-    The canonical rebuild path drops the database file first, so this
-    migrator only runs against databases that exist with an older
-    ``user_version``. The migrations here are additive (column adds via
-    ``ALTER TABLE ... ADD COLUMN``) and idempotent — running the
-    migrator against an already-current database is a no-op.
-
-    The consolidated v1 -> v2 step covers every column that landed in
-    SCHEMA_VERSION 2: ``epochs.goal``, ``epochs.parent_epoch_id``,
-    ``runs.tournament_id``, ``loss_profiles.tournament_id``. The
-    ``judge_losses`` table is created (rather than altered) by the
-    regular ``CREATE TABLE IF NOT EXISTS`` pass, so it does not need
-    a migration entry. The v2 -> v3 step adds the configurable-
-    tournament-structure columns to ``tournaments``; the v3 -> v4 step
-    adds ``runs.match_id`` + ``loss_profiles.match_id`` (per-board-run
-    tournament provenance). Each ALTER is guarded by a column-presence
-    check so the migration is idempotent; tables that do not yet
-    exist (fresh database) are skipped — the subsequent CREATE TABLE
-    statement will already include the column.
-    """
-    current = read_schema_version(conn)
-    if current >= SCHEMA_VERSION:
-        return
-
-    if current < 2:
-        for table, column, ddl_type in _V2_ADDED_COLUMNS:
-            if not _table_exists(conn, table):
-                continue
-            if column in _column_names(conn, table):
-                continue
-            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}")
-
-    if current < 3:
-        for table, column, ddl_type in _V3_ADDED_COLUMNS:
-            if not _table_exists(conn, table):
-                continue
-            if column in _column_names(conn, table):
-                continue
-            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}")
-
-    if current < 4:
-        for table, column, ddl_type in _V4_ADDED_COLUMNS:
-            if not _table_exists(conn, table):
-                continue
-            if column in _column_names(conn, table):
-                continue
-            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}")
-
-    if current < 5:
-        for table, column, ddl_type in _V5_ADDED_COLUMNS:
-            if not _table_exists(conn, table):
-                continue
-            if column in _column_names(conn, table):
-                continue
-            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}")
-
-    if current < 6:
-        for table, column, ddl_type in _V6_ADDED_COLUMNS:
-            if not _table_exists(conn, table):
-                continue
-            if column in _column_names(conn, table):
-                continue
-            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}")
-
-    if current < 7:
-        for table, column, ddl_type in _V7_ADDED_COLUMNS:
-            if not _table_exists(conn, table):
-                continue
-            if column in _column_names(conn, table):
-                continue
-            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}")
-
-    if current < 8:
-        for table, column, ddl_type in _V8_ADDED_COLUMNS:
-            if not _table_exists(conn, table):
-                continue
-            if column in _column_names(conn, table):
-                continue
-            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}")
-
-    if current < 9:
-        for table, column, ddl_type in _V9_ADDED_COLUMNS:
-            if not _table_exists(conn, table):
-                continue
-            if column in _column_names(conn, table):
-                continue
-            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}")
-
-    if current < 10:
-        for table, column, ddl_type in _V10_ADDED_COLUMNS:
-            if not _table_exists(conn, table):
-                continue
-            if column in _column_names(conn, table):
-                continue
-            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}")
-
-    # v11 added WHOLE tables (reflections / judge_scorecards), materialised by
-    # the CREATE TABLE IF NOT EXISTS pass — no column ALTER needed here. v12
-    # adds the ``generations.elo_se`` rating-uncertainty column. v13 adds
-    # another WHOLE table (``pareto_frontier``), so it needs no ALTER either —
-    # an existing v12 file gains the empty table on open, and the next
-    # ``zicato repair index`` fills it from each epoch's canonical record. v14 adds
-    # a third WHOLE table (``ingest_cursors``); an existing v13 file gains it
-    # empty, which reads as "every epoch diverged" and so heals itself on the
-    # first ``heal_index`` pass.
-    if current < 12:
-        for table, column, ddl_type in _V12_ADDED_COLUMNS:
-            if not _table_exists(conn, table):
-                continue
-            if column in _column_names(conn, table):
-                continue
-            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}")
 
 
 @cache
@@ -843,10 +433,10 @@ def read_schema_version(conn: sqlite3.Connection) -> int:
 
 __all__ = [
     "SCHEMA_VERSION",
-    "IndexSchemaNewerError",
+    "IndexSchemaError",
     "Table",
     "apply_schema",
-    "raise_if_newer",
+    "require_schema",
     "read_schema_version",
     "table_columns",
 ]

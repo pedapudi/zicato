@@ -101,7 +101,7 @@ The shipped example (`examples/zicato_examples/target_1_presentation/scoring.jso
 | `pass_rate_monotonicity_scope` | `"per_entry"` | Granularity when the rule is on: `"per_entry"` rejects if ANY champion-passed entry flips to fail (invariant/regression boards); `"aggregate"` rejects only if the OVERALL pass-rate drops (sampled evaluation boards). |
 | `namespace_weights` | `{"drift:":1.0,"judge:":1.0,"failure:":1.0,"runtime:":0.0,"cost:":0.001,"latency:":0.0001,"rubric:":-1.0,"output:":0.0,"schema:":5.0}` | The per-CHANNEL coefficients — every measured signal rides this map. The SIGN encodes the channel's "worse" direction — positive = higher is worse, negative = higher is better (rubric), `0.0` = tracked but not optimised. An explicit mapping REPLACES the defaults wholesale, so a channel you omit scores at `0.0`; `"failure:"` must be present and > 0 or the contract is rejected at load. |
 | `namespace_monotonicity` | `{"drift:":false,"rubric:":true,"schema:":true}` | Per-namespace gate guards. A `true` namespace rejects any child that moved in that namespace's worse direction, even when the combined scalar improves. **Default-on for `rubric:` and `schema:`** — see the gate section. |
-| `diff_complexity_weight` | `0.0` (off) | Opt-in parsimony/MDL term: adds `weight * (added + removed + patches)` to the challenger's scalar, biasing toward the smaller, more general edit. At `0.0` the term is exactly absent (omitted from the contract hash, so unset contracts never roll). |
+| `diff_complexity_weight` | `0.0` (off) | Opt-in parsimony/MDL term: adds `weight * (added + removed + patches)` to the challenger's scalar, biasing toward the smaller, more general edit. At `0.0` the scalar term is absent; the configured value still participates in the contract hash. |
 | `diff_complexity_ceiling` | `0.0` (off) | Opt-in parsimony CEILING — a hard gate rule rather than a loss nudge. Any `<= 0` is off; above that, a challenger whose diff complexity exceeds it is rejected outright. |
 
 (The dataclass also carries an optional `regression_gate_enabled` /
@@ -314,8 +314,8 @@ active, a promotion must also survive the holdout confirmation on a **smaller**
 slice, whose scalar moves in coarser `1/N` steps — and sharing one knob left
 real board shapes (the default 12-train / 6-holdout split with one holdout
 entry flipping) with **no promotable margin at all**. Two contract fields split
-the bounds; both default to exactly today's behaviour and neither moves the
-contract hash at its default:
+the bounds. Both effective values, including defaults, participate in the
+contract hash:
 
 | Field | Default | Set it when |
 |---|---|---|

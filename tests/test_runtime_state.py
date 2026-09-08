@@ -771,14 +771,14 @@ def test_atomic_write_does_not_leave_partial_on_overwrite(tmp_path: Path) -> Non
 
 def test_loss_summary_from_profile_projects_pinned_keys() -> None:
     """``loss_summary_from_profile`` projects the pinned scalar keys."""
-    from zicato.core.types import DriftCount, ExpectationResult, LossProfile
+    from zicato.core.types import ExpectationResult, LossProfile, MetricCount
 
     profile = LossProfile(
         run_id="r1",
         entry_id="e1",
         generation_id="v1",
         epoch_id="ep1",
-        drift_counts=(DriftCount(kind="off_topic", severity="warning", count=2),),
+        metric_counts=(MetricCount(name="drift:off_topic", severity="warning", count=2),),
         plan_revisions=3,
         task_failure_ratio=0.25,
         runtime_ms=4200,
@@ -817,7 +817,7 @@ def test_loss_summary_from_profile_omits_pass_fail_when_none() -> None:
         entry_id="e1",
         generation_id="v1",
         epoch_id="ep1",
-        drift_counts=(),
+        metric_counts=(),
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=10,
@@ -839,7 +839,7 @@ def test_loss_summary_from_profile_includes_multi_turn_extras() -> None:
         entry_id="e1",
         generation_id="v1",
         epoch_id="ep1",
-        drift_counts=(),
+        metric_counts=(),
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=10,
@@ -860,18 +860,18 @@ def test_loss_summary_from_profile_includes_multi_turn_extras() -> None:
 
 def test_drift_count_snapshot_sums_across_severities() -> None:
     """``drift_count_snapshot`` sums per-kind counts across severity buckets."""
-    from zicato.core.types import DriftCount, LossProfile
+    from zicato.core.types import LossProfile, MetricCount
 
     profile = LossProfile(
         run_id="r1",
         entry_id="e1",
         generation_id="v1",
         epoch_id="ep1",
-        drift_counts=(
-            DriftCount(kind="intent_divergence", severity="warning", count=2),
-            DriftCount(kind="intent_divergence", severity="critical", count=1),
-            DriftCount(kind="off_topic", severity="info", count=4),
-            DriftCount(kind="custom:slide_quality", severity="warning", count=3),
+        metric_counts=(
+            MetricCount(name="drift:intent_divergence", severity="warning", count=2),
+            MetricCount(name="drift:intent_divergence", severity="critical", count=1),
+            MetricCount(name="drift:off_topic", severity="info", count=4),
+            MetricCount(name="drift:custom:slide_quality", severity="warning", count=3),
         ),
         plan_revisions=0,
         task_failure_ratio=0.0,
@@ -892,14 +892,14 @@ def test_drift_count_snapshot_sums_across_severities() -> None:
 
 def test_loss_summary_round_trips_through_active_tournament_entry(tmp_path: Path) -> None:
     """A projected loss_summary survives the ActiveTournamentEntry JSON round-trip."""
-    from zicato.core.types import DriftCount, LossProfile
+    from zicato.core.types import LossProfile, MetricCount
 
     profile = LossProfile(
         run_id="r1",
         entry_id="entry_a",
         generation_id="v1",
         epoch_id="ep1",
-        drift_counts=(DriftCount(kind="off_topic", severity="warning", count=2),),
+        metric_counts=(MetricCount(name="drift:off_topic", severity="warning", count=2),),
         plan_revisions=1,
         task_failure_ratio=0.0,
         runtime_ms=100,

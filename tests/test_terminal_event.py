@@ -41,7 +41,8 @@ from tests.test_subprocess_workers import (
     _worker_env,
     _write_args_file,
 )
-from zicato.core.workspace import events_jsonl_path
+from zicato.core.measurement import measurement_artifact_path
+from zicato.core.workspace import run_dir
 from zicato.telemetry.terminal_event import (
     SequenceTrackingSink,
     ensure_run_aborted_event,
@@ -237,7 +238,12 @@ def test_worker_emits_run_aborted_when_cooperative_budget_cancels_mid_emit(
     proc = _spawn_worker_blocking(args_path)
     assert proc.returncode == 0, "a self-aborted worker still exits cleanly"
 
-    events_path = events_jsonl_path(workspace, "e0", generation.id, entry.id)
+    events_path = measurement_artifact_path(
+        run_dir(workspace, "e0", generation.id, entry.id),
+        "events",
+        0,
+        base_seed=None,
+    )
     assert events_path.exists(), "the worker must have written an events file"
 
     lines = [line for line in events_path.read_text(encoding="utf-8").splitlines() if line.strip()]

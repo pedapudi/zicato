@@ -449,13 +449,10 @@ def _anchor_spec(pattern: Any) -> _AnchorSpec | None:
     kind = str(getattr(pattern, "kind", ""))
     detail: Mapping[str, str] = getattr(pattern, "detail", {}) or {}
 
-    if kind == "drift_kind_frequency" or (
-        kind.endswith("metric_frequency")
-        and str(detail.get("metric_name", "")).startswith("drift:")
+    if kind.endswith("metric_frequency") and str(detail.get("metric_name", "")).startswith(
+        "drift:"
     ):
-        drift_kind = (
-            str(detail.get("drift_kind", "")) or str(detail.get("metric_name", ""))[len("drift:") :]
-        )
+        drift_kind = str(detail["metric_name"]).removeprefix("drift:")
         if not drift_kind:
             return None
         affected = _split_ids(str(detail.get("affected_entry_ids", "")))

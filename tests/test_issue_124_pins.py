@@ -233,7 +233,7 @@ def test_finalize_generation_threads_the_reason_onto_the_lineage_node(
                 core_idea="tighten the researcher instruction",
                 modulating=(),
                 why="fewer confabulations",
-                expected_drift_movements=(),
+                expected_metric_movements=(),
                 expected_pass_rate_delta="+0.05",
             ),
             patches=(),
@@ -247,7 +247,7 @@ def test_finalize_generation_threads_the_reason_onto_the_lineage_node(
         generation_id="v1",
         outcome=OutcomeRecord(
             ran_at="2026-07-29T10:30:00+00:00",
-            drift_movements=(),
+            metric_movements=(),
             pass_rate_delta=0.0,
             drift_loss_delta=0.0,
             scalar_score_delta=0.014,

@@ -5,7 +5,6 @@ Coverage:
 * :func:`zicato.epoch.journal.write_seed_experiment` writes a minimal
   experiment for v0 with ``parent_generation_id=None`` (the seed has no
   in-epoch parent), ``outcome=None``, and is idempotent on a second call.
-  A legacy on-disk ``""`` still reads back as ``None``.
 * :func:`zicato.evolve.round_baseline._ensure_baseline_snapshot` invokes the
   seed writer so a freshly-materialised v0 carries the marker.
 * :func:`zicato.analyzer.report_data.gather_epoch_report_data` returns
@@ -25,6 +24,7 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
+from tests._workspace_support import experiment_record, write_epoch
 from zicato.analyzer.report_data import gather_epoch_report_data
 from zicato.analyzer.report_sections import (
     _promoted_lineage,
@@ -32,6 +32,7 @@ from zicato.analyzer.report_sections import (
 )
 from zicato.cli.commands.repair_v0_baseline import repair_v0_baseline_cmd
 from zicato.epoch.journal import write_seed_experiment
+from zicato.workspace.layout import WorkspaceLayout
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -56,13 +57,15 @@ def _bootstrap_workspace_without_v0_marker(tmp_path: Path) -> tuple[Path, str]:
     edir = ws / "epochs" / epoch
     edir.mkdir(parents=True)
 
-    _write_json(
-        edir / "config.json",
-        {
+    write_epoch(
+        WorkspaceLayout.from_root(ws),
+        epoch,
+        scoring={"pass_weight": 1.0},
+        config={
             "id": epoch,
             "name": "Demo",
             "created_at": "2026-05-20T00:00:00Z",
-            "contract_hash": "feedface00000001",
+            "contract_hash": "feedface00000001" * 4,
             "closed": False,
         },
     )
@@ -72,7 +75,6 @@ def _bootstrap_workspace_without_v0_marker(tmp_path: Path) -> tuple[Path, str]:
         '"input": "answer", "expectation": {"kind": "rubric", "spec": "accurate"}}\n',
         encoding="utf-8",
     )
-    _write_json(edir / "scoring.json", {"pass_weight": 1.0})
 
     # v0 — seed, no experiment.json (the bug-reproduction shape).
     v0_dir = edir / "generations" / "v0"
@@ -80,67 +82,91 @@ def _bootstrap_workspace_without_v0_marker(tmp_path: Path) -> tuple[Path, str]:
     (v0_dir / "snapshot" / "agent.py").write_text("# seed\n", encoding="utf-8")
     _write_json(
         v0_dir / "gen_score.json",
-        {"generation_id": "v0", "scalar": 1.000, "drift_loss_mean": 0.500, "pass_rate": 0.80},
+        {
+            "format_version": 1,
+            "generation_id": "v0",
+            "scalar": 1.000,
+            "drift_loss_mean": 0.500,
+            "pass_rate": 0.80,
+        },
     )
 
     # v1 — promoted challenger.
     _write_json(
         edir / "generations" / "v1" / "experiment.json",
-        {
-            "id": "exp-v1",
-            "epoch_id": epoch,
-            "generation_id": "v1",
-            "parent_generation_id": "v0",
-            "proposed_at": "2026-05-20T01:00:00Z",
-            "hypothesis": {
-                "core_idea": "tighten the prompt",
-                "modulating": [],
-                "why": "",
-                "expected_pass_rate_delta": "+0.05",
-            },
-            "patch_ids": [],
-            "outcome": {
-                "ran_at": "2026-05-20T01:30:00Z",
-                "drift_movements": [],
-                "pass_rate_delta": 0.05,
-                "drift_loss_delta": -0.10,
-                "scalar_score_delta": -0.150,
-                "tournament_decision": "promoted",
-                "rejection_reason": "",
-            },
-        },
+        experiment_record(
+            **{
+                "epoch_id": epoch,
+                "round_index": 1,
+                **{
+                    "id": "exp-v1",
+                    "epoch_id": epoch,
+                    "generation_id": "v1",
+                    "parent_generation_id": "v0",
+                    "proposed_at": "2026-05-20T01:00:00Z",
+                    "hypothesis": {
+                        "core_idea": "tighten the prompt",
+                        "modulating": [],
+                        "why": "",
+                        "expected_pass_rate_delta": "+0.05",
+                    },
+                    "patch_ids": [],
+                    "outcome": {
+                        "ran_at": "2026-05-20T01:30:00Z",
+                        "metric_movements": [],
+                        "pass_rate_delta": 0.05,
+                        "drift_loss_delta": -0.1,
+                        "scalar_score_delta": -0.15,
+                        "tournament_decision": "promoted",
+                        "rejection_reason": "",
+                    },
+                },
+            }
+        ),
     )
     _write_json(
         edir / "generations" / "v1" / "gen_score.json",
-        {"generation_id": "v1", "scalar": 0.850, "drift_loss_mean": 0.400, "pass_rate": 0.85},
+        {
+            "format_version": 1,
+            "generation_id": "v1",
+            "scalar": 0.850,
+            "drift_loss_mean": 0.400,
+            "pass_rate": 0.85,
+        },
     )
 
     # v2 — rejected challenger of v1.
     _write_json(
         edir / "generations" / "v2" / "experiment.json",
-        {
-            "id": "exp-v2",
-            "epoch_id": epoch,
-            "generation_id": "v2",
-            "parent_generation_id": "v1",
-            "proposed_at": "2026-05-20T02:00:00Z",
-            "hypothesis": {
-                "core_idea": "noisy variation",
-                "modulating": [],
-                "why": "",
-                "expected_pass_rate_delta": "+0.0",
-            },
-            "patch_ids": [],
-            "outcome": {
-                "ran_at": "2026-05-20T02:30:00Z",
-                "drift_movements": [],
-                "pass_rate_delta": -0.10,
-                "drift_loss_delta": 0.15,
-                "scalar_score_delta": 0.200,
-                "tournament_decision": "rejected",
-                "rejection_reason": "regressed past margin",
-            },
-        },
+        experiment_record(
+            **{
+                "epoch_id": epoch,
+                "round_index": 2,
+                **{
+                    "id": "exp-v2",
+                    "epoch_id": epoch,
+                    "generation_id": "v2",
+                    "parent_generation_id": "v1",
+                    "proposed_at": "2026-05-20T02:00:00Z",
+                    "hypothesis": {
+                        "core_idea": "noisy variation",
+                        "modulating": [],
+                        "why": "",
+                        "expected_pass_rate_delta": "+0.0",
+                    },
+                    "patch_ids": [],
+                    "outcome": {
+                        "ran_at": "2026-05-20T02:30:00Z",
+                        "metric_movements": [],
+                        "pass_rate_delta": -0.1,
+                        "drift_loss_delta": 0.15,
+                        "scalar_score_delta": 0.2,
+                        "tournament_decision": "rejected",
+                        "rejection_reason": "regressed past margin",
+                    },
+                },
+            }
+        ),
     )
 
     return ws, epoch
@@ -192,36 +218,6 @@ def test_write_seed_experiment_is_idempotent(tmp_path: Path) -> None:
     # Second call: should leave the tampered text in place.
     assert write_seed_experiment(ws, epoch, "v0") is False
     assert exp_path.read_text() == tampered
-
-
-def test_read_experiment_normalises_legacy_empty_parent(tmp_path: Path) -> None:
-    """A legacy on-disk ``parent_generation_id: ""`` reads back as ``None``.
-
-    Pre-migration workspaces wrote the seed's parent as an empty string;
-    the reader must normalise that to ``None`` so the in-memory shape is
-    uniform regardless of when the file was written.
-    """
-    from zicato.epoch.journal import read_experiment  # noqa: PLC0415
-
-    ws, epoch = _bootstrap_workspace_without_v0_marker(tmp_path)
-    # Hand-write a v0 experiment.json carrying the legacy empty-string
-    # sentinel (the shape pre-migration writers produced).
-    _write_json(
-        ws / "epochs" / epoch / "generations" / "v0" / "experiment.json",
-        {
-            "id": f"exp_{epoch}_v0",
-            "epoch_id": epoch,
-            "generation_id": "v0",
-            "parent_generation_id": "",
-            "proposed_at": "2026-05-20T00:00:00Z",
-            "hypothesis": {"core_idea": "baseline seed", "modulating": [], "why": ""},
-            "patch_ids": [],
-            "outcome": None,
-        },
-    )
-
-    exp = read_experiment(ws, epoch, "v0")
-    assert exp.parent_generation_id is None
 
 
 # ---------------------------------------------------------------------------
@@ -372,7 +368,18 @@ def test_ensure_baseline_snapshot_writes_v0_marker(tmp_path: Path) -> None:
     from zicato.runtime.lock import acquire_workspace_lock
 
     with acquire_workspace_lock(ws, "contract-test") as writer:
-        _ensure_baseline_snapshot(ws, epoch_id, {"mutable_trees": [str(src_tree)]}, writer=writer)
+        _ensure_baseline_snapshot(
+            ws,
+            epoch_id,
+            {
+                "adapter": {
+                    "kind": "import",
+                    "factory": "tests._stub_adapter:make_stub_adapter",
+                    "mutable_trees": [str(src_tree)],
+                }
+            },
+            writer=writer,
+        )
 
     # The marker landed alongside the seeded snapshot.
     exp_path = v0_dir / "experiment.json"
@@ -391,5 +398,16 @@ def test_ensure_baseline_snapshot_writes_v0_marker(tmp_path: Path) -> None:
     from zicato.runtime.lock import acquire_workspace_lock
 
     with acquire_workspace_lock(ws, "contract-test") as writer:
-        _ensure_baseline_snapshot(ws, epoch_id, {"mutable_trees": [str(src_tree)]}, writer=writer)
+        _ensure_baseline_snapshot(
+            ws,
+            epoch_id,
+            {
+                "adapter": {
+                    "kind": "import",
+                    "factory": "tests._stub_adapter:make_stub_adapter",
+                    "mutable_trees": [str(src_tree)],
+                }
+            },
+            writer=writer,
+        )
     assert json.loads(exp_path.read_text()) == body

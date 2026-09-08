@@ -200,8 +200,6 @@ def _validated_writes(
         raise ValueError("contract publication has no accepted contract paths")
     for component, path, _, _ in parsed[:-1]:
         declared = contract.get(f"{component}_path")
-        if component == "brief":
-            declared = declared or contract.get("rubric_path")
         if not isinstance(declared, str) or Path(declared) != path:
             raise ValueError(f"contract publication {component} destination differs from config")
     return parsed

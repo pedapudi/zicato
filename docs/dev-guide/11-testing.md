@@ -785,7 +785,7 @@ importable adapter because each must survive the process crossing:
 
 | Adapter | Behaviour it forces | What it tests |
 |---|---|---|
-| `StubAdapter` | the two-argument `run(entry, sink_path)` form, writing an empty events file | the happy path, no goldfive dependency |
+| `StubAdapter` | `run(entry, sinks, config)` without emitted events | the happy path, no goldfive dependency |
 | `SnapshotWritingAdapter` | writes runtime output INTO the mounted snapshot | per-run checkout isolation — the write must land in a discarded per-run copy, never the canonical snapshot |
 | `SleepingAdapter` | a BLOCKING `time.sleep` that wedges the worker's own event loop | forces the PARENT's `wait_for` + SIGTERM/SIGKILL escalation (the cooperative budget can't fire) |
 | `CooperativeAdapter` | a CANCELLABLE `asyncio.sleep` | the worker's own cooperative budget fires and it self-aborts, exit 0 |

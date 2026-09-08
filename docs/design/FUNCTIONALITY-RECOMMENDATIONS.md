@@ -270,7 +270,7 @@ inside the existing overfitting-restricted context channels:
    holdout access.
 2. **Score the hypothesis's predictions against actuals (the most novel
    lever).** The hypothesis already carries falsifiable predictions —
-   `expected_drift_movements`, `expected_pass_rate_delta`,
+   `expected_metric_movements`, `expected_pass_rate_delta`,
    `expected_metric_movements` — which are parsed and journaled and **never
    compared to what happened**. Score them after the tournament settles and
    feed the calibration back into experiment memory. This turns decorative

@@ -127,20 +127,23 @@ def _drift_transform(ctx: DriftContext) -> tuple[float, ScoringProvenance]:
     sev_w = weights.severity_weights
     loss = 0.0
     transformed: dict[str, str] = {}
-    for c in ctx.drift_counts:
+    for c in ctx.metric_counts:
+        if not c.name.startswith("drift:"):
+            continue
+        kind = c.name.removeprefix("drift:")
         # Judge-attributed drift is the judge: channel's rather than this one's —
         # the same exclusion :func:`builtin_drift_loss` makes, in lockstep.
-        if is_judge_attributed_kind(c.kind):
+        if is_judge_attributed_kind(kind):
             continue
         sev_mult = sev_w.get(c.severity, 0.0)
-        kind_mult = _kind_multiplier(c.kind, weights)
-        spec = active.get(c.kind)
+        kind_mult = _kind_multiplier(kind, weights)
+        spec = active.get(kind)
         if spec is None:
             # Default kind: linear count, byte-identical to the built-in term.
             shaped_count: float = c.count
         else:
             shaped_count = apply_transform(spec, c.count)
-            transformed[c.kind] = _spec_provenance(spec)
+            transformed[kind] = _spec_provenance(spec)
         loss += sev_mult * kind_mult * shaped_count
     # Plan revisions are not per-kind and ride through unchanged.
     loss += weights.plan_revision_weight * ctx.plan_revisions

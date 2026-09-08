@@ -6,13 +6,9 @@ Covers:
   ``goal`` field through :mod:`zicato.epoch.lifecycle`.
 * ``new_epoch`` round-trips an operator-supplied goal into
   ``config.json``.
-* The index schema is at version 2 and an older v1 database upgrades in
-  place to include the ``epochs.goal`` column.
 * :func:`zicato.index.ingest.rebuild_index` populates ``epochs.goal``
   from the per-epoch ``config.json``.
 * The ``zicato epoch new --goal "..."`` CLI flag end-to-end.
-* :func:`zicato.index.ingest.repair_epoch_goals` is idempotent and
-  backfills the ``goal`` key on epochs that predate the field.
 * The analyzer report header surfaces the goal (and renders the empty
   case as "no goal recorded").
 """
@@ -28,7 +24,7 @@ from click.testing import CliRunner
 
 from zicato.analyzer.report_data import gather_epoch_report_data
 from zicato.analyzer.report_sections import render_title_block
-from zicato.cli.commands.epoch import epoch_grp, repair_epoch_goals_cmd
+from zicato.cli.commands.epoch import epoch_grp
 from zicato.core.types import EpochConfig, ScoringWeights
 from zicato.epoch.lifecycle import (
     _config_from_dict,
@@ -39,12 +35,6 @@ from zicato.epoch.lifecycle import (
 )
 from zicato.index.ingest import (
     rebuild_index,
-    repair_epoch_goals,
-)
-from zicato.index.schema import (
-    SCHEMA_VERSION,
-    apply_schema,
-    read_schema_version,
 )
 from zicato.workspace.config_io import write_workspace_config
 
@@ -91,6 +81,7 @@ def test_epoch_config_serializes_and_deserializes_goal() -> None:
         brief_path=Path("/brief.md"),
         scoring=ScoringWeights(),
         goal="shift the proposer brief toward concrete deltas\nline two",
+        contract_hash="0" * 64,
     )
     payload = _config_to_dict(cfg)
     assert payload["goal"] == "shift the proposer brief toward concrete deltas\nline two"
@@ -109,46 +100,18 @@ def test_epoch_config_serializes_and_deserializes_goal() -> None:
     assert restored_legacy.goal == ""
 
 
-def test_epoch_config_contract_hash_absent_is_none() -> None:
-    """``contract_hash`` is ``None`` (not "") when absent or legacy-empty.
+def test_epoch_config_requires_its_recorded_contract_identity() -> None:
+    from zicato.testing.fixtures import make_epoch_config
 
-    "Absent" must be ``None`` so the "legacy never rolls" rule can be an
-    explicit ``is None`` check — a corrupted/empty stored hash must NOT
-    read as legacy.
-    """
-    # A real hash round-trips verbatim.
-    cfg = EpochConfig(
-        id="2026-05-27_x",
-        name="x",
-        created_at="2026-05-27T00:00:00+00:00",
-        board_path=Path("/board.jsonl"),
-        brief_path=Path("/brief.md"),
-        scoring=ScoringWeights(),
-        contract_hash="feedface00000001",
-    )
-    restored = _config_from_dict(json.loads(json.dumps(_config_to_dict(cfg))))
-    assert restored.contract_hash == "feedface00000001"
-
-    # Default (never set) ⇒ None, written as JSON null.
-    default_cfg = EpochConfig(
-        id="2026-05-27_y",
-        name="y",
-        created_at="2026-05-27T00:00:00+00:00",
-        board_path=Path("/board.jsonl"),
-        brief_path=Path("/brief.md"),
-        scoring=ScoringWeights(),
-    )
-    payload = _config_to_dict(default_cfg)
-    assert payload["contract_hash"] is None
-    assert _config_from_dict(json.loads(json.dumps(payload))).contract_hash is None
-
-    # Back-compat: a config missing the key, or carrying a legacy empty
-    # string, both normalise to None.
-    base = _config_to_dict(cfg)
-    legacy_missing = {k: v for k, v in base.items() if k != "contract_hash"}
-    assert _config_from_dict(legacy_missing).contract_hash is None
-    legacy_empty = dict(base, contract_hash="")
-    assert _config_from_dict(legacy_empty).contract_hash is None
+    cfg = make_epoch_config(contract_hash="f" * 64)
+    payload = json.loads(json.dumps(_config_to_dict(cfg)))
+    assert _config_from_dict(payload).contract_hash == cfg.contract_hash
+    for invalid in (None, "", "not-a-digest"):
+        with pytest.raises(ValueError, match="contract_hash"):
+            _config_from_dict({**payload, "contract_hash": invalid})
+    del payload["contract_hash"]
+    with pytest.raises(ValueError, match="contract_hash"):
+        _config_from_dict(payload)
 
 
 def test_epoch_config_round_trips_implementation_identity() -> None:
@@ -164,7 +127,7 @@ def test_epoch_config_round_trips_implementation_identity() -> None:
         board_path=Path("/board.jsonl"),
         brief_path=Path("/brief.md"),
         scoring=ScoringWeights(goldfive={}),
-        contract_hash="feedface00000002",
+        contract_hash="feedface00000002" * 4,
         implementation_identity=identity,
     )
 
@@ -264,57 +227,6 @@ def test_set_epoch_goal_overwrites_existing(
     # Idempotent — writing the same goal again is a no-op.
     set_epoch_goal(workspace, cfg.id, "revised text")
     assert load_epoch(workspace, cfg.id).goal == "revised text"
-
-
-# ---------------------------------------------------------------------------
-# 3. Schema migration
-# ---------------------------------------------------------------------------
-
-
-def test_schema_version_is_at_least_two() -> None:
-    # v2 added the ``epochs.goal`` column this file exercises; later
-    # versions are additive over it, so the floor is what matters here.
-    assert SCHEMA_VERSION >= 2
-
-
-def test_v1_database_upgrades_in_place_to_v2(tmp_path: Path) -> None:
-    """An older v1 ``epochs`` table picks up the ``goal`` column on apply."""
-    db_path = tmp_path / "index.db"
-    conn = sqlite3.connect(str(db_path))
-    # Pretend an older zicato wrote this database: the v1 epochs DDL
-    # plus the v1 user_version stamp. No ``goal`` column.
-    conn.execute(
-        "CREATE TABLE epochs ("
-        "epoch_id TEXT PRIMARY KEY, "
-        "contract_hash TEXT, "
-        "created_at TEXT, "
-        "closed INTEGER)"
-    )
-    conn.execute(
-        "INSERT INTO epochs(epoch_id, contract_hash, created_at, closed) "
-        "VALUES('legacy_epoch', 'h', '2026-01-01T00:00:00Z', 0)"
-    )
-    conn.execute("PRAGMA user_version = 1")
-    conn.commit()
-    conn.close()
-
-    # Re-open and apply the current schema; the migrator must add the
-    # ``goal`` column without dropping the legacy row.
-    conn = sqlite3.connect(str(db_path))
-    apply_schema(conn)
-    cols = {r[1] for r in conn.execute("PRAGMA table_info(epochs)").fetchall()}
-    assert "goal" in cols
-    assert read_schema_version(conn) == SCHEMA_VERSION
-    # Legacy row survives the migration; ``goal`` defaults to NULL.
-    row = conn.execute(
-        "SELECT epoch_id, contract_hash, goal FROM epochs WHERE epoch_id = ?",
-        ("legacy_epoch",),
-    ).fetchone()
-    assert row is not None
-    assert row[0] == "legacy_epoch"
-    assert row[1] == "h"
-    assert row[2] is None
-    conn.close()
 
 
 # ---------------------------------------------------------------------------
@@ -467,60 +379,6 @@ def test_cli_epoch_new_without_goal_defaults_to_empty_in_non_tty(
 # ---------------------------------------------------------------------------
 # 6. repair-epoch-goals idempotency
 # ---------------------------------------------------------------------------
-
-
-def test_repair_epoch_goals_is_idempotent(
-    workspace: Path, board_file: Path, brief_file: Path
-) -> None:
-    """Two epochs, one missing the ``goal`` key; repair is idempotent."""
-    cfg_a = new_epoch(workspace, "alpha", board_file, brief_file, ScoringWeights())
-    new_epoch(workspace, "beta", board_file, brief_file, ScoringWeights())
-
-    # Mimic a pre-feature config.json for ``cfg_a``: strip the goal key.
-    config_a = workspace / "epochs" / cfg_a.id / "config.json"
-    raw = json.loads(config_a.read_text())
-    raw.pop("goal", None)
-    config_a.write_text(json.dumps(raw), encoding="utf-8")
-
-    # Build the index first so the repair has a target to update.
-    rebuild_index(workspace)
-
-    first = repair_epoch_goals(workspace)
-    # Two epochs scanned; exactly one config patched (the one we
-    # stripped) — ``cfg_b`` was untouched and remains correct.
-    assert first["scanned"] == 2
-    assert first["config_patched"] == 1
-    # config.json now carries the key.
-    raw_after = json.loads(config_a.read_text())
-    assert "goal" in raw_after
-    assert raw_after["goal"] == ""
-
-    # Second pass: nothing left to patch.
-    second = repair_epoch_goals(workspace)
-    assert second["scanned"] == 2
-    assert second["config_patched"] == 0
-    assert second["index_updated"] == 0
-
-
-def test_repair_epoch_goals_cli_command(
-    workspace: Path, board_file: Path, brief_file: Path
-) -> None:
-    """The ``zicato repair epoch-goals`` CLI surface drives the repair."""
-    cfg = new_epoch(workspace, "alpha", board_file, brief_file, ScoringWeights())
-    # Strip the goal key so the repair has work to do.
-    config_path = workspace / "epochs" / cfg.id / "config.json"
-    raw = json.loads(config_path.read_text())
-    raw.pop("goal", None)
-    config_path.write_text(json.dumps(raw), encoding="utf-8")
-
-    runner = CliRunner()
-    result = runner.invoke(repair_epoch_goals_cmd, ["--workspace", str(workspace)])
-    assert result.exit_code == 0, result.output
-    # The CLI reports the patched count.
-    assert "1 config.json files patched" in result.output
-
-    raw_after = json.loads(config_path.read_text())
-    assert "goal" in raw_after
 
 
 # ---------------------------------------------------------------------------

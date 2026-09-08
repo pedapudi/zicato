@@ -246,7 +246,7 @@ async def _persist_rejected_round(
         rejection_reason = "validation_failed: " + "; ".join(validation_errors)
     rejected_outcome = OutcomeRecord(
         ran_at=_now_iso(),
-        drift_movements=(),
+        metric_movements=(),
         pass_rate_delta=0.0,
         drift_loss_delta=0.0,
         scalar_score_delta=0.0,
@@ -442,11 +442,11 @@ def _rejected_proposer_experiment(
             core_idea="proposer exhausted retries without a valid patch set",
             modulating=(),
             why=(
-                "Every proposer attempt this round failed parsing or "
-                "post-apply validation; see the rejected outcome for the "
-                "per-attempt error trail."
+                "Every proposer attempt this round failed parsing or post-apply"
+                " validation; see the rejected outcome for the per-attempt "
+                "error trail."
             ),
-            expected_drift_movements=(),
+            expected_metric_movements=(),
             expected_pass_rate_delta="0.0",
             risks="; ".join(error.attempts),
         ),

@@ -170,41 +170,16 @@ def detect_metric_frequency(
     pattern_kind: str | None = None,
     min_frequency: float = 0.20,
 ) -> list[Pattern]:
-    """One Pattern per namespaced metric that fires in >= ``min_frequency`` of runs.
+    """Report metrics observed in at least ``min_frequency`` of the runs.
 
-    Generalises :func:`detect_drift_kind_frequency` to any
-    :class:`MetricCount` namespace. ``namespace`` is matched against the
-    ``MetricCount.name`` prefix (so ``"drift:"`` matches every drift
-    kind, ``"cost:"`` matches every cost metric, etc.). The empty
-    string matches every namespace.
+    ``namespace`` filters metric names by prefix; an empty prefix includes
+    every namespace. Each run contributes at most one hit per name, even
+    when several severity buckets contain observations. Pattern severity is
+    the highest observed severity, or info for metrics without severity.
 
-    A metric "fires" in a run iff at least one
-    :class:`zicato.core.MetricCount` entry under :meth:`LossProfile.unified_metrics`
-    has the prefix and a positive count. Severity is the max-severity
-    bucket observed for the metric in the window (or ``"info"`` when
-    the namespace doesn't carry severity).
-
-    Emits Pattern.kind = ``pattern_kind`` (defaults to
-    ``"{namespace}metric_frequency"`` with the trailing colon stripped;
-    e.g. ``"drift:" -> "drift_metric_frequency"``). Detail keys mirror
-    the drift-only surface for back-compat: ``metric_name``,
-    ``frequency``, ``run_count``, ``hits``, ``max_severity``,
-    ``affected_entry_ids``.
-
-    Parameters
-    ----------
-    inp:
-        The detector input bundle.
-    namespace:
-        Prefix string the metric name must start with. Use ``"drift:"``
-        for drift-only detection (the back-compat path), ``"cost:"`` for
-        cost metrics, etc. Empty string matches every metric.
-    pattern_kind:
-        Override for :attr:`Pattern.kind`. When ``None`` the kind is
-        derived from the namespace.
-    min_frequency:
-        Minimum per-window frequency for a metric to be surfaced.
-        Default 0.20 matches the historical drift-detector threshold.
+    Detail records contain metric_name, frequency, run_count, hits,
+    max_severity, and affected_entry_ids. The pattern kind defaults to the
+    namespace followed by ``_metric_frequency``.
     """
 
     losses = inp.losses
@@ -225,7 +200,7 @@ def detect_metric_frequency(
     metric_entries: dict[str, set[str]] = {}
 
     for loss in losses:
-        for mc in loss.unified_metrics():
+        for mc in loss.scoring_metrics():
             if mc.count <= 0:
                 continue
             if namespace and not mc.name.startswith(namespace):
@@ -254,9 +229,6 @@ def detect_metric_frequency(
         summary = f"{label} {display!r} fires in {pct}% of runs across {len(affected)} entries"
         max_sev = metric_max_sev.get(metric_name, "info")
         pattern_severity: str = max_sev if max_sev in ("info", "warning", "critical") else "info"
-        # For drift namespace the back-compat detail key is
-        # ``drift_kind``; for everything else we use ``metric_name`` so
-        # the proposer sees a more general label.
         detail: dict[str, str] = {
             "metric_name": metric_name,
             "frequency": f"{frequency:.3f}",
@@ -265,8 +237,6 @@ def detect_metric_frequency(
             "max_severity": max_sev,
             "affected_entry_ids": ",".join(affected),
         }
-        if namespace == "drift:":
-            detail["drift_kind"] = display
         patterns.append(
             Pattern(
                 id=_pattern_id(pattern_kind, summary, affected),
@@ -278,24 +248,6 @@ def detect_metric_frequency(
             )
         )
     return patterns
-
-
-def detect_drift_kind_frequency(inp: DetectorInput) -> list[Pattern]:
-    """One Pattern per drift kind that fires in >=20% of runs.
-
-    Back-compat wrapper over :func:`detect_metric_frequency` with
-    ``namespace="drift:"`` and ``pattern_kind="drift_kind_frequency"``.
-    The detail dict includes ``drift_kind`` for old consumers and
-    ``metric_name`` for new ones; the latter carries the fully
-    namespaced name (e.g. ``"drift:off_topic"``).
-
-    "Fires" means at least one :class:`zicato.core.DriftCount` with
-    ``count > 0`` for that kind appears in the run's
-    :attr:`LossProfile.drift_counts`. Severity is summarised as the
-    max-severity bucket observed for that kind in the window.
-    """
-
-    return detect_metric_frequency(inp, namespace="drift:", pattern_kind="drift_kind_frequency")
 
 
 def detect_cost_outliers(inp: DetectorInput) -> list[Pattern]:
@@ -639,7 +591,7 @@ def detect_multi_turn_context_loss(inp: DetectorInput) -> list[Pattern]:
 #: by id so the same finding from two detectors collapses to the first
 #: one's row.
 ALL_DETECTORS: tuple[DetectorFn, ...] = (
-    detect_drift_kind_frequency,
+    detect_metric_frequency,
     detect_cost_outliers,
     detect_rubric_score_movement,
     detect_hot_tasks,
@@ -678,7 +630,6 @@ __all__ = [
     "DetectorFn",
     "DetectorInput",
     "detect_cost_outliers",
-    "detect_drift_kind_frequency",
     "detect_hot_agents",
     "detect_hot_tasks",
     "detect_metric_frequency",

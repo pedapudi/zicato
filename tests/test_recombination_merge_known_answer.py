@@ -87,10 +87,10 @@ def _scoring_dict(*, merge_mode: str | None) -> dict:
     proposer_quality: dict = {
         "best_of_n": BEST_OF_N,
         "critique_enabled": False,
-        "recombine": True,
     }
+    experimental = {"recombine": True}
     if merge_mode is not None:
-        proposer_quality["recombine_merge"] = merge_mode
+        experimental["recombine_merge"] = merge_mode
     return {
         "pass_weight": 1.0,
         "severity_weights": {"info": 1.0, "warning": 3.0, "critical": 10.0},
@@ -102,6 +102,7 @@ def _scoring_dict(*, merge_mode: str | None) -> dict:
             "params": {"replicates": 1, "promote_confidence_threshold": None},
         },
         "proposer_quality": proposer_quality,
+        "experimental": experimental,
     }
 
 
@@ -127,12 +128,16 @@ def _bootstrap_workspace(
                 ),
                 "created_at": "2026-07-01T00:00:00Z",
                 "generation_source_backend": "directory",
-                "adapter": ADAPTER_BLOCK,
-                "runtime": {
-                    "target_call_llm": "zicato_examples.target_0_convergence.mocks:target_llm",
-                    "evaluation_call_llm": evaluation_call_llm,
+                "adapter": {**ADAPTER_BLOCK, "mutable_trees": [str(agent_dir)]},
+                "runtime": {},
+                "models": {
+                    "engines": {
+                        "target": {
+                            "call_llm": "zicato_examples.target_0_convergence.mocks:target_llm"
+                        },
+                        "evaluation": {"call_llm": evaluation_call_llm},
+                    }
                 },
-                "mutable_trees": [str(agent_dir)],
             }
         )
     )
@@ -308,7 +313,7 @@ async def _garbage_merge_aux(system: str, user: str, model: str, **kwargs) -> st
 
 
 def test_contract_hash_pins_recombine_merge() -> None:
-    """Default ``"mechanical"`` is omit-at-default; ``"llm"`` rolls the epoch."""
+    """The effective merge mode participates in the contract identity."""
     from zicato.epoch.contract import scoring_to_canon
 
     def _canon(merge_mode: str | None) -> dict:
@@ -318,10 +323,7 @@ def test_contract_hash_pins_recombine_merge() -> None:
     mechanical = _canon("mechanical")
     llm = _canon("llm")
 
-    # At the default the key is absent from the canonical form (byte-identical
-    # to a contract that predates the field) — both directions.
     assert mechanical == omitted
-    assert "recombine_merge" not in json.dumps(mechanical)
-    # "llm" reintroduces the key and changes the canonical form (rolls).
+    assert mechanical["experimental"]["recombine_merge"] == "mechanical"
     assert llm != mechanical
     assert '"recombine_merge": "llm"' in json.dumps(llm, sort_keys=True)

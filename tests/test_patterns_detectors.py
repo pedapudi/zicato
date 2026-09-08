@@ -10,17 +10,18 @@ environment without goldfive on ``sys.path``.
 
 from __future__ import annotations
 
+from functools import partial
 from pathlib import Path
 
 import pytest
 
-from zicato.core import BoardEntry, DriftCount, LossProfile, Pattern
+from zicato.core import BoardEntry, LossProfile, MetricCount, Pattern
 from zicato.patterns import (
     ALL_DETECTORS,
     DetectorInput,
-    detect_drift_kind_frequency,
     detect_hot_agents,
     detect_hot_tasks,
+    detect_metric_frequency,
     detect_multi_turn_context_loss,
     detect_multi_turn_memory_failure,
     detect_patterns,
@@ -41,7 +42,7 @@ def _loss(
     entry_id: str = "e1",
     generation_id: str = "g0",
     epoch_id: str = "ep0",
-    drift_counts: tuple[DriftCount, ...] = (),
+    metric_counts: tuple[MetricCount, ...] = (),
     plan_revisions: int = 0,
     memory_failure_count: int | None = None,
     context_loss_count: int | None = None,
@@ -57,7 +58,7 @@ def _loss(
         entry_id=entry_id,
         generation_id=generation_id,
         epoch_id=epoch_id,
-        drift_counts=drift_counts,
+        metric_counts=metric_counts,
         plan_revisions=plan_revisions,
         task_failure_ratio=0.0,
         runtime_ms=1000,
@@ -99,80 +100,80 @@ def test_detect_patterns_returns_empty_on_empty_input() -> None:
 
 
 # ---------------------------------------------------------------------------
-# drift_kind_frequency
+# drift_metric_frequency
 # ---------------------------------------------------------------------------
 
 
-def test_drift_kind_frequency_fires_at_20_percent_threshold() -> None:
+def test_drift_metric_frequency_fires_at_20_percent_threshold() -> None:
     # 10 losses; 3 of them have OFF_TOPIC -> 30% >= 20%.
     losses: list[LossProfile] = []
     for i in range(10):
         if i < 3:
-            dc = (DriftCount(kind="off_topic", severity="warning", count=2),)
+            dc = (MetricCount(name="drift:off_topic", severity="warning", count=2),)
         else:
             dc = ()
-        losses.append(_loss(run_id=f"r{i}", entry_id="e1", drift_counts=dc))
+        losses.append(_loss(run_id=f"r{i}", entry_id="e1", metric_counts=dc))
     inp = DetectorInput(losses=losses, entries={"e1": _single_turn_entry()}, events_paths={})
 
-    patterns = detect_drift_kind_frequency(inp)
+    patterns = detect_metric_frequency(inp, namespace="drift:")
     assert len(patterns) == 1
     pat = patterns[0]
-    assert pat.kind == "drift_kind_frequency"
-    assert pat.detail["drift_kind"] == "off_topic"
+    assert pat.kind == "drift_metric_frequency"
+    assert pat.detail["metric_name"] == "drift:off_topic"
     assert pat.detail["hits"] == "3"
     assert pat.detail["run_count"] == "10"
     assert pat.detail["max_severity"] == "warning"
     assert pat.severity == "warning"
 
 
-def test_drift_kind_frequency_skips_below_threshold() -> None:
+def test_drift_metric_frequency_skips_below_threshold() -> None:
     # 10 losses; 1 with OFF_TOPIC -> 10% < 20%.
     losses = [
         _loss(
             run_id=f"r{i}",
-            drift_counts=(
-                (DriftCount(kind="off_topic", severity="info", count=1),) if i == 0 else ()
+            metric_counts=(
+                (MetricCount(name="drift:off_topic", severity="info", count=1),) if i == 0 else ()
             ),
         )
         for i in range(10)
     ]
     inp = DetectorInput(losses=losses, entries={"e1": _single_turn_entry()}, events_paths={})
-    assert detect_drift_kind_frequency(inp) == []
+    assert detect_metric_frequency(inp, namespace="drift:") == []
 
 
-def test_drift_kind_frequency_zero_count_does_not_fire() -> None:
-    # A DriftCount with count=0 must NOT be treated as a hit.
+def test_drift_metric_frequency_zero_count_does_not_fire() -> None:
+    # A MetricCount with count=0 must NOT be treated as a hit.
     losses = [
         _loss(
             run_id=f"r{i}",
-            drift_counts=(DriftCount(kind="off_topic", severity="info", count=0),),
+            metric_counts=(MetricCount(name="drift:off_topic", severity="info", count=0),),
         )
         for i in range(10)
     ]
     inp = DetectorInput(losses=losses, entries={"e1": _single_turn_entry()}, events_paths={})
-    assert detect_drift_kind_frequency(inp) == []
+    assert detect_metric_frequency(inp, namespace="drift:") == []
 
 
-def test_drift_kind_frequency_takes_max_severity() -> None:
+def test_drift_metric_frequency_takes_max_severity() -> None:
     # One info hit, one critical hit, one warning hit -> max severity critical.
     losses = [
         _loss(
             run_id="r0",
-            drift_counts=(DriftCount(kind="tool_error", severity="info", count=1),),
+            metric_counts=(MetricCount(name="drift:tool_error", severity="info", count=1),),
         ),
         _loss(
             run_id="r1",
-            drift_counts=(DriftCount(kind="tool_error", severity="warning", count=1),),
+            metric_counts=(MetricCount(name="drift:tool_error", severity="warning", count=1),),
         ),
         _loss(
             run_id="r2",
-            drift_counts=(DriftCount(kind="tool_error", severity="critical", count=1),),
+            metric_counts=(MetricCount(name="drift:tool_error", severity="critical", count=1),),
         ),
         _loss(run_id="r3"),
         _loss(run_id="r4"),
     ]
     inp = DetectorInput(losses=losses, entries={"e1": _single_turn_entry()}, events_paths={})
-    patterns = detect_drift_kind_frequency(inp)
+    patterns = detect_metric_frequency(inp, namespace="drift:")
     assert len(patterns) == 1
     assert patterns[0].detail["max_severity"] == "critical"
     assert patterns[0].severity == "critical"
@@ -480,13 +481,13 @@ def test_pattern_ids_are_deterministic() -> None:
     losses = [
         _loss(
             run_id=f"r{i}",
-            drift_counts=(DriftCount(kind="off_topic", severity="info", count=1),),
+            metric_counts=(MetricCount(name="drift:off_topic", severity="info", count=1),),
         )
         for i in range(3)
     ] + [_loss(run_id=f"r{i}") for i in range(3, 10)]
     inp = DetectorInput(losses=losses, entries={"e1": _single_turn_entry()}, events_paths={})
-    first = detect_drift_kind_frequency(inp)
-    second = detect_drift_kind_frequency(inp)
+    first = detect_metric_frequency(inp, namespace="drift:")
+    second = detect_metric_frequency(inp, namespace="drift:")
     assert [p.id for p in first] == [p.id for p in second]
 
 
@@ -510,10 +511,10 @@ def test_detect_patterns_end_to_end_mixed_batch() -> None:
     # Drift-kind: 6/10 OFF_TOPIC on e1 -> 6/24 = 25% across window.
     for i in range(10):
         if i < 6:
-            dc = (DriftCount(kind="off_topic", severity="warning", count=1),)
+            dc = (MetricCount(name="drift:off_topic", severity="warning", count=1),)
         else:
             dc = ()
-        losses.append(_loss(run_id=f"d{i}", entry_id="e1", drift_counts=dc))
+        losses.append(_loss(run_id=f"d{i}", entry_id="e1", metric_counts=dc))
     # Plan revisions: 9 with 1, 1 with 6.
     for i in range(9):
         losses.append(_loss(run_id=f"p{i}", entry_id="e2", plan_revisions=1))
@@ -541,7 +542,7 @@ def test_detect_patterns_end_to_end_mixed_batch() -> None:
 
     patterns = detect_patterns(inp)
     kinds = {p.kind for p in patterns}
-    assert "drift_kind_frequency" in kinds
+    assert "drift_metric_frequency" in kinds
     assert "plan_revision_instability" in kinds
     assert "multi_turn_memory_failure" in kinds
     # Ids are unique even after dedup.
@@ -554,13 +555,16 @@ def test_detect_patterns_dedupes_by_id() -> None:
     losses = [
         _loss(
             run_id=f"r{i}",
-            drift_counts=(DriftCount(kind="off_topic", severity="info", count=1),),
+            metric_counts=(MetricCount(name="drift:off_topic", severity="info", count=1),),
         )
         for i in range(3)
     ] + [_loss(run_id=f"r{i}") for i in range(3, 10)]
     inp = DetectorInput(losses=losses, entries={"e1": _single_turn_entry()}, events_paths={})
 
-    detectors = (detect_drift_kind_frequency, detect_drift_kind_frequency)
+    detectors = (
+        partial(detect_metric_frequency, namespace="drift:"),
+        partial(detect_metric_frequency, namespace="drift:"),
+    )
     patterns = detect_patterns(inp, detectors=detectors)
     assert len(patterns) == 1
     assert isinstance(patterns[0], Pattern)
@@ -573,7 +577,7 @@ def test_detect_patterns_preserves_detector_order() -> None:
         _loss(
             run_id=f"r{i}",
             entry_id="e1",
-            drift_counts=(DriftCount(kind="off_topic", severity="info", count=1),),
+            metric_counts=(MetricCount(name="drift:off_topic", severity="info", count=1),),
             plan_revisions=1,
         )
         for i in range(9)
@@ -582,11 +586,14 @@ def test_detect_patterns_preserves_detector_order() -> None:
     inp = DetectorInput(losses=losses, entries={"e1": _single_turn_entry()}, events_paths={})
     patterns = detect_patterns(
         inp,
-        detectors=(detect_plan_revision_instability, detect_drift_kind_frequency),
+        detectors=(
+            detect_plan_revision_instability,
+            partial(detect_metric_frequency, namespace="drift:"),
+        ),
     )
     assert [p.kind for p in patterns] == [
         "plan_revision_instability",
-        "drift_kind_frequency",
+        "drift_metric_frequency",
     ]
 
 

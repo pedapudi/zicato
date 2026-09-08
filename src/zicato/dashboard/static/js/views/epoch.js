@@ -267,7 +267,7 @@ export async function render(host, ctx, params) {
     waterfall: waterfallSteps(timeline).map((s) => [s.round_index, svg.isNum(s.from) ? s.from.toFixed(2) : null, svg.isNum(s.to) ? s.to.toFixed(2) : null, s.promoted, s.gen]),
     heatChannel,
     cell: [...cellLookup.entries()].sort(),
-    board: board.map((b) => [b.entry_id, b.kind, b.weight, b.budget_s]),
+    board: board.map((b) => [b.entry_id, b.kind, b.weight, b.wall_clock_budget_seconds]),
     boardStatus: boardStatusDigest(boardStatus),
     // loop-communication panels: content-gated on their own rounded folds so
     // a no-op heartbeat (identical trajectory/cost/judge-trend) churns no DOM.

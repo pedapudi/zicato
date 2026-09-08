@@ -29,11 +29,10 @@ the live ``compute_drift_loss`` / ``aggregate_generation_score`` paths match.
 from __future__ import annotations
 
 import dataclasses
-import json
 import math
 from pathlib import Path
 
-from zicato.core import DriftCount, JudgeLoss, LossProfile, ScoringWeights
+from zicato.core import JudgeLoss, LossProfile, MetricCount, ScoringWeights
 from zicato.scoring import (
     PROVENANCE_BUILTIN,
     DriftContext,
@@ -66,7 +65,7 @@ def _ref_kind_multiplier(kind: str, weights: ScoringWeights) -> float:
 
 
 def _ref_drift_loss(
-    drift_counts: tuple[DriftCount, ...],
+    metric_counts: tuple[MetricCount, ...],
     plan_revisions: int,
     weights: ScoringWeights,
 ) -> float:
@@ -79,24 +78,33 @@ def _ref_drift_loss(
     """
     sev_w = weights.severity_weights
     terms = [
-        sev_w.get(c.severity, 0.0) * _ref_kind_multiplier(c.kind, weights) * c.count
-        for c in drift_counts
-        if not _ref_is_judge_attributed(c.kind)
+        sev_w.get(c.severity, 0.0)
+        * _ref_kind_multiplier(c.name.removeprefix("drift:"), weights)
+        * c.count
+        for c in metric_counts
+        if c.name.startswith("drift:")
+        and not _ref_is_judge_attributed(c.name.removeprefix("drift:"))
     ]
     terms.append(weights.plan_revision_weight * plan_revisions)
     return max(0.0, math.fsum(terms))
 
 
 def _ref_judge_channel(
-    drift_counts: tuple[DriftCount, ...],
+    metric_counts: tuple[MetricCount, ...],
     weights: ScoringWeights,
 ) -> dict[str, float]:
     """Independently: ``{judge_name: weighted_loss}`` for the judge channel."""
     terms: dict[str, list[float]] = {}
-    for c in drift_counts:
-        if not _ref_is_judge_attributed(c.kind):
+    for c in metric_counts:
+        if not c.name.startswith("drift:") or not _ref_is_judge_attributed(
+            c.name.removeprefix("drift:")
+        ):
             continue
-        name = c.kind[len("custom:") :] if c.kind.startswith("custom:") else ""
+        name = (
+            c.name.removeprefix("drift:")[len("custom:") :]
+            if c.name.removeprefix("drift:").startswith("custom:")
+            else ""
+        )
         terms.setdefault(name, []).append(weights.severity_weights.get(c.severity, 0.0) * c.count)
     return {
         name: math.fsum(values) * weights.per_judge_weights.get(name, weights.default_judge_weight)
@@ -153,13 +161,25 @@ _W_MISSING_SEV = ScoringWeights(
     per_kind_weights={"off_topic": 4.0},
 )
 
-_DRIFT_CORPUS: list[tuple[str, tuple[DriftCount, ...], int, float, int, ScoringWeights]] = [
+_DRIFT_CORPUS: list[tuple[str, tuple[MetricCount, ...], int, float, int, ScoringWeights]] = [
     ("empty", (), 0, 0.0, 0, _W_DEFAULT),
+    (
+        "non_drift_metrics",
+        (
+            MetricCount(name="cost:custom", severity="warning", count=50.0),
+            MetricCount(name="custom:precision", severity="critical", count=70.0),
+            MetricCount(name="drift:off_topic", severity="warning", count=2.0),
+        ),
+        1,
+        0.4,
+        2000,
+        _W_DEFAULT,
+    ),
     (
         "first_class_kinds",
         (
-            DriftCount(kind="off_topic", severity="warning", count=2),
-            DriftCount(kind="tool_error", severity="critical", count=1),
+            MetricCount(name="drift:off_topic", severity="warning", count=2),
+            MetricCount(name="drift:tool_error", severity="critical", count=1),
         ),
         3,
         0.4,
@@ -169,10 +189,12 @@ _DRIFT_CORPUS: list[tuple[str, tuple[DriftCount, ...], int, float, int, ScoringW
     (
         "custom_judges",
         (
-            DriftCount(kind="custom:precision", severity="warning", count=2),
-            DriftCount(kind="custom:structure", severity="info", count=5),
-            DriftCount(kind="custom", severity="critical", count=1),  # bare/unattributed
-            DriftCount(kind="custom:unlisted", severity="warning", count=3),  # default weight
+            MetricCount(name="drift:custom:precision", severity="warning", count=2),
+            MetricCount(name="drift:custom:structure", severity="info", count=5),
+            MetricCount(name="drift:custom", severity="critical", count=1),  # bare/unattributed
+            MetricCount(
+                name="drift:custom:unlisted", severity="warning", count=3
+            ),  # default weight
         ),
         0,
         0.0,
@@ -182,8 +204,8 @@ _DRIFT_CORPUS: list[tuple[str, tuple[DriftCount, ...], int, float, int, ScoringW
     (
         "missing_severity_fallback",
         (
-            DriftCount(kind="off_topic", severity="critical", count=4),  # sev → 0.0
-            DriftCount(kind="off_topic", severity="warning", count=2),
+            MetricCount(name="drift:off_topic", severity="critical", count=4),  # sev → 0.0
+            MetricCount(name="drift:off_topic", severity="warning", count=2),
         ),
         1,
         1.0,
@@ -192,7 +214,7 @@ _DRIFT_CORPUS: list[tuple[str, tuple[DriftCount, ...], int, float, int, ScoringW
     ),
     (
         "task_failure_and_runtime",
-        (DriftCount(kind="schema_violation", severity="info", count=1),),
+        (MetricCount(name="drift:schema_violation", severity="info", count=1),),
         7,
         0.75,
         60_000,
@@ -209,8 +231,8 @@ _DRIFT_CORPUS: list[tuple[str, tuple[DriftCount, ...], int, float, int, ScoringW
         # re-introduces a harmonic special-case into the builtin.
         "looping_reasoning_is_linear_in_builtin",
         (
-            DriftCount(kind="looping_reasoning", severity="warning", count=5),
-            DriftCount(kind="looping_reasoning", severity="info", count=3),
+            MetricCount(name="drift:looping_reasoning", severity="warning", count=5),
+            MetricCount(name="drift:looping_reasoning", severity="info", count=3),
         ),
         0,
         0.0,
@@ -223,7 +245,7 @@ _DRIFT_CORPUS: list[tuple[str, tuple[DriftCount, ...], int, float, int, ScoringW
 def test_builtin_drift_loss_byte_identical_to_reference() -> None:
     for name, dc, pr, _tfr, _rt, w in _DRIFT_CORPUS:
         expected = _ref_drift_loss(dc, pr, w)
-        got = builtin_drift_loss(drift_counts=dc, plan_revisions=pr, weights=w)
+        got = builtin_drift_loss(metric_counts=dc, plan_revisions=pr, weights=w)
         # Byte-identical: bit-for-bit equal floats (no tolerance).
         assert got == expected, f"{name}: builtin {got!r} != ref {expected!r}"
         assert got.hex() == expected.hex(), name
@@ -233,13 +255,13 @@ def test_resolve_drift_loss_dispatches_builtin_with_provenance() -> None:
     for name, dc, pr, tfr, rt, w in _DRIFT_CORPUS:
         expected = _ref_drift_loss(dc, pr, w)
         ctx = DriftContext(
-            drift_counts=dc,
+            metric_counts=dc,
             plan_revisions=pr,
             task_failure_ratio=tfr,
             runtime_ms=rt,
             weights=w,
             builtin_loss=builtin_drift_loss(
-                drift_counts=dc,
+                metric_counts=dc,
                 plan_revisions=pr,
                 weights=w,
             ),
@@ -254,7 +276,7 @@ def test_live_compute_drift_loss_matches_reference() -> None:
     for name, dc, pr, tfr, rt, w in _DRIFT_CORPUS:
         expected = _ref_drift_loss(dc, pr, w)
         got = compute_drift_loss(
-            drift_counts=dc,
+            metric_counts=dc,
             plan_revisions=pr,
             weights=w,
             task_failure_ratio=tfr,
@@ -288,7 +310,6 @@ def _loss(
         entry_id=entry_id,
         generation_id="v0",
         epoch_id="e0",
-        drift_counts=(),
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=0,
@@ -422,9 +443,9 @@ def test_live_aggregate_scalar_with_judges_and_an_abort_matches_reference() -> N
     weights = ScoringWeights(per_judge_weights={"precision": 3.0}, default_judge_weight=1.5)
     judged = dataclasses.replace(
         _loss("a", drift_loss=0.0, pass_fail=True),
-        drift_counts=(
-            DriftCount(kind="custom:precision", severity="warning", count=2),
-            DriftCount(kind="custom:unlisted", severity="info", count=1),
+        metric_counts=(
+            MetricCount(name="drift:custom:precision", severity="warning", count=2),
+            MetricCount(name="drift:custom:unlisted", severity="info", count=1),
         ),
         per_judge_loss=tuple(
             JudgeLoss(
@@ -436,8 +457,8 @@ def test_live_aggregate_scalar_with_judges_and_an_abort_matches_reference() -> N
             for name, value in sorted(
                 _ref_judge_channel(
                     (
-                        DriftCount(kind="custom:precision", severity="warning", count=2),
-                        DriftCount(kind="custom:unlisted", severity="info", count=1),
+                        MetricCount(name="drift:custom:precision", severity="warning", count=2),
+                        MetricCount(name="drift:custom:unlisted", severity="info", count=1),
                     ),
                     weights,
                 ).items()
@@ -456,7 +477,7 @@ def test_live_aggregate_scalar_with_judges_and_an_abort_matches_reference() -> N
 
     # Each channel, rebuilt independently and meaned over the two runs.
     judge_mean = (
-        math.fsum(math.fsum(_ref_judge_channel(p.drift_counts, weights).values()) for p in losses)
+        math.fsum(math.fsum(_ref_judge_channel(p.metric_counts, weights).values()) for p in losses)
         / 2
     )
     failure_mean = (
@@ -509,18 +530,6 @@ def test_loss_profile_scoring_provenance_round_trips(tmp_path: Path) -> None:
     loaded = read_loss_profile(p)
     assert loaded.scoring_provenance == "builtin"
     assert loaded == profile
-
-
-def test_loss_profile_without_provenance_field_reads_as_none(tmp_path: Path) -> None:
-    """A loss.json written before scoring_provenance existed reads cleanly."""
-    profile = _loss("old", drift_loss=2.0, pass_fail=False)
-    p = tmp_path / "loss.json"
-    write_loss_profile(profile, p)
-    data = json.loads(p.read_text(encoding="utf-8"))
-    data.pop("scoring_provenance", None)  # simulate a pre-feature file
-    p.write_text(json.dumps(data), encoding="utf-8")
-    loaded = read_loss_profile(p)
-    assert loaded.scoring_provenance is None
 
 
 def test_reduce_loss_stamps_builtin_provenance(tmp_path: Path) -> None:

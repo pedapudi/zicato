@@ -60,7 +60,7 @@ ENTRY = "entry-a"
 def _base_workspace(tmp_path: Path) -> WorkspaceLayout:
     layout = workspace(tmp_path)
     layout.runtime_dir.mkdir(parents=True)
-    write_epoch(layout, EPOCH, config={"contract_hash": "h", "closed": False}, current=True)
+    write_epoch(layout, EPOCH, config={"contract_hash": "a" * 64, "closed": False}, current=True)
     return layout
 
 

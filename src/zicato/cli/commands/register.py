@@ -258,33 +258,17 @@ def register_cmd(
         stock_grading_confirmed=confirm_stock_grading,
     )
     config["adapter"] = declaration.document()
-    if entrypoint:
-        config["adk_entrypoint"] = entrypoint
-    else:
-        config.pop("adk_entrypoint", None)
-    # ``mutable_trees`` and ``source_roots`` are the same concept under
-    # two historical names: ``zicato inspect mutations`` and ``zicato proposer propose``
-    # read ``source_roots``; the adapter factory reads ``mutable_trees``.
-    # Writing both keeps the readers consistent without forcing a
-    # workspace-format migration.
-    config["mutable_trees"] = list(declaration.mutable_trees)
-    config["source_roots"] = list(declaration.mutable_trees)
-
     # Canonical contract source paths. The operator's live, editable
     # copies — frozen into epochs/{id}/ on each epoch creation / roll.
     from zicato.epoch.contract import default_contract_paths  # noqa: PLC0415
 
     defaults = default_contract_paths(workspace_root)
-    # The proposer brief is recorded under the contract's ``rubric_path``
-    # key: that key name is the on-disk contract format read back by
-    # ``resolve_contract_inputs`` (a non-CLI module). The operator-facing
-    # flag is ``--brief``; only the persisted key keeps the older name.
     contract_block: dict[str, str] = {
         "board_path": str(
             Path(board_path).resolve() if board_path is not None else defaults["board_path"]
         ),
-        "rubric_path": str(
-            Path(brief_path).resolve() if brief_path is not None else defaults["rubric_path"]
+        "brief_path": str(
+            Path(brief_path).resolve() if brief_path is not None else defaults["brief_path"]
         ),
         "scoring_path": str(
             Path(scoring_path).resolve() if scoring_path is not None else defaults["scoring_path"]

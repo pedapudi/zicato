@@ -28,6 +28,7 @@ from zicato.evolve.propose_apply import _propose_and_apply_challenger
 from zicato.evolve.round_api import EvolveRoundOutcome
 from zicato.evolve.round_reporting import _RoundLogEmitter
 from zicato.evolve.settlement import settle_field_round
+from zicato.models_config import load_models_config
 
 log = logging.getLogger("zicato.orchestrator")
 
@@ -61,7 +62,7 @@ def _open_field_round(prepared: generation_phase.PreparedRound) -> FieldRound:
         prepared=prepared,
         parent_id=prepared.parent_generation.id,
         evaluation_call_llm=prepared.config.evaluation_call_llm,
-        evaluation_model=str(prepared.workspace_config.get("evaluation_model", "")),
+        evaluation_model=load_models_config(prepared.workspace_config).evaluation.model or "",
         field_size=prepared.strategy.field_size(),
     )
 

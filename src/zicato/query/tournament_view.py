@@ -11,7 +11,6 @@ from zicato.query._sqlite import (
     _IndexAbsent,
     _opt_json,
     _query,
-    _rget,
     open_index_ro,
     with_index_not_built_note,
 )
@@ -124,12 +123,6 @@ def _bracket_from_conn(
     ]
     champion_lineage = _champion_lineage(generations)
 
-    # Select the structure-aware columns alongside the per-matchup ones. The
-    # v3 columns (structure / *_json) may be absent on an index that predates
-    # the migration, so the SELECT is split: a missing-column error on the
-    # structure columns must not blank out the per-matchup rows, which is what
-    # a gauntlet read needs. ``_query`` swallows the sqlite error and returns
-    # [] for the structure-aware query in that case.
     tour_rows = _query(
         conn,
         "SELECT t.tournament_id, t.parent_generation_id, t.child_generation_id, "
@@ -161,32 +154,15 @@ def _bracket_from_conn(
         if not _is_field_tournament_id(r["tournament_id"])
     ]
 
-    # Structure-aware envelope (§3.1). Read the v3 columns
-    # defensively: if they are absent (pre-migration index) the query
-    # returns [] and the structure degenerates to gauntlet — leaving
-    # the ``matchups`` and ``champion_lineage`` fields byte-identical.
-    # The champion-eval columns are v8; a pre-v8 (or fixture) index lacks
-    # them, and a SELECT naming a missing column errors → _query returns []
-    # → the whole structure envelope degrades. So include them only when the
-    # table actually has them (PRAGMA), and read them defensively per-row.
-    _tcols = {row["name"] for row in _query(conn, "PRAGMA table_info(tournaments)", ())}
-    _champ_sel = (
-        ", champion_eval_mode, champion_run_ref"
-        if {"champion_eval_mode", "champion_run_ref"} <= _tcols
-        else ""
-    )
     struct_rows = _query(
         conn,
         "SELECT tournament_id, structure, structure_params_json, "
         "competitors_json, rounds_json, standings_json, ran_at, "
-        "parent_generation_id, child_generation_id, parent_scalar"
-        + _champ_sel
-        + " FROM tournaments WHERE epoch_id = ? ORDER BY ran_at ASC, tournament_id ASC",
+        "parent_generation_id, child_generation_id, parent_scalar, "
+        "champion_eval_mode, champion_run_ref "
+        "FROM tournaments WHERE epoch_id = ? ORDER BY ran_at ASC, tournament_id ASC",
         (epoch_id,),
     )
-
-    # ``_rget`` (tolerant additive-column read) is the shared accessor in
-    # ``zicato.query._sqlite``.
 
     # The per-round CHAMPION (id + scalar + eval provenance: champion_eval_mode
     # / champion_run_ref — cached vs re-run) is carried on the per-CHALLENGER
@@ -202,13 +178,8 @@ def _bracket_from_conn(
             champ_by_child[str(cg)] = {
                 "id": str(pg),
                 "scalar": r["parent_scalar"],
-                # A row from a pre-v8 index has the column as NULL, and the
-                # schema's rule for that is "mode unknown, treat as full". The
-                # default belongs HERE, on the read of a real row — not on the
-                # assembled champion, where it would also fire for a round that
-                # has NO row yet and claim an evaluation that never happened.
-                "eval_mode": _rget(r, "champion_eval_mode") or "full",
-                "run_ref": _rget(r, "champion_run_ref"),
+                "eval_mode": r["champion_eval_mode"],
+                "run_ref": r["champion_run_ref"],
             }
 
     def _field_champion(comps: list[Any]) -> dict[str, Any] | None:
@@ -283,8 +254,8 @@ def _bracket_from_conn(
             {
                 "id": str(cid),
                 "scalar": row["parent_scalar"],
-                "eval_mode": _rget(row, "champion_eval_mode") or "full",
-                "run_ref": _rget(row, "champion_run_ref"),
+                "eval_mode": row["champion_eval_mode"] or "full",
+                "run_ref": row["champion_run_ref"],
             }
             if cid is not None and str(cid) != ""
             else None
@@ -688,12 +659,12 @@ def _read_run_loss_files(
             "scoring_provenance": str(prov) if isinstance(prov, str) and prov else None,
             # Did this run OBSERVE drift at all? An adapter that emits no drift
             # stream still writes a structural ``drift_loss`` of 0.0 with an
-            # empty ``drift_counts``, which is indistinguishable on the wire
+            # empty measured drift metrics, which is indistinguishable on the wire
             # from a run that watched for drift and saw none. Either a recorded
             # drift event or a non-zero loss proves the channel carries signal;
             # nothing else does. Internal to this module — the endpoint serves
             # the matchup-wide ``drift_present`` derived from it.
-            "drift_observed": bool(loss.get("drift_counts"))
+            "drift_observed": any(m["name"].startswith("drift:") for m in loss["metric_counts"])
             or bool(coerce_float(drift) not in (None, 0.0)),
         }
         sid = loss.get("adk_session_id")
@@ -1280,16 +1251,15 @@ def _structure_from_index(
 ) -> dict[str, Any] | None:
     """The settled structure state from the SQLite ``tournaments`` row.
 
-    Returns ``None`` when the index is absent, the row is missing, or the
-    v3 structure columns do not exist (pre-migration index) — every such
-    case falls through to the next link in the resolution chain.
+    Returns ``None`` when the index is unavailable or the row is missing,
+    allowing the caller to inspect active and canonical tournament records.
     """
     try:
         with open_index_ro(paths.index_db) as conn:
             rows = _query(
                 conn,
                 "SELECT structure, structure_params_json, competitors_json, "
-                "rounds_json, standings_json FROM tournaments "
+                "rounds_json, standings_json, field_status_json FROM tournaments "
                 "WHERE epoch_id = ? AND tournament_id = ? LIMIT 1",
                 (epoch_id, tournament_id),
             )
@@ -1300,26 +1270,9 @@ def _structure_from_index(
             competitors = _opt_json(r["competitors_json"])
             rounds = _opt_json(r["rounds_json"])
             standings = _opt_json(r["standings_json"])
-            # ``field_status_json`` is a v5 column. A real index is migrated to
-            # v5 on open, but a hand-built / pre-migration index may lack the
-            # column — query it separately and degrade to an empty list rather
-            # than letting a missing column fail the whole resolution.
-            field_status: Any = None
-            try:
-                fs_rows = _query(
-                    conn,
-                    "SELECT field_status_json FROM tournaments "
-                    "WHERE epoch_id = ? AND tournament_id = ? LIMIT 1",
-                    (epoch_id, tournament_id),
-                )
-                if fs_rows:
-                    field_status = _opt_json(fs_rows[0]["field_status_json"])
-            except sqlite3.Error:
-                field_status = None
-            # A row that exists but carries no structure internals (a gauntlet
-            # row, or a NULL-backfilled pre-feature row) is not a useful
-            # structure read; fall through so the active/loss-file links can
-            # offer something richer.
+            field_status = _opt_json(r["field_status_json"])
+            # A gauntlet row has no structure internals; active or canonical
+            # tournament records can provide the remaining detail.
             if rounds is None and standings is None and competitors is None:
                 return None
             return _structure_envelope(

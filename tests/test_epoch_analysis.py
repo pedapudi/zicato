@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._workspace_support import experiment_record
 from zicato.core.types import ScoringWeights
 from zicato.core.workspace import (
     analysis_path,
@@ -80,19 +81,19 @@ async def test_generate_analysis_inlines_experiments(
     epath.parent.mkdir(parents=True, exist_ok=True)
     epath.write_text(
         json.dumps(
-            {
-                "id": "exp_beta_v1",
-                "epoch_id": cfg.id,
-                "generation_id": "v1",
-                "parent_generation_id": "v0",
-                "proposed_at": "2026-04-08T10:00:00+00:00",
-                "hypothesis": {
+            experiment_record(
+                id="exp_beta_v1",
+                epoch_id=cfg.id,
+                generation_id="v1",
+                parent_generation_id="v0",
+                proposed_at="2026-04-08T10:00:00+00:00",
+                hypothesis={
                     "core_idea": "Tighten the writer prompt.",
                     "modulating": ["writer.instruction"],
                     "why": "Off-topic drift dominates.",
                 },
-                "outcome": {"tournament_decision": "promoted"},
-            }
+                outcome={"tournament_decision": "promoted"},
+            )
         )
     )
 
@@ -129,7 +130,9 @@ async def test_generate_analysis_includes_patterns_when_present(
     cfg = new_epoch(workspace, "delta", board_file, rubric_file, ScoringWeights())
     pdir = workspace / "epochs" / cfg.id / "patterns"
     pdir.mkdir()
-    (pdir / "round_001.json").write_text(json.dumps([{"id": "p1", "kind": "drift_kind_frequency"}]))
+    (pdir / "round_001.json").write_text(
+        json.dumps([{"id": "p1", "kind": "drift_metric_frequency"}])
+    )
 
     seen: dict[str, str] = {}
 
@@ -138,7 +141,7 @@ async def test_generate_analysis_includes_patterns_when_present(
         return "# Epoch analysis"
 
     await generate_analysis(workspace, cfg.id, stub_call)
-    assert "drift_kind_frequency" in seen["user"]
+    assert "drift_metric_frequency" in seen["user"]
     assert "## Patterns" in seen["user"]
 
 

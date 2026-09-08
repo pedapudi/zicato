@@ -487,13 +487,13 @@ def _epoch_max_generations_per_contract(workspace_root: Path, epoch_id: str) -> 
     import json as _json  # noqa: PLC0415
 
     from zicato.core.workspace import scoring_path  # noqa: PLC0415
-    from zicato.workspace_loader import historical_scoring_weights_from_dict  # noqa: PLC0415
+    from zicato.workspace_loader import scoring_weights_from_dict  # noqa: PLC0415
 
     try:
         raw = _json.loads(scoring_path(workspace_root, epoch_id).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    return historical_scoring_weights_from_dict(raw).experimental.max_generations_per_contract
+    return scoring_weights_from_dict(raw).experimental.max_generations_per_contract
 
 
 # ``epoch_noise_floor_inputs`` and ``epoch_preflight_record`` live in

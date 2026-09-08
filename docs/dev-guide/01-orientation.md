@@ -2,7 +2,7 @@
 
 > **Covers:** what zicato is and where it sits in its ecosystem · the complete load-bearing vocabulary, each term anchored to the file that owns it · the repo map (every package, its public face, and its import rules) · **the Golden Rules** — the ten non-negotiable invariants that keep the repo healthy · your first hour, command by command.
 > **Prerequisites:** none — this is the entry chapter.
-> **Invariants introduced:** [G1 — the vendor rule] [G2 — the all-extras sync rule] [G3 — the live-run go-ahead rule] [G4 — the two-oracles rule] [G5 — the green-gates rule] [G6 — the omit-at-default rule] [G7 — the reserved-base ledger] [G8 — the restricted-visibility envelope] [G9 — the module-level-callable rule] [G10 — digest-gated rendering] [files are canonical, the index is derived] [contract edits roll epochs] [the hypothesis is written before the run]
+> **Invariants introduced:** [G1 — the vendor rule] [G2 — the all-extras sync rule] [G3 — the live-run go-ahead rule] [G4 — the two-oracles rule] [G5 — the green-gates rule] [G6 — complete configuration identity] [G7 — the reserved-base ledger] [G8 — the restricted-visibility envelope] [G9 — the module-level-callable rule] [G10 — digest-gated rendering] [files are canonical, the index is derived] [contract edits roll epochs] [the hypothesis is written before the run]
 
 This guide is written for coding agents extending zicato. It assumes zero
 prior context: every acronym is expanded on first use, every rule states
@@ -270,8 +270,8 @@ epoch comparable. The contract hash combines seven canonical forms:
 2. the proposer brief;
 3. the scoring configuration;
 4. Zicato's evaluator revision;
-5. the registered adapter worker document plus implementation source outside
-   the mutable trees;
+5. the registered adapter worker document, captured execution roles, and
+   implementation source outside the mutable trees;
 6. the registered mutable-tree paths; and
 7. the proposer identity, tools, and skill bodies.
 
@@ -300,8 +300,8 @@ optional typed **expectation** and per-entry **judges**, plus
 (`src/zicato/core/board.py`) with `ExpectationKind` in
 `{text, regex, json_schema, predicate, rubric}`. A **predicate** is a
 deterministic matcher (dotted-spec Python function; its *source* is
-hashed into the contract — see 03-contract-and-epochs.md §"The ONE
-source-hashing mechanism"). A **rubric** is LLM-as-judge grading of the outcome.
+hashed into the contract — see 03-contract-and-epochs.md §3.3,
+"Shared grading source identity"). A **rubric** is LLM-as-judge grading of the outcome.
 
 **judge** — the PROCESS check observed while a run is in flight:
 `JudgeSpec` (`src/zicato/core/board.py`) — a name, a mode (`"inline"`
@@ -319,17 +319,16 @@ material of zicato's loss.
 the goal, constraints, and a `## Forbidden` section listing mutation ids
 the proposer must not touch. Parsed by `src/zicato/proposer/brief.py`;
 normalized (whitespace/line-ending-insensitive) into the contract hash by
-`_canon_brief`. The loaders also accept the alternative file name
-`rubric.md` and the matching `rubric` config key
-(`resolve_contract_inputs`, `_default_brief_path`), so a workspace that
-spells the brief that way still resolves.
+`_canon_brief`. The authored setting is `contract.brief_path`, which defaults
+to `brief.md`. Execution and query readers share that brief owner.
 
 **scoring / `ScoringWeights`** — the frozen weight set that turns loss
 into a scalar and gates promotion: `src/zicato/core/scoring_config.py`.
-Nested config blocks ride on it and therefore fold into the contract hash
-automatically (the canonicalizer recurses into nested dataclasses):
-`TournamentStructure`, `OverfittingConfig` (+ `LadderConfig`),
-`ProposerQualityConfig`, `ExperimentalConfig`.
+Its nested configuration includes `TournamentStructure`, `OverfittingConfig`,
+`LadderConfig`, `ProposerQualityConfig`, and `ExperimentalConfig`.
+`core.configuration.dataclass_to_jsonable` writes every declared field,
+including defaults and nested values. Authored and frozen scoring use the same
+strict decoder. All effective scoring values enter the contract hash.
 
 The optional `ScoringWeights.goldfive` field is a different kind of contract
 value. Zicato keeps it as an immutable JSON mapping and loads no Goldfive
@@ -582,8 +581,9 @@ sequence is pinned by the convergence oracle and reproduced in
 
 **index** — the derived SQLite analytical index `.zicato/index.db`
 (`src/zicato/index/`): schema + ingest + query. Rebuildable at any time
-by `zicato repair index`; dual-written live (best-effort) as rounds run. Files
-are canonical; the index is a projection.
+by `zicato repair index`; updated as rounds run. Files are canonical; the index
+is a projection. An unsupported index schema requires rebuilding through its
+owner, not migrating canonical records or guessing missing columns.
 
 **heartbeat / progress log** — the liveness surface under
 `.zicato/runtime/`: `HeartbeatBeater` writes `heartbeat.json` every ~2s
@@ -607,12 +607,12 @@ board entry" seam: `HarnessAdapter` protocol (`src/zicato/adapters/`),
 with the ADK adapter as the reference implementation and a generic
 `kind: "import"` factory block in `config.json` for anything else.
 
-**RuntimeConfig** — the runtime-side binding (`src/zicato/core/runtime.py`):
-the two LLM callables, parallelism, worker-env scrubbing, diversity
-tolerance, infra circuit knobs, per-round token budget. RUNTIME knobs
-never fold into the contract hash and never roll epochs — the mirror
-image of contract knobs. The decision procedure for "which kind is my new
-knob?" is the closing recipe of 03-contract-and-epochs.md.
+**RuntimeConfig** — the execution binding (`src/zicato/core/runtime.py`).
+It carries accepted callables and model settings alongside operational values
+such as parallelism, worker environment controls, and per-round budgets.
+Captured execution roles participate in contract identity. Operational controls
+and measured results remain outside it. Classify a value by what its consumer
+does, not by its presence on this carrier; see 03-contract-and-epochs.md §3.12.
 `RuntimeConfig.goldfive` is a transported copy of the frozen scoring document,
 rather than a runtime-selectable knob. An adapter receives it only after
 declaring the Goldfive integration.
@@ -645,8 +645,9 @@ shape (assembled from `src/zicato/epoch/lifecycle.py`'s module docstring,
       {epoch_id}/
         board.jsonl              # frozen board
         brief.md                 # frozen proposer brief
-        scoring.json             # frozen serialized ScoringWeights
-        config.json              # EpochConfig (hash, goal, noise_floor, …)
+        scoring.json             # complete effective ScoringWeights
+        execution.json           # required captured execution bindings
+        config.json              # EpochConfig (required hash, goal, measurements)
         contract_components.json # per-component sub-hashes (roll diagnosis)
         current_generation       # the promoted-head marker
         journal.md               # appended per experiment
@@ -694,13 +695,12 @@ from importing `zicato.cli` or `zicato.dashboard`.
 imports: board types, loss types, experiment/hypothesis/outcome, epoch/
 generation, scoring config, tournament types, mutation types, proposer
 spec, runtime config, plus workspace path math and the drift-kind
-registry. Public face: `from zicato.core import X` (re-exported through
-`core/types.py`, whose namespace also anchors the contract-serde
-annotation resolver — see 03-contract-and-epochs.md). Imports nothing
-domain-heavy; everything imports it. Never put behaviour here beyond
-validation — core is types. Optional integration documents remain generic
-JSON mappings here so an upstream package can own its schema without becoming
-a core dependency.
+registry. Public face: `from zicato.core import X`, re-exported through
+`core/types.py`. `core/configuration.py` owns the shared strict dataclass decoder,
+complete serializer, and schema generator. Domain declaration records use these
+helpers without importing runtime factories. Optional integration documents
+remain generic JSON mappings so the integration can own its schema without
+becoming a core dependency.
 
 **`orchestrator.py`** — the stable integration import surface, and nothing
 else: fourteen lines re-exporting `evolve_once`, `evolve_n_rounds`,
@@ -725,8 +725,9 @@ loop-level entry points.
 
 **`epoch/`** — the epoch domain: `lifecycle.py` (new/close/list/switch/
 load + the frozen-contract writes), `contract.py` (the hash),
-`contract_serde.py` (field-enumerating serializer), `journal.py`,
-`lineage.py`, `analysis.py` (the at-close retrospective; its HTML
+`execution.py` (captured execution inputs), `publication.py` and `baseline.py`
+(recoverable publication), `journal.py`, `lineage.py`, `analysis.py`
+(the at-close retrospective; its HTML
 companion is rendered by `analyzer/report.py`), `round_log.py`, `screen.py`, `preflight.py`,
 `genstore.py` + `git_genstore.py` (the generation-tree seam), `gc.py`,
 `_storage.py` (record-format guard + storage keys). Owns the
@@ -819,8 +820,9 @@ goes through the public `zicato.storage` face.
 **`index/`** — the SQLite analytical index: `schema.py` (the table
 definitions, `schema_version`, and the `Table` descriptor that builds each
 write statement from those definitions), `ingest.py` (rebuild + incremental),
-`query.py`, `elo.py`. Derived from the canonical files, and never
-canonical itself.
+`query.py`, `elo.py`. Its schema is pinned; a mismatch requires rebuilding
+from canonical files through the index owner. The index is never canonical
+itself.
 
 **`health/`** — loop-health diagnostics (`assess_loop_health`,
 `LoopHealth`, the detectors incl. `detect_placebo_promoted` and the
@@ -1112,15 +1114,12 @@ computed artifacts against committed goldens under
 ```
 *(tools/parity.sh, header comment)*
 
-The CONTRACT-HASH gate is the repo's tripwire for the epoch-roll bug
-class (see the omit-at-default rule below, and 03-contract-and-epochs.md).
-It caught one such bug. An earlier `_canon_mutable_trees` resolved the
-registered paths against the filesystem, which folded the process working
-directory into the hash. The golden then read red in every checkout
-except the one that captured it (commit `fix(contract): the hash
-identifies the contract, not the checkout`). A red gate after your change
-means you moved observable behaviour: either that was the point (update the golden
-WITH a CHANGELOG entry) or it is a bug.
+The CONTRACT-HASH comparison detects changes to contract identity.
+Canonicalization must preserve identity across checkout locations and equivalent
+authored representations. Every effective scoring value and grading source
+identity must remain visible. When an intended change alters a reference hash,
+review the changed components and explain the identity change before updating
+the reference. Do not omit configuration to retain an earlier hash.
 
 **Why — import contracts.** The library/driver split (§1.3) only holds
 because `make import-lint` enforces it. If you add an import from a
@@ -1134,39 +1133,28 @@ run excludes the in-pytest shim by design (`-m 'not node'`), so
 `make node-test` is the canonical run. Frontend regressions are invisible
 to pytest.
 
-### G6 — The omit-at-default rule: a new default-off field stays out of the hash
+### G6 — Complete configuration identity
 
-> ⚠️ **TRAP** — adding a field to `ScoringWeights` (or any nested
-> contract dataclass) and emitting it unconditionally in the canonical
-> form ROLLS EVERY EXISTING EPOCH the moment your code ships, and turns
-> the parity CONTRACT-HASH gate red. A purely-additive, default-off field
-> MUST be registered in `_SCORING_OMIT_AT_DEFAULT_FIELDS`
-> (`src/zicato/epoch/contract.py`) so it is omitted from the hash while
-> it holds its default.
+The shared dataclass serializer writes every declared scoring field, including
+nested defaults. Authored and frozen configuration use one strict decoder.
+Unknown fields, missing required fields, and invalid values are errors. The
+contract canonicalizer includes the full effective configuration and adds
+source identities for grading plugins.
 
-**Why.** The contract hash must be byte-stable across zicato upgrades for
-an unchanged contract. The canonicalizer enumerates every dataclass field
-— so a new key changes the canonical JSON, changes the hash, and the next
-`evolve` on every workspace auto-rolls its epoch "because you upgraded",
-resetting pattern history and severing comparability for no operator
-action. The omit-at-default set is the escape: the key appears only once
-the operator sets a non-default value, and rolling the epoch is then
-correct because the operator changed the contract. Membership is declared
-one knob at a time — a contract knob carries `omit_at_default=True` in its
-field metadata, and `omit_at_default_fields()`
-(`src/zicato/core/scoring_config.py`) collects them — so read the registry
-rather than a list in prose.
+An omitted authored field and its explicit default have the same identity
+because they decode to the same value. Adding a field or changing a default
+can change the contract hash. There is no omission registry or historical
+decoder that preserves a previous configuration shape.
 
-03-contract-and-epochs.md §"omit-at-default" carries the full discipline,
-including when a default-ON field is the right call and must ship with a
-CHANGELOG notice that epochs will roll. That section also carries the
-add-a-knob recipe. The serializer-completeness guard
-(`tests/test_contract_serializer_completeness.py`) fails on any new
-contract field until you register a non-default value for it — that
-failure is the checklist doing its job.
+A selected epoch requires captured `execution.json` and a contract hash with
+exactly 64 lowercase hexadecimal characters. Missing or malformed identity
+cannot be treated as matching the live contract. Storage paths, measured
+results, and recovery progress remain outside evaluation identity.
 
-**Verify:** `bash tools/parity.sh --only CONTRACT-HASH` and
-`uv run pytest tests/test_epoch_contract.py tests/test_contract_serializer_completeness.py -q`.
+Chapter 03 describes the owners and the recipe for adding a field.
+Verify complete serialization, strict invalid-input refusal, source sensitivity,
+and the consuming worker boundary. The contract reference comparison checks
+identity; an expected hash change needs a component-level explanation.
 
 ### G7 — The reserved-base ledger: every replicate base is claimed
 

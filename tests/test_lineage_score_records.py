@@ -16,6 +16,7 @@ from zicato.workspace.projection import epoch_revisions
 
 def test_lineage_preserves_omissions_zero_and_cross_epoch_parent(tmp_path: Path) -> None:
     body = {
+        "format_version": 1,
         "epochs": [
             {
                 "id": "epoch",
@@ -57,7 +58,9 @@ def test_empty_lineage_and_absence_remain_distinct(tmp_path: Path) -> None:
     assert not tmp_path.joinpath("lineage.json").exists()
     initialize_lineage(tmp_path)
     assert load_lineage(tmp_path).exists
-    assert (tmp_path / "lineage.json").read_bytes() == b'{\n  "epochs": []\n}\n'
+    assert (
+        tmp_path / "lineage.json"
+    ).read_bytes() == b'{\n  "epochs": [],\n  "format_version": 1\n}\n'
 
 
 @pytest.mark.parametrize(
@@ -65,13 +68,25 @@ def test_empty_lineage_and_absence_remain_distinct(tmp_path: Path) -> None:
     [
         "null",
         "[]",
-        "{}",
-        '{"epochs": null}',
-        '{"epochs": [{"id": "epoch", "generations": ["v0"]}]}',
-        '{"epochs": [{"id": "epoch", "generations": [{"id": "v1", "promoted": 0}]}]}',
-        '{"epochs": [{"id": "epoch", "generations": [{"id": "v1", "round_index": true}]}]}',
-        '{"epochs": [{"id": "epoch", "generations": [{"id": "v1", "parent_scalar": NaN}]}]}',
-        '{"epochs": [{"id": "epoch", "generations": [{"id": "v1"}, {"id": "v1"}]}]}',
+        '{"format_version": 1}',
+        '{"format_version": 1, "epochs": null}',
+        '{"format_version": 1, "epochs": [{"id": "epoch", "generations": ["v0"]}]}',
+        (
+            '{"format_version": 1, "epochs": [{"id": "epoch", "generations": '
+            '[{"id": "v1", "promoted": 0}]}]}'
+        ),
+        (
+            '{"format_version": 1, "epochs": [{"id": "epoch", "generations": '
+            '[{"id": "v1", "round_index": true}]}]}'
+        ),
+        (
+            '{"format_version": 1, "epochs": [{"id": "epoch", "generations": '
+            '[{"id": "v1", "parent_scalar": NaN}]}]}'
+        ),
+        (
+            '{"format_version": 1, "epochs": [{"id": "epoch", "generations": '
+            '[{"id": "v1"}, {"id": "v1"}]}]}'
+        ),
     ],
 )
 def test_malformed_lineage_is_never_replaced(tmp_path: Path, text: str) -> None:
@@ -87,7 +102,10 @@ def test_malformed_lineage_is_never_replaced(tmp_path: Path, text: str) -> None:
 def test_lineage_revision_failure_prevents_canonical_replacement(
     tmp_path: Path, monkeypatch
 ) -> None:
-    write_lineage(tmp_path, decode_lineage({"epochs": [{"id": "epoch", "generations": []}]}))
+    write_lineage(
+        tmp_path,
+        decode_lineage({"format_version": 1, "epochs": [{"id": "epoch", "generations": []}]}),
+    )
     path = tmp_path / "lineage.json"
     before = path.read_bytes()
 
@@ -98,7 +116,7 @@ def test_lineage_revision_failure_prevents_canonical_replacement(
 
     monkeypatch.setattr("zicato.epoch.lineage.mark_epoch_changed", fail_mark)
     with pytest.raises(OSError, match="revision unavailable"):
-        write_lineage(tmp_path, decode_lineage({"epochs": []}))
+        write_lineage(tmp_path, decode_lineage({"format_version": 1, "epochs": []}))
     assert path.read_bytes() == before
 
 
@@ -114,7 +132,7 @@ def test_score_and_history_preserve_written_bytes(tmp_path: Path) -> None:
     write_gen_score(tmp_path, "epoch", "v0", aggregate)
     revisions = epoch_revisions(tmp_path)
     assert revisions.keys() == {"epoch"}
-    payload = {**aggregate, "generation_id": "v0"}
+    payload = {**aggregate, "generation_id": "v0", "format_version": 1}
     history = {**payload, "round_index": None, "seq": 0}
     assert (
         layout.gen_score("epoch", "v0").read_bytes()
@@ -137,13 +155,13 @@ def test_score_and_history_preserve_written_bytes(tmp_path: Path) -> None:
     [
         "null",
         "[]",
-        "{}",
-        '{"scalar": true}',
-        '{"scalar": NaN}',
-        '{"scalar": 0, "generation_id": "v2"}',
-        '{"scalar": 0, "entry_count": 1.5}',
-        '{"scalar": 0, "per_entry": []}',
-        '{"scalar": 0, "per_entry": {"task": {"pass_fail": 1}}}',
+        '{"format_version": 1}',
+        '{"format_version": 1, "scalar": true}',
+        '{"format_version": 1, "scalar": NaN}',
+        '{"format_version": 1, "scalar": 0, "generation_id": "v2"}',
+        '{"format_version": 1, "scalar": 0, "entry_count": 1.5}',
+        '{"format_version": 1, "scalar": 0, "per_entry": []}',
+        '{"format_version": 1, "scalar": 0, "per_entry": {"task": {"pass_fail": 1}}}',
         '{"format_version": 2, "scalar": 0}',
     ],
 )
@@ -209,7 +227,7 @@ def test_query_and_index_share_lineage_refusal(tmp_path: Path) -> None:
     from zicato.query.paths import WorkspacePaths
     from zicato.query.runtime_view import read_lineage_dict
 
-    tmp_path.joinpath("lineage.json").write_text('{"epochs": [null]}')
+    tmp_path.joinpath("lineage.json").write_text('{"format_version": 1, "epochs": [null]}')
     paths = WorkspacePaths(tmp_path)
     with pytest.raises(RecordError, match="generations list"):
         _lineage_by_epoch(tmp_path)
@@ -226,7 +244,7 @@ def test_score_corruption_is_visible_and_cannot_supply_a_gate(tmp_path: Path) ->
     layout = WorkspaceLayout.from_root(tmp_path)
     path = layout.gen_score("epoch", "v1")
     path.parent.mkdir(parents=True)
-    path.write_text('{"scalar": true}')
+    path.write_text('{"format_version": 1, "scalar": true}')
     paths = WorkspacePaths(tmp_path)
     with pytest.raises(RecordError, match="scalar must be finite"):
         _load_historical_aggregate(tmp_path, "epoch", "v1")

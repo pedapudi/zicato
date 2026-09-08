@@ -64,7 +64,7 @@ def doubles_module() -> str:
 
 
 def _write_run(workspace: Path, epoch_id: str, gen: str, *, fired: bool) -> None:
-    from zicato.core import DriftCount, JudgeLoss, LossProfile
+    from zicato.core import JudgeLoss, LossProfile, MetricCount
     from zicato.telemetry import reducer
 
     drift = 1.0 if fired else 0.0
@@ -73,7 +73,9 @@ def _write_run(workspace: Path, epoch_id: str, gen: str, *, fired: bool) -> None
         entry_id="entryA",
         generation_id=gen,
         epoch_id=epoch_id,
-        drift_counts=((DriftCount(kind="custom:j", severity="warning", count=1),) if fired else ()),
+        metric_counts=(
+            (MetricCount(name="drift:custom:j", severity="warning", count=1),) if fired else ()
+        ),
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=10,

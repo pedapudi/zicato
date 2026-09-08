@@ -54,26 +54,16 @@ def index_preflight(workspace_root: Path, *, writer: WorkspaceLock | None = None
     A fresh build already projects every epoch, so it needs no subsequent heal.
 
     Callers isolate repair failures because canonical execution must continue
-    without the derived index. A database with a newer schema is retained and
-    produces a warning; this executable cannot safely interpret or repair it.
+    without the derived index. Incompatible index schemas are rebuilt from
+    the canonical records before content revisions are checked.
     """
     from zicato.evolve.settlement_recovery import (  # noqa: PLC0415
         acknowledge_repaired_settlement_indexes,
     )
     from zicato.index.ingest import ensure_index, heal_index  # noqa: PLC0415
-    from zicato.index.schema import IndexSchemaNewerError  # noqa: PLC0415
 
     actions: list[str] = []
-    try:
-        ensure_index(workspace_root, action_out=actions, writer=writer)
-    except IndexSchemaNewerError as exc:
-        log.warning(
-            "index: %s — this run reads a stale index (no build, no heal). "
-            "Recover with: delete the workspace index.db and run `zicato repair index`, "
-            "or run this workspace with the newer zicato that wrote it.",
-            exc,
-        )
-        return "index: SKIPPED — index.db was written by a newer zicato"
+    ensure_index(workspace_root, action_out=actions, writer=writer)
     built = actions[0] if actions else "present"
     if built.startswith("built:"):
         acknowledge_repaired_settlement_indexes(workspace_root)

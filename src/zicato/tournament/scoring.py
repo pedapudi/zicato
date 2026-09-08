@@ -85,7 +85,7 @@ from zicato.core import (
     MetricSeverity,
     ScoringWeights,
 )
-from zicato.epoch._storage import RecordError, check_record_format
+from zicato.epoch._storage import RECORD_FORMAT_VERSION, RecordError, check_record_format
 from zicato.scoring import ScalarContext, builtin_scalar, resolve_scalar
 from zicato.scoring.builtins import diff_complexity_component
 from zicato.storage import atomic_write_text
@@ -298,6 +298,7 @@ def write_gen_score(
     if round_index is not None:
         _score_count(round_index, "round_index")
     payload = dict(aggregate)
+    payload.setdefault("format_version", RECORD_FORMAT_VERSION)
     payload.setdefault("generation_id", generation_id)
     score = decode_gen_score(payload, generation_id=generation_id)
     layout = WorkspaceLayout.from_root(workspace_root)
@@ -424,7 +425,7 @@ def _failure_channel_total(loss: LossProfile, weights: ScoringWeights) -> float:
 
     ``task_failure_weight × task_failure_ratio + not_completed_weight`` (the
     latter only for a run that did not complete) — the same two members
-    :meth:`LossProfile.unified_metrics` derives and
+    :meth:`LossProfile.scoring_metrics` derives and
     :func:`aggregate_namespaced_metrics` sums, computed per entry so the
     evidence surface can explain an aborted unit's contribution.
 
@@ -453,7 +454,7 @@ def aggregate_namespaced_metrics(
     For every other namespace the aggregate is
     ``namespace_weights[namespace] * mean(Σ within-channel-weighted
     MetricCount.count)`` over the namespace's entries across all losses'
-    unified metric view (see :meth:`LossProfile.unified_metrics`, which
+    unified metric view (see :meth:`LossProfile.scoring_metrics`, which
     derives the ``judge:`` / ``failure:`` / ``runtime:`` members).
     Namespaces named in :attr:`ScoringWeights.namespace_weights` but absent
     from the loss data appear with an aggregate of ``0.0`` so the keys are
@@ -497,7 +498,7 @@ def aggregate_namespaced_metrics(
         # the same namespace counts each entry, and a loss with none
         # contributes zero.
         per_loss: dict[str, list[float]] = {}
-        for mc in loss.unified_metrics():
+        for mc in loss.scoring_metrics():
             ns = _namespace_of(mc.name)
             if not ns or ns == "drift:":
                 # Drift is already reduced into ``drift_loss`` above; its
@@ -854,17 +855,6 @@ def _mean_metric_counts(profiles: list[LossProfile]) -> tuple[MetricCount, ...]:
     is deterministic and replicate 0's ordering is preserved for the
     buckets it carried.
 
-    Scope of that equality: it holds when the replicates agree on which
-    :meth:`LossProfile.unified_metrics` BRANCH they take — in production
-    they do, because the reducer populates ``metric_counts`` on every
-    profile it writes. A set MIXING an explicit-``metric_counts`` replicate
-    with one carrying only the int scalars is aggregate-preserving only
-    approximately: the fold's non-empty ``metric_counts`` makes the folded
-    profile take the explicit branch, so the scalar-only replicate's
-    synthesised contribution is dropped from the fold's view. Only a
-    hand-built profile, or one written before ``metric_counts`` existed, can
-    reach that, and the residual is bounded by those replicates' share of
-    the namespace.
     """
     keys: list[tuple[str, MetricSeverity]] = []
     seen: set[tuple[str, MetricSeverity]] = set()
@@ -1026,26 +1016,9 @@ def average_replicate_losses(
         (:func:`_mean_metrics`) — the decomposition has to decompose the
         folded ``score`` sitting next to it.
     ``metric_counts``, ``tokens_spent``, ``output_chars``, ``schema_failures``
-        Namespace-bearing: they reach the scalar through
-        :func:`~zicato.tournament.scoring.aggregate_namespaced_metrics`,
-        whose per-namespace values are appended to ``scalar_components``
-        and summed into the scalar for any contract with a non-zero
-        ``cost:`` / ``output:`` / ``schema:`` weight. ``metric_counts`` is
-        the one that matters in production — the reducer always populates
-        it, and :meth:`LossProfile.unified_metrics` then reads it in
-        preference to synthesising from the three scalars — so it is
-        meaned exactly (:func:`_mean_metric_counts`). The three int-typed
-        scalars carry the ROUNDED mean: the fields are integer counts by
-        contract, and they are consulted only on the synthesised path
-        (a profile with no ``metric_counts``) and by display. That rounding
-        is the ONE place the reducer's "scalar and its MetricCount mirror
-        agree" invariant relaxes across the fold — a folded
-        ``cost:tokens_spent`` of ``100.5`` sits beside ``tokens_spent=100``.
-        The mirror is what the scalar reads, so the scalar is exact and the
-        disagreement is display-only and sub-unit. Note ``round`` is
-        banker's rounding, so a mean of exactly ``0.5`` floors to ``0`` and
-        ``unified_metrics``' truthiness check then omits the synthesised
-        bucket entirely — reachable only on the synthesised path.
+        Named metric buckets use their exact means across all replicates.
+        Their integer display counters use rounded means. Scoring reads the
+        named values, so display rounding cannot change the scalar.
     ``per_judge_loss``
         Meaned per judge (:func:`_mean_per_judge_loss`); it is carried onto
         :class:`~zicato.scoring.api.ScalarContext`, so a scalar PLUGIN can
@@ -1078,13 +1051,6 @@ def average_replicate_losses(
         / ``metrics`` / ``pass_fail`` fields, which are the ones scoring
         and the gate read; ``expectation_result`` stays the untouched raw
         evidence from one replicate.
-    ``drift_counts``
-        The per-``(kind, severity)`` buckets are NOT scalar-bearing: the
-        ``"drift:"`` namespace is explicitly excluded from
-        :func:`aggregate_namespaced_metrics` precisely because
-        ``drift_loss`` — which IS meaned above — owns the drift axis. The
-        buckets are int-typed attribution/display, and the folded
-        ``metric_counts`` already carries their meaned ``"drift:"`` mirror.
     ``entry_id``, ``generation_id``, ``epoch_id``, ``match_id``
         Invariant across the replicates of one unit by construction.
     ``plan_revisions``,

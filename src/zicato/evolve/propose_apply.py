@@ -674,7 +674,7 @@ async def _maybe_run_placebo_arm_gauntlet(
             placebo_id,
             OutcomeRecord(
                 ran_at=_now_iso(),
-                drift_movements=(),
+                metric_movements=(),
                 pass_rate_delta=result.outcome.delta_pass_rate,
                 drift_loss_delta=0.0,
                 scalar_score_delta=result.outcome.delta_scalar,

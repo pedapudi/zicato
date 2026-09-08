@@ -32,15 +32,15 @@ from typing import Any
 
 from zicato.core.types import (
     BoardEntry,
-    DriftCount,
-    DriftMovementActual,
     EpochConfig,
     Expectation,
-    ExpectedDriftMovement,
+    ExpectedMetricMovement,
     Experiment,
     Generation,
     HypothesisSpec,
     LossProfile,
+    MetricCount,
+    MetricMovementActual,
     MutationPoint,
     OutcomeRecord,
     Patch,
@@ -129,13 +129,13 @@ def make_board_entry(kind: str = "single_turn", **overrides: Any) -> BoardEntry:
 # ---------------------------------------------------------------------------
 
 
-def make_drift_count(
-    kind: str = "off_topic",
+def make_metric_count(
+    name: str = "drift:off_topic",
     severity: str = "warning",
     count: int = 1,
-) -> DriftCount:
-    """Build a :class:`DriftCount` with the named drift kind and severity."""
-    return DriftCount(kind=kind, severity=severity, count=count)  # type: ignore[arg-type]
+) -> MetricCount:
+    """Build a named metric with its severity and measured value."""
+    return MetricCount(name=name, severity=severity, count=float(count))  # type: ignore[arg-type]
 
 
 def make_loss_profile(**overrides: Any) -> LossProfile:
@@ -151,7 +151,7 @@ def make_loss_profile(**overrides: Any) -> LossProfile:
         "entry_id": "e_default",
         "generation_id": "v0",
         "epoch_id": "epoch_default",
-        "drift_counts": (),
+        "metric_counts": (),
         "plan_revisions": 0,
         "task_failure_ratio": 0.0,
         "runtime_ms": 1000,
@@ -193,11 +193,9 @@ def make_hypothesis_spec(**overrides: Any) -> HypothesisSpec:
         "core_idea": "Tighten the system prompt to suppress off-topic drift.",
         "modulating": ("mut_default",),
         "why": "Pattern detector flagged off_topic concentration on the prompt span.",
-        "expected_drift_movements": (
-            ExpectedDriftMovement(
-                kind="off_topic",
-                direction="decrease",
-                magnitude="small",
+        "expected_metric_movements": (
+            ExpectedMetricMovement(
+                metric_name="drift:off_topic", direction="decrease", magnitude="small"
             ),
         ),
         "expected_pass_rate_delta": "+0.00 to +0.05",
@@ -232,7 +230,7 @@ def make_pattern(**overrides: Any) -> Pattern:
     """Build a :class:`Pattern` flagging one drift-kind hotspot."""
     kwargs: dict[str, Any] = {
         "id": "pat_default",
-        "kind": "drift_kind_frequency",
+        "kind": "drift_metric_frequency",
         "summary": "off_topic dominates loss across the board",
         "detail": {"drift_kind": "off_topic", "share": "0.62"},
         "affected_mutation_ids": ("mut_default",),
@@ -297,6 +295,7 @@ def make_epoch_config(**overrides: Any) -> EpochConfig:
         "board_path": Path("/tmp/zicato/test/epoch/board.jsonl"),
         "brief_path": Path("/tmp/zicato/test/epoch/brief.md"),
         "scoring": make_scoring_weights(),
+        "contract_hash": "0" * 64,
     }
     kwargs.update(overrides)
     return EpochConfig(**kwargs)
@@ -631,30 +630,30 @@ def make_synthetic_events_jsonl(
 # ---------------------------------------------------------------------------
 
 
-def make_drift_movement_actual(**overrides: Any) -> DriftMovementActual:
-    """Build a :class:`DriftMovementActual` describing a small improvement.
+def make_metric_movement_actual(**overrides: Any) -> MetricMovementActual:
+    """Build a :class:`MetricMovementActual` describing a small improvement.
 
     Convenience helper for tests that assemble an :class:`OutcomeRecord`
     by hand; not in the spec's required list but cheap to provide and
     symmetric with :func:`make_outcome_record`.
     """
     kwargs: dict[str, Any] = {
-        "kind": "off_topic",
-        "from_rate": 1.0,
-        "to_rate": 0.5,
+        "metric_name": "drift:off_topic",
+        "from_value": 1.0,
+        "to_value": 0.5,
         "hypothesis_match": True,
     }
     kwargs.update(overrides)
-    return DriftMovementActual(**kwargs)
+    return MetricMovementActual(**kwargs)
 
 
 def make_outcome_record(**overrides: Any) -> OutcomeRecord:
     """Build an :class:`OutcomeRecord` for a small-promotion test outcome."""
     kwargs: dict[str, Any] = {
         "ran_at": "2026-01-01T00:01:00Z",
-        "drift_movements": (make_drift_movement_actual(),),
+        "metric_movements": (make_metric_movement_actual(),),
         "pass_rate_delta": 0.05,
-        "drift_loss_delta": -0.10,
+        "drift_loss_delta": -0.1,
         "scalar_score_delta": 0.15,
         "tournament_decision": "promoted",
     }
@@ -669,14 +668,14 @@ __all__ = [
     "make_scripted_turn",
     "make_board_entry",
     # Loss / telemetry
-    "make_drift_count",
+    "make_metric_count",
     "make_loss_profile",
     # Run record / lineage
     "make_run_result",
     # Hypothesis / experiment
     "make_hypothesis_spec",
     "make_experiment",
-    "make_drift_movement_actual",
+    "make_metric_movement_actual",
     "make_outcome_record",
     # Mutation surface / patches / patterns
     "make_pattern",

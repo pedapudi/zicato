@@ -513,15 +513,12 @@ async def resolve_field_verdict(
 
 
 def _registered_mutable_trees(workspace_config: Any) -> list[str]:
-    """The workspace's registered mutable-tree paths (empty when unset).
+    """Return the source roots declared by the workspace adapter."""
+    from zicato.core.adapter_config import adapter_declaration
 
-    The same config surface :func:`_ensure_baseline_snapshot` seeds from
-    (``mutable_trees``, with ``source_roots`` as the older fallback key) and the
-    same one the Rust supervisor reads for its out-of-band containment
-    attestation — the two ends of the check share the rule surface.
-    """
-    raw = workspace_config.get("mutable_trees") or workspace_config.get("source_roots") or []
-    return [str(t) for t in raw]
+    if workspace_config.get("adapter") is None:
+        return []
+    return list(adapter_declaration(workspace_config).mutable_trees)
 
 
 def _integrity_block_reason(

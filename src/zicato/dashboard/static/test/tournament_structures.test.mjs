@@ -696,8 +696,8 @@ test('epoch timeline (no data): the timeline renders an honest empty — NEVER t
   assert(!host.textContent.includes('not a gauntlet'), 'no negative "not a gauntlet" placeholder even with no data');
   assert(allByClass(host, 'dn-roundtl')[0], 'the round timeline renders even with no data');
   assertEqual(svgsByClass(host, 'dn-swissover').length, 0, 'no embedded swiss figure when there is no data');
-  // a no-data epoch degrades to a single round-0 episode with no minted field.
-  assert(/no challengers minted this round/i.test(host.textContent), 'the empty round reads "no challengers minted this round"');
+  assert(/no rounds have run in this epoch/i.test(host.textContent), 'the timeline reports that no round has run');
+  assertEqual(allByClass(host, 'dn-roundtl-ep').length, 0, 'an epoch without rounds has no round episode');
 });
 
 test('structure: the data layer exposes tournamentStructure() + invalidates its cache live', async () => {

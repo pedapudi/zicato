@@ -383,11 +383,11 @@ colon) whose weighted mean folds into the generation scalar.
    (a `{namespace: bool}` map). `tournament/gate.py::_regressed_namespaces`
    consumes it. See 04-evaluation-statistics.md §2 for the
    monotonicity scope semantics.
-5. **Contract editing and omission at default.** The typed operation
+5. **Contract editing and identity.** The typed operation
    `set_namespace_weights` edits `namespace_weights`
-   (10-cli-and-configuration.md §10.2). Confirm your key is omitted-at-default from
-   the canonical scoring form so existing epochs do not roll retroactively (a
-   non-default value MUST roll — that is the contract).
+   (10-cli-and-configuration.md §10.2). The complete effective map enters the
+   contract hash. Verify the configured weight survives serialization and that
+   changing it changes identity, including when its value is zero.
 6. **Test** in `tests/test_scoring_multi_objective.py` (the namespace composes
    into the scalar with the right sign and weight) and `tests/test_scoring_seams.py`
    (byte-identity at default: with the namespace absent or zero-weighted, the
@@ -399,11 +399,11 @@ colon) whose weighted mean folds into the generation scalar.
   is order-sensitive at float precision; `test_scoring_seams.py` is the pin. Add
   your term where the composition naturally places it and do not reorder the
   existing terms.
-- ⚠️ **A namespace that changes the scalar at default rolls every epoch.** Follow
-  the omit-at-default rule (01-orientation.md §4; 03-contract-and-epochs.md
-  §3.4): default weight `0` (or the key absent from the
-  canonical form) means existing epochs hash identically. A real weight rolls the
-  epoch, which is correct: a new objective is a new contract.
+- **Scalar equality does not establish configuration identity.** A zero-weighted
+  namespace may leave the scalar unchanged while adding a key to the effective
+  configuration. All configured values enter the hash; verify the changed
+  component instead of omitting the key to retain a previous hash
+  (03-contract-and-epochs.md §3.4).
 - ⚠️ **Do NOT reshape a term into a seam edit when a weight will do.** A reshape
   (a transform, a reducer) belongs in the declarative `pass_transform` /
   `drift_kind_aggregation` registry or in a `scalar_fn` plugin, rather than in a
@@ -415,13 +415,13 @@ colon) whose weighted mean folds into the generation scalar.
 ```bash
 uv run pytest tests/test_scoring_seams.py tests/test_scoring_multi_objective.py \
     tests/test_tournament_scoring.py tests/test_tournament_gate.py -q
-uv run pytest tests/test_epoch_contract.py -q      # omit-at-default: default did not roll
+uv run pytest tests/test_epoch_contract.py -q      # complete configuration and identity
 ```
 
 **Definition of done.** The namespace folds into the scalar with the right sign
 and weight, its metric is emitted by the reducer, the default scalar is
-byte-identical to the one without the namespace (no retroactive roll),
-monotonicity works if you wired it, and both oracles pass.
+byte-identical to the one without the namespace, its complete configuration
+participates in identity, monotonicity works if configured, and both oracles pass.
 
 ---
 
@@ -547,7 +547,7 @@ this recipe only when you need custom routing or a wire kind the maps lack.
 2. **For a custom-judge consumer, route via `per_judge_weights`.** A
    custom-judge drift arrives as the kind `"custom:<judge_name>"` (built by
    `_judge_attributed_kind`, split by `split_judge_attributed_kind`). Its loss is
-   surfaced by `compute_per_judge_loss(drift_counts, weights)`, weighted by
+   surfaced by `compute_per_judge_loss(metric_counts, weights)`, weighted by
    `per_judge_weights.get(name, default_judge_weight)`. To give a judge a
    distinct weight, set `per_judge_weights["<judge_name>"]`.
 3. **Only for a wire-int kind the maps lack** (goldfive added an integer the map
@@ -578,9 +578,9 @@ this recipe only when you need custom routing or a wire kind the maps lack.
   The reducer's `_DRIFT_KIND_INT_TO_STR` and `core.drift_kinds` are a paired
   contract; a kind in one but not the other reads as `"custom"` (or raises) on
   the other path. Add to both in the same commit.
-- ⚠️ **`per_judge_weights` changes are contract changes.** They roll the epoch
-  (they shape the loss). Follow the omit-at-default rule so an empty map hashes
-  identically to a contract with no such map at all.
+- **`per_judge_weights` is part of the contract.** The complete map participates
+  in identity. An omitted authored field uses its declared default, so omission
+  and an explicit empty map agree only when that default is empty.
 
 **Verify.**
 
@@ -682,125 +682,38 @@ documented in the commit.
 
 ---
 
-## Recipe 7 — Add an index table / column
+## Recipe 7 — Add an index table or column
 
-**When to use.** You want a new analytics fact queryable from the derived SQLite
-index (`index.db`) — e.g. a new column on `generations`, or a whole new table.
-Remember the doctrine first: the index is DERIVED. The fact must already exist in
-a canonical file; the index row is a projection (the files-canonical rule —
-07-runtime-and-durability.md §7.1, invariant `D1`).
+The analytical index is derived from canonical workspace records. Every added
+field needs a canonical source and a projection through its owning reader.
 
-**Files touched.**
+1. Update the DDL in `src/zicato/index/schema.py` and advance `SCHEMA_VERSION`.
+   The version identifies table layout and projection semantics.
+2. Advance `EXPECTED_SCHEMA_VERSION` in `crates/supervisor/src/index_db.rs`.
+   Python and supervisor readers admit only the supported version.
+3. Update the relevant ingest statement and its named values. `Table` derives
+   the column list from the DDL; `tests/test_index_statements.py` checks each
+   writer supplies the fields it owns.
+4. Add the direct supported-schema query. Missing analytical data is unavailable;
+   do not synthesize columns from an incompatible database.
+5. Verify a full canonical rebuild populates the added data, a failed rebuild
+   preserves the previous database, and incremental ingestion followed by heal
+   matches a full rebuild.
+6. Review the rebuilt-index parity change and update its expected data only
+   after confirming every difference follows from the schema change.
 
-| File | Symbol | Why |
-|---|---|---|
-| `src/zicato/index/schema.py` | `SCHEMA_VERSION`, `_TABLE_STATEMENTS`, `_V<N>_ADDED_COLUMNS`, `_migrate_inplace` | schema + migration |
-| `src/zicato/index/ingest.py` | the table's `Table` descriptor, `_upsert_<table>`, `rebuild_index` | populate it |
-| `src/zicato/index/query.py` | selector + `_select_optional_columns` | read it back-compatibly |
-| `tests/test_index_schema.py`, `tests/test_index_v<N>_schema.py` | tests | pin the column contract |
+`apply_schema` creates an empty database or admits the supported schema. It
+never migrates an existing incompatible layout. `ensure_index` and
+`rebuild_index` own reconstruction under the workspace writer lease.
 
-**Steps.**
-
-1. **Bump `SCHEMA_VERSION`.** It is a module int in `schema.py` (currently `14`).
-   Increment it. The schema is dual-stamped (`PRAGMA user_version` + a
-   `schema_meta` row).
-2. **Add to the fresh-build shape.** Edit the relevant `CREATE TABLE` in
-   `_TABLE_STATEMENTS` (for a new column) or add a `CREATE TABLE IF NOT EXISTS`
-   block (for a new table). This is the shape a brand-new database gets.
-3. **Add to the incremental-open migration.** A pre-existing older database is
-   migrated in place. Add a `_V<N>_ADDED_COLUMNS` tuple and a new `if current <
-   N:` block in `_migrate_inplace` that `ALTER TABLE … ADD COLUMN`s it (additive
-   only — never drop/rename). The version-10 column additions are the model:
-
-   ```python
-   # src/zicato/index/schema.py — the v10 column-add tuple
-   _V10_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
-       ("generations", "elo", "REAL"),
-       ("generations", "elo_games", "INTEGER"),
-   )
-   ```
-
-   The migration block is idempotent (guarded by `_column_names`), so a
-   half-applied open is safe to re-run.
-4. **Populate it in ingest.** No column list is written out in `ingest.py`:
-   each writer holds a `Table` descriptor (`schema.py`) that reads its columns
-   off the DDL and builds the `INSERT … ON CONFLICT DO UPDATE` from them. So
-   teach `_upsert_<table>` to read the value off the canonical record and pass
-   it by the column's name; the statement picks it up. Two tests fail until you
-   do, one naming the writer that does not supply the column. Name the column
-   in the descriptor only where it departs from "write it, overwrite it on a
-   re-ingest":
-
-   ```python
-   # src/zicato/index/ingest.py — the runs writer
-   _RUNS = Table(
-       "runs",
-       key=("run_id",),
-       preserved_when_incoming_null=("tournament_id", "match_id"),
-   )
-   ```
-
-   `preserved_when_incoming_null` is the one to reach for on a nullable
-   provenance column, so a re-ingest that cannot resolve the value leaves the
-   stored one standing. `written_elsewhere` is for a column a different writer
-   owns — the Elo triple, which `_fold_elo` updates after ingest, is the
-   precedent for a derived-analytics column.
-5. **Read it back-compatibly.** In `query.py`, expose the column through
-   `_select_optional_columns`, which emits `NULL AS <col>` when the column is
-   absent — so an index built before your bump still loads. Never `SELECT
-   <col>` directly from a table that an older-schema index lacks.
-6. **Re-capture the goldens.** Update the exact column-contract lists in
-   `tests/test_index_schema.py` and add a `tests/test_index_v<N>_schema.py`
-   mirroring `test_index_v10_schema.py` (fresh-build columns + a migration test
-   from the prior version). Re-run the REINDEX-DUMP parity gate.
-
-**Traps.**
-
-- ⚠️ **Miss step 2 or step 3 and the fresh vs migrated schemas diverge.** A
-  column added to `_TABLE_STATEMENTS` but not to a migration block means a
-  freshly-built index has it and an upgraded one does not (and vice-versa). Both
-  paths must reach the same shape; `test_index_v<N>_schema.py` tests both a fresh
-  build AND a migration, to catch this.
-- ⚠️ **The reader refuses a NEWER index; never re-stamp it down.** `apply_schema`
-  raises `IndexSchemaNewerError` when the on-disk `user_version` exceeds
-  `SCHEMA_VERSION` — the refuse-a-newer-record-format rule
-  (07-runtime-and-durability.md §7.11, invariant `D12`). This is why the index is
-  safe to throw away:
-
-  ```python
-  # src/zicato/index/schema.py — IndexSchemaNewerError (why the refusal exists)
-  class IndexSchemaNewerError(RuntimeError):
-      """The index database was written by a NEWER zicato than this build.
-
-      Raised by :func:`apply_schema` when ``PRAGMA user_version`` exceeds
-      :data:`SCHEMA_VERSION`: an older writer must never silently re-stamp
-      a newer database DOWN ...
-      """
-  ```
-
-  An operator on an older build gets a clear refusal instead of a silent
-  misinterpretation. Do not add a down-migration; the recovery is `zicato
-  reindex` rather than a schema downgrade.
-- ⚠️ **A row with no canonical file source vanishes on `zicato repair index`.** The
-  index is derived (the files-canonical rule — 07-runtime-and-durability.md,
-  invariant `D1`). If your column has no file to re-derive from, it disappears on
-  the next rebuild, and the disappearance looks like someone else's bug.
-  Land the fact in a canonical record first.
-
-**Verify.**
+Run focused checks while editing:
 
 ```bash
-uv run pytest tests/test_index_schema.py tests/test_index_v10_schema.py \
-    tests/test_index_statements.py tests/test_index_ingest.py \
-    tests/test_index_query.py -q
-# add + run your new tests/test_index_v<N>_schema.py
-bash tools/parity.sh --only REINDEX-DUMP        # the rebuilt-index golden
+uv run pytest -n 0 tests/test_index_schema.py tests/test_index_statements.py \
+    tests/test_index_ingest.py tests/test_index_query.py tests/test_index_self_heal.py
 ```
 
-**Definition of done.** A new database and an upgraded one reach the same schema,
-the column is populated by ingest from a canonical record, an older-schema index
-still loads (optional-column read), the REINDEX-DUMP golden is re-captured, and
-the two oracles pass.
+The complete required checks apply to the composed source before merge.
 
 ---
 
@@ -1347,8 +1260,8 @@ Each recipe's owning chapter carries the theory the recipe applies:
 
 - 02-architecture.md §3 — the pipeline the orchestrator seams
   (Recipe 9) sit in; the four processes Recipe 12's forensics span.
-- 03-contract-and-epochs.md §3.7 (computing the hash) and §3.4 (the
-  omit-at-default discipline) —
+- 03-contract-and-epochs.md §3.7 (computing the hash) and §3.4 (complete
+  effective configuration) —
   what rolls the epoch (Recipes 3, 4, 8); §3.2.1 — how board entries and their
   judge metadata fold into the hash (Recipe 4).
 - 04-evaluation-statistics.md §1.1 and §1.3 (the two scoring seams) (Recipe 3, 5), §"The gate's rule ladder" (Recipe 3 monotonicity), §"Operating characteristics as pinned tests" +
@@ -1359,7 +1272,7 @@ Each recipe's owning chapter carries the theory the recipe applies:
   ledger Recipes 8, 13 draw on (duels 0.., calibration 1000, preflight 2000,
   screening 3000/3001, evidence 4000).
 - 07-runtime-and-durability.md §7.1 the files-canonical rule (invariant `D1`)
-  and §7.11 the refuse-a-newer-record-format rule (invariant `D12`) — Recipe 7;
+  and §7.11 supported record formats (invariant `D12`) — Recipe 7;
   §7.10.4 the best-effort-round-log rule (invariant `D11`) — Recipes 9 and 12;
   §7.10 the durable round log — Recipe 12.
 - 04-evaluation-statistics.md §1.9 (the loop-health detectors over the

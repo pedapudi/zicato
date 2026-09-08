@@ -80,15 +80,11 @@ def copy_example_project(project_root: Path) -> None:
 def example_config_overlay(project_root: Path) -> dict[str, Any]:
     """The ``config.json`` keys naming the copied example.
 
-    Five decisions, and they are the five any project makes:
+    The workspace declares its harness, editable code, models, and proposer:
 
-    * ``adapter`` — how a generation is run, as a dotted factory a
-      tournament worker can rebuild in its own process.
-    * ``mutable_trees`` — what the proposer may rewrite. Absolute,
-      because a worker resolves it from its own working directory.
-    * ``source_roots`` — where mutation markers are enumerated from. The
-      same tree here; they differ when a project's markers live in more
-      places than the proposer may edit.
+    * ``adapter`` — the factory reconstructed by tournament workers.
+    * ``adapter.mutable_trees`` — source directories the proposer may edit
+      and the mutation enumerator inspects.
     * ``models.engines`` — what the ``target`` and ``evaluation`` roles
       run on. A ``call_llm`` dotted path is the offline form of an engine.
     * ``runtime.proposer_agent`` — the proposer class. A project using
@@ -102,9 +98,8 @@ def example_config_overlay(project_root: Path) -> dict[str, Any]:
             "kind": "import",
             "factory": f"{WIRING_PACKAGE_NAME}.adapter:make_adapter",
             "import_roots": ["."],
+            "mutable_trees": [tree],
         },
-        "mutable_trees": [tree],
-        "source_roots": [tree],
         "models": {
             "engines": {
                 "target": {"call_llm": f"{WIRING_PACKAGE_NAME}.models:target_model"},

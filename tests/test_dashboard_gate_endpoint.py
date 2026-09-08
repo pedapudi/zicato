@@ -17,9 +17,13 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
+from tests._workspace_support import experiment_record
 from zicato.dashboard.server import create_app
 from zicato.query import WorkspacePaths, build_gate_breakdown
 from zicato.runtime.lock import acquire_workspace_lock
+from zicato.telemetry.reducer import write_loss_profile
+from zicato.testing import make_loss_profile
+from zicato.tournament.scoring import write_gen_score
 
 EPOCH_ID = "2026-05-28_e0"
 
@@ -39,6 +43,7 @@ def _gen_score(
     scalar_provenance: object = "__unset__",
 ) -> dict[str, object]:
     score: dict[str, object] = {
+        "format_version": 1,
         "scalar": scalar,
         "pass_rate": pass_rate,
         "per_entry": per_entry,
@@ -57,17 +62,19 @@ def _gen_score(
 def _write_loss(
     ws: Path, generation_id: str, entry_id: str, *, scoring_provenance: object = "__unset__"
 ) -> None:
-    """Write a minimal per-run ``loss.json`` carrying a Seam-1 token.
-
-    Lets the decomposition tests seed the per-run drift provenance the gate
-    breakdown reads off the generation's ``runs/{entry}/loss.json`` files.
-    """
-    loss: dict[str, object] = {"entry_id": entry_id, "drift_loss": 0.3, "pass_fail": True}
-    if scoring_provenance != "__unset__":
-        loss["scoring_provenance"] = scoring_provenance
-    _write_json(
-        ws / "epochs" / EPOCH_ID / "generations" / generation_id / "runs" / entry_id / "loss.json",
+    """Publish a complete loss carrying the requested scoring provenance."""
+    values = {} if scoring_provenance == "__unset__" else {"scoring_provenance": scoring_provenance}
+    loss = make_loss_profile(
+        epoch_id=EPOCH_ID,
+        generation_id=generation_id,
+        entry_id=entry_id,
+        drift_loss=0.3,
+        pass_fail=True,
+        **values,
+    )
+    write_loss_profile(
         loss,
+        ws / "epochs" / EPOCH_ID / "generations" / generation_id / "runs" / entry_id / "loss.json",
     )
 
 
@@ -83,8 +90,8 @@ def _make_workspace(
     (ws).mkdir(parents=True, exist_ok=True)
     (ws / "current_epoch").write_text(EPOCH_ID, encoding="utf-8")
     _write_json(epoch_dir / "scoring.json", scoring or {})
-    _write_json(epoch_dir / "generations" / "v0" / "gen_score.json", champion)
-    _write_json(epoch_dir / "generations" / "v1" / "gen_score.json", challenger)
+    write_gen_score(ws, EPOCH_ID, "v0", champion)
+    write_gen_score(ws, EPOCH_ID, "v1", challenger)
     return ws
 
 
@@ -772,7 +779,12 @@ def test_gate_breakdown_decomposition_backcompat_none(tmp_path: Path) -> None:
 def _write_experiment_outcome(ws: Path, generation_id: str, outcome: dict[str, object]) -> None:
     """Write a challenger's experiment.json with an ``outcome`` block."""
     path = ws / "epochs" / EPOCH_ID / "generations" / generation_id / "experiment.json"
-    _write_json(path, {"outcome": outcome})
+    _write_json(
+        path,
+        experiment_record(
+            generation_id, epoch_id=EPOCH_ID, parent_generation_id="v0", outcome=outcome
+        ),
+    )
 
 
 def test_gate_override_block_absent_without_override(tmp_path: Path) -> None:

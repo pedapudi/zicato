@@ -224,7 +224,7 @@ def write_lineage(workspace_root: Path, lineage: Lineage) -> None:
 
 def initialize_lineage(workspace_root: Path) -> None:
     """Write the empty graph with the initialization format's final newline."""
-    empty = decode_lineage({"epochs": []})
+    empty = decode_lineage({"format_version": RECORD_FORMAT_VERSION, "epochs": []})
     _replace_lineage(
         workspace_root, empty, json.dumps(empty.to_dict(), indent=2, sort_keys=True) + "\n"
     )

@@ -23,7 +23,7 @@ from zicato.contract_draft.publication import (
 from zicato.core.types import ScoringWeights
 from zicato.epoch import lifecycle
 from zicato.epoch.lineage import render_lineage_summary
-from zicato.index.ingest import rebuild_index, repair_epoch_goals
+from zicato.index.ingest import ensure_index, heal_index
 from zicato.runtime.lock import WorkspaceLock, acquire_workspace_lock
 
 
@@ -72,10 +72,8 @@ def _prepare_contract_sources(
     config = dict(source.config.raw)
     contract = dict(config.get("contract") or {})
     for component in ("board", "brief", "scoring"):
-        key = "rubric_path" if component == "brief" else f"{component}_path"
+        key = f"{component}_path"
         contract[key] = str(source.file(component).path)
-    if "brief_path" in contract:
-        contract["brief_path"] = str(source.file("brief").path)
     config["contract"] = contract
     accepted = {**accepted, "config": json.dumps(config, indent=2, sort_keys=True) + "\n"}
     return prepare_contract_publication(source, accepted, writer=writer)
@@ -116,13 +114,11 @@ def epoch_grp() -> None:
 )
 @click.option(
     "--brief",
-    "--rubric",
     "brief_source",
     required=True,
     type=click.Path(dir_okay=False),
     help="Path to a proposer brief (brief.md). Frozen into the epoch "
-    "and adopted as the workspace's live contract brief. ``--rubric`` "
-    "is accepted as a legacy alias.",
+    "and adopted as the workspace's live contract brief.",
 )
 @click.option(
     "--scoring",
@@ -358,26 +354,20 @@ def gc_cmd(
     help="Path to the zicato workspace directory.",
 )
 def set_goal_cmd(epoch_id: str, goal: str, workspace: str) -> None:
-    """Set the goal on an existing epoch and re-ingest its index row.
+    """Set an epoch's goal and refresh its derived index under one writer lease.
 
-    Designed for the contract-hash auto-roll case: when ``zicato
-    evolve`` opens a new epoch mid-run there is no opportunity to
-    prompt the operator, so the goal lands as an empty string + a
-    warning that recommends running this command later.
-
-    Idempotent — writes the supplied goal into ``config.json`` and
-    refreshes the ``epochs.goal`` index column. The rest of the index
-    is left alone (use ``zicato repair index`` for a full rebuild).
+    Automatic epoch creation may leave the goal empty. This command writes the
+    supplied goal and repairs any stale epoch projections, creating the index
+    when absent.
     """
     ws = _resolve_workspace(workspace)
-    try:
-        cfg = lifecycle.set_epoch_goal(ws, epoch_id, goal)
-    except FileNotFoundError as exc:
-        raise click.UsageError(str(exc)) from exc
-    # Re-ingest just this epoch's row. ``repair_epoch_goals`` walks
-    # every epoch but that is the simplest idempotent path; the index
-    # writes are keyed upserts so the other rows are no-ops.
-    repair_epoch_goals(ws)
+    with acquire_workspace_lock(ws, "epoch-set-goal") as writer:
+        try:
+            cfg = lifecycle.set_epoch_goal(ws, epoch_id, goal)
+        except FileNotFoundError as exc:
+            raise click.UsageError(str(exc)) from exc
+        ensure_index(ws, writer=writer)
+        heal_index(ws, writer=writer)
     click.echo(f"Set goal for epoch {cfg.id}.")
 
 
@@ -461,45 +451,4 @@ def rounds_cmd(workspace: str, epoch_id: str | None, verify: bool, as_json: bool
         raise SystemExit(1)
 
 
-@click.command(
-    name="repair-epoch-goals",
-    short_help="Advanced: backfill the goal field on epochs that predate the field.",
-)
-@click.option(
-    "--workspace",
-    default=".zicato",
-    show_default=True,
-    help="Path to the zicato workspace directory.",
-)
-def repair_epoch_goals_cmd(workspace: str) -> None:
-    """Walk every epoch on disk and add an empty goal where missing.
-
-    Targeted migration helper for workspaces whose per-epoch
-    ``config.json`` files were written before the ``goal`` field
-    landed. Defaults missing goals to the empty string (which renders
-    as "no goal recorded" in the analyzer), and refreshes the
-    ``epochs.goal`` column in the index database to match.
-
-    Read-only against epochs that already have a goal value
-    (including a deliberately-empty one). Idempotent: running it
-    twice writes the same bytes. The index is created with the
-    current schema if it does not exist yet.
-
-    For populating the goal on an individual epoch with a real value,
-    see ``zicato epoch set-goal``.
-    """
-    ws = _resolve_workspace(workspace)
-    # Ensure the index exists with the current schema so the column is
-    # present before repair_epoch_goals tries to upsert into it.
-    db_path = ws / "index.db"
-    if not db_path.exists():
-        rebuild_index(ws)
-    result = repair_epoch_goals(ws)
-    click.echo(
-        f"Repaired {result['scanned']} epochs at {ws}: "
-        f"{result['config_patched']} config.json files patched, "
-        f"{result['index_updated']} index rows refreshed."
-    )
-
-
-__all__ = ["epoch_grp", "repair_epoch_goals_cmd"]
+__all__ = ["epoch_grp"]

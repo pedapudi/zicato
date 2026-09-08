@@ -10,14 +10,14 @@ experiment format (which is being refactored concurrently).
 from __future__ import annotations
 
 from zicato.core.types import (
-    DriftMovementActual,
     Experiment,
     Generation,
+    MetricMovementActual,
     OutcomeRecord,
 )
 from zicato.epoch.analysis import (
-    render_drift_kind_movement_table,
     render_mermaid_lineage,
+    render_metric_movement_table,
     render_score_sparkline,
     render_tournament_outcomes_section,
     render_trajectory_table,
@@ -52,7 +52,7 @@ def _experiment(
     scalar_delta: float = -0.10,
     pass_delta: float = 0.0,
     drift_loss_delta: float = -0.05,
-    drift_movements: tuple[DriftMovementActual, ...] = (),
+    metric_movements: tuple[MetricMovementActual, ...] = (),
     rejection_reason: str = "",
     core_idea: str = "Refine the system prompt.",
 ) -> Experiment:
@@ -64,7 +64,7 @@ def _experiment(
             scalar_score_delta=scalar_delta,
             pass_rate_delta=pass_delta,
             drift_loss_delta=drift_loss_delta,
-            drift_movements=drift_movements,
+            metric_movements=metric_movements,
             rejection_reason=rejection_reason,
         )
     return make_experiment(
@@ -375,16 +375,13 @@ def test_sparkline_handles_baseline_only() -> None:
 
 
 # ---------------------------------------------------------------------------
-# render_drift_kind_movement_table
+# render_metric_movement_table
 # ---------------------------------------------------------------------------
 
 
-def _movement(kind: str, frm: float, to: float) -> DriftMovementActual:
-    return DriftMovementActual(
-        kind=kind,
-        from_rate=frm,
-        to_rate=to,
-        hypothesis_match=True,
+def _movement(kind: str, frm: float, to: float) -> MetricMovementActual:
+    return MetricMovementActual(
+        metric_name="drift:" + kind, from_value=frm, to_value=to, hypothesis_match=True
     )
 
 
@@ -394,21 +391,17 @@ def test_drift_table_orders_by_abs_net_change_and_caps_at_12() -> None:
     # ... -> vN. The final v1 step shifts every kind by a known amount.
     gens = [_baseline_gen("v0"), _child_gen("v1", "v0", promoted=True)]
     # 15 drift kinds with monotonically-decreasing magnitude.
-    movements: list[DriftMovementActual] = []
+    movements: list[MetricMovementActual] = []
     for i in range(15):
         # net = abs(to - frm) = (15 - i) / 100 — gives 0.15 down to 0.01.
         magnitude = (15 - i) / 100.0
         movements.append(_movement(f"k_{i:02d}", 1.0, 1.0 - magnitude))
     exps = [
         _experiment(
-            "v1",
-            "v0",
-            decision="promoted",
-            scalar_delta=-0.10,
-            drift_movements=tuple(movements),
+            "v1", "v0", decision="promoted", scalar_delta=-0.1, metric_movements=tuple(movements)
         )
     ]
-    out = render_drift_kind_movement_table(gens, exps)
+    out = render_metric_movement_table(gens, exps, namespace_filter="drift:")
 
     # Header + separator + 12 data rows = 14 total lines.
     rows = [ln for ln in out.splitlines() if ln.startswith("|")]
@@ -429,7 +422,7 @@ def test_drift_table_empty_when_no_movements() -> None:
         _child_gen("v1", "v0", promoted=True),
     ]
     exps = [_experiment("v1", "v0", decision="promoted", scalar_delta=-0.10)]
-    out = render_drift_kind_movement_table(gens, exps)
+    out = render_metric_movement_table(gens, exps, namespace_filter="drift:")
     assert out == ""
 
 
@@ -448,25 +441,25 @@ def test_drift_table_chains_rates_across_multiple_promoted_steps() -> None:
             "v1",
             "v0",
             decision="promoted",
-            scalar_delta=-0.10,
-            drift_movements=(_movement("off_topic", 1.00, 0.60),),
+            scalar_delta=-0.1,
+            metric_movements=(_movement("off_topic", 1.0, 0.6),),
         ),
         _experiment(
             "v2",
             "v1",
             decision="rejected",
-            scalar_delta=+0.20,
-            drift_movements=(_movement("off_topic", 0.60, 5.00),),
+            scalar_delta=+0.2,
+            metric_movements=(_movement("off_topic", 0.6, 5.0),),
         ),
         _experiment(
             "v3",
             "v1",
             decision="promoted",
             scalar_delta=-0.05,
-            drift_movements=(_movement("off_topic", 0.60, 0.40),),
+            metric_movements=(_movement("off_topic", 0.6, 0.4),),
         ),
     ]
-    out = render_drift_kind_movement_table(gens, exps)
+    out = render_metric_movement_table(gens, exps, namespace_filter="drift:")
     # Header references the promoted-chain generations only.
     assert "v0_rate" in out
     assert "v1_rate" in out
@@ -493,8 +486,8 @@ def test_section_integrates_all_four_renderers() -> None:
             "v1",
             "v0",
             decision="promoted",
-            scalar_delta=-0.20,
-            drift_movements=(_movement("off_topic", 1.0, 0.5),),
+            scalar_delta=-0.2,
+            metric_movements=(_movement("off_topic", 1.0, 0.5),),
         ),
         _experiment(
             "v2",

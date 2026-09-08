@@ -21,6 +21,7 @@ from zicato.evolve.propose_apply import (
     _trim_reason,
 )
 from zicato.evolve.round_context import _recombine_pair_for_slot
+from zicato.models_config import load_models_config
 from zicato.util import best_effort
 from zicato.workspace import generation_round_number
 
@@ -71,7 +72,7 @@ def _persist_soft_reject(
         generation_id,
         OutcomeRecord(
             ran_at=_now_iso(),
-            drift_movements=(),
+            metric_movements=(),
             pass_rate_delta=0.0,
             drift_loss_delta=0.0,
             scalar_score_delta=0.0,
@@ -188,7 +189,8 @@ async def produce_candidate_batch(
             evaluation_call_llm=prepared.config.effective_proposer_call_llm(),
             evaluation_model=(
                 prepared.config.proposer_model
-                or str(prepared.workspace_config.get("evaluation_model", ""))
+                or load_models_config(prepared.workspace_config).evaluation.model
+                or ""
             ),
             max_proposer_retries=prepared.max_proposer_retries,
             beater=prepared.beater,

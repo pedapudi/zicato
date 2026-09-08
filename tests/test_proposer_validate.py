@@ -2,9 +2,9 @@
 
 Three families:
 
-* **Tier behaviour** — each tier catches what it is there to catch, and the
-  pipeline stops at the first failing tier (there is nothing to lint in a
-  tree that would not apply). The A1–A4 cases are the point of the feature:
+* **Stage behaviour** — each stage catches what it is there to catch, and the
+  pipeline stops at the first failing stage (there is nothing to lint in a
+  tree that would not apply). The post-apply checks cases are the point of the feature:
   a dropped import, a vanished marker, a missing required placeholder, and
   a syntax break each come back as an actionable finding rather than as a
   rejected challenger one expensive round later.
@@ -36,7 +36,7 @@ from zicato.proposer.validate import (
 )
 
 # A module with a marked span, an import the span's code needs, and a
-# second marked file — enough surface for every A1-A4 case below.
+# second marked file — enough surface for every post-apply checks case below.
 _PROMPTS_PY = '''\
 import re
 
@@ -89,12 +89,12 @@ def ctx(tmp_path: Path) -> ProposerToolContext:
     )
 
 
-#: A whole-module mutation point — the surface A1 and A4 actually police.
+#: Whole-module edits can break syntax and remove imports.
 #: A SPAN replace cannot break either: the applier re-quotes span content as
 #: a Python string literal, so injected quotes are escaped rather than
 #: syntax-breaking, and a span edit cannot touch an import line. A file
 #: marker is where the proposer writes raw module text, which is exactly the
-#: "emit an entire post-edit module and hope it satisfies A1-A4" workload
+#: "emit an entire post-edit module and hope it satisfies post-apply checks" workload
 #: this tool exists for.
 _WHOLE_PY = '# zicato:mutable:file id="harness__whole"\nimport re\n\nVALUE = re.escape("x")\n'
 
@@ -105,7 +105,7 @@ def file_ctx(tmp_path: Path) -> ProposerToolContext:
 
     ``source_root`` is the snapshot root itself, matching what the
     orchestrator enumerates for a snapshot-rooted mutable tree. That
-    alignment is load-bearing for A4: ``validate_post_apply`` locates a
+    alignment is load-bearing for removed_import: ``validate_post_apply`` locates a
     touched file's pre-apply twin by comparing ``file.relative_to(
     source_root)`` against ``file.relative_to(target_root)``, so a manifest
     whose ``source_root`` is not an ancestor of its ``file`` silently skips
@@ -162,7 +162,7 @@ def test_clean_patch_set_validates(ctx: ProposerToolContext) -> None:
     report = _validate(ctx, _replace("You are a terse assistant."))
     assert report["ok"] is True, report
     assert report["errors"] == []
-    assert report["tiers"]["apply"]["ran"] is True
+    assert report["stages"]["apply"]["ran"] is True
 
 
 def test_accepts_both_the_bare_array_and_the_wrapped_object(
@@ -194,7 +194,7 @@ def test_requires_a_bound_context() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Tier 1a — structure, cross-checks, and the pre-image guard
+# Patch structure, cross-checks, and parent identity
 # ---------------------------------------------------------------------------
 
 
@@ -205,7 +205,7 @@ def test_unknown_mutation_id_is_a_structure_error(ctx: ProposerToolContext) -> N
     assert report["ok"] is False
     assert "unknown mutation_id" in report["errors"][0]
     # Nothing downstream ran — there was no tree to lint.
-    assert "apply" not in report["tiers"]
+    assert "apply" not in report["stages"]
 
 
 def test_op_payload_mismatch_is_a_structure_error(ctx: ProposerToolContext) -> None:
@@ -302,12 +302,12 @@ def test_patch_carries_no_pre_image_field(ctx: ProposerToolContext) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Tier 1b — A1-A4, the reason the feature exists
+# Source checks after patch application
 # ---------------------------------------------------------------------------
 
 
 def test_whole_module_rewrite_validates(file_ctx: ProposerToolContext) -> None:
-    """The file-kind baseline the A1/A4 cases below deviate from."""
+    """A whole-module edit preserves valid syntax and required imports."""
     report = _validate(
         file_ctx,
         _whole_replace(
@@ -317,8 +317,8 @@ def test_whole_module_rewrite_validates(file_ctx: ProposerToolContext) -> None:
     assert report["ok"] is True, report
 
 
-def test_a1_syntax_break_is_caught(file_ctx: ProposerToolContext) -> None:
-    """A1: a touched .py file that no longer parses."""
+def test_syntax_break_is_caught(file_ctx: ProposerToolContext) -> None:
+    """invalid_source: a touched .py file that no longer parses."""
     report = _validate(
         file_ctx,
         _whole_replace('# zicato:mutable:file id="harness__whole"\nimport re\n\ndef broken(\n'),
@@ -331,15 +331,8 @@ def test_a1_syntax_break_is_caught(file_ctx: ProposerToolContext) -> None:
     assert any("syntax" in e.lower() or "does not apply" in e for e in report["errors"])
 
 
-def test_a4_dropped_import_is_caught(file_ctx: ProposerToolContext) -> None:
-    """A4: the post-apply top-level import set must be a superset.
-
-    The case the issue names verbatim (``A4: dropped 'import re'``) and the
-    one a whole-module rewrite most easily gets wrong. Note the rewrite is
-    still perfectly valid Python on its own — only the comparison against
-    the pre-apply import set catches it, which is why A4 exists separately
-    from A1.
-    """
+def test_dropped_import_is_caught(file_ctx: ProposerToolContext) -> None:
+    """A syntactically valid rewrite must preserve its parent's imports."""
     report = _validate(
         file_ctx,
         _whole_replace('# zicato:mutable:file id="harness__whole"\nVALUE = "y"\n'),
@@ -348,8 +341,8 @@ def test_a4_dropped_import_is_caught(file_ctx: ProposerToolContext) -> None:
     assert any("import" in e for e in report["errors"]), report["errors"]
 
 
-def test_a2_vanished_marker_is_caught(file_ctx: ProposerToolContext) -> None:
-    """A2: the patched id must still resolve in a fresh enumeration.
+def test_vanished_marker_is_caught(file_ctx: ProposerToolContext) -> None:
+    """missing_mutation: the patched id must still resolve in a fresh enumeration.
 
     A whole-module rewrite that forgets to carry its own marker forward
     erases the point, so the NEXT round could never find it again.
@@ -360,13 +353,7 @@ def test_a2_vanished_marker_is_caught(file_ctx: ProposerToolContext) -> None:
 
 
 def test_a_span_replace_cannot_break_syntax(ctx: ProposerToolContext) -> None:
-    """Pins WHY the A1/A4 cases above use a file marker.
-
-    The applier re-quotes span content as a Python string literal, so a
-    quote in the replacement is escaped rather than syntax-breaking. Span
-    edits are structurally safe; whole-module rewrites are where A1-A4 earn
-    their keep.
-    """
+    """Span replacement escapes quotes inside the surrounding Python literal."""
     assert _validate(ctx, _replace('unbalanced "quote'))["ok"] is True
 
 
@@ -377,8 +364,8 @@ def test_apply_failure_stops_the_pipeline(file_ctx: ProposerToolContext) -> None
         _whole_replace('# zicato:mutable:file id="harness__whole"\nimport re\n\ndef broken(\n'),
     )
     assert report["ok"] is False
-    assert "static_checks" not in report["tiers"]
-    assert "load_probe" not in report["tiers"]
+    assert "static_checks" not in report["stages"]
+    assert "load_probe" not in report["stages"]
 
 
 def test_validation_leaves_the_snapshot_untouched(ctx: ProposerToolContext) -> None:
@@ -410,14 +397,14 @@ def test_scratch_tree_is_cleaned_up(
 
 
 # ---------------------------------------------------------------------------
-# Tier 2 — the contract-declared static-check set
+# Contract-declared static analysis
 # ---------------------------------------------------------------------------
 
 
 def test_static_checks_are_omitted_when_undeclared(ctx: ProposerToolContext) -> None:
     report = _validate(ctx, _replace("You are a terse assistant."))
-    assert report["tiers"]["static_checks"]["ran"] is False
-    assert "no checks declared" in report["tiers"]["static_checks"]["reason"]
+    assert report["stages"]["static_checks"]["ran"] is False
+    assert "no checks declared" in report["stages"]["static_checks"]["reason"]
 
 
 def test_declared_static_checks_reads_the_contract_block(tmp_path: Path) -> None:
@@ -433,7 +420,7 @@ def test_declared_static_checks_reads_the_contract_block(tmp_path: Path) -> None
     ["", "not json", '{"contract": {}}', '{"contract": {"proposer_static_checks": "ruff"}}'],
 )
 def test_declared_static_checks_degrades_to_empty(tmp_path: Path, config: str) -> None:
-    """Every malformed shape yields (), which omits tier 2 AND leaves the
+    """Every malformed shape yields (), which omits static analysis and leaves the
     proposer contract component hashing byte-identically."""
     (tmp_path / "config.json").write_text(config, encoding="utf-8")
     assert declared_static_checks(tmp_path) == ()
@@ -548,7 +535,7 @@ def test_static_check_registry_is_closed() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Tier 3 — the sandboxed load probe
+# Subprocess harness loading
 # ---------------------------------------------------------------------------
 
 
@@ -556,13 +543,13 @@ def test_load_probe_skipped_without_a_workspace_config(ctx: ProposerToolContext)
     """An adapterless workspace is the operator's problem, not the patch's."""
     report = _validate(ctx, _replace("You are a terse assistant."))
     assert report["ok"] is True
-    probe = report["tiers"]["load_probe"]
+    probe = report["stages"]["load_probe"]
     assert probe["errors"] == []
     assert any("no config.json" in n for n in probe["notes"])
 
 
 def test_load_probe_reports_an_unimportable_harness(tmp_path: Path) -> None:
-    """The tier-3 payoff: an import-time break surfaces one round early.
+    """The load probe reports an import failure before tournament execution.
 
     Drives the probe module directly (it is the subprocess entry point) so
     the assertion is about the probe's verdict, not about process spawning.

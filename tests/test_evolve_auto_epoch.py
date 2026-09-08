@@ -22,9 +22,9 @@ from tests._orchestrator_harness import target_call_llm
 from tests._stub_adapter import make_stub_adapter
 from zicato.core.types import (
     BoardEntry,
-    DriftCount,
     ExpectationResult,
     LossProfile,
+    MetricCount,
 )
 from zicato.epoch.lifecycle import current_epoch_id, list_epochs
 
@@ -41,9 +41,9 @@ def _proposer_response() -> str:
                 "core_idea": "swap the greeting string",
                 "modulating": ["greeting"],
                 "why": "Baseline round exercising the orchestrator.",
-                "expected_drift_movements": [
+                "expected_metric_movements": [
                     {
-                        "kind": "off_topic",
+                        "metric_name": "drift:off_topic",
                         "direction": "decrease",
                         "magnitude": "small",
                     }
@@ -119,22 +119,25 @@ def _bootstrap_registered(tmp_path: Path) -> tuple[Path, Path]:
                 "adapter": {
                     "kind": "import",
                     "factory": "tests._stub_adapter:make_stub_adapter",
+                    "mutable_trees": [str(agent)],
                 },
-                "adk_entrypoint": "pkg.mod:agent",
                 # This suite asserts the directory-backend snapshot layout
                 # (epochs/.../generations/v0/snapshot/) after a contract
                 # roll, so it pins the directory backend; the git default
                 # keeps generations in the private repo, not that path.
                 "generation_source_backend": "directory",
-                "mutable_trees": [str(agent)],
-                "source_roots": [str(agent)],
-                "runtime": {
-                    "target_call_llm": "tests._orchestrator_harness:target_call_llm",
-                    "evaluation_call_llm": "tests.test_evolve_auto_epoch:evaluation_call_llm",
+                "runtime": {},
+                "models": {
+                    "engines": {
+                        "target": {"call_llm": "tests._orchestrator_harness:target_call_llm"},
+                        "evaluation": {
+                            "call_llm": "tests.test_evolve_auto_epoch:evaluation_call_llm"
+                        },
+                    }
                 },
                 "contract": {
                     "board_path": str(board),
-                    "rubric_path": str(rubric),
+                    "brief_path": str(rubric),
                     "scoring_path": str(scoring),
                 },
             }
@@ -207,7 +210,7 @@ def _install_telemetry_stubs(
             entry_id=entry.id,
             generation_id=generation_id,
             epoch_id=epoch_id,
-            drift_counts=(DriftCount(kind="off_topic", severity="info", count=0),),
+            metric_counts=(MetricCount(name="drift:off_topic", severity="info", count=0),),
             plan_revisions=0,
             task_failure_ratio=0.0,
             runtime_ms=100,
@@ -267,7 +270,7 @@ def _install_telemetry_stubs(
             entry_id=entry.id,
             generation_id=generation.id,
             epoch_id=epoch_id,
-            drift_counts=(DriftCount(kind="off_topic", severity="info", count=0),),
+            metric_counts=(MetricCount(name="drift:off_topic", severity="info", count=0),),
             plan_revisions=0,
             task_failure_ratio=0.0,
             runtime_ms=100,

@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from zicato.core.types import (
-    ExpectedDriftMovement,
+    ExpectedMetricMovement,
     Experiment,
     HypothesisSpec,
     Patch,
@@ -45,8 +45,10 @@ def _experiment(
         core_idea=core_idea,
         modulating=("router.instruction",),
         why=why,
-        expected_drift_movements=(
-            ExpectedDriftMovement(kind="off_topic", direction="decrease", magnitude="medium"),
+        expected_metric_movements=(
+            ExpectedMetricMovement(
+                metric_name="drift:off_topic", direction="decrease", magnitude="medium"
+            ),
         ),
         expected_pass_rate_delta="+0.0 to +0.15",
         risks="May under-route genuinely ambiguous requests.",

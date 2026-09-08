@@ -73,7 +73,9 @@ def _workspace(tmp_path: Path) -> Path:
     )
     layout.board(EPOCH).write_text(
         "\n".join(
-            json.dumps({"id": entry, "kind": "single_turn", "input": "go", "budget_s": 1})
+            json.dumps(
+                {"id": entry, "kind": "single_turn", "input": "go", "wall_clock_budget_seconds": 1}
+            )
             for entry in ENTRIES
         )
         + "\n",
@@ -105,7 +107,7 @@ def _write_loss(
         entry_id=entry_id,
         generation_id=generation_id,
         epoch_id=EPOCH,
-        drift_counts=(),
+        metric_counts=(),
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=1200,

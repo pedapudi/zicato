@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from zicato.core import (
-    DriftCount,
     ExpectationResult,
     LossProfile,
+    MetricCount,
     ScoringWeights,
 )
 from zicato.tournament.scoring import (
@@ -31,7 +31,7 @@ def _make_loss(
         entry_id=entry_id,
         generation_id="v0",
         epoch_id="e0",
-        drift_counts=(DriftCount(kind="off_topic", severity="info", count=0),),
+        metric_counts=(MetricCount(name="drift:off_topic", severity="info", count=0),),
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=1000,

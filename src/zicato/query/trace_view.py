@@ -119,7 +119,7 @@ def _tone_glyph(signal_kind: str) -> tuple[str, str]:
 
 
 def _drift_count(signals: Any, kind: str) -> int:
-    return sum(int(dc.count) for dc in signals.drift_counts if dc.kind == kind)
+    return sum(int(mc.count) for mc in signals.metric_counts if mc.name == f"drift:{kind}")
 
 
 def _signal_counts(trace: ImportedTrace) -> dict[str, int]:

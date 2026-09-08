@@ -54,11 +54,15 @@ def test_typed_fields_project_the_blocks_and_keys(tmp_path: Path) -> None:
     root = _workspace(
         tmp_path,
         {
-            "runtime": {"parallelism": 8, "evaluation_model": "from-runtime"},
+            "runtime": {"parallelism": 8},
+            "models": {"engines": {"evaluation": {"model": "configured-evaluator"}}},
             "contract": {"board_path": "/live/board.jsonl"},
-            "source_roots": ["src", "tools"],
             "generation_source_backend": "git",
-            "adk_entrypoint": "pkg.mod:agent",
+            "adapter": {
+                "kind": "adk",
+                "entrypoint": "pkg.mod:agent",
+                "mutable_trees": ["src", "tools"],
+            },
         },
     )
     config = read_workspace_config(root)
@@ -67,17 +71,26 @@ def test_typed_fields_project_the_blocks_and_keys(tmp_path: Path) -> None:
     assert config.contract["board_path"] == "/live/board.jsonl"
     assert config.source_roots == ("src", "tools")
     assert config.generation_source_backend == "git"
-    assert config.evaluation_model == "from-runtime"
+    assert config.evaluation_model == "configured-evaluator"
     # Keys with no typed field stay reachable on the whole mapping.
-    assert config.raw["adk_entrypoint"] == "pkg.mod:agent"
+    assert config.raw["adapter"]["entrypoint"] == "pkg.mod:agent"
 
 
-def test_a_top_level_evaluation_model_outranks_the_runtime_block(tmp_path: Path) -> None:
-    root = _workspace(
-        tmp_path,
-        {"evaluation_model": "from-top-level", "runtime": {"evaluation_model": "from-runtime"}},
-    )
-    assert read_workspace_config(root).evaluation_model == "from-top-level"
+@pytest.mark.parametrize(
+    "field",
+    [
+        "evaluation_model",
+        "evaluation_call_llm",
+        "adk_entrypoint",
+        "source_roots",
+        "mutable_trees",
+        "harmonograf_url",
+    ],
+)
+def test_workspace_rejects_alternate_registration_locations(tmp_path: Path, field: str) -> None:
+    root = _workspace(tmp_path, {field: "obsolete"})
+    with pytest.raises(ValueError, match=f"config.{field}: unknown field"):
+        read_workspace_config(root)
 
 
 @pytest.mark.parametrize(
@@ -85,7 +98,7 @@ def test_a_top_level_evaluation_model_outranks_the_runtime_block(tmp_path: Path)
     [
         ("runtime", ["not", "an", "object"]),
         ("contract", "not an object"),
-        ("source_roots", "src"),
+        ("adapter", "src"),
         ("generation_source_backend", 7),
     ],
 )

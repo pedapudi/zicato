@@ -631,8 +631,10 @@ mod tests {
         // Harness with a single mutable tree "agent".
         std::fs::write(
             ws.join("config.json"),
-            serde_json::json!({"adk_entrypoint": "m:a", "mutable_trees": ["/reg/agent"]})
-                .to_string(),
+            serde_json::json!({"adapter": {
+                "kind": "adk", "entrypoint": "m:a", "mutable_trees": ["/reg/agent"]
+            }})
+            .to_string(),
         )
         .unwrap();
         (tmp, p)

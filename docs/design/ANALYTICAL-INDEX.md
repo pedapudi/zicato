@@ -149,14 +149,10 @@ correctness backstop:
 
 - If the index is ever suspected stale or corrupt, `reindex`
   fixes it — no manual repair.
-- If the schema changes between zicato versions, `reindex`
-  rebuilds under the new schema. The index is disposable, so a
-  full rebuild is always the clean path. As a convenience for an
-  *existing* file opened by a newer writer, `apply_schema` also
-  carries out a small in-place additive migration (e.g. the v1 → v2
-  column adds, §4.2) so an incremental `ingest_*` write does not
-  force a rebuild first — but a rebuild remains the canonical
-  recovery.
+- If the supported schema or projection semantics change, `ensure_index`
+  rebuilds the incompatible database from canonical records. Incremental
+  writers refuse incompatible indexes and never add columns in place.
+
 - If an operator hand-edits a file under `.zicato/epochs/`
   (e.g. fixes a malformed `experiment.json`), `reindex` brings
   the index back in line.
@@ -227,7 +223,7 @@ follows (see [RUNTIME.md](RUNTIME.md)).
 The schema is defined authoritatively in
 `src/zicato/index/schema.py` as plain SQL DDL, kept as SQL strings
 rather than an ORM so the Rust supervisor can mirror it verbatim. The
-current `SCHEMA_VERSION` is **14**, which includes, among others, the
+supported `SCHEMA_VERSION` is **15**, which includes, among others, the
 `generations.elo*` visibility-rating columns (§3.2) and the
 `ingest_cursors` self-heal table (§5.2). That module is the contract;
 this section documents it.
@@ -236,10 +232,8 @@ The index has **thirteen tables**. Nine mirror the artifact
 hierarchy: `epochs` → `generations` → `experiments` → `patches`, and
 `generations` → `runs` → `loss_profiles` / `metric_counts` /
 `judge_losses`, with `tournaments` as the per-round comparison record.
-The remaining four are the two reflection tables added at schema v11
-(`reflections`, `judge_scorecards`), the `pareto_frontier` projection
-added at v13, and the `ingest_cursors` self-heal table added at v14
-(§5.2). `ingest_cursors` is the one table that is not a
+The remaining four are `reflections`, `judge_scorecards`,
+`pareto_frontier`, and `ingest_cursors` (§5.2). `ingest_cursors` is the one table that is not a
 projection of a canonical file: it records *what the workspace
 looked like* when each epoch was last projected, so divergence is
 detectable without re-deriving every row.
@@ -291,11 +285,8 @@ the epoch's `config.json` (`EpochConfig`).
 | `contract_hash` | TEXT | `EpochConfig.contract_hash` |
 | `created_at` | TEXT | `lineage.json` |
 | `closed` | INTEGER | 1 once the epoch is closed |
-| `goal` | TEXT | the epoch's goal (v2 column) |
-| `parent_epoch_id` | TEXT | predecessor epoch id, cross-epoch lineage (v2 column) |
-
-`goal` and `parent_epoch_id` are the two `epochs` columns added in
-the v1 → v2 migration (§4.2).
+| `goal` | TEXT | the epoch's goal |
+| `parent_epoch_id` | TEXT | predecessor epoch id, cross-epoch lineage |
 
 ### 3.2 `generations`
 
@@ -382,14 +373,13 @@ One row per `runs/{entry_id}/` directory — i.e. one per
 | `ended_at` | TEXT | run end |
 | `aborted` | INTEGER | `loss.json` — 1 if `RunAborted` |
 | `runtime_ms` | INTEGER | `loss.json` |
-| `tournament_id` | TEXT | (FK → `tournaments`) — the round this run belonged to (v2 column) |
+| `tournament_id` | TEXT | (FK → `tournaments`) — the round this run belonged to |
 
 Primary key is `run_id` (the `{generation_id}--{entry_id}`
 synthetic id). The "which side of the tournament" distinction is
 carried by the run's generation: the parent and child generations
 each get their own run row, and `tournament_id` ties both to the
-round they were scored in. `tournament_id` is one of the v2-added
-columns (§4.2), indexed by `idx_runs_tournament`. The harmonograf
+round they were scored in. `idx_runs_tournament` indexes that association. The harmonograf
 drill-down join key is the run's `adk_session_id`; the reducer stamps
 it into `loss.json`, and no index column holds it. See
 [TOURNAMENT.md §5](TOURNAMENT.md#5-the-harmonograf-split) and §6
@@ -410,7 +400,7 @@ One row per `loss.json` — the reduced per-run feature vector.
 | `runtime_ms` | INTEGER | `LossProfile.runtime_ms` |
 | `wall_clock_budget_exceeded` | INTEGER | 1 if the run exhausted its wall-clock budget |
 | `loss_json` | TEXT (JSON) | the full `LossProfile`, verbatim — the per-kind counts, escalations, plan revisions, etc. that get no dedicated column live here |
-| `tournament_id` | TEXT | (FK → `tournaments`) — the round (v2 column) |
+| `tournament_id` | TEXT | (FK → `tournaments`) — the round |
 
 Primary key `run_id` (matching `runs`). This table is the
 scoring-side projection; the per-entry A/B grid in
@@ -421,8 +411,7 @@ their own column (`escalations`, `plan_revisions`,
 `task_failure_ratio`, `human_intervention_required`, the per-kind
 counts) are recoverable from `loss_json` with `json_extract`; the
 drift counts are *also* unpivoted into `metric_counts` (§3.7) for
-`GROUP BY`-able access. `tournament_id` is a v2-added column
-indexed by `idx_loss_tournament`.
+`GROUP BY`-able access. `idx_loss_tournament` indexes the tournament association.
 
 ### 3.7 `metric_counts`
 
@@ -477,10 +466,7 @@ round's full per-entry detail is one join away.
 
 One row per (run × custom judge) — the per-judge weighted-loss
 breakdown that the scoring layer's `per_judge_weights` produces
-(see [SCORING.md §2.2](SCORING.md#22-the-judge-channel)). This is
-the table added in the v1 → v2 migration; it is created by the
-regular `CREATE TABLE IF NOT EXISTS` pass (the migrator does not
-need an `ALTER` for it — a fresh table on a v1 database).
+(see [SCORING.md §2.2](SCORING.md#22-the-judge-channel)).
 
 | Column | Type | Source |
 |---|---|---|
@@ -521,15 +507,13 @@ for `reindex` only in the situations §5.4 names.
 
 `reindex`:
 
-1. Opens (or creates) `.zicato/index.db`.
-2. Drops the database and re-applies the current schema (§3) — the
-   canonical build path (`rebuild_index`) starts from a clean file.
-3. Walks `.zicato/lineage.json`, then every
-   `.zicato/epochs/{epoch}/` directory: every `experiment.json`,
-   `patches/*.json`, `runs/*/loss.json`, and the resolved outcomes.
-4. Inserts the derived rows.
-5. Prints a summary of how many epochs, generations, and runs were
-   indexed.
+1. Acquires the workspace writer lease after delegated workers finish.
+2. Creates a private SQLite file with the supported schema.
+3. Walks every canonical epoch, generation, experiment, measurement,
+   reflection, and frontier record through its owning reader.
+4. Commits and closes the scratch database, then publishes it over the
+   derived index. A failure before publication preserves the existing file.
+5. Acknowledges the captured epoch revisions and prints indexed row counts.
 
 ```
 $ zicato repair index
@@ -537,33 +521,18 @@ $ zicato repair index
 [reindex] indexed 2 epochs, 13 generations, 130 runs
 ```
 
-### 4.2 Schema versioning drives the rebuild
+### 4.2 One supported schema
 
-The shipped `reindex` does not have a `--verify` integrity mode and
-does not take an `--epoch` scope. The discipline in §2 (canonical
-file first, index row second) is what keeps the index from ever
-going *ahead* of the files; a behind index is fixed by a plain
-`reindex` (or by the next incremental `ingest_*`).
+`SCHEMA_VERSION` is **15**. It identifies both the SQLite layout and the
+projection semantics. `apply_schema` stamps `PRAGMA user_version` and its
+`schema_meta` mirror only when creating an empty database.
 
-Schema versioning is the mechanism that makes a rebuild recognisably
-necessary. `SCHEMA_VERSION` is **14**, stamped into `PRAGMA
-user_version` and the `schema_meta` table by `apply_schema`. An index
-whose stamped version is *older* than this build's does not wait for an
-operator to notice: `ensure_index` rebuilds it at the next `evolve`
-start or dashboard start (§5.1).
-The v1 → v2 migration added five things:
-
-- `epochs.goal`
-- `epochs.parent_epoch_id`
-- `runs.tournament_id`
-- `loss_profiles.tournament_id`
-- the whole `judge_losses` table (§3.9)
-
-When a newer writer opens an older v1 file, `apply_schema` performs
-the additive `ALTER TABLE` column adds in place (the `judge_losses`
-table is created by the ordinary `CREATE TABLE IF NOT EXISTS` pass),
-so incremental writes proceed without forcing a rebuild. A full
-`reindex` drops the file and re-applies the current DDL outright.
+`ensure_index` rebuilds every incompatible version from canonical records.
+Incremental writers raise `IndexSchemaError` before changing an incompatible
+database. They cannot run a full repair while sibling workers are active.
+Python and supervisor queries open read-only and admit only the supported
+version. An incompatible index produces unavailable analytical results until
+its existing repair owner rebuilds it.
 
 ### 4.3 `zicato repair generations` — targeted repair
 
@@ -573,15 +542,12 @@ Alongside the full rebuild, zicato ships a narrow repair command:
 zicato repair generations [--workspace <path>]
 ```
 
-It reconciles **only** the `generations` table from disk. It exists
-for workspaces whose `generations` rows were written by a buggy live
-dual-write, which left `parent_generation_id` NULL and clamped
-`promoted` to `0` on every row except the seed. It walks
-`lineage.json` plus every `experiment.json` and rewrites only the
-`parent_generation_id` and `promoted` columns of each `generations`
-row; the rest of the index is untouched. It is idempotent and
-read-only against the workspace files. For anything broader, use the
-full `zicato repair index`.
+The command reconciles indexed generation facts with `lineage.json` under
+the workspace writer lease. Parent coordinates, promotion state, creation
+timestamps, and birth rounds match the canonical record, including null
+values. Ratings and other index tables remain unchanged. Repeating the
+repair makes no changes, and canonical files are read only. Use
+`zicato repair index` to rebuild the complete projection.
 
 ### 4.4 Reindex on resume
 
@@ -613,7 +579,7 @@ it silently returns *fewer* prior experiments, and the loop
 degrades in quality with no error anywhere. Keeping the index
 current is a loop-quality property rather than a convenience.
 
-### 5.1 An absent or older index rebuilds itself, temp-then-rename
+### 5.1 Missing or incompatible indexes are rebuilt before publication
 
 ```python
 # zicato.index.ingest
@@ -633,7 +599,7 @@ when — one of three things is true:
 | Condition | `action_out` value |
 |---|---|
 | the file is absent | `built:absent` |
-| `PRAGMA user_version` < `SCHEMA_VERSION` | `built:stale-schema` |
+| `PRAGMA user_version` != `SCHEMA_VERSION` | `built:stale-schema` |
 | the file is not a readable SQLite database | `built:unreadable` |
 | none of the above | `present` |
 
@@ -642,21 +608,9 @@ that its *contents* drifted from the workspace belongs to the cursor
 validation and heal (§5.2); the auto-build answers only the structural
 question "is there a database of the right shape here at all".
 
-A **newer** database — `user_version` > `SCHEMA_VERSION` — raises
-`IndexSchemaNewerError` with its existing actionable message.
-Auto-deleting a newer index is forbidden: the newer build's columns
-and semantics are unknown to this one, and the recovery — upgrade
-zicato, or delete the file as an explicit choice — belongs to the
-operator.
-
-Whole-table additions are why an older-version database is rebuilt
-rather than migrated. `apply_schema`'s in-place migrator can add a
-column, but it cannot *populate* a table that did not exist — the
-v11 reflection tables and the v13 `pareto_frontier` table both
-landed empty on an in-place open and stayed empty until a rebuild.
-A full rebuild is the only shape that backfills them, so the
-auto-build rebuilds rather than leaving a technically-current database
-with silently empty tables.
+Every version mismatch follows the same rebuild path. No historical table
+or column shape is interpreted during incremental ingestion. A rebuild walks
+all canonical records before publishing the derived database.
 
 **Temp-then-rename.** Every build — `ensure_index`'s and
 `rebuild_index`'s alike — goes through one private helper:
@@ -732,7 +686,7 @@ read or invocation completion, even if their incremental projections succeeded. 
 cost keeps incomplete coverage visible. Manual edits that bypass the writer
 APIs require a full `zicato repair index` rebuild.
 
-The existing schema **v14** cursor table also detects added or removed records:
+The cursor table also detects added or removed records:
 
 ```sql
 CREATE TABLE IF NOT EXISTS ingest_cursors (
@@ -823,18 +777,15 @@ def heal_index(
 `validate_index` returns the sorted ids of **diverged** epochs.
 Four conditions count as divergence:
 
-1. an epoch on disk with no cursor row (never ingested, or ingested
-   by a build that predates v14),
+1. an epoch on disk with no cursor row, because no full epoch projection
+   has completed; incremental ingestion only refreshes an existing cursor,
 2. an epoch whose cursor row disagrees with any of the five
    signals,
 3. an epoch the **index still holds rows for** that is gone from the
    workspace. This set is the union of the cursor table and
    `SELECT DISTINCT epoch_id FROM epochs`, rather than the cursor table
-   alone. A cursor-driven test can only find epochs that some
-   cursor-writing path already visited. A v13 database migrated *in
-   place* by the incremental writers — populated tables, zero cursors —
-   would therefore orphan any of its deleted epochs permanently, with
-   `heal_index` reporting nothing to do,
+   alone. An incrementally ingested epoch can hold rows before its first
+   complete projection establishes a cursor,
 4. an epoch revision differs from that database's acknowledged revision,
    including replacements that leave every count unchanged.
 
@@ -963,12 +914,9 @@ invocation is still writing canonical records.
 
 ### 5.4 What still requires `zicato repair index`
 
-Routine reindexing is now automatic. Four situations still call for
+Routine reindexing is automatic. Three situations still call for
 the explicit command:
 
-- **Downgrade recovery.** A database written by a newer zicato
-  raises `IndexSchemaNewerError`; auto-deleting it is forbidden, so
-  the operator deletes it and rebuilds by hand.
 - **Manual edits outside the canonical writer APIs.** Changing values or
   swapping files directly does not issue an epoch revision. If those edits
   preserve every cursor count, validation cannot detect them. A full rebuild

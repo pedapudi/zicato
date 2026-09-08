@@ -55,7 +55,7 @@ def _loss(entry_id: str, *, drift_loss: float, pass_fail: bool) -> LossProfile:
         entry_id=entry_id,
         generation_id=CHAMPION,
         epoch_id=EPOCH,
-        drift_counts=(),
+        metric_counts=(),
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=1000,

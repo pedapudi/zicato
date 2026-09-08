@@ -82,7 +82,7 @@ needs to build a `LossProfile`:
 
 | Signal | Feeds |
 |---|---|
-| `drift_counts` | the drift term (`drift_loss`) + `metric_counts` under `drift:` |
+| `metric_counts` | the drift term (`drift_loss`) + `metric_counts` under `drift:` |
 | `plan_revisions` | the plan-revision term |
 | `task_started` / `task_failed` | `task_failure_ratio` (the ×10 failure term) |
 | `llm_call_count` | `cost:llm_calls` |
@@ -115,8 +115,8 @@ drift-instrument stream, so it is the only dialect that can carry
   emulator's own lane (`zicato:emulator`), which the reducer's transcript
   reconstruction reads.
 
-`goldfive` is the default and rides `_SCORING_OMIT_AT_DEFAULT_FIELDS`
-omission (§5) so every existing contract hash is untouched.
+`goldfive` is the default. The effective dialect is included in the sealed
+evaluation configuration.
 
 ## 4. Dialect 2 — `adk_events`
 
@@ -164,7 +164,7 @@ Tolerance rules (honest, never-crash):
 ### 4.2 The signal table
 
 How each event-log signal derives, and the drift-vocabulary signal it
-maps to. Every drift-style row is a `DriftCount(kind, severity, count)`
+maps to. Every drift-style row is a `MetricCount(name="drift:<kind>", severity=severity, count=count)`
 that folds through the SAME `severity_weights × per_kind_weights × count`
 machinery a goldfive drift instrument folds through, so an operator tunes
 an `adk_events` contract with the same knobs.
@@ -173,9 +173,9 @@ an `adk_events` contract with the same knobs.
 |---|---|---|---|---|
 | tool invocations | count of `tool_call` | `task_started` | — | denominator of the failure ratio |
 | tool failures | count of `tool_response` with error status | `task_failed` | — | numerator of `task_failure_ratio`, the `failure:tasks` channel member |
-| errors / exceptions | count of `error` events | `DriftCount("tool_error", …)` | critical | a surfaced execution error is worst-severity drift |
-| retry loops | a `tool_call` whose `(tool, args)` repeats an earlier `tool_call` | `DriftCount("looping_tool_call", …)`, one per repeat | warning | the canonical "same tool, same args" loop |
-| transfer churn | count of `agent_transfer` | `DriftCount("agent_transfer", …)` | info | excessive handoffs are weak-signal drift (info-weighted so churn shows without swamping) |
+| errors / exceptions | count of `error` events | `MetricCount("drift:tool_error", …)` | critical | a surfaced execution error is worst-severity drift |
+| retry loops | a `tool_call` whose `(tool, args)` repeats an earlier `tool_call` | `MetricCount("drift:looping_tool_call", …)`, one per repeat | warning | the canonical "same tool, same args" loop |
+| transfer churn | count of `agent_transfer` | `MetricCount("drift:agent_transfer", …)` | info | excessive handoffs are weak-signal drift (info-weighted so churn shows without swamping) |
 | model usage | count of `model_usage`; sum of input+output tokens | `llm_call_count` → `cost:llm_calls`; `token_count` → `cost:tokens_spent` | — | the cost envelope |
 | output size | summed `agent_message` text length | `agent_text_chars` → `output:chars` | — | the output envelope |
 | turn / latency envelope | `agent_message` / `user_message` order | `agent_turns` / `user_turns` → `turns_completed`, memory/context heuristics | — | multi-turn shape signals |
@@ -221,7 +221,7 @@ No telemetry at all. The input is a bare transcript JSONL (lines of
 `{"role": "user"|"assistant", "content": "…"}`), or nothing. The
 `transcript` dialect produces:
 
-- **no drift** (`drift_counts == ()`), **no task counts**, **no tokens**;
+- **no drift** (`metric_counts == ()`), **no task counts**, **no tokens**;
 - `agent_turns` / `user_turns` reconstructed from the transcript (so the
   zicato-derived multi-turn *feature* signals, memory-failure and
   context-loss, still work, because they are features rather than loss)
@@ -233,7 +233,7 @@ Scoring degrades to **predicates + optional in-run judges only**.
 ### 5.1 The degrade decision: explicit zero-drift, no renormalization
 
 The drift channel is structurally `0.0` under `transcript`: with
-`drift_counts == ()` and `plan_revisions == 0`, `builtin_drift_loss`
+`metric_counts == ()` and `plan_revisions == 0`, `builtin_drift_loss`
 returns `0.0`, so the `drift` component is `namespace_weights["drift:"]
 × 0 = 0`. The `judge:` channel is likewise structurally empty. The
 scalar reduces to the pass/miss term (`pass_weight × (1 - mean_score)`)
@@ -308,16 +308,9 @@ carries `drift_reducer` across the worker boundary, with zero new
 plumbing. The worker reduces under the contract's dialect and never under
 a guessed default.
 
-**Omit-at-default.** `telemetry_dialect` is listed in
-`epoch/contract.py::_SCORING_OMIT_AT_DEFAULT_FIELDS`, so while it holds
-its `"goldfive"` default the scoring canonical form omits the key
-entirely, so a contract that leaves the dialect at its default hashes
-byte-identically to one that does not carry the key at all, and no epoch
-rolls (the contract-hash parity gate stays green). A non-default dialect
-(`adk_events` or `transcript`) reintroduces the key and rolls the epoch,
-as any other weight change does. The contract pins the dialect in both
-directions: setting it rolls, and reverting it to `goldfive` rolls back
-to the original hash.
+The complete effective scoring configuration includes `telemetry_dialect`.
+Changing the effective dialect changes the evaluation contract and rolls the
+epoch. The selected epoch supplies the same dialect to every worker.
 
 ## 7. Determinism
 
@@ -329,7 +322,7 @@ per dialect:
 - `goldfive` — unchanged; the JSONL is the canonical record.
 - `adk_events` — the walk is order-deterministic; the retry-loop rule
   keys on canonical (`sort_keys=True`) `args` JSON so key ordering in the
-  source cannot flip a verdict; `drift_counts` is `sorted()` before it is
+  source cannot flip a verdict; `metric_counts` is `sorted()` before it is
   frozen, so map-iteration order never leaks.
 - `transcript` — a pure function of the transcript lines.
 
@@ -353,5 +346,5 @@ A change to the effective dialect changes the evaluation contract.
 |---|---|
 | The single-producer telemetry path + `LossProfile` shape | [TELEMETRY.md](TELEMETRY.md) |
 | The drift-loss scalar formula | [SCORING.md](SCORING.md) |
-| Contract hashing + omit-at-default | `epoch/contract.py` |
+| Complete evaluation contract hashing | `epoch/contract.py` |
 | Preflight warn/refuse house style | [OVERFITTING.md](OVERFITTING.md) / `epoch/preflight.py` |

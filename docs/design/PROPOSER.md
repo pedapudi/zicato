@@ -788,14 +788,14 @@ re-quotes span content as a Python string literal, so a span edit is
 structurally incapable of breaking syntax or dropping an import. For a
 **file-marker `replace`**, though, the new content is an entire post-edit
 module that must satisfy every constraint in
-[MUTATION-SURFACE.md](MUTATION-SURFACE.md) §6 — the parse check (`A1`), id
-resolution (`A2`), placeholder survival (`A3`), and import preservation
-(`A4`). Emitting a whole module in one shot and hoping it satisfies all four
+[MUTATION-SURFACE.md](MUTATION-SURFACE.md) §6 — the parse check (`invalid_source`), id
+resolution (`missing_mutation`), placeholder survival (`missing_placeholder`), and import preservation
+(`removed_import`). Emitting a whole module in one shot and hoping it satisfies all four
 is the workload a tool-using agent exists to avoid, and a violation costs a
 whole episode.
 
 `validate_patches` (`src/zicato/proposer/validate.py`) is a **linter for
-patches**. The proposer edits, validates, sees `A4: dropped 'import re'`,
+patches**. The proposer edits, validates, sees `removed_import: dropped 'import re'`,
 fixes it, validates again, and only then answers.
 
 Under the Foe runtime the loop is not optional and not advisory: it is
@@ -840,7 +840,7 @@ whichever gate a change hits first.
 
 Two structural consequences follow:
 
-- **The tier-3 probe lives in its own module** (`_load_probe.py`) and is
+- **The harness load probe lives in its own module** (`_load_probe.py`) and is
   reached by *spawning a subprocess* rather than by importing the adapter
   factory. That is what keeps the adapter packages on the forbidden list
   instead of forcing an exemption, and it contains `adapter.load`'s arbitrary
@@ -857,24 +857,25 @@ every module in the repo reaches them through
 `core.types → core.scoring_config`, which imports them for *type definitions*.
 That edge is a type-model artifact rather than a capability.
 
-### The three tiers
+### Validation stages
 
-Stages run in order and stop at the first that fails — there is nothing to lint
-in a tree that would not apply. The tool returns
-`{"ok": bool, "errors": [...], "tiers": {...}}`; `errors` is the flat list to
-act on, `tiers` says which stage each finding came from.
+Structure and application must succeed before static analysis or harness
+loading. Static-analysis findings and load failures are reported together.
+The tool returns
+`{"ok": bool, "errors": [...], "stages": {...}}`; `errors` is the flat list to
+act on, `stages` says which stage each finding came from.
 
-| Tier | What it runs | Reuses |
+| Stage | What it runs | Reuses |
 |---|---|---|
-| 1 **structure + apply** (always on) | the `patches` shape pass, the cross-check pass (mutation-id resolution, op/payload discrimination, `min`/`max`, enum domains), the pre-image guard (`content_hash` from the drafted-against manifest vs a fresh enumeration), the pre-apply surface check, an all-or-nothing apply into a scratch copy of the parent snapshot, then A1–A4 | `PATCHES_JSON_SCHEMA` + `parse_patch_list` (`structured.py`), `validate_patches` + `validate_post_apply` (`mutation/validator.py`), `apply_patches` (`mutation/applier.py`) |
-| 2 **static analysis** (opt-in, contract-declared) | the workspace's declared linter / type-checker set over the scratch tree | the tools already in zicato's environment, via `sys.executable -m` |
-| 3 **load probe** (on whenever the workspace has a config to resolve an adapter from) | `adapter.load` against the scratch snapshot in a subprocess with a timeout — the same call the tournament makes before any entry executes, one expensive round earlier | `make_adapter_from_config` + `load_workspace_config`, in the child process |
+| **Structure and application** (always on) | the `patches` shape pass, the cross-check pass (mutation-id resolution, op/payload discrimination, `min`/`max`, enum domains), the pre-image guard (`content_hash` from the drafted-against manifest vs a fresh enumeration), the pre-apply surface check, an all-or-nothing apply into a scratch copy of the parent snapshot, then post-apply checks | `PATCHES_JSON_SCHEMA` + `parse_patch_list` (`structured.py`), `validate_patches` + `validate_post_apply` (`mutation/validator.py`), `apply_patches` (`mutation/applier.py`) |
+| **Static analysis** (opt-in, contract-declared) | the workspace's declared linter / type-checker set over the scratch tree | the tools already in zicato's environment, via `sys.executable -m` |
+| **Harness loading** (on whenever the workspace has a config to resolve an adapter from) | `adapter.load` against the scratch snapshot in a subprocess with a timeout — the same call the tournament makes before any entry executes, one expensive round earlier | `make_adapter_from_config` + `load_workspace_config`, in the child process |
 
-Tier 1 reimplements nothing: every check it runs is machinery the round
+Structure and application reuse the checks that the round
 pipeline already applies after the proposer answers. The tool's contribution is
 running it *before*.
 
-**Tier 2 reports a delta rather than raw findings.** Each declared check runs
+**Static analysis reports added findings.** Each declared check runs
 over the parent tree *and* the scratch tree; only findings present in the second and
 absent from the first are errors. Real trees carry lint debt, and a validator
 that blamed a patch for the tree it landed in would fail every draft and teach
@@ -892,14 +893,15 @@ missing is a validator the proposer learns to distrust.
 
 ### The static-check set is contract, and it is a closed registry
 
-Tier 2's set is declared at `contract.proposer_static_checks` in the
+The static-check set is declared at `contract.proposer_static_checks` in the
 workspace's `config.json` — the same `contract` block that carries
 `proposer_path` — and folded into the proposer component of the contract hash
 by `_canon_proposer`. It is contract rather than configuration: changing which
 checks the proposer must satisfy before it will emit a patch changes which
-patches it accepts from itself, hence what it proposes. The empty default is
-**omitted from the canonical form**, so a workspace that configures no static
-checks keeps the hash it has (§4's omit-at-default discipline).
+patches it accepts from itself, hence what it proposes. The canonicalizer
+sorts the declared check names and includes the set when nonempty. Scoring
+configuration separately includes every declared field and default. No
+cross-version hash guarantee follows from the empty check set.
 
 The declarable names are a **closed registry** (`STATIC_CHECKS`: `ruff`,
 `ruff-format`, `mypy`, `compileall`) rather than operator-supplied command
@@ -911,9 +913,9 @@ it to the registry rather than gaining a way to name any command.
 ### The pre-image guard
 
 `MutationPoint.content_hash` records the text a mutation point held at
-enumeration. The applier does not compare it; tier 1 does.
+enumeration. Structural validation compares it before application.
 
-Tier 1 compares `content_hash` for each patched point between
+Structural validation compares `content_hash` for each patched point between
 **the manifest the proposal was drafted against** (`ProposerToolContext.mutations`,
 which is an `enumerate_mutations` result) and **a fresh enumeration of the parent
 snapshot** at validate time. A point whose hash moved between the two was
@@ -936,7 +938,7 @@ already been validated, all-or-nothing; a staleness rejection there would
 surface as a failed derive with no route back to the proposer that could fix it.
 Catching it in `validate_patches` puts the finding where a fix is still cheap.
 A point that has *vanished* rather than moved is left to the post-apply
-id-resolution check (`A2`), which reports it against the post-apply tree with a
+id-resolution check (`missing_mutation`), which reports it against the post-apply tree with a
 clearer message, so that one fault costs one fix rather than two.
 
 > ⛔ The standing prohibition is unchanged: **no proposer tool may write to the
@@ -1039,11 +1041,10 @@ A `config.json` sketch (other keys elided):
 
 ```jsonc
 {
-  "adk_entrypoint": "my_pkg.agent:root_agent",
-  "mutable_trees": ["src/my_pkg"],
+  "adapter": {"kind": "adk", "entrypoint": "my_pkg.agent:root_agent", "mutable_trees": ["src/my_pkg"]},
   "contract": {
     "board_path":   "/abs/board.jsonl",
-    "rubric_path":  "/abs/brief.md",       // the brief, under its on-disk key
+    "brief_path":   "/abs/brief.md",
     "scoring_path": "/abs/scoring.json",
     "proposer_path": "/abs/proposers/fancy" // OPTIONAL — absent ⇒ no skills
   }
@@ -1074,7 +1075,7 @@ epochs' proposals came from two different proposers and are not comparable.
 
 | Aggregate | Read from |
 |---|---|
-| `validator_failure_rates` (A1–A4 + `unclassified`) | `proposal_attempted.errors`, classified by the code `validate_post_apply` stamps |
+| `validator_failure_rates` (post-apply checks + `unclassified`) | `proposal_attempted.errors`, classified by the code `validate_post_apply` stamps |
 | `validation_failure_rate` | the same, any-check |
 | `screen_veto_rate` | `candidate_screened.vetoed` over `candidate_screened` |
 | `revision_success_rate` | the `revise` screens that were not vetoed |
@@ -1094,7 +1095,7 @@ Three honesty rules are structural:
   information, but flagged.
 
 **Post-apply classification is structural.** `validate_post_apply` prefixes each
-error string with its check code (`A4: Post-apply file … dropped top-level
+error string with its check code (`removed_import: Post-apply file … dropped top-level
 imports: …`) and `classify_post_apply_error` is the one reader of that prefix.
 The prose after the code stays free to reword; nothing regexes the sentence.
 An error carrying no recognised code counts under `unclassified` — the honest

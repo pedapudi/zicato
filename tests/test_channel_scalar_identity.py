@@ -28,7 +28,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from zicato.core import DriftCount, JudgeLoss, LossProfile, ScoringWeights  # noqa: E402
+from zicato.core import JudgeLoss, LossProfile, MetricCount, ScoringWeights  # noqa: E402
 from zicato.tournament.scoring import aggregate_generation_score  # noqa: E402
 from zicato.tournament.unit_cache import _average_losses  # noqa: E402
 
@@ -39,7 +39,7 @@ def _profile(entry_id: str, **overrides: object) -> LossProfile:
         "entry_id": entry_id,
         "generation_id": "v0",
         "epoch_id": "e0",
-        "drift_counts": (),
+        "metric_counts": (),
         "plan_revisions": 0,
         "task_failure_ratio": 0.0,
         "runtime_ms": 0,
@@ -88,9 +88,9 @@ def test_a_custom_judge_only_run_scores_what_the_judges_weigh() -> None:
     profile = _profile(
         "a",
         pass_fail=True,
-        drift_counts=(
-            DriftCount(kind="custom:precision", severity="warning", count=2),
-            DriftCount(kind="custom:unlisted", severity="info", count=1),
+        metric_counts=(
+            MetricCount(name="drift:custom:precision", severity="warning", count=2),
+            MetricCount(name="drift:custom:unlisted", severity="info", count=1),
         ),
         per_judge_loss=(
             JudgeLoss(judge_name="precision", raw_loss=6.0, weight=3.0, weighted_loss=18.0),
@@ -210,7 +210,7 @@ def test_per_kind_weights_may_not_claim_the_custom_kind() -> None:
 
 
 def test_not_completed_round_trips_through_loss_json(tmp_path: Path) -> None:
-    """The flag survives the write/read cycle, and defaults False when absent.
+    """The flag survives the write/read cycle and is required in a complete record.
 
     ``not_completed_reason`` is legitimately ``None`` for an abort whose
     adapter supplied no reason, so the flag has to be its own field: reading
@@ -229,7 +229,8 @@ def test_not_completed_round_trips_through_loss_json(tmp_path: Path) -> None:
     payload = json.loads(path.read_text())
     del payload["not_completed"]
     path.write_text(json.dumps(payload))
-    assert read_loss_profile(path).not_completed is False
+    with pytest.raises(ValueError, match="not_completed"):
+        read_loss_profile(path)
 
 
 def test_one_failed_replicate_makes_the_folded_unit_not_completed() -> None:

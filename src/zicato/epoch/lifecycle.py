@@ -41,6 +41,7 @@ import tempfile
 import warnings
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -142,118 +143,31 @@ def _make_epoch_id(workspace_root: Path, name: str) -> str:
 
 
 def scoring_to_dict(weights: ScoringWeights) -> dict[str, Any]:
-    """Serialize :class:`ScoringWeights` to the frozen ``scoring.json`` shape.
-
-    Field-enumerating (and recursive over the nested
-    :class:`TournamentStructure` / :class:`OverfittingConfig` /
-    :class:`LadderConfig`) via
-    :func:`zicato.epoch.contract_serde.dataclass_to_jsonable`, so adding a
-    field to any of those dataclasses is covered automatically and the
-    frozen snapshot can never silently drop a field behind the
-    field-enumerating contract canonicalizer (issue #13). The output is
-    byte-compatible with the historical hand-written form: the tournament
-    structure is still emitted under the ``"tournament"`` key.
-    """
+    """Write complete effective scoring settings to the frozen scoring file."""
     return weights.to_json()
 
 
 def _scoring_from_dict(d: dict[str, Any]) -> ScoringWeights:
-    """Decode the epoch's recorded scoring using the shared historical rules."""
-    from zicato.workspace_loader import historical_scoring_weights_from_dict  # noqa: PLC0415
+    """Validate saved scoring settings through the shared reader."""
+    from zicato.workspace_loader import scoring_weights_from_dict  # noqa: PLC0415
 
-    return historical_scoring_weights_from_dict(d)
+    return scoring_weights_from_dict(d)
 
 
 def _config_to_dict(cfg: EpochConfig) -> dict[str, Any]:
-    return {
-        # Record-format version: stamped at write, checked at read. An absent
-        # stamp reads as version 1, so an epoch written before it loads.
-        "format_version": RECORD_FORMAT_VERSION,
-        "id": cfg.id,
-        "name": cfg.name,
-        "created_at": cfg.created_at,
-        "board_path": str(cfg.board_path),
-        "brief_path": str(cfg.brief_path),
-        "scoring": scoring_to_dict(cfg.scoring),
-        "closed": cfg.closed,
-        "closed_at": cfg.closed_at,
-        # ``None`` ⇒ an epoch written before contract hashing, stored as
-        # null. A newly created epoch always carries a computed hash.
-        "contract_hash": cfg.contract_hash,
-        # System revisions whose behavior contributes to the contract hash.
-        # Stored explicitly so an archived workspace remains auditable without
-        # reversing an opaque hash.
-        "implementation_identity": dict(cfg.implementation_identity),
-        "goal": cfg.goal,
-        # ``None`` ⇒ built-in default proposer. Written as null so an
-        # epoch that never configured a proposer round-trips cleanly.
-        "proposer_path": str(cfg.proposer_path) if cfg.proposer_path is not None else None,
-        # Measured A/A noise floor (runtime measurement, never hashed).
-        # ``None`` ⇒ never measured; written as null so it round-trips.
-        "noise_floor": cfg.noise_floor,
-        # Contract pre-flight verdict (runtime measurement, never hashed).
-        # ``None`` ⇒ never run; written as null so it round-trips.
-        "preflight": cfg.preflight,
-        **(
-            {"applied_proposer_recommendations": list(cfg.applied_proposer_recommendations)}
-            if cfg.applied_proposer_recommendations
-            else {}
-        ),
-    }
+    """Serialize the complete epoch record from its field declarations."""
+    from zicato.core.configuration import dataclass_to_jsonable  # noqa: PLC0415
+
+    return {"format_version": RECORD_FORMAT_VERSION, **dataclass_to_jsonable(cfg)}
 
 
 def _config_from_dict(d: dict[str, Any]) -> EpochConfig:
-    # ``contract_hash`` defaults to ``None`` so epochs written before
-    # contract-hash auto-epoching landed load cleanly — see
-    # :class:`zicato.core.types.EpochConfig` and the contract module. A
-    # on-disk ``""`` is normalised to ``None``, which downstream reads as
-    # "this epoch carries no hash, so it never rolls".
-    #
-    # ``brief_path`` is the current key; ``rubric_path`` is the
-    # pre-rename name, still accepted so an epoch ``config.json`` written
-    # before the field rename keeps loading.
-    #
-    # ``goal`` defaults to "" so epochs written before the field landed
-    # load as "no goal recorded".
-    #
-    # ``proposer_path`` defaults to ``None`` (the built-in default
-    # proposer) so an epoch ``config.json`` written before the field
-    # landed loads cleanly.
-    raw_proposer = d.get("proposer_path")
-    raw_floor = d.get("noise_floor")
-    raw_preflight = d.get("preflight")
-    raw_identity = d.get("implementation_identity")
-    return EpochConfig(
-        id=d["id"],
-        name=d["name"],
-        created_at=d["created_at"],
-        board_path=Path(d["board_path"]),
-        brief_path=Path(d.get("brief_path") or d["rubric_path"]),
-        scoring=_scoring_from_dict(d.get("scoring", {})),
-        closed=bool(d.get("closed", False)),
-        closed_at=d.get("closed_at", ""),
-        contract_hash=(str(raw_hash) if (raw_hash := d.get("contract_hash")) else None),
-        implementation_identity=(
-            {
-                key: value
-                for key, value in raw_identity.items()
-                if isinstance(key, str) and (isinstance(value, str) or type(value) is int)
-            }
-            if isinstance(raw_identity, dict)
-            else {}
-        ),
-        goal=str(d.get("goal", "")),
-        proposer_path=Path(raw_proposer) if raw_proposer else None,
-        # ``noise_floor`` defaults to ``None`` (never measured) so epochs
-        # written before the calibration surface landed load cleanly.
-        noise_floor=raw_floor if isinstance(raw_floor, dict) else None,
-        # ``preflight`` defaults to ``None`` (never run) so epochs written
-        # before the pre-flight surface landed load cleanly.
-        preflight=raw_preflight if isinstance(raw_preflight, dict) else None,
-        applied_proposer_recommendations=tuple(
-            str(item) for item in (d.get("applied_proposer_recommendations") or [])
-        ),
-    )
+    """Validate the supported epoch fields before constructing its saved state."""
+    from zicato.core.configuration import authored_dataclass_from_json  # noqa: PLC0415
+
+    body = dict(d)
+    body.pop("format_version", None)
+    return authored_dataclass_from_json(EpochConfig, body, path="epoch")
 
 
 def _write_config(workspace_root: Path, cfg: EpochConfig) -> None:
@@ -304,9 +218,6 @@ def load_epoch(workspace_root: Path, epoch_id: str) -> EpochConfig:
     raw = workspace_backend(workspace_root, start=False).read_json(epoch_config_key(epoch_id))
     if raw is None:
         raise FileNotFoundError(f"epoch {epoch_id!r} has no config.json under {workspace_root}")
-    # Record-format guard: absent ⇒ version 1, so an epoch written before the
-    # stamp keeps loading; a future incompatible version refuses with a clear
-    # error.
     check_record_format(raw, f"epochs/{epoch_id}/config.json")
     return _config_from_dict(raw)
 
@@ -337,10 +248,7 @@ def list_epochs(workspace_root: Path) -> list[EpochConfig]:
             continue
         if raw is None:
             continue
-        # Record-format guard: a future incompatible config.json is a LOUD
-        # refusal rather than a silent skip. Unlike a torn in-progress write,
-        # the record is intact, and the operator must know why it will not
-        # load.
+        # A complete unsupported record must be reported rather than skipped.
         check_record_format(raw, f"epochs/{epoch_id}/config.json")
         try:
             out.append(_config_from_dict(raw))
@@ -434,25 +342,6 @@ def _prepare_epoch(
             "new_epoch: pass either `contract` (the resolved live contract) or the "
             "entrypoint/mutable_trees/proposer_path shorthand, not both — with both, "
             "one spelling would silently lose"
-        )
-
-    from dataclasses import replace
-
-    from zicato.core.tournament import read_promote_confidence_threshold, read_replicate_budget
-
-    # Typed callers already have effective settings. Persist an enabled implicit
-    # budget before authored hashing can apply a different omission default.
-    params = weights.tournament_structure.params
-    if (
-        read_promote_confidence_threshold(params) is not None
-        and "promote_confidence_replicates" not in params
-    ):
-        weights = replace(
-            weights,
-            tournament_structure=replace(
-                weights.tournament_structure,
-                params={**params, "promote_confidence_replicates": read_replicate_budget(params)},
-            ),
         )
 
     # Validate optional integration documents before closing an epoch or

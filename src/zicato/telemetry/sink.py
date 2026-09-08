@@ -156,7 +156,7 @@ def resolve_harmonograf_url(
         return inherited.telemetry.web_url
     if workspace_config:
         selected = resolve_configuration(workspace_config).values.integration.harmonograf_url
-        return selected.strip() or str(workspace_config.get("harmonograf_url", "")).strip()
+        return selected.strip()
     return ""
 
 

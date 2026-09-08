@@ -2,7 +2,7 @@
 
 These tests cover the new namespaced :class:`MetricCount` outputs
 (``cost:*``, ``output:*``, ``schema:*``, ``drift:*``) alongside the
-existing :attr:`LossProfile.drift_counts` invariant. The drift-side
+existing :attr:`LossProfile.metric_counts` invariant. The drift-side
 expectations are tested in :mod:`tests.test_telemetry_reducer`.
 """
 
@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+
+import pytest
 
 from zicato.core import (
     BoardEntry,
@@ -279,87 +281,23 @@ def test_loss_profile_json_round_trip_carries_metric_counts(tmp_path: Path) -> N
     write_loss_profile(profile, target)
     re_read = read_loss_profile(target)
 
-    # Drift_counts identical.
-    assert re_read.drift_counts == profile.drift_counts
-    # metric_counts identical (order preserved).
     assert re_read.metric_counts == profile.metric_counts
+    assert "drift_counts" not in json.loads(target.read_text())
+    from zicato.telemetry.reducer import loss_profile_from_dict, loss_profile_to_dict
+
+    assert loss_profile_from_dict(loss_profile_to_dict(profile)) == profile
     # Scalar fields preserved.
     assert re_read.tokens_spent == profile.tokens_spent
     assert re_read.output_chars == profile.output_chars
     assert re_read.schema_failures == profile.schema_failures
 
 
-def test_read_loss_profile_back_compat_loads_old_json_without_metric_fields(
-    tmp_path: Path,
-) -> None:
-    """A loss.json without metric_counts / scalar fields still loads."""
-    old_payload = {
-        "run_id": "r1",
-        "entry_id": "e1",
-        "generation_id": "v0",
-        "epoch_id": "ep",
-        "drift_counts": [{"kind": "off_topic", "severity": "warning", "count": 2}],
-        "plan_revisions": 0,
-        "task_failure_ratio": 0.0,
-        "runtime_ms": 100,
-        "wall_clock_budget_exceeded": False,
-        "expectation_result": None,
-        "drift_loss": 1.0,
-        "pass_fail": None,
-        "turns_completed": None,
-        "memory_failure_count": None,
-        "context_loss_count": None,
-    }
-    target = tmp_path / "old.json"
-    with open(target, "w", encoding="utf-8") as f:
-        json.dump(old_payload, f)
-    profile = read_loss_profile(target)
-    assert profile.metric_counts == ()
-    assert profile.tokens_spent == 0
-    assert profile.output_chars == 0
-    assert profile.schema_failures == 0
-    # unified_metrics() synthesises the drift-namespace view from
-    # drift_counts when metric_counts is empty, and derives the run-outcome
-    # channels from the first-class fields (a profile written before those
-    # fields existed reads as "completed, no task failures").
-    unified = profile.unified_metrics()
-    assert [mc.name for mc in unified] == [
-        "drift:off_topic",
-        "failure:tasks",
-        "failure:not_completed",
-        "runtime:seconds",
-    ]
-    assert {mc.name: mc.count for mc in unified}["failure:not_completed"] == 0.0
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), "3", True])
+def test_loss_decoder_rejects_invalid_measured_values(value: object) -> None:
+    from zicato.telemetry.reducer import loss_profile_from_dict, loss_profile_to_dict
+    from zicato.testing.fixtures import make_loss_profile
 
-
-def test_unified_metrics_after_reducer_emit_does_not_double_count_drift(
-    tmp_path: Path,
-) -> None:
-    """The reducer puts drift entries in metric_counts under the ``"drift:"``
-    namespace; :meth:`LossProfile.unified_metrics` must not double-count them."""
-    events_path = tmp_path / "events.jsonl"
-    _write_events_jsonl(
-        events_path,
-        [
-            {
-                "run_id": "r",
-                "drift_detected": {
-                    "kind": "DRIFT_KIND_OFF_TOPIC",
-                    "severity": "DRIFT_SEVERITY_WARNING",
-                },
-            },
-        ],
-    )
-    profile = reduce_loss(
-        events_jsonl_path=events_path,
-        entry=_single_turn_entry(),
-        generation_id="v0",
-        epoch_id="ep1",
-        expectation_result=None,
-        runtime_ms=100,
-        wall_clock_budget_exceeded=False,
-        weights=_weights(),
-    )
-    unified = profile.unified_metrics()
-    names = [m.name for m in unified]
-    assert names.count("drift:off_topic") == 1
+    payload = loss_profile_to_dict(make_loss_profile())
+    payload["metric_counts"] = [{"name": "drift:off_topic", "severity": "warning", "count": value}]
+    with pytest.raises(ValueError):
+        loss_profile_from_dict(payload)

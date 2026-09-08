@@ -61,9 +61,9 @@ def _single_patch_experiment(core_idea: str, why: str, new_content: str, rationa
                 "core_idea": core_idea,
                 "modulating": ["style_rules"],
                 "why": why,
-                "expected_drift_movements": [
+                "expected_metric_movements": [
                     {
-                        "kind": "unexpected_output",
+                        "metric_name": "drift:unexpected_output",
                         "direction": "decrease",
                         "magnitude": "medium",
                     }

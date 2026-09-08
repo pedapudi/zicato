@@ -110,8 +110,9 @@ brief / scoring, run `zicato evolve`, and the right thing happens.
 `evolve` reduces these to one `sha256` **contract hash**
 (`zicato/epoch/contract.py`), stored on the `EpochConfig.contract_hash` at
 creation. The hash is over a **canonicalized** form, so spurious edits do not
-roll: a reordered board, CRLF churn in the brief, float-precision noise in
-`scoring.json`, and registration-order differences in the trees are all no-ops.
+roll: board row order, brief line endings, equivalent typed numeric spellings,
+and mutable-tree registration order do not change identity. Distinct effective
+scoring values retain their precision and change the hash.
 
 ### 4.2 When does it roll vs continue?
 
@@ -121,12 +122,13 @@ the resolved epoch is pinned for every round (never re-rolls mid-flight).
 | Current epoch | auto-epoch ON (default) | `--no-auto-epoch` |
 |---|---|---|
 | none yet | create the first epoch (`e0`) from the contract, run | error: run `zicato epoch new` |
-| hash **matches** (or is empty — legacy) | **continue**, no roll | continue |
+| valid hash **matches** | **continue**, no roll | continue |
 | hash **differs** (contract drifted) | **ROLL**: close current (writes `analysis.md`), open a fresh epoch carrying the new contract, run | error naming the changed component |
 
-A legacy epoch with an empty `contract_hash` (created before auto-epoching) is
-treated as **always matching** — the orchestrator never rolls it spuriously.
-`--epoch <id>` skips the check entirely: an explicit target always wins.
+A selected epoch requires a contract hash containing exactly 64 lowercase
+hexadecimal characters and captured `execution.json`. Missing or malformed
+identity is refused. `--epoch <id>` chooses the target but still validates its
+captured contract before execution.
 
 ### 4.3 What forces a roll (any contract change)
 
@@ -218,9 +220,9 @@ run. The hypothesis is mandatory — a schema-invalid proposer response is
 rejected and re-prompted.
 
 - The hypothesis (`HypothesisSpec`): `core_idea`, `modulating` (mutation-point
-  ids), `why` (the pattern observation), `expected_drift_movements` /
+  ids), `why` (the pattern observation), `expected_metric_movements` /
   `expected_metric_movements`, `expected_pass_rate_delta`, `risks`.
-- The outcome (`OutcomeRecord`): realized `drift_movements` (each with a
+- The outcome (`OutcomeRecord`): realized `metric_movements` (each with a
   per-kind `hypothesis_match` — the load-bearing signal: did the proposer
   *reason* or *guess*?), `scalar_score_delta`, `tournament_decision`, and the
   additive structure fields (`structure`, `final_rank`, `match_record`,

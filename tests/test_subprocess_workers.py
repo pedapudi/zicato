@@ -49,18 +49,27 @@ from tests._subprocess_worker_support import (
     evaluation_call_llm,
     target_call_llm,
 )
+from zicato.config import resolve_configuration
 from zicato.core import (
     BoardEntry,
-    DriftCount,
     Expectation,
     ExpectationKind,
     ExpectationResult,
     Generation,
     LossProfile,
+    MetricCount,
     RuntimeConfig,
     ScoringWeights,
     is_infra_abort_cause,
 )
+from zicato.core.adapter_config import DriverImportContext
+from zicato.core.measurement import (
+    MeasurementDraw,
+    artifact_replicate_index,
+    measurement_artifact_path,
+)
+from zicato.core.run_context import RunContext
+from zicato.core.runtime_context import WorkerRuntimeContext
 from zicato.core.types import LadderConfig, OverfittingConfig
 from zicato.core.workspace import (
     events_jsonl_path,
@@ -211,13 +220,19 @@ def _write_args_file(
     adapter_factory: str,
 ) -> None:
     """Write a worker args file pointing at a stub adapter."""
-    sink_path = events_jsonl_path(workspace, "e0", generation.id, entry.id)
-    loss_path = loss_profile_path(workspace, "e0", generation.id, entry.id)
+    sink_path = measurement_artifact_path(
+        events_jsonl_path(workspace, "e0", generation.id, entry.id).parent,
+        "events",
+        0,
+        base_seed=None,
+    )
+    loss_path = measurement_artifact_path(
+        loss_profile_path(workspace, "e0", generation.id, entry.id).parent,
+        "loss",
+        0,
+        base_seed=None,
+    )
     payload = {
-        "workspace_root": str(workspace),
-        "epoch_id": "e0",
-        "generation_id": generation.id,
-        "snapshot_root": str(generation.snapshot_root),
         "entry": {
             "id": entry.id,
             "kind": entry.kind,
@@ -225,18 +240,35 @@ def _write_args_file(
             "input": entry.input,
         },
         "adapter": {"kind": "import", "factory": adapter_factory},
-        "target_role": {"dotted": "tests._subprocess_worker_support:target_call_llm"},
-        "evaluation_role": {"dotted": "tests._subprocess_worker_support:evaluation_call_llm"},
-        "run_id": run_id_for_unit(generation.id, entry.id),
+        "target_role": {
+            "models_role": {"call_llm": "tests._subprocess_worker_support:target_call_llm"}
+        },
+        "evaluation_role": {
+            "models_role": {"call_llm": "tests._subprocess_worker_support:evaluation_call_llm"}
+        },
         "producer_pid": os.getpid(),
         "producer_start_time": pid_start_time(os.getpid()),
         "sink_events_path": str(sink_path),
         "loss_path": str(loss_path),
         "result_path": str(result_path),
-        "instance_id": "test",
-        "seed": None,
-        "harmonograf_url": "",
         "weights": {},
+        "runtime_context": WorkerRuntimeContext(
+            run=RunContext(
+                Path(str(workspace)),
+                "e0",
+                generation.id,
+                run_id_for_unit(generation.id, entry.id),
+                Path(str(generation.snapshot_root)),
+                None,
+            )
+        ).to_json(),
+        "configuration": resolve_configuration(
+            {"runtime": {"instance_id": "test", "seed": None}}
+        ).to_json(),
+        "driver_imports": DriverImportContext().document(),
+        "measurement": MeasurementDraw.from_index(
+            artifact_replicate_index(Path(str(loss_path)).name), base_seed=None
+        ).to_json(),
     }
     args_path.write_text(json.dumps(payload), encoding="utf-8")
 
@@ -272,21 +304,19 @@ def test_worker_runs_entry_end_to_end(tmp_path: Path, replicate: int) -> None:
     args = json.loads(args_path.read_text())
     args["measurement"] = identity
     args["entry"]["context"] = {"replicate_index": str(replicate)}
-    args["loss_path"] = str(
-        Path(args["loss_path"]).parent / "seed-none" / unit_artifact_name("loss", replicate)
-    )
+    args["loss_path"] = str(Path(args["loss_path"]).parent / unit_artifact_name("loss", replicate))
     args["sink_events_path"] = str(
-        Path(args["sink_events_path"]).parent
-        / "seed-none"
-        / unit_artifact_name("events", replicate)
+        Path(args["sink_events_path"]).parent / unit_artifact_name("events", replicate)
     )
-    args["run_id"] = run_id_for_unit(generation.id, entry.id, replicate, base_seed=None)
+    args["runtime_context"]["run"]["run_id"] = run_id_for_unit(
+        generation.id, entry.id, replicate, base_seed=None
+    )
     args_path.write_text(json.dumps(args))
 
     proc = _spawn_worker_blocking(args_path)
     assert proc.returncode == 0, "worker should exit cleanly"
 
-    run_id = args["run_id"]
+    run_id = args["runtime_context"]["run"]["run_id"]
 
     # loss.json was written by the worker.
     loss_path = Path(args["loss_path"])
@@ -341,7 +371,7 @@ def test_worker_captures_unknown_files_before_grading(tmp_path: Path) -> None:
         adapter_factory="tests._subprocess_worker_support:make_artifact_writing_adapter",
     )
     payload = json.loads(args_path.read_text(encoding="utf-8"))
-    payload["scratch_dir"] = str(scratch)
+    payload["runtime_context"]["run"]["scratch_dir"] = str(scratch)
     payload["entry"]["expectation"] = {
         "kind": "predicate",
         "spec": "tests._subprocess_worker_support:artifact_inventory_is_visible",
@@ -351,7 +381,12 @@ def test_worker_captures_unknown_files_before_grading(tmp_path: Path) -> None:
     proc = _spawn_worker_blocking(args_path)
 
     assert proc.returncode == 0, proc.stderr.decode()
-    loss_path = loss_profile_path(workspace, "e0", generation.id, entry.id)
+    loss_path = measurement_artifact_path(
+        loss_profile_path(workspace, "e0", generation.id, entry.id).parent,
+        "loss",
+        0,
+        base_seed=None,
+    )
     manifest_path = loss_path.with_name("artifacts.json")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert [item["path"] for item in manifest["files"]] == [
@@ -408,7 +443,12 @@ def test_worker_penalises_aborted_run_in_loss_json(tmp_path: Path) -> None:
     assert result["aborted"] is False
     assert result["run_result"]["aborted"] is True
 
-    loss_path = loss_profile_path(workspace, "e0", generation.id, entry.id)
+    loss_path = measurement_artifact_path(
+        loss_profile_path(workspace, "e0", generation.id, entry.id).parent,
+        "loss",
+        0,
+        base_seed=None,
+    )
     assert loss_path.exists()
     profile = read_loss_profile(loss_path)
     # The crash is charged, not rewarded. The charge is the failure channel's
@@ -418,7 +458,7 @@ def test_worker_penalises_aborted_run_in_loss_json(tmp_path: Path) -> None:
     assert profile.drift_loss == 0.0
     assert profile.not_completed is True
     assert profile.task_failure_ratio == pytest.approx(1.0)
-    failure = {mc.name: mc.count for mc in profile.unified_metrics()}
+    failure = {mc.name: mc.count for mc in profile.scoring_metrics()}
     assert failure["failure:not_completed"] == 1.0
     assert failure["failure:tasks"] == pytest.approx(1.0)
     # ...and the charge is attributable: the adapter's own abort reason is
@@ -457,7 +497,7 @@ def test_per_judge_weights_survive_worker_serialize_deserialize() -> None:
     contribute 28 to the judge channel. The dropped-weight bug yields 14.
     """
     from zicato._tournament_worker import _weights_from_args
-    from zicato.core import DriftCount
+    from zicato.core import MetricCount
     from zicato.telemetry.reducer import compute_per_judge_loss
     from zicato.tournament.runner import _weights_spec
 
@@ -476,7 +516,7 @@ def test_per_judge_weights_survive_worker_serialize_deserialize() -> None:
     assert round_tripped.default_judge_weight == 1.0
 
     # raw drift = count 14 × info severity 1.0 = 14.
-    drift = (DriftCount(kind="custom:file_findability", severity="info", count=14),)
+    drift = (MetricCount(name="drift:custom:file_findability", severity="info", count=14),)
 
     weighted = sum(jl.weighted_loss for jl in compute_per_judge_loss(drift, round_tripped))
     # 14 raw × per_judge weight 2.0 = 28. The bug (weight dropped to the
@@ -550,13 +590,12 @@ def test_pass_rate_monotonicity_scope_survives_worker_serialize_deserialize() ->
     assert evaluate_gate(parent, child, dropped).decision == "rejected"
 
 
-def test_unknown_monotonicity_scope_token_coerces_to_default() -> None:
-    """A malformed scope token in the args file coerces to the default rather
-    than desyncing the worker's gate-view (defensive deserialise, issue #17)."""
+def test_unknown_monotonicity_scope_token_is_rejected() -> None:
+    """Worker scoring refuses an unknown gate scope before execution."""
     from zicato._tournament_worker import _weights_from_args
 
-    rebuilt = _weights_from_args({"weights": {"pass_rate_monotonicity_scope": "bogus"}})
-    assert rebuilt.pass_rate_monotonicity_scope == "per_entry"
+    with pytest.raises(ValueError, match="scoring.pass_rate_monotonicity_scope"):
+        _weights_from_args({"weights": {"pass_rate_monotonicity_scope": "bogus"}})
 
 
 def test_drift_kind_aggregation_survives_worker_serialize_deserialize() -> None:
@@ -578,7 +617,7 @@ def test_drift_kind_aggregation_survives_worker_serialize_deserialize() -> None:
     import math
 
     from zicato._tournament_worker import _weights_from_args
-    from zicato.core import DriftCount
+    from zicato.core import MetricCount
     from zicato.telemetry.reducer import compute_drift_loss
     from zicato.tournament.runner import _weights_spec
 
@@ -597,7 +636,7 @@ def test_drift_kind_aggregation_survives_worker_serialize_deserialize() -> None:
     assert round_tripped.drift_kind_aggregation == {"looping_reasoning": {"op": "harmonic"}}
     assert round_tripped.pass_transform == {"op": "pow", "exponent": 2.0}
 
-    drift = (DriftCount(kind="looping_reasoning", severity="warning", count=4),)
+    drift = (MetricCount(name="drift:looping_reasoning", severity="warning", count=4),)
     weighted = compute_drift_loss(drift, plan_revisions=0, weights=round_tripped)
     harmonic4 = 1.0 + 1.0 / 2.0 + 1.0 / 3.0 + 1.0 / 4.0
     assert weighted == pytest.approx(3.0 * 2.0 * harmonic4)  # sev × kind × H(4)
@@ -655,11 +694,7 @@ def test_scoring_weights_unified_serde_round_trips_every_field() -> None:
     # The direct method form is the same single serde.
     assert ScoringWeights.from_json(weights.to_json()) == weights
 
-    # Tolerance: a partial / absent payload falls back to defaults per field,
-    # so a stub-adapter test that omits the weights block still gets a usable
-    # default-weighted instance (back-compat with the old reader).
-    assert _weights_from_args({}) == ScoringWeights()
-    assert ScoringWeights.from_json(None) == ScoringWeights()
+    # Authored partial settings resolve declared defaults before serialization.
     assert ScoringWeights.from_json({"per_judge_weights": {"q": 5.0}}).per_judge_weights == {
         "q": 5.0
     }
@@ -815,7 +850,7 @@ def test_full_tournament_persists_charge_before_real_holdout_worker(
                 entry_id=entry.id,
                 generation_id="v0",
                 epoch_id=epoch_id,
-                drift_counts=(DriftCount(kind="off_topic", severity="info", count=2),),
+                metric_counts=(MetricCount(name="drift:off_topic", severity="info", count=2),),
                 plan_revisions=0,
                 task_failure_ratio=0.0,
                 runtime_ms=1,
@@ -824,9 +859,12 @@ def test_full_tournament_persists_charge_before_real_holdout_worker(
                 drift_loss=2.0,
                 pass_fail=True,
             ),
-            loss_profile_path(workspace, epoch_id, "v0", entry.id).parent
-            / "seed-none"
-            / "loss.json",
+            measurement_artifact_path(
+                loss_profile_path(workspace, epoch_id, "v0", entry.id).parent,
+                "loss",
+                0,
+                base_seed=None,
+            ),
         )
 
     launches: list[tuple[str, int | None]] = []
@@ -1232,7 +1270,9 @@ def test_cancellation_keeps_worker_resources_until_supervisor_reaps(
             await asyncio.wait_for(spawned.wait(), timeout=10)
             proc = captured["proc"]
             args_path = captured["args_path"]
-            snapshot = Path(json.loads(args_path.read_text())["snapshot_root"])
+            snapshot = Path(
+                json.loads(args_path.read_text())["runtime_context"]["run"]["snapshot_root"]
+            )
             deadline = time.monotonic() + 10
             while not record_path.exists() and time.monotonic() < deadline:
                 await asyncio.sleep(0.01)
@@ -1356,7 +1396,13 @@ def test_invocation_cancellation_reaps_all_active_workers(
     async def spawn(*args: object, **kwargs: object) -> asyncio.subprocess.Process:
         proc = await real_spawn(*args, **kwargs)
         payload = json.loads(Path(str(args[-1])).read_text())
-        captured.append((proc, pid_start_time(proc.pid), Path(payload["snapshot_root"])))
+        captured.append(
+            (
+                proc,
+                pid_start_time(proc.pid),
+                Path(payload["runtime_context"]["run"]["snapshot_root"]),
+            )
+        )
         return proc
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)

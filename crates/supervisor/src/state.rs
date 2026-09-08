@@ -126,9 +126,8 @@ pub struct ActiveRun {
     /// Worker-reported task progress, when the worker chooses to write
     /// one. Distinct from the supervisor's computed deadline fraction
     /// (`ActiveRunView::progress`); serialized as `reported_progress` so
-    /// the two never collide in `/api/active-runs`. The worker may write
-    /// it under either key.
-    #[serde(default, rename = "reported_progress", alias = "progress")]
+    /// the two never collide in `/api/active-runs`.
+    #[serde(default)]
     pub reported_progress: Option<f64>,
     #[serde(default)]
     pub message: Option<String>,

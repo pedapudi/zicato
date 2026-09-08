@@ -692,9 +692,8 @@ closes even that point. Past the scalar bound the pass-rate rule rejects
 at every margin, carrying only its float-noise tolerance and no operator
 knob.
 
-Two additive `ScoringWeights` fields split the bounds. Both defaults
-reproduce the unsplit behaviour, and both are omitted from the contract
-canonical form at their default, so no existing epoch's hash moves.
+Two `ScoringWeights` fields split the bounds. Their effective values,
+including defaults, are serialized and hashed with the complete configuration.
 `holdout_margin` (`None` ⇒ fall back to `promote_margin`;
 `gate.effective_holdout_margin` resolves it, and it also becomes the
 Ladder's release-threshold base when set) and
@@ -725,13 +724,10 @@ does not create fresh data. Depends on the train/holdout split. The practical ac
 and durable reservation protocol are defined in
 [§"What query budget means"](#what-query-budget-means).
 
-Authored scoring accepts one release threshold. The retired
-`overfitting.ladder.noise_scale` field represented a fixed threshold addition.
-To migrate an authored file, set `ladder.threshold` to its previous threshold
-(or `promote_margin` when null) plus that increment, then remove `noise_scale`.
-A zero increment can simply be removed. This edit changes the evaluation
-contract and rolls the epoch. It does not alter a frozen epoch: historical
-readers preserve its release rule, original bytes, and recorded hash.
+Scoring declares one release threshold, `ladder.threshold`. The effective
+value participates in contract identity. Authored and frozen scoring use the
+same strict decoder; unsupported fields are errors. A changed threshold changes
+the evaluation contract and requires the corresponding epoch selection.
 
 **#3 — Restrict the proposer's per-entry visibility. (SHIPPED.)**
 *What:* §11's restrictions 1–4 — patterns on the training slice, declared

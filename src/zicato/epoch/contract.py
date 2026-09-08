@@ -47,7 +47,6 @@ from zicato.core.adapter_config import (
     adapter_declaration,
     registered_mutable_trees,
 )
-from zicato.core.scoring_config import omit_at_default_fields
 from zicato.driver_imports import driver_import_scope, with_workspace_imports
 from zicato.epoch._storage import RecordError
 from zicato.storage._atomic import atomic_write_text
@@ -405,38 +404,6 @@ def canonical_scoring_json(text: str) -> str:
     return json.dumps(scoring_contract_to_canon(weights), sort_keys=True)
 
 
-def _canon_recorded_scoring(scoring_path: Path) -> str:
-    """Retain recorded scoring identity while runtime decoding migrates its meaning.
-
-    Frozen records containing the retired increment hashed both the increment
-    and the unmodified threshold. Restore those values only in this read path;
-    authored contracts must use the admitted schema.
-    """
-    from zicato.workspace_loader import historical_scoring_weights_from_dict  # noqa: PLC0415
-
-    raw = json.loads(scoring_path.read_text(encoding="utf-8"))
-    weights = historical_scoring_weights_from_dict(raw)
-    canon = cast("dict[str, Any]", scoring_contract_to_canon(weights))
-    overfitting = raw.get("overfitting")
-    ladder = overfitting.get("ladder") if isinstance(overfitting, Mapping) else None
-    if isinstance(ladder, Mapping) and "noise_scale" in ladder:
-        target = canon["overfitting"]
-        assert isinstance(target, dict)
-        target = target["ladder"]
-        assert isinstance(target, dict)
-        threshold = ladder.get("threshold")
-        target["threshold"] = None if threshold is None else float(threshold)
-        target["noise_scale"] = float(ladder["noise_scale"])
-    tournament = raw.get("tournament")
-    params = tournament.get("params") if isinstance(tournament, Mapping) else None
-    if isinstance(params, Mapping):
-        # Historical strategy parameters hashed their supplied disabled tokens.
-        canon["tournament_structure"]["params"].update(
-            {key: params[key] for key in ("rating", "resolver") if key in params}
-        )
-    return json.dumps(canon, sort_keys=True)
-
-
 #: ``ScoringWeights`` fields that carry a dotted-spec pointing at an operator
 #: GRADING plugin (resolved by the shared importer). The canonicalizer expands
 #: each into ``{"spec": ..., "source_sha256": ...}`` via
@@ -449,94 +416,20 @@ _SCORING_PLUGIN_SPEC_FIELDS: frozenset[str] = frozenset(
     {"scalar_fn", "drift_reducer", "outcome_summarizer_spec"}
 )
 
-#: ``ScoringWeights`` (+ nested config) fields OMITTED from the canonical
-#: scoring dict when they hold their dataclass default — DERIVED from field
-#: metadata at import time; no generated source is checked in.
-_SCORING_OMIT_AT_DEFAULT_FIELDS: frozenset[str] = omit_at_default_fields()
-
 
 def scoring_to_canon(weights: object) -> dict[str, object]:
-    """Reduce a :class:`ScoringWeights` to a plain JSON-shaped dict.
+    """Include complete scoring settings and the source identities of grading plugins."""
+    from zicato.core.configuration import dataclass_to_jsonable  # noqa: PLC0415
 
-    Every public field is included so the canonical form is complete
-    and independent of which fields the operator spelled out in their
-    ``scoring.json`` — EXCEPT the purely-additive, default-off fields in
-    :data:`_SCORING_OMIT_AT_DEFAULT_FIELDS`, which are omitted while they hold
-    their default so a contract that predates the field hashes identically (an
-    opt-in field cannot retroactively roll every existing epoch). A
-    non-default value reintroduces the key and rolls the epoch normally.
-
-    The dotted-spec GRADING-plugin fields (:data:`_SCORING_PLUGIN_SPEC_FIELDS`)
-    are NOT folded in as bare strings: each is expanded to
-    ``{"spec": ..., "source_sha256": ...}`` so editing the resolved plugin's
-    source rolls the contract hash (issue #19 cross-cutting #1). This shares the
-    SAME mechanism the board predicates / judges use (see
-    :func:`_canon_dotted_spec`).
-    """
-    from dataclasses import MISSING, fields, is_dataclass
-
-    out: dict[str, object] = {}
-    for f in fields(weights):  # type: ignore[arg-type]
-        value = getattr(weights, f.name)
-        if f.name in _SCORING_OMIT_AT_DEFAULT_FIELDS:
-            # Omission is a persisted-format rule. An authored default may
-            # change while the value omitted from archived identity stays fixed.
-            if "canonical_default" in f.metadata:
-                default_value: object = f.metadata["canonical_default"]
-            elif f.default is not MISSING:
-                default_value = f.default
-            elif f.default_factory is not MISSING:
-                default_value = f.default_factory()
-            else:
-                default_value = object()  # no default ⇒ never matches; always emit
-            if value == default_value:
-                continue
-        if f.name in _SCORING_PLUGIN_SPEC_FIELDS:
-            out[f.name] = _canon_dotted_spec(value if isinstance(value, str) else "")
-        elif is_dataclass(value) and not isinstance(value, type):
-            # A nested frozen dataclass field (e.g. the tournament
-            # structure). Recurse so it canonicalizes structurally —
-            # its `params` mapping is dict-ified, lists become lists —
-            # rather than leaking an unserializable object into the
-            # hash input. This is what folds the tournament structure
-            # into the scoring contract automatically (§4 of the data
-            # model design): switching structures or bumping a param
-            # changes this canonical form and rolls the epoch.
-            out[f.name] = scoring_to_canon(value)
-        elif hasattr(value, "items"):
-            out[f.name] = {k: _canon_value(v) for k, v in value.items()}
-        elif isinstance(value, tuple):
-            out[f.name] = [_canon_value(v) for v in value]
-        else:
-            out[f.name] = value
+    out = dataclass_to_jsonable(weights)
+    for name in _SCORING_PLUGIN_SPEC_FIELDS & out.keys():
+        out[name] = _canon_dotted_spec(out[name])
     return out
 
 
 def scoring_contract_to_canon(weights: object) -> dict[str, object]:
     """Add system-owned evaluator identity to typed scoring configuration."""
-    from dataclasses import fields
-
     out = cast("dict[str, Any]", scoring_to_canon(weights))
-    features = getattr(weights, "experimental", None)
-    if features is not None:
-        values = out.pop("experimental", {})
-        for declared in fields(features):
-            path = declared.metadata.get("recorded_path")
-            if path is None:
-                if declared.name in values:
-                    out.setdefault("experimental", {})[declared.name] = values[declared.name]
-                continue
-            if declared.name not in values and declared.name != "max_generations_per_contract":
-                continue
-            parts = path.split(".")
-            if parts[0] == "tournament":
-                parts[0] = "tournament_structure"
-            target = out
-            for part in parts[:-1]:
-                target = target.setdefault(part, {})
-            target[parts[-1]] = _canon_value(getattr(features, declared.name))
-        # Editor grouping and retired settings do not change existing hash bytes.
-        out["overfitting"]["ladder"]["noise_scale"] = 0.0
     if getattr(weights, "goldfive", None) is None:
         return out
     from zicato.integrations.goldfive import normalize_config  # noqa: PLC0415
@@ -886,13 +779,6 @@ def _compute_contract_hash(
     return _hash_contract(inputs, _canon_scoring(inputs.scoring_path), proposer_spec)
 
 
-def compute_recorded_contract_hash(
-    inputs: ContractInputs, *, proposer_spec: ProposerSpec | None = None
-) -> str:
-    """Hash saved settings through the same stable representation as authored settings."""
-    return _hash_contract(inputs, _canon_recorded_scoring(inputs.scoring_path), proposer_spec)
-
-
 def _hash_contract(inputs: ContractInputs, scoring: str, proposer_spec: ProposerSpec | None) -> str:
     components = [
         _canon_board(inputs.board_path),
@@ -978,30 +864,12 @@ def resolve_contract_inputs(
     workspace_config: Mapping[str, Any] | None = None,
     execution_roles: bytes | None = None,
 ) -> ContractInputs:
-    """Resolve the contract inputs for a workspace from ``config.json``.
+    """Resolve the declared contract, adapter, and execution settings.
 
-    Reads ``{workspace_root}/config.json``, then resolves:
-
-    * ``contract.board_path`` / ``contract.brief_path`` /
-      ``contract.scoring_path`` — the canonical contract source paths
-      recorded by ``zicato epoch register``. The proposer-brief path is also
-      accepted under the older ``contract.rubric_path`` key, so a workspace
-      registered under that name keeps resolving. When the
-      ``contract`` key is absent (a workspace registered before
-      auto-epoching landed) the default convention is used:
-      ``<workspace_root>/board.jsonl``, ``brief.md``, ``scoring.json``
-      relative to the workspace root's parent (the operator's working
-      directory).
-    * ``adk_entrypoint`` — the registered adapter entrypoint.
-    * ``mutable_trees`` — the registered source roots.
-    * ``runtime.proposer_agent`` — the optional external proposer
-      (:func:`zicato.proposer.external.external_proposer_config`).
-
-    Raises
-    ------
-    FileNotFoundError
-        When ``config.json`` is missing. The message suggests running
-        ``zicato epoch register``.
+    Relative contract paths resolve against the workspace's parent. Adapter
+    source directories come from its registration block. An absent proposer
+    path selects the built-in proposer. Incomplete contract publication must
+    finish before these inputs can be used.
     """
     from zicato.workspace.contract_publication import (
         assert_contract_publication_complete,  # noqa: PLC0415
@@ -1020,12 +888,8 @@ def resolve_contract_inputs(
     board_path = Path(
         contract.get("board_path") or _default_contract_path(workspace_root, "board.jsonl")
     )
-    # ``brief_path`` is the current key; ``rubric_path`` is the older name,
-    # still read so a workspace registered under it resolves.
     brief_path = Path(
-        contract.get("brief_path")
-        or contract.get("rubric_path")
-        or _default_contract_path(workspace_root, "brief.md")
+        contract.get("brief_path") or _default_contract_path(workspace_root, "brief.md")
     )
     scoring_path = Path(
         contract.get("scoring_path") or _default_contract_path(workspace_root, "scoring.json")
@@ -1035,7 +899,7 @@ def resolve_contract_inputs(
     from zicato.tournament.worker_transport import adapter_worker_spec  # noqa: PLC0415
 
     adapter_block = config.get("adapter")
-    has_adapter = isinstance(adapter_block, Mapping) or bool(config.get("adk_entrypoint"))
+    has_adapter = isinstance(adapter_block, Mapping)
     worker_spec: dict[str, Any] | None
     if has_adapter:
         adapter = make_adapter_from_config(config, workspace_root=workspace_root)
@@ -1043,7 +907,7 @@ def resolve_contract_inputs(
         worker_spec = adapter_worker_spec(adapter)
     else:
         worker_spec = None
-    entrypoint = str((worker_spec or {}).get("entrypoint") or config.get("adk_entrypoint", ""))
+    entrypoint = str((worker_spec or {}).get("entrypoint") or "")
     mutable_trees = tuple(str(tree) for tree in registered_mutable_trees(config, workspace_root))
     source_specs: list[str] = []
     if isinstance(adapter_block, Mapping) and isinstance(adapter_block.get("factory"), str):
@@ -1088,7 +952,7 @@ def resolve_contract_inputs(
             for tree in (
                 adapter_block["mutable_trees"]
                 if isinstance(adapter_block, Mapping) and "mutable_trees" in adapter_block
-                else config.get("mutable_trees") or config.get("source_roots") or ()
+                else ()
             )
         ),
         adapter_spec=worker_spec,
@@ -1105,27 +969,15 @@ def resolve_contract_inputs(
 
 
 def default_contract_paths(workspace_root: Path) -> dict[str, Path | None]:
-    """Return the default canonical contract source paths for a workspace.
+    """Return board, brief, scoring, and optional proposer paths for a workspace.
 
-    The convention is ``<workspace_root_parent>/board.jsonl``,
-    ``brief.md``, ``scoring.json`` — the operator's live, editable
-    copies sitting alongside the ``.zicato/`` directory. ``zicato
-    register`` records these in ``config.json`` so subsequent commands
-    do not have to re-derive them.
-
-    The proposer-brief default is returned under both ``brief_path``
-    (the current key) and ``rubric_path`` (the older alias) so a caller
-    reading either key resolves.
-
-    The ``proposer_path`` default is ``None`` — no proposer dir, i.e. the
-    built-in default proposer. A workspace opts into a proposer dir by
-    setting ``contract.proposer_path`` explicitly.
+    Editable files live beside the workspace directory. An absent proposer
+    path selects the built-in proposer.
     """
     brief_default = Path(_default_contract_path(workspace_root, "brief.md"))
     return {
         "board_path": Path(_default_contract_path(workspace_root, "board.jsonl")),
         "brief_path": brief_default,
-        "rubric_path": brief_default,
         "scoring_path": Path(_default_contract_path(workspace_root, "scoring.json")),
         "proposer_path": None,
     }

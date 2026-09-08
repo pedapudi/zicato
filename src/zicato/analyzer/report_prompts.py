@@ -87,15 +87,10 @@ def _data_digest(data: EpochReportData) -> str:
         "promoted": data.promoted,
         "rejected": data.rejected,
         "deferred": data.deferred,
-        # CHAMPION-ANCHORED (the last promoted generation, or the baseline):
-        # the score the harness stands behind. The newest generation's
-        # cumulative is a different number whenever the last round rejected,
-        # and it travels under its own name below so the model cannot mistake
-        # a discarded challenger's counterfactual for the lineage's score.
         "final_cumulative_scalar": round(data.final_scalar, 4),
-        "latest_rejected_scalar": (
-            None if data.latest_rejected_scalar is None else round(data.latest_rejected_scalar, 4)
-        ),
+        "latest_rejected_scalar": None
+        if data.latest_rejected_scalar is None
+        else round(data.latest_rejected_scalar, 4),
         "board_entry_count": len(data.board_entries),
         "board_entries": [
             {
@@ -119,13 +114,12 @@ def _data_digest(data: EpochReportData) -> str:
                 "why": g.why,
                 "risks": g.risks,
                 "expected_pass_rate_delta": g.expected_pass_rate_delta,
-                "expected_drift_movements": list(g.expected_drift_movements),
+                "expected_metric_movements": list(g.expected_metric_movements),
                 "scalar_score_delta": round(g.scalar_score_delta, 4),
                 "drift_loss_delta": round(g.drift_loss_delta, 4),
                 "pass_rate_delta": round(g.pass_rate_delta, 4),
                 "cumulative_scalar": round(g.cumulative_scalar, 4),
                 "rejection_reason": g.rejection_reason,
-                "drift_movements": [dict(m) for m in g.drift_movements],
                 "metric_movements": [dict(m) for m in g.metric_movements],
                 "patches": [dict(p) for p in g.patches],
             }

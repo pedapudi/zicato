@@ -295,8 +295,8 @@ def _score_generation(gen_id: str, researcher_instruction: str, weights, tmp_pat
 
 def _custom_judge_names(profile) -> set[str]:
     names: set[str] = set()
-    for count in profile.drift_counts:
-        is_custom, judge_name = split_judge_attributed_kind(count.kind)
+    for count in profile.metric_counts:
+        is_custom, judge_name = split_judge_attributed_kind(count.name.removeprefix("drift:"))
         if is_custom and judge_name:
             names.add(judge_name)
     return names

@@ -22,6 +22,8 @@ from zicato.core import ScoringWeights
 from zicato.runtime.lock import WorkspaceLockHeld, acquire_workspace_lock, read_workspace_lock
 from zicato.runtime.state import list_active_runs
 from zicato.tournament import runner
+from zicato.tournament.scoring import read_gen_score
+from zicato.workspace.layout import WorkspaceLayout
 
 pytestmark = pytest.mark.integration
 
@@ -128,6 +130,9 @@ async def test_tournament_retains_writer_through_repeated_cancellation(
     parent_score = {"scalar": 0.0, "generation_id": parent.id, "base_seed": config.seed}
     if entry_point == "run_fast_mode":
         record_tournament_score(root, epoch_id, parent.id, parent_score)
+        stored_parent = read_gen_score(WorkspaceLayout(root), epoch_id, parent.id)
+        assert stored_parent is not None
+        parent_score = stored_parent.to_dict()
 
     async def execute() -> None:
         async with _caller_writer(root, nested) as writer:

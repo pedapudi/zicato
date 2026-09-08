@@ -27,6 +27,7 @@ from zicato.workspace.layout import WorkspaceLayout
 
 def test_nested_lineage_edits_reach_canonical_bytes(tmp_path: Path) -> None:
     body = {
+        "format_version": 1,
         "epochs": [{"id": "epoch", "generations": [{"id": "v0", "child_scalar": 1}]}],
         "extension": {"count": 0, "weight": 0.0},
     }
@@ -53,10 +54,11 @@ def test_nested_lineage_edits_reach_canonical_bytes(tmp_path: Path) -> None:
 
 
 def test_score_and_measurement_edits_reach_history_and_flat_file(tmp_path: Path) -> None:
-    score = decode_gen_score({"scalar": 1, "extension": {"value": 0}})
+    score = decode_gen_score({"format_version": 1, "scalar": 1, "extension": {"value": 0}})
     edited = replace(score, scalar=1.0, mean_score=0.5)
     measurement = replace(ScoreMeasurement(edited, 0, None), round_index=2)
     assert measurement.to_dict() == {
+        "format_version": 1,
         "scalar": 1.0,
         "extension": {"value": 0},
         "mean_score": 0.5,
@@ -69,7 +71,7 @@ def test_score_and_measurement_edits_reach_history_and_flat_file(tmp_path: Path)
     assert type(stored["scalar"]) is float
     assert stored["mean_score"] == 0.5
     assert "drift_loss_mean" not in stored
-    assert score.to_dict() == {"scalar": 1, "extension": {"value": 0}}
+    assert score.to_dict() == {"format_version": 1, "scalar": 1, "extension": {"value": 0}}
 
 
 def test_receipt_edits_compose_candidates_and_progress_then_revalidate(tmp_path: Path) -> None:
@@ -101,12 +103,13 @@ def test_receipt_edits_compose_candidates_and_progress_then_revalidate(tmp_path:
     assert receipt.to_dict() == body
 
 
-def test_tournament_edits_preserve_omission_and_refuse_inconsistent_identity(
+def test_tournament_edits_preserve_state_and_refuse_inconsistent_identity(
     tmp_path: Path,
 ) -> None:
     body = {
         "tournament_id": "epoch:field:v1",
         "epoch_id": "epoch",
+        "state": "settled",
         "structure": "swiss",
         "structure_params": {},
         "ran_at": "2026-06-01",
@@ -121,7 +124,7 @@ def test_tournament_edits_preserve_omission_and_refuse_inconsistent_identity(
         "field_status": [],
     }
     record = decode_field_tournament_record(body)
-    assert record.to_dict() == body and "state" not in record.to_dict()
+    assert record.to_dict() == body and record.to_dict()["state"] == "settled"
     edited = replace(record, state="in_progress")
     write_field_tournament_record(
         tmp_path, epoch_id="epoch", first_challenger_id="v1", record=edited

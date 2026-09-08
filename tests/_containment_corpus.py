@@ -9,6 +9,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from tests._workspace_support import experiment_record
 from zicato.core.mutation import Patch
 from zicato.epoch.containment import build_manifest, write_mutation_policy
 from zicato.epoch.journal import patch_body
@@ -390,7 +391,7 @@ def materialize_case(case: dict[str, Any], root: Path) -> Path:
         policy.write_bytes(bytes.fromhex(case["policy"]))
     generation = root / "epochs" / "epoch" / "generations" / "v1"
     (generation / "patches").mkdir(parents=True)
-    (generation / "experiment.json").write_text(json.dumps(case["experiment"]))
+    (generation / "experiment.json").write_text(json.dumps(experiment_record(**case["experiment"])))
     if case["manifest"] is not None:
         (generation / "containment.json").write_text(json.dumps(case["manifest"]))
     for key, value in case["patch_records"].items():

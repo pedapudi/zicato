@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from zicato.core.scoring_config import ScoringWeights
 
@@ -18,95 +19,19 @@ from zicato.core.scoring_config import ScoringWeights
 
 @dataclass(frozen=True, slots=True)
 class EpochConfig:
-    """The frozen evaluation contract for an epoch.
+    """The saved evaluation settings and runtime observations for an epoch.
 
-    Pinned for the lifetime of the epoch: board, proposer brief, scoring
-    weights. Changing any of these starts a new epoch — see
-    ``docs/design/EPOCHS-AND-JOURNALING.md``.
+    The contract hash identifies the board, brief, effective scoring settings,
+    evaluator implementation, adapter, mutable source paths, and proposer.
+    It is required; changed live inputs create a different epoch.
 
-    Fields
-    ------
-    id:
-        Stable epoch identifier (operator-chosen; filesystem-safe).
-    name:
-        Human-readable name surfaced in CLI listings.
-    created_at:
-        ISO-8601 UTC timestamp of epoch creation.
-    board_path:
-        Absolute path to the frozen ``board.jsonl`` for this epoch.
-    brief_path:
-        Absolute path to the frozen ``brief.md`` proposer brief the
-        proposer reads each round.
-    scoring:
-        The frozen :class:`ScoringWeights` for this epoch.
-    closed:
-        ``True`` once the epoch has been closed by ``zicato epoch close``
-        (or auto-closed by a subsequent ``zicato epoch new``). Closed
-        epochs are read-only.
-    closed_at:
-        ISO-8601 UTC timestamp of closure, or empty string when still
-        open.
-    contract_hash:
-        ``sha256`` hex digest of the canonicalized evaluation contract:
-        board, proposer brief, scoring, evaluator revision, adapter identity,
-        mutable source paths, and proposer identity. See
-        :mod:`zicato.epoch.contract`. The orchestrator recomputes this
-        on every ``evolve`` and auto-rolls the epoch when the live
-        contract drifts from the stored value.
-        The default is ``None``, meaning the epoch records no hash. Such an
-        epoch is treated as *always matching*, so the orchestrator never
-        spuriously rolls a workspace that stores no hash. That rule is an
-        explicit ``is None`` check and NOT ``== ""``: a corrupted or empty
-        stored hash must not read as "no hash recorded". An on-disk ``""``
-        is normalised to ``None`` on read.
-    implementation_identity:
-        System implementation revisions that contributed behavior to the
-        evaluation contract. Every epoch records the Zicato evaluator revision.
-        A Goldfive-enabled epoch also records the pinned Goldfive version and
-        Zicato integration revision. The same values participate in the
-        contract hash; this field keeps them directly inspectable in the
-        canonical workspace record.
-    goal:
-        Free-form operator-supplied statement of *why* this epoch
-        exists — the intent the operator is testing (e.g. "shift the
-        proposer brief toward concrete deltas" or "new scoring weights
-        for cost drift"). Machine-readable companion to the narrative
-        in ``journal.md``; surfaced in the analyzer report header so
-        the reason for an epoch is visible without re-reading the
-        journal. Defaults to the empty string (which renders as "no
-        goal recorded" downstream) so epochs already on disk that
-        predate this field load cleanly. May be multi-line.
-    proposer_path:
-        Filesystem location of the ``proposers/<name>/`` directory frozen
-        for this epoch, or ``None`` for the built-in default proposer.
-        Folds into the contract hash via :mod:`zicato.epoch.contract`, so
-        configuring a proposer dir (or editing one of its skills) rolls
-        the epoch. Defaults to ``None``; an epoch ``config.json`` written
-        before this field landed loads as the built-in default.
-    noise_floor:
-        The measured A/A noise floor for this epoch's contract — the
-        persisted :meth:`zicato.tournament.calibration.NoiseFloor.to_json`
-        dict (``{generation_id, epoch_id, runs, scalars, max_abs_delta,
-        delta_std, measured_at}``) — or ``None`` when never measured. A
-        RUNTIME measurement recorded post-creation (like :attr:`goal`),
-        NOT a contract input: it never folds into the contract hash. Set
-        via :func:`zicato.epoch.lifecycle.set_epoch_noise_floor` (the
-        ``zicato board audit`` surface / the opt-in evolve-start
-        calibration step); read back by the evolve-start margin check and
-        the loop-health detector.
-    preflight:
-        The contract pre-flight verdict for this epoch — the persisted
-        :meth:`zicato.epoch.preflight.PreflightReport.to_json` dict
-        (``{verdict, signal, noise_floor_max_abs_delta, champion_scalars,
-        degraded_scalar, ...}``) — or ``None`` when never run. Like
-        :attr:`noise_floor` it is a RUNTIME measurement recorded
-        post-creation, NOT a contract input: it never folds into the
-        contract hash. Set via
-        :func:`zicato.epoch.lifecycle.set_epoch_preflight` (the ``zicato
-        board preflight`` surface / the opt-in epoch-open hook,
-        ``config.json``'s ``"contract_preflight": K``); read back by the
-        loop-health detector
-        (:func:`zicato.health.diagnostics.detect_preflight_verdict`).
+    Board and brief paths name the frozen files. Optional proposer_path selects
+    a saved proposer directory; None selects the built-in proposer. The goal
+    describes the operator's objective. closed and closed_at record completion.
+
+    noise_floor and preflight are optional measurements made after creation.
+    They do not contribute to contract identity. implementation_identity records
+    the evaluator revisions that governed execution.
     """
 
     id: str
@@ -115,25 +40,22 @@ class EpochConfig:
     board_path: Path
     brief_path: Path
     scoring: ScoringWeights
+    contract_hash: str
     closed: bool = False
     closed_at: str = ""
-    contract_hash: str | None = None
     implementation_identity: dict[str, str | int] = field(default_factory=dict)
     goal: str = ""
-    # Location of the proposer dir frozen for this epoch, or ``None`` for
-    # the built-in default proposer. Folded into the contract hash; missing
-    # in an epoch ``config.json`` written before this field landed ⇒ ``None``.
     proposer_path: Path | None = None
-    # Measured A/A noise floor (runtime measurement, never hashed). ``None``
-    # when never measured; missing in an epoch ``config.json`` written
-    # before this field landed ⇒ ``None``.
-    noise_floor: dict[str, object] | None = None
-    # Contract pre-flight verdict (runtime measurement, never hashed).
-    # ``None`` when never run; missing in an epoch ``config.json`` written
-    # before this field landed ⇒ ``None``.
-    preflight: dict[str, object] | None = None
-    # Historical provenance is retained when an epoch record is rewritten.
-    applied_proposer_recommendations: tuple[str, ...] = ()
+    noise_floor: dict[str, Any] | None = None
+    preflight: dict[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.contract_hash, str)
+            or len(self.contract_hash) != 64
+            or any(character not in "0123456789abcdef" for character in self.contract_hash)
+        ):
+            raise ValueError("contract_hash must be a SHA-256 hexadecimal digest")
 
 
 @dataclass(frozen=True, slots=True)

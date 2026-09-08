@@ -108,7 +108,7 @@ def _directory_workspace(tmp_path: Path, backend: str | None) -> Path:
                 core_idea="rewrite the instruction",
                 modulating=("instr",),
                 why="backend config test",
-                expected_drift_movements=(),
+                expected_metric_movements=(),
                 expected_pass_rate_delta="+0.0",
             ),
             patches=(patch,),
@@ -265,7 +265,11 @@ def test_repair_sets_the_key_and_leaves_every_other_key_alone(tmp_path: Path) ->
     ws = _directory_workspace(tmp_path, None)
     config = json.loads((ws / "config.json").read_text())
     config["contract"] = {"board_path": "operator-board.jsonl"}
-    config["mutable_trees"] = ["agent"]
+    config["adapter"] = {
+        "kind": "import",
+        "factory": "tests._stub_adapter:make_stub_adapter",
+        "mutable_trees": ["agent"],
+    }
     (ws / "config.json").write_text(json.dumps(config), encoding="utf-8")
     (ws / "lineage.json").write_text(json.dumps({"epochs": [{"id": "e1"}]}), encoding="utf-8")
 
@@ -278,7 +282,7 @@ def test_repair_sets_the_key_and_leaves_every_other_key_alone(tmp_path: Path) ->
     written = json.loads((ws / "config.json").read_text())
     assert written[GENERATION_SOURCE_BACKEND_KEY] == "directory"
     assert written["contract"] == {"board_path": "operator-board.jsonl"}
-    assert written["mutable_trees"] == ["agent"]
+    assert written["adapter"] == config["adapter"]
     assert json.loads((ws / "lineage.json").read_text())["epochs"] == [{"id": "e1"}]
     # …and the workspace now opens.
     assert default_generation_store(ws).backend_name == "directory"
@@ -323,7 +327,9 @@ def test_init_force_refuses_to_discard_a_recorded_lineage(tmp_path: Path) -> Non
     ws = tmp_path / ".zicato"
     ws.mkdir()
     (ws / "config.json").write_text(json.dumps({"instance_id": "first"}), encoding="utf-8")
-    lineage = json.dumps({"epochs": [{"id": "e1", "generations": [{"id": "v0"}, {"id": "v1"}]}]})
+    lineage = json.dumps(
+        {"format_version": 1, "epochs": [{"id": "e1", "generations": [{"id": "v0"}, {"id": "v1"}]}]}
+    )
     (ws / "lineage.json").write_text(lineage, encoding="utf-8")
 
     result = CliRunner().invoke(
@@ -343,7 +349,8 @@ def test_init_force_discards_a_recorded_lineage_when_asked_explicitly(tmp_path: 
     ws.mkdir()
     (ws / "config.json").write_text(json.dumps({"instance_id": "first"}), encoding="utf-8")
     (ws / "lineage.json").write_text(
-        json.dumps({"epochs": [{"id": "e1", "generations": []}]}), encoding="utf-8"
+        json.dumps({"format_version": 1, "epochs": [{"id": "e1", "generations": []}]}),
+        encoding="utf-8",
     )
 
     result = CliRunner().invoke(
@@ -352,7 +359,7 @@ def test_init_force_discards_a_recorded_lineage_when_asked_explicitly(tmp_path: 
     )
 
     assert result.exit_code == 0, result.output
-    assert json.loads((ws / "lineage.json").read_text()) == {"epochs": []}
+    assert json.loads((ws / "lineage.json").read_text()) == {"format_version": 1, "epochs": []}
 
 
 def test_init_force_still_re_initializes_an_empty_workspace(tmp_path: Path) -> None:

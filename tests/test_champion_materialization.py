@@ -15,7 +15,8 @@ from pathlib import Path
 
 import pytest
 
-from zicato.core.types import LossProfile
+from tests._workspace_support import write_epoch
+from zicato.core.types import LossProfile, MetricCount
 from zicato.core.workspace import loss_profile_path
 from zicato.evolve.round_baseline import (
     _materialize_carried_champion,
@@ -24,6 +25,8 @@ from zicato.evolve.round_baseline import (
 from zicato.index.ingest import ingest_run
 from zicato.index.query import loss_profiles_for_generation
 from zicato.telemetry.reducer import read_loss_profile, write_loss_profile
+from zicato.tournament.scoring import write_gen_score
+from zicato.workspace import WorkspaceLayout
 
 
 def _fresh_profile(*, epoch: str, gen: str, entry: str, drift: float) -> LossProfile:
@@ -32,7 +35,7 @@ def _fresh_profile(*, epoch: str, gen: str, entry: str, drift: float) -> LossPro
         entry_id=entry,
         generation_id=gen,
         epoch_id=epoch,
-        drift_counts=(),
+        metric_counts=(MetricCount(name="drift:off_topic", severity="info", count=drift),),
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=100,
@@ -45,18 +48,13 @@ def _fresh_profile(*, epoch: str, gen: str, entry: str, drift: float) -> LossPro
 
 def _write_source_epoch(ws: Path, *, epoch: str, gen: str, entries: dict[str, float]) -> None:
     """Write a champion's per-board loss.json + gen_score.json in a source epoch."""
-    import json
-
+    write_epoch(WorkspaceLayout.from_root(ws), epoch)
     for entry, drift in entries.items():
         write_loss_profile(
             _fresh_profile(epoch=epoch, gen=gen, entry=entry, drift=drift),
             loss_profile_path(ws, epoch, gen, entry),
         )
-    gen_dir = ws / "epochs" / epoch / "generations" / gen
-    gen_dir.mkdir(parents=True, exist_ok=True)
-    (gen_dir / "gen_score.json").write_text(
-        json.dumps({"generation_id": gen, "scalar": 0.42}), encoding="utf-8"
-    )
+    write_gen_score(ws, epoch, gen, {"generation_id": gen, "scalar": 0.42})
 
 
 # ---------------------------------------------------------------------------
@@ -82,6 +80,7 @@ def test_materialize_carried_champion_writes_cached_losses(tmp_path: Path) -> No
     ws = tmp_path / ".zicato"
     ws.mkdir()
     _write_source_epoch(ws, epoch="e1", gen="v2", entries={"task-a": 2.0, "task-b": 3.0})
+    write_epoch(WorkspaceLayout.from_root(ws), "e2")
 
     _materialize_carried_champion(
         ws,
@@ -118,6 +117,7 @@ def test_materialized_champion_reads_as_cached_in_index(tmp_path: Path) -> None:
     ws.mkdir()
     db = ws / "index.db"
     _write_source_epoch(ws, epoch="e1", gen="v2", entries={"task-a": 2.0})
+    write_epoch(WorkspaceLayout.from_root(ws), "e2")
 
     _materialize_carried_champion(
         ws,
@@ -147,6 +147,7 @@ def test_fresh_profile_defaults_to_not_cached(tmp_path: Path) -> None:
     ws = tmp_path / ".zicato"
     ws.mkdir()
     db = ws / "index.db"
+    write_epoch(WorkspaceLayout.from_root(ws), "e1")
     path = loss_profile_path(ws, "e1", "v1", "task-a")
     write_loss_profile(_fresh_profile(epoch="e1", gen="v1", entry="task-a", drift=1.0), path)
 
@@ -175,6 +176,7 @@ def test_ambiguous_measurements_withhold_carried_aggregate(tmp_path: Path, ambig
 
     ws = tmp_path / ".zicato"
     _write_source_epoch(ws, epoch="source", gen="v1", entries={"task": 2.0})
+    write_epoch(WorkspaceLayout.from_root(ws), "destination")
     source = loss_profile_path(ws, "source", "v1", "task")
     profile = read_loss_profile(source)
     if ambiguity == "purpose":

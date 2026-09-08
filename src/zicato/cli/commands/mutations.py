@@ -48,7 +48,7 @@ def _load_source_roots(workspace_dir: Path) -> list[Path]:
         )
     if not config.source_roots:
         raise click.ClickException(
-            f"{config.path} has no 'source_roots' field. "
+            f"{config.path} has no paths in 'adapter.mutable_trees'. "
             "Run `zicato epoch register` to populate it."
         )
     return [Path(r) for r in config.source_roots]

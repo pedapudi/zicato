@@ -291,14 +291,14 @@ def _holdout_ids(paths: WorkspacePaths, epoch_id: str, board_entries: list[Any])
     unconfigured / unreadable split yields an empty set (every entry train).
     """
     from zicato.board.split import rotation_seed, split_board  # noqa: PLC0415
-    from zicato.workspace_loader import historical_scoring_weights_from_dict  # noqa: PLC0415
+    from zicato.workspace_loader import scoring_weights_from_dict  # noqa: PLC0415
 
     if not board_entries:
         return set()
     scoring = _read_json_value(layout_of(paths).epoch_dir(epoch_id) / "scoring.json")
     raw = scoring if isinstance(scoring, dict) else {}
     try:
-        cfg = historical_scoring_weights_from_dict(raw).overfitting
+        cfg = scoring_weights_from_dict(raw).overfitting
         seed = rotation_seed(cfg, epoch_id)
         _train, holdout = split_board(board_entries, cfg, seed=seed)
     except Exception:  # noqa: BLE001 — best-effort; degrade to no holdout
@@ -1140,9 +1140,9 @@ def _rotation_status(
     from zicato.health.diagnostics import detect_refresh_cadence  # noqa: PLC0415
 
     scoring = _read_json_value(layout_of(paths).epoch_dir(epoch_id) / "scoring.json")
-    from zicato.workspace_loader import historical_scoring_weights_from_dict  # noqa: PLC0415
+    from zicato.workspace_loader import scoring_weights_from_dict  # noqa: PLC0415
 
-    weights = historical_scoring_weights_from_dict(scoring if isinstance(scoring, dict) else {})
+    weights = scoring_weights_from_dict(scoring if isinstance(scoring, dict) else {})
     rotate = weights.overfitting.rotate_holdout
     ceiling = weights.experimental.max_generations_per_contract
     evaluated = sum(
@@ -1479,7 +1479,7 @@ def _epoch_scoring_weights(
     the defaults rather than the epoch's own weights.
     """
     from zicato.core import ScoringWeights  # noqa: PLC0415
-    from zicato.workspace_loader import historical_scoring_weights_from_dict  # noqa: PLC0415
+    from zicato.workspace_loader import scoring_weights_from_dict  # noqa: PLC0415
 
     raw = (
         inputs.scoring.copy()
@@ -1489,7 +1489,7 @@ def _epoch_scoring_weights(
     if not isinstance(raw, dict):
         return ScoringWeights()
     try:
-        return historical_scoring_weights_from_dict(raw)
+        return scoring_weights_from_dict(raw)
     except Exception:  # noqa: BLE001 — best-effort; defaults keep the read alive
         return ScoringWeights()
 

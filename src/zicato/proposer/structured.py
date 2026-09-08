@@ -18,7 +18,7 @@ Validation runs in two passes:
      to fall inside any ``min`` / ``max`` range the
      :class:`MutationPoint.metadata` declared; ``set_enum`` requires the
      value to appear in the metadata's declared enum domain;
-   * drift-kind strings inside ``expected_drift_movements`` are
+   * drift metric names inside ``expected_metric_movements`` are
      registered goldfive kinds (defense in depth — the schema bounds the
      direction / magnitude domains but not the kind set).
 
@@ -40,7 +40,6 @@ import jsonschema
 
 from zicato.core.drift_kinds import GOLDFIVE_DRIFT_KINDS
 from zicato.core.types import (
-    ExpectedDriftMovement,
     ExpectedMetricMovement,
     Experiment,
     HypothesisSpec,
@@ -68,43 +67,6 @@ _DIRECTION_ENUM = [
 ]
 _MAGNITUDE_ENUM = ["small", "medium", "large"]
 
-#: Namespace prefixes a model naturally tacks onto a metric name when it
-#: addresses a board judge. A custom judge emits its goldfive signal under
-#: the single ``"custom"`` drift kind, so a model that knows that detail
-#: writes ``drift:custom:<judge>`` or ``custom:<judge>``; one that thinks of
-#: the judge as a drift signal writes ``drift:<judge>``; one that uses the
-#: bare name writes ``<judge>``. The validator strips these (longest first,
-#: repeatedly) before matching against the declared judge names so all four
-#: forms resolve to the same declared judge. Order matters: ``drift:custom:``
-#: must be tried before ``drift:`` / ``custom:`` so the compound prefix is
-#: peeled in one step.
-_JUDGE_METRIC_PREFIXES = ("drift:custom:", "drift:", "custom:")
-
-
-def _strip_judge_prefixes(metric_name: str) -> str:
-    """Strip known metric prefixes to recover a bare judge-name candidate.
-
-    Repeatedly peels any leading prefix in :data:`_JUDGE_METRIC_PREFIXES`
-    (longest-match first) so that ``drift:custom:file_findability``,
-    ``custom:file_findability``, and ``drift:file_findability`` all collapse
-    to ``file_findability``. Idempotent on a bare name. This only *recovers a
-    candidate* — the caller still gates acceptance on the result resolving to
-    a REAL declared judge, so an unknown ``drift:bogus`` does not become valid
-    by having its prefix stripped.
-    """
-
-    out = metric_name
-    changed = True
-    while changed:
-        changed = False
-        for prefix in _JUDGE_METRIC_PREFIXES:
-            if out.startswith(prefix):
-                out = out[len(prefix) :]
-                changed = True
-                break
-    return out
-
-
 EXPERIMENT_JSON_SCHEMA: dict[str, Any] = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "type": "object",
@@ -112,18 +74,13 @@ EXPERIMENT_JSON_SCHEMA: dict[str, Any] = {
     "properties": {
         "hypothesis": {
             "type": "object",
-            # ``expected_drift_movements`` and ``expected_metric_movements``
-            # are interchangeable; at least one must be present. Schema-
-            # side we require ``core_idea`` / ``modulating`` / ``why`` /
-            # ``expected_pass_rate_delta`` only — the "at least one
-            # movements field" rule is enforced by the parser since
-            # JSON Schema's ``anyOf`` predicates obscure error messages
-            # in the proposer-retry path.
+            "additionalProperties": False,
             "required": [
                 "core_idea",
                 "modulating",
                 "why",
                 "expected_pass_rate_delta",
+                "expected_metric_movements",
             ],
             "properties": {
                 "core_idea": {"type": "string", "minLength": 1},
@@ -133,23 +90,13 @@ EXPERIMENT_JSON_SCHEMA: dict[str, Any] = {
                     "minItems": 1,
                 },
                 "why": {"type": "string", "minLength": 1},
-                "expected_drift_movements": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "required": ["kind", "direction", "magnitude"],
-                        "properties": {
-                            "kind": {"type": "string", "minLength": 1},
-                            "direction": {"enum": _DIRECTION_ENUM},
-                            "magnitude": {"enum": _MAGNITUDE_ENUM},
-                        },
-                    },
-                },
                 "expected_metric_movements": {
                     "type": "array",
+                    "minItems": 1,
                     "items": {
                         "type": "object",
                         "required": ["metric_name", "direction", "magnitude"],
+                        "additionalProperties": False,
                         "properties": {
                             "metric_name": {"type": "string", "minLength": 1},
                             "direction": {"enum": _DIRECTION_ENUM},
@@ -755,84 +702,26 @@ def parse_experiment_json(
         raise ExperimentParseError(f"schema violation at {path}: {exc.message}") from exc
 
     hyp_dict = data["hypothesis"]
-    # Either expected_drift_movements OR expected_metric_movements must
-    # be present; both are accepted and merged. expected_drift_movements
-    # is the back-compat path (drift kinds only); expected_metric_movements
-    # is the generalised namespaced path (drift / cost / rubric / ...).
-    raw_drift_movements = hyp_dict.get("expected_drift_movements", [])
-    raw_metric_movements = hyp_dict.get("expected_metric_movements", [])
-    if not raw_drift_movements and not raw_metric_movements:
-        raise ExperimentParseError(
-            "hypothesis: at least one of 'expected_drift_movements' or "
-            "'expected_metric_movements' must be present and non-empty"
-        )
-
-    drift_movements: list[ExpectedDriftMovement] = []
-    for i, mv in enumerate(raw_drift_movements):
-        kind = mv["kind"]
-        if kind not in GOLDFIVE_DRIFT_KINDS:
-            raise ExperimentParseError(
-                f"hypothesis.expected_drift_movements[{i}]: unknown drift kind {kind!r}"
-            )
-        drift_movements.append(
-            ExpectedDriftMovement(
-                kind=kind,
-                direction=mv["direction"],
-                magnitude=mv["magnitude"],
-            )
-        )
-
     judge_names = custom_judge_names or frozenset()
     metric_movements: list[ExpectedMetricMovement] = []
-    for i, mv in enumerate(raw_metric_movements):
+    for mv in hyp_dict["expected_metric_movements"]:
         metric_name = mv["metric_name"]
-        # Validate drift-namespace metric names against the registered
-        # goldfive kind set AND the board's declared custom judges
-        # (defense in depth — the schema bounds the direction/magnitude
-        # domains but not the kind set). A custom judge emits its signal
-        # under the single ``"custom"`` goldfive drift kind, but a
-        # hypothesis addresses it by its own ``judge_name`` (e.g.
-        # ``drift:file_findability``), so a declared judge name is a valid
-        # ``drift:`` metric even though it is not a built-in DriftKind. A
-        # name that is neither a built-in kind nor a declared judge is
-        # still rejected. Other namespaces are accepted as-is; the
-        # convention is namespace-prefixed names but we don't lock down
-        # the namespace registry here so harnesses can add new namespaces
-        # freely.
-        #
-        # Normalization (defensive): a model that knows the custom-judge
-        # implementation detail naturally writes a declared judge as
-        # ``drift:custom:<name>`` or ``custom:<name>`` — both mangles of
-        # the bare ``<name>``. Before rejecting a ``drift:``-prefixed
-        # name, strip the known prefixes and re-check the recovered bare
-        # token against the declared judge set, so any of
-        # ``file_findability`` / ``custom:file_findability`` /
-        # ``drift:custom:file_findability`` / ``drift:file_findability``
-        # resolves to the same declared judge instead of a vacuous
-        # rejection. Acceptance still requires the stripped token to be a
-        # REAL declared judge (or a built-in kind), so an unknown kind is
-        # left to fail.
-        if metric_name.startswith(_JUDGE_METRIC_PREFIXES):
-            bare = _strip_judge_prefixes(metric_name)
-            if bare not in GOLDFIVE_DRIFT_KINDS and bare not in judge_names:
-                kinds = ", ".join(sorted(GOLDFIVE_DRIFT_KINDS))
-                judges = ", ".join(sorted(judge_names)) if judge_names else "(none declared)"
-                raise ExperimentParseError(
-                    f"hypothesis.expected_metric_movements[{i}]: unknown drift "
-                    f"kind {bare!r} in metric_name {metric_name!r} "
-                    f"(not a built-in drift kind and not a declared board judge). "
-                    f"To predict a declared board judge improving, use that "
-                    f"judge's bare name as the metric_name. Declared board "
-                    f"judges: {judges}. Built-in drift kinds (use as "
-                    f"'drift:<kind>'): {kinds}"
-                )
-        metric_movements.append(
-            ExpectedMetricMovement(
-                metric_name=metric_name,
-                direction=mv["direction"],
-                magnitude=mv["magnitude"],
+        namespace, separator, name = metric_name.partition(":")
+        if not separator or not name:
+            raise ExperimentParseError(
+                f"metric_name {metric_name!r} must name a namespace and metric"
             )
-        )
+        if namespace == "custom":
+            raise ExperimentParseError("board judge predictions use judge:<name>")
+        if namespace == "drift" and name not in GOLDFIVE_DRIFT_KINDS:
+            raise ExperimentParseError(
+                f"unknown drift kind {name!r} in metric_name {metric_name!r}"
+            )
+        if namespace == "judge" and name not in judge_names:
+            raise ExperimentParseError(
+                f"unknown board judge {name!r} in metric_name {metric_name!r}"
+            )
+        metric_movements.append(ExpectedMetricMovement(**mv))
 
     raw_modulating = list(hyp_dict["modulating"])
     # Cross-check every modulating id resolves in the manifest. The
@@ -849,7 +738,6 @@ def parse_experiment_json(
         core_idea=hyp_dict["core_idea"],
         modulating=tuple(raw_modulating),
         why=hyp_dict["why"],
-        expected_drift_movements=tuple(drift_movements),
         expected_pass_rate_delta=hyp_dict["expected_pass_rate_delta"],
         risks=hyp_dict.get("risks", ""),
         expected_metric_movements=tuple(metric_movements),

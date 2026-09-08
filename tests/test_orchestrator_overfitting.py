@@ -22,7 +22,7 @@ import pytest
 
 from tests._proposal_evidence import render_proposal_evidence
 from zicato.board.split import HOLDOUT_TAG, split_board
-from zicato.core import BoardEntry, DriftCount, ExpectationResult, LossProfile, ScoringWeights
+from zicato.core import BoardEntry, ExpectationResult, LossProfile, MetricCount, ScoringWeights
 from zicato.core.measurement import MeasurementDraw
 from zicato.core.types import OverfittingConfig
 from zicato.core.workspace import loss_profile_path
@@ -40,7 +40,7 @@ def _loss(entry_id: str, *, drift_count: int) -> LossProfile:
         entry_id=entry_id,
         generation_id=_PARENT,
         epoch_id=_EPOCH,
-        drift_counts=(DriftCount(kind="off_topic", severity="warning", count=drift_count),),
+        metric_counts=(MetricCount(name="drift:off_topic", severity="warning", count=drift_count),),
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=1000,
@@ -162,7 +162,9 @@ def _degraded_loss(entry_id: str) -> LossProfile:
     return type(profile)(
         **{
             **{f.name: getattr(profile, f.name) for f in profile.__dataclass_fields__.values()},
-            "drift_counts": (DriftCount(kind="task_failed_fatal", severity="critical", count=99),),
+            "metric_counts": (
+                MetricCount(name="drift:task_failed_fatal", severity="critical", count=99),
+            ),
             "pass_fail": False,
         }
     )
@@ -195,7 +197,7 @@ def test_baseline_round_reads_the_calibration_band_not_the_degraded_probes(
     assert all(
         kind not in {"task_failed_fatal"}
         for loss in losses
-        for kind in (dc.kind for dc in loss.drift_counts)
+        for kind in (dc.name.removeprefix("drift:") for dc in loss.metric_counts)
     )
     # Provenance reads as the calibration draw it is, not as a duel.
     assert all(loss.match_id == "" or "aa-calibration" in loss.match_id for loss in losses)

@@ -206,20 +206,10 @@ def _render_scoring_block(scoring: dict[str, object]) -> str:
 
 
 def _render_tournament_structure_block(structure: dict[str, object]) -> str:
-    """Render the per-epoch tournament structure + its params.
-
-    Reads the ``{"structure": name, "params": {...}}`` shape serialised
-    into ``scoring.json``. An empty view (an epoch predating configurable
-    structures, or one that never left the default) renders the honest
-    default notice rather than fabricating a param table.
-    """
+    """Render the recorded tournament format and its parameters."""
     name = str(structure.get("structure", "") or "") if structure else ""
     if not name:
-        return (
-            "The tournament ran the default **gauntlet** structure "
-            "(champion vs. one challenger per round); no alternate "
-            "structure or resolver/rating layer was configured."
-        )
+        return "No tournament structure is recorded."
     params = structure.get("params")
     params = params if isinstance(params, dict) else {}
     lines: list[str] = []
@@ -246,15 +236,9 @@ def _render_proposer_config_block(scoring: dict[str, object]) -> str:
     Historical decoding preserves values stored at former field locations.
     Execution role bindings are absent from the scoring artifact.
     """
-    from zicato.workspace_loader import historical_scoring_weights_from_dict
+    from zicato.workspace_loader import scoring_weights_from_dict
 
-    weights = historical_scoring_weights_from_dict(scoring)
-    if not scoring.get("proposer_quality") and not scoring.get("experimental"):
-        return (
-            "The proposer ran the built-in defaults: a best-of-3 slate with "
-            "the self-critique pass; screening, process exemplars, the "
-            "genealogy channel, and recombination all off."
-        )
+    weights = scoring_weights_from_dict(scoring)
     quality = weights.proposer_quality
     experimental = weights.experimental
     best_of_n = quality.best_of_n
@@ -643,14 +627,15 @@ def render_drift_movement_table(data: EpochReportData) -> str:
     per_kind: dict[str, list[float | None]] = {}
     seen_any = False
     for step, child in enumerate(chain[1:], start=1):
-        for mv in child.drift_movements:
-            kind = str(mv.get("kind", ""))
-            if not kind:
+        for mv in child.metric_movements:
+            kind = str(mv.get("metric_name", ""))
+            if not kind.startswith("drift:"):
                 continue
+            kind = kind.removeprefix("drift:")
             seen_any = True
             seq = per_kind.setdefault(kind, [None] * n_cols)
-            from_rate = _coerce_float(mv.get("from_rate"))
-            to_rate = _coerce_float(mv.get("to_rate"))
+            from_rate = _coerce_float(mv.get("from_value"))
+            to_rate = _coerce_float(mv.get("to_value"))
             if seq[step - 1] is None:
                 seq[step - 1] = from_rate
             seq[step] = to_rate
@@ -823,7 +808,7 @@ def render_results_section(data: EpochReportData) -> str:
         "Predictions are projected onto the same axis the realised Δ "
         "occupies: a textual `expected_pass_rate_delta` like "
         '`"+0.05 to +0.15"` becomes its midpoint; an '
-        "`expected_drift_movements` entry's direction and magnitude bucket "
+        "`expected_metric_movements` entry's direction and magnitude bucket "
         '(e.g. "decrease / moderate") becomes a signed magnitude on the '
         "drift axis. The proposer's hit rate is the share of pairs that "
         "point the same direction with comparable magnitude."

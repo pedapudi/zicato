@@ -70,15 +70,15 @@ def epoch(tmp_path: Path) -> tuple[Path, str]:
                 },
                 "outcome": {
                     "ran_at": "2026-08-30T00:00:01Z",
-                    "pass_rate_delta": 0.10,
-                    "drift_loss_delta": -0.20,
-                    "scalar_score_delta": -0.20,
+                    "pass_rate_delta": 0.1,
+                    "drift_loss_delta": -0.2,
+                    "scalar_score_delta": -0.2,
                     "tournament_decision": "promoted",
-                    "drift_movements": [
+                    "metric_movements": [
                         {
-                            "kind": "off_topic",
-                            "from_rate": 0.40,
-                            "to_rate": 0.20,
+                            "metric_name": "drift:off_topic",
+                            "from_value": 0.4,
+                            "to_value": 0.2,
                             "hypothesis_match": True,
                         }
                     ],

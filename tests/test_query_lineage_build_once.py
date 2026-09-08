@@ -80,6 +80,7 @@ def layout(tmp_path: Path) -> WorkspaceLayout:
                 gid,
                 experiment=experiment_record(
                     gid,
+                    epoch_id=eid,
                     parent_generation_id=None if gi == 0 else GENS[gi - 1],
                     proposed_at=f"2026-05-1{ei}T0{gi}:30:00Z",
                     round_index=gi,

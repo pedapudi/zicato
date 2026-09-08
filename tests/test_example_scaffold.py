@@ -61,14 +61,13 @@ def test_scaffold_writes_every_artifact_a_first_round_needs(tmp_path: Path) -> N
 def test_scaffold_wires_the_config_to_what_it_copied(tmp_path: Path) -> None:
     project = _scaffold(tmp_path)
     config = json.loads((project / ".zicato" / "config.json").read_text(encoding="utf-8"))
+    tree = str((project / "system_under_test").resolve())
     assert config["adapter"] == {
         "kind": "import",
         "factory": "example_wiring.adapter:make_adapter",
         "import_roots": ["."],
+        "mutable_trees": [tree],
     }
-    tree = str((project / "system_under_test").resolve())
-    assert config["mutable_trees"] == [tree]
-    assert config["source_roots"] == [tree]
     engines = config["models"]["engines"]
     assert engines["target"] == {"call_llm": "example_wiring.models:target_model"}
     assert engines["evaluation"] == {"call_llm": "example_wiring.models:evaluation_model"}

@@ -11,7 +11,7 @@ from __future__ import annotations
 import random
 from dataclasses import replace
 
-from zicato.core.types import ExpectedDriftMovement, ExpectedMetricMovement, Patch
+from zicato.core.types import ExpectedMetricMovement, Patch
 from zicato.epoch.recombine import (
     DEFAULT_ELO,
     RECOMBINE_POOL_MAX,
@@ -425,10 +425,14 @@ def test_mint_hypothesis_composition() -> None:
 
 
 def test_mint_movements_concat_dedup_first_wins() -> None:
-    a_drift = ExpectedDriftMovement(kind="off_topic", direction="decrease", magnitude="medium")
-    b_drift_dup = ExpectedDriftMovement(kind="off_topic", direction="increase", magnitude="small")
-    b_drift_new = ExpectedDriftMovement(
-        kind="unexpected_output", direction="decrease", magnitude="small"
+    a_drift = ExpectedMetricMovement(
+        metric_name="drift:off_topic", direction="decrease", magnitude="medium"
+    )
+    b_drift_dup = ExpectedMetricMovement(
+        metric_name="drift:off_topic", direction="increase", magnitude="small"
+    )
+    b_drift_new = ExpectedMetricMovement(
+        metric_name="drift:unexpected_output", direction="decrease", magnitude="small"
     )
     a_metric = ExpectedMetricMovement(
         metric_name="cost:tokens_spent", direction="decrease", magnitude="small"
@@ -437,10 +441,8 @@ def test_mint_movements_concat_dedup_first_wins() -> None:
         metric_name="cost:tokens_spent", direction="increase", magnitude="large"
     )
     pair = _mk_pair(
-        a_expected_drift_movements=(a_drift,),
-        b_expected_drift_movements=(b_drift_dup, b_drift_new),
-        a_expected_metric_movements=(a_metric,),
-        b_expected_metric_movements=(b_metric_dup,),
+        a_expected_metric_movements=(a_drift, a_metric),
+        b_expected_metric_movements=(b_drift_dup, b_drift_new, b_metric_dup),
     )
     exp = mint_recombined_experiment(
         pair,
@@ -450,8 +452,7 @@ def test_mint_movements_concat_dedup_first_wins() -> None:
         proposed_at="2026-07-11T00:00:00+00:00",
     )
     # Concatenated A-then-B, deduped per axis, FIRST (parent A) wins.
-    assert exp.hypothesis.expected_drift_movements == (a_drift, b_drift_new)
-    assert exp.hypothesis.expected_metric_movements == (a_metric,)
+    assert exp.hypothesis.expected_metric_movements == (a_drift, a_metric, b_drift_new)
 
 
 def test_mint_is_deterministic_up_to_patch_ids() -> None:

@@ -16,8 +16,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from starlette.testclient import TestClient
 
+from tests._workspace_support import write_generation, write_lineage
 from zicato.dashboard.server import create_app
 from zicato.query import (
     WorkspacePaths,
@@ -29,14 +31,27 @@ from zicato.query.decisions import (
     experiment_decision,
     promoted_tristate,
 )
+from zicato.workspace import WorkspaceLayout
 
 EPOCH = "2026-06-01_e0"
 OTHER = "2026-06-02_e1"
 
 
 def _write_json(path: Path, obj: object) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(obj), encoding="utf-8")
+    if path.name == "lineage.json":
+        assert isinstance(obj, dict)
+        write_lineage(WorkspaceLayout.from_root(path.parent), obj)
+    elif path.name == "experiment.json":
+        assert isinstance(obj, dict)
+        write_generation(
+            WorkspaceLayout.from_root(path.parents[4]),
+            path.parents[2].name,
+            path.parent.name,
+            experiment=obj,
+        )
+    else:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(obj), encoding="utf-8")
 
 
 def _seed_workspace(tmp_path: Path) -> Path:
@@ -95,29 +110,28 @@ def _seed_workspace(tmp_path: Path) -> Path:
 
 def test_canonical_decision_vocabulary() -> None:
     assert canonical_decision("promoted") == "promoted"
-    assert canonical_decision("promote") == "promoted"
-    assert canonical_decision("won") == "promoted"
     assert canonical_decision("rejected") == "rejected"
-    assert canonical_decision("Reject") == "rejected"
     assert canonical_decision("deferred") == "deferred"
-    # unknown tokens pass through lowercased — never guessed into a verdict.
-    assert canonical_decision("baseline") == "baseline"
     assert canonical_decision(None) is None
-    assert canonical_decision("  ") is None
+
+
+@pytest.mark.parametrize("token", ["promote", "won", "Reject", "baseline", "", "  "])
+def test_unsupported_decision_tokens_are_rejected(token: str) -> None:
+    with pytest.raises(ValueError):
+        canonical_decision(token)
 
 
 def test_promoted_tristate_never_defaults_absent_to_false() -> None:
     assert promoted_tristate(None) is None
-    assert promoted_tristate("") is None
     assert promoted_tristate("promoted") is True
     assert promoted_tristate("rejected") is False
     assert promoted_tristate("deferred") is False
 
 
 def test_experiment_decision_reads_outcome_shapes() -> None:
-    assert experiment_decision({"outcome": "promoted"}) == "promoted"
+    assert experiment_decision({"outcome": {"tournament_decision": "promoted"}}) == "promoted"
     assert experiment_decision({"outcome": {"tournament_decision": "rejected"}}) == "rejected"
-    assert experiment_decision({"outcome": {"decision": "deferred"}}) == "deferred"
+    assert experiment_decision({"outcome": {"tournament_decision": "deferred"}}) == "deferred"
     assert experiment_decision({"outcome": None}) is None
     assert experiment_decision({}) is None
 

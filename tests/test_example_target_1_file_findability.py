@@ -24,7 +24,7 @@ import goldfive
 from goldfive.judges import JudgeContext, JudgeVerdict
 
 from zicato.board.judges import Judge
-from zicato.core.types import DriftCount, ScoringWeights
+from zicato.core.types import MetricCount, ScoringWeights
 from zicato.judge_runtime import judge_spec_to_goldfive
 from zicato.telemetry.reducer import compute_per_judge_loss
 from zicato_examples.target_1_presentation.judges import (
@@ -405,11 +405,11 @@ def _weights(judge_weight: float) -> ScoringWeights:
 
 def _judge_loss(
     *,
-    drift_counts: tuple[DriftCount, ...],
+    metric_counts: tuple[MetricCount, ...],
     weights: ScoringWeights,
 ) -> float:
     """The ``judge:`` channel total for these drift counts."""
-    return sum(jl.weighted_loss for jl in compute_per_judge_loss(drift_counts, weights))
+    return sum(jl.weighted_loss for jl in compute_per_judge_loss(metric_counts, weights))
 
 
 def test_file_finding_failure_scores_worse_than_clean() -> None:
@@ -418,14 +418,14 @@ def test_file_finding_failure_scores_worse_than_clean() -> None:
     The judge's adverse verdicts are attributed by the reducer to the
     ``custom:file_findability`` drift kind, which the ``judge:`` channel
     scores through ``severity_weights[severity] * per_judge_weights[name] *
-    count``. Here we feed the two outcomes' drift_counts directly to
+    count``. Here we feed the two outcomes' metric_counts directly to
     isolate the loss-fold contract.
     """
     weights = _weights(2.0)
 
     # Clean run: no file-findability drift at all.
     clean_loss = _judge_loss(
-        drift_counts=(),
+        metric_counts=(),
         weights=weights,
     )
 
@@ -433,12 +433,14 @@ def test_file_finding_failure_scores_worse_than_clean() -> None:
     # have emitted them (one INFO, one WARNING, two CRITICAL as severity
     # escalated), all attributed to custom:file_findability.
     failing_counts = (
-        DriftCount(kind=f"custom:{FILE_FINDABILITY_NAME}", severity="info", count=1),
-        DriftCount(kind=f"custom:{FILE_FINDABILITY_NAME}", severity="warning", count=1),
-        DriftCount(kind=f"custom:{FILE_FINDABILITY_NAME}", severity="critical", count=2),
+        MetricCount(name="drift:" + f"custom:{FILE_FINDABILITY_NAME}", severity="info", count=1),
+        MetricCount(name="drift:" + f"custom:{FILE_FINDABILITY_NAME}", severity="warning", count=1),
+        MetricCount(
+            name="drift:" + f"custom:{FILE_FINDABILITY_NAME}", severity="critical", count=2
+        ),
     )
     failing_loss = _judge_loss(
-        drift_counts=failing_counts,
+        metric_counts=failing_counts,
         weights=weights,
     )
 
@@ -450,8 +452,10 @@ def test_file_finding_failure_scores_worse_than_clean() -> None:
 
 def test_per_judge_weight_amplifies_the_penalty() -> None:
     """Raising per_judge_weights[file_findability] increases the loss."""
-    counts = (DriftCount(kind=f"custom:{FILE_FINDABILITY_NAME}", severity="warning", count=1),)
-    low = _judge_loss(drift_counts=counts, weights=_weights(1.0))
-    high = _judge_loss(drift_counts=counts, weights=_weights(2.0))
+    counts = (
+        MetricCount(name="drift:" + f"custom:{FILE_FINDABILITY_NAME}", severity="warning", count=1),
+    )
+    low = _judge_loss(metric_counts=counts, weights=_weights(1.0))
+    high = _judge_loss(metric_counts=counts, weights=_weights(2.0))
     assert high > low
     assert high == 2.0 * low

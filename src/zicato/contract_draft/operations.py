@@ -1697,11 +1697,9 @@ def _accepted_contract(draft: TournamentDraft) -> dict[str, str]:
     contract = dict(source.config.contract)
     contract.update(
         board_path=str(source.file("board").path),
-        rubric_path=str(source.file("brief").path),
+        brief_path=str(source.file("brief").path),
         scoring_path=str(source.file("scoring").path),
     )
-    if "brief_path" in contract:
-        contract["brief_path"] = str(source.file("brief").path)
     if draft.proposer_path is None:
         contract.pop("proposer_path", None)
     else:

@@ -207,10 +207,11 @@ Notes on the shape:
 - `axes` and `margin` are echoed from the contract so the file is
   self-describing — a reader does not need `scoring.json` to interpret it.
 - `format_version` follows the canonical-record discipline
-  (`zicato.epoch._storage.check_record_format`): absent means version 1, a
-  higher version is refused rather than misread.
-- **A missing file is an empty frontier, never an error.** Every workspace
-  written before this feature reads back as `members: [], retired: []`.
+  (`zicato.epoch._storage.check_record_format`): the present record must carry
+  the owner's supported integer version. Missing, Boolean, floating-point,
+  and incompatible stamps are refused.
+- **A missing file is an empty frontier.** A present malformed file is refused;
+  it cannot be substituted with `members: [], retired: []`.
 
 ## 4. Admission — the control that makes the record safe
 

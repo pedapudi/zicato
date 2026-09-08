@@ -215,7 +215,7 @@ function bandFixture() {
       epoch_id: BAND_EPOCH, closed: false, goal: 'reduce drift',
       experiments: gens.map((g) => ({ generation_id: g.generation_id,
         parent_generation_id: g.parent_generation_id, outcome: { decision: 'promoted' } })),
-      board: [{ entry_id: 'waffles_single', kind: 'single_turn', budget_s: 180, weight: 1 }],
+      board: [{ entry_id: 'waffles_single', kind: 'single_turn', wall_clock_budget_seconds: 180, weight: 1 }],
     },
     [`/api/score-trajectory?epoch=${BAND_EPOCH}`]: {
       points: gens.map((g, i) => ({ generation_id: g.generation_id, scalar: 3 - i })),

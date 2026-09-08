@@ -32,7 +32,7 @@ class Pattern:
         Stable pattern identifier within a generation.
     kind:
         Detector-defined kind string. Conventional values include
-        ``"drift_kind_frequency"`` (one drift kind dominates),
+        ``"drift_metric_frequency"`` (one drift kind dominates),
         ``"hot_task"`` (one task id drifts disproportionately often),
         ``"hot_agent"`` (one agent id is overrepresented in drift
         sources). New detectors register new kinds without coordinating

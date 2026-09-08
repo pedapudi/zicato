@@ -140,7 +140,6 @@ def artifact_manifest_from_payload(payload: object) -> dict[str, Any]:
             payload,
             "artifact manifest",
             expected_version=ARTIFACT_FORMAT_VERSION,
-            allow_missing=False,
         )
     except RecordFormatError as exc:
         raise ValueError(str(exc)) from exc

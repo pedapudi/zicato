@@ -154,10 +154,9 @@ def _adversarial_events() -> list[dict[str, Any]]:
 def _looping_pattern(entry_ids: tuple[str, ...] = (_ENTRY_ID,)) -> Pattern:
     return Pattern(
         id="p" * 16,
-        kind="drift_kind_frequency",
+        kind="drift_metric_frequency",
         summary="drift kind 'looping_tool_call' fires in 100.0% of runs across 1 entries",
         detail={
-            "drift_kind": "looping_tool_call",
             "metric_name": "drift:looping_tool_call",
             "affected_entry_ids": ",".join(entry_ids),
             "frequency": "1.000",
@@ -200,7 +199,7 @@ def test_window_anchors_on_the_drift_and_keeps_allowlisted_fields(tmp_path: Path
     exemplars = _extract(tmp_path, [_looping_pattern()])
     assert len(exemplars) == 1
     ex = exemplars[0]
-    assert ex.pattern_kind == "drift_kind_frequency"
+    assert ex.pattern_kind == "drift_metric_frequency"
     assert ex.anchor_label == "drift kind 'looping_tool_call'"
     anchor = next(ev for ev in ex.events if ev.offset == 0)
     assert anchor.case == "drift_detected"
@@ -369,9 +368,9 @@ def _second_entry_events(entry_id: str) -> list[dict[str, Any]]:
 def _off_topic_pattern(entry_id: str) -> Pattern:
     return Pattern(
         id="q" * 16,
-        kind="drift_kind_frequency",
+        kind="drift_metric_frequency",
         summary="drift kind 'off_topic' fires",
-        detail={"drift_kind": "off_topic", "affected_entry_ids": entry_id},
+        detail={"metric_name": "drift:off_topic", "affected_entry_ids": entry_id},
     )
 
 
@@ -403,8 +402,8 @@ def test_cap_limits_total_exemplars(tmp_path: Path) -> None:
     )
     assert len(capped) == 2
     assert [ex.pattern_kind for ex in capped] == [
-        "drift_kind_frequency",
-        "drift_kind_frequency",
+        "drift_metric_frequency",
+        "drift_metric_frequency",
     ]
     uncapped = extract_process_exemplars(
         tmp_path,
@@ -522,8 +521,7 @@ def test_process_exemplars_knob_validates_non_negative() -> None:
 
 
 def test_contract_hash_stable_at_default_and_rolls_on_opt_in() -> None:
-    """Omit-at-default: a contract that never mentions the knob hashes
-    byte-identically to one pinning its 0 default; opting in rolls."""
+    """Equivalent defaults hash equally; enabling exemplars changes the contract."""
     from zicato.core.types import ScoringWeights
     from zicato.epoch.contract import scoring_to_canon
 
@@ -535,7 +533,7 @@ def test_contract_hash_stable_at_default_and_rolls_on_opt_in() -> None:
         )
     )
     assert base == pinned
-    assert "process_exemplars" not in json.dumps(base)
+    assert base["experimental"]["process_exemplars"] == 0
 
     opted = scoring_to_canon(
         ScoringWeights(
@@ -560,7 +558,7 @@ def test_scaffold_does_not_enable_process_exemplars() -> None:
 def test_exemplar_types_are_frozen_and_hashable() -> None:
     ev = ExemplarEvent(offset=0, case="drift_detected", fields=(("kind", "off_topic"),))
     ex = ProcessExemplar(
-        pattern_id="p", pattern_kind="drift_kind_frequency", anchor_label="x", events=(ev,)
+        pattern_id="p", pattern_kind="drift_metric_frequency", anchor_label="x", events=(ev,)
     )
     assert hash(ex) == hash(ex)
     with pytest.raises(AttributeError):
@@ -575,7 +573,7 @@ def test_exemplar_types_are_frozen_and_hashable() -> None:
 def _sample_exemplar() -> ProcessExemplar:
     return ProcessExemplar(
         pattern_id="p" * 16,
-        pattern_kind="drift_kind_frequency",
+        pattern_kind="drift_metric_frequency",
         anchor_label="drift kind 'looping_tool_call'",
         events=(
             ExemplarEvent(
@@ -607,7 +605,7 @@ def test_render_process_exemplars_block_shape() -> None:
     rendered = render_process_exemplars([_sample_exemplar()])
     lines = rendered.splitlines()
     assert lines[0] == (
-        "- exemplar 1/1 — pattern drift_kind_frequency (drift kind 'looping_tool_call'):"
+        "- exemplar 1/1 — pattern drift_metric_frequency (drift kind 'looping_tool_call'):"
     )
     # Relative offsets, aligned; free text quoted, closed vocab bare.
     assert lines[1] == "    -1 agent_invocation_started agent_name=researcher task_id=task-1"
@@ -706,7 +704,7 @@ def test_the_episode_task_carries_the_context_s_process_exemplars() -> None:
         brief_text="brief",
         current_loss_summary="ok",
         aux_call_llm=_unused,
-        process_exemplars="- exemplar 1/1 — pattern drift_kind_frequency (drift kind 'x'):",
+        process_exemplars="- exemplar 1/1 — pattern drift_metric_frequency (drift kind 'x'):",
     )
     rendered = render_evidence(evidence_from_context(ctx))
     assert "## Process exemplars (train slice — redacted event windows)" in rendered

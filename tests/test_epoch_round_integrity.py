@@ -461,21 +461,12 @@ def test_call_boundary_prefixes_match_the_real_emitters(tmp_path: Path) -> None:
     the reason, which on a credential lapse is the whole triage.
     """
     real_templates = (
-        # proposer.py — the aux-call boundary, both exception paths.
         f"evaluation LLM call raised {ConnectionError.__name__}: connection refused",
-        "evaluation LLM call timed out after 120.0s",
-        # foe_agent.py — the episode boundary of the sole proposer runtime,
-        # both the launch failure and the runtime failure.
         "the proposal episode could not start: ConnectionRefusedError: connection refused",
         "the proposal episode failed: PermissionDenied: 403 Forbidden",
     )
-    for template in real_templates:
+    for index, template in enumerate(real_templates, start=1):
         assert template.lower().startswith(CALL_BOUNDARY_PREFIXES), template
-
-    # And the eligible ones that name hard infra really do classify void.
-    for index, template in enumerate(
-        (real_templates[0], real_templates[2], real_templates[3]), start=1
-    ):
         _write(
             tmp_path,
             index,
@@ -487,58 +478,16 @@ def test_call_boundary_prefixes_match_the_real_emitters(tmp_path: Path) -> None:
         )
         assert round_integrity(tmp_path, EPOCH, index).status == RoundStatus.VOID
 
-    # The timeout template is eligible but deliberately carries no marker:
-    # one attempt timing out is not proof the endpoint was never reached.
-    _write(
-        tmp_path,
-        3,
-        [
-            RoundOpened(contract_hash="sha256:contract-t0"),
-            ProposalAttempted(errors=(real_templates[1],)),
-            RoundClosed(),
-        ],
-    )
-    assert round_integrity(tmp_path, EPOCH, 3).infra_markers == ()
 
-
-#: Prefixes kept for logs written before their emitter was removed. This
-#: module reads durable round logs, so a template outlives the code that
-#: wrote it. Both below belong to the ADK proposer that Foe replaced as the
-#: sole runtime; nothing in the tree emits either any more.
-RETIRED_CALL_BOUNDARY_PREFIXES = frozenset(
-    {
-        "evaluation llm call timed out ",
-        "proposer agent run raised ",
-    }
-)
-
-
-def test_every_call_boundary_prefix_is_live_or_declared_retired() -> None:
-    """The direction the template-pinning test above cannot check.
-
-    Pinning templates against the tuple catches a rename that drops a
-    template. It does not catch the reverse -- a prefix left in the tuple
-    after its emitter is deleted -- and that drift is what made three of
-    these prefixes describe code the tree no longer contains. A retired
-    prefix is legitimate, because historical logs still carry its prose, but
-    it must be declared rather than merely surviving unnoticed.
-    """
+def test_every_call_boundary_prefix_has_an_emitter() -> None:
+    """Every classified error prefix belongs to a supported producer."""
     source = "\n".join(
         path.read_text(encoding="utf-8")
         for path in Path(zicato.__file__).parent.rglob("*.py")
         if path.name != "round_integrity.py"
     ).lower()
     for prefix in CALL_BOUNDARY_PREFIXES:
-        if prefix in RETIRED_CALL_BOUNDARY_PREFIXES:
-            assert prefix not in source, (
-                f"{prefix!r} is declared retired but something still emits it; "
-                "drop it from RETIRED_CALL_BOUNDARY_PREFIXES"
-            )
-            continue
-        assert prefix in source, (
-            f"nothing emits {prefix!r} any more; either restore the emitter or "
-            "declare the prefix retired in RETIRED_CALL_BOUNDARY_PREFIXES"
-        )
+        assert prefix in source, f"no producer emits {prefix!r}"
 
 
 def test_infra_tokens_in_a_validation_finding_never_void_a_round(tmp_path: Path) -> None:

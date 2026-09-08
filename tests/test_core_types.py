@@ -11,13 +11,13 @@ from goldfive import DriftSeverity
 from zicato.core import (
     GOLDFIVE_DRIFT_KINDS,
     BoardEntry,
-    DriftCount,
     Expectation,
     ExpectationKind,
     ExpectationResult,
     JudgeMode,
     JudgeSpec,
     LossProfile,
+    MetricCount,
     MutationPoint,
     OutputScope,
     Patch,
@@ -577,7 +577,7 @@ def test_loss_profile_replace_preserves_fields() -> None:
         entry_id="e1",
         generation_id="v0",
         epoch_id="epoch-001",
-        drift_counts=(DriftCount(kind="tool_error", severity="warning", count=2),),
+        metric_counts=(MetricCount(name="drift:tool_error", severity="warning", count=2),),
         plan_revisions=1,
         task_failure_ratio=0.0,
         runtime_ms=1234,
@@ -588,7 +588,7 @@ def test_loss_profile_replace_preserves_fields() -> None:
     )
     updated = dataclasses.replace(profile, drift_loss=4.5)
     assert updated.drift_loss == 4.5
-    assert updated.drift_counts == profile.drift_counts
+    assert updated.metric_counts == profile.metric_counts
     assert profile.drift_loss == 6.0
 
 

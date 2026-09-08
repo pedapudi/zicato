@@ -77,9 +77,7 @@ def judge_io_record_from_payload(payload: object) -> dict[str, Any]:
     """Validate one complete judge capture without dropping extension fields."""
     if not isinstance(payload, dict):
         raise RecordError("judge capture must be an object")
-    check_record_format(
-        payload, "judge capture", expected_version=JUDGE_IO_FORMAT_VERSION, allow_missing=False
-    )
+    check_record_format(payload, "judge capture", expected_version=JUDGE_IO_FORMAT_VERSION)
     if any(not isinstance(payload.get(name), str) for name in ("judge_name", "ts", "raw_response")):
         raise RecordError("judge capture names, timestamp and response must be text")
     if type(payload.get("call_index")) is not int or payload["call_index"] < 0:

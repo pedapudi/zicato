@@ -77,8 +77,12 @@ def _valid_response() -> str:
                 "core_idea": "tighten router preamble",
                 "modulating": ["router__sp"],
                 "why": "off_topic dominates",
-                "expected_drift_movements": [
-                    {"kind": "off_topic", "direction": "decrease", "magnitude": "medium"}
+                "expected_metric_movements": [
+                    {
+                        "metric_name": "drift:off_topic",
+                        "direction": "decrease",
+                        "magnitude": "medium",
+                    }
                 ],
                 "expected_pass_rate_delta": "+0.05",
             },
@@ -209,7 +213,7 @@ def _experiment(core_idea: str, mutation_id: str) -> Experiment:
             core_idea=core_idea,
             modulating=(mutation_id,),
             why="because",
-            expected_drift_movements=(),
+            expected_metric_movements=(),
             expected_pass_rate_delta="+0.01",
         ),
         patches=(

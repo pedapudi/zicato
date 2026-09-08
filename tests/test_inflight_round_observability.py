@@ -61,8 +61,12 @@ def _distinct_proposer_response(core_idea: str, new_word: str) -> str:
                 "core_idea": core_idea,
                 "modulating": ["greeting"],
                 "why": "exercising the in-flight observability field path",
-                "expected_drift_movements": [
-                    {"kind": "off_topic", "direction": "decrease", "magnitude": "small"}
+                "expected_metric_movements": [
+                    {
+                        "metric_name": "drift:off_topic",
+                        "direction": "decrease",
+                        "magnitude": "small",
+                    }
                 ],
                 "expected_pass_rate_delta": "+0.0 to +0.1",
                 "risks": "harmless",
@@ -118,11 +122,16 @@ def _bootstrap_single_elim_workspace(tmp_path: Path, *, field_size: int) -> tupl
                 # tags this fixture never writes.
                 "generation_source_backend": "directory",
                 "adapter": {"kind": "import", "factory": "tests._stub_adapter:make_stub_adapter"},
-                "runtime": {
-                    "target_call_llm": "tests._orchestrator_harness:target_call_llm",
-                    "evaluation_call_llm": (
-                        "tests.test_inflight_round_observability:evaluation_call_llm"
-                    ),
+                "runtime": {},
+                "models": {
+                    "engines": {
+                        "target": {"call_llm": "tests._orchestrator_harness:target_call_llm"},
+                        "evaluation": {
+                            "call_llm": (
+                                "tests.test_inflight_round_observability:" "evaluation_call_llm"
+                            )
+                        },
+                    }
                 },
             }
         )

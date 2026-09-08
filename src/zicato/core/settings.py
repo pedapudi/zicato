@@ -423,16 +423,11 @@ class RuntimeSettings:
         metadata={
             "constraint": KnobConstraint(minimum=1),
             "cli": "--parallelism",
-            "null_uses_default": True,
         },
     )
-    propose_parallelism: int = field(
-        default=4, metadata={"constraint": KnobConstraint(minimum=1), "null_uses_default": True}
-    )
+    propose_parallelism: int = field(default=4, metadata={"constraint": KnobConstraint(minimum=1)})
     scrub_worker_env: bool = False
-    worker_env_passthrough: tuple[str, ...] = field(
-        default=(), metadata={"null_uses_default": True}
-    )
+    worker_env_passthrough: tuple[str, ...] = field(default=(), metadata={})
     diversity_tolerance: float | None = field(
         default=None,
         metadata={
@@ -445,19 +440,17 @@ class RuntimeSettings:
         default=20.0, metadata={"constraint": KnobConstraint(minimum=0)}
     )
     infra_abort_round_threshold: int = field(
-        default=0, metadata={"constraint": KnobConstraint(minimum=0), "null_uses_default": True}
+        default=0, metadata={"constraint": KnobConstraint(minimum=0)}
     )
     infra_backoff_base_s: float = field(
         default=INFRA_BACKOFF_BASE_S_DEFAULT,
-        metadata={"constraint": KnobConstraint(minimum=0), "null_uses_default": True},
+        metadata={"constraint": KnobConstraint(minimum=0)},
     )
     infra_backoff_cap_s: float = field(
         default=INFRA_BACKOFF_CAP_S_DEFAULT,
-        metadata={"constraint": KnobConstraint(minimum=0), "null_uses_default": True},
+        metadata={"constraint": KnobConstraint(minimum=0)},
     )
-    max_tokens_per_round: int = field(
-        default=0, metadata={"constraint": KnobConstraint(minimum=0), "null_uses_default": True}
-    )
+    max_tokens_per_round: int = field(default=0, metadata={"constraint": KnobConstraint(minimum=0)})
     preflight_gate: str = field(
         default=PREFLIGHT_GATE_DEFAULT,
         metadata={"constraint": KnobConstraint(choices=PREFLIGHT_GATE_MODES)},
@@ -466,12 +459,9 @@ class RuntimeSettings:
         default=PREFLIGHT_PROBE_POINTS_DEFAULT,
         metadata={
             "constraint": KnobConstraint(minimum=1, maximum=PREFLIGHT_PROBE_POINTS_MAX),
-            "null_uses_default": True,
         },
     )
-    preflight_probe_mutation_ids: tuple[str, ...] = field(
-        default=(), metadata={"null_uses_default": True}
-    )
+    preflight_probe_mutation_ids: tuple[str, ...] = field(default=(), metadata={})
     persist_run_results: bool = True
     persist_judge_io: bool = True
     host_worker_permits: int | bool | None = field(
@@ -499,26 +489,17 @@ class RuntimeSettings:
 
 @dataclass(frozen=True, slots=True)
 class RuntimeDeclaration(RuntimeSettings):
-    """Persisted runtime settings and importable role declarations.
+    """Persisted runtime settings and external proposer selection.
 
     Fields
     ------
     workspace_root:
         Workspace path used by direct runtime construction when no path is supplied.
-    target_call_llm:
-        Importable target callable used when no named target engine is configured.
-    evaluation_call_llm:
-        Importable evaluation callable used when no named evaluation engine is configured.
-    evaluation_model:
-        Model name passed to evaluation calls.
     proposer_agent:
         Importable operator-supplied proposer class.
     """
 
     workspace_root: str = ".zicato"
-    target_call_llm: str | None = None
-    evaluation_call_llm: str | None = None
-    evaluation_model: str = ""
     proposer_agent: str = ""
 
 
@@ -647,12 +628,6 @@ def resolve_configuration(
     workspace_declaration(workspace_config)
     sections = {item.name for item in fields(ZicatoConfig)}
     authored = {key: value for key, value in workspace_config.items() if key in sections}
-    integration = dict(authored.get("integration", {}))
-    if not integration.get("harmonograf_url", "").strip() and workspace_config.get(
-        "harmonograf_url"
-    ):
-        integration["harmonograf_url"] = workspace_config["harmonograf_url"]
-        authored["integration"] = integration
     if "runtime" in authored:
         runtime = authored["runtime"]
         validate_authored_overlay(RuntimeDeclaration, runtime, path="config.runtime")

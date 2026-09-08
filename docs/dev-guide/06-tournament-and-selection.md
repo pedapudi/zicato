@@ -488,11 +488,11 @@ Three design choices that matter for the gate:
   `score` before it can consult the vote; it still drives the binary `pass_rate`
   and the gate's `pass_fail` fallback for score-less aggregates.
 
-The namespace-bearing counters (`metric_counts` and the three int scalars) are
-meaned with an absent-bucket-contributes-zero divisor — the same per-run-mean
-model `aggregate_namespaced_metrics` applies — so the namespace aggregate over
-the fold equals the aggregate over the replicates it folded. Full field-by-field
-treatment: ch.04 §7.1.
+Named metric buckets retain their means across all replicates; an absent bucket
+contributes zero. Integer token, output, and schema counters retain rounded means
+for runtime and display consumers. Drift reports use the averaged named buckets;
+the drift scoring channel uses the averaged `drift_loss`. Full field treatment:
+ch.04 §7.1.
 
 ### 6.2.6 Provenance and the `champion_eval_mode`
 
@@ -848,8 +848,8 @@ Two properties are load-bearing far beyond this module:
   §"confirmed-dead-only reaping and the `ztw-snap-` contract"). Change the
   prefix or move the checkout out of the temp dir and crashed runs leak disk
   forever.
-- **The scratch dir + `SCRATCH_DIR_ENV`.** The checkout carries a sibling
-  `run-scratch` dir; the worker exports its path as `SCRATCH_DIR_ENV` so a
+- **The run scratch directory.** The checkout carries a sibling
+  `run-scratch` dir; the worker supplies its path in `RunContext` so a
   target routes run output OUTSIDE its own source tree. A stray write that
   ignores the scratch dir still only pollutes the *throwaway* checkout — a
   belt-and-braces second layer. When the harness returns, the worker captures
@@ -2123,9 +2123,9 @@ evaluation. The worked example lives at
 (`DeterministicPolicyAdapter`); mirror it.
 
 **Step 1 — the `RunnableHarness` session shape.** Your adapter's `load(generation_root)`
-returns a *session* implementing the rich `run(entry, sinks, config) -> RunResult`
-shape (the worker dispatches on the signature; a two-argument
-`run(entry, sink_path)` stub is detected by parameter name). Emit real goldfive lifecycle frames through
+returns a session implementing `async run(entry, sinks, config) -> RunResult`.
+Both import probes and workers validate this interface before execution.
+Emit real goldfive lifecycle frames through
 `sinks` so the REAL reducer computes the loss from a real events file — no
 telemetry stubs:
 

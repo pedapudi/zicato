@@ -578,7 +578,7 @@ digest is curated rather than a dump. It is capped at
 the remainder"). Each entry is a `PriorExperiment`: core idea, modulating
 ids, decision, banded Δscalar under restricted visibility, and the
 diagnostic `prediction_accuracy`. With
-`experimental.cross_epoch_memory: true` (contract knob, omit-at-default),
+`experimental.cross_epoch_memory: true` (a field in the complete scoring contract),
 settled experiments from PRIOR epochs sharing the current
 `contract_hash` are appended — marked `same_contract=False`, Δscalar
 omitted (the number does not transfer), and admitted only into budget
@@ -757,7 +757,7 @@ the dashboard, and fast mode. Its keys are therefore a wire contract:
 | `mean_score` | the UNIFORM continuous outcome axis — equals `pass_rate` byte-for-byte on an all-bool board (the back-compat proof is in the source comment); the scalar's pass component and the gate's `aggregate` scope read THIS |
 | `per_entry` | `{entry_id: {drift_loss, pass_fail, score}}` — the gate's `per_entry` scope reads `score` |
 | `namespace_aggregates` | weight-multiplied per-namespace means (`cost:`, `latency:`, `rubric:`, `schema:`, …) — already sign-folded so lower is uniformly worse-to-better comparable |
-| `scalar_components` | the display/gate breakdown: `drift`, `pass`, one entry per non-drift namespace, plus `diff_complexity` ONLY when opted in (the key is never written at the default — the omit-at-default idea applied to a runtime artifact) |
+| `scalar_components` | the display/gate breakdown: `drift`, `pass`, one entry per non-drift namespace, plus `diff_complexity` ONLY when opted in (the display key is absent when the term is disabled; configuration identity includes the setting) |
 | `scalar` | the lower-is-better number the gate compares, synthesized through the Seam-2 dispatcher (`resolve_scalar`), byte-identical to `sum(scalar_components.values())` for the builtin path |
 
 > ⚠️ **TRAP** — empty input aggregates to `scalar=0.0`, `pass_rate=1.0`

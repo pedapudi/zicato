@@ -628,7 +628,11 @@ def test_probe_knobs_do_not_move_the_contract_hash(tmp_path: Path) -> None:
                 {
                     "instance_id": "default",
                     "created_at": "2026-07-01T00:00:00Z",
-                    "mutable_trees": [str(example / "agent")],
+                    "adapter": {
+                        "kind": "import",
+                        "factory": "tests._stub_adapter:make_stub_adapter",
+                        "mutable_trees": [str(example / "agent")],
+                    },
                     "runtime": runtime,
                 }
             )

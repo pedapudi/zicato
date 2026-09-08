@@ -23,8 +23,6 @@ import pytest
 from starlette.testclient import TestClient
 
 from zicato.core import (
-    DriftMovementActual,
-    ExpectedDriftMovement,
     ExpectedMetricMovement,
     MetricMovementActual,
     OutcomeRecord,
@@ -82,14 +80,12 @@ def _client(ws: Path, static_dir: Path) -> TestClient:
 
 def _outcome(
     *,
-    drift_movements=(),
     metric_movements=(),
     pass_rate_delta: float = 0.0,
     decision: str = "promoted",
 ) -> OutcomeRecord:
     return OutcomeRecord(
         ran_at="2026-05-28T01:00:00Z",
-        drift_movements=tuple(drift_movements),
         metric_movements=tuple(metric_movements),
         pass_rate_delta=pass_rate_delta,
         drift_loss_delta=-0.1,
@@ -106,21 +102,30 @@ def _outcome(
 def test_hypothesis_accuracy_hit_and_miss(tmp_path: Path) -> None:
     ws = _make_workspace(tmp_path)
     hypothesis = make_hypothesis_spec(
-        expected_drift_movements=(
-            ExpectedDriftMovement(kind="off_topic", direction="decrease", magnitude="small"),
-            ExpectedDriftMovement(kind="hallucination", direction="decrease", magnitude="medium"),
+        expected_metric_movements=(
+            ExpectedMetricMovement(
+                metric_name="drift:off_topic", direction="decrease", magnitude="small"
+            ),
+            ExpectedMetricMovement(
+                metric_name="drift:hallucination", direction="decrease", magnitude="medium"
+            ),
         ),
         expected_pass_rate_delta="+0.05 to +0.10",
     )
     outcome = _outcome(
-        drift_movements=(
-            # Predicted decrease, realised decrease, stamped MATCH.
-            DriftMovementActual(
-                kind="off_topic", from_rate=0.40, to_rate=0.20, hypothesis_match=True, note="good"
+        metric_movements=(
+            MetricMovementActual(
+                metric_name="drift:off_topic",
+                from_value=0.4,
+                to_value=0.2,
+                hypothesis_match=True,
+                note="good",
             ),
-            # Predicted decrease, realised increase, stamped MISS.
-            DriftMovementActual(
-                kind="hallucination", from_rate=0.10, to_rate=0.30, hypothesis_match=False
+            MetricMovementActual(
+                metric_name="drift:hallucination",
+                from_value=0.1,
+                to_value=0.3,
+                hypothesis_match=False,
             ),
         ),
         pass_rate_delta=0.07,
@@ -132,10 +137,10 @@ def test_hypothesis_accuracy_hit_and_miss(tmp_path: Path) -> None:
     assert result["epoch_id"] == EPOCH_ID
     assert result["generation_id"] == "v1"
     claims = {c["target"]: c for c in result["claims"]}
-    assert set(claims) == {"off_topic", "hallucination"}
+    assert set(claims) == {"drift:off_topic", "drift:hallucination"}
 
-    hit = claims["off_topic"]
-    assert hit["kind"] == "drift"
+    hit = claims["drift:off_topic"]
+    assert hit["kind"] == "metric"
     assert hit["predicted_direction"] == "decrease"
     assert hit["predicted_magnitude"] == "small"
     assert hit["from_rate"] == pytest.approx(0.40)
@@ -146,7 +151,7 @@ def test_hypothesis_accuracy_hit_and_miss(tmp_path: Path) -> None:
     assert hit["unpredicted"] is False
     assert hit["note"] == "good"
 
-    miss = claims["hallucination"]
+    miss = claims["drift:hallucination"]
     assert miss["observed_direction"] == "increase"
     assert miss["signed_error"] == pytest.approx(0.20)
     assert miss["hypothesis_match"] is False
@@ -173,20 +178,24 @@ def test_hypothesis_accuracy_lifts_the_stamped_verdict_over_the_raw_rates(
     """
     ws = _make_workspace(tmp_path)
     hypothesis = make_hypothesis_spec(
-        expected_drift_movements=(
-            ExpectedDriftMovement(kind="off_topic", direction="decrease", magnitude="small"),
-            ExpectedDriftMovement(kind="verbosity", direction="increase", magnitude="large"),
-        ),
+        expected_metric_movements=(
+            ExpectedMetricMovement(
+                metric_name="drift:off_topic", direction="decrease", magnitude="small"
+            ),
+            ExpectedMetricMovement(
+                metric_name="drift:verbosity", direction="increase", magnitude="large"
+            ),
+        )
     )
     outcome = _outcome(
-        drift_movements=(
-            DriftMovementActual(
-                kind="off_topic", from_rate=0.40, to_rate=0.45, hypothesis_match=True
+        metric_movements=(
+            MetricMovementActual(
+                metric_name="drift:off_topic", from_value=0.4, to_value=0.45, hypothesis_match=True
             ),
-            DriftMovementActual(
-                kind="verbosity", from_rate=0.10, to_rate=0.30, hypothesis_match=False
+            MetricMovementActual(
+                metric_name="drift:verbosity", from_value=0.1, to_value=0.3, hypothesis_match=False
             ),
-        ),
+        )
     )
     _persist(ws, generation_id="v1", hypothesis=hypothesis, outcome=outcome)
 
@@ -195,10 +204,10 @@ def test_hypothesis_accuracy_lifts_the_stamped_verdict_over_the_raw_rates(
 
     # The realised direction disagrees with the prediction on both claims;
     # only the stamped flag separates them.
-    assert claims["off_topic"]["observed_direction"] == "increase"
-    assert claims["off_topic"]["hypothesis_match"] is True
-    assert claims["verbosity"]["observed_direction"] == "increase"
-    assert claims["verbosity"]["hypothesis_match"] is False
+    assert claims["drift:off_topic"]["observed_direction"] == "increase"
+    assert claims["drift:off_topic"]["hypothesis_match"] is True
+    assert claims["drift:verbosity"]["observed_direction"] == "increase"
+    assert claims["drift:verbosity"]["hypothesis_match"] is False
     assert result["score"] == {"hits": 1, "total": 2, "fraction": 0.5, "brier": None}
 
 
@@ -206,12 +215,11 @@ def test_hypothesis_accuracy_metric_movements_and_unpredicted(tmp_path: Path) ->
     """Namespaced metric claims score; a realised-but-unpredicted row rides along."""
     ws = _make_workspace(tmp_path)
     hypothesis = make_hypothesis_spec(
-        expected_drift_movements=(),
         expected_metric_movements=(
             ExpectedMetricMovement(
                 metric_name="cost:tokens_spent", direction="decrease", magnitude="medium"
             ),
-        ),
+        )
     )
     outcome = _outcome(
         metric_movements=(
@@ -261,16 +269,18 @@ def test_hypothesis_accuracy_predicted_without_actual(tmp_path: Path) -> None:
     """A predicted movement the outcome never recorded -> null match, no hit."""
     ws = _make_workspace(tmp_path)
     hypothesis = make_hypothesis_spec(
-        expected_drift_movements=(
-            ExpectedDriftMovement(kind="off_topic", direction="decrease", magnitude="small"),
-        ),
+        expected_metric_movements=(
+            ExpectedMetricMovement(
+                metric_name="drift:off_topic", direction="decrease", magnitude="small"
+            ),
+        )
     )
-    outcome = _outcome(drift_movements=())  # nothing realised for off_topic
+    outcome = _outcome(metric_movements=())  # nothing realised for off_topic
     _persist(ws, generation_id="v1", hypothesis=hypothesis, outcome=outcome)
 
     result = build_hypothesis_accuracy(WorkspacePaths(ws), EPOCH_ID, "v1")
     claim = result["claims"][0]
-    assert claim["target"] == "off_topic"
+    assert claim["target"] == "drift:off_topic"
     assert claim["from_rate"] is None
     assert claim["to_rate"] is None
     assert claim["observed_direction"] is None
@@ -285,7 +295,7 @@ def test_hypothesis_accuracy_no_claims(tmp_path: Path) -> None:
     """A hypothesis with no falsifiable movement claims -> empty claims, null fraction."""
     ws = _make_workspace(tmp_path)
     hypothesis = make_hypothesis_spec(
-        expected_drift_movements=(), expected_pass_rate_delta="+0.00 to +0.05"
+        expected_metric_movements=(), expected_pass_rate_delta="+0.00 to +0.05"
     )
     outcome = _outcome(pass_rate_delta=0.03)
     _persist(ws, generation_id="v1", hypothesis=hypothesis, outcome=outcome)
@@ -319,16 +329,18 @@ def test_hypothesis_accuracy_missing_experiment(tmp_path: Path) -> None:
 def test_hypothesis_accuracy_endpoint(tmp_path: Path, static_dir: Path) -> None:
     ws = _make_workspace(tmp_path)
     hypothesis = make_hypothesis_spec(
-        expected_drift_movements=(
-            ExpectedDriftMovement(kind="off_topic", direction="decrease", magnitude="small"),
-        ),
+        expected_metric_movements=(
+            ExpectedMetricMovement(
+                metric_name="drift:off_topic", direction="decrease", magnitude="small"
+            ),
+        )
     )
     outcome = _outcome(
-        drift_movements=(
-            DriftMovementActual(
-                kind="off_topic", from_rate=0.4, to_rate=0.2, hypothesis_match=True
+        metric_movements=(
+            MetricMovementActual(
+                metric_name="drift:off_topic", from_value=0.4, to_value=0.2, hypothesis_match=True
             ),
-        ),
+        )
     )
     _persist(ws, generation_id="v1", hypothesis=hypothesis, outcome=outcome)
 
@@ -370,14 +382,19 @@ def test_calibration_trend_over_lineage(tmp_path: Path) -> None:
         generation_id="v1",
         round_index=0,
         hypothesis=make_hypothesis_spec(
-            expected_drift_movements=(
-                ExpectedDriftMovement(kind="off_topic", direction="decrease", magnitude="small"),
-            ),
+            expected_metric_movements=(
+                ExpectedMetricMovement(
+                    metric_name="drift:off_topic", direction="decrease", magnitude="small"
+                ),
+            )
         ),
         outcome=_outcome(
-            drift_movements=(
-                DriftMovementActual(
-                    kind="off_topic", from_rate=0.4, to_rate=0.2, hypothesis_match=True
+            metric_movements=(
+                MetricMovementActual(
+                    metric_name="drift:off_topic",
+                    from_value=0.4,
+                    to_value=0.2,
+                    hypothesis_match=True,
                 ),
             ),
             decision="promoted",
@@ -389,18 +406,28 @@ def test_calibration_trend_over_lineage(tmp_path: Path) -> None:
         round_index=1,
         parent_generation_id="v1",
         hypothesis=make_hypothesis_spec(
-            expected_drift_movements=(
-                ExpectedDriftMovement(kind="off_topic", direction="decrease", magnitude="small"),
-                ExpectedDriftMovement(kind="verbosity", direction="increase", magnitude="large"),
-            ),
+            expected_metric_movements=(
+                ExpectedMetricMovement(
+                    metric_name="drift:off_topic", direction="decrease", magnitude="small"
+                ),
+                ExpectedMetricMovement(
+                    metric_name="drift:verbosity", direction="increase", magnitude="large"
+                ),
+            )
         ),
         outcome=_outcome(
-            drift_movements=(
-                DriftMovementActual(
-                    kind="off_topic", from_rate=0.2, to_rate=0.3, hypothesis_match=False
+            metric_movements=(
+                MetricMovementActual(
+                    metric_name="drift:off_topic",
+                    from_value=0.2,
+                    to_value=0.3,
+                    hypothesis_match=False,
                 ),
-                DriftMovementActual(
-                    kind="verbosity", from_rate=0.1, to_rate=0.1, hypothesis_match=False
+                MetricMovementActual(
+                    metric_name="drift:verbosity",
+                    from_value=0.1,
+                    to_value=0.1,
+                    hypothesis_match=False,
                 ),
             ),
             decision="rejected",
@@ -411,7 +438,7 @@ def test_calibration_trend_over_lineage(tmp_path: Path) -> None:
         generation_id="v3",
         round_index=2,
         parent_generation_id="v1",
-        hypothesis=make_hypothesis_spec(expected_drift_movements=()),
+        hypothesis=make_hypothesis_spec(expected_metric_movements=()),
         outcome=_outcome(decision="rejected"),
     )
 
@@ -456,16 +483,21 @@ def test_calibration_trend_endpoint(tmp_path: Path, static_dir: Path) -> None:
         ws,
         generation_id="v1",
         hypothesis=make_hypothesis_spec(
-            expected_drift_movements=(
-                ExpectedDriftMovement(kind="off_topic", direction="decrease", magnitude="small"),
-            ),
+            expected_metric_movements=(
+                ExpectedMetricMovement(
+                    metric_name="drift:off_topic", direction="decrease", magnitude="small"
+                ),
+            )
         ),
         outcome=_outcome(
-            drift_movements=(
-                DriftMovementActual(
-                    kind="off_topic", from_rate=0.4, to_rate=0.2, hypothesis_match=True
+            metric_movements=(
+                MetricMovementActual(
+                    metric_name="drift:off_topic",
+                    from_value=0.4,
+                    to_value=0.2,
+                    hypothesis_match=True,
                 ),
-            ),
+            )
         ),
     )
     client = _client(ws, static_dir)

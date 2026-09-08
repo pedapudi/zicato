@@ -152,8 +152,8 @@ def test_new_epoch_accepts_in_memory_objects_without_prior_save(
     """
     board = (
         Board()
-        .add(Entry(id="e1", input="hi", budget_s=60))
-        .add(Entry(id="e2", input="bye", budget_s=60))
+        .add(Entry(id="e1", input="hi", wall_clock_budget_seconds=60))
+        .add(Entry(id="e2", input="bye", wall_clock_budget_seconds=60))
     )
     brief = ProposerBrief(
         text="# Proposer brief\n\n# Forbidden edits\n- Avoid `router__sp`.\n",
@@ -321,26 +321,14 @@ def test_list_epochs_skips_directories_without_config(
 
 
 def _write_epoch_config(workspace: Path, epoch_id: str, created_at: str) -> None:
-    """Materialize a minimal ``epochs/<id>/config.json`` directly on disk.
+    """Publish a supported epoch with explicit ordering coordinates."""
+    from tests._workspace_support import write_epoch
+    from zicato.workspace import WorkspaceLayout
 
-    Bypasses ``new_epoch`` so the test can pin both the id and the
-    ``created_at`` stamp — the two inputs to the canonical sort key.
-    """
-    edir = workspace / "epochs" / epoch_id
-    edir.mkdir(parents=True)
-    (edir / "config.json").write_text(
-        json.dumps(
-            {
-                "id": epoch_id,
-                "name": epoch_id,
-                "created_at": created_at,
-                "board_path": "board.jsonl",
-                "brief_path": "brief.md",
-                "contract_hash": "deadbeef",
-                "closed": False,
-            }
-        ),
-        encoding="utf-8",
+    write_epoch(
+        WorkspaceLayout.from_root(workspace),
+        epoch_id,
+        config={"name": epoch_id, "created_at": created_at},
     )
 
 

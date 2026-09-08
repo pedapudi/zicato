@@ -131,11 +131,7 @@ async def ensure_epoch_for_contract(
         return new_id
 
     cfg = load_epoch(workspace_root, cur)
-    if cfg.contract_hash is None or cfg.contract_hash == current_hash:
-        # The epoch stores no hash (``None`` → treated as always-matching), or
-        # the contract is unchanged. Either way: no roll. The check is
-        # ``is None`` rather than ``== ""``, so a corrupted or empty real hash
-        # rolls instead of reading as "no hash stored".
+    if cfg.contract_hash == current_hash:
         return cur
 
     stored_components = (

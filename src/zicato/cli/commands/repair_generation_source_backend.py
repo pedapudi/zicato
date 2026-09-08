@@ -13,9 +13,8 @@ need this command:
   generation as having no source tree.
 
 The alternative remedy is ``zicato init --force``, and it is the wrong one:
-force rebuilds ``config.json`` from scratch (dropping ``contract``,
-``mutable_trees``, ``source_roots``, ``adk_entrypoint`` and everything else
-a registration wrote) and resets ``lineage.json`` to an empty epoch list.
+force rebuilds ``config.json`` from scratch, dropping the adapter and contract
+registration, and resets ``lineage.json`` to an empty epoch list.
 This command writes exactly one key and leaves every other byte of the
 workspace alone.
 
@@ -65,7 +64,7 @@ def repair_generation_source_backend_cmd(workspace: str, backend: str, force: bo
     """Advanced: set ``generation_source_backend`` on an existing workspace.
 
     Merges the one key into the existing ``config.json`` — every other key
-    (contract, mutable_trees, source_roots, models, instance_id) and
+    (adapter, contract, models, instance_id) and
     ``lineage.json`` are untouched. Use this rather than ``zicato init
     --force``, which rewrites the config and resets the lineage.
 

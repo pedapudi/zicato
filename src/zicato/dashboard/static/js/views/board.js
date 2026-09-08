@@ -266,7 +266,7 @@ export async function render(host, ctx, params, route) {
   // (and its scroll position) untouched — mirrors compare.js's per-side hosts.
   const upperDigest = JSON.stringify({
     epochId, entryId, selGen,
-    def: def ? [def.kind, def.weight, def.budget_s, def.expectation_kind || null, (def.tags || []).join(',')] : null,
+    def: def ? [def.kind, def.weight, def.wall_clock_budget_seconds, def.expectation_kind || null, (def.tags || []).join(',')] : null,
     champ: championId,
     // rows fold the continuous score + its precision/recall metrics (#18) so a
     // scored board repaints when a score moves; a bool-only row contributes
@@ -337,7 +337,7 @@ export async function render(host, ctx, params, route) {
       stat(def ? (ENTRY_KIND_LABEL[def.kind] || def.kind || '—') : '—', 'kind'),
       stat(def && def.expectation_kind ? String(def.expectation_kind) : '—', 'oracle'),
       stat(def && svg.isNum(def.weight) ? svg.fmt(def.weight, 1) : '—', 'weight'),
-      stat(def && svg.isNum(def.budget_s) ? def.budget_s + 's' : '—', 'budget'),
+      stat(def && svg.isNum(def.wall_clock_budget_seconds) ? def.wall_clock_budget_seconds + 's' : '—', 'budget'),
       stat(String(rows.filter((r) => r.ran).length) + '/' + String(rows.length), 'candidates ran'),
     ]));
     const tags = (def && Array.isArray(def.tags)) ? def.tags : [];

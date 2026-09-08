@@ -1,4 +1,4 @@
-"""Authored feature settings have one owner; archived settings retain their meaning."""
+"""Experimental settings use one declared configuration location."""
 
 from __future__ import annotations
 
@@ -7,12 +7,11 @@ from dataclasses import fields
 
 import pytest
 
-from zicato.core.configuration import ConfigurationError
 from zicato.core.scoring_config import (
     ExperimentalConfig,
     ScoringWeights,
 )
-from zicato.workspace_loader import historical_scoring_weights_from_dict, scoring_weights_from_dict
+from zicato.workspace_loader import scoring_weights_from_dict
 
 
 @pytest.mark.parametrize(
@@ -36,9 +35,9 @@ from zicato.workspace_loader import historical_scoring_weights_from_dict, scorin
         ({"tournament": {"params": {"resolver": "ranked_pairs"}}}, "resolver", "ranked_pairs"),
     ],
 )
-def test_authored_location_is_explicit_and_archived_value_is_preserved(recorded, name, value):
+def test_experimental_setting_uses_its_declared_location(recorded, name, value):
     original = deepcopy(recorded)
-    with pytest.raises(ConfigurationError, match=f"experimental.{name}"):
+    with pytest.raises(ValueError):
         scoring_weights_from_dict(recorded)
     authored = scoring_weights_from_dict(
         {
@@ -47,10 +46,8 @@ def test_authored_location_is_explicit_and_archived_value_is_preserved(recorded,
             "proposer_quality": {"screen_entries": 0},
         }
     )
-    archived = historical_scoring_weights_from_dict(recorded)
-    assert archived == authored
     assert recorded == original
-    assert ScoringWeights.from_json(archived.to_json()) == authored
+    assert ScoringWeights.from_json(authored.to_json()) == authored
     assert getattr(authored.experimental, name) == value
 
 
@@ -60,13 +57,3 @@ def test_recommended_settings_keep_experiments_inactive_and_screening_enabled():
     assert recommended.proposer_quality.screen_entries > 0
     assert "experiment_memory" not in {field.name for field in fields(ScoringWeights)}
     assert recommended.overfitting.restrict_proposer_visibility is True
-
-
-def test_conflicting_archived_locations_are_refused():
-    with pytest.raises(ValueError, match="both"):
-        historical_scoring_weights_from_dict(
-            {
-                "proposer_quality": {"genealogy": 2},
-                "experimental": {"genealogy": 3},
-            }
-        )

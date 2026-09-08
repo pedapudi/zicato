@@ -27,7 +27,7 @@ from pathlib import Path
 
 import pytest
 
-from zicato.core import DriftCount, ScoringWeights
+from zicato.core import MetricCount, ScoringWeights
 from zicato.scoring import builtin_drift_loss, builtin_scalar
 from zicato.scoring.api import DriftContext, ScalarContext
 from zicato.scoring.dispatch import resolve_drift_loss, resolve_scalar
@@ -52,15 +52,15 @@ def _install_plugin_module(tmp_path: Path, name: str, body: str) -> str:
     return name
 
 
-def _drift_ctx(weights: ScoringWeights, drift_counts: tuple[DriftCount, ...]) -> DriftContext:
+def _drift_ctx(weights: ScoringWeights, metric_counts: tuple[MetricCount, ...]) -> DriftContext:
     return DriftContext(
-        drift_counts=drift_counts,
+        metric_counts=metric_counts,
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=0,
         weights=weights,
         builtin_loss=builtin_drift_loss(
-            drift_counts=drift_counts,
+            metric_counts=metric_counts,
             plan_revisions=0,
             weights=weights,
         ),
@@ -96,7 +96,7 @@ def test_neutral_default_no_plugin_is_builtin_path() -> None:
     weights = ScoringWeights()
     assert weights.scalar_fn == "" and weights.drift_reducer == ""
 
-    dctx = _drift_ctx(weights, (DriftCount(kind="off_topic", severity="warning", count=2),))
+    dctx = _drift_ctx(weights, (MetricCount(name="drift:off_topic", severity="warning", count=2),))
     loss, prov = resolve_drift_loss(dctx)
     assert loss == dctx.builtin_loss
     assert prov == "builtin"
@@ -139,7 +139,7 @@ def test_drift_reducer_wraps_builtin(tmp_path: Path) -> None:
         """,
     )
     weights = ScoringWeights(drift_reducer=f"{name}:halve")
-    dctx = _drift_ctx(weights, (DriftCount(kind="off_topic", severity="warning", count=4),))
+    dctx = _drift_ctx(weights, (MetricCount(name="drift:off_topic", severity="warning", count=4),))
     loss, prov = resolve_drift_loss(dctx)
     assert loss == dctx.builtin_loss / 2.0
     assert prov == f"plugin:drift_reducer={name}:halve"
@@ -191,7 +191,7 @@ def test_drift_reducer_composes_on_top_of_kind_aggregation(tmp_path: Path) -> No
             return ctx.builtin_loss
         """,
     )
-    drift = (DriftCount(kind="looping_reasoning", severity="warning", count=4),)
+    drift = (MetricCount(name="drift:looping_reasoning", severity="warning", count=4),)
     agg = {"looping_reasoning": {"op": "harmonic"}}
     w_transform_only = ScoringWeights(drift_kind_aggregation=agg)
     w_with_plugin = ScoringWeights(drift_kind_aggregation=agg, drift_reducer=f"{name}:echo")
@@ -253,7 +253,7 @@ def test_non_finite_or_non_numeric_return_falls_back(
         """,
     )
     weights = ScoringWeights(drift_reducer=f"{name}:bad")
-    dctx = _drift_ctx(weights, (DriftCount(kind="off_topic", severity="warning", count=3),))
+    dctx = _drift_ctx(weights, (MetricCount(name="drift:off_topic", severity="warning", count=3),))
     loss, prov = resolve_drift_loss(dctx)
     assert loss == dctx.builtin_loss
     assert prov == f"builtin (fallback: {reason})"
@@ -473,7 +473,7 @@ def test_drift_reducer_survives_worker_transport_and_drives_compute_drift_loss(
     round_tripped = _weights_from_args({"weights": json.loads(json.dumps(spec))})
     assert round_tripped.drift_reducer == f"{name}:double"
 
-    drift = (DriftCount(kind="off_topic", severity="warning", count=5),)
+    drift = (MetricCount(name="drift:off_topic", severity="warning", count=5),)
     # builtin = 5 × warning 3.0 = 15; the reducer doubles it → 30.
     plugin_loss = compute_drift_loss(drift, plan_revisions=0, weights=round_tripped)
     builtin_loss = compute_drift_loss(
@@ -596,7 +596,7 @@ def test_example_drift_reducer_reproduces_harmonic_looping() -> None:
     from zicato_examples.target_1_presentation.scoring import harmonic_looping_reducer
 
     weights = ScoringWeights(severity_weights={"warning": 1.0})
-    drift = (DriftCount(kind="looping_reasoning", severity="warning", count=3),)
+    drift = (MetricCount(name="drift:looping_reasoning", severity="warning", count=3),)
     dctx = _drift_ctx(weights, drift)
     # builtin: 3 loops × warning 1.0 = 3.0 linear.
     assert dctx.builtin_loss == pytest.approx(3.0)

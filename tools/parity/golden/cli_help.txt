@@ -277,25 +277,21 @@ Usage: zicato epoch new [OPTIONS] NAME
   Create an epoch and adopt its contract for subsequent evolve runs.
 
 Options:
-  --workspace TEXT        Path to the zicato workspace directory.  [default:
-                          .zicato]
-  --board FILE            Path to a board.jsonl. Frozen into the epoch and
-                          adopted as the workspace's live contract board.
-                          [required]
-  --brief, --rubric FILE  Path to a proposer brief (brief.md). Frozen into the
-                          epoch and adopted as the workspace's live contract
-                          brief. ``--rubric`` is accepted as a legacy alias.
-                          [required]
-  --scoring FILE          Path to scoring.json; defaults applied if absent. The
-                          accepted scoring is frozen into the epoch and adopted
-                          as the live contract scoring.
-  --goal TEXT             Free-form statement of *why* this epoch exists (the
-                          intent the operator is testing). Persisted into
-                          config.json and surfaced in the analyzer report
-                          header. When omitted and stdin is a TTY, the operator
-                          is prompted for one line; in non-TTY contexts the goal
-                          defaults to the empty string.
-  --help                  Show this message and exit.
+  --workspace TEXT  Path to the zicato workspace directory.  [default: .zicato]
+  --board FILE      Path to a board.jsonl. Frozen into the epoch and adopted as
+                    the workspace's live contract board.  [required]
+  --brief FILE      Path to a proposer brief (brief.md). Frozen into the epoch
+                    and adopted as the workspace's live contract brief.
+                    [required]
+  --scoring FILE    Path to scoring.json; defaults applied if absent. The
+                    accepted scoring is frozen into the epoch and adopted as the
+                    live contract scoring.
+  --goal TEXT       Free-form statement of *why* this epoch exists (the intent
+                    the operator is testing). Persisted into config.json and
+                    surfaced in the analyzer report header. When omitted and
+                    stdin is a TTY, the operator is prompted for one line; in
+                    non-TTY contexts the goal defaults to the empty string.
+  --help            Show this message and exit.
 
 ===== zicato epoch register --help =====
 Usage: zicato epoch register [OPTIONS]
@@ -390,16 +386,11 @@ Options:
 ===== zicato epoch set-goal --help =====
 Usage: zicato epoch set-goal [OPTIONS]
 
-  Set the goal on an existing epoch and re-ingest its index row.
+  Set an epoch's goal and refresh its derived index under one writer lease.
 
-  Designed for the contract-hash auto-roll case: when ``zicato evolve`` opens a
-  new epoch mid-run there is no opportunity to prompt the operator, so the goal
-  lands as an empty string + a warning that recommends running this command
-  later.
-
-  Idempotent — writes the supplied goal into ``config.json`` and refreshes the
-  ``epochs.goal`` index column. The rest of the index is left alone (use
-  ``zicato repair index`` for a full rebuild).
+  Automatic epoch creation may leave the goal empty. This command writes the
+  supplied goal and repairs any stale epoch projections, creating the index when
+  absent.
 
 Options:
   --epoch TEXT      The epoch id to mutate.  [required]
@@ -499,7 +490,7 @@ Options:
                                   the contract hash and can open an epoch. With
                                   --dry-run, the edit is checked in memory.
                                   Cannot be combined with --epoch. Unset reads
-                                  scoring.json (gauntlet when absent). The
+                                  scoring.json (racing when absent). The
                                   experimental structures single_elim,
                                   double_elim and swiss are selected in
                                   scoring.json alongside
@@ -892,43 +883,16 @@ Options:
   --help  Show this message and exit.
 
 Commands:
-  epoch-goals                Advanced: backfill the goal field on epochs that
-                             predate the field.
   generation-source-backend  Advanced: set generation_source_backend on an
                              existing workspace.
-  generations                Advanced: reconcile the index `generations` table
-                             against disk (parent + promoted).
+  generations                Advanced: reconcile indexed generation facts with
+                             lineage.
   index                      Advanced: rebuild the SQLite analytical index from
                              workspace files.
-  judge-losses               Advanced: backfill per_judge_loss into every
-                             persisted loss slot.
   report                     Advanced: re-render `epochs/{id}/analysis.md`
                              against the current on-disk data.
-  tournament-fk              Advanced: backfill tournament_id on runs /
-                             loss_profiles + parent_epoch_id on epochs.
   v0-baseline                Advanced: backfill the synthetic v0 experiment.json
                              into every epoch.
-
-===== zicato repair epoch-goals --help =====
-Usage: zicato repair epoch-goals [OPTIONS]
-
-  Walk every epoch on disk and add an empty goal where missing.
-
-  Targeted migration helper for workspaces whose per-epoch ``config.json`` files
-  were written before the ``goal`` field landed. Defaults missing goals to the
-  empty string (which renders as "no goal recorded" in the analyzer), and
-  refreshes the ``epochs.goal`` column in the index database to match.
-
-  Read-only against epochs that already have a goal value (including a
-  deliberately-empty one). Idempotent: running it twice writes the same bytes.
-  The index is created with the current schema if it does not exist yet.
-
-  For populating the goal on an individual epoch with a real value, see ``zicato
-  epoch set-goal``.
-
-Options:
-  --workspace TEXT  Path to the zicato workspace directory.  [default: .zicato]
-  --help            Show this message and exit.
 
 ===== zicato repair generation-source-backend --help =====
 Usage: zicato repair generation-source-backend [OPTIONS]
@@ -936,9 +900,9 @@ Usage: zicato repair generation-source-backend [OPTIONS]
   Advanced: set ``generation_source_backend`` on an existing workspace.
 
   Merges the one key into the existing ``config.json`` — every other key
-  (contract, mutable_trees, source_roots, models, instance_id) and
-  ``lineage.json`` are untouched. Use this rather than ``zicato init --force``,
-  which rewrites the config and resets the lineage.
+  (adapter, contract, models, instance_id) and ``lineage.json`` are untouched.
+  Use this rather than ``zicato init --force``, which rewrites the config and
+  resets the lineage.
 
   Refuses a value the workspace's own source data contradicts unless ``--force``
   is passed.
@@ -957,14 +921,12 @@ Usage: zicato repair generations [OPTIONS]
 
   Advanced: reconcile only the `generations` table from disk.
 
-  Off the happy path. Targeted repair for workspaces whose `generations` rows
-  were written by a buggy live dual-write (parent_generation_id NULL, promoted
-  clamped to 0 on every row except the seed). Walks lineage.json + every
-  experiment.json and rewrites only the parent_generation_id and promoted flag
-  of each `generations` row. The rest of the index is left alone — use `zicato
-  repair index` for a full rebuild.
+  Canonical lineage supplies each generation's parent, promotion state, creation
+  timestamp, and birth round. The workspace writer lease covers the repair.
+  Ratings and other index tables remain unchanged; use `zicato repair index` for
+  a full rebuild.
 
-  Idempotent. Read-only against workspace files.
+  Repeating the repair makes no changes. Workspace files are read only.
 
 Options:
   --workspace TEXT  Path to the zicato workspace directory.  [default: .zicato]
@@ -973,52 +935,14 @@ Options:
 ===== zicato repair index --help =====
 Usage: zicato repair index [OPTIONS]
 
-  Advanced: rebuild the SQLite analytical index from workspace files.
+  Rebuild the analytical index from canonical workspace files.
 
-  Off the happy path. Routine reindexing is AUTOMATIC — `zicato evolve` builds
-  an absent or wrong-schema index and re-projects any diverged epoch at its own
-  start, and the dashboard builds an absent one when it boots. Reach for this
-  command for downgrade recovery, after hand-editing a value inside a canonical
-  file, or to assert the index is a pure re-projection of the files.
-
-  Re-derives every row from the canonical files under the workspace, into a
-  scratch file renamed into place on success — a failed rebuild leaves the
-  existing index untouched. Prints a summary of how many epochs, generations,
-  and runs were indexed.
+  A private scratch database is populated before publication. A failed build
+  preserves the existing index. The command reports counts from the result.
 
 Options:
   --workspace TEXT  Path to the zicato workspace directory.  [default: .zicato]
   --help            Show this message and exit.
-
-===== zicato repair judge-losses --help =====
-Usage: zicato repair judge-losses [OPTIONS]
-
-  Advanced: backfill per_judge_loss into existing runs.
-
-  Off the happy path. Walks every run directory on disk and repairs every
-  persisted loss slot it holds — the canonical loss.json and each replicate
-  sibling loss.r{n}.json, degraded measurement bands included, attempt siblings
-  never. Each slot's per-judge weighted-loss attribution is re-derived from its
-  own drift_counts, falling back to its own replicate-keyed events transcript,
-  and written back. Idempotent: a slot that already agrees is left unchanged.
-
-  The summary counts every slot by what happened to it, canonical and replicate
-  separately, including the slots that could not be re-derived because neither
-  source survives.
-
-  Scope: this repairs the on-disk records. The analytical index projects
-  canonical slots only, so `judge_losses` rows come from replicate 0; a repaired
-  replicate slot is correct on disk and carries no index row by design. Each run
-  with a readable canonical profile is re-ingested by default.
-
-Options:
-  --workspace TEXT            Path to the zicato workspace directory.  [default:
-                              .zicato]
-  --reingest / --no-reingest  Re-ingest each run whose canonical loss.json is
-                              readable into index.db so the judge_losses table
-                              is populated without a full `zicato repair index`.
-                              [default: reingest]
-  --help                      Show this message and exit.
 
 ===== zicato repair report --help =====
 Usage: zicato repair report [OPTIONS]
@@ -1042,28 +966,6 @@ Options:
   --no-llm          Skip the evaluation-LLM prose pass and substitute
                     placeholders. The deterministic data sections (figures,
                     tables, scores) are still re-rendered.
-  --help            Show this message and exit.
-
-===== zicato repair tournament-fk --help =====
-Usage: zicato repair tournament-fk [OPTIONS]
-
-  Advanced: backfill schema-v2 cross-cutting FKs on an existing index.
-
-  Off the happy path. Schema v2 added a ``tournament_id`` column to ``runs`` and
-  ``loss_profiles`` plus a ``parent_epoch_id`` column on ``epochs``. New writes
-  populate them automatically; this command repairs rows that were ingested
-  under the v1 schema by walking every epoch in ``lineage.json`` and every
-  ``experiment.json`` on disk and rewriting the FK columns from those sources.
-
-  Idempotent: cells that already carry the correct value are skipped, so a re-
-  run against a healthy index is a no-op. Read-only against the workspace files
-  — only the SQLite index is mutated.
-
-  Folded into one command because the two backfills share the same walk and
-  operators always want both columns repaired together.
-
-Options:
-  --workspace TEXT  Path to the zicato workspace directory.  [default: .zicato]
   --help            Show this message and exit.
 
 ===== zicato repair v0-baseline --help =====

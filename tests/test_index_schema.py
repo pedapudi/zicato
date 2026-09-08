@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import re
 import sqlite3
+from pathlib import Path
+
+import pytest
 
 from zicato.index.schema import (
     SCHEMA_VERSION,
@@ -23,6 +27,11 @@ _EXPECTED_TABLES = {
     "metric_counts",
     "tournaments",
     "judge_losses",
+    "reflections",
+    "judge_scorecards",
+    "pareto_frontier",
+    "ingest_cursors",
+    "schema_meta",
 }
 
 _EXPECTED_INDEXES = {
@@ -54,7 +63,7 @@ def _columns(conn: sqlite3.Connection, table: str) -> list[str]:
 def test_apply_schema_creates_every_table() -> None:
     conn = sqlite3.connect(":memory:")
     apply_schema(conn)
-    assert _EXPECTED_TABLES.issubset(_table_names(conn))
+    assert _EXPECTED_TABLES == _table_names(conn)
     conn.close()
 
 
@@ -188,3 +197,61 @@ def test_runs_primary_key_is_run_id() -> None:
     pk_cols = [r[1] for r in info if r[5]]  # r[5] = pk flag
     assert pk_cols == ["run_id"]
     conn.close()
+
+
+@pytest.mark.parametrize("version", [0, SCHEMA_VERSION - 1, SCHEMA_VERSION + 1])
+def test_schema_application_refuses_populated_incompatible_database(tmp_path, version):
+    path = tmp_path / "index.db"
+    with sqlite3.connect(path) as conn:
+        conn.execute("CREATE TABLE unsupported (value TEXT)")
+        conn.execute("INSERT INTO unsupported VALUES ('preserve until rebuild')")
+        conn.execute(f"PRAGMA user_version = {version}")
+    before = path.read_bytes()
+    with sqlite3.connect(path) as conn:
+        with pytest.raises(sqlite3.DatabaseError, match="run `zicato repair index`"):
+            apply_schema(conn)
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    "table,expected",
+    [
+        (
+            "generations",
+            [
+                "epoch_id",
+                "generation_id",
+                "parent_generation_id",
+                "promoted",
+                "created_at",
+                "round_index",
+                "elo",
+                "elo_se",
+                "elo_games",
+            ],
+        ),
+        (
+            "ingest_cursors",
+            [
+                "epoch_id",
+                "experiments_count",
+                "runs_count",
+                "round_dirs_count",
+                "reflections_count",
+                "lineage_generations_count",
+                "last_ingested_at",
+            ],
+        ),
+    ],
+)
+def test_rating_and_currency_columns_match_contract(table, expected):
+    with sqlite3.connect(":memory:") as conn:
+        apply_schema(conn)
+        assert _columns(conn, table) == expected
+
+
+def test_rust_supervisor_schema_version_is_in_lockstep():
+    rust = Path(__file__).resolve().parents[1] / "crates" / "supervisor" / "src" / "index_db.rs"
+    match = re.search(r"EXPECTED_SCHEMA_VERSION\s*:\s*\w+\s*=\s*(\d+)", rust.read_text())
+    assert match is not None
+    assert int(match.group(1)) == SCHEMA_VERSION

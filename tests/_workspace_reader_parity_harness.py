@@ -55,7 +55,9 @@ from pathlib import Path
 from typing import Any
 
 from tests._reader_parity_harness import _MASK, _normalize_root, mask_volatile
+from tests._workspace_support import experiment_record
 from zicato.core.mutation import MutationPoint
+from zicato.epoch._storage import RECORD_FORMAT_VERSION
 from zicato.mutation.inventory import write_mutation_inventory
 
 # ---------------------------------------------------------------------------
@@ -186,18 +188,24 @@ def _write_workspace_config(ws: Path) -> None:
 def _epoch_config(ws: Path, epoch_id: str) -> dict[str, Any]:
     """One epoch's ``config.json`` payload.
 
-    The historical decoder retains the recorded gauntlet contract with screening
-    disabled; the epoch serializer writes its complete scoring block. Authored
+    The fixture declares a gauntlet tournament with screening disabled; the
+    epoch serializer writes its complete scoring block. Authored
     defaults therefore cannot change this fixture. The measured noise floor and
     persisted pre-flight verdict are present on the rich epoch only: they are what the
     margin-versus-noise and pre-flight loop-health detectors read, and the
     second epoch's absence of them pins the silent path.
     """
     from zicato.epoch.lifecycle import scoring_to_dict
-    from zicato.workspace_loader import historical_scoring_weights_from_dict
+    from zicato.workspace_loader import scoring_weights_from_dict
 
     rich = epoch_id == RICH_EPOCH_ID
-    weights = historical_scoring_weights_from_dict({"promote_margin": 0.01 if rich else 0.05})
+    weights = scoring_weights_from_dict(
+        {
+            "promote_margin": 0.01 if rich else 0.05,
+            "tournament": {"structure": "gauntlet", "params": {}},
+            "proposer_quality": {"screen_entries": 0},
+        }
+    )
     return {
         "format_version": 1,
         "id": epoch_id,
@@ -208,7 +216,7 @@ def _epoch_config(ws: Path, epoch_id: str) -> dict[str, Any]:
         "scoring": scoring_to_dict(weights),
         "closed": rich,
         "closed_at": _EPOCH_CLOSED_AT[epoch_id],
-        "contract_hash": f"contract-{epoch_id}",
+        "contract_hash": hashlib.sha256(f"contract-{epoch_id}".encode()).hexdigest(),
         "goal": f"Reduce drift under the {epoch_id} contract.",
         "proposer_path": None,
         "noise_floor": ({"max_abs_delta": 0.04, "delta_std": 0.012, "runs": 8} if rich else None),
@@ -298,7 +306,7 @@ def _loss_profile(epoch_id: str, generation_id: str, entry_id: str, replicate: i
     replicate index, so the same fixture always produces the same profile
     and the per-generation trends the readers compute are non-flat.
     """
-    from zicato.core.loss import DriftCount, ExpectationResult, JudgeLoss, LossProfile
+    from zicato.core.loss import ExpectationResult, JudgeLoss, LossProfile, MetricCount
 
     index = _generation_index(generation_id)
     entry_rank = ENTRY_IDS.index(entry_id)
@@ -314,9 +322,13 @@ def _loss_profile(epoch_id: str, generation_id: str, entry_id: str, replicate: i
         entry_id=entry_id,
         generation_id=generation_id,
         epoch_id=epoch_id,
-        drift_counts=(
-            DriftCount(kind="plan_thrash", severity="warning", count=index % 3),
-            DriftCount(kind="custom:tone_guard", severity="warning", count=1 if judges else 0),
+        metric_counts=(
+            MetricCount(name="drift:plan_thrash", severity="warning", count=index % 3),
+            MetricCount(
+                name="drift:custom:tone_guard", severity="warning", count=1 if judges else 0
+            ),
+            MetricCount(name="cost:tokens_spent", count=500 + 25 * index),
+            MetricCount(name="output:chars", count=1200 + 40 * index),
         ),
         plan_revisions=index % 4,
         task_failure_ratio=0.0,
@@ -512,19 +524,16 @@ def _experiment(epoch_id: str, generation_id: str) -> dict[str, Any]:
         "patch_ids": [] if index == 0 else [f"p{index}"],
     }
     if index == 0:
-        return record
+        return experiment_record(**record, id="")
     record["hypothesis"] = {
-        "summary": f"Attempt {index}: tighten the planning prompt.",
         "core_idea": f"Rewrite the planner instruction block for round {index}.",
         "why": "Plan thrash dominates the drift profile.",
         "risks": "A shorter instruction may drop the citation requirement.",
         "modulating": ["prompt.planner"],
         "expected_pass_rate_delta": "+0.05",
-        "expected_drift_movements": [
-            {"kind": "plan_thrash", "direction": "down", "magnitude": "moderate"}
-        ],
         "expected_metric_movements": [
-            {"metric_name": "cost:tokens_spent", "direction": "down", "magnitude": "small"}
+            {"metric_name": "drift:plan_thrash", "direction": "decrease", "magnitude": "medium"},
+            {"metric_name": "cost:tokens_spent", "direction": "decrease", "magnitude": "small"},
         ],
     }
     decision = _decision_for(generation_id)
@@ -538,27 +547,25 @@ def _experiment(epoch_id: str, generation_id: str) -> dict[str, Any]:
         "scalar_score_delta": round(-0.02 if decision == "promoted" else 0.005, 6),
         "drift_loss_delta": round(-0.02 * index, 6),
         "pass_rate_delta": round(0.01 * index, 6),
-        "drift_movements": [
+        "metric_movements": [
             {
-                "kind": "plan_thrash",
-                "from_rate": 3.0,
-                "to_rate": 2.0,
+                "metric_name": "drift:plan_thrash",
+                "from_value": 3.0,
+                "to_value": 2.0,
                 "hypothesis_match": True,
                 "note": "",
-            }
-        ],
-        "metric_movements": [
+            },
             {
                 "metric_name": "cost:tokens_spent",
                 "from_value": 500,
                 "to_value": 480,
                 "hypothesis_match": True,
                 "note": "",
-            }
+            },
         ],
-        "generalization_gap": {"train_delta": -0.02, "holdout_delta": 0.01},
+        "generalization_gap": None,
     }
-    return record
+    return experiment_record(**record)
 
 
 def _write_generation(ws: Path, epoch_id: str, generation_id: str) -> None:
@@ -653,7 +660,9 @@ def _write_round_logs(ws: Path, epoch_id: str) -> None:
     for round_index in ROUND_INDICES:
         generation_id = f"v{round_index}"
         log = RoundLog(ws, epoch_id, round_index)
-        log.append(RoundOpened(contract_hash=f"contract-{epoch_id}"))
+        log.append(
+            RoundOpened(contract_hash=hashlib.sha256(f"contract-{epoch_id}".encode()).hexdigest())
+        )
         log.append(ProposalAttempted(errors=(), slot_index=0))
         log.append(ExperimentMinted(experiment_id=f"exp-{round_index}"))
         log.append(PatchesApplied(generation_id=generation_id))
@@ -998,6 +1007,7 @@ def _write_lineage(ws: Path) -> None:
     _write_json(
         ws / "lineage.json",
         {
+            "format_version": RECORD_FORMAT_VERSION,
             "epochs": [
                 {
                     "id": epoch_id,
@@ -1020,7 +1030,7 @@ def _write_lineage(ws: Path) -> None:
                     ],
                 }
                 for epoch_id in EPOCH_IDS
-            ]
+            ],
         },
     )
 
@@ -1180,9 +1190,9 @@ def _capture_analyzer(ws: Path, snap: dict[str, Any]) -> None:
         ),
         Pattern(
             id="pat-drift",
-            kind="drift_kind_frequency",
+            kind="drift_metric_frequency",
             summary="plan_thrash dominates the drift profile.",
-            detail={"drift_kind": "plan_thrash", "affected_entry_ids": "t2,t10"},
+            detail={"metric_name": "drift:plan_thrash", "affected_entry_ids": "t2,t10"},
             severity="warning",
         ),
     ]

@@ -99,8 +99,7 @@ cfg["adapter"] = {
     "factory": "zicato_examples.target_4_agent_config.driver:make_adapter",
 }
 # The shell substitutes \$EX before python runs (unquoted heredoc).
-cfg["mutable_trees"] = ["$EX/config_package"]
-cfg["source_roots"] = ["$EX/config_package"]
+cfg["adapter"]["mutable_trees"] = ["$EX/config_package"]
 cfg_path.write_text(json.dumps(cfg, indent=2) + "\n")
 PYEOF
 

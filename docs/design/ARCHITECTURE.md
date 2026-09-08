@@ -694,8 +694,8 @@ hypothesis plus the patches that test it.
     "core_idea": "<one sentence>",
     "modulating": ["mp_id_1", "mp_id_2", ...],
     "why": "<the pattern observation>",
-    "expected_drift_movements": [
-      {"kind": "CONFABULATION_RISK", "direction": "down", "magnitude": "moderate"},
+    "expected_metric_movements": [
+      {"metric_name": "drift:CONFABULATION_RISK", "direction": "down", "magnitude": "moderate"},
       ...
     ],
     "expected_pass_rate_delta": {"low": 0.0, "high": 0.1},

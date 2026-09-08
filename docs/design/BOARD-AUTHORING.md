@@ -52,7 +52,7 @@ Entry(
             severity=DriftSeverity.WARNING,
         ),
     ],
-    budget_s=180,
+    wall_clock_budget_seconds=180,
     tags=["research", "citations"],
 )
 ```
@@ -440,7 +440,7 @@ Common keyword arguments:
 | `input=` / `turns=` / `persona=` | The per-kind discriminant; supply one of the three. `turns=` accepts plain strings; `persona=` takes a `UserPersona`. |
 | `evaluate=` | A **single** `Predicate` / `Rubric` outcome check (or omitted). Not a list — one expectation per entry. |
 | `judges=` | List of `Judge` process checks. Default `()`. |
-| `budget_s=` | Wall-clock budget for the whole entry, in seconds. Default `300`. |
+| `wall_clock_budget_seconds=` | Wall-clock budget for the whole entry, in seconds. Default `300`. |
 | `weight=` | Relative scoring weight. Default `1.0`. |
 | `tags=` | Operator labels for pattern slicing. `holdout` and `facet:{name}` are reserved (BOARD-FORMAT.md §1.4). Default `()`. |
 
@@ -461,7 +461,7 @@ board.add(Entry(
     id="three_bullet_solar",
     input="Summarise solar panels in exactly three bullet points.",
     evaluate=Predicate.regex(r"^- .+\n- .+\n- .+$"),
-    budget_s=120,
+    wall_clock_budget_seconds=120,
     tags=["easy", "summarise"],
 ))
 
@@ -480,7 +480,7 @@ board.add(Entry(
             severity=DriftSeverity.WARNING,
         ),
     ],
-    budget_s=180,
+    wall_clock_budget_seconds=180,
     weight=1.5,
     tags=["research", "citations"],
 ))
@@ -492,7 +492,7 @@ board.add(Entry(
     id="cited_market_summary_has_marker",
     input="Summarise the EV market in three bullets, each with a source.",
     evaluate=Predicate.regex(r"\[\d+\]"),
-    budget_s=180,
+    wall_clock_budget_seconds=180,
     tags=["research", "citations"],
 ))
 
@@ -516,7 +516,7 @@ board.add(Entry(
             severity=DriftSeverity.WARNING,
         ),
     ],
-    budget_s=480,
+    wall_clock_budget_seconds=480,
     tags=["multi-turn", "revision"],
 ))
 
@@ -565,9 +565,7 @@ pretty-printed; on disk it is one line):
 }
 ```
 
-(`Board.save` writes the budget under the short key `budget_s`; the
-reader accepts both `budget_s` and `wall_clock_budget_seconds`, so the
-long form shown here is equally valid for hand-authored boards.)
+`Board.save` emits the same `wall_clock_budget_seconds` field shown here.
 
 The board-level `disable_drift` is a board-wide setting rather than a
 per-entry field. It is recorded once on the optional `board_meta`
@@ -805,7 +803,7 @@ this guide, and `zicato evolve`.
 ## 10. Authoring checklist
 
 - [ ] Every entry has a stable, filesystem-safe, board-unique `id`.
-- [ ] Every entry has a `budget_s` (wall-clock budget).
+- [ ] Every entry has a `wall_clock_budget_seconds` (wall-clock budget).
 - [ ] The outcome property is one `Predicate` / `Rubric` passed as
       `evaluate=...` (a single expectation per entry).
 - [ ] Process properties are `Judge` in `judges=[...]`.

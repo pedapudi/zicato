@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
 
 from zicato.core.drift_kinds import DriftKind
 from zicato.core.types import BoardEntry, ProposerSkill, ProposerSpec, RuntimeConfig, ScoringWeights
-from zicato.epoch.contract import ContractInputs, compute_recorded_contract_hash
+from zicato.epoch.contract import ContractInputs, compute_contract_hash
 from zicato.proposer.brief import ProposerBrief
 from zicato.proposer.external import ExternalProposerConfig
 
@@ -27,7 +26,7 @@ def bind_runtime_to_epoch(
     from zicato.models_config import execution_roles_for_runtime
 
     try:
-        selected = load_epoch_execution_contract(workspace_root, epoch_id, workspace_config={})
+        selected = load_epoch_execution_contract(workspace_root, epoch_id)
         expected = selected.execution_roles
         if expected is None:
             raise ValueError("the epoch has no captured execution roles")
@@ -142,9 +141,9 @@ class EpochExecutionContract:
 
     @property
     def scoring(self) -> ScoringWeights:
-        from zicato.workspace_loader import historical_scoring_weights_from_dict
+        from zicato.workspace_loader import scoring_weights_from_dict
 
-        return historical_scoring_weights_from_dict(self.raw_scoring)
+        return scoring_weights_from_dict(self.raw_scoring)
 
     @property
     def raw_scoring(self) -> dict[str, Any]:
@@ -211,16 +210,12 @@ class EpochExecutionContract:
     @property
     def adapter_configuration(self) -> dict[str, Any]:
         body = self._bindings()
-        trees = body.get("mutable_tree_identities")
-        result = {
-            "adk_entrypoint": body["entrypoint"],
-            "mutable_trees": trees if trees is not None else list(self.mutable_trees),
-        }
-        if body.get("adapter_declaration") is not None:
-            result["adapter"] = _object(body["adapter_declaration"], "adapter_declaration")
-        elif body.get("adapter_spec") is not None:
-            result["adapter"] = _object(body["adapter_spec"], "adapter_spec")
-        return result
+        declaration = body["adapter_declaration"]
+        return (
+            {"adapter": _object(declaration, "adapter_declaration")}
+            if declaration is not None
+            else {}
+        )
 
     @property
     def execution_roles(self) -> bytes | None:
@@ -312,38 +307,20 @@ class EpochExecutionContract:
         ):
             if path.read_bytes() != captured:
                 raise ExecutionContractError(f"epoch {self.epoch_id}: retained {path.name} changed")
-        if compute_recorded_contract_hash(inputs, proposer_spec=spec) != self.contract_hash:
+        if compute_contract_hash(inputs, proposer_spec=spec) != self.contract_hash:
             raise ExecutionContractError(
                 f"epoch {self.epoch_id}: retained inputs or executable dependencies do not match "
                 "the recorded contract; restore them or create an epoch for the changed contract"
             )
 
 
-def load_epoch_execution_contract(
-    workspace_root: Path, epoch_id: str, *, workspace_config: Mapping[str, Any]
-) -> EpochExecutionContract:
-    """Bind a selected epoch, verifying historical reconstruction before execution."""
+def load_epoch_execution_contract(workspace_root: Path, epoch_id: str) -> EpochExecutionContract:
+    """Bind an epoch to its captured settings and verify the recorded implementation."""
     from zicato.core.workspace import epoch_dir
-    from zicato.epoch.contract import resolve_contract_inputs
     from zicato.epoch.lifecycle import load_epoch
 
     cfg = load_epoch(workspace_root, epoch_id)
-    if not cfg.contract_hash:
-        raise ExecutionContractError(
-            f"epoch {epoch_id} has no recorded contract identity; create an epoch before executing"
-        )
     directory = epoch_dir(workspace_root, epoch_id)
-    path = directory / "execution.json"
-    if path.exists():
-        bindings = path.read_bytes()
-    else:
-        # Reconstruction is read-only and accepted only by the full recorded
-        # identity below. Missing skill bytes cannot be replaced by edited skills.
-        inputs = replace(
-            resolve_contract_inputs(workspace_root, workspace_config=workspace_config),
-            proposer_path=cfg.proposer_path,
-        )
-        bindings, _spec = capture_execution_bindings(inputs)
     selected = EpochExecutionContract(
         workspace_root=workspace_root,
         epoch_id=epoch_id,
@@ -351,7 +328,7 @@ def load_epoch_execution_contract(
         board_bytes=(directory / "board.jsonl").read_bytes(),
         brief_bytes=(directory / "brief.md").read_bytes(),
         scoring_bytes=(directory / "scoring.json").read_bytes(),
-        bindings_bytes=bindings,
+        bindings_bytes=(directory / "execution.json").read_bytes(),
     )
     selected.verify_implementation()
     return selected

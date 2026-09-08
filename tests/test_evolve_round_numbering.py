@@ -19,6 +19,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from tests._workspace_support import experiment_record
+from zicato.epoch.journal import write_seed_experiment
 from zicato.evolve.loop import _epoch_round_base
 
 
@@ -28,7 +30,9 @@ def _write_gen(ws: Path, epoch: str, gid: str, round_index: int, parent: str = "
     d.mkdir(parents=True, exist_ok=True)
     (d / "experiment.json").write_text(
         json.dumps(
-            {"generation_id": gid, "round_index": round_index, "parent_generation_id": parent}
+            experiment_record(
+                gid, epoch_id=epoch, round_index=round_index, parent_generation_id=parent
+            )
         )
     )
 
@@ -39,11 +43,7 @@ def _write_seed(ws: Path, epoch: str, gid: str = "v0") -> None:
     Parentless, and stamped ``round_index: 0`` by the ``Experiment.round_index``
     default — the pair that made the seed look like a spent round.
     """
-    d = ws / "epochs" / epoch / "generations" / gid
-    d.mkdir(parents=True, exist_ok=True)
-    (d / "experiment.json").write_text(
-        json.dumps({"generation_id": gid, "round_index": 0, "parent_generation_id": None})
-    )
+    write_seed_experiment(ws, epoch, generation_id=gid)
 
 
 def test_epoch_round_base_continues_existing_numbering(tmp_path: Path) -> None:
@@ -80,9 +80,9 @@ def test_epoch_round_base_ignores_non_integer_round_index(tmp_path: Path) -> Non
     # A malformed round_index must not crash or inflate the base.
     d = ws / "epochs" / epoch / "generations" / "v2"
     d.mkdir(parents=True, exist_ok=True)
-    (d / "experiment.json").write_text(
-        json.dumps({"parent_generation_id": "v0", "round_index": "oops"})
-    )
+    body = experiment_record("v2", epoch_id=epoch, parent_generation_id="v0")
+    body["round_index"] = "oops"
+    (d / "experiment.json").write_text(json.dumps(body))
     assert _epoch_round_base(ws, epoch) == 1
 
 

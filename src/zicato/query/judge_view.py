@@ -19,8 +19,6 @@ from zicato.epoch._storage import RecordError
 from zicato.query._sqlite import (
     _opt_json,
     _opt_str,
-    _row_bool,
-    _row_keys,
     open_index_ro,
     open_index_ro_or_none,
     with_index_not_built_note,
@@ -295,9 +293,8 @@ def build_per_entry_for_generation(
         except Exception:  # noqa: BLE001
             rows = []
     if not rows:
-        # Either the FK lookup found nothing (v1 index without
-        # backfill) or there is no parent. Walk the generation-scoped
-        # query so a completed-but-orphaned tournament still surfaces.
+        # A seed has no parent matchup. Its generation-scoped measurements
+        # remain available independently of tournament membership.
         try:
             rows = loss_profiles_for_generation(paths.index_db, epoch_id, generation_id)
         except Exception:  # noqa: BLE001
@@ -305,33 +302,20 @@ def build_per_entry_for_generation(
 
     from zicato.selection.strategy import rung_for_match_id  # noqa: PLC0415
 
-    # The tolerant row accessors (``_row_keys`` / ``_opt_str`` / ``_row_bool``)
-    # are the shared set in ``zicato.query._sqlite`` — the cached-champion
-    # provenance columns (``cached`` / ``source_epoch`` / ``source_run``) are
-    # additive in a later schema, so a stale index loads unchanged.
-
-    def _match_id_of(row: Any) -> str | None:
-        # ``match_id`` lands in schema v4. A stale index opened before
-        # the migration ran would not carry the column; tolerate its
-        # absence (and a NULL value) so an old index loads rather than errors.
-        if "match_id" not in _row_keys(row):
-            return None
-        value = row["match_id"]
-        return value if isinstance(value, str) and value else None
-
     def _drift_observed(row: Any, drift_loss: float | None) -> bool:
         # Did this run OBSERVE drift at all? An adapter that emits no drift
-        # stream still records a structural 0.0 with an empty ``drift_counts``,
+        # stream still records a structural 0.0 with an empty measured drift metrics,
         # which is indistinguishable on the wire from a run that watched for
         # drift and saw none. Either a recorded drift event or a non-zero loss
         # proves the channel carries signal; nothing else does. Mirrors the
         # matchup grid's predicate, sourced from the same persisted field —
         # here off the index's verbatim ``loss_json`` blob, with the row's
         # ``drift_loss`` column as the fallback for a blob-less stale index.
-        if "loss_json" in _row_keys(row):
-            lj = _opt_json(row["loss_json"])
-            if isinstance(lj, dict) and lj.get("drift_counts"):
-                return True
+        lj = _opt_json(row["loss_json"])
+        if isinstance(lj, dict) and any(
+            m["name"].startswith("drift:") for m in lj["metric_counts"]
+        ):
+            return True
         return drift_loss not in (None, 0.0)
 
     def _score_metrics_of(row: Any) -> tuple[float | None, dict[str, float] | None]:
@@ -340,8 +324,6 @@ def build_per_entry_for_generation(
         # stores verbatim, NOT in a dedicated column — so a stale index
         # without new columns still surfaces the score. Absent / malformed
         # blob -> (None, None), which renders by the bool pass bit alone.
-        if "loss_json" not in _row_keys(row):
-            return None, None
         lj = _opt_json(row["loss_json"])
         if not isinstance(lj, dict):
             return None, None
@@ -358,7 +340,7 @@ def build_per_entry_for_generation(
     entries = []
     drift_present = False
     for r in rows:
-        match_id = _match_id_of(r)
+        match_id = _opt_str(r, "match_id")
         entry_score, entry_metrics = _score_metrics_of(r)
         entry_drift = coerce_float(r["drift_loss"])
         drift_present = drift_present or _drift_observed(r, entry_drift)
@@ -390,7 +372,7 @@ def build_per_entry_for_generation(
                 # OWN loss.json / index materializes the provenance so this read
                 # stays epoch-local. ``cached`` False / ``source_*`` None for a
                 # freshly-executed run.
-                "cached": _row_bool(r, "cached"),
+                "cached": bool(r["cached"]),
                 "source_epoch": _opt_str(r, "source_epoch"),
                 "source_run": _opt_str(r, "source_run"),
                 # The ``facet:`` slices this entry belongs to (BOARD-FORMAT.md
@@ -880,7 +862,7 @@ def _mutation_point_count(
     try:
         from zicato.mutation.enumerator import enumerate_mutations  # noqa: PLC0415
         from zicato.mutation.markers import syntax_table_from_config  # noqa: PLC0415
-        from zicato.workspace_loader import historical_scoring_weights_from_dict  # noqa: PLC0415
+        from zicato.workspace_loader import scoring_weights_from_dict  # noqa: PLC0415
 
         raw = (
             _read_json_value(layout_of(WorkspacePaths(workspace_root)).scoring(epoch_id))
@@ -888,7 +870,7 @@ def _mutation_point_count(
             else None
         )
         try:
-            weights = historical_scoring_weights_from_dict(raw) if isinstance(raw, dict) else None
+            weights = scoring_weights_from_dict(raw) if isinstance(raw, dict) else None
         except ValueError:
             weights = None
         table = syntax_table_from_config(weights.mutation_surface if weights is not None else None)
@@ -939,17 +921,8 @@ def build_workspace_identity(
 
     entrypoint = adapter.get("entrypoint")
     if not isinstance(entrypoint, str) or not entrypoint:
-        for key in ("adk_entrypoint", "entrypoint"):
-            val = cfg.get(key)
-            if isinstance(val, str) and val:
-                entrypoint = val
-                break
-        else:
-            entrypoint = None
-
+        entrypoint = None
     raw_trees = adapter.get("mutable_trees")
-    if not isinstance(raw_trees, list):
-        raw_trees = cfg.get("mutable_trees")
     if isinstance(raw_trees, list):
         source_roots = [t for t in raw_trees if isinstance(t, str)]
     else:

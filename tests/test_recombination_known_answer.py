@@ -110,8 +110,8 @@ def _scoring_dict(*, promote_margin: float, recombine: bool) -> dict:
         "proposer_quality": {
             "best_of_n": BEST_OF_N,
             "critique_enabled": False,
-            "recombine": recombine,
         },
+        "experimental": {"recombine": recombine},
     }
 
 
@@ -134,12 +134,18 @@ def _bootstrap_workspace(
                 ),
                 "created_at": "2026-07-01T00:00:00Z",
                 "generation_source_backend": "directory",
-                "adapter": ADAPTER_BLOCK,
-                "runtime": {
-                    "target_call_llm": "zicato_examples.target_0_convergence.mocks:target_llm",
-                    "evaluation_call_llm": "zicato_examples.target_0_convergence.mocks:aux_llm",
+                "adapter": {**ADAPTER_BLOCK, "mutable_trees": [str(agent_dir)]},
+                "runtime": {},
+                "models": {
+                    "engines": {
+                        "target": {
+                            "call_llm": "zicato_examples.target_0_convergence.mocks:target_llm"
+                        },
+                        "evaluation": {
+                            "call_llm": "zicato_examples.target_0_convergence.mocks:aux_llm"
+                        },
+                    }
                 },
-                "mutable_trees": [str(agent_dir)],
             }
         )
     )

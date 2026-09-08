@@ -240,14 +240,14 @@ that definition.
 
 The structure is **flat by design** — every field is a scalar, a
 tuple of scalars, or a tuple of small frozen dataclasses
-(`DriftCount`, `MetricCount`, `JudgeLoss`) — so the profile
+(`MetricCount`, `JudgeLoss`) — so the profile
 round-trips through JSON and is diffable in the journal. Counts are
 carried as *tuples of typed measurement rows* rather than as `dict`s.
 
 ```python
 from dataclasses import dataclass
 from zicato.core.types import (
-    DriftCount, MetricCount, JudgeLoss, ExpectationResult,
+    MetricCount, JudgeLoss, ExpectationResult,
 )
 
 @dataclass(frozen=True, slots=True)
@@ -259,7 +259,6 @@ class LossProfile:
     epoch_id: str
 
     # --- drift + outcome features ---
-    drift_counts: tuple[DriftCount, ...]   # (kind, severity, count) rows
     plan_revisions: int
     task_failure_ratio: float
     runtime_ms: int
@@ -276,7 +275,7 @@ class LossProfile:
     context_loss_count: int | None = None
 
     # --- generalised metric surface ---
-    metric_counts: tuple[MetricCount, ...] = ()  # superset of drift_counts
+    metric_counts: tuple[MetricCount, ...] = ()
     tokens_spent: int = 0
     output_chars: int = 0
     schema_failures: int = 0
@@ -301,17 +300,14 @@ id used as the per-board-run harmonograf session (§1.4).
 
 | Field | Computation |
 |---|---|
-| `drift_counts` | A tuple of `DriftCount(kind, severity, count)` rows. `kind` is the lowercase wire-canonical drift-kind string (see `zicato.core.drift_kinds`); `severity` is `"info"` / `"warning"` / `"critical"`. A given kind may appear in several rows, one per severity bucket. Custom-judge violations fold into a `kind` of `"custom:<judge_name>"` — see §3.2.1. |
 | `plan_revisions` | Number of plan-revision events observed. |
 | `task_failure_ratio` | Fatally-failed tasks / total tasks, in `[0.0, 1.0]`. |
 | `runtime_ms` | Total wall-clock duration in milliseconds. |
 | `wall_clock_budget_exceeded` | `True` iff the run hit `BoardEntry.wall_clock_budget_seconds` and was force-aborted; scoring then treats the run as worst-case for the entry. |
 | `expectation_result` | The `ExpectationResult(kind, passed, detail)` of evaluating the entry's expectation, or `None` when the entry had no expectation (or the run aborted before it could fire). |
 
-`DriftCount.kind` carries the wire-canonical lowercase string, not
-the symbolic proto enum integer — this keeps the JSON self-describing
-and survives proto-enum reordering in goldfive without invalidating
-historical loss profiles.
+Named metrics retain each drift kind as a ``drift:<kind>`` name and keep
+info, warning, and critical observations in separate severity buckets.
 
 #### 3.2.1 Custom judges and `custom:<judge_name>`
 
@@ -323,26 +319,20 @@ custom judges against the live reasoning stream; an adverse verdict is
 emitted as a `DriftDetected` of kind `custom`, paired with a
 `JudgementEmitted` carrying the judge's stable `judge_name`.
 
-The reducer attributes each such drift to its authoring judge by
-folding the judge name into the `DriftCount.kind` as
-`"custom:<judge_name>"` (via
-`zicato.telemetry.reducer._judge_attributed_kind`). So two different
-custom judges appear as two distinct `DriftCount` kinds rather than
-collapsing into one bucket:
+The reducer pairs each drift with its judge and records the name as
+`drift:custom:<judge_name>`. Separate judges retain separate measurements:
 
 ```json
-"drift_counts": [
-  {"kind": "looping_reasoning",      "severity": "warning",  "count": 1},
-  {"kind": "custom:cite-before-metric", "severity": "critical", "count": 2},
-  {"kind": "custom:ack-before-edit",    "severity": "warning",  "count": 1}
+"metric_counts": [
+  {"name": "drift:looping_reasoning", "severity": "warning", "count": 1},
+  {"name": "drift:custom:cite-before-metric", "severity": "critical", "count": 2},
+  {"name": "drift:custom:ack-before-edit", "severity": "warning", "count": 1}
 ]
 ```
 
-The aggregate `drift_loss` already sums in every judge's
-contribution, but it does not preserve *which* judge drove the loss.
-`per_judge_loss` (§3.6) carries that attribution out separately. The
-per-judge weight applied is `ScoringWeights.per_judge_weights` keyed
-on `judge_name` (see [SCORING.md §2.2](SCORING.md#22-the-judge-channel)).
+`per_judge_loss` carries the severity-weighted attribution and each judge's
+configured multiplier. These values enter the `judge:` scoring channel;
+`drift_loss` excludes them so the same event contributes once.
 
 goldfive's built-in judges emit their own native drift kinds (not
 `custom`), so they are already discriminated by kind and never need
@@ -385,7 +375,7 @@ schema-failure metrics alongside drift.
 
 | Field | Computation |
 |---|---|
-| `metric_counts` | A tuple of `MetricCount(name, severity, count)` rows. `name` is namespaced (`"drift:looping_reasoning"`, `"cost:input_tokens"`, `"rubric:slide_structure"`, ...); `count` is a float so the same row can carry counts, rates, scores, and durations. When populated it is a **superset** of `drift_counts` (every drift row also appears under the `"drift:"` namespace). When left empty, `LossProfile.unified_metrics()` synthesises it on the fly from `drift_counts` plus the first-class scalars. |
+| `metric_counts` | Named measurements as `MetricCount(name, severity, count)` rows. Names carry a namespace, severity preserves event buckets, and the numeric count supports rates, scores, durations, and fractional replicate means. `LossProfile.scoring_metrics()` adds the derived judge, failure, and runtime channels. |
 | `tokens_spent` | First-class scalar mirrored into `metric_counts` as `"cost:tokens_spent"`. |
 | `output_chars` | First-class scalar mirrored as `"output:chars"`. |
 | `schema_failures` | First-class scalar mirrored as `"schema:failures"`. |
@@ -398,7 +388,7 @@ plus a small grace period the adapter's abort path takes; the
 
 | Field | Source |
 |---|---|
-| `drift_loss` | Weighted scalar computed from `drift_counts` (severity-weighted, with per-judge weights folded in). Higher = worse. See [SCORING.md](SCORING.md). |
+| `drift_loss` | Weighted scalar computed from drift metrics and plan revisions. Judge-attributed events enter their own channel. Higher = worse. See [SCORING.md](SCORING.md). |
 | `pass_fail` | Derived from `expectation_result`. `None` when no expectation was attached, so pass-rate aggregation across the board can ignore entries without ground truth. |
 
 `drift_loss` is computed in the reducer (not in a downstream component)
@@ -441,11 +431,11 @@ with a `JudgementEmitted`.
 Goldfive's drift events fire per turn (the planner refines per-turn;
 detectors fire per-turn). A multi-turn entry produces many drift
 events across many turns. The reducer aggregates them **run-bounded**:
-`drift_counts` is the total per (kind, severity) across the whole
+`metric_counts` is the total per (kind, severity) across the whole
 conversation. This is the comparable-to-single-turn view, and it is
 the view the tournament uses to score the entry.
 
-zicato does not ship a per-turn `drift_counts` breakdown as a profile
+zicato does not ship a per-turn `metric_counts` breakdown as a profile
 field. The per-turn *shape* questions ("did the agent re-ask
 something already answered", "did it forget a fact established
 earlier") are instead surfaced as the derived multi-turn signals
@@ -508,7 +498,7 @@ for scoring. Some are both. The split:
 
 | Field | Feature? | Loss? |
 |---|---|---|
-| `drift_counts` | yes (per-(kind, severity) movement is hypothesis-shaped) | yes (severity-weighted into `drift_loss`) |
+| `metric_counts` | yes (per-(kind, severity) movement is hypothesis-shaped) | yes (severity-weighted into `drift_loss`) |
 | `per_judge_loss` | yes (per-custom-judge movement is hypothesis-shaped) | yes (each judge's `weighted_loss` is already summed into `drift_loss` via `per_judge_weights`) |
 | `plan_revisions` | yes | yes |
 | `task_failure_ratio` | yes | yes |

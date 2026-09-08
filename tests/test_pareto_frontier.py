@@ -38,7 +38,7 @@ from tests._orchestrator_harness import (
     run_evolve_once,
     target_call_llm,
 )
-from zicato.core import DriftCount, ExpectationResult, LossProfile, MetricCount, ScoringWeights
+from zicato.core import ExpectationResult, LossProfile, MetricCount, ScoringWeights
 from zicato.core.types import ExperimentalConfig, TournamentStructure
 from zicato.epoch.pareto import (
     FrontierCandidate,
@@ -156,7 +156,6 @@ def test_a_negative_weight_axis_reads_lower_is_better_after_folding() -> None:
             entry_id="e",
             generation_id="g",
             epoch_id="ep",
-            drift_counts=(DriftCount(kind="off_topic", severity="info", count=0),),
             plan_revisions=0,
             task_failure_ratio=0.0,
             runtime_ms=1,
@@ -164,7 +163,10 @@ def test_a_negative_weight_axis_reads_lower_is_better_after_folding() -> None:
             expectation_result=ExpectationResult(kind="predicate", passed=True),
             drift_loss=0.0,
             pass_fail=True,
-            metric_counts=(MetricCount(name="rubric:quality", severity="", count=quality),),
+            metric_counts=(
+                MetricCount(name="drift:off_topic", severity="info", count=0),
+                MetricCount(name="rubric:quality", severity="", count=quality),
+            ),
         )
 
     axes = frontier_axes(weights)
@@ -885,20 +887,6 @@ def test_the_index_schema_carries_the_frontier_table() -> None:
     conn.close()
 
 
-def test_a_v12_database_gains_the_table_in_place() -> None:
-    """v13 adds a WHOLE table, so the migration needs no column ALTER."""
-    from zicato.index.schema import apply_schema, read_schema_version
-
-    conn = sqlite3.connect(":memory:")
-    conn.execute("PRAGMA user_version = 12")
-    conn.commit()
-    apply_schema(conn)
-    assert read_schema_version(conn) >= 13
-    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-    assert "pareto_frontier" in tables
-    conn.close()
-
-
 def test_the_index_projection_is_derived_from_the_workspace_record(tmp_path: Path) -> None:
     """Files are canonical; the table is a pure projection of them."""
     from zicato.index.ingest import ingest_pareto_frontier
@@ -1097,8 +1085,8 @@ def _install_costed_run_single(
 
     The orchestrator suite's stub varies only ``drift_loss``, which moves one
     axis. The frontier is about candidates that trade one axis for another, so
-    this adds ``tokens_spent`` — which ``LossProfile.unified_metrics`` lifts
-    into the ``cost:`` namespace, exactly as the real reducer does.
+    this records the matching ``tokens_spent`` display value and
+    ``cost:tokens_spent`` measurement, as the real reducer does.
     """
     import zicato.tournament.runner as _runner_mod
 
@@ -1121,7 +1109,14 @@ def _install_costed_run_single(
             entry_id=entry.id,
             generation_id=generation.id,
             epoch_id=epoch_id,
-            drift_counts=(DriftCount(kind="off_topic", severity="info", count=0),),
+            metric_counts=(
+                MetricCount(name="drift:off_topic", severity="info", count=0),
+                MetricCount(
+                    name="cost:tokens_spent",
+                    severity="info",
+                    count=tokens_by_gen.get(generation.id, 0),
+                ),
+            ),
             plan_revisions=0,
             task_failure_ratio=0.0,
             runtime_ms=100,

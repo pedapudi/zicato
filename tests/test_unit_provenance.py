@@ -11,7 +11,7 @@ Three durable facts a board unit's record did not carry:
   the executions the canonical slot does not survive to show.
 * WHY the reducer scored a run worst-case
   (:attr:`LossProfile.not_completed_reason`). The not-completed penalty
-  lands as a large ``drift_loss`` beside an empty ``drift_counts``; without
+  lands as a large ``drift_loss`` beside an empty ``metric_counts``; without
   the reason nothing in the record accounts for the number.
 
 The penalty's ARITHMETIC is unchanged — the attribution is additive. The
@@ -160,36 +160,6 @@ def test_timestamps_survive_the_loss_json_round_trip(tmp_path: Path) -> None:
     read_back = read_loss_profile(path)
     assert read_back.started_at == "2026-08-18T10:00:00Z"
     assert read_back.ended_at == "2026-08-18T10:00:42Z"
-
-
-def test_a_profile_written_before_the_fields_existed_reads_as_none(tmp_path: Path) -> None:
-    """A loss.json with none of the new keys loads; no reader raises."""
-    legacy = json.loads(
-        json.dumps(
-            {
-                "run_id": "run_legacy",
-                "entry_id": "entry_a",
-                "generation_id": "v0",
-                "epoch_id": _EPOCH,
-                "drift_counts": [],
-                "plan_revisions": 0,
-                "task_failure_ratio": 0.0,
-                "runtime_ms": 1000,
-                "wall_clock_budget_exceeded": False,
-                "expectation_result": None,
-                "drift_loss": 0.0,
-                "pass_fail": None,
-            }
-        )
-    )
-    path = tmp_path / "loss.json"
-    path.write_text(json.dumps(legacy), encoding="utf-8")
-
-    profile = read_loss_profile(path)
-    assert profile.started_at is None
-    assert profile.ended_at is None
-    assert profile.not_completed_reason is None
-    assert loss_profile_from_dict(legacy) == profile
 
 
 def test_a_cached_unit_keeps_the_times_of_the_run_that_produced_it(

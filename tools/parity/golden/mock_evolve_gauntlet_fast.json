@@ -7,7 +7,6 @@
       "generation_id": "v0",
       "hypothesis": {
         "core_idea": "baseline seed",
-        "expected_drift_movements": [],
         "expected_metric_movements": [],
         "expected_pass_rate_delta": "",
         "modulating": [],
@@ -27,7 +26,6 @@
       "generation_id": "v1",
       "hypothesis": {
         "core_idea": "Tag the topic_slugify_logic literal for candidate v1.",
-        "expected_drift_movements": [],
         "expected_metric_movements": [
           {
             "direction": "neutral",
@@ -46,7 +44,6 @@
       "outcome": {
         "champion_eval_mode": "fast",
         "drift_loss_delta": -1.6,
-        "drift_movements": [],
         "eliminated_in_round": null,
         "evidence": {
           "confirmation_status": "disabled",
@@ -104,6 +101,7 @@
       "drift_loss_mean": 2.0,
       "entry_count": 5,
       "expectation_count": 5,
+      "format_version": 1,
       "generation_id": "v0",
       "mean_score": 1.0,
       "namespace_aggregates": {
@@ -170,6 +168,7 @@
       "drift_loss_mean": 0.4,
       "entry_count": 5,
       "expectation_count": 5,
+      "format_version": 1,
       "generation_id": "v1",
       "mean_score": 1.0,
       "namespace_aggregates": {
@@ -263,7 +262,6 @@
       "adk_session_id": "",
       "cached": false,
       "context_loss_count": null,
-      "drift_counts": [],
       "drift_loss": 2.0,
       "ended_at": null,
       "entry_id": "every_expectation_kind_demo",
@@ -304,7 +302,6 @@
       "adk_session_id": "",
       "cached": false,
       "context_loss_count": null,
-      "drift_counts": [],
       "drift_loss": 2.0,
       "ended_at": null,
       "entry_id": "picky_stakeholder_emulated",
@@ -345,7 +342,6 @@
       "adk_session_id": "",
       "cached": false,
       "context_loss_count": null,
-      "drift_counts": [],
       "drift_loss": 2.0,
       "ended_at": null,
       "entry_id": "q3_metrics_outline",
@@ -386,7 +382,6 @@
       "adk_session_id": "",
       "cached": false,
       "context_loss_count": null,
-      "drift_counts": [],
       "drift_loss": 2.0,
       "ended_at": null,
       "entry_id": "transformers_lay_audience",
@@ -427,7 +422,6 @@
       "adk_session_id": "",
       "cached": false,
       "context_loss_count": null,
-      "drift_counts": [],
       "drift_loss": 2.0,
       "ended_at": null,
       "entry_id": "transformers_progressive_scripted",
@@ -468,7 +462,6 @@
       "adk_session_id": "",
       "cached": false,
       "context_loss_count": null,
-      "drift_counts": [],
       "drift_loss": 2.0,
       "ended_at": null,
       "entry_id": "waffles_revision_scripted",
@@ -509,7 +502,6 @@
       "adk_session_id": "",
       "cached": false,
       "context_loss_count": null,
-      "drift_counts": [],
       "drift_loss": 2.0,
       "ended_at": null,
       "entry_id": "waffles_single",
@@ -550,13 +542,6 @@
       "adk_session_id": "",
       "cached": false,
       "context_loss_count": null,
-      "drift_counts": [
-        {
-          "count": 0,
-          "kind": "off_topic",
-          "severity": "info"
-        }
-      ],
       "drift_loss": 0.4,
       "ended_at": null,
       "entry_id": "every_expectation_kind_demo",
@@ -577,7 +562,13 @@
         "purpose": "tournament"
       },
       "memory_failure_count": null,
-      "metric_counts": [],
+      "metric_counts": [
+        {
+          "count": 0,
+          "name": "drift:off_topic",
+          "severity": "info"
+        }
+      ],
       "metrics": null,
       "not_completed": false,
       "not_completed_reason": null,
@@ -603,13 +594,6 @@
       "adk_session_id": "",
       "cached": false,
       "context_loss_count": null,
-      "drift_counts": [
-        {
-          "count": 0,
-          "kind": "off_topic",
-          "severity": "info"
-        }
-      ],
       "drift_loss": 0.4,
       "ended_at": null,
       "entry_id": "picky_stakeholder_emulated",
@@ -630,7 +614,13 @@
         "purpose": "tournament"
       },
       "memory_failure_count": null,
-      "metric_counts": [],
+      "metric_counts": [
+        {
+          "count": 0,
+          "name": "drift:off_topic",
+          "severity": "info"
+        }
+      ],
       "metrics": null,
       "not_completed": false,
       "not_completed_reason": null,
@@ -656,13 +646,6 @@
       "adk_session_id": "",
       "cached": false,
       "context_loss_count": null,
-      "drift_counts": [
-        {
-          "count": 0,
-          "kind": "off_topic",
-          "severity": "info"
-        }
-      ],
       "drift_loss": 0.4,
       "ended_at": null,
       "entry_id": "q3_metrics_outline",
@@ -683,7 +666,13 @@
         "purpose": "tournament"
       },
       "memory_failure_count": null,
-      "metric_counts": [],
+      "metric_counts": [
+        {
+          "count": 0,
+          "name": "drift:off_topic",
+          "severity": "info"
+        }
+      ],
       "metrics": null,
       "not_completed": false,
       "not_completed_reason": null,
@@ -709,13 +698,6 @@
       "adk_session_id": "",
       "cached": false,
       "context_loss_count": null,
-      "drift_counts": [
-        {
-          "count": 0,
-          "kind": "off_topic",
-          "severity": "info"
-        }
-      ],
       "drift_loss": 0.4,
       "ended_at": null,
       "entry_id": "transformers_lay_audience",
@@ -736,7 +718,13 @@
         "purpose": "tournament"
       },
       "memory_failure_count": null,
-      "metric_counts": [],
+      "metric_counts": [
+        {
+          "count": 0,
+          "name": "drift:off_topic",
+          "severity": "info"
+        }
+      ],
       "metrics": null,
       "not_completed": false,
       "not_completed_reason": null,
@@ -762,13 +750,6 @@
       "adk_session_id": "",
       "cached": false,
       "context_loss_count": null,
-      "drift_counts": [
-        {
-          "count": 0,
-          "kind": "off_topic",
-          "severity": "info"
-        }
-      ],
       "drift_loss": 0.4,
       "ended_at": null,
       "entry_id": "transformers_progressive_scripted",
@@ -789,7 +770,13 @@
         "purpose": "tournament"
       },
       "memory_failure_count": null,
-      "metric_counts": [],
+      "metric_counts": [
+        {
+          "count": 0,
+          "name": "drift:off_topic",
+          "severity": "info"
+        }
+      ],
       "metrics": null,
       "not_completed": false,
       "not_completed_reason": null,
@@ -815,13 +802,6 @@
       "adk_session_id": "",
       "cached": false,
       "context_loss_count": null,
-      "drift_counts": [
-        {
-          "count": 0,
-          "kind": "off_topic",
-          "severity": "info"
-        }
-      ],
       "drift_loss": 0.4,
       "ended_at": null,
       "entry_id": "waffles_revision_scripted",
@@ -836,7 +816,13 @@
         "purpose": "tournament"
       },
       "memory_failure_count": null,
-      "metric_counts": [],
+      "metric_counts": [
+        {
+          "count": 0,
+          "name": "drift:off_topic",
+          "severity": "info"
+        }
+      ],
       "metrics": null,
       "not_completed": false,
       "not_completed_reason": null,
@@ -862,13 +848,6 @@
       "adk_session_id": "",
       "cached": false,
       "context_loss_count": null,
-      "drift_counts": [
-        {
-          "count": 0,
-          "kind": "off_topic",
-          "severity": "info"
-        }
-      ],
       "drift_loss": 0.4,
       "ended_at": null,
       "entry_id": "waffles_single",
@@ -889,7 +868,13 @@
         "purpose": "tournament"
       },
       "memory_failure_count": null,
-      "metric_counts": [],
+      "metric_counts": [
+        {
+          "count": 0,
+          "name": "drift:off_topic",
+          "severity": "info"
+        }
+      ],
       "metrics": null,
       "not_completed": false,
       "not_completed_reason": null,
@@ -915,7 +900,7 @@
     "0/round_log.jsonl": [
       {
         "payload": {
-          "contract_hash": "2744699221a13ed8a303c3d9da552a64d1f2e439b499948315b59503db0b1410"
+          "contract_hash": "76b5bf7a933769eb64fbc1fd0481777e56be2b21f99f636c808c94699ca9848f"
         },
         "scope": {},
         "seq": 1,

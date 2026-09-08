@@ -38,9 +38,9 @@ from tests._contract_pins import deterministic_weights
 from tests._foe_support import stand_in_proposer_block
 from zicato.core.types import (
     BoardEntry,
-    DriftCount,
     ExpectationResult,
     LossProfile,
+    MetricCount,
     ScoringWeights,
 )
 from zicato.core.workspace import run_id_for_unit
@@ -94,14 +94,17 @@ def bootstrap_workspace(
                 # directory backend explicitly — the git default reads its
                 # generations from git tags this fixture never writes.
                 "generation_source_backend": "directory",
-                "mutable_trees": list(mutable_trees),
-                "runtime": {
-                    "target_call_llm": _callable_dotted_path(target_call_llm),
-                    "evaluation_call_llm": _callable_dotted_path(evaluation_call_llm),
+                "runtime": {},
+                "models": {
+                    "engines": {
+                        "target": {"call_llm": _callable_dotted_path(target_call_llm)},
+                        "evaluation": {"call_llm": _callable_dotted_path(evaluation_call_llm)},
+                    }
                 },
                 "adapter": {
                     "kind": "import",
                     "factory": "tests._stub_adapter:make_stub_adapter",
+                    "mutable_trees": list(mutable_trees),
                 },
                 "proposer": stand_in_proposer_block(tmp_path / "foe", **proposer),
             }
@@ -266,7 +269,7 @@ def install_telemetry_stubs(
             entry_id=entry.id,
             generation_id=generation_id,
             epoch_id=epoch_id,
-            drift_counts=(DriftCount(kind="off_topic", severity="info", count=0),),
+            metric_counts=(MetricCount(name="drift:off_topic", severity="info", count=0),),
             plan_revisions=0,
             task_failure_ratio=0.0,
             runtime_ms=100,
@@ -365,7 +368,7 @@ def install_telemetry_stubs(
             entry_id=entry.id,
             generation_id=generation.id,
             epoch_id=epoch_id,
-            drift_counts=(DriftCount(kind="off_topic", severity="info", count=0),),
+            metric_counts=(MetricCount(name="drift:off_topic", severity="info", count=0),),
             plan_revisions=0,
             task_failure_ratio=0.0,
             runtime_ms=100,

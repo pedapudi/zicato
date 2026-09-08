@@ -257,21 +257,18 @@ def _build_experiment_json(round_index: int) -> str:
         "hypothesis": {
             "core_idea": core_idea,
             "modulating": [target_id],
-            "why": (
+            ("why"): (
                 "Round-rotation smoke proposer: targeting "
-                f"{target_id} so the applier exercises a manifest-bridged "
-                "prompt rewrite end-to-end. Real proposer rounds will read "
-                "pattern detector output and choose a substantive edit."
+                f"{target_id}"
+                " so the applier exercises a manifest-bridged prompt rewrite "
+                "end-to-end. Real proposer rounds will read pattern detector "
+                "output and choose a substantive edit."
             ),
-            "expected_drift_movements": [
-                {
-                    "kind": drift_kind,
-                    "direction": direction,
-                    "magnitude": "small",
-                }
+            "expected_metric_movements": [
+                {"metric_name": "drift:" + drift_kind, "direction": direction, "magnitude": "small"}
             ],
             "expected_pass_rate_delta": "+0.00 to +0.05",
-            "risks": (
+            ("risks"): (
                 "Mock-driven; a real round may regress recall on the "
                 "adversarial board if the rewrite weakens the steerer."
             ),
@@ -281,10 +278,10 @@ def _build_experiment_json(round_index: int) -> str:
                 "mutation_id": target_id,
                 "op": "replace",
                 "new_content": new_content,
-                "rationale": (
-                    "Smoke-test rewrite. Body is bland on purpose — the "
-                    "applier's job here is to land the diff, not to "
-                    "produce a substantively better prompt."
+                ("rationale"): (
+                    "Smoke-test rewrite. Body is bland on purpose — the applier's "
+                    "job here is to land the diff, not to produce a substantively "
+                    "better prompt."
                 ),
             }
         ],

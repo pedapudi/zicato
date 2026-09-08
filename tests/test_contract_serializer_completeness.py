@@ -1,32 +1,8 @@
-"""Guard tests for the frozen-contract serializer (issue #13).
+"""Every scoring field survives serialization and retains its contract identity.
 
-The epoch evaluation contract — :class:`ScoringWeights` and its nested
-config dataclasses — is serialized by two code paths that MUST agree on
-which fields exist:
-
-* the contract-hash canonicalizer
-  (:func:`zicato.epoch.contract.scoring_to_canon`), which enumerates
-  ``dataclasses.fields()`` and therefore covers every field; and
-* the frozen-epoch snapshot writer/parser/loader.
-
-Historically the snapshot path was a hand-maintained, field-by-field
-dict. When a new field was added and threaded through the canonicalizer
-but NOT the hand-written writer, the frozen ``scoring.json`` silently
-dropped it; on the next ``evolve`` the live contract hashed differently
-from the frozen one and the orchestrator performed a *spurious* epoch
-auto-roll.
-
-These tests pin the GENERAL invariant for the WHOLE contract-dataclass
-family, not one field:
-
-    from_dict(to_dict(x)) == x                          # round-trip identity
-    canon(x) == canon(from_dict(to_dict(x)))            # no spurious roll
-    every dataclass field appears in to_dict(x)         # no dropped field
-
-The structural tests iterate ``dataclasses.fields()`` and synthesise a
-non-default value for each field, so a FUTURE field added to any contract
-dataclass is covered automatically — if a serializer drops it, these
-tests fail without anyone having to remember to extend them.
+Independent non-default values cover the declared fields, nested configurations,
+worker payloads, and saved scoring readers. Sparse input resolves to the same
+configuration as explicitly supplied defaults.
 """
 
 from __future__ import annotations
@@ -37,7 +13,11 @@ from typing import Any
 
 import pytest
 
-from zicato.core.configuration import persisted_key
+from zicato.core.configuration import (
+    authored_dataclass_from_json,
+    dataclass_to_jsonable,
+    persisted_key,
+)
 from zicato.core.types import (
     ExperimentalConfig,
     LadderConfig,
@@ -47,10 +27,6 @@ from zicato.core.types import (
     TournamentStructure,
 )
 from zicato.epoch.contract import scoring_to_canon
-from zicato.epoch.contract_serde import (
-    dataclass_to_jsonable,
-    historical_dataclass_from_json,
-)
 from zicato.epoch.lifecycle import _scoring_from_dict, scoring_to_dict
 from zicato.workspace_loader import scoring_weights_from_dict
 
@@ -151,17 +127,12 @@ _NONDEFAULT_VALUES: dict[str, dict[str, Any]] = {
         # round-trip / drop-a-field guard this test exercises.
         "scalar_fn": "pkg.mod:my_scalar",
         "drift_reducer": "pkg.mod:my_drift_reducer",
-        # Opt-in integrity blocking modes (default OFF; omit-at-default in
-        # the canonicalizer — opting in rolls the epoch like any weight).
+        # Enabled integrity checks change the evaluation contract.
         "block_on_containment_violation": True,
         "block_on_gate_contradiction": True,
-        # Telemetry dialect (TELEMETRY-DIALECTS.md): the pluggable LossProfile
-        # producer. Default "goldfive" is omit-at-default; a non-default
-        # dialect rolls the epoch like any weight.
+        # The telemetry dialect identifies the loss-profile producer.
         "telemetry_dialect": "adk_events",
-        # The declared mutation-site syntax table (MUTATION-SURFACE.md §2.5):
-        # empty by default and omit-at-default in the canonicalizer; a declared
-        # file type widens the surface and rolls the epoch.
+        # A declared file type expands the mutation surface.
         "mutation_surface": {".ts": {"leaders": ["//", "/*"], "trailers": ["*/"]}},
     },
 }
@@ -245,7 +216,7 @@ def test_every_field_appears_in_snapshot(cls: type) -> None:
 def test_generic_round_trip_identity(cls: type) -> None:
     """``from_dict(to_dict(x)) == x`` for non-default values of every field."""
     inst = _all_fields_nondefault(cls)
-    again = historical_dataclass_from_json(cls, dataclass_to_jsonable(inst))
+    again = authored_dataclass_from_json(cls, dataclass_to_jsonable(inst), path="scoring")
     assert again == inst
 
 
@@ -284,8 +255,7 @@ def test_lifecycle_parser_and_loader_agree() -> None:
 
 
 def test_persist_load_rehash_no_spurious_roll_default() -> None:
-    """A default ScoringWeights persists, loads, and re-hashes identically —
-    the zero-churn guarantee for every epoch already on disk."""
+    """Serializing resolved defaults preserves their supported contract identity."""
     w = ScoringWeights()
     reloaded = scoring_weights_from_dict(scoring_to_dict(w))
     assert _canon(w) == _canon(reloaded)
@@ -354,22 +324,16 @@ def test_nested_tournament_and_overfitting_survive_round_trip() -> None:
     assert _canon(w) == _canon(reloaded)
 
 
-def test_tournament_block_uses_legacy_key() -> None:
-    """The tournament structure is persisted under ``"tournament"`` (not
-    ``"tournament_structure"``) — the shape the dashboard builder and every
-    existing on-disk ``scoring.json`` rely on."""
+def test_tournament_block_uses_its_declared_json_key() -> None:
+    """The scoring document uses the declared tournament key."""
     snapshot = scoring_to_dict(ScoringWeights())
     assert "tournament" in snapshot
     assert "tournament_structure" not in snapshot
 
 
-def test_legacy_scoring_json_loads_at_defaults() -> None:
-    """A minimal legacy ``scoring.json`` (only a couple of keys) loads with
-    every absent field at its dataclass default — back-compat for epochs
-    frozen before later fields landed."""
-    legacy = {"pass_weight": 1.0, "promote_margin": 0.01}
-    w = scoring_weights_from_dict(legacy)
-    assert w == ScoringWeights()
+def test_sparse_scoring_uses_declared_defaults() -> None:
+    supplied = {"pass_weight": 1.0, "promote_margin": 0.01}
+    assert scoring_weights_from_dict(supplied) == ScoringWeights()
 
 
 def test_continuous_score_adds_no_scoring_contract_field() -> None:
@@ -392,14 +356,11 @@ def test_continuous_score_adds_no_scoring_contract_field() -> None:
     assert "metrics" not in field_names
 
 
-def test_cross_epoch_memory_omitted_from_canon_at_default() -> None:
-    """Inactive cross-epoch memory is omitted; opting in changes the contract."""
+def test_cross_epoch_memory_default_is_explicit_and_enabling_it_changes_identity() -> None:
     canon_default = scoring_to_canon(ScoringWeights())
-    assert "experiment_memory" not in canon_default
-
+    assert canon_default["experimental"]["cross_epoch_memory"] is False
     explicit_default = ScoringWeights(experimental=ExperimentalConfig())
     assert _canon(explicit_default) == _canon(ScoringWeights())
-
     opted_in = ScoringWeights(experimental=ExperimentalConfig(cross_epoch_memory=True))
     assert scoring_to_canon(opted_in)["experimental"]["cross_epoch_memory"] is True
     assert _canon(opted_in) != _canon(ScoringWeights())

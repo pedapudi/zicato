@@ -237,99 +237,97 @@ _ANALYSIS_FINGERPRINT_REVIEWER = "expert reviewer summarizing one epoch"
 _PROPOSER_ROUNDS: list[dict[str, Any]] = [
     {
         "hypothesis": {
-            "core_idea": (
-                "Tighten the researcher's instruction so it produces a "
-                "compact bullet-point synthesis instead of long prose."
+            ("core_idea"): (
+                "Tighten the researcher's instruction so it produces a compact "
+                "bullet-point synthesis instead of long prose."
             ),
             "modulating": ["researcher_instruction"],
-            "why": (
+            ("why"): (
                 "The current researcher prompt encourages a verbose, "
-                "step-by-step synthesis; compact bullets give the writer "
-                "a cleaner input and should reduce off-topic drift."
+                "step-by-step synthesis; compact bullets give the writer a "
+                "cleaner input and should reduce off-topic drift."
             ),
-            "expected_drift_movements": [
+            "expected_metric_movements": [
                 {
-                    "kind": "context_pressure",
+                    "metric_name": "drift:context_pressure",
                     "direction": "decrease",
                     "magnitude": "medium",
                 },
                 {
-                    "kind": "stopped_early",
+                    "metric_name": "drift:stopped_early",
                     "direction": "neutral",
                     "magnitude": "small",
                 },
             ],
             "expected_pass_rate_delta": "+0.05 to +0.10",
-            "risks": (
-                "Compact bullets may drop nuance the writer relied on; "
-                "the writer's slide quality may regress if so."
+            ("risks"): (
+                "Compact bullets may drop nuance the writer relied on; the "
+                "writer's slide quality may regress if so."
             ),
         },
         "patches": [
             {
                 "mutation_id": "researcher_instruction",
                 "op": "replace",
-                "new_content": (
-                    "You are a researcher. Produce a compact bulleted "
-                    "synthesis of the topic the user provides. Each "
-                    "bullet is one factual claim suitable for a single "
-                    "slide. Keep it under twelve bullets."
+                ("new_content"): (
+                    "You are a researcher. Produce a compact bulleted synthesis of "
+                    "the topic the user provides. Each bullet is one factual claim "
+                    "suitable for a single slide. Keep it under twelve bullets."
                 ),
-                "rationale": (
-                    "Compact bullets reduce context pressure on the "
-                    "writer and tighten the topical signal."
+                ("rationale"): (
+                    "Compact bullets reduce context pressure on the writer and "
+                    "tighten the topical signal."
                 ),
             }
         ],
     },
     {
         "hypothesis": {
-            "core_idea": (
-                "Sharpen the coordinator's routing instruction so it "
-                "stops re-dispatching the reviewer in a loop on "
-                "files_not_found cases."
+            ("core_idea"): (
+                "Sharpen the coordinator's routing instruction so it stops "
+                "re-dispatching the reviewer in a loop on files_not_found "
+                "cases."
             ),
             "modulating": ["coordinator_instruction"],
-            "why": (
-                "The current coordinator prompt is long and conflates "
-                "two failure modes; a sharper routing flow reduces "
-                "agent_transfer churn on the picky-stakeholder entry."
+            ("why"): (
+                "The current coordinator prompt is long and conflates two "
+                "failure modes; a sharper routing flow reduces agent_transfer "
+                "churn on the picky-stakeholder entry."
             ),
-            "expected_drift_movements": [
+            "expected_metric_movements": [
                 {
-                    "kind": "agent_transfer",
+                    "metric_name": "drift:agent_transfer",
                     "direction": "decrease",
                     "magnitude": "medium",
                 },
                 {
-                    "kind": "looping_reasoning",
+                    "metric_name": "drift:looping_reasoning",
                     "direction": "decrease_or_neutral",
                     "magnitude": "small",
                 },
             ],
             "expected_pass_rate_delta": "+0.02 to +0.08",
-            "risks": (
-                "An overly terse routing flow may skip the debugger when "
-                "it was actually needed; watch the multi-turn entries."
+            ("risks"): (
+                "An overly terse routing flow may skip the debugger when it was"
+                " actually needed; watch the multi-turn entries."
             ),
         },
         "patches": [
             {
                 "mutation_id": "coordinator_instruction",
                 "op": "replace",
-                "new_content": (
-                    "You are the Coordinator. Flow: get a topic, route "
-                    "to research_agent, then web_developer_agent, then "
-                    "reviewer_agent. On critical issues route to "
-                    "debugger_agent once and only once. On "
-                    "files_not_found, route to debugger_agent for "
+                ("new_content"): (
+                    "You are the Coordinator. Flow: get a topic, route to "
+                    "research_agent, then web_developer_agent, then reviewer_agent."
+                    " On critical issues route to debugger_agent once and only "
+                    "once. On files_not_found, route to debugger_agent for "
                     "find_presentation_files; on found=False re-dispatch "
-                    "web_developer_agent with the bare topic. Report to "
-                    "the user when done."
+                    "web_developer_agent with the bare topic. Report to the user "
+                    "when done."
                 ),
-                "rationale": (
-                    "Tightening the routing flow reduces redundant "
-                    "agent_transfer events and breaks reviewer loops."
+                ("rationale"): (
+                    "Tightening the routing flow reduces redundant agent_transfer "
+                    "events and breaks reviewer loops."
                 ),
             }
         ],
@@ -340,22 +338,21 @@ _PROPOSER_ROUNDS: list[dict[str, Any]] = [
     # alongside the first researcher idea in a wide (field_size >= 3) field.
     {
         "hypothesis": {
-            "core_idea": (
-                "Require the researcher to attach a source citation to "
-                "every claim so the writer stops inventing unsupported "
-                "metrics."
+            ("core_idea"): (
+                "Require the researcher to attach a source citation to every "
+                "claim so the writer stops inventing unsupported metrics."
             ),
             "modulating": ["researcher_instruction"],
-            "why": (
+            ("why"): (
                 "Uncited claims drive the writer to fabricate numbers; "
                 "demanding a citation per bullet tightens factual grounding."
             ),
-            "expected_drift_movements": [
+            "expected_metric_movements": [
                 {
-                    "kind": "context_pressure",
+                    "metric_name": "drift:context_pressure",
                     "direction": "decrease_or_neutral",
                     "magnitude": "small",
-                },
+                }
             ],
             "expected_pass_rate_delta": "+0.02 to +0.06",
             "risks": "Strict citation demands may slow the researcher down.",
@@ -364,15 +361,15 @@ _PROPOSER_ROUNDS: list[dict[str, Any]] = [
             {
                 "mutation_id": "researcher_instruction",
                 "op": "replace",
-                "new_content": (
-                    "You are a researcher. Produce a bulleted synthesis "
-                    "where EACH bullet is one factual claim followed by a "
-                    "short source citation in parentheses. Do not assert a "
-                    "metric without a citation."
+                ("new_content"): (
+                    "You are a researcher. Produce a bulleted synthesis where EACH "
+                    "bullet is one factual claim followed by a short source "
+                    "citation in parentheses. Do not assert a metric without a "
+                    "citation."
                 ),
-                "rationale": (
-                    "Per-bullet citations ground the writer's numbers and "
-                    "cut fabricated metrics."
+                ("rationale"): (
+                    "Per-bullet citations ground the writer's numbers and cut "
+                    "fabricated metrics."
                 ),
             }
         ],
@@ -382,21 +379,21 @@ _PROPOSER_ROUNDS: list[dict[str, Any]] = [
     # field_size==4 round mints four distinct challengers.
     {
         "hypothesis": {
-            "core_idea": (
+            ("core_idea"): (
                 "Give the coordinator an explicit turn budget so it stops "
                 "re-routing on revision turns once the budget is spent."
             ),
             "modulating": ["coordinator_instruction"],
-            "why": (
-                "Without a budget the coordinator re-dispatches the "
-                "reviewer indefinitely; a hard turn cap halts the loop."
+            ("why"): (
+                "Without a budget the coordinator re-dispatches the reviewer "
+                "indefinitely; a hard turn cap halts the loop."
             ),
-            "expected_drift_movements": [
+            "expected_metric_movements": [
                 {
-                    "kind": "looping_reasoning",
+                    "metric_name": "drift:looping_reasoning",
                     "direction": "decrease",
                     "magnitude": "medium",
-                },
+                }
             ],
             "expected_pass_rate_delta": "+0.01 to +0.05",
             "risks": "Too tight a budget may cut a revision the user wanted.",
@@ -405,15 +402,14 @@ _PROPOSER_ROUNDS: list[dict[str, Any]] = [
             {
                 "mutation_id": "coordinator_instruction",
                 "op": "replace",
-                "new_content": (
-                    "You are the Coordinator. You have a budget of six "
-                    "routing turns. Flow: topic -> research_agent -> "
-                    "web_developer_agent -> reviewer_agent. Route to "
-                    "debugger_agent at most once. When the budget is spent, "
-                    "report the best result to the user instead of "
-                    "re-dispatching."
+                ("new_content"): (
+                    "You are the Coordinator. You have a budget of six routing "
+                    "turns. Flow: topic -> research_agent -> web_developer_agent ->"
+                    " reviewer_agent. Route to debugger_agent at most once. When "
+                    "the budget is spent, report the best result to the user "
+                    "instead of re-dispatching."
                 ),
-                "rationale": (
+                ("rationale"): (
                     "A hard turn budget halts the reviewer re-dispatch loop " "deterministically."
                 ),
             }

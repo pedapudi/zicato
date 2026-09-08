@@ -35,8 +35,7 @@ class AdapterDeclaration:
     args: tuple[Any, ...] = field(
         default=(),
         metadata={
-            **_metadata("Positional factory arguments. Null selects no positional arguments."),
-            "null_uses_default": True,
+            **_metadata("Positional factory arguments."),
         },
     )
     options: Mapping[str, Any] = field(
@@ -46,8 +45,7 @@ class AdapterDeclaration:
     mutable_trees: tuple[str, ...] = field(
         default=(),
         metadata={
-            **_metadata("Source directories copied into each candidate. Null selects none."),
-            "null_uses_default": True,
+            **_metadata("Source directories copied into each candidate."),
         },
     )
     import_roots: tuple[str, ...] = field(
@@ -78,27 +76,21 @@ class AdapterDeclaration:
 
 
 def adapter_declaration(config: Mapping[str, Any]) -> AdapterDeclaration:
-    """Read the adapter block, normalizing the supported legacy registration."""
+    """Read the workspace's declared adapter."""
     raw = config.get("adapter")
     if raw is None:
-        if not config.get("adk_entrypoint"):
-            raise ValueError("workspace has no 'adapter' block or adk_entrypoint registration")
-        raw = {"kind": "adk", "entrypoint": config["adk_entrypoint"]}
-    if isinstance(raw, Mapping):
-        raw = dict(raw)
-        if "mutable_trees" not in raw:
-            raw["mutable_trees"] = config.get("mutable_trees") or config.get("source_roots") or []
+        raise ValueError("workspace has no 'adapter' registration")
     return authored_dataclass_from_json(AdapterDeclaration, raw, path="adapter")
 
 
 def registered_mutable_trees(config: Mapping[str, Any], workspace_root: Path) -> tuple[Path, ...]:
     """Resolve the declared source directories against the workspace parent."""
-    trees = (
-        adapter_declaration(config).mutable_trees
-        if config.get("adapter") or config.get("adk_entrypoint")
-        else config.get("mutable_trees") or config.get("source_roots") or ()
+    if config.get("adapter") is None:
+        return ()
+    return tuple(
+        (workspace_root.resolve().parent / tree).resolve()
+        for tree in adapter_declaration(config).mutable_trees
     )
-    return tuple((workspace_root.resolve().parent / tree).resolve() for tree in trees)
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,7 +102,7 @@ class DriverImportContext:
 
     @classmethod
     def from_config(cls, config: Mapping[str, Any], workspace_root: Path) -> DriverImportContext:
-        if not config.get("adapter") and not config.get("adk_entrypoint"):
+        if config.get("adapter") is None:
             return cls()
         declaration = adapter_declaration(config)
         base = workspace_root.resolve().parent

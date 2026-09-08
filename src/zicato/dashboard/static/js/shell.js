@@ -847,11 +847,8 @@ export async function buildTreeModel(route) {
           promoted: x.promoted == null ? null : !!x.promoted,
           round_index: Number.isInteger(x.round_index) ? x.round_index : null,
         })) : []);
-    // Separate THIS epoch's CURRENT champion from its FORMER champions (the
-    // hollow crown) off THIS epoch's own pointer. An unknown pointer stamps
-    // NEITHER flag, so tree.js falls back to `legacyChamp`: the promoted
-    // generations keep the solid crown. An unserved pointer must never turn a
-    // whole epoch "former".
+    // The epoch's champion pointer distinguishes current and former champions.
+    // Without that pointer, neither crown is known.
     const epochChampionId = championByEpoch.get(id) || null;
     if (epochChampionId != null) {
       for (const g of gensList) {

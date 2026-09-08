@@ -152,7 +152,7 @@ def test_analysis_timeout_substitutes_placeholder(tmp_path: Path) -> None:
                 },
                 "outcome": {
                     "ran_at": "2026-05-14T00:00:01Z",
-                    "drift_movements": [],
+                    "metric_movements": [],
                     "pass_rate_delta": 0.0,
                     "drift_loss_delta": 0.0,
                     "scalar_score_delta": -0.1,

@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._workspace_support import experiment_record
 from zicato.core.types import Experiment, HypothesisSpec
 from zicato.epoch.lineage import decode_lineage
 from zicato.epoch.settlement_receipt import (
@@ -24,8 +25,7 @@ from zicato.tournament.records import (
     write_field_tournament_record,
 )
 
-# Format 3 permits absent optional outcome fields. Integer zero remains an
-# integer on disk even though the outcome owner's interpreted delta is float.
+# The receipt carries a complete outcome. Integer deltas retain their JSON type.
 REJECTED_RECEIPT = {
     "format_version": 3,
     "state": "pending",
@@ -40,14 +40,18 @@ REJECTED_RECEIPT = {
             "created_at": "2026-06-01T00:00:00Z",
             "parent_scalar": 0,
             "child_scalar": 1.0,
-            "outcome": {
-                "ran_at": "2026-06-01T00:01:00Z",
-                "tournament_decision": "rejected",
-                "rejection_reason": "higher loss",
-                "scalar_score_delta": 1,
-                "structure": "gauntlet",
-                "evidence": {"draws": [{"draw": 0, "eligible": False}]},
-            },
+            "outcome": experiment_record(
+                "v1",
+                epoch_id="epoch",
+                outcome={
+                    "ran_at": "2026-06-01T00:01:00Z",
+                    "tournament_decision": "rejected",
+                    "rejection_reason": "higher loss",
+                    "scalar_score_delta": 1,
+                    "structure": "gauntlet",
+                    "evidence": {"draws": [{"draw": 0, "eligible": False}]},
+                },
+            )["outcome"],
         }
     ],
     "field_tournament_record": None,
@@ -197,6 +201,7 @@ def test_pure_cross_record_checks_preserve_unresolved_lineage() -> None:
         round_index=0,
     )
     lineage = {
+        "format_version": 1,
         "epochs": [
             {
                 "id": "epoch",
@@ -210,7 +215,7 @@ def test_pure_cross_record_checks_preserve_unresolved_lineage() -> None:
                     }
                 ],
             }
-        ]
+        ],
     }
     before = json.dumps(lineage)
     assert (
@@ -253,9 +258,9 @@ def test_field_readers_expose_corruption_instead_of_dropping_records(tmp_path: P
     assert "field-v1.json" in projected["unreadable"]
 
 
-@pytest.mark.parametrize("explicit_state", [False, True])
-def test_tournament_snapshot_preserves_omitted_state_and_optional_keys(
-    tmp_path: Path, explicit_state: bool
+@pytest.mark.parametrize("state", ["in_progress", "settled", "omitted", None, True, "pending"])
+def test_tournament_snapshot_requires_state_and_preserves_optional_keys(
+    tmp_path: Path, state: object
 ) -> None:
     raw = {
         "tournament_id": "epoch:field:v1",
@@ -277,8 +282,17 @@ def test_tournament_snapshot_preserves_omitted_state_and_optional_keys(
         "delta_scalar": 0,
         "ran_at": "2026-06-01T00:01:00Z",
     }
-    if explicit_state:
-        raw["state"] = "settled"
+    if state != "omitted":
+        raw["state"] = state
+    if state not in ("in_progress", "settled"):
+        from zicato.epoch._storage import RecordError
+
+        with pytest.raises(RecordError, match="invalid state"):
+            decode_field_tournament_record(raw)
+        return
+    if state == "in_progress":
+        raw["decision"] = ""
+        raw["reason"] = ""
     expected = json.dumps(raw, indent=2, sort_keys=True).encode()
     record = decode_field_tournament_record(raw)
     raw["competitors"].clear()
@@ -288,4 +302,4 @@ def test_tournament_snapshot_preserves_omitted_state_and_optional_keys(
     )
     path = tmp_path / "epochs/epoch/tournaments/field-v1.json"
     assert path.read_bytes() == expected
-    assert read_field_tournament_record(path).state == "settled"
+    assert read_field_tournament_record(path).state == state

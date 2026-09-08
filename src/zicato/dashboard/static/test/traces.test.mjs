@@ -200,7 +200,8 @@ test('detail: episode anchors show their suggestion IDs without links', async ()
   const suggestions = allByClass(host, 'dn-trace-ep-sug');
   assert(suggestions.length >= 1, 'at least one suggestion ID');
   assert(suggestions.every((node) => node.tagName.toLowerCase() === 'span' && !node.getAttribute('href')), 'suggestion IDs are plain text');
-  assert(suggestions.some((node) => node.getAttribute('text') === 'sug-14ffa7e6' || textOf(node) === 'sug-14ffa7e6'), 'names the drafted suggestion');
+  const suggestionId = DETAIL.episodes[0].suggestion_ids[0];
+  assert(suggestions.some((node) => node.getAttribute('text') === suggestionId || textOf(node) === suggestionId), 'names the drafted suggestion');
 });
 
 // ====================================================================

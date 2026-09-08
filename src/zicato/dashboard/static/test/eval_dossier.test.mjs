@@ -267,7 +267,7 @@ test('digest: an identical payload yields a byte-identical digest; a changed fie
 // ════════════════════════════════════════════════════════════════════
 
 const STORE = {
-  epoch: { epoch_id: 'e3', board: [{ entry_id: 'task_login', kind: 'single_turn', weight: 1, budget_s: 60 }] },
+  epoch: { epoch_id: 'e3', board: [{ entry_id: 'task_login', kind: 'single_turn', weight: 1, wall_clock_budget_seconds: 60 }] },
   lineage: { generations: [
     { generation_id: 'g0', parent_generation_id: null, promoted: true, epoch_id: 'e3' },
     { generation_id: 'g2', parent_generation_id: 'g0', promoted: true, epoch_id: 'e3' },

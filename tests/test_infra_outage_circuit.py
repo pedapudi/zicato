@@ -43,7 +43,7 @@ from tests._orchestrator_harness import (
     run_evolve_once,
     target_call_llm,
 )
-from zicato.core.types import DriftCount, LossProfile, TournamentStructure
+from zicato.core.types import LossProfile, MetricCount, TournamentStructure
 from zicato.orchestrator import DEFERRED_INFRA_DECISION, EvolveRoundOutcome
 from zicato.runtime.resume import prepare_resume
 
@@ -82,7 +82,7 @@ def _install_infra_abort_run_single(monkeypatch: pytest.MonkeyPatch) -> None:
             entry_id=entry.id,
             generation_id=generation.id,
             epoch_id=epoch_id,
-            drift_counts=(DriftCount(kind="off_topic", severity="info", count=0),),
+            metric_counts=(MetricCount(name="drift:off_topic", severity="info", count=0),),
             plan_revisions=0,
             task_failure_ratio=1.0,
             runtime_ms=100,

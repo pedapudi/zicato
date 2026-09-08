@@ -39,7 +39,7 @@ class InvocationContext:
 
     @property
     def workspace_config(self) -> dict[str, Any]:
-        """Give mutable legacy factories an owned copy of the captured declaration."""
+        """Return an independent copy of the captured workspace declaration."""
         result: dict[str, Any] = json.loads(self.workspace_config_bytes)
         return result
 
@@ -61,9 +61,7 @@ class InvocationContext:
             if not intentional_roll:
                 raise ValueError("invocation epoch changes require an intentional contract roll")
             self._imports.close()
-        selected = load_epoch_execution_contract(
-            self.writer.workspace_root, epoch_id, workspace_config=self.workspace_config
-        )
+        selected = load_epoch_execution_contract(self.writer.workspace_root, epoch_id)
         require_workspace_valid(self.writer.workspace_root, execution_contract=selected)
         self._imports.enter_context(
             driver_import_scope(

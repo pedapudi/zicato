@@ -24,11 +24,23 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
+from tests._workspace_support import experiment_record
 from zicato.cli.commands.regenerate_report import regenerate_report_cmd
+from zicato.tournament.scoring import write_gen_score
 
 
-def _write_json(path: Path, payload: object) -> None:
+def _write_json(path: Path, payload: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    if path.name == "gen_score.json":
+        write_gen_score(path.parents[4], path.parents[2].name, path.parent.name, payload)
+        return
+    if path.name == "experiment.json":
+        payload = experiment_record(
+            **{
+                **payload,
+                "parent_generation_id": payload.get("parent_generation_id") or None,
+            }
+        )
     path.write_text(json.dumps(payload), encoding="utf-8")
 
 
@@ -90,12 +102,12 @@ def _build_populated_workspace(outer: Path) -> tuple[Path, str]:
             "hypothesis": {"core_idea": "tighten the prompt"},
             "outcome": {
                 "ran_at": "2026-05-18T01:00:00Z",
-                "scalar_score_delta": -0.250,
-                "drift_loss_delta": -0.30,
-                "pass_rate_delta": 0.10,
+                "scalar_score_delta": -0.25,
+                "drift_loss_delta": -0.3,
+                "pass_rate_delta": 0.1,
                 "tournament_decision": "promoted",
                 "rejection_reason": "",
-                "drift_movements": [],
+                "metric_movements": [],
             },
         },
     )

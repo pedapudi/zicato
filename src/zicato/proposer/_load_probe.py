@@ -1,4 +1,4 @@
-"""Subprocess entry point for the ``validate_patches`` tier-3 load probe.
+"""Subprocess entry point for the ``validate_patches`` harness load probe.
 
 Runs ``adapter.load(scratch_root)`` — the SAME call the tournament makes
 before any board entry executes — against a scratch snapshot, and reports
@@ -97,9 +97,9 @@ def _probe(workspace_root: Path, scratch_root: Path, configuration: dict[str, An
         return 2
 
     try:
-        from zicato.adapter_factory import uses_legacy_run
+        from zicato.adapter_factory import validate_harness_run
 
-        uses_legacy_run(adapter.load(scratch_root))
+        validate_harness_run(adapter.load(scratch_root))
         from zicato.driver_imports import imported_sources, workspace_driver_imports
 
         imported_sources(workspace_driver_imports(workspace_root), scratch_root)

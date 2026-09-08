@@ -302,27 +302,31 @@ emits (`cost:llm_calls`, `cost:tokens_spent`, `output:chars`,
 `schema:failures`). An unrecognised namespace in the data is aggregated
 at coefficient `0.0` and surfaced for visibility.
 
-### 2.5 Scoring config is part of the frozen contract
+### 2.5 Scoring configuration is part of the frozen contract
 
-Every `ScoringWeights` field — the linear weights, the gate knobs, the
-declarative transforms (§11.1), and the plugin specs (§11.2) — folds
-into the **frozen per-epoch contract hash** through the
-field-enumerating canonicalizer (`zicato/epoch/contract.py`). Changing
-any of them rolls the epoch: the next `evolve` closes the current epoch
-and opens a fresh one, so a scoring change is never silently applied to
-an in-flight epoch's already-scored generations.
+Every effective `ScoringWeights` value participates in the epoch contract hash,
+including defaults and nested decision settings. The shared serializer in
+`core.configuration` writes all declared fields. Authored and frozen scoring
+use the same strict decoder; there is no omission registry or historical
+configuration decoder.
 
-For the dotted-spec plugins this goes one step further than a plain
-field. The canonicalizer hashes the **plugin spec string AND the
-resolved module's source** (`spec_with_source_hash`). Editing a plugin's
-*body*, and not only its dotted reference, is therefore detected as a
-contract change and rolls the epoch. This is the **single
-source-hashing mechanism shared across every grading plugin**
-(predicates, judges, the outcome summarizer, and the scoring `scalar_fn`
-/ `drift_reducer`): a body edit anywhere on the operator's grading
-surface rolls the contract consistently. The declarative transforms
-need no source hashing — they serialize natively as dicts and are
-covered by the field canonicalizer for free.
+An omitted authored field and its explicit default decode to the same value
+and therefore have the same identity. Changing a default used by an authored
+document changes its effective configuration. A changed contract rolls the
+epoch on the next `evolve`, or raises a drift error when automatic rolling is
+disabled. Frozen execution cannot silently adopt changed scoring rules.
+
+Grading plugins include both their specification and resolved source through
+`spec_with_source_hash`. Predicates, Python judges, the outcome summarizer,
+`scalar_fn`, and `drift_reducer` share this mechanism. Editing a plugin body
+changes identity even when its dotted name stays unchanged. Declarative
+transforms participate through their serialized values.
+
+Epoch publication saves complete scoring configuration and captured
+`execution.json`. Loading the selected epoch requires those inputs and a
+contract hash containing exactly 64 lowercase hexadecimal characters.
+Noise-floor measurements, preflight results, and publication recovery state
+remain outside the contract hash.
 
 ## 3. Per-entry pass-rate
 
@@ -827,7 +831,7 @@ formula:
 
 ```python
 def my_drift_reducer(ctx: DriftContext) -> float:
-    loop = sum(c.count for c in ctx.drift_counts if c.kind == "looping_reasoning")
+    loop = sum(c.count for c in ctx.metric_counts if c.name == "drift:looping_reasoning")
     base = ctx.builtin_loss - _linear_looping(ctx)
     return base + sum(1.0 / k for k in range(1, int(loop) + 1))
 ```

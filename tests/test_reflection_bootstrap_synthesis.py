@@ -17,7 +17,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from zicato.board.jsonl import load_board, save_board
+from zicato.board.jsonl import entry_to_dict, load_board, save_board
 from zicato.core.board import BoardEntry, ExpectationKind, validate_board_entry
 from zicato.reflection import synthesis as s
 from zicato.reflection.mining import imported_trace_episodes
@@ -159,7 +159,9 @@ def test_single_turn_entry_input_is_the_reconstructed_opening_turn() -> None:
     entry = next(
         sug.entry
         for sug in suggestions
-        if sug.entry is not None and sug.entry.id == "bootstrap__error_cascade__trace-a0be332d"
+        if sug.entry is not None
+        and sug.evidence["signal_kind"] == "error_cascade"
+        and sug.provenance["foreign_source"]["source_file"] == "adk_run.jsonl"
     )
     assert entry.kind == "single_turn"
     assert entry.input == "Book me a flight to Lisbon next Tuesday and add it to my calendar."
@@ -387,7 +389,7 @@ def test_surface_draft_artifact_re_validates_as_an_add_board_entry_op() -> None:
     ]
     assert multi
     for entry in multi:
-        op_dict = s._entry_op_dict(entry)
+        op_dict = entry_to_dict(entry)
         rebuilt = validate_board_entry(op_dict)
         assert rebuilt.kind == "multi_turn_emulated"
         assert rebuilt.user_persona is not None

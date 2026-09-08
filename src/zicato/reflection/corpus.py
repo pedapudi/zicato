@@ -220,10 +220,12 @@ def _loss_decomposition(loss: Any, weights: ScoringWeights) -> dict[str, float]:
     sev_weights = getattr(weights, "severity_weights", {}) or {}
     namespace_weights = getattr(weights, "namespace_weights", {}) or {}
     drift_weight = float(namespace_weights.get("drift:", 0.0))
-    for dc in getattr(loss, "drift_counts", ()) or ():
+    for dc in loss.metric_counts:
+        if not dc.name.startswith("drift:"):
+            continue
         sev_w = float(sev_weights.get(getattr(dc, "severity", ""), 1.0))
-        key = f"drift:{getattr(dc, 'kind', '')}"
-        decomp[key] = decomp.get(key, 0.0) + sev_w * int(getattr(dc, "count", 0)) * drift_weight
+        key = dc.name
+        decomp[key] = decomp.get(key, 0.0) + sev_w * dc.count * drift_weight
     return decomp
 
 
@@ -235,15 +237,17 @@ def _drift_events(loss: Any) -> tuple[dict[str, Any], ...]:
     span is available in the passive tier (``span_ref`` is ``None``).
     """
     events: list[dict[str, Any]] = []
-    for dc in getattr(loss, "drift_counts", ()) or ():
-        kind = str(getattr(dc, "kind", ""))
+    for dc in loss.metric_counts:
+        if not dc.name.startswith("drift:"):
+            continue
+        kind = dc.name.removeprefix("drift:")
         judge_name = kind.split(":", 1)[1] if kind.startswith("custom:") else ""
         events.append(
             {
                 "kind": kind,
                 "severity": str(getattr(dc, "severity", "")),
                 "judge_name": judge_name,
-                "count": int(getattr(dc, "count", 0)),
+                "count": dc.count,
                 "span_ref": None,
             }
         )

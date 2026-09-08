@@ -370,9 +370,10 @@ def test_collect_epoch_health_inputs_reads_persisted_losses(tmp_path: Path) -> N
     files on disk (the evolve-loop tests use a stub reducer that does
     not persist, so this is the only place the read path is covered).
     """
-    from zicato.core.types import BoardEntry, DriftCount, LossProfile
+    from zicato.core.types import BoardEntry, LossProfile, MetricCount
     from zicato.core.workspace import loss_profile_path
     from zicato.evolve.round_reporting import _collect_epoch_health_inputs
+    from zicato.telemetry.reducer import write_loss_profile
 
     workspace = tmp_path / ".zicato"
     epoch_id = "e0"
@@ -383,7 +384,7 @@ def test_collect_epoch_health_inputs_reads_persisted_losses(tmp_path: Path) -> N
             entry_id=entry_id,
             generation_id=gen_id,
             epoch_id=epoch_id,
-            drift_counts=(DriftCount(kind="off_topic", severity="info", count=0),),
+            metric_counts=(MetricCount(name="drift:off_topic", severity="info", count=0),),
             plan_revisions=0,
             task_failure_ratio=0.0,
             runtime_ms=100,
@@ -393,26 +394,7 @@ def test_collect_epoch_health_inputs_reads_persisted_losses(tmp_path: Path) -> N
             pass_fail=True,
         )
         path = loss_profile_path(workspace, epoch_id, gen_id, entry_id)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            json.dumps(
-                {
-                    "run_id": loss.run_id,
-                    "entry_id": loss.entry_id,
-                    "generation_id": loss.generation_id,
-                    "epoch_id": loss.epoch_id,
-                    "drift_counts": [{"kind": "off_topic", "severity": "info", "count": 0}],
-                    "plan_revisions": 0,
-                    "task_failure_ratio": 0.0,
-                    "runtime_ms": 100,
-                    "wall_clock_budget_exceeded": False,
-                    "expectation_result": None,
-                    "drift_loss": drift,
-                    "pass_fail": True,
-                }
-            ),
-            encoding="utf-8",
-        )
+        write_loss_profile(loss, path)
 
     _write_loss("v0", "entry_a", 2.0)
     _write_loss("v1", "entry_a", 1.0)

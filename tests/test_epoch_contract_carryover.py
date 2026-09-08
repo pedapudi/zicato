@@ -56,10 +56,9 @@ _SCORING = '{"pass_weight": 2.0}\n'
 def workspace(tmp_path: Path) -> Path:
     """A workspace whose ``config.json`` registers EVERY contract component.
 
-    Every field of :class:`ContractInputs` is set to a non-default value
-    here, which is what makes the hash-equality assertions below able to
-    catch a dropped component: with the defaults in place a drop is
-    indistinguishable from a correct carryover.
+    Every applicable field of :class:`ContractInputs` is set here so the
+    hash-equality assertions detect a dropped component. The import adapter
+    has no native entrypoint; its declaration carries its source identity.
     """
     (tmp_path / "board.jsonl").write_text(_BOARD, encoding="utf-8")
     (tmp_path / "brief.md").write_text(_BRIEF, encoding="utf-8")
@@ -81,9 +80,7 @@ def workspace(tmp_path: Path) -> Path:
     (ws / "config.json").write_text(
         json.dumps(
             {
-                "adk_entrypoint": "pkg.mod:agent",
                 "generation_source_backend": "directory",
-                "mutable_trees": ["src/agent"],
                 # An adapter whose factory ignores its arguments and reports a
                 # worker document naming only itself, so the declared ``args``
                 # reach the contract through the declaration alone. A
@@ -92,6 +89,7 @@ def workspace(tmp_path: Path) -> Path:
                 "adapter": {
                     "kind": "import",
                     "factory": "tests._stub_adapter:make_stub_adapter",
+                    "mutable_trees": ["src/agent"],
                     "args": ["carryover"],
                 },
                 "contract": {
@@ -110,20 +108,22 @@ def workspace(tmp_path: Path) -> Path:
 
 
 def test_every_contract_component_is_exercised(workspace: Path) -> None:
-    """THE COMPLETENESS GUARD: no contract component may sit at its default.
+    """Every component applicable to the import adapter is exercised.
 
     A carryover bug is only observable when the dropped component would
     have changed the hash, i.e. when it is configured. So this guard
     walks ``fields(ContractInputs)`` and requires the fixture above to
-    have configured each one. Add a field to ``ContractInputs`` and this
+    configure each applicable field. Add a field to ``ContractInputs`` and this
     test fails until the fixture registers it — at which point the
     hash-equality tests below cover it automatically.
     """
     resolved = resolve_contract_inputs(workspace)
+    # An import adapter is identified by its declaration, not a native entrypoint.
+    assert resolved.entrypoint == ""
     unexercised = [
         f.name
         for f in fields(ContractInputs)
-        if not getattr(resolved, f.name)  # empty string / empty tuple / None
+        if f.name != "entrypoint" and not getattr(resolved, f.name)
     ]
     assert not unexercised, (
         f"contract component(s) left at their default by the fixture: {sorted(unexercised)}. "

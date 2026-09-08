@@ -48,8 +48,7 @@ from pathlib import Path
 from typing import Any
 
 from zicato.core.types import (
-    DriftMovementActual,
-    ExpectedDriftMovement,
+    ExpectedMetricMovement,
     Experiment,
     MetricMovementActual,
 )
@@ -107,13 +106,12 @@ class GenerationView:
     risks: str
     modulating: tuple[str, ...]
     expected_pass_rate_delta: str
-    expected_drift_movements: tuple[dict[str, str], ...]
+    expected_metric_movements: tuple[dict[str, str], ...]
     decision: str
     rejection_reason: str
     scalar_score_delta: float
     drift_loss_delta: float
     pass_rate_delta: float
-    drift_movements: tuple[dict[str, Any], ...]
     metric_movements: tuple[dict[str, Any], ...]
     patches: tuple[dict[str, str], ...]
     # Cached absolute tournament aggregate for this generation, if the
@@ -335,11 +333,11 @@ def _load_scoring(layout: WorkspaceLayout, epoch_id: str) -> dict[str, Any]:
 
 
 def _str_movements(
-    movements: Sequence[ExpectedDriftMovement],
+    movements: Sequence[ExpectedMetricMovement],
 ) -> tuple[dict[str, str], ...]:
-    """Project the predicted drift movements to string-valued dicts."""
+    """Project the predicted metric movements to string-valued dicts."""
     return tuple(
-        {"kind": str(m.kind), "direction": str(m.direction), "magnitude": str(m.magnitude)}
+        {"metric_name": m.metric_name, "direction": str(m.direction), "magnitude": str(m.magnitude)}
         for m in movements
     )
 
@@ -371,13 +369,11 @@ def _load_one_generation(
         scalar_delta = outcome.scalar_score_delta
         drift_delta = outcome.drift_loss_delta
         pass_delta = outcome.pass_rate_delta
-        drift_movements = _movement_dicts(outcome.drift_movements)
         metric_movements = _movement_dicts(outcome.metric_movements)
     else:
         decision = "baseline" if is_baseline else "pending"
         rejection_reason = ""
         scalar_delta = drift_delta = pass_delta = 0.0
-        drift_movements = ()
         metric_movements = ()
 
     patches = _patch_views(experiment)
@@ -395,13 +391,12 @@ def _load_one_generation(
         risks=hypothesis.risks,
         modulating=tuple(str(m) for m in hypothesis.modulating),
         expected_pass_rate_delta=hypothesis.expected_pass_rate_delta,
-        expected_drift_movements=_str_movements(hypothesis.expected_drift_movements),
+        expected_metric_movements=_str_movements(hypothesis.expected_metric_movements),
         decision=decision,
         rejection_reason=rejection_reason,
         scalar_score_delta=scalar_delta,
         drift_loss_delta=drift_delta,
         pass_rate_delta=pass_delta,
-        drift_movements=drift_movements,
         metric_movements=metric_movements,
         patches=patches,
         gen_score=gen_score_body,
@@ -451,7 +446,7 @@ def _patch_views(experiment: Experiment) -> tuple[dict[str, str], ...]:
 
 
 def _movement_dicts(
-    movements: Sequence[DriftMovementActual] | Sequence[MetricMovementActual],
+    movements: Sequence[MetricMovementActual],
 ) -> tuple[dict[str, Any], ...]:
     """Project the realised movements to plain dicts."""
     return tuple(asdict(m) for m in movements)
@@ -537,8 +532,12 @@ def gather_epoch_report_data(workspace_root: Path, epoch_id: str) -> EpochReport
     span_start = min(timestamps) if timestamps else ""
     span_end = max(timestamps) if timestamps else ""
 
-    ts_raw = scoring.get("tournament_structure")
-    tournament_structure = ts_raw if isinstance(ts_raw, dict) else {}
+    from zicato.core.configuration import dataclass_to_jsonable
+    from zicato.core.scoring_config import scoring_weights_from_dict
+
+    tournament_structure = dataclass_to_jsonable(
+        scoring_weights_from_dict(scoring).tournament_structure
+    )
     pq_raw = scoring.get("proposer_quality")
     proposer_quality = pq_raw if isinstance(pq_raw, dict) else {}
     round_records = read_round_records(layout, epoch_id)

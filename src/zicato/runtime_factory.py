@@ -15,7 +15,6 @@ from zicato.core.settings import RuntimeDeclaration, RuntimeSettings
 from zicato.core.types import CallLLM, RuntimeConfig
 from zicato.core.workspace import assert_distinct_callables
 from zicato.driver_imports import with_workspace_imports
-from zicato.import_path import import_dotted_path
 from zicato.models_config import load_models_config, resolve_text_call_llm
 from zicato.runtime.effective_settings import (
     SOURCE_HOST_CPU_COUNT,
@@ -46,31 +45,11 @@ def resolve_host_worker_permits(
 def resolve_role_call_llm(
     workspace_config: Mapping[str, Any], *, role: str, workspace_root: Path | None = None
 ) -> CallLLM:
-    """Resolve one model role to the callable a round runs it on.
-
-    Two sources, in order: the ``models`` block's engine for ``role``,
-    then the ``runtime.<role>_call_llm`` dotted path. A workspace that
-    configures neither has not said what the role runs on, and this
-    raises naming both keys — the message an operator acts on, so it
-    names the file's keys rather than a function argument.
-
-    Shared by :func:`make_runtime_config` and by ``zicato evolve``, which
-    resolves the two roles a round always needs before opening one so the
-    refusal arrives at the command line rather than mid-loop.
-    """
-    models = load_models_config(workspace_config)
-    spec = models.role(role)
-    if not spec.is_empty:
-        return resolve_text_call_llm(spec, role=role)
-    runtime_dict = workspace_config.get("runtime", {}) or {}
-    dotted = runtime_dict.get(f"{role}_call_llm") if isinstance(runtime_dict, Mapping) else None
-    if not dotted:
-        raise ValueError(
-            f"model role {role!r} is unconfigured: name an engine for it under "
-            f"models.engines / models.roles, or give runtime.{role}_call_llm a "
-            f"dotted import path"
-        )
-    return _import_callable(str(dotted), kind=f"{role}_call_llm")
+    """Resolve the named engine selected for a model role."""
+    spec = load_models_config(workspace_config).role(role)
+    if spec.is_empty:
+        raise ValueError(f"model role {role!r} is unconfigured: set models.engines / models.roles")
+    return resolve_text_call_llm(spec, role=role)
 
 
 @with_workspace_imports
@@ -84,41 +63,7 @@ def make_runtime_config(
     telemetry: TelemetryEndpoints | None = None,
     execution_roles: bytes | None = None,
 ) -> RuntimeConfig:
-    """Assemble a :class:`RuntimeConfig` from workspace config + optional overrides.
-
-    Parameters
-    ----------
-    workspace_config:
-        Dict produced by :func:`zicato.workspace_loader.load_workspace_config`.
-        Read fields:
-
-        * ``runtime.instance_id`` (string; defaults to ``"default"``).
-        * ``runtime.workspace_root`` (path; overridden by the explicit
-          ``workspace_root`` kwarg when supplied).
-        * ``runtime.target_call_llm`` (dotted path; only consulted
-          when the kwarg is ``None`` and ``models`` names no engine for
-          the role — see :func:`resolve_role_call_llm`).
-        * ``runtime.evaluation_call_llm`` (dotted path; same rule).
-        * ``runtime.seed`` (int or null).
-    workspace_root:
-        Optional override for the workspace root path. When ``None``
-        we fall back to ``config['runtime']['workspace_root']`` and then
-        to ``.zicato`` (relative to the operator's cwd).
-    target_call_llm, evaluation_call_llm:
-        Optional pre-resolved callables. Each one bypasses the config's
-        dotted-path lookup when supplied.
-
-    Returns
-    -------
-    RuntimeConfig
-
-    Raises
-    ------
-    ValueError
-        Missing dotted paths when no callable kwarg was supplied;
-        non-string dotted paths; or
-        :func:`assert_distinct_callables` rejecting the pair.
-    """
+    """Resolve named model engines and runtime controls, with explicit library callables."""
     resolved = configuration or resolve_configuration(workspace_config)
     settings = resolved.values.runtime
 
@@ -158,7 +103,7 @@ def make_runtime_config(
         missing_role = "target" if target is None else "evaluation"
         raise ValueError(
             f"model role {missing_role!r} is unconfigured: "
-            f"set runtime.{missing_role}_call_llm or models.roles.{missing_role}"
+            f"set models.engines / models.roles.{missing_role}"
         )
     judge = resolved_role("judge")
     adjudicator = resolved_role("adjudicator")
@@ -205,23 +150,6 @@ def make_runtime_config(
         proposer_model=model_name("proposer"),
         target_model=target_model,
     )
-
-
-def _import_callable(dotted: str, *, kind: str) -> CallLLM:
-    """Resolve a ``pkg.mod:attr`` or ``pkg.mod.attr`` dotted path to a callable.
-
-    Delegates to :func:`zicato.import_path.import_dotted_path` so both the
-    colon-separated (entry-point style) and dot-separated forms are handled
-    identically by the single shared implementation.
-    """
-    result: Any = import_dotted_path(dotted, label=kind)
-    if not callable(result):
-        raise ValueError(
-            f"{kind}: {dotted!r} resolved to {type(result).__name__}, " "expected a callable"
-        )
-    # mypy can't narrow Any → CallLLM here, but the runner re-checks
-    # the call shape on its first invocation.
-    return result  # type: ignore[no-any-return]
 
 
 __all__ = [

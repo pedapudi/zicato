@@ -380,7 +380,7 @@ def _write_loss(workspace: Path, gen: str, entry: str, *, pass_fail: bool | None
         entry_id=entry,
         generation_id=gen,
         epoch_id=EPOCH,
-        drift_counts=(),
+        metric_counts=(),
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=42,

@@ -45,7 +45,7 @@ def _write_experiment(
     if decision is not None:
         payload["outcome"] = {
             "ran_at": "2026-05-14T00:00:01Z",
-            "drift_movements": [],
+            "metric_movements": [],
             "pass_rate_delta": 0.0,
             "drift_loss_delta": -0.1,
             "scalar_score_delta": -0.1,

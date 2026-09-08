@@ -23,10 +23,10 @@ import pytest
 import zicato.tournament.runner as runner_mod
 from zicato.core import (
     BoardEntry,
-    DriftCount,
     Generation,
     JudgeLoss,
     LossProfile,
+    MetricCount,
     RuntimeConfig,
     ScoringWeights,
 )
@@ -60,14 +60,14 @@ def _loss(
     drift_loss: float = 2.0,
     pass_fail: bool | None = True,
     judge_losses: tuple[JudgeLoss, ...] = (),
-    drift_counts: tuple[DriftCount, ...] = (),
+    metric_counts: tuple[MetricCount, ...] = (),
 ) -> LossProfile:
     return LossProfile(
         run_id=f"run-{generation_id}-{entry_id}",
         entry_id=entry_id,
         generation_id=generation_id,
         epoch_id=EPOCH,
-        drift_counts=drift_counts,
+        metric_counts=metric_counts,
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=42,
@@ -131,7 +131,9 @@ def test_passive_ingest_verbatim_tier_when_judge_io_present(tmp_path: Path) -> N
         generation_id="v1",
         entry_id="entryA",
         judge_losses=(JudgeLoss("citation_judge", raw_loss=3.0, weight=1.0, weighted_loss=3.0),),
-        drift_counts=(DriftCount(kind="custom:citation_judge", severity="warning", count=1),),
+        metric_counts=(
+            MetricCount(name="drift:custom:citation_judge", severity="warning", count=1),
+        ),
     )
     loss_path = _write_loss(workspace, "v1", "entryA", 0, loss)
     _write_result_json(loss_path)
@@ -345,7 +347,7 @@ class _CountingRunSingle:
             entry_id=entry.id,
             generation_id=generation.id,
             epoch_id=epoch_id,
-            drift_counts=(),
+            metric_counts=(),
             plan_revisions=0,
             task_failure_ratio=0.0,
             runtime_ms=10,

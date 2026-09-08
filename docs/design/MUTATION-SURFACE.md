@@ -245,7 +245,7 @@ properties follow, and each is pinned by a test:
    YAML block, and nested structure is not flattened.
 
 A `:file` marker gives up property 2 by definition, because a whole-file
-replace *can* delete the marker. The post-apply id-resolution check (`A2`)
+replace *can* delete the marker. The post-apply id-resolution check (`missing_mutation`)
 catches that after the fact and rejects the snapshot.
 
 **JSON.** Strict JSON has no comment syntax, so there is no way to write a
@@ -289,10 +289,8 @@ Two consequences follow from the table being contract:
 
 - **Editing it rolls the epoch.** The table decides what is enumerable,
   hence what the proposer may rewrite, hence comparability across
-  generations. It is folded into the contract hash, omitted at its empty
-  default so that a workspace declaring nothing keeps the hash it has.
-  Widening the surface is a material contract change and is recorded as
-  one.
+  generations. The complete table participates in the contract hash,
+  including its empty default. Widening the surface changes the contract.
 - **`.py` is reserved.** The table governs the text pass only; an entry
   for `.py` is an error. That reservation keeps "widening the surface moves
   zero Python points" a property of the grammar rather than a claim a
@@ -567,13 +565,13 @@ non-empty error list):
 
 | Code | Check | Constraint | Why |
 |---|---|---|---|
-| `A1` | patched Python still parses | Every touched `.py` file still parses (`ast.parse`). Non-Python touched files are checked for existence and readability only. | A non-parsing file cannot be imported; the whole snapshot is unusable. |
-| `A2` | every patched id still resolves | Every patch's `mutation_id` still resolves in a fresh enumeration of the snapshot. | The next round must be able to re-find this id. |
-| `A3` | required placeholders survive | For any point whose pre-apply `metadata` declared `required_placeholders`, each named placeholder (exact substring, braces included) survives in the patched content. | Prevents the proposer from silently dropping a `{user_message}` formatter the surrounding code injects. |
-| `A4` | top-level imports are preserved | Top-level imports in every patched `.py` file are preserved — the post-apply import set must be a superset of the pre-apply set. The proposer may add imports but not silently remove them. | A dropped import breaks the snapshot at runtime rather than at parse time. |
+| `invalid_source` | patched Python still parses | Every touched `.py` file still parses (`ast.parse`). Non-Python touched files are checked for existence and readability only. | A non-parsing file cannot be imported; the whole snapshot is unusable. |
+| `missing_mutation` | every patched id still resolves | Every patch's `mutation_id` still resolves in a fresh enumeration of the snapshot. | The next round must be able to re-find this id. |
+| `missing_placeholder` | required placeholders survive | For any point whose pre-apply `metadata` declared `required_placeholders`, each named placeholder (exact substring, braces included) survives in the patched content. | Prevents the proposer from silently dropping a `{user_message}` formatter the surrounding code injects. |
+| `removed_import` | top-level imports are preserved | Top-level imports in every patched `.py` file are preserved — the post-apply import set must be a superset of the pre-apply set. The proposer may add imports but not silently remove them. | A dropped import breaks the snapshot at runtime rather than at parse time. |
 
-Each post-apply error string is **prefixed with its check code** — `A1: `,
-`A2: `, `A3: `, `A4: ` — so a consumer counting per-check failure rates reads
+Each post-apply error string is **prefixed with its check code** — `invalid_source: `,
+`missing_mutation: `, `missing_placeholder: `, `removed_import: ` — so a consumer counting per-check failure rates reads
 the code rather than parsing the prose. `classify_post_apply_error`
 (`zicato/mutation/validator.py`) is the one reader of that prefix, and the
 prose after it stays free to reword. `GateEvaluated` draws the same division
@@ -583,13 +581,13 @@ recognised code classifies as `None`, an honest unknown, rather than being
 attributed to a check that may not have run — see the proposer scorecard,
 [PROPOSER.md §6.1](PROPOSER.md).
 
-The required-placeholder check (`A3`) is opt-in per mutation point via the
+The required-placeholder check (`missing_placeholder`) is opt-in per mutation point via the
 `required_placeholders` metadata key on the marker; the validator never
 guesses placeholders for an unannotated span. The check is format-agnostic,
 because a placeholder is an exact substring, so it fires on a markdown
 region body in the same way as on a Python literal.
 
-There is **no** non-Python counterpart to the parse check (`A1`). "Still
+There is **no** non-Python counterpart to the parse check (`invalid_source`). "Still
 parses" has no cheap, dependency-free meaning for markdown or YAML, and a
 gate that covered only the one format the standard library can check would
 buy inconsistent protection at the cost of a second validation path. The
@@ -599,7 +597,7 @@ operator-marked region.
 The mutation surface stays **operator-owned**: the proposer addresses
 patches by id and rewrites within an enumerated point, but only the
 operator's markers define what the surface is. The post-apply id-resolution
-check (`A2`) enforces that every patched id still resolves after the
+check (`missing_mutation`) enforces that every patched id still resolves after the
 rewrite.
 
 ### Accepted source and byte-range evidence
@@ -760,7 +758,7 @@ and are deferred:
   module-level string or uses a file marker.
 - **Type-narrowed mutation points.** A marker that asserts "the new
   value must satisfy this Pydantic shape." The `required_placeholders`
-  check (`A3`) and the `min` / `max` / `enum` metadata bounds are the only
+  check (`missing_placeholder`) and the `min` / `max` / `enum` metadata bounds are the only
   structural validators on patched text.
 
 Either is straightforward to add later, because the

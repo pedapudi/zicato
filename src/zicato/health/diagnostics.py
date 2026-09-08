@@ -705,7 +705,7 @@ def detect_flat_drift_signal(
     for losses in losses_by_generation.values():
         for loss in losses:
             total_runs += 1
-            for metric in loss.unified_metrics():
+            for metric in loss.scoring_metrics():
                 if metric.name.startswith(_DRIFT_NAMESPACE):
                     drift_total += metric.count
 
@@ -786,7 +786,7 @@ def detect_dead_judge(
     Every board entry's :attr:`BoardEntry.judges` declares one or more
     PROCESS judges. On a violation a judge emits a goldfive ``custom``
     drift the reducer attributes back to the judge as a
-    ``custom:<judge_name>`` :class:`DriftCount` on the run's
+    ``custom:<judge_name>`` :class:`MetricCount` on the run's
     ``loss.json``. A judge whose attributed kind never appears in ANY run
     of the epoch fired zero times. That silence has two causes an operator
     must not confuse, and this detector emits a different finding for each:
@@ -859,8 +859,12 @@ def detect_dead_judge(
     for losses in losses_by_generation.values():
         for loss in losses:
             total_runs += 1
-            for count in loss.drift_counts:
-                is_custom, judge_name = split_judge_attributed_kind(count.kind)
+            for count in loss.metric_counts:
+                if not count.name.startswith("drift:"):
+                    continue
+                is_custom, judge_name = split_judge_attributed_kind(
+                    count.name.removeprefix("drift:")
+                )
                 if is_custom and judge_name:
                     fired.add(judge_name)
             for je in getattr(loss, "judge_errors", ()) or ():

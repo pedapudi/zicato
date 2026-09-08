@@ -32,13 +32,13 @@
         "episodes": [
           {
             "anchor": "signal",
-            "episode_id": "ep-acaca016",
+            "episode_id": "ep-34b1baef",
             "glyph": "✕",
             "kind": "imported_signal",
             "severity_rank": 5,
             "signal_kind": "error_cascade",
             "suggestion_ids": [
-              "sug-14ffa7e6"
+              "sug-08ce2f79"
             ],
             "tone": "bad",
             "x0": 0.15,
@@ -46,13 +46,13 @@
           },
           {
             "anchor": "signal",
-            "episode_id": "ep-971de1aa",
+            "episode_id": "ep-60505383",
             "glyph": "✕",
             "kind": "imported_signal",
             "severity_rank": 5,
             "signal_kind": "abort_pattern",
             "suggestion_ids": [
-              "sug-c5760e02"
+              "sug-4d3fec04"
             ],
             "tone": "bad",
             "x0": 0.35,
@@ -60,13 +60,13 @@
           },
           {
             "anchor": "signal",
-            "episode_id": "ep-dc4a5674",
+            "episode_id": "ep-c4fabf76",
             "glyph": "↻",
             "kind": "imported_signal",
             "severity_rank": 3,
             "signal_kind": "retry_loop",
             "suggestion_ids": [
-              "sug-f2a45b2d"
+              "sug-82d6689f"
             ],
             "tone": "caution",
             "x0": 0.55,
@@ -74,13 +74,13 @@
           },
           {
             "anchor": "signal",
-            "episode_id": "ep-cff2490f",
+            "episode_id": "ep-a22bc598",
             "glyph": "⇄",
             "kind": "imported_signal",
             "severity_rank": 2,
             "signal_kind": "transfer_churn",
             "suggestion_ids": [
-              "sug-734ba4eb"
+              "sug-75c8c59c"
             ],
             "tone": "neutral",
             "x0": 0.75,
@@ -147,9 +147,9 @@
             "x": 0.8
           }
         ],
-        "trace_id": "trace-a0be332d"
+        "trace_id": "trace-5ca172fc"
       },
-      "trace_id": "trace-a0be332d",
+      "trace_id": "trace-5ca172fc",
       "turn_counts": {
         "agent": 1,
         "total": 2,
@@ -184,13 +184,13 @@
         "episodes": [
           {
             "anchor": "signal",
-            "episode_id": "ep-dd671eb7",
+            "episode_id": "ep-016789e4",
             "glyph": "✕",
             "kind": "imported_signal",
             "severity_rank": 5,
             "signal_kind": "error_cascade",
             "suggestion_ids": [
-              "sug-1f25bc68"
+              "sug-473a2fdd"
             ],
             "tone": "bad",
             "x0": 0.2,
@@ -198,13 +198,13 @@
           },
           {
             "anchor": "signal",
-            "episode_id": "ep-63298be2",
+            "episode_id": "ep-fd8db8ea",
             "glyph": "✕",
             "kind": "imported_signal",
             "severity_rank": 5,
             "signal_kind": "abort_pattern",
             "suggestion_ids": [
-              "sug-bc0c0bc2"
+              "sug-1cec0fd7"
             ],
             "tone": "bad",
             "x0": 0.45,
@@ -212,13 +212,13 @@
           },
           {
             "anchor": "signal",
-            "episode_id": "ep-3b50d8aa",
+            "episode_id": "ep-99875cf7",
             "glyph": "↻",
             "kind": "imported_signal",
             "severity_rank": 3,
             "signal_kind": "retry_loop",
             "suggestion_ids": [
-              "sug-bb01c71f"
+              "sug-bd840a76"
             ],
             "tone": "caution",
             "x0": 0.7,
@@ -276,9 +276,9 @@
             "x": 0.75
           }
         ],
-        "trace_id": "trace-a882c112"
+        "trace_id": "trace-1f9ab4fa"
       },
-      "trace_id": "trace-a882c112",
+      "trace_id": "trace-1f9ab4fa",
       "turn_counts": {
         "agent": 1,
         "total": 2,
@@ -334,9 +334,9 @@
           "turn_count": 2
         },
         "signals": [],
-        "trace_id": "trace-19715d12"
+        "trace_id": "trace-1b6e8881"
       },
-      "trace_id": "trace-19715d12",
+      "trace_id": "trace-1b6e8881",
       "turn_counts": {
         "agent": 1,
         "total": 2,
@@ -392,9 +392,9 @@
           "turn_count": 2
         },
         "signals": [],
-        "trace_id": "trace-c26a6cfa"
+        "trace_id": "trace-d1d71c4d"
       },
-      "trace_id": "trace-c26a6cfa",
+      "trace_id": "trace-d1d71c4d",
       "turn_counts": {
         "agent": 1,
         "total": 2,
@@ -466,9 +466,9 @@
           "turn_count": 4
         },
         "signals": [],
-        "trace_id": "trace-47874586"
+        "trace_id": "trace-e0238266"
       },
-      "trace_id": "trace-47874586",
+      "trace_id": "trace-e0238266",
       "turn_counts": {
         "agent": 2,
         "total": 4,

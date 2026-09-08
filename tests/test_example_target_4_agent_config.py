@@ -29,6 +29,7 @@ from pathlib import Path
 import pytest
 
 import zicato_examples.target_4_agent_config as _t4_pkg
+from tests._runtime_builders import runtime_config
 from zicato.adapter_factory import make_adapter_from_config
 from zicato.adapters.base import HarnessAdapter
 from zicato.core import BoardEntry, Patch, validate_board_entry
@@ -194,6 +195,7 @@ def test_agent_environment_is_offline_and_carries_no_credentials(
 
 
 async def test_driver_drives_the_stub_and_reports_the_produced_patch(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """One full run: turns to the sinks, edits to the tree, diff to the output."""
@@ -212,7 +214,7 @@ async def test_driver_drives_the_stub_and_reports_the_produced_patch(
     )
     sink = _RecordingSink()
     session = make_adapter().load(EXAMPLE_DIR)
-    result = await session.run(_entry(), [sink], None)
+    result = await session.run(_entry(), [sink], runtime_config(tmp_path))
 
     assert not result.aborted
     assert session.agent_version, "the binary's --version is probed and recorded"
@@ -258,7 +260,7 @@ async def test_emitted_lines_round_trip_through_the_real_transcript_reducer(
     await (
         make_adapter()
         .load(EXAMPLE_DIR)
-        .run(entry, [JSONLPersistenceSink(path=events, mode="write")], None)
+        .run(entry, [JSONLPersistenceSink(path=events, mode="write")], runtime_config(tmp_path))
     )
 
     signals = reduce_transcript(events, entry)
@@ -268,7 +270,7 @@ async def test_emitted_lines_round_trip_through_the_real_transcript_reducer(
     assert signals.warnings == ()
     # The floor tier carries no drift, which is why the drift knobs in
     # scoring.json are left at their (inert) defaults.
-    assert signals.drift_counts == ()
+    assert signals.metric_counts == ()
 
 
 async def test_driver_mounts_the_snapshot_config_package(
@@ -288,7 +290,7 @@ async def test_driver_mounts_the_snapshot_config_package(
     agents_md = snapshot / "config_package" / "AGENTS.md"
     agents_md.write_text(agents_md.read_text() + "\n- An edit only this snapshot has.\n")
 
-    result = await make_adapter().load(snapshot).run(_entry(), [], None)
+    result = await make_adapter().load(snapshot).run(_entry(), [], runtime_config(tmp_path))
 
     reported = [
         line.split(FINGERPRINT_PREFIX, 1)[1]
@@ -319,11 +321,14 @@ def test_run_ids_separate_generations_and_replicates() -> None:
 
 
 async def test_wall_clock_budget_aborts_instead_of_raising(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """An over-budget run returns an aborted result, per the adapter contract."""
     _use_stub(monkeypatch, {"sleep": 30})
-    result = await make_adapter().load(EXAMPLE_DIR).run(_entry(budget=1), [], None)
+    result = (
+        await make_adapter().load(EXAMPLE_DIR).run(_entry(budget=1), [], runtime_config(tmp_path))
+    )
     assert result.aborted
     assert result.abort_reason == "wall_clock_budget"
 

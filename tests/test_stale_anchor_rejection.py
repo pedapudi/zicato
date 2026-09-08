@@ -118,7 +118,7 @@ async def test_transaction_boundary_surfaces_key_error_as_a_finding(tmp_path: Pa
             core_idea="triage probe",
             modulating=("instr",),
             why="because",
-            expected_drift_movements=(),
+            expected_metric_movements=(),
             expected_pass_rate_delta="+0.00",
         ),
         patches=(),

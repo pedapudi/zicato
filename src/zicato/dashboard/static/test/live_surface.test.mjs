@@ -1467,14 +1467,5 @@ test('tree champion badge: the shell tree model marks the current champion from 
     'the tree digest changes when the crown moves (v3 current vs v0 current) — the badge re-stamps');
 });
 
-test('tree champion badge: a legacy model with NO current/former split keeps the champion badge for a promoted generation (back-compat)', () => {
-  const host = document.createElement('div');
-  const model = { epochs: [{ id: EPOCH_ID, current: true }], byEpoch: { [EPOCH_ID]: {
-    gens: [{ id: 'v0', promoted: true, parent: null }], boards: [],
-  } } };
-  const toggles = new Set(['e:' + EPOCH_ID, 'e:' + EPOCH_ID + '/gens']);
-  tree.buildTree(host, model, router.parseRoute(`#/e/${EPOCH_ID}`), toggles, { navigate() {}, href: router.href }, () => {});
-  assert(allByClass(host, 'dt-glyph-gen-champ').length >= 1, 'a legacy promoted generation still carries the champion glyph');
-});
 
 await run();

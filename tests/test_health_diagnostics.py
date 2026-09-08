@@ -15,10 +15,10 @@ from click.testing import CliRunner
 from zicato.cli.commands.health import health_cmd
 from zicato.core.types import (
     BoardEntry,
-    DriftCount,
     Expectation,
     JudgeSpec,
     LossProfile,
+    MetricCount,
 )
 from zicato.health.diagnostics import (
     HealthFinding,
@@ -44,7 +44,7 @@ def _loss(
     generation_id: str,
     *,
     drift_loss: float = 0.0,
-    drift_counts: tuple[DriftCount, ...] = (),
+    metric_counts: tuple[MetricCount, ...] = (),
     pass_fail: bool | None = None,
 ) -> LossProfile:
     """Build a minimal :class:`LossProfile` for detector tests."""
@@ -53,7 +53,7 @@ def _loss(
         entry_id=entry_id,
         generation_id=generation_id,
         epoch_id="e1",
-        drift_counts=drift_counts,
+        metric_counts=metric_counts,
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=1000,
@@ -70,7 +70,7 @@ def _experiment(generation_id: str, *, scalar_delta: float | None, decision: str
     if scalar_delta is not None:
         outcome = {
             "ran_at": "2026-05-15T00:00:00Z",
-            "drift_movements": [],
+            "metric_movements": [],
             "pass_rate_delta": 0.0,
             "drift_loss_delta": 0.0,
             "scalar_score_delta": scalar_delta,
@@ -96,7 +96,7 @@ def _gap_experiment(
         "generation_id": generation_id,
         "outcome": {
             "ran_at": "2026-05-15T00:00:00Z",
-            "drift_movements": [],
+            "metric_movements": [],
             "pass_rate_delta": 0.0,
             "drift_loss_delta": 0.0,
             "scalar_score_delta": 0.0,
@@ -210,7 +210,7 @@ def test_non_differentiating_entry_ignores_single_generation_entry() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_flat_drift_signal_fires_when_all_drift_counts_zero() -> None:
+def test_flat_drift_signal_fires_when_all_metric_counts_zero() -> None:
     # Runs exist, but no drift count anywhere.
     losses_by_generation = {
         "v0": [_loss("a", "v0"), _loss("b", "v0")],
@@ -229,7 +229,7 @@ def test_flat_drift_signal_silent_when_drift_fired() -> None:
             _loss(
                 "a",
                 "v0",
-                drift_counts=(DriftCount(kind="off_topic", severity="warning", count=2),),
+                metric_counts=(MetricCount(name="drift:off_topic", severity="warning", count=2),),
             )
         ],
     }
@@ -320,16 +320,16 @@ def _board_entry_with_judges(entry_id: str, judge_names: list[str]) -> BoardEntr
     )
 
 
-def _custom(judge_name: str) -> DriftCount:
+def _custom(judge_name: str) -> MetricCount:
     """A custom-judge-attributed drift count (what the reducer writes)."""
-    return DriftCount(kind=f"custom:{judge_name}", severity="warning", count=1)
+    return MetricCount(name="drift:" + f"custom:{judge_name}", severity="warning", count=1)
 
 
 def test_dead_judge_fires_for_declared_but_never_fired_judge() -> None:
     board = [_board_entry_with_judges("e1", ["lives", "dead"])]
     losses_by_generation = {
-        "v0": [_loss("e1", "v0", drift_counts=(_custom("lives"),))],
-        "v1": [_loss("e1", "v1", drift_counts=(_custom("lives"),))],
+        "v0": [_loss("e1", "v0", metric_counts=(_custom("lives"),))],
+        "v1": [_loss("e1", "v1", metric_counts=(_custom("lives"),))],
     }
     findings = detect_dead_judge(losses_by_generation, board)
     assert len(findings) == 1
@@ -342,7 +342,7 @@ def test_dead_judge_fires_for_declared_but_never_fired_judge() -> None:
 def test_dead_judge_silent_when_every_judge_fires() -> None:
     board = [_board_entry_with_judges("e1", ["a", "b"])]
     losses_by_generation = {
-        "v0": [_loss("e1", "v0", drift_counts=(_custom("a"), _custom("b")))],
+        "v0": [_loss("e1", "v0", metric_counts=(_custom("a"), _custom("b")))],
     }
     assert detect_dead_judge(losses_by_generation, board) == []
 
@@ -545,7 +545,7 @@ def test_loop_health_healthy_true_when_no_warning_or_critical() -> None:
             _loss(
                 "a",
                 "v0",
-                drift_counts=(DriftCount(kind="off_topic", severity="info", count=1),),
+                metric_counts=(MetricCount(name="drift:off_topic", severity="info", count=1),),
             )
         ],
     }
@@ -580,7 +580,7 @@ def test_loop_health_unhealthy_when_a_critical_finding_exists() -> None:
             _loss(
                 "a",
                 "v0",
-                drift_counts=(DriftCount(kind="off_topic", severity="info", count=1),),
+                metric_counts=(MetricCount(name="drift:off_topic", severity="info", count=1),),
             )
         ],
     }
@@ -697,9 +697,9 @@ def _write_run_loss(workspace: Path, epoch_id: str, generation_id: str, loss: Lo
         "entry_id": loss.entry_id,
         "generation_id": loss.generation_id,
         "epoch_id": loss.epoch_id,
-        "drift_counts": [
-            {"kind": dc.kind, "severity": dc.severity, "count": dc.count}
-            for dc in loss.drift_counts
+        "metric_counts": [
+            {"name": dc.name, "severity": dc.severity, "count": dc.count}
+            for dc in loss.metric_counts
         ],
         "plan_revisions": loss.plan_revisions,
         "task_failure_ratio": loss.task_failure_ratio,
@@ -820,7 +820,7 @@ def test_cli_health_healthy_workspace_exits_zero(tmp_path: Path) -> None:
             "entry_a",
             "v0",
             drift_loss=0.5,
-            drift_counts=(DriftCount(kind="off_topic", severity="info", count=1),),
+            metric_counts=(MetricCount(name="drift:off_topic", severity="info", count=1),),
         ),
     )
 

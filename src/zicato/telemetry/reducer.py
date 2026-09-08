@@ -56,7 +56,6 @@ import logging
 import math
 import re
 from collections import Counter
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -65,10 +64,7 @@ from zicato.core import (
     DIALECT_GOLDFIVE,
     DIALECT_TRANSCRIPT,
     BoardEntry,
-    DriftCount,
-    ExpectationKind,
     ExpectationResult,
-    JudgeError,
     JudgeLoss,
     LossProfile,
     MetricCount,
@@ -76,6 +72,7 @@ from zicato.core import (
     normalize_wire_drift_kind,
     normalize_wire_severity,
 )
+from zicato.core.configuration import dataclass_to_jsonable
 from zicato.core.measurement import MeasurementDraw
 from zicato.scoring import DriftContext, builtin_drift_loss, resolve_drift_loss
 from zicato.telemetry.dialects import (
@@ -256,7 +253,7 @@ def _judge_attributed_kind(judge_name: str) -> str:
 
     ``judge_name`` is the stable per-judge identity carried on the
     paired :class:`JudgementEmitted`. The reducer folds it into the
-    :class:`DriftCount.kind` string as ``custom:<judge_name>`` so two
+    :class:`MetricCount.kind` string as ``custom:<judge_name>`` so two
     distinct custom judges occupy distinct drift buckets and
     :func:`compute_drift_loss` can weight them independently via
     :attr:`ScoringWeights.per_judge_weights`.
@@ -283,7 +280,7 @@ def split_judge_attributed_kind(kind: str) -> tuple[bool, str]:
 
     Exposed (not underscore-private) because :func:`compute_drift_loss`
     is not the only consumer that needs to recover the judge identity
-    from a :class:`DriftCount.kind` — analysis / journal-rendering
+    from a :class:`MetricCount.kind` — analysis / journal-rendering
     callers reading a persisted :class:`LossProfile` do too.
     """
     if kind == _CUSTOM_DRIFT_KIND:
@@ -295,10 +292,10 @@ def split_judge_attributed_kind(kind: str) -> tuple[bool, str]:
 
 
 def compute_per_judge_loss(
-    drift_counts: tuple[DriftCount, ...],
+    metric_counts: tuple[MetricCount, ...],
     weights: ScoringWeights,
 ) -> tuple[JudgeLoss, ...]:
-    """Group ``drift_counts`` into per-judge loss attributions.
+    """Group ``metric_counts`` into per-judge loss attributions.
 
     Walks the run's drift counts, picks out every ``custom`` /
     ``custom:<judge_name>`` entry, sums the severity-weighted counts
@@ -309,7 +306,7 @@ def compute_per_judge_loss(
 
     This split is how custom judges reach the scalar: each entry becomes a
     ``judge:<name>`` metric of the ``judge:`` channel
-    (:meth:`zicato.core.LossProfile.unified_metrics`), and
+    (:meth:`zicato.core.LossProfile.scoring_metrics`), and
     :func:`compute_drift_loss` excludes judge-attributed kinds from the
     ``drift:`` channel so the same event is never charged twice.
 
@@ -324,8 +321,10 @@ def compute_per_judge_loss(
     """
     sev_w = weights.severity_weights
     raw_by_judge: dict[str, float] = {}
-    for c in drift_counts:
-        is_custom, judge_name = split_judge_attributed_kind(c.kind)
+    for c in metric_counts:
+        if not c.name.startswith("drift:"):
+            continue
+        is_custom, judge_name = split_judge_attributed_kind(c.name.removeprefix("drift:"))
         if not is_custom:
             continue
         sev_mult = sev_w.get(c.severity, 0.0)
@@ -350,7 +349,7 @@ def compute_per_judge_loss(
 
 
 def compute_drift_loss(
-    drift_counts: tuple[DriftCount, ...],
+    metric_counts: tuple[MetricCount, ...],
     plan_revisions: int,
     weights: ScoringWeights,
     *,
@@ -363,7 +362,7 @@ def compute_drift_loss(
 
         loss = fsum(
             severity_weights[c.severity] * per_kind_weights(c.kind) * c.count
-            for c in drift_counts if not judge-attributed
+            for c in metric_counts if not judge-attributed
         )
         + weights.plan_revision_weight * plan_revisions
 
@@ -395,13 +394,13 @@ def compute_drift_loss(
     """
     loss, _provenance = resolve_drift_loss(
         DriftContext(
-            drift_counts=drift_counts,
+            metric_counts=metric_counts,
             plan_revisions=plan_revisions,
             task_failure_ratio=task_failure_ratio,
             runtime_ms=runtime_ms,
             weights=weights,
             builtin_loss=builtin_drift_loss(
-                drift_counts=drift_counts,
+                metric_counts=metric_counts,
                 plan_revisions=plan_revisions,
                 weights=weights,
             ),
@@ -722,15 +721,15 @@ def _goldfive_signals(events_jsonl_path: Path, entry: BoardEntry) -> DialectSign
             if isinstance(s, str):
                 agent_text_chars += len(s)
 
-    drift_counts = tuple(
-        DriftCount(kind=k, severity=s, count=n)  # type: ignore[arg-type]
+    metric_counts = tuple(
+        MetricCount(name=f"drift:{k}", severity=s, count=float(n))  # type: ignore[arg-type]
         for (k, s), n in sorted(drift_bucket.items())
     )
 
     agent_turns, user_turns = _agent_and_user_turns_from_events(events)
 
     return DialectSignals(
-        drift_counts=drift_counts,
+        metric_counts=metric_counts,
         plan_revisions=plan_revisions,
         task_started=task_started,
         task_failed=task_failed,
@@ -832,8 +831,7 @@ def reduce_loss(
 
     Generalised metric surface
     --------------------------
-    Alongside ``drift_counts``, the reducer populates
-    :attr:`LossProfile.metric_counts` with namespaced :class:`MetricCount`
+    The reducer populates :attr:`LossProfile.metric_counts` with named :class:`MetricCount`
     entries — every drift entry under the ``"drift:"`` namespace plus
     per-namespace derivations:
 
@@ -896,7 +894,7 @@ def reduce_loss(
     for warning in signals.warnings:
         log.warning("telemetry reduction [%s]: %s", weights.telemetry_dialect, warning)
 
-    drift_counts = signals.drift_counts
+    metric_counts = signals.metric_counts
     plan_revisions = signals.plan_revisions
     task_started = signals.task_started
     task_failed = signals.task_failed
@@ -909,7 +907,9 @@ def reduce_loss(
     # Schema-failure scalar derived from the drift counts. Folds the
     # `schema_violation` kind into a first-class metric so analysis
     # sites that care about schema health don't have to re-walk drift.
-    schema_failures = sum(dc.count for dc in drift_counts if dc.kind == "schema_violation")
+    schema_failures = int(
+        sum(mc.count for mc in metric_counts if mc.name == "drift:schema_violation")
+    )
 
     # Output-chars: prefer the caller's explicit final_output length
     # (single source of truth for the user-facing surface); otherwise
@@ -966,13 +966,13 @@ def reduce_loss(
     # ``not_completed``) and scored in the ``failure:`` channel.
     drift_loss, scoring_provenance = resolve_drift_loss(
         DriftContext(
-            drift_counts=drift_counts,
+            metric_counts=metric_counts,
             plan_revisions=plan_revisions,
             task_failure_ratio=task_failure_ratio,
             runtime_ms=runtime_ms,
             weights=weights,
             builtin_loss=builtin_drift_loss(
-                drift_counts=drift_counts,
+                metric_counts=metric_counts,
                 plan_revisions=plan_revisions,
                 weights=weights,
             ),
@@ -1006,14 +1006,11 @@ def reduce_loss(
     if not run_id:
         run_id = f"{generation_id}:{entry.id}"
 
-    # Build the generalised metric_counts superset: drift entries lifted
-    # under the "drift:" namespace, plus per-namespace cost / output /
+    # Retain measured drift metrics and add cost / output /
     # schema metrics. Always emit cost:llm_calls (even at zero) so
     # downstream analysis can rely on the key being present; the other
     # entries are emitted only when non-zero to keep the JSON compact.
-    metric_counts_list: list[MetricCount] = [
-        MetricCount.from_drift_count(dc) for dc in drift_counts
-    ]
+    metric_counts_list = list(metric_counts)
     metric_counts_list.append(
         MetricCount(name="cost:llm_calls", severity="", count=float(llm_call_count))
     )
@@ -1030,14 +1027,13 @@ def reduce_loss(
             MetricCount(name="schema:failures", severity="", count=float(schema_failures))
         )
 
-    per_judge_loss = compute_per_judge_loss(drift_counts, weights)
+    per_judge_loss = compute_per_judge_loss(metric_counts, weights)
 
     return LossProfile(
         run_id=run_id,
         entry_id=entry.id,
         generation_id=generation_id,
         epoch_id=epoch_id,
-        drift_counts=drift_counts,
         plan_revisions=plan_revisions,
         task_failure_ratio=task_failure_ratio,
         runtime_ms=runtime_ms,
@@ -1067,15 +1063,8 @@ def reduce_loss(
 
 
 def loss_profile_to_dict(profile: LossProfile) -> dict[str, Any]:
-    """Render :class:`LossProfile` into a JSON-serialisable dict.
-
-    We use :func:`dataclasses.asdict` for the body, which recursively
-    unpacks the nested :class:`DriftCount` tuple and
-    :class:`ExpectationResult`. Tuples are converted to lists by
-    ``asdict``, which is the correct JSON-side shape; the inverse
-    reader re-tuples them on the way back.
-    """
-    payload = asdict(profile)
+    """Render the current loss record and its optional measurement provenance."""
+    payload = dataclass_to_jsonable(profile)
     if profile.execution_started is None:
         payload.pop("execution_started")
     if profile.measurement is None:
@@ -1128,151 +1117,27 @@ def read_loss_profile(path: Path) -> LossProfile:
 
 
 def loss_profile_from_dict(d: dict[str, Any]) -> LossProfile:
-    """Rebuild a :class:`LossProfile` from its persisted JSON object.
+    """Decode the current writer's fields without reconstructing older records."""
+    from dataclasses import fields, replace  # noqa: PLC0415
 
-    Re-tuples ``drift_counts`` (which JSON renders as a list) and
-    re-constructs the nested :class:`DriftCount` and
-    :class:`ExpectationResult` dataclasses.
+    from zicato.core.configuration import authored_dataclass_from_json  # noqa: PLC0415
 
-    Back-compat: profiles written before the generalised metric surface
-    omit ``metric_counts`` / ``tokens_spent`` / ``output_chars`` /
-    ``schema_failures``. The reader treats them as the dataclass
-    defaults (empty tuple / 0) so old JSON loads cleanly. New consumers
-    that want the merged view should call
-    :meth:`LossProfile.unified_metrics`. Same for ``judge_errors``: a
-    profile written before per-judge error provenance existed — and every
-    profile of a run whose judges all returned — carries no such key and
-    loads as the empty tuple.
-    """
-    drift_counts = tuple(
-        DriftCount(
-            kind=c["kind"],
-            severity=c["severity"],
-            count=int(c["count"]),
-        )
-        for c in d.get("drift_counts", ())
-    )
-    metric_counts = tuple(
-        MetricCount(
-            name=str(m.get("name", "")),
-            severity=m.get("severity", ""),
-            count=float(m.get("count", 0.0)),
-        )
-        for m in d.get("metric_counts", ())
-        if isinstance(m, dict) and m.get("name")
-    )
-    per_judge_loss = tuple(
-        JudgeLoss(
-            judge_name=str(j.get("judge_name", "")),
-            raw_loss=float(j.get("raw_loss", 0.0) or 0.0),
-            weight=float(j.get("weight", 0.0) or 0.0),
-            weighted_loss=float(j.get("weighted_loss", 0.0) or 0.0),
-        )
-        for j in d.get("per_judge_loss", ())
-        if isinstance(j, dict)
-    )
-    judge_errors = tuple(
-        JudgeError(
-            judge_name=str(j.get("judge_name", "")),
-            invocations=int(j.get("invocations", 0) or 0),
-            errors=int(j.get("errors", 0) or 0),
-            last_error_type=str(j.get("last_error_type", "") or ""),
-        )
-        for j in d.get("judge_errors", ())
-        if isinstance(j, dict)
-    )
-    exp = d.get("expectation_result")
-    expectation_result: ExpectationResult | None
-    if exp is None:
-        expectation_result = None
-    else:
-        exp_score = exp.get("score")
-        exp_metrics_raw = exp.get("metrics")
-        exp_metrics = (
-            {str(k): float(v) for k, v in exp_metrics_raw.items()}
-            if isinstance(exp_metrics_raw, dict)
-            else None
-        )
-        expectation_result = ExpectationResult(
-            # ``kind`` is declared :class:`ExpectationKind`; coerce so a
-            # profile read back off disk carries the same runtime type as the
-            # one the matcher produced in-process (issue #132). An invalid
-            # token raises ``ValueError``, which is what every caller of this
-            # reader already catches alongside the ``KeyError`` the direct
-            # indexing on this same line has always been able to raise.
-            #
-            # "Every caller catches it" is NOT "every caller degrades
-            # harmlessly". The sharp one is
-            # ``unit_cache._resolve_cached_unit``: it catches and returns
-            # ``None``, i.e. a cache MISS, so an undecodable token re-runs the
-            # unit instead of reusing a profile whose kind is meaningless.
-            # That is the right trade — but on a round whose token or
-            # wall-clock budget is already spent the unit is not re-run:
-            # ``scheduling._skip_unit_side`` synthesises a
-            # ``wall_clock_budget_exceeded`` profile and overwrites the real
-            # measurement with it. Unreachable today (the enum's five members
-            # have never changed and only ``write_loss_profile`` writes the
-            # field), and the guard against making it reachable is the
-            # forward-compat note on :class:`ExpectationKind` itself.
-            kind=ExpectationKind(exp["kind"]),
-            passed=bool(exp["passed"]),
-            detail=exp.get("detail", ""),
-            score=float(exp_score) if exp_score is not None else None,
-            metrics=exp_metrics,
-        )
-    score_raw = d.get("score")
-    metrics_raw = d.get("metrics")
-    metrics = (
-        {str(k): float(v) for k, v in metrics_raw.items()}
-        if isinstance(metrics_raw, dict)
-        else None
-    )
-    return LossProfile(
-        run_id=d["run_id"],
-        entry_id=d["entry_id"],
-        generation_id=d["generation_id"],
-        epoch_id=d["epoch_id"],
-        drift_counts=drift_counts,
-        plan_revisions=int(d["plan_revisions"]),
-        task_failure_ratio=float(d["task_failure_ratio"]),
-        runtime_ms=int(d["runtime_ms"]),
-        wall_clock_budget_exceeded=bool(d["wall_clock_budget_exceeded"]),
-        not_completed=bool(d.get("not_completed", False)),
-        expectation_result=expectation_result,
-        drift_loss=float(d["drift_loss"]),
-        pass_fail=d.get("pass_fail"),
-        turns_completed=d.get("turns_completed"),
-        memory_failure_count=d.get("memory_failure_count"),
-        context_loss_count=d.get("context_loss_count"),
-        metric_counts=metric_counts,
-        tokens_spent=int(d.get("tokens_spent", 0) or 0),
-        output_chars=int(d.get("output_chars", 0) or 0),
-        schema_failures=int(d.get("schema_failures", 0) or 0),
-        adk_session_id=str(d.get("adk_session_id", "") or ""),
-        match_id=str(d.get("match_id", "") or ""),
-        per_judge_loss=per_judge_loss,
-        judge_errors=judge_errors,
-        cached=bool(d.get("cached", False)),
-        source_epoch=str(d.get("source_epoch", "") or ""),
-        source_run=str(d.get("source_run", "") or ""),
-        score=float(score_raw) if score_raw is not None else None,
-        metrics=metrics,
-        scoring_provenance=(
-            str(d["scoring_provenance"]) if d.get("scoring_provenance") is not None else None
-        ),
-        abort_cause=(str(d["abort_cause"]) if d.get("abort_cause") is not None else None),
-        not_completed_reason=(
-            str(d["not_completed_reason"]) if d.get("not_completed_reason") is not None else None
-        ),
-        started_at=(str(d["started_at"]) if d.get("started_at") is not None else None),
-        ended_at=(str(d["ended_at"]) if d.get("ended_at") is not None else None),
-        measurement=(MeasurementDraw.from_json(d["measurement"]) if "measurement" in d else None),
+    if not isinstance(d, dict):
+        raise ValueError("loss record must be an object")
+    provenance = {"measurement", "source_measurements", "execution_started"}
+    required = {item.name for item in fields(LossProfile)} - provenance
+    if missing := required - d.keys():
+        raise ValueError(f"loss record is missing fields: {', '.join(sorted(missing))}")
+    values = {key: value for key, value in d.items() if key not in provenance}
+    if "execution_started" in d:
+        values["execution_started"] = d["execution_started"]
+    profile = authored_dataclass_from_json(LossProfile, values, path="loss")
+    return replace(
+        profile,
+        measurement=MeasurementDraw.from_json(d["measurement"]) if "measurement" in d else None,
         source_measurements=tuple(
-            MeasurementDraw.from_json(value) if value is not None else None
-            for value in d.get("source_measurements", ())
-        ),
-        execution_started=(
-            d["execution_started"] if isinstance(d.get("execution_started"), bool) else None
+            MeasurementDraw.from_json(draw) if draw is not None else None
+            for draw in d.get("source_measurements", ())
         ),
     )
 

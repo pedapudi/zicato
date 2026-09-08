@@ -1146,15 +1146,9 @@ def _make_conversation_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
         run_id = request.path_params["run_id"]
         if not _is_safe_id(run_id):
             return JSONResponse({"error": "invalid run_id"}, status_code=400)
-        # Back-compat run_id route, but gen×entry-FIRST when the coordinates
-        # are known. The deterministic triple is the primary key: when the
-        # caller supplies ``?gen=&entry=`` (and optionally ``?epoch=``), we
-        # resolve straight to ``generations/<gen>/runs/<entry>/events.jsonl``
-        # — strict to that entry's own run dir, with the run_id only a
-        # disambiguator. This inverts the prior run_id-first order, which
-        # kept failing on reused / index-only run_ids. We fall back to the
-        # opaque run_id lookup only when the triple is absent or resolves to
-        # nothing (a pure-run_id caller with no coordinates).
+        # Supplied epoch, generation, and entry coordinates confine the run
+        # lookup. The run identifier must select a capture in that scope.
+        # Without entry coordinates, recorded event identifiers locate the run.
         #
         # ``?gen=`` WITHOUT ``?entry=`` asks for that generation's proposal
         # episode rather than one of its board runs; ``?slot=`` names a

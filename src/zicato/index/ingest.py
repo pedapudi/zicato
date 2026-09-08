@@ -6,8 +6,8 @@ Public entry points:
   Re-derives every row by walking every epoch / generation / run under
   ``.zicato/``, into a scratch file that is renamed over ``index.db``
   on success. Backs ``zicato repair index``.
-* :func:`ensure_index` — builds the index when it is absent, older than
-  :data:`~zicato.index.schema.SCHEMA_VERSION`, or unreadable, and does
+* :func:`ensure_index` — builds the index when it is absent, differs from
+  :data:`~zicato.index.schema.SCHEMA_VERSION`, or is unreadable, and does
   nothing otherwise. Runs at ``evolve`` start and at dashboard start.
 * :func:`validate_index` / :func:`heal_index` — compare each epoch's
   persisted cursor against cheap workspace signals and re-project only
@@ -50,7 +50,7 @@ enumeration / ordering through the canonical workspace-read layer
 parse — or an epoch ordering — that a canonical module already owns. The
 index is a pure projection of the canonical files: ``metric_counts`` is
 derived solely from each run's ``loss.json`` (via
-:meth:`zicato.core.loss.LossProfile.unified_metrics`); it never
+:meth:`zicato.core.loss.LossProfile.scoring_metrics`); it never
 independently re-tallies a run's events JSONL.
 """
 
@@ -64,7 +64,7 @@ import os
 import sqlite3
 import uuid
 from collections.abc import Iterable, Iterator
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -82,7 +82,6 @@ from zicato.index.schema import (
     SCHEMA_VERSION,
     Table,
     apply_schema,
-    raise_if_newer,
     read_schema_version,
 )
 from zicato.runtime.lock import WorkspaceLock, acquire_workspace_lock, validate_workspace_lock
@@ -355,10 +354,10 @@ def _upsert_run(
     """Upsert one ``runs`` row.
 
     ``tournament_id`` is the FK link back to a ``tournaments`` row. NULL is
-    permitted for old rows (pre-v2 schema) and for runs that have no
-    tournament round (champion-only fast-cache runs under a ``v0`` seed).
+    permitted for runs without a tournament round, including champion-only
+    fast-cache runs under a ``v0`` seed.
 
-    ``match_id`` (schema v4) is the per-board-run tournament-provenance
+    ``match_id`` is the per-board-run tournament-provenance
     tag — the matchup id this run executed within (e.g. ``"rung0_m2"``,
     ``"racing-final"``). NULL for a run persisted without the tag and for a
     run that executed outside a tagged matchup (a gauntlet duel, which never
@@ -393,7 +392,7 @@ def _upsert_loss_profile(
     ``tournament_id`` matches the FK on the parallel ``runs`` row, with the
     same nullability and the same preservation against an incoming null.
 
-    ``match_id`` (schema v4) is read straight off the profile — the
+    ``match_id`` is read straight off the profile — the
     runner stamps it onto ``LossProfile.match_id`` (and into the run's
     ``loss.json``) for runs that executed within a tagged matchup. An
     empty string on the profile means "untagged" (a gauntlet or ad-hoc run)
@@ -489,7 +488,7 @@ def _replace_metric_counts(
     ``metric_counts`` has no natural primary key (a run produces many
     rows), so an idempotent upsert is a delete-then-insert keyed on
     ``run_id``. The rows come from
-    :meth:`LossProfile.unified_metrics`, which yields every drift entry
+    :meth:`LossProfile.scoring_metrics`, which yields every drift entry
     under the ``"drift:"`` namespace plus any non-drift namespaces the
     reducer derived (cost / output / schema). That covers the contract
     requirement that metric_counts is populated from BOTH the drift
@@ -504,7 +503,7 @@ def _replace_metric_counts(
             severity=mc.severity,
             count=float(mc.count),
         )
-        for mc in profile.unified_metrics()
+        for mc in profile.scoring_metrics()
     ]
     if rows:
         conn.executemany(_METRIC_COUNTS.insert, rows)
@@ -1510,37 +1509,23 @@ def _write_cursor(
 
 
 def _refresh_cursor(conn: sqlite3.Connection, workspace_root: Path, epoch_id: str) -> None:
-    """Dual-write companion: bring one epoch's cursor up to date.
+    """Refresh a cursor only after a full epoch projection established it.
 
-    Called from every incremental ``ingest_*`` entry point so a live evolve's
-    cursors track its writes. Without this the cursor would only ever be
-    written by a rebuild or a heal, and every dual-written round would read as
-    divergence at the next validation — turning the cheap incremental heal
-    into a full re-projection of the active epoch on every ``evolve`` start.
-
-    It records what the index NOW HOLDS, including the row the caller just
-    wrote — never a fresh reading of the workspace for the index-backed
-    columns. See :func:`_write_cursor` for why that distinction is the whole
-    point of this function rather than a detail of it.
-    """
-    _write_cursor(conn, workspace_root, epoch_id, _lineage_by_epoch(workspace_root).get(epoch_id))
+    An incremental write may cover one record in an otherwise incomplete
+    epoch. It cannot establish that every canonical record was indexed.
+    Leaving the cursor absent makes the next heal project that epoch in full."""
+    if conn.execute("SELECT 1 FROM ingest_cursors WHERE epoch_id = ?", (epoch_id,)).fetchone():
+        _write_cursor(
+            conn, workspace_root, epoch_id, _lineage_by_epoch(workspace_root).get(epoch_id)
+        )
 
 
 def _read_cursors(conn: sqlite3.Connection) -> dict[str, _CursorSignals]:
-    """Read every persisted cursor; ``{}`` when the table is absent.
-
-    An absent (or empty) table reads as "every epoch diverged", which is the
-    correct conservative answer for a database written before v14: the first
-    heal re-projects each epoch once and writes its cursor, and every heal
-    after that is a no-op.
-    """
-    try:
-        rows = conn.execute(
-            "SELECT epoch_id, experiments_count, runs_count, round_dirs_count, "
-            "reflections_count, lineage_generations_count FROM ingest_cursors"
-        ).fetchall()
-    except sqlite3.Error:
-        return {}
+    """Read the cursor for each fully projected epoch."""
+    rows = conn.execute(
+        "SELECT epoch_id, experiments_count, runs_count, round_dirs_count, "
+        "reflections_count, lineage_generations_count FROM ingest_cursors"
+    ).fetchall()
     out: dict[str, _CursorSignals] = {}
     for row in rows:
         if isinstance(row[0], str):
@@ -1556,10 +1541,7 @@ def _read_cursors(conn: sqlite3.Connection) -> dict[str, _CursorSignals]:
 
 def _indexed_epoch_ids(conn: sqlite3.Connection) -> set[str]:
     """Every epoch id the index holds a row for, cursor or not."""
-    try:
-        rows = conn.execute("SELECT DISTINCT epoch_id FROM epochs").fetchall()
-    except sqlite3.Error:
-        return set()
+    rows = conn.execute("SELECT DISTINCT epoch_id FROM epochs").fetchall()
     return {row[0] for row in rows if isinstance(row[0], str)}
 
 
@@ -1579,11 +1561,9 @@ def _diverged_epochs(
     ids actually present in ``epochs``) rather than the cursor table alone. A
     cursor-driven test can only find epochs that some cursor-writing path
     already visited, so a row written without a cursor is invisible to it.
-    A database migrated IN PLACE by the incremental writers arrives with
-    populated tables and ZERO cursors. Any of its epochs since deleted from
-    the workspace would then be orphaned in the index permanently, with
-    ``heal_index`` reporting nothing to do. Reading the epoch ids straight
-    off the index closes that, and costs one ``SELECT DISTINCT``.
+    Incremental ingestion can populate an epoch without a completion cursor.
+    Reading indexed epoch IDs also finds those rows after their canonical
+    epoch is removed, so healing can delete the stale projection.
     """
     stale: set[str] = set()
     on_disk: set[str] = set()
@@ -1716,10 +1696,6 @@ def _build_index_atomically(workspace_root: Path, target: Path) -> None:
             conn.execute("PRAGMA busy_timeout=5000")
             apply_schema(conn)
             _rebuild_all(conn, workspace_root)
-            conn.execute(
-                "INSERT OR REPLACE INTO schema_meta(key, value) VALUES (?, ?)",
-                ("measurement_projection", "seed-qualified"),
-            )
             # The read-only Elo analytics fold runs AFTER every tournament has
             # been ingested (it reads the full match ledger off the
             # ``tournaments`` rows). It only ever writes the additive
@@ -1762,38 +1738,17 @@ def _build_index_atomically(workspace_root: Path, target: Path) -> None:
 
 
 def _rebuild_reason(target: Path) -> str | None:
-    """Why ``target`` needs a full build, or ``None`` when it does not.
-
-    Schema and measurement-projection versions require a complete rebuild.
-    Ordinary canonical mutations are checked by :func:`heal_index`.
-
-    Raises :class:`~zicato.index.schema.IndexSchemaNewerError` for a database
-    written by a NEWER build. Auto-deleting it is forbidden — its columns and
-    semantics are unknown here, so the recovery belongs to the operator.
-    """
+    """Classify a missing, incompatible, or unreadable derived database."""
     if not target.exists():
         return "absent"
     try:
-        conn = sqlite3.connect(f"file:{target}?mode=ro", uri=True)
+        with contextlib.closing(
+            sqlite3.connect(f"{target.resolve().as_uri()}?mode=ro", uri=True)
+        ) as conn:
+            version = read_schema_version(conn)
     except sqlite3.Error:
         return "unreadable"
-    try:
-        version = read_schema_version(conn)
-        raise_if_newer(version)
-        if version == SCHEMA_VERSION:
-            marker = conn.execute(
-                "SELECT value FROM schema_meta WHERE key = ?", ("measurement_projection",)
-            ).fetchone()
-            if marker is None or marker[0] != "seed-qualified":
-                return "stale-projection"
-    except sqlite3.DatabaseError:
-        # Not a SQLite database at all (truncated, or some other file that
-        # ended up at this path). A rebuild is the recovery.
-        return "unreadable"
-    finally:
-        conn.close()
-    raise_if_newer(version)
-    return "stale-schema" if version < SCHEMA_VERSION else None
+    return "stale-schema" if version != SCHEMA_VERSION else None
 
 
 def _record_action(action_out: list[str] | None, action: str) -> None:
@@ -1808,43 +1763,13 @@ def ensure_index(
     action_out: list[str] | None = None,
     writer: WorkspaceLock | None = None,
 ) -> Path:
-    """Guarantee an index of the CURRENT schema exists, building it if not.
+    """Build a missing, unreadable, or incompatible index under the workspace lease.
 
-    The structural half of the self-healing index
-    (``docs/design/ANALYTICAL-INDEX.md`` §5.1). On return ``index.db`` exists
-    and carries :data:`~zicato.index.schema.SCHEMA_VERSION`. It builds when —
-    and only when — the file is absent, stamped with an OLDER version, or not
-    a readable SQLite database. An equal-version database is left alone:
-    content drift is :func:`heal_index`'s business.
+    Construction finishes in private scratch before replacing the derived
+    file. Failure preserves the existing database. A supported schema needs
+    no structural work; heal_index handles canonical record changes.
 
-    An older-version file is REBUILT rather than migrated in place because
-    whole-table additions need a backfill that ``ALTER TABLE`` cannot
-    provide. The v11 reflection tables and the v13 ``pareto_frontier`` table
-    both land empty on an in-place open and stay empty until something walks
-    the files again; a rebuild is the only shape that fills them.
-
-    Parameters
-    ----------
-    workspace_root:
-        The ``.zicato/`` directory to index.
-    db_path:
-        Where the index lives. Defaults to ``{workspace_root}/index.db``.
-    action_out:
-        Optional caller-supplied list this appends exactly one symbolic
-        action to, so a caller can report what happened without re-deriving
-        it: ``"present"``, ``"built:absent"``, ``"built:stale-schema"``, or
-        ``"built:unreadable"``.
-
-    Returns
-    -------
-    Path
-        The path the index lives at.
-
-    Raises
-    ------
-    zicato.index.schema.IndexSchemaNewerError
-        When the existing database was written by a newer zicato.
-    """
+    The optional action_out list receives present or built:<reason>."""
     with _index_writer(workspace_root, writer):
         target = db_path if db_path is not None else _default_db_path(workspace_root)
         reason = _rebuild_reason(target)
@@ -1865,17 +1790,10 @@ def ensure_index(
 
 
 def validate_index(workspace_root: Path, db_path: Path | None = None) -> tuple[str, ...]:
-    """Return the sorted ids of epochs whose index rows diverged from disk.
+    """Return epochs whose projected records diverge from canonical workspace data.
 
-    Read-only: compare the five cursor counts and durable epoch revisions.
-    API-driven replacements remain visible even when file counts stay equal.
-    Manual edits that bypass revision issuance require a full rebuild.
-
-    A missing database yields ``()`` — there is nothing to validate, and
-    building one is :func:`ensure_index`'s job. A database predating v14 has
-    no cursors, so every epoch reads as diverged; the first
-    :func:`heal_index` re-projects each once and every pass after is a no-op.
-    """
+    Missing or unreadable indexes yield no validation result. ensure_index
+    owns structural repair; heal_index reprojects the divergent epochs."""
     target = db_path if db_path is not None else _default_db_path(workspace_root)
     if not target.exists():
         return ()
@@ -1953,26 +1871,21 @@ def heal_index(
 
 
 def _open_for_write(workspace_root: Path, db_path: Path | None) -> tuple[sqlite3.Connection, Path]:
-    """Open (creating + schema-applying if needed) the index for a write.
+    """Open a supported index for incremental ingestion, creating an empty one.
 
-    Used by the incremental ingest paths. When the database does not
-    exist yet it is created and the schema applied — so the first
-    live dual-write from the orchestrator does not require a prior
-    ``rebuild_index``. The connection is in WAL mode for concurrent
-    reads.
+    Incompatible databases require the lease-owned rebuild before ingestion.
+    A worker cannot repair the whole index while sibling workers are active.
     """
     target = db_path if db_path is not None else _default_db_path(workspace_root)
     target.parent.mkdir(parents=True, exist_ok=True)
-    fresh = not target.exists()
     conn = sqlite3.connect(str(target))
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=5000")
-    if fresh:
+    try:
         apply_schema(conn)
-    else:
-        # Cheap idempotent re-apply guards against an index file that
-        # exists but predates a table (e.g. a partially-built database).
-        apply_schema(conn)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=5000")
+    except BaseException:
+        conn.close()
+        raise
     return conn, target
 
 
@@ -2243,318 +2156,54 @@ def backfill_generations(
     workspace_root: Path,
     db_path: Path | None = None,
 ) -> dict[str, int]:
-    """Reconcile the ``generations`` table against the on-disk source-of-truth.
+    """Reconcile indexed generation facts with canonical lineage under its writer lease.
 
-    Targeted repair for workspaces whose ``generations`` rows disagree with
-    ``lineage.json``. The lineage record is the sole authority for each
-    generation's parent, promotion state, creation timestamp, and birth round.
-
-    Read-only against the disk files; the database is the only thing
-    mutated. Idempotent: running it twice produces the same rows.
-
-    Live ingestion uses the same lineage projection. The backfill remains a
-    focused repair for an existing derived index.
-
-    Parameters
-    ----------
-    workspace_root:
-        The ``.zicato/`` directory to reconcile.
-    db_path:
-        Where the index lives. Defaults to ``{workspace_root}/index.db``.
-
-    Returns
-    -------
-    dict
-        ``{"updated": N, "scanned": M}`` — how many rows were rewritten
-        and how many generations were scanned. ``M - N`` is the number
-        already correct (or seed rows whose lineage row already
-        matches disk).
+    Parent, promotion, creation time, and birth round come from lineage,
+    including explicit null values. Ratings remain owned by the rating fold.
+    Canonical files are read only. Repeating the repair makes no changes.
     """
-    target = db_path if db_path is not None else _default_db_path(workspace_root)
-    if not target.exists():
-        return {"updated": 0, "scanned": 0}
-
     from zicato.epoch.lineage import load_lineage  # noqa: PLC0415
 
-    scanned = 0
-    updated = 0
-    conn = sqlite3.connect(str(target))
-    try:
-        conn.execute("PRAGMA busy_timeout=5000")
-        lineage = load_lineage(workspace_root)
-        for entry in lineage.epochs:
-            epoch_id = entry.id
-            for g in entry.generations:
-                gid = g.id
-                scanned += 1
-                parent = g.parent_id
-                promoted = g.promoted
-
-                # ``round_index`` is owned by lineage.json (the birth
-                # round); reconcile it too so a row missing the value gains
-                # it once lineage carries it. An absent value reads as None.
-                round_index = g.round_index
-
-                # Read what the DB currently has so we only count a real
-                # rewrite rather than a no-op upsert.
-                cur = conn.execute(
-                    "SELECT parent_generation_id, promoted, created_at, round_index "
-                    "FROM generations WHERE epoch_id = ? AND generation_id = ?",
-                    (epoch_id, gid),
-                )
-                row = cur.fetchone()
-                created_at = ""
-                cur_parent: str | None = None
-                cur_promoted: int | None = None
-                cur_round_index: int | None = None
-                if row is not None:
-                    cur_parent = row[0] if row[0] is not None else None
-                    cur_promoted = None if row[1] is None else int(row[1])
-                    created_at = row[2] if row[2] else ""
-                    cur_round_index = row[3] if row[3] is not None else None
-                # Prefer the existing created_at; fall back to lineage's,
-                # then to the empty string (matches the live writer's
-                # behaviour when timestamps are unavailable).
-                if not created_at:
-                    created_at = g.created_at
-
-                # The upsert writes round_index via COALESCE, so it never
-                # nulls an existing value; a backfill is needed only when
-                # lineage supplies a value the DB row is missing.
-                round_index_needs_write = round_index is not None and cur_round_index is None
-                expected_promoted = None if promoted is None else (1 if promoted else 0)
-                if (
-                    row is not None
-                    and cur_parent == parent
-                    and cur_promoted == expected_promoted
-                    and not round_index_needs_write
-                ):
-                    continue
-                _upsert_generation(
-                    conn,
-                    epoch_id=epoch_id,
-                    generation_id=gid,
-                    parent_generation_id=parent,
-                    promoted=promoted,
-                    created_at=created_at,
-                    round_index=round_index,
-                )
-                updated += 1
-        conn.commit()
-    finally:
-        conn.close()
-    return {"updated": updated, "scanned": scanned}
-
-
-def repair_epoch_goals(
-    workspace_root: Path,
-    db_path: Path | None = None,
-) -> dict[str, int]:
-    """Walk every epoch on disk and reconcile the ``goal`` field.
-
-    Targeted repair for workspaces whose per-epoch ``config.json``
-    predates the ``goal`` field (or whose row in the ``epochs`` index
-    table was written before the column existed). For every epoch we
-    can read off disk, this:
-
-    1. Ensures the ``config.json`` carries a ``goal`` key (added with
-       an empty string if missing); the rewrite goes through the
-       canonical :func:`zicato.epoch.lifecycle._write_config` so all
-       other keys are preserved.
-    2. Re-upserts the ``epochs`` row so the index column matches the
-       on-disk value.
-
-    Idempotent — running it twice writes the same bytes. Read-only on
-    epoch ids: epochs that exist only in ``lineage.json`` (no
-    ``config.json`` on disk) are left untouched.
-
-    Parameters
-    ----------
-    workspace_root:
-        The ``.zicato/`` directory to repair.
-    db_path:
-        Where the index lives. Defaults to ``{workspace_root}/index.db``.
-
-    Returns
-    -------
-    dict
-        ``{"scanned": M, "config_patched": A, "index_updated": B}`` —
-        ``M`` epochs walked, ``A`` config files that needed the goal
-        key added, ``B`` index rows refreshed. The two counters are
-        independent; an epoch can need a config patch but not an
-        index refresh (and vice versa).
-    """
-    from zicato.epoch._storage import epoch_config_key  # noqa: PLC0415
-    from zicato.epoch.lifecycle import (  # noqa: PLC0415
-        _write_config,
-        list_epochs,
-    )
-    from zicato.storage import workspace_backend  # noqa: PLC0415
-
-    scanned = 0
-    config_patched = 0
-    index_updated = 0
-    backend = workspace_backend(workspace_root, start=False)
-
-    # 1. Walk every epoch on disk and patch its config.json.
-    for cfg in list_epochs(workspace_root):
-        scanned += 1
-        # Read the raw JSON so we can tell whether the goal key was
-        # actually present (vs. defaulted-to-empty by the loader).
-        raw = backend.read_json(epoch_config_key(cfg.id))
-        if not isinstance(raw, dict):
-            continue
-        if "goal" not in raw:
-            # The loader already defaulted cfg.goal to "" — round-trip
-            # back through _write_config to land the key on disk.
-            _write_config(workspace_root, cfg)
-            config_patched += 1
-
-    # 2. Refresh the index epochs.goal column.
-    target = db_path if db_path is not None else _default_db_path(workspace_root)
-    if target.exists():
-        conn = sqlite3.connect(str(target))
+    with _index_writer(workspace_root, None):
+        target = db_path if db_path is not None else _default_db_path(workspace_root)
+        if not target.exists():
+            return {"updated": 0, "scanned": 0}
+        scanned = 0
+        updated = 0
+        statement = replace(_GENERATIONS, preserved_when_incoming_null=())
+        conn, _ = _open_for_write(workspace_root, target)
         try:
-            conn.execute("PRAGMA busy_timeout=5000")
-            apply_schema(conn)
-            for cfg in list_epochs(workspace_root):
-                cur = conn.execute(
-                    "SELECT goal FROM epochs WHERE epoch_id = ?",
-                    (cfg.id,),
-                )
-                row = cur.fetchone()
-                existing_goal: str | None = row[0] if row is not None else None
-                if existing_goal == cfg.goal:
-                    continue
-                _upsert_epoch(
-                    conn,
-                    epoch_id=cfg.id,
-                    contract_hash=cfg.contract_hash,
-                    created_at=cfg.created_at,
-                    closed=cfg.closed,
-                    goal=cfg.goal,
-                )
-                index_updated += 1
+            for entry in load_lineage(workspace_root).epochs:
+                for generation in entry.generations:
+                    scanned += 1
+                    promoted = None if generation.promoted is None else int(generation.promoted)
+                    row = conn.execute(
+                        "SELECT parent_generation_id, promoted, created_at, round_index "
+                        "FROM generations WHERE epoch_id = ? AND generation_id = ?",
+                        (entry.id, generation.id),
+                    ).fetchone()
+                    expected = (
+                        generation.parent_id,
+                        promoted,
+                        generation.created_at,
+                        generation.round_index,
+                    )
+                    if row == expected:
+                        continue
+                    statement.upsert_row(
+                        conn,
+                        epoch_id=entry.id,
+                        generation_id=generation.id,
+                        parent_generation_id=generation.parent_id,
+                        promoted=promoted,
+                        created_at=generation.created_at,
+                        round_index=generation.round_index,
+                    )
+                    updated += 1
             conn.commit()
         finally:
             conn.close()
-
-    return {
-        "scanned": scanned,
-        "config_patched": config_patched,
-        "index_updated": index_updated,
-    }
-
-
-def backfill_tournament_fk(
-    workspace_root: Path,
-    db_path: Path | None = None,
-) -> dict[str, int]:
-    """Backfill ``tournament_id`` on existing ``runs`` and ``loss_profiles``.
-
-    Walks every generation in ``lineage.json`` whose ``experiment.json``
-    is on disk, computes the canonical
-    ``"{epoch_id}:{parent_gen}->{child_gen}"`` tournament id, and
-    rewrites the ``runs.tournament_id`` and ``loss_profiles.tournament_id``
-    columns for every row under that generation that does not already
-    have one.
-
-    Also backfills ``epochs.parent_epoch_id`` from each lineage entry's
-    ``v0_parent`` — folded into the same command so an operator with an
-    older index gets both v2 columns repaired in one pass.
-
-    Idempotent: only rewrites cells that are currently ``NULL`` or
-    disagree with the disk-derived value. A fresh index built by the
-    v2 ingest path is already populated correctly, so this command is
-    a no-op there.
-
-    Returns
-    -------
-    dict
-        ``{"runs_updated": A, "loss_updated": B, "epochs_updated": C,
-        "scanned": M}`` — A, B, C count cells actually rewritten, M is
-        the number of generation rows the walk visited.
-    """
-    target = db_path if db_path is not None else _default_db_path(workspace_root)
-    if not target.exists():
-        return {
-            "runs_updated": 0,
-            "loss_updated": 0,
-            "epochs_updated": 0,
-            "scanned": 0,
-        }
-
-    from zicato.epoch.journal import read_experiment  # noqa: PLC0415
-    from zicato.epoch.lineage import load_lineage  # noqa: PLC0415
-
-    runs_updated = 0
-    loss_updated = 0
-    epochs_updated = 0
-    scanned = 0
-    conn = sqlite3.connect(str(target))
-    try:
-        conn.execute("PRAGMA busy_timeout=5000")
-        # Make sure the v2 columns exist before we try to write them —
-        # an older index file opened here might still be v1. apply_schema
-        # is idempotent + carries the v1 -> v2 migration.
-        apply_schema(conn)
-
-        lineage = load_lineage(workspace_root)
-        for entry in lineage.epochs:
-            epoch_id = entry.id
-
-            # epochs.parent_epoch_id from this lineage entry's v0_parent.
-            parent_epoch_id = entry.parent_epoch_id
-            cur = conn.execute(
-                "SELECT parent_epoch_id FROM epochs WHERE epoch_id = ?",
-                (epoch_id,),
-            )
-            row = cur.fetchone()
-            if row is not None and row[0] != parent_epoch_id:
-                conn.execute(
-                    "UPDATE epochs SET parent_epoch_id = ? WHERE epoch_id = ?",
-                    (parent_epoch_id, epoch_id),
-                )
-                epochs_updated += 1
-
-            for g in entry.generations:
-                gid = g.id
-                scanned += 1
-                try:
-                    experiment = read_experiment(workspace_root, epoch_id, gid)
-                except (FileNotFoundError, json.JSONDecodeError, KeyError, RecordError):
-                    continue
-                parent = experiment.parent_generation_id
-                if not parent:
-                    continue
-                tournament_id = f"{epoch_id}:{parent}->{gid}"
-
-                # runs.tournament_id — only rewrite cells where the
-                # current value disagrees (NULL or a stale id).
-                cur = conn.execute(
-                    "UPDATE runs SET tournament_id = ? "
-                    "WHERE epoch_id = ? AND generation_id = ? "
-                    "AND (tournament_id IS NULL OR tournament_id != ?)",
-                    (tournament_id, epoch_id, gid, tournament_id),
-                )
-                runs_updated += cur.rowcount if cur.rowcount > 0 else 0
-
-                cur = conn.execute(
-                    "UPDATE loss_profiles SET tournament_id = ? "
-                    "WHERE epoch_id = ? AND generation_id = ? "
-                    "AND (tournament_id IS NULL OR tournament_id != ?)",
-                    (tournament_id, epoch_id, gid, tournament_id),
-                )
-                loss_updated += cur.rowcount if cur.rowcount > 0 else 0
-        conn.commit()
-    finally:
-        conn.close()
-    return {
-        "runs_updated": runs_updated,
-        "loss_updated": loss_updated,
-        "epochs_updated": epochs_updated,
-        "scanned": scanned,
-    }
+        return {"updated": updated, "scanned": scanned}
 
 
 __all__ = [
@@ -2569,6 +2218,4 @@ __all__ = [
     "ingest_reflection",
     "ingest_pareto_frontier",
     "backfill_generations",
-    "repair_epoch_goals",
-    "backfill_tournament_fk",
 ]

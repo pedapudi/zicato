@@ -582,7 +582,15 @@ def workspace_with_harness(tmp_path: Path) -> Path:
     workspace = tmp_path / ".zicato"
     workspace.mkdir()
     (workspace / "config.json").write_text(
-        json.dumps({"source_roots": [str(harness)]}),
+        json.dumps(
+            {
+                "adapter": {
+                    "kind": "import",
+                    "factory": "tests._stub_adapter:make_stub_adapter",
+                    "mutable_trees": [str(harness)],
+                }
+            }
+        ),
         encoding="utf-8",
     )
     return workspace

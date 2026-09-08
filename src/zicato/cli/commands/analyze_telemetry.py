@@ -18,17 +18,14 @@ The command wires together:
 * :func:`zicato.analyzer.insights.analyze_epoch_telemetry` for the
   analysis itself.
 
-The evaluation callable resolution mirrors the ``zicato proposer propose``
-command's discipline: we read the workspace config's
-``runtime.evaluation_call_llm`` (or the top-level ``evaluation_call_llm``
-key, also accepted) and import the dotted path. A failure to resolve the callable
-surfaces as a ``ClickException`` rather than a stack trace.
+The evaluation callable is resolved from the named engine selected by
+`models.roles.evaluation`. Import or configuration failures produce a command
+error before analysis begins.
 """
 
 from __future__ import annotations
 
 import asyncio
-import importlib
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
@@ -68,39 +65,15 @@ def _resolve_epoch(workspace_dir: Path, override: str | None) -> str:
 
 
 def _resolve_aux_llm(config: WorkspaceConfig) -> Callable[[str, str, str], Awaitable[str]]:
-    """Look up the evaluation LLM callable from the workspace config.
+    """Resolve the named evaluation engine through the runtime owner."""
+    from zicato.runtime_factory import resolve_role_call_llm
 
-    Mirrors :func:`zicato.cli.commands.propose._resolve_aux_llm`. The
-    config field is ``evaluation_call_llm`` (a dotted import path) or
-    the nested ``runtime.evaluation_call_llm``. When absent, we raise a
-    click error early so the operator doesn't burn time waiting for a
-    call that can't happen.
-    """
-
-    dotted = config.raw.get("evaluation_call_llm") or config.runtime.get("evaluation_call_llm")
-    if not dotted:
-        raise click.ClickException(
-            "No evaluation LLM callable is registered. Wire one into the "
-            "workspace config under 'evaluation_call_llm' (dotted import path) "
-            "before running `zicato inspect telemetry`."
-        )
-    mod_name, _, attr = str(dotted).rpartition(".")
-    if not mod_name:
-        raise click.ClickException(
-            f"evaluation_call_llm config value is not a dotted path: {dotted!r}"
-        )
     try:
-        module = importlib.import_module(mod_name)
-    except ImportError as exc:
-        raise click.ClickException(
-            f"Could not import {mod_name!r} for evaluation_call_llm: {exc}"
-        ) from exc
-    if not hasattr(module, attr):
-        raise click.ClickException(
-            f"Module {mod_name!r} has no attribute {attr!r} for evaluation_call_llm"
+        return resolve_role_call_llm(
+            config.raw, role="evaluation", workspace_root=config.path.parent
         )
-    resolved: Callable[[str, str, str], Awaitable[str]] = getattr(module, attr)
-    return resolved
+    except (ImportError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
 
 
 @click.command(

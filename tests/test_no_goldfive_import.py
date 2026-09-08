@@ -262,7 +262,7 @@ def test_generic_tournament_runs_without_goldfive() -> None:
             import zicato.tournament.runner as runner
             from tests._runtime_builders import prepare_tournament_epoch
             from zicato.core import (
-                BoardEntry, DriftCount, ExpectationResult, Generation, LossProfile,
+                BoardEntry, MetricCount, ExpectationResult, Generation, LossProfile,
                 RuntimeConfig, ScoringWeights,
             )
 
@@ -280,7 +280,7 @@ def test_generic_tournament_runs_without_goldfive() -> None:
                     entry_id=entry.id,
                     generation_id=generation.id,
                     epoch_id=generation.epoch_id,
-                    drift_counts=(DriftCount("off_topic", "info", 0),),
+                    metric_counts=(MetricCount("off_topic", "info", 0),),
                     plan_revisions=0,
                     task_failure_ratio=0.0,
                     runtime_ms=1,
@@ -345,9 +345,9 @@ def test_import_adapter_contract_and_worker_payload_remain_goldfive_free() -> No
             weights = ScoringWeights(telemetry_dialect="transcript")
             frozen = scoring_to_dict(weights)
             worker_weights = _weights_spec(weights)
-            assert "goldfive" not in frozen
-            assert "goldfive" not in worker_weights
-            assert "goldfive" not in scoring_to_canon(weights)
+            assert frozen["goldfive"] is None
+            assert worker_weights["goldfive"] is None
+            assert scoring_to_canon(weights)["goldfive"] is None
             assert _scoring_from_dict(frozen) == weights
 
             adapter = make_adapter_from_config({
@@ -364,10 +364,9 @@ def test_import_adapter_contract_and_worker_payload_remain_goldfive_free() -> No
             )
             with tempfile.TemporaryDirectory() as raw:
                 root = Path(raw)
-                events = root / "events.jsonl"
+                from tests._runtime_builders import runtime_config
                 session = rebuilt.load(root)
-                asyncio.run(session.run(entry, events))
-                assert events.exists()
+                assert asyncio.run(session.run(entry, [], runtime_config(root))) is None
             assert "goldfive" not in sys.modules
             """
         )

@@ -27,7 +27,7 @@ the number the loop would actually charge.
 
 from __future__ import annotations
 
-from zicato.core import DriftCount, LossProfile, ScoringWeights
+from zicato.core import LossProfile, MetricCount, ScoringWeights
 from zicato.core.types import Experiment, ExperimentalConfig, HypothesisSpec, Patch
 from zicato.scoring.builtins import diff_complexity_component
 from zicato.scoring.diff_complexity import diff_size
@@ -68,20 +68,22 @@ def _experiment(*contents: str) -> Experiment:
             core_idea="rewrite the template",
             modulating=(),
             why="the board asks for it",
-            expected_drift_movements=(),
+            expected_metric_movements=(),
             expected_pass_rate_delta="+0.0",
         ),
         patches=tuple(
-            Patch(
-                id=f"p{i}",
-                mutation_id="whole_file_point",
-                op="replace",
-                new_content=content,
-                new_numeric=None,
-                new_enum=None,
-                rationale="r",
+            (
+                Patch(
+                    id=f"p{i}",
+                    mutation_id="whole_file_point",
+                    op="replace",
+                    new_content=content,
+                    new_numeric=None,
+                    new_enum=None,
+                    rationale="r",
+                )
+                for i, content in enumerate(contents)
             )
-            for i, content in enumerate(contents)
         ),
         outcome=None,
     )
@@ -93,7 +95,7 @@ def _loss(entry_id: str, *, passed: bool) -> LossProfile:
         entry_id=entry_id,
         generation_id="v1",
         epoch_id="e0",
-        drift_counts=(DriftCount(kind="off_topic", severity="info", count=0),),
+        metric_counts=(MetricCount(name="drift:off_topic", severity="info", count=0),),
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=1000,

@@ -26,7 +26,7 @@
         "decision": "promoted",
         "epoch_id": "e0",
         "generation_id": "v0",
-        "round_index": null,
+        "round_index": 0,
         "score_fraction": null,
         "total_claims": 0
       }
@@ -43,7 +43,7 @@
         "decision": "promoted",
         "epoch_id": "e1",
         "generation_id": "v0",
-        "round_index": null,
+        "round_index": 0,
         "score_fraction": null,
         "total_claims": 0
       },
@@ -51,7 +51,7 @@
         "decision": "rejected",
         "epoch_id": "e1",
         "generation_id": "v1",
-        "round_index": null,
+        "round_index": 0,
         "score_fraction": null,
         "total_claims": 0
       }
@@ -82,18 +82,45 @@
     "experiment": {
       "decision": "baseline",
       "decision_label": "seed (v0)",
+      "epoch_id": "e1",
+      "format_version": 1,
       "generation_id": "v0",
       "hypothesis": {
-        "summary": "hyp e1 v0"
+        "core_idea": "hyp e1 v0",
+        "expected_metric_movements": [],
+        "expected_pass_rate_delta": "",
+        "modulating": [],
+        "risks": "",
+        "why": ""
       },
+      "id": "exp_e1_v0",
       "outcome": {
-        "decision": "promoted",
-        "scalar_score_delta": -0.05
+        "champion_eval_mode": "full",
+        "drift_loss_delta": 0.0,
+        "eliminated_in_round": null,
+        "evidence": null,
+        "final_rank": null,
+        "generalization_gap": null,
+        "holdout": null,
+        "holdout_loss": null,
+        "match_record": [],
+        "metric_movements": [],
+        "operator_override": false,
+        "operator_override_reason": "",
+        "pass_rate_delta": 0.0,
+        "ran_at": "",
+        "rejection_reason": "",
+        "scalar_score_delta": -0.05,
+        "structure": "gauntlet",
+        "tournament_decision": "promoted",
+        "train_loss": null
       },
       "parent_generation_id": null,
+      "patch_ids": [],
       "patches": {},
       "promoted": true,
-      "proposed_at": "2026-01-01T00:00:00Z"
+      "proposed_at": "2026-01-01T00:00:00Z",
+      "round_index": 0
     },
     "found": true,
     "gates": [],
@@ -107,7 +134,8 @@
       "epoch_id": "e1",
       "generation_id": "v0",
       "parent_generation_id": null,
-      "promoted": true
+      "promoted": true,
+      "round_index": 0
     },
     "generation_id": "v0",
     "hypothesis_accuracy": null,
@@ -146,7 +174,8 @@
         "generation_id": "v1",
         "parent_generation_id": "v0",
         "promoted": false,
-        "relationship": "child"
+        "relationship": "child",
+        "round_index": 0
       }
     ],
     "structure": "gauntlet"
@@ -188,19 +217,19 @@
         "outcomes": []
       },
       "header": {
-        "adk_session_id": null,
+        "adk_session_id": "",
         "drift_loss": 0.31,
         "entry_id": "t1",
         "epoch_id": "e1",
         "generation_id": "v1",
-        "output_chars": null,
+        "output_chars": 0,
         "pass_fail": true,
-        "plan_revisions": null,
+        "plan_revisions": 0,
         "run_id": "e1-v1-t1",
-        "runtime_ms": null,
-        "tokens_spent": null,
+        "runtime_ms": 0,
+        "tokens_spent": 0,
         "turns_completed": null,
-        "wall_clock_budget_exceeded": null
+        "wall_clock_budget_exceeded": false
       },
       "judges": {
         "judges": [],
@@ -219,18 +248,45 @@
     "experiment": {
       "decision": "rejected",
       "decision_label": "rejected",
+      "epoch_id": "e1",
+      "format_version": 1,
       "generation_id": "v1",
       "hypothesis": {
-        "summary": "hyp e1 v1"
+        "core_idea": "hyp e1 v1",
+        "expected_metric_movements": [],
+        "expected_pass_rate_delta": "",
+        "modulating": [],
+        "risks": "",
+        "why": ""
       },
+      "id": "exp_e1_v1",
       "outcome": {
-        "decision": "rejected",
-        "scalar_score_delta": 0.02
+        "champion_eval_mode": "full",
+        "drift_loss_delta": 0.0,
+        "eliminated_in_round": null,
+        "evidence": null,
+        "final_rank": null,
+        "generalization_gap": null,
+        "holdout": null,
+        "holdout_loss": null,
+        "match_record": [],
+        "metric_movements": [],
+        "operator_override": false,
+        "operator_override_reason": "",
+        "pass_rate_delta": 0.0,
+        "ran_at": "",
+        "rejection_reason": "",
+        "scalar_score_delta": 0.02,
+        "structure": "gauntlet",
+        "tournament_decision": "rejected",
+        "train_loss": null
       },
       "parent_generation_id": "v0",
+      "patch_ids": [],
       "patches": {},
       "promoted": false,
-      "proposed_at": "2026-01-01T00:00:00Z"
+      "proposed_at": "2026-01-01T00:00:00Z",
+      "round_index": 0
     },
     "found": true,
     "gates": [
@@ -360,7 +416,8 @@
       "epoch_id": "e1",
       "generation_id": "v1",
       "parent_generation_id": "v0",
-      "promoted": false
+      "promoted": false,
+      "round_index": 0
     },
     "generation_id": "v1",
     "hypothesis_accuracy": {
@@ -368,7 +425,7 @@
       "epoch_id": "e1",
       "generation_id": "v1",
       "pass_rate": {
-        "observed": null,
+        "observed": 0.0,
         "predicted": ""
       },
       "score": {
@@ -462,7 +519,8 @@
         "generation_id": "v0",
         "parent_generation_id": null,
         "promoted": true,
-        "relationship": "parent"
+        "relationship": "parent",
+        "round_index": 0
       }
     ],
     "structure": "gauntlet"
@@ -651,7 +709,8 @@
           "epoch_id": "e1",
           "generation_id": "v0",
           "parent_generation_id": null,
-          "promoted": true
+          "promoted": true,
+          "round_index": 0
         },
         {
           "created_at": "2026-01-01T00:00:00Z",
@@ -663,7 +722,8 @@
           "epoch_id": "e1",
           "generation_id": "v1",
           "parent_generation_id": "v0",
-          "promoted": false
+          "promoted": false,
+          "round_index": 0
         },
         {
           "created_at": "2026-03-01T00:00:00Z",
@@ -675,7 +735,8 @@
           "epoch_id": "e0",
           "generation_id": "v0",
           "parent_generation_id": null,
-          "promoted": true
+          "promoted": true,
+          "round_index": 0
         }
       ]
     },
@@ -709,7 +770,6 @@
     "analysis_md": "",
     "board": [
       {
-        "budget_s": 1.0,
         "entry_id": "t1",
         "expectation_kind": "rubric",
         "input_preview": "Say hello.",
@@ -717,15 +777,16 @@
         "tags": [
           "smoke"
         ],
+        "wall_clock_budget_seconds": 1.0,
         "weight": 1.0
       },
       {
-        "budget_s": 1.0,
         "entry_id": "t2",
         "expectation_kind": "predicate",
         "input_preview": "Say goodbye.",
         "kind": "single_turn",
         "tags": [],
+        "wall_clock_budget_seconds": 1.0,
         "weight": 2.0
       }
     ],
@@ -761,10 +822,11 @@
       "epoch_id": "e0",
       "generation_id": "v0",
       "parent_generation_id": null,
-      "promoted": true
+      "promoted": true,
+      "round_index": 0
     },
     "closed": false,
-    "contract_hash": "hash-e0",
+    "contract_hash": "10b4d7c10ff82e639db708da3ec54fe920096f70474edcf750d6602b8a1d543c",
     "created_at": "2026-03-01T00:00:00Z",
     "current_champion": "v0",
     "delta_scalar_summary": {
@@ -776,18 +838,45 @@
       {
         "decision": "baseline",
         "decision_label": "seed (v0)",
+        "epoch_id": "e0",
+        "format_version": 1,
         "generation_id": "v0",
         "hypothesis": {
-          "summary": "hyp e0 v0"
+          "core_idea": "hyp e0 v0",
+          "expected_metric_movements": [],
+          "expected_pass_rate_delta": "",
+          "modulating": [],
+          "risks": "",
+          "why": ""
         },
+        "id": "exp_e0_v0",
         "outcome": {
-          "decision": "promoted",
-          "scalar_score_delta": -0.05
+          "champion_eval_mode": "full",
+          "drift_loss_delta": 0.0,
+          "eliminated_in_round": null,
+          "evidence": null,
+          "final_rank": null,
+          "generalization_gap": null,
+          "holdout": null,
+          "holdout_loss": null,
+          "match_record": [],
+          "metric_movements": [],
+          "operator_override": false,
+          "operator_override_reason": "",
+          "pass_rate_delta": 0.0,
+          "ran_at": "",
+          "rejection_reason": "",
+          "scalar_score_delta": -0.05,
+          "structure": "gauntlet",
+          "tournament_decision": "promoted",
+          "train_loss": null
         },
         "parent_generation_id": null,
+        "patch_ids": [],
         "patches": {},
         "promoted": true,
-        "proposed_at": "2026-03-01T00:00:00Z"
+        "proposed_at": "2026-03-01T00:00:00Z",
+        "round_index": 0
       }
     ],
     "goal": "Name sorts first, created last — the bug mirror.",
@@ -818,7 +907,6 @@
     "analysis_md": "",
     "board": [
       {
-        "budget_s": 1.0,
         "entry_id": "t1",
         "expectation_kind": "rubric",
         "input_preview": "Say hello.",
@@ -826,15 +914,16 @@
         "tags": [
           "smoke"
         ],
+        "wall_clock_budget_seconds": 1.0,
         "weight": 1.0
       },
       {
-        "budget_s": 1.0,
         "entry_id": "t2",
         "expectation_kind": "predicate",
         "input_preview": "Say goodbye.",
         "kind": "single_turn",
         "tags": [],
+        "wall_clock_budget_seconds": 1.0,
         "weight": 2.0
       }
     ],
@@ -870,10 +959,11 @@
       "epoch_id": "e1",
       "generation_id": "v0",
       "parent_generation_id": null,
-      "promoted": true
+      "promoted": true,
+      "round_index": 0
     },
     "closed": true,
-    "contract_hash": "hash-e1",
+    "contract_hash": "072c8dbf5b30a1c4c1d113b60d02828627cbaf5ec13588ba71321b85151f5b31",
     "created_at": "2026-01-01T00:00:00Z",
     "current_champion": "v0",
     "delta_scalar_summary": {
@@ -885,34 +975,88 @@
       {
         "decision": "baseline",
         "decision_label": "seed (v0)",
+        "epoch_id": "e1",
+        "format_version": 1,
         "generation_id": "v0",
         "hypothesis": {
-          "summary": "hyp e1 v0"
+          "core_idea": "hyp e1 v0",
+          "expected_metric_movements": [],
+          "expected_pass_rate_delta": "",
+          "modulating": [],
+          "risks": "",
+          "why": ""
         },
+        "id": "exp_e1_v0",
         "outcome": {
-          "decision": "promoted",
-          "scalar_score_delta": -0.05
+          "champion_eval_mode": "full",
+          "drift_loss_delta": 0.0,
+          "eliminated_in_round": null,
+          "evidence": null,
+          "final_rank": null,
+          "generalization_gap": null,
+          "holdout": null,
+          "holdout_loss": null,
+          "match_record": [],
+          "metric_movements": [],
+          "operator_override": false,
+          "operator_override_reason": "",
+          "pass_rate_delta": 0.0,
+          "ran_at": "",
+          "rejection_reason": "",
+          "scalar_score_delta": -0.05,
+          "structure": "gauntlet",
+          "tournament_decision": "promoted",
+          "train_loss": null
         },
         "parent_generation_id": null,
+        "patch_ids": [],
         "patches": {},
         "promoted": true,
-        "proposed_at": "2026-01-01T00:00:00Z"
+        "proposed_at": "2026-01-01T00:00:00Z",
+        "round_index": 0
       },
       {
         "decision": "rejected",
         "decision_label": "rejected",
+        "epoch_id": "e1",
+        "format_version": 1,
         "generation_id": "v1",
         "hypothesis": {
-          "summary": "hyp e1 v1"
+          "core_idea": "hyp e1 v1",
+          "expected_metric_movements": [],
+          "expected_pass_rate_delta": "",
+          "modulating": [],
+          "risks": "",
+          "why": ""
         },
+        "id": "exp_e1_v1",
         "outcome": {
-          "decision": "rejected",
-          "scalar_score_delta": 0.02
+          "champion_eval_mode": "full",
+          "drift_loss_delta": 0.0,
+          "eliminated_in_round": null,
+          "evidence": null,
+          "final_rank": null,
+          "generalization_gap": null,
+          "holdout": null,
+          "holdout_loss": null,
+          "match_record": [],
+          "metric_movements": [],
+          "operator_override": false,
+          "operator_override_reason": "",
+          "pass_rate_delta": 0.0,
+          "ran_at": "",
+          "rejection_reason": "",
+          "scalar_score_delta": 0.02,
+          "structure": "gauntlet",
+          "tournament_decision": "rejected",
+          "train_loss": null
         },
         "parent_generation_id": "v0",
+        "patch_ids": [],
         "patches": {},
         "promoted": false,
-        "proposed_at": "2026-01-01T00:00:00Z"
+        "proposed_at": "2026-01-01T00:00:00Z",
+        "round_index": 0
       }
     ],
     "goal": "First epoch chronologically.",
@@ -943,7 +1087,6 @@
     "analysis_md": "",
     "board": [
       {
-        "budget_s": 1.0,
         "entry_id": "t1",
         "expectation_kind": "rubric",
         "input_preview": "Say hello.",
@@ -951,15 +1094,16 @@
         "tags": [
           "smoke"
         ],
+        "wall_clock_budget_seconds": 1.0,
         "weight": 1.0
       },
       {
-        "budget_s": 1.0,
         "entry_id": "t2",
         "expectation_kind": "predicate",
         "input_preview": "Say goodbye.",
         "kind": "single_turn",
         "tags": [],
+        "wall_clock_budget_seconds": 1.0,
         "weight": 2.0
       }
     ],
@@ -987,7 +1131,7 @@
     "brief": "# Brief e2\n\n## Goal\n\nEmpty epoch — no generations.\n",
     "champion_record": null,
     "closed": true,
-    "contract_hash": "hash-e2",
+    "contract_hash": "7408152f37a6dca68026533d7a43115299a9264dcc846fc5e29420d29461dab7",
     "created_at": "2026-02-01T00:00:00Z",
     "current_champion": null,
     "delta_scalar_summary": {
@@ -1044,7 +1188,66 @@
       {
         "children": [
           {
-            "children": [],
+            "children": [
+              {
+                "children": [],
+                "coordinates": {
+                  "entry_id": "t1",
+                  "epoch_id": "e0",
+                  "generation_id": "v0",
+                  "match_id": "",
+                  "replicate": 0
+                },
+                "duration_ms": 0,
+                "ended_at": null,
+                "id": "e:e0/baseline/v0/t1/r0",
+                "kind": "board_entry_run",
+                "label": "t1 · replicate 0",
+                "outcome": {
+                  "abort_reason": "",
+                  "aborted": null,
+                  "cached": false,
+                  "drift_loss": 0.3,
+                  "not_completed_reason": null,
+                  "pass_fail": true,
+                  "score": 0.9
+                },
+                "progress": null,
+                "provenance": "partial",
+                "purpose": "One board entry executed against this candidate.",
+                "started_at": null,
+                "status": "done"
+              },
+              {
+                "children": [],
+                "coordinates": {
+                  "entry_id": "t2",
+                  "epoch_id": "e0",
+                  "generation_id": "v0",
+                  "match_id": "",
+                  "replicate": 0
+                },
+                "duration_ms": 0,
+                "ended_at": null,
+                "id": "e:e0/baseline/v0/t2/r0",
+                "kind": "board_entry_run",
+                "label": "t2 · replicate 0",
+                "outcome": {
+                  "abort_reason": "",
+                  "aborted": null,
+                  "cached": false,
+                  "drift_loss": 0.3,
+                  "not_completed_reason": null,
+                  "pass_fail": true,
+                  "score": 0.9
+                },
+                "progress": null,
+                "provenance": "partial",
+                "purpose": "One board entry executed against this candidate.",
+                "started_at": null,
+                "status": "done"
+              }
+            ],
             "coordinates": {
               "epoch_id": "e0",
               "generation_id": "v0"
@@ -1055,20 +1258,16 @@
             "kind": "board_sweep",
             "label": "Board sweep — v0",
             "outcome": {
-              "entries_without_units": [
-                "t1",
-                "t2"
-              ],
-              "unit_count": 0
+              "unit_count": 2
             },
             "progress": {
-              "done": 0,
+              "done": 2,
               "total": 2
             },
             "provenance": "partial",
             "purpose": "Every board entry executed against one candidate.",
             "started_at": null,
-            "status": "skipped"
+            "status": "done"
           }
         ],
         "coordinates": {
@@ -1091,7 +1290,7 @@
         "provenance": "partial",
         "purpose": "Evaluate the incoming champion before the loop proposes anything.",
         "started_at": null,
-        "status": "skipped"
+        "status": "done"
       }
     ]
   },
@@ -1107,7 +1306,66 @@
       {
         "children": [
           {
-            "children": [],
+            "children": [
+              {
+                "children": [],
+                "coordinates": {
+                  "entry_id": "t1",
+                  "epoch_id": "e1",
+                  "generation_id": "v0",
+                  "match_id": "",
+                  "replicate": 0
+                },
+                "duration_ms": 0,
+                "ended_at": null,
+                "id": "e:e1/baseline/v0/t1/r0",
+                "kind": "board_entry_run",
+                "label": "t1 · replicate 0",
+                "outcome": {
+                  "abort_reason": "",
+                  "aborted": null,
+                  "cached": false,
+                  "drift_loss": 0.3,
+                  "not_completed_reason": null,
+                  "pass_fail": true,
+                  "score": 0.9
+                },
+                "progress": null,
+                "provenance": "partial",
+                "purpose": "One board entry executed against this candidate.",
+                "started_at": null,
+                "status": "done"
+              },
+              {
+                "children": [],
+                "coordinates": {
+                  "entry_id": "t2",
+                  "epoch_id": "e1",
+                  "generation_id": "v0",
+                  "match_id": "",
+                  "replicate": 0
+                },
+                "duration_ms": 0,
+                "ended_at": null,
+                "id": "e:e1/baseline/v0/t2/r0",
+                "kind": "board_entry_run",
+                "label": "t2 · replicate 0",
+                "outcome": {
+                  "abort_reason": "",
+                  "aborted": null,
+                  "cached": false,
+                  "drift_loss": 0.3,
+                  "not_completed_reason": null,
+                  "pass_fail": true,
+                  "score": 0.9
+                },
+                "progress": null,
+                "provenance": "partial",
+                "purpose": "One board entry executed against this candidate.",
+                "started_at": null,
+                "status": "done"
+              }
+            ],
             "coordinates": {
               "epoch_id": "e1",
               "generation_id": "v0"
@@ -1118,23 +1376,78 @@
             "kind": "board_sweep",
             "label": "Board sweep — v0",
             "outcome": {
-              "entries_without_units": [
-                "t1",
-                "t2"
-              ],
-              "unit_count": 0
+              "unit_count": 2
             },
             "progress": {
-              "done": 0,
+              "done": 2,
               "total": 2
             },
             "provenance": "partial",
             "purpose": "Every board entry executed against one candidate.",
             "started_at": null,
-            "status": "skipped"
+            "status": "done"
           },
           {
-            "children": [],
+            "children": [
+              {
+                "children": [],
+                "coordinates": {
+                  "entry_id": "t1",
+                  "epoch_id": "e1",
+                  "generation_id": "v1",
+                  "match_id": "",
+                  "replicate": 0
+                },
+                "duration_ms": 0,
+                "ended_at": null,
+                "id": "e:e1/baseline/v1/t1/r0",
+                "kind": "board_entry_run",
+                "label": "t1 · replicate 0",
+                "outcome": {
+                  "abort_reason": "",
+                  "aborted": null,
+                  "cached": false,
+                  "drift_loss": 0.31,
+                  "not_completed_reason": null,
+                  "pass_fail": true,
+                  "score": 0.9
+                },
+                "progress": null,
+                "provenance": "partial",
+                "purpose": "One board entry executed against this candidate.",
+                "started_at": null,
+                "status": "done"
+              },
+              {
+                "children": [],
+                "coordinates": {
+                  "entry_id": "t2",
+                  "epoch_id": "e1",
+                  "generation_id": "v1",
+                  "match_id": "",
+                  "replicate": 0
+                },
+                "duration_ms": 0,
+                "ended_at": null,
+                "id": "e:e1/baseline/v1/t2/r0",
+                "kind": "board_entry_run",
+                "label": "t2 · replicate 0",
+                "outcome": {
+                  "abort_reason": "",
+                  "aborted": null,
+                  "cached": false,
+                  "drift_loss": 0.31,
+                  "not_completed_reason": null,
+                  "pass_fail": true,
+                  "score": 0.9
+                },
+                "progress": null,
+                "provenance": "partial",
+                "purpose": "One board entry executed against this candidate.",
+                "started_at": null,
+                "status": "done"
+              }
+            ],
             "coordinates": {
               "epoch_id": "e1",
               "generation_id": "v1"
@@ -1145,20 +1458,16 @@
             "kind": "board_sweep",
             "label": "Board sweep — v1",
             "outcome": {
-              "entries_without_units": [
-                "t1",
-                "t2"
-              ],
-              "unit_count": 0
+              "unit_count": 2
             },
             "progress": {
-              "done": 0,
+              "done": 2,
               "total": 2
             },
             "provenance": "partial",
             "purpose": "Every board entry executed against one candidate.",
             "started_at": null,
-            "status": "skipped"
+            "status": "done"
           }
         ],
         "coordinates": {
@@ -1182,7 +1491,7 @@
         "provenance": "partial",
         "purpose": "Evaluate the incoming champion before the loop proposes anything.",
         "started_at": null,
-        "status": "skipped"
+        "status": "done"
       }
     ]
   },
@@ -1329,7 +1638,7 @@
     "epoch_id": "e0",
     "generation_id": "v0",
     "pass_rate": {
-      "observed": null,
+      "observed": 0.0,
       "predicted": ""
     },
     "score": {
@@ -1344,7 +1653,7 @@
     "epoch_id": "e1",
     "generation_id": "v0",
     "pass_rate": {
-      "observed": null,
+      "observed": 0.0,
       "predicted": ""
     },
     "score": {
@@ -1359,7 +1668,7 @@
     "epoch_id": "e1",
     "generation_id": "v1",
     "pass_rate": {
-      "observed": null,
+      "observed": 0.0,
       "predicted": ""
     },
     "score": {
@@ -1381,7 +1690,8 @@
         "epoch_id": "e1",
         "generation_id": "v0",
         "parent_generation_id": null,
-        "promoted": true
+        "promoted": true,
+        "round_index": 0
       },
       {
         "created_at": "2026-01-01T00:00:00Z",
@@ -1393,7 +1703,8 @@
         "epoch_id": "e1",
         "generation_id": "v1",
         "parent_generation_id": "v0",
-        "promoted": false
+        "promoted": false,
+        "round_index": 0
       },
       {
         "created_at": "2026-03-01T00:00:00Z",
@@ -1405,7 +1716,8 @@
         "epoch_id": "e0",
         "generation_id": "v0",
         "parent_generation_id": null,
-        "promoted": true
+        "promoted": true,
+        "round_index": 0
       }
     ]
   },
@@ -1436,7 +1748,68 @@
         "children": [
           {
             "active": false,
-            "children": [],
+            "children": [
+              {
+                "active": false,
+                "children": [],
+                "coordinates": {
+                  "entry_id": "t1",
+                  "epoch_id": "e0",
+                  "generation_id": "v0",
+                  "match_id": "",
+                  "replicate": 0
+                },
+                "duration_ms": 0,
+                "ended_at": null,
+                "id": "e:e0/baseline/v0/t1/r0",
+                "kind": "board_entry_run",
+                "label": "t1 · replicate 0",
+                "outcome": {
+                  "abort_reason": "",
+                  "aborted": null,
+                  "cached": false,
+                  "drift_loss": 0.3,
+                  "not_completed_reason": null,
+                  "pass_fail": true,
+                  "score": 0.9
+                },
+                "progress": null,
+                "provenance": "partial",
+                "purpose": "One board entry executed against this candidate.",
+                "started_at": null,
+                "status": "done"
+              },
+              {
+                "active": false,
+                "children": [],
+                "coordinates": {
+                  "entry_id": "t2",
+                  "epoch_id": "e0",
+                  "generation_id": "v0",
+                  "match_id": "",
+                  "replicate": 0
+                },
+                "duration_ms": 0,
+                "ended_at": null,
+                "id": "e:e0/baseline/v0/t2/r0",
+                "kind": "board_entry_run",
+                "label": "t2 · replicate 0",
+                "outcome": {
+                  "abort_reason": "",
+                  "aborted": null,
+                  "cached": false,
+                  "drift_loss": 0.3,
+                  "not_completed_reason": null,
+                  "pass_fail": true,
+                  "score": 0.9
+                },
+                "progress": null,
+                "provenance": "partial",
+                "purpose": "One board entry executed against this candidate.",
+                "started_at": null,
+                "status": "done"
+              }
+            ],
             "coordinates": {
               "epoch_id": "e0",
               "generation_id": "v0"
@@ -1447,20 +1820,16 @@
             "kind": "board_sweep",
             "label": "Board sweep — v0",
             "outcome": {
-              "entries_without_units": [
-                "t1",
-                "t2"
-              ],
-              "unit_count": 0
+              "unit_count": 2
             },
             "progress": {
-              "done": 0,
+              "done": 2,
               "total": 2
             },
             "provenance": "partial",
             "purpose": "Every board entry executed against one candidate.",
             "started_at": null,
-            "status": "skipped"
+            "status": "done"
           }
         ],
         "coordinates": {
@@ -1483,7 +1852,7 @@
         "provenance": "partial",
         "purpose": "Evaluate the incoming champion before the loop proposes anything.",
         "started_at": null,
-        "status": "skipped"
+        "status": "done"
       }
     ]
   },
@@ -1796,7 +2165,6 @@
       "analysis_md": "",
       "board": [
         {
-          "budget_s": 1.0,
           "entry_id": "t1",
           "expectation_kind": "rubric",
           "input_preview": "Say hello.",
@@ -1804,15 +2172,16 @@
           "tags": [
             "smoke"
           ],
+          "wall_clock_budget_seconds": 1.0,
           "weight": 1.0
         },
         {
-          "budget_s": 1.0,
           "entry_id": "t2",
           "expectation_kind": "predicate",
           "input_preview": "Say goodbye.",
           "kind": "single_turn",
           "tags": [],
+          "wall_clock_budget_seconds": 1.0,
           "weight": 2.0
         }
       ],
@@ -1848,10 +2217,11 @@
         "epoch_id": "e0",
         "generation_id": "v0",
         "parent_generation_id": null,
-        "promoted": true
+        "promoted": true,
+        "round_index": 0
       },
       "closed": false,
-      "contract_hash": "hash-e0",
+      "contract_hash": "10b4d7c10ff82e639db708da3ec54fe920096f70474edcf750d6602b8a1d543c",
       "created_at": "2026-03-01T00:00:00Z",
       "current_champion": "v0",
       "delta_scalar_summary": {
@@ -1863,18 +2233,45 @@
         {
           "decision": "baseline",
           "decision_label": "seed (v0)",
+          "epoch_id": "e0",
+          "format_version": 1,
           "generation_id": "v0",
           "hypothesis": {
-            "summary": "hyp e0 v0"
+            "core_idea": "hyp e0 v0",
+            "expected_metric_movements": [],
+            "expected_pass_rate_delta": "",
+            "modulating": [],
+            "risks": "",
+            "why": ""
           },
+          "id": "exp_e0_v0",
           "outcome": {
-            "decision": "promoted",
-            "scalar_score_delta": -0.05
+            "champion_eval_mode": "full",
+            "drift_loss_delta": 0.0,
+            "eliminated_in_round": null,
+            "evidence": null,
+            "final_rank": null,
+            "generalization_gap": null,
+            "holdout": null,
+            "holdout_loss": null,
+            "match_record": [],
+            "metric_movements": [],
+            "operator_override": false,
+            "operator_override_reason": "",
+            "pass_rate_delta": 0.0,
+            "ran_at": "",
+            "rejection_reason": "",
+            "scalar_score_delta": -0.05,
+            "structure": "gauntlet",
+            "tournament_decision": "promoted",
+            "train_loss": null
           },
           "parent_generation_id": null,
+          "patch_ids": [],
           "patches": {},
           "promoted": true,
-          "proposed_at": "2026-03-01T00:00:00Z"
+          "proposed_at": "2026-03-01T00:00:00Z",
+          "round_index": 0
         }
       ],
       "goal": "Name sorts first, created last — the bug mirror.",
@@ -1936,7 +2333,8 @@
           ],
           "id": "e0"
         }
-      ]
+      ],
+      "format_version": 1
     },
     "liveness": {
       "state": "settled"

@@ -650,10 +650,9 @@ id. A body that instead inlines a `patches: [...]` array is refused by
 name, because reading it under the current rules would silently yield
 an experiment with no patches at all. Canonical JSON records — `experiment.json`, the epoch `config.json`, and
 `lineage.json` — carry an explicit `format_version: 1` stamp at write.
-A reader treats an absent stamp as version 1, so a record written
-without one still loads, and refuses a newer incompatible version with
-a clear error. No reader sniffs a record's shape to decide how to
-parse it.
+Readers require that stamp to be an integer equal to the supported version.
+Missing stamps, booleans, and other versions are refused. Readers neither infer
+a version from a record's shape nor rewrite unsupported canonical records.
 
 
 ## 9. Cross-references

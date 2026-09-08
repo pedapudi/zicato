@@ -23,7 +23,7 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping
 
-from zicato.core import DriftCount, ScoringWeights
+from zicato.core import MetricCount, ScoringWeights
 
 
 def is_judge_attributed_kind(kind: str) -> bool:
@@ -53,7 +53,7 @@ def _kind_multiplier(kind: str, weights: ScoringWeights) -> float:
 
 
 def builtin_drift_loss(
-    drift_counts: tuple[DriftCount, ...],
+    metric_counts: tuple[MetricCount, ...],
     plan_revisions: int,
     weights: ScoringWeights,
 ) -> float:
@@ -62,13 +62,13 @@ def builtin_drift_loss(
     Byte-identical to ``zicato.telemetry.reducer.compute_drift_loss``::
 
         loss = fsum(severity_weights[c.severity] * per_kind_weights(c.kind) * c.count
-                    for c in drift_counts if not judge-attributed)
+                    for c in metric_counts if not judge-attributed)
              + plan_revision_weight * plan_revisions
 
     clamped to ``max(0.0, loss)``. Drift EVENTS only: the run-outcome facts
     (task failures, a run that did not complete) are the ``failure:`` channel
     and wall-clock is the ``runtime:`` channel, both derived from the profile
-    by :meth:`zicato.core.LossProfile.unified_metrics`. Plan revisions stay
+    by :meth:`zicato.core.LossProfile.scoring_metrics`. Plan revisions stay
     here because they are the same telemetry stream — an adapter that emits no
     plan-revision events contributes exactly zero.
 
@@ -83,9 +83,12 @@ def builtin_drift_loss(
     # running accumulator make the result depend on something other than the
     # inputs — the interpreter version, or the order the counts arrive in.
     terms = [
-        sev_w.get(c.severity, 0.0) * _kind_multiplier(c.kind, weights) * c.count
-        for c in drift_counts
-        if not is_judge_attributed_kind(c.kind)
+        sev_w.get(c.severity, 0.0)
+        * _kind_multiplier(c.name.removeprefix("drift:"), weights)
+        * c.count
+        for c in metric_counts
+        if c.name.startswith("drift:")
+        and not is_judge_attributed_kind(c.name.removeprefix("drift:"))
     ]
     terms.append(weights.plan_revision_weight * plan_revisions)
     return max(0.0, math.fsum(terms))

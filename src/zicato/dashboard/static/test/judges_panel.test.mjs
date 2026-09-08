@@ -259,7 +259,7 @@ test('digest: a deep-equal payload yields a byte-identical digest; any moved fie
 const STORE = {
   epoch: {
     epoch_id: 'e4',
-    board: [{ entry_id: 'transformers_lay_audience', kind: 'single_turn', weight: 1, budget_s: 60, input_preview: 'Build slides' }],
+    board: [{ entry_id: 'transformers_lay_audience', kind: 'single_turn', weight: 1, wall_clock_budget_seconds: 60, input_preview: 'Build slides' }],
     board_judges: { transformers_lay_audience: ENTRY_JUDGES },
   },
   lineage: { generations: [{ generation_id: 'g0', parent_generation_id: null, promoted: true, epoch_id: 'e4' }] },

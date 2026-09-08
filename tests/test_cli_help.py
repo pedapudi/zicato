@@ -239,18 +239,23 @@ def test_evolve_resolves_and_auto_epochs_on_contract_change(
         json.dumps(
             {
                 "instance_id": "default",
-                "adapter": {"kind": "import", "factory": "tests._stub_adapter:make_stub_adapter"},
+                "adapter": {
+                    "kind": "import",
+                    "factory": "tests._stub_adapter:make_stub_adapter",
+                    "mutable_trees": [str(source)],
+                },
                 "generation_source_backend": "directory",
-                "mutable_trees": [str(source)],
-                "source_roots": [str(source)],
                 "proposer": stand_in_proposer_block(tmp_path / "foe"),
-                "runtime": {
-                    "target_call_llm": "tests.test_cli_help:_target_call_llm",
-                    "evaluation_call_llm": "tests.test_cli_help:_aux_call_llm",
+                "runtime": {},
+                "models": {
+                    "engines": {
+                        "target": {"call_llm": "tests.test_cli_help:_target_call_llm"},
+                        "evaluation": {"call_llm": "tests.test_cli_help:_aux_call_llm"},
+                    }
                 },
                 "contract": {
                     "board_path": str(board),
-                    "rubric_path": str(brief),
+                    "brief_path": str(brief),
                     "scoring_path": str(scoring),
                 },
             }

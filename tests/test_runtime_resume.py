@@ -72,7 +72,7 @@ def _make_experiment(generation_id: str, *, with_outcome: bool = False) -> Exper
     outcome = (
         OutcomeRecord(
             ran_at="2026-06-09T00:00:00Z",
-            drift_movements=(),
+            metric_movements=(),
             pass_rate_delta=0.0,
             drift_loss_delta=0.0,
             scalar_score_delta=0.0,
@@ -92,7 +92,7 @@ def _make_experiment(generation_id: str, *, with_outcome: bool = False) -> Exper
             core_idea="x",
             modulating=("greeting",),
             why="y",
-            expected_drift_movements=(),
+            expected_metric_movements=(),
             expected_pass_rate_delta="flat",
         ),
         patches=(patch,),
@@ -144,14 +144,14 @@ def _write_snapshot(workspace: Path, generation_id: str) -> None:
 
 
 def _write_loss(workspace: Path, generation_id: str, entry_id: str) -> None:
-    from zicato.core.types import DriftCount
+    from zicato.core.types import MetricCount
 
     loss = LossProfile(
         run_id=f"r-{generation_id}-{entry_id}",
         entry_id=entry_id,
         generation_id=generation_id,
         epoch_id=EPOCH,
-        drift_counts=(DriftCount(kind="off_topic", severity="info", count=0),),
+        metric_counts=(MetricCount(name="drift:off_topic", severity="info", count=0),),
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=10,
@@ -604,7 +604,6 @@ def test_dangling_patch_reference_discards(tmp_path: Path) -> None:
                     "core_idea": "x",
                     "modulating": ["greeting"],
                     "why": "y",
-                    "expected_drift_movements": [],
                     "expected_pass_rate_delta": "flat",
                     "risks": "",
                     "expected_metric_movements": [],

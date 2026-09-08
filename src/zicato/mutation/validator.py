@@ -42,14 +42,11 @@ Post-apply checks (:func:`validate_post_apply`)
    be a superset of the set before. A proposer is allowed to ADD imports
    but not silently remove them; the validator catches the latter.
 
-Each post-apply error string is PREFIXED with the stable check code it
-came from (``A1:`` … ``A4:``, the codes MUTATION-SURFACE.md §"post-apply"
-names). The prose after the code stays human-readable and free to
-reword; the code is the machine-readable half, so a consumer that counts
-per-check failure rates (the proposer scorecard) never regexes the
-sentence. :func:`classify_post_apply_error` is the ONE reader of that
-prefix — the same division of labour ``GateEvaluated`` draws between its
-numeric fields and its presentational ``rule_fired``.
+Each post-apply error starts with a failure name from :data:`POST_APPLY_CHECKS`.
+The names identify invalid source, a missing mutation point, a missing required
+placeholder, or a removed import. :func:`classify_post_apply_error` reads that
+prefix so the proposer scorecard can count failures independently of their
+explanatory prose.
 """
 
 from __future__ import annotations
@@ -83,7 +80,12 @@ _ALL_PAYLOAD_FIELDS = ("new_content", "new_numeric", "new_enum")
 #: The post-apply check codes, in check order, as MUTATION-SURFACE.md
 #: §"post-apply" names them. Every string :func:`validate_post_apply`
 #: returns starts with one of these plus ``": "``.
-POST_APPLY_CHECKS: tuple[str, ...] = ("A1", "A2", "A3", "A4")
+POST_APPLY_CHECKS: tuple[str, ...] = (
+    "invalid_source",
+    "missing_mutation",
+    "missing_placeholder",
+    "removed_import",
+)
 
 #: The separator between a check code and its human-readable prose.
 _CODE_SEP = ": "
@@ -92,12 +94,9 @@ _CODE_SEP = ": "
 def classify_post_apply_error(message: str) -> str | None:
     """Return the post-apply check code ``message`` came from, or ``None``.
 
-    ``None`` is the HONEST unknown rather than a bucket: a string that carries no
-    recognised prefix is either an error from some other producer (a
-    proposer parse failure, a credential lapse a best-of-N slot recorded)
-    or a validator error from a log written before the codes existed. A
-    consumer counts those separately rather than attributing them to a
-    check that may not have run.
+    Messages without a supported prefix return None. Proposal parsing and
+    credential failures can occur before validation, so consumers count them
+    separately without attributing them to a source check.
     """
     code, sep, _rest = message.partition(_CODE_SEP)
     if sep and code in POST_APPLY_CHECKS:
@@ -336,26 +335,26 @@ def validate_post_apply(
     # :func:`ast.parse` produces false positives.
     for file_path in touched_files:
         if not file_path.exists():
-            errors.append(f"A1: Touched file {file_path} does not exist post-apply")
+            errors.append(f"invalid_source: Touched file {file_path} does not exist post-apply")
             continue
         try:
             text = file_path.read_text(encoding="utf-8")
         except OSError as exc:
-            errors.append(f"A1: Could not read {file_path}: {exc}")
+            errors.append(f"invalid_source: Could not read {file_path}: {exc}")
             continue
         if file_path.suffix != ".py":
             continue
         try:
             ast.parse(text)
         except SyntaxError as exc:
-            errors.append(f"A1: Post-apply syntax error in {file_path}: {exc}")
+            errors.append(f"invalid_source: Post-apply syntax error in {file_path}: {exc}")
 
     # Check 2: every patch's mutation id still resolves.
     for patch in patches:
         if patch.mutation_id not in post_by_id:
             errors.append(
-                f"A2: Patch {patch.id!r}: mutation_id {patch.mutation_id!r} no longer "
-                f"resolves in target_root"
+                f"missing_mutation: Patch {patch.id!r}: mutation_id {patch.mutation_id!r} no longer"
+                f" resolves in target_root"
             )
 
     # Check 3: required placeholders survive.
@@ -373,8 +372,8 @@ def validate_post_apply(
         for placeholder in placeholders:
             if placeholder not in post.content:
                 errors.append(
-                    f"A3: Patch {patch.id!r}: required placeholder {placeholder!r} "
-                    f"missing from post-apply content of {patch.mutation_id!r}"
+                    f"missing_placeholder: Patch {patch.id!r}: required placeholder {placeholder!r}"
+                    f" missing from post-apply content of {patch.mutation_id!r}"
                 )
 
     # Check 4: top-level imports survive. Only meaningful for ``.py``
@@ -407,7 +406,8 @@ def validate_post_apply(
         if missing:
             missing_str = ", ".join(sorted(missing))
             errors.append(
-                f"A4: Post-apply file {file_path} dropped top-level imports: {missing_str}"
+                f"removed_import: Post-apply file {file_path} dropped top-level imports: "
+                f"{missing_str}"
             )
 
     return errors

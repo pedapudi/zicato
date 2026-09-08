@@ -252,7 +252,7 @@ class MetricPriorities:
         ``drift:`` and ``judge:`` are excluded because the two channels above
         already name them per kind and per judge. Names are DATA-DRIVEN from the
         round's own loss profiles (:meth:`~zicato.core.loss.LossProfile
-        .unified_metrics`), so a round with no losses yet carries the
+        .scoring_metrics`), so a round with no losses yet carries the
         namespace prefixes alone (``cost:``, ``rubric:``) rather than
         inventing metric names.
     """
@@ -353,9 +353,9 @@ def render_metric_priorities_block(priorities: MetricPriorities) -> str:
     if priorities.judges:
         example = priorities.judges[0].name
         sections.append(
-            "Declared board judges (THIS board) — reference by the judge's BARE name\n"
-            'in "expected_metric_movements"[].metric_name. Correct:\n'
-            f'    {{"metric_name": "{example}", "direction": "increase", "magnitude": "medium"}}\n'
+            "Declared board judges (THIS board) — reference by the judge's namespaced metric name\n"
+            'in "expected_metric_movements"[].metric_name (weighted loss; lower is better). Correct:\n'
+            f'    {{"metric_name": "judge:{example}", "direction": "decrease", "magnitude": "medium"}}\n'
             f'  WRONG (these will be rejected as written): "drift:{example}",\n'
             f'  "drift:custom:{example}", "custom:{example}".\n'
             + _render_priority_targets(priorities.judges)
@@ -365,8 +365,7 @@ def render_metric_priorities_block(priorities: MetricPriorities) -> str:
     if priorities.drift_kinds:
         sections.append(
             'Built-in drift kinds — reference as "drift:<kind>" (e.g.\n'
-            '{"metric_name": "drift:off_topic", ...}) or, in\n'
-            'expected_drift_movements, {"kind": "off_topic", ...}:\n'
+            '{"metric_name": "drift:off_topic", ...}):\n'
             + _render_priority_targets(priorities.drift_kinds)
         )
     if priorities.pass_rate_weight:
@@ -396,7 +395,7 @@ def render_metric_targets_block(
     guessing:
 
     * the declared board judges (e.g. ``file_findability``) — addressed by
-      their BARE name in ``expected_metric_movements[].metric_name`` (NOT a
+      ``judge:<name>`` in ``expected_metric_movements[].metric_name`` (NOT a
       ``drift:custom:<name>`` mangle), since a custom judge emits its
       goldfive signal under the single ``"custom"`` drift kind but is named
       by its own judge name in a hypothesis; and
@@ -439,11 +438,11 @@ def render_metric_targets_block(
             f"Declared board judges (THIS board): {judges_line}\n"
             "  To predict a declared board judge moving, add an entry to\n"
             '  "expected_metric_movements" whose "metric_name" is the judge\'s\n'
-            "  BARE name — NOT a namespaced or prefixed form. Correct:\n"
-            f'    {{"metric_name": "{judge_example}", "direction": "increase", "magnitude": "medium"}}\n'
+            "  name prefixed by judge:. Correct:\n"
+            f'    {{"metric_name": "judge:{judge_example}", "direction": "decrease", "magnitude": "medium"}}\n'
             f'  WRONG (these will be rejected as written): "drift:{judge_example}",\n'
             f'  "drift:custom:{judge_example}", "custom:{judge_example}". Use the\n'
-            "  bare judge name."
+            "  judge: prefix."
         )
     else:
         judges_section = (
@@ -452,8 +451,7 @@ def render_metric_targets_block(
     return (
         f"{judges_section}\n\n"
         "Valid built-in drift kinds — reference these in a movement as\n"
-        '"drift:<kind>" (e.g. {"metric_name": "drift:off_topic", ...} or, in\n'
-        'expected_drift_movements, {"kind": "off_topic", ...}):\n'
+        '"drift:<kind>" (e.g. {"metric_name": "drift:off_topic", ...}):\n'
         f"  {drift_kinds}\n\n"
         "Other metric namespaces (cost / rubric / latency / schema / output)\n"
         'are accepted as-is, e.g. "cost:tokens_spent", "rubric:slide_structure".'
@@ -915,10 +913,9 @@ The object conforms to this JSON Schema:
 Beyond the schema:
 - Every "mutation_id" MUST appear in the mutation manifest the user
   message lists, and MUST NOT appear in the brief's forbidden-edits list.
-- At least one of "expected_drift_movements" or
-  "expected_metric_movements" MUST be present and non-empty, and every
-  name in them MUST come from the user message's valid expectation
-  targets. To predict a declared board judge moving, use its BARE name.
+- "expected_metric_movements" MUST contain at least one prediction. Use
+  "drift:<kind>" for a built-in drift kind and "judge:<name>" for a declared
+  board judge. Other measured metrics retain their declared namespace.
 - For a "replace" on a span point, "new_content" is the replacement text
   for that one string literal and nothing around it — no signature, no
   import line, no ``zicato:mutable`` marker, no other mutation point. The

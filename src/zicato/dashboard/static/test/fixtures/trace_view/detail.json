@@ -2,7 +2,7 @@
   "dialect": "adk_events",
   "episodes": [
     {
-      "episode_id": "ep-acaca016",
+      "episode_id": "ep-34b1baef",
       "episode_type": "imported_signal",
       "glyph": "✕",
       "severity_rank": 5,
@@ -13,13 +13,13 @@
         "x1": 0.25
       },
       "suggestion_ids": [
-        "sug-14ffa7e6"
+        "sug-08ce2f79"
       ],
       "summary": "Foreign trace 'adk_run.jsonl' (adk_events) showed a error_cascade the loop never saw.",
       "tone": "bad"
     },
     {
-      "episode_id": "ep-971de1aa",
+      "episode_id": "ep-60505383",
       "episode_type": "imported_signal",
       "glyph": "✕",
       "severity_rank": 5,
@@ -30,13 +30,13 @@
         "x1": 0.45
       },
       "suggestion_ids": [
-        "sug-c5760e02"
+        "sug-4d3fec04"
       ],
       "summary": "Foreign trace 'adk_run.jsonl' (adk_events) showed a abort_pattern the loop never saw.",
       "tone": "bad"
     },
     {
-      "episode_id": "ep-dc4a5674",
+      "episode_id": "ep-c4fabf76",
       "episode_type": "imported_signal",
       "glyph": "↻",
       "severity_rank": 3,
@@ -47,13 +47,13 @@
         "x1": 0.65
       },
       "suggestion_ids": [
-        "sug-f2a45b2d"
+        "sug-82d6689f"
       ],
       "summary": "Foreign trace 'adk_run.jsonl' (adk_events) showed a retry_loop the loop never saw.",
       "tone": "caution"
     },
     {
-      "episode_id": "ep-cff2490f",
+      "episode_id": "ep-a22bc598",
       "episode_type": "imported_signal",
       "glyph": "⇄",
       "severity_rank": 2,
@@ -64,7 +64,7 @@
         "x1": 0.85
       },
       "suggestion_ids": [
-        "sug-734ba4eb"
+        "sug-75c8c59c"
       ],
       "summary": "Foreign trace 'adk_run.jsonl' (adk_events) showed a transfer_churn the loop never saw.",
       "tone": "neutral"
@@ -99,13 +99,13 @@
     "episodes": [
       {
         "anchor": "signal",
-        "episode_id": "ep-acaca016",
+        "episode_id": "ep-34b1baef",
         "glyph": "✕",
         "kind": "imported_signal",
         "severity_rank": 5,
         "signal_kind": "error_cascade",
         "suggestion_ids": [
-          "sug-14ffa7e6"
+          "sug-08ce2f79"
         ],
         "tone": "bad",
         "x0": 0.15,
@@ -113,13 +113,13 @@
       },
       {
         "anchor": "signal",
-        "episode_id": "ep-971de1aa",
+        "episode_id": "ep-60505383",
         "glyph": "✕",
         "kind": "imported_signal",
         "severity_rank": 5,
         "signal_kind": "abort_pattern",
         "suggestion_ids": [
-          "sug-c5760e02"
+          "sug-4d3fec04"
         ],
         "tone": "bad",
         "x0": 0.35,
@@ -127,13 +127,13 @@
       },
       {
         "anchor": "signal",
-        "episode_id": "ep-dc4a5674",
+        "episode_id": "ep-c4fabf76",
         "glyph": "↻",
         "kind": "imported_signal",
         "severity_rank": 3,
         "signal_kind": "retry_loop",
         "suggestion_ids": [
-          "sug-f2a45b2d"
+          "sug-82d6689f"
         ],
         "tone": "caution",
         "x0": 0.55,
@@ -141,13 +141,13 @@
       },
       {
         "anchor": "signal",
-        "episode_id": "ep-cff2490f",
+        "episode_id": "ep-a22bc598",
         "glyph": "⇄",
         "kind": "imported_signal",
         "severity_rank": 2,
         "signal_kind": "transfer_churn",
         "suggestion_ids": [
-          "sug-734ba4eb"
+          "sug-75c8c59c"
         ],
         "tone": "neutral",
         "x0": 0.75,
@@ -214,9 +214,9 @@
         "x": 0.8
       }
     ],
-    "trace_id": "trace-a0be332d"
+    "trace_id": "trace-5ca172fc"
   },
-  "trace_id": "trace-a0be332d",
+  "trace_id": "trace-5ca172fc",
   "turns": [
     {
       "chars": 66,

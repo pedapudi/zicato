@@ -110,7 +110,6 @@ def _experiment(generation_id: str, parent_id: str | None) -> Experiment:
     if generation_id in _DELTAS:
         outcome = OutcomeRecord(
             ran_at="2026-09-01T01:00:00Z",
-            drift_movements=(),
             metric_movements=(),
             pass_rate_delta=0.0,
             drift_loss_delta=_DELTAS[generation_id],
@@ -127,7 +126,7 @@ def _experiment(generation_id: str, parent_id: str | None) -> Experiment:
             core_idea=f"change {generation_id}",
             modulating=("instruction",),
             why="parity fixture",
-            expected_drift_movements=(),
+            expected_metric_movements=(),
             expected_pass_rate_delta="+0.0",
         ),
         patches=(),
@@ -158,7 +157,7 @@ def workspace(tmp_path: Path) -> Path:
                     entry_id=entry_id,
                     generation_id=generation_id,
                     epoch_id=EPOCH,
-                    drift_counts=(),
+                    metric_counts=(),
                     plan_revisions=0,
                     task_failure_ratio=0.0,
                     runtime_ms=1000,

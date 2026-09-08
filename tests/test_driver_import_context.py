@@ -12,9 +12,12 @@ from pathlib import Path
 
 import pytest
 
+from zicato.config import resolve_configuration
 from zicato.core.adapter_config import DriverImportContext
 from zicato.core.loss import validate_loss_identity
 from zicato.core.measurement import MeasurementDraw, measurement_artifact_path
+from zicato.core.run_context import RunContext
+from zicato.core.runtime_context import WorkerRuntimeContext
 from zicato.core.workspace import run_dir, run_id_for_unit
 from zicato.driver_imports import driver_import_scope, imported_sources
 from zicato.telemetry.reducer import read_loss_profile
@@ -139,10 +142,7 @@ def test_missing_candidate_cannot_use_the_live_target(tmp_path: Path) -> None:
             imported_sources(context, snapshot)
 
 
-@pytest.mark.parametrize("context_format", ["legacy", "record"])
-def test_two_real_workers_import_their_own_snapshots_with_preloaded_decoys(
-    tmp_path: Path, context_format: str
-) -> None:
+def test_two_real_workers_import_their_own_snapshots_with_preloaded_decoys(tmp_path: Path) -> None:
     project, workspace = tmp_path / "driver project with spaces", tmp_path / ".zicato"
     _package(project, "live decoy")
     _driver(project)
@@ -163,12 +163,6 @@ def test_two_real_workers_import_their_own_snapshots_with_preloaded_decoys(
         ).parent
         unit.mkdir(parents=True)
         payload = {
-            "workspace_root": str(workspace),
-            "epoch_id": "e0",
-            "generation_id": generation,
-            "run_id": run_id,
-            "snapshot_root": str(snapshot),
-            "scratch_dir": str(unit / "scratch"),
             "driver_imports": DriverImportContext((project,), ("candidate_target",)).document(),
             "adapter": {"kind": "import", "factory": "fixed_driver:make_adapter"},
             "entry": {
@@ -178,21 +172,25 @@ def test_two_real_workers_import_their_own_snapshots_with_preloaded_decoys(
                 "wall_clock_budget_seconds": 20,
                 "context": {"generation_id": generation},
             },
-            "target_role": {"dotted": "fixed_driver:target"},
-            "evaluation_role": {"dotted": "fixed_driver:evaluation"},
+            "target_role": {"models_role": {"call_llm": "fixed_driver:target"}},
+            "evaluation_role": {"models_role": {"call_llm": "fixed_driver:evaluation"}},
             "sink_events_path": str(unit / "events.jsonl"),
             "loss_path": str(unit / "loss.json"),
             "measurement": measurement.to_json(),
+            "weights": {},
             "result_path": str(unit / "worker.result.json"),
-            "harmonograf_url": "",
+            "runtime_context": WorkerRuntimeContext(
+                run=RunContext(
+                    Path(str(workspace)),
+                    "e0",
+                    generation,
+                    run_id,
+                    Path(str(snapshot)),
+                    Path(str(unit / "scratch")),
+                )
+            ).to_json(),
+            "configuration": resolve_configuration({"runtime": {}}).to_json(),
         }
-        if context_format == "record":
-            from zicato.core.run_context import RunContext
-            from zicato.core.runtime_context import WorkerRuntimeContext
-
-            payload["runtime_context"] = WorkerRuntimeContext(
-                run=RunContext(workspace, "e0", generation, run_id, snapshot, unit / "scratch")
-            ).to_json()
         args = unit / "args.json"
         args.write_text(json.dumps(payload), encoding="utf-8")
         bootstrap = (

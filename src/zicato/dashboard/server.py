@@ -126,7 +126,6 @@ def _ensure_index_at_startup(paths: WorkspacePaths) -> None:
     more gracefully than it survives a failed startup.
     """
     from zicato.index.ingest import ensure_index  # noqa: PLC0415
-    from zicato.index.schema import IndexSchemaNewerError  # noqa: PLC0415
     from zicato.runtime.lock import read_workspace_lock  # noqa: PLC0415
 
     try:
@@ -148,13 +147,6 @@ def _ensure_index_at_startup(paths: WorkspacePaths) -> None:
         # to ignore the one line that means something happened.
         if actions:
             log.info("index: %s", actions[0])
-    except IndexSchemaNewerError as exc:
-        log.warning(
-            "index: %s — the analytical views render from a stale index. "
-            "Recover with: delete the workspace index.db and run `zicato repair index`, "
-            "or serve this workspace with the newer zicato that wrote it.",
-            exc,
-        )
     except Exception as exc:  # noqa: BLE001 — startup index build is best-effort
         log.debug("index: startup build skipped: %s", exc)
 

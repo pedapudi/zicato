@@ -31,9 +31,6 @@ def inherited_runtime_context() -> WorkerRuntimeContext | None:
     return WorkerRuntimeContext.from_json(document["runtime_context"])
 
 
-def bind_worker_runtime_context(args_path: Path, *, has_context: bool) -> None:
+def bind_worker_runtime_context(args_path: Path) -> None:
     """Bind inheritance only inside the isolated worker process, before target loading."""
-    if has_context:
-        os.environ[RUNTIME_CONTEXT_ENV] = str(args_path.resolve())
-    else:
-        os.environ.pop(RUNTIME_CONTEXT_ENV, None)
+    os.environ[RUNTIME_CONTEXT_ENV] = str(args_path.resolve())

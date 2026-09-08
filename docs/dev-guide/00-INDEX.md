@@ -60,7 +60,7 @@ chapter 01.
 | **G3** | No live model run without go-ahead | Live runs cost money and need explicit operator sign-off; the deterministic convergence example is the sanctioned end-to-end vehicle. | run `examples/zicato_examples/target_0_convergence/RUN.md` rather than a real model |
 | **G4** | Both oracles pass in complete validation | `test_convergence_known_answer` (the loop converges) + `test_decision_procedure_power` (the decision procedure's measured operating characteristics). | `make check` |
 | **G5** | Parity + import contracts + node | The shared plan runs golden, import and JavaScript checks through `make check`. | all green |
-| **G6** | Omit-at-default contract discipline | A new default-off contract field MUST be registered in `_SCORING_OMIT_AT_DEFAULT_FIELDS`, or every existing workspace spuriously rolls its epoch. | `03-contract-and-epochs.md`; contract-hash parity gate |
+| **G6** | Complete configuration identity | Serialize and hash every effective scoring field through the shared declarations, including defaults; load configuration with the same strict decoder. | `03-contract-and-epochs.md`; contract identity and serialization checks |
 | **G7** | Measurement purpose and draw identity | `core/measurement.py` owns the allocated ranges and full-interval validation. Loss and capture records name their purpose and draw. Historical conflicts remain auditable and supply no cache or statistical evidence. | `04-evaluation-statistics.md §8` |
 | **G8** | The restricted-visibility envelope | Nothing entry-identifying (entry ids, task text, holdout data, raw per-entry outcomes) may reach the proposer. Every channel is banded/aggregated/anonymized/redacted. | `05-proposer.md` §5.8; adversarial-identity fixtures |
 | **G9** | Module-level callables only across the worker boundary | `_callable_dotted_path` rejects closures; scripted proposers/harnesses are module-level functions + module state + `reset()`. | `06-tournament-and-selection.md` §6.3 |
@@ -74,7 +74,7 @@ chapter 01.
 |---|---|---|---|
 | 01 | `01-orientation.md` | vocabulary, the repo map, the 10 Golden Rules, your-first-hour | first session, always |
 | 02 | `02-architecture.md` | one round twice (gauntlet + multi-challenger), the data-type flow, the extracted-seam inventory | you need to see where a change sits |
-| 03 | `03-contract-and-epochs.md` | the contract hash + every canonicalizer, omit-at-default, epoch lifecycle, **add-a-contract-knob** | you add/change any contract knob or epoch behavior |
+| 03 | `03-contract-and-epochs.md` | the contract hash, complete configuration, strict loading, epoch lifecycle, **add-a-contract-field** | you add/change any contract knob or epoch behavior |
 | 04 | `04-evaluation-statistics.md` | the measurement chain, the gate, the **noise doctrine**, the reserved-base ledger, how to prove a statistical change | you touch scoring, the gate, replication, calibration, or the evidence gate |
 | 05 | `05-proposer.md` | the three proposer paths, `ProposerContext`, best-of-N + screen + critique + align-tree, the **restricted-visibility envelope** | you change how candidates are generated or what the proposer sees |
 | 06 | `06-tournament-and-selection.md` | `run_tournament`/`resolve_tournament`, the five structures, the **worker boundary**, the **unit cache** | you touch tournament execution, structures, the worker, or caching |
@@ -87,7 +87,7 @@ chapter 01.
 | 13 | `13-recipes.md` | the cookbook — fourteen self-contained, copy-precise recipes | you are about to make a change (find yours first) |
 | 14 | `14-goals-and-roadmap.md` | the north star, the proof state, the endpoint-gated runbook, the deferred register, anti-goals | you are proposing new work or a live run |
 
-Total: roughly 24,000 lines across 14 chapters plus this index.
+The guide contains 14 chapters plus this index.
 
 ---
 
@@ -103,11 +103,11 @@ citing section states the failure mode.
 | Namespace | Owner | Governs |
 |---|---|---|
 | **G1–G10** | `01-orientation.md §4` | the Golden Rules (above) |
-| **numbered in place** | `03-contract-and-epochs.md` | the contract hash and epoch identity: hash-identifies-contract-not-checkout, omit-at-default, serializer-completeness, edit-the-body-rolls, runtime-never-hashed, absent-hash-is-`None`, refuse-on-newer, lineage-tri-state |
+| **numbered in place** | `03-contract-and-epochs.md` | the contract hash and epoch identity: location-independent identity, complete configuration, shared serialization and strict decoding, grading source identity, measurements excluded, required hash and execution bindings, record acceptance, lineage promotion states |
 | **numbered in place** | `04-evaluation-statistics.md` | the noise doctrine: measurements are stochastic, margin is read against the floor, the evidence gate buys soundness rather than power, replicate bases are reserved, and a statistical change is proven by its operating characteristics |
 | **numbered in place** | `05-proposer.md` | the proposer contract: the restricted-visibility envelope, mounted-tree-matches-chosen, screen-vetoes-never-ranks, pure-prompt-assembler, `ProposerError`-only, byte-identical-at-default |
 | **T** | `06-tournament-and-selection.md` | tournament execution and the unit cache: evaluate-once, the canonical replicate slot, cache-only-budget-exhaustion, importable worker callables, explicit invocation settings, the gate as the per-duel decider, only-promotion-advances-the-champion, disjoint reserved bases, mounted-tree-matches-the-chosen-candidate, distinct-draws-only, placebo-never-crowns |
-| **D** | `07-runtime-and-durability.md` | persistence and crash-safety: files canonical and the index derived, best-effort index writes, atomic record writes, torn-tail tolerance for append-only logs, transactional derivation, known-shape ephemeral checkouts, prune-trees-never-records, outcome-before-journal-and-lineage, pid-plus-start-time identity, one writer per event log, best-effort round-log emission, refuse-a-newer-record-format |
+| **D** | `07-runtime-and-durability.md` | persistence and crash-safety: files canonical and the index derived, best-effort index writes, atomic record writes, torn-tail tolerance for append-only logs, transactional derivation, known-shape ephemeral checkouts, prune-trees-never-records, outcome-before-journal-and-lineage, pid-plus-start-time identity, one writer per event log, best-effort round-log emission, supported record formats |
 | **S** | `08-supervisor.md` | the supervisor's out-of-band enforcement: out-of-band supervision, never-kill-the-orchestrator, vetted pid signalling, clamped deadlines, confirmed death before reaping, path-confined snapshot collection, a ledger that records without gating, a read-only version-pinned index, the sole worker signaller, read-only fail-open integrity checks, two loops with a fixed trigger priority, a live surface that never blocks or leaks, no cached state across ticks, an operational rather than analytical HTTP surface |
 | **DQ** | `09-dashboard-and-query.md` | the dashboard and query doctrine: server-computes-client-renders, one spelling per wire field, every reader is best-effort, the query layer is library code, change-signals carry no content, a no-op heartbeat rebuilds zero DOM, verdicts are honest about the noise floor, null-degrade under the Rust supervisor, controls gate on writability, the champion is the reigning spine end, a payload-shape change is a clean break, validate an id before it touches the workspace, every JSON GET has a declared contract, lineage owns topology, composite readers share walks |
 | **L** | `10-cli-and-configuration.md` | contract and library boundaries: typed edits, strict admission, shared cost estimation, recoverable publication, explicit invocation settings, a lazy facade, and driver-independent library code |
@@ -167,8 +167,8 @@ If your task is here, follow the recipe — do not improvise. Each is self-conta
 1. Add a health detector · 2. Add a loss-pattern detector · 3. Add a scoring
 namespace / weight · 4. Add a board expectation kind · 5. Add a goldfive
 drift-kind consumer · 6. Extend the deterministic example target (updating both
-oracles honestly) · 7. Add an index table / column (schema bump + migration +
-golden re-capture) · 8. Add an epoch-open step · 9. Change the round pipeline
+oracles honestly) · 7. Add an index table / column (schema bump, rebuild from
+canonical records, and reviewed reference outputs) · 8. Add an epoch-open step · 9. Change the round pipeline
 safely (the map of module responsibilities) · 10. Run focused checks and require complete CI validation ·
 11. Investigate a red parity gate · 12. Debug a failing tournament end-to-end run
 (the forensic file map) · 13. Safely bump a pinned operating-characteristic

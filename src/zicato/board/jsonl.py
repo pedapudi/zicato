@@ -235,14 +235,6 @@ def _parse_board(text: str, *, source: Path | str) -> BoardDocument:
             continue
 
         seen_any_row = True
-        # Back-compat alias: ``budget_s`` is the short field name
-        # preferred by Python-builder boards (see
-        # :class:`zicato.board.builder.Entry`). Promote it to the
-        # canonical ``wall_clock_budget_seconds`` when only the
-        # short form is present so older readers stay tolerant of
-        # boards written by the builder API.
-        if "budget_s" in payload and "wall_clock_budget_seconds" not in payload:
-            payload["wall_clock_budget_seconds"] = payload.pop("budget_s")
         _reject_legacy_expectation(payload, f"{path}: line {line_no}")
         try:
             entry = validate_board_entry(payload)
@@ -296,13 +288,6 @@ def board_meta_to_dict(
 def entry_to_dict(entry: BoardEntry) -> dict[str, Any]:
     """Serialize one entry, emitting only the keys relevant to its kind.
 
-    The wall-clock budget is written as ``budget_s`` (the short form)
-    rather than the dataclass-canonical ``wall_clock_budget_seconds``.
-    The reader in :func:`load_board_with_meta` accepts both names — long
-    form for hand-written and operator-authored JSONL, short form for
-    boards produced by :class:`zicato.board.builder.Board.save` — so this
-    asymmetry is invisible to round-trip callers.
-
     Enum-valued fields (expectation ``kind`` / ``reads``, judge ``mode`` /
     ``severity``) are written as their bare wire token: the enums all
     subclass ``str``, so ``json.dumps`` does the right thing without an
@@ -312,7 +297,7 @@ def entry_to_dict(entry: BoardEntry) -> dict[str, Any]:
     out: dict[str, Any] = {
         "id": entry.id,
         "kind": entry.kind,
-        "budget_s": entry.wall_clock_budget_seconds,
+        "wall_clock_budget_seconds": entry.wall_clock_budget_seconds,
     }
     # Optional envelope fields — only emit if they carry signal.
     if entry.weight != 1.0:

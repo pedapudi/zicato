@@ -14,7 +14,6 @@ from pathlib import Path
 
 from zicato.epoch.snapshot_scope import (
     ARTIFACT_NAMES,
-    SCRATCH_DIR_ENV,
     copytree_ignore,
     gitignore_lines,
     is_artifact,
@@ -119,13 +118,3 @@ def test_gitignore_lines_include_pyc_glob() -> None:
 def test_gitignore_lines_honour_extra_names() -> None:
     lines = gitignore_lines(extra_names=["renders"])
     assert "renders" in lines
-
-
-# ---------------------------------------------------------------------------
-# scratch-dir env var contract
-# ---------------------------------------------------------------------------
-
-
-def test_scratch_dir_env_var_name_is_stable() -> None:
-    """The env var name is a cross-zone contract — pin it."""
-    assert SCRATCH_DIR_ENV == "ZICATO_RUN_SCRATCH_DIR"

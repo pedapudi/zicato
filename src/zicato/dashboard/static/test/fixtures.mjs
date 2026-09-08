@@ -87,8 +87,8 @@ export const FIXTURE = {
       { generation_id: 'v2', parent_generation_id: 'v0', outcome: { decision: 'rejected' }, decision: 'rejected', promoted: false },
     ],
     board: [
-      { entry_id: 'waffles_single', kind: 'single_turn', input_preview: 'Make a presentation about waffles.', expectation_kind: 'predicate', budget_s: 180, weight: 1, tags: ['smoke'] },
-      { entry_id: 'picky_stakeholder_emulated', kind: 'multi_turn_emulated', input_preview: null, expectation_kind: null, budget_s: 360, weight: 1, tags: ['hard'] },
+      { entry_id: 'waffles_single', kind: 'single_turn', input_preview: 'Make a presentation about waffles.', expectation_kind: 'predicate', wall_clock_budget_seconds: 180, weight: 1, tags: ['smoke'] },
+      { entry_id: 'picky_stakeholder_emulated', kind: 'multi_turn_emulated', input_preview: null, expectation_kind: null, wall_clock_budget_seconds: 360, weight: 1, tags: ['hard'] },
     ],
   },
   '/api/lineage': { generations: [
@@ -247,11 +247,11 @@ export const PROPOSER_SCORECARD = {
 
 export const PROPOSER_RECOMMENDATIONS = { found: true, count: 1, pending: [
   { finding_id: 'prec-9f3a12bc', epoch_id: 'e0', reflection_id: 'prefl-20260601T090000Z',
-    severity: 'critical', title: 'Post-apply check A4 fails on 38% of proposals',
+    severity: 'critical', title: 'Post-apply check removed_import fails on 38% of proposals',
     detail: 'Three of eight proposal attempts dropped a top-level import.',
     population: '8 proposal attempts across 8 rounds of epoch e0.',
-    measured: [{ metric: 'validator_failure_rate.A4', k: 3, n: 8, value: 0.375, provisional: false }],
-    compared_against: 'Banded prior epochs (A4): none',
+    measured: [{ metric: 'validator_failure_rate.removed_import', k: 3, n: 8, value: 0.375, provisional: false }],
+    compared_against: 'Banded prior epochs (removed_import): none',
     remedy_safety: 'The edit writes markdown under the proposer dir’s skills/.',
     remedy_kind: 'skill_add', remedy_path: 'skills/preserve-imports.md',
     remedy_sha256: 'a1b2c3d4e5f6' },

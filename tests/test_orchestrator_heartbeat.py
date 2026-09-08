@@ -19,9 +19,9 @@ from tests._orchestrator_harness import (
 )
 from zicato.core.types import (
     BoardEntry,
-    DriftCount,
     ExpectationResult,
     LossProfile,
+    MetricCount,
     RunResult,
     ScoringWeights,
 )
@@ -45,9 +45,14 @@ def _bootstrap_workspace(tmp_path: Path) -> tuple[Path, str]:
                 # tags this fixture never writes.
                 "generation_source_backend": "directory",
                 "adapter": {"kind": "import", "factory": "tests._stub_adapter:make_stub_adapter"},
-                "runtime": {
-                    "target_call_llm": "tests._orchestrator_harness:target_call_llm",
-                    "evaluation_call_llm": "tests._orchestrator_harness:evaluation_call_llm",
+                "runtime": {},
+                "models": {
+                    "engines": {
+                        "target": {"call_llm": "tests._orchestrator_harness:target_call_llm"},
+                        "evaluation": {
+                            "call_llm": "tests._orchestrator_harness:evaluation_call_llm"
+                        },
+                    }
                 },
             }
         )
@@ -165,7 +170,7 @@ def _install_telemetry_stubs(
             entry_id=entry.id,
             generation_id=generation_id,
             epoch_id=epoch_id,
-            drift_counts=(DriftCount(kind="off_topic", severity="info", count=0),),
+            metric_counts=(MetricCount(name="drift:off_topic", severity="info", count=0),),
             plan_revisions=0,
             task_failure_ratio=0.0,
             runtime_ms=100,

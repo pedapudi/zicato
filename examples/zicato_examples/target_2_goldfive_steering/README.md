@@ -110,7 +110,7 @@ source root for the duration of the child generation's runs.
 ```
 zicato epoch new goldfive-steering-e0 \
   --board examples/zicato_examples/target_2_goldfive_steering/board.jsonl \
-  --rubric examples/zicato_examples/target_2_goldfive_steering/rubric.md \
+  --brief examples/zicato_examples/target_2_goldfive_steering/rubric.md \
   --scoring examples/zicato_examples/target_2_goldfive_steering/scoring.json
 
 zicato evolve

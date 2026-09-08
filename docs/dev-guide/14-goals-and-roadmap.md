@@ -928,13 +928,11 @@ Two territories require a written design note **before** implementation:
   process-exemplars work is the precedent: design doc first
   (`docs/design/PROCESS-EXEMPLARS.md`), redaction rules explicit, opt-in and
   deliberately NOT scaffolded.
-- **Anything that touches contract identity** — new `ScoringWeights` fields,
-  canonicalization changes, hash inputs. The note must state: the
-  omit-at-default decision (does an unset field roll existing epochs? it must
-  not), the epoch-roll semantics of setting it, and — if the hash moves for
-  anyone — the explicit BREAKING declaration with the one-time roll called
-  out (the `8d0a94f` precedent: when the hash is *wrong*, move it once,
-  loudly, rather than shimming the wrongness stable).
+- **Anything that touches contract identity** — scoring fields,
+  canonicalization, or hash inputs. The note must state the effective defaults,
+  the values and source identities included in the hash, and the resulting
+  epoch-roll behavior. The complete configuration is serialized and hashed;
+  compatibility with another configuration shape is not a design constraint.
 
 ### 5.4 Measured acceptance criteria, stated up front
 
@@ -956,10 +954,10 @@ named test that fails today and passes after.
   workstreams only on genuinely disjoint surfaces (and module moves —
   facade/boundary work — sequenced last so files do not churn under active
   branches).
-- **Both oracles green at every merge point**: the convergence known-answer
-  suite and the decision-procedure power suite, plus byte-identity checks for
-  every default-off knob you added (the "oracle byte-identical at
-  default-off" acceptance line).
+- **Both oracles pass on the proposed source:** the convergence known-answer
+  suite and the decision-procedure power suite. Check disabled feature behavior
+  and complete configuration identity separately. A behaviorally inert setting
+  still participates in the contract hash.
 - **Regression tests fail with the fix stashed** — the fail-with-the-fix-stashed
   lesson (12-bug-casebook.md), demonstrated on each test rather than assumed.
 - **Per-branch vendor scan** before any push or PR: no model-vendor names,
@@ -1018,9 +1016,9 @@ endorse starting the work.
    evaluation-side. Does it touch contract identity? YES: a new resolution rule
    changes what "winner" means, so it is a `TournamentStructure` param (folds into
    the contract hash via the scoring recursion, 03-contract-and-epochs.md §3.2.3)
-   and needs the omit-at-default treatment (§3.4) so existing epochs do not roll.
-   → design note required (§5.3), stating the omit-at-default decision and the
-   epoch-roll semantics of opting in.
+   and its default and non-default values both participate in identity.
+   The design note (§5.3) must explain those values and the resulting epoch-roll
+   behavior. It must not omit the field to retain a previous hash.
 
 4. **Slots audit.** Every artifact the resolver writes (a rating block, a
    ci_history) already has a home on `OutcomeRecord.evidence`
@@ -1037,8 +1035,8 @@ endorse starting the work.
 
 6. **Cadence.** Any confirmed resolver bug ships first (§5.5, fixes-first); the
    new resolver option stacks as a single-concern PR behind it; both oracles green
-   at the merge point with the new knob byte-identical at default-off; docs
-   (`SELECTION-THEORY.md`) land in the same PR.
+   on the proposed source. Verify disabled behavior and complete configuration
+   identity separately; update `SELECTION-THEORY.md` in the same PR.
 
 The point of the worked example: a reviewable proposal is *almost entirely*
 premise, objection, and acceptance — the code is the small part. A proposal that
@@ -1069,9 +1067,9 @@ The shape, using the casebook's pattern as the template:
 3. **Then the feature stacks behind the fix**, single-concern, with a stated
    dependency order (§5.5). Module moves / facade work sequence LAST so files do
    not churn under active branches.
-4. **Both oracles green at the merge point** (§2.3), plus the byte-identical-at-
-   default check for every default-off knob the feature added (03-contract-and-
-   epochs.md §3.11 step 8 is the same discipline on the contract side).
+4. **Both oracles pass on the proposed source** (§2.3). Verify the feature's
+   disabled behavior and its effective configuration identity separately
+   (03-contract-and-epochs.md §3.11).
 
 Shipping the fix and the feature in one PR because they are related costs two
 things. A combined diff hides which change did what, so a later bisect cannot
@@ -1107,11 +1105,10 @@ disciplines:
   doc. When you change a subsystem this guide documents, the chapter is part of
   the change.
 
-The CHANGELOG is the fourth surface (§5.5, §6.1): a behavior-affecting default is a
-CHANGELOG entry with the pin spelled out, in the loud `⚠️ BREAKING DEFAULTS` idiom
-the noise-aware-defaults and contract-hash-fix entries established
-(03-contract-and-epochs.md §3.11 step 9). A default changed with no CHANGELOG entry is
-the kind of change the casebook records (§6, "no silent defaults changes").
+A behavior-affecting default change must explain its measured effect and the
+resulting contract identity. Update the present-state documentation and review
+changed reference outputs against those effects. The contract-field recipe
+(03-contract-and-epochs.md §3.11) names the required boundaries.
 
 > ⚠️ TRAP — command help, the generated help snapshot and the hand-authored
 > command contract must agree. Update all three in the same change so readers
@@ -1145,16 +1142,12 @@ reference any specific model vendor" is written into the example sources).
 This is both a portability property and a durable repo rule; the per-branch
 vendor scan enforces it.
 
-**No silent defaults changes.** A behavioral default is part of the measured
-system: the shipped defaults were *chosen against measurements* (replicates=2,
-best_of_n=3, margin 0.01 + calibration warnings, evidence gate opt-in-but-
-scaffolded — each traceable to a pinned number in the power harness).
-Changing one is a contract-visible act: omit-at-default canonicalization so
-nobody rolls retroactively, an epoch roll for those who opt in, a CHANGELOG
-entry, and a docs sweep. The noise-aware defaults flip and the contract-hash
-fix both shipped as loud, declared changes — that is the template. A default
-changed in passing, inside an unrelated PR, is a casebook entry waiting to
-happen.
+**Defaults are measured configuration.** A behavioral default must have evidence
+for its intended effect. Changing it changes the effective configuration of
+an authored document that omits the field. Complete serialization and hashing
+make that change visible to epoch selection. Review the expected behavior and
+identity changes together, update their reference outputs with an explanation,
+and keep the configuration documentation consistent.
 
 **No gate-bypassing shortcuts.** Every path to the champion pointer goes
 through the gate + its confirmation stack. No test hook, resume path, repair
@@ -1190,7 +1183,7 @@ the PR:
 |---|---|---|
 | No free-form source edits | every mutation goes through an enumerated mutation point + the validating applier's post-apply syntax gate | `zicato.mutation.applier`; `derive_generation` all-or-nothing (03-contract-and-epochs.md §3.9.2) |
 | No vendor coupling | the per-branch scan finds no model-vendor name / id / trailer in the diff or commit message; every LLM touch is the `CallLLM` seam | the vendor scan; `models_config.py` owns model selection, never code/mocks |
-| No silent default change | a changed behavioral default carries a CHANGELOG `⚠️ BREAKING DEFAULTS` entry with the pin spelled out; omit-at-default canonicalization so non-pinners roll deliberately | `CHANGELOG.md`; 03-contract-and-epochs.md §3.4 |
+| Defaults have measured behavior and explicit identity | changed defaults have behavior tests and reviewed contract-reference changes; every effective value is serialized and hashed | 03-contract-and-epochs.md §3.4; contract and decision tests |
 | No gate-bypassing shortcut | no test hook, resume path, repair tool, dashboard control, or override writes the promoted spine directly | every champion-pointer write goes through the gate + confirmation stack (§6) |
 | No agent-initiated live run | the run has recorded explicit operator go-ahead; the launch reported its dashboard URL | §3's standing rules; the gate-live-runs discipline |
 | No untestable statistic | the new decision surface has a power-harness test (nulls first, planted deltas in floor units, printed rates + pinned bounds) that fails today and passes after | `tests/test_decision_procedure_power.py` (§2.3, §5.4) |
@@ -1251,7 +1244,7 @@ refusal is a statement of what the system guarantees.
 | If you are about to… | Read first | And do not skip |
 |---|---|---|
 | add a scoring / gate / selection rule | 04-evaluation-statistics.md §13, 06-tournament-and-selection.md | this chapter §5.4 (measured acceptance) + §2.3 (the power oracle) |
-| add a contract knob | 03-contract-and-epochs.md §3.11 | §3.4 (omit-at-default) — a missed registration mass-rolls the fleet |
+| add a contract field | 03-contract-and-epochs.md §3.11 | §3.4 — complete serialization, strict decoding, and effective configuration identity |
 | widen what the proposer sees | 05-proposer.md §5.8 | this chapter §5.3 (design-first) — an overfitting-boundary change needs a note before code |
 | touch storage / worktrees / caches | 07-runtime-and-durability.md | casebook cases 1, 2, 8, 9 (the identity-vs-location + slot-reuse classes) |
 | add a runtime tuning knob | 03-contract-and-epochs.md §3.12 | the choose-which table — a scoring rule mis-filed as runtime silently breaks comparability |

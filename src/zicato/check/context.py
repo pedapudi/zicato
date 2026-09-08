@@ -299,10 +299,8 @@ class CheckContext:
 
     @cached_property
     def has_adapter_config(self) -> bool:
-        """Whether config names adapter wiring, under either accepted key."""
-        return self.config.raw.get("adapter") is not None or bool(
-            self.config.raw.get("adk_entrypoint")
-        )
+        """Whether the workspace declares a harness adapter."""
+        return self.config.raw.get("adapter") is not None
 
     @cached_property
     def adapter_error(self) -> str | None:

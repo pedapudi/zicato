@@ -147,16 +147,14 @@ export function buildTree(host, model, route, toggles, ctx, onToggle, live) {
         // Only the CURRENT champion (the last id in champion_lineage) gets the
         // solid-crown (CROWN.current) "champion" badge; a FORMER champion (held
         // the title, then was succeeded) gets the distinct, dimmer hollow-crown
-        // (CROWN.former) "former" marker. Pre-feature models without the
-        // current/former split keep the solid crown for any promoted gen.
+        // (CROWN.former) "former" marker.
         const isCurrent = g.currentChampion === true;
         const isFormer = g.formerChampion === true;
-        const legacyChamp = g.promoted === true && g.currentChampion === undefined && g.formerChampion === undefined;
         // Class B: a child with no recorded outcome (promoted == null) is still
         // racing — tag it "pending", NEVER "rejected/dead branch".
         const childTag = g.parent ? (g.promoted == null ? 'pending' : (g.promoted === false ? 'rejected' : 'promoted')) : 'seed';
         let kind = 'gen', glyph = (g.parent ? '↳' : '◆'), tag = childTag;
-        if (isCurrent || legacyChamp) { kind = 'gen-champ'; glyph = CROWN.current; tag = 'champion'; }
+        if (isCurrent) { kind = 'gen-champ'; glyph = CROWN.current; tag = 'champion'; }
         else if (isFormer) { kind = 'gen-former'; glyph = CROWN.former; tag = 'former champion'; }
         else if (g.orphan === true) { kind = 'gen-orphan'; glyph = '◌'; tag = 'unscored'; }
         return leafRow({

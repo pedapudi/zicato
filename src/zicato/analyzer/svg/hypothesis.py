@@ -15,23 +15,13 @@ from zicato.analyzer.svg.palette import (
 )
 from zicato.analyzer.svg.primitives import _empty_svg, _esc, _fmt_delta, _truncate
 
-# Magnitude tokens the proposer uses when writing an `expected_drift_movements`
+# Magnitude tokens the proposer uses when writing an `expected_metric_movements`
 # direction/magnitude pair. Used to project a categorical prediction onto a
 # unit-scale rate axis [-1, +1]. The bucket values are coarse
 # since they're a categorical estimate rather than a measurement; the renderer
 # normalises them per-lane so the visual reading is direction + relative
 # magnitude rather than an absolute number.
-_MAGNITUDE_MAP: dict[str, float] = {
-    "tiny": 0.02,
-    "small": 0.05,
-    "minor": 0.05,
-    "modest": 0.08,
-    "medium": 0.10,
-    "moderate": 0.10,
-    "large": 0.20,
-    "major": 0.20,
-    "big": 0.20,
-}
+_MAGNITUDE_MAP = {"small": 0.05, "medium": 0.10, "large": 0.20}
 
 
 def _parse_expected_pass_rate_delta(text: str) -> float | None:
@@ -63,11 +53,10 @@ def _parse_expected_pass_rate_delta(text: str) -> float | None:
 
 def _direction_sign(direction: str) -> int:
     """Map a textual direction to a sign for projecting magnitude onto Δ."""
-    d = (direction or "").strip().lower()
-    if d in ("decrease", "down", "lower", "drop", "fall"):
+    if direction in ("decrease", "decrease_or_neutral"):
         return -1
-    if d in ("increase", "up", "higher", "rise"):
-        return +1
+    if direction in ("increase", "increase_or_neutral"):
+        return 1
     return 0
 
 
@@ -75,29 +64,20 @@ def _predicted_drift_delta_sum(g: GenerationView) -> float | None:
     """Project the proposer's expected drift movements to a single Δ scalar.
 
     Sums signed magnitude predictions across drift kinds: a "decrease /
-    moderate" movement contributes -0.10, an "increase / small" +0.05, and
+    medium" movement contributes -0.10, an "increase / small" +0.05, and
     so on, mirroring the units the realised ``drift_loss_delta`` reads in.
     Returns ``None`` when the proposer recorded no movements at all (so the
     figure can mark the bar as "no prediction").
     """
-    if not g.expected_drift_movements:
+    if not g.expected_metric_movements:
         return None
     total = 0.0
     seen = False
-    for mv in g.expected_drift_movements:
-        sign = _direction_sign(str(mv.get("direction", "")))
-        mag = str(mv.get("magnitude", "")).strip().lower()
-        if not mag:
+    for mv in g.expected_metric_movements:
+        if not mv["metric_name"].startswith("drift:"):
             continue
-        # Accept a free-form ``magnitude`` like "small" / "moderate" /
-        # "large"; default to the moderate bucket when unrecognised.
-        amount = _MAGNITUDE_MAP.get(mag)
-        if amount is None:
-            # tolerate a raw numeric in the magnitude slot.
-            try:
-                amount = abs(float(mag))
-            except ValueError:
-                amount = 0.0
+        sign = _direction_sign(mv["direction"])
+        amount = _MAGNITUDE_MAP[mv["magnitude"]]
         if sign == 0 or amount == 0.0:
             continue
         total += sign * amount

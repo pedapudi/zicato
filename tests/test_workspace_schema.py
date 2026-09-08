@@ -67,7 +67,7 @@ def test_complete_declaration_roundtrips_through_decoder_and_editor_schema(tmp_p
     assert read_workspace_config(tmp_path).values == declared
 
 
-def test_authored_compatibility_forms_match_factories_and_generated_schema():
+def test_authored_defaults_match_factories_and_generated_schema():
     from zicato.core.adapter_config import adapter_declaration
     from zicato.core.settings import resolve_configuration
     from zicato.runtime_factory import resolve_host_worker_permits
@@ -78,13 +78,9 @@ def test_authored_compatibility_forms_match_factories_and_generated_schema():
         "adapter": {
             "kind": "import",
             "factory": "tests._stub_adapter:make_stub_adapter",
-            "args": None,
-            "mutable_trees": None,
         },
         "proposer": proposer,
         "runtime": {
-            "parallelism": None,
-            "propose_parallelism": None,
             "worker_permit_dir": "~/worker-permits",
             "log_level": "dEbUg",
         },
@@ -105,8 +101,6 @@ def test_authored_compatibility_forms_match_factories_and_generated_schema():
         Draft202012Validator(dataclass_schema(WorkspaceDeclaration)).validate(raw)
         assert resolve_host_worker_permits(raw["runtime"])[0] == expected
 
-    from zicato.core.settings import RuntimeSettings
-
     nullable_defaults = {
         "parallelism": None,
         "propose_parallelism": None,
@@ -118,20 +112,25 @@ def test_authored_compatibility_forms_match_factories_and_generated_schema():
         "worker_env_passthrough": None,
         "preflight_probe_mutation_ids": None,
     }
-    Draft202012Validator(dataclass_schema(WorkspaceDeclaration)).validate(
-        {"runtime": nullable_defaults}
+    errors = list(
+        Draft202012Validator(dataclass_schema(WorkspaceDeclaration)).iter_errors(
+            {"runtime": nullable_defaults}
+        )
     )
-    assert resolve_configuration({"runtime": nullable_defaults}).values.runtime == RuntimeSettings()
+    assert {error.path[-1] for error in errors} == set(nullable_defaults)
+    with pytest.raises(ConfigurationError, match="config.runtime.parallelism"):
+        resolve_configuration({"runtime": nullable_defaults})
 
 
-def test_legacy_telemetry_location_survives_invocation_resolution():
+def test_declared_telemetry_and_invocation_override_retain_source():
     from zicato.core.settings import InvocationOverlay, resolve_configuration
     from zicato.evolve.lifecycle_services import _resolve_harmonograf_url
 
-    raw = {"harmonograf_url": "http://127.0.0.1:9100"}
+    raw = {"integration": {"harmonograf_url": "http://127.0.0.1:9100"}}
     selected = resolve_configuration(raw)
     assert (
-        _resolve_harmonograf_url(Path("."), selected.values.integration) == raw["harmonograf_url"]
+        _resolve_harmonograf_url(Path("."), selected.values.integration)
+        == raw["integration"]["harmonograf_url"]
     )
     assert selected.sources["integration.harmonograf_url"] == "workspace"
     raw["integration"] = {"harmonograf_url": "http://127.0.0.1:9200"}

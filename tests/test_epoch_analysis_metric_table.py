@@ -4,13 +4,11 @@ namespace-aware version of :func:`render_drift_kind_movement_table`."""
 from __future__ import annotations
 
 from zicato.core.types import (
-    DriftMovementActual,
     Experiment,
     Generation,
     MetricMovementActual,
 )
 from zicato.epoch.analysis import (
-    render_drift_kind_movement_table,
     render_metric_movement_table,
     render_tournament_outcomes_section,
 )
@@ -34,15 +32,11 @@ def _experiment(
     gid: str,
     parent_id: str,
     *,
-    drift_movements: tuple[DriftMovementActual, ...] = (),
     metric_movements: tuple[MetricMovementActual, ...] = (),
     decision: str = "promoted",
 ) -> Experiment:
     outcome = make_outcome_record(
-        tournament_decision=decision,
-        scalar_score_delta=-0.10,
-        drift_movements=drift_movements,
-        metric_movements=metric_movements,
+        tournament_decision=decision, scalar_score_delta=-0.1, metric_movements=metric_movements
     )
     return make_experiment(
         id=f"exp_{gid}",
@@ -53,8 +47,10 @@ def _experiment(
     )
 
 
-def _drift_mv(kind: str, frm: float, to: float) -> DriftMovementActual:
-    return DriftMovementActual(kind=kind, from_rate=frm, to_rate=to, hypothesis_match=True)
+def _drift_mv(kind: str, frm: float, to: float) -> MetricMovementActual:
+    return MetricMovementActual(
+        metric_name="drift:" + kind, from_value=frm, to_value=to, hypothesis_match=True
+    )
 
 
 def _metric_mv(name: str, frm: float, to: float) -> MetricMovementActual:
@@ -70,7 +66,7 @@ def _metric_mv(name: str, frm: float, to: float) -> MetricMovementActual:
 
 def test_drift_namespace_filter_renders_legacy_drift_table() -> None:
     gens = [_baseline("v0"), _child("v1", "v0")]
-    exps = [_experiment("v1", "v0", drift_movements=(_drift_mv("off_topic", 1.0, 0.5),))]
+    exps = [_experiment("v1", "v0", metric_movements=(_drift_mv("off_topic", 1.0, 0.5),))]
     out = render_metric_movement_table(gens, exps, namespace_filter="drift:")
     # Legacy header uses ``drift_kind`` + ``_rate`` columns.
     assert "drift_kind" in out
@@ -79,15 +75,6 @@ def test_drift_namespace_filter_renders_legacy_drift_table() -> None:
     # Namespace prefix is stripped in the display column.
     assert "off_topic" in out
     assert "drift:off_topic" not in out
-
-
-def test_drift_kind_movement_table_back_compat_wrapper_matches_legacy() -> None:
-    """The back-compat wrapper produces output equivalent to filtering on drift."""
-    gens = [_baseline("v0"), _child("v1", "v0")]
-    exps = [_experiment("v1", "v0", drift_movements=(_drift_mv("off_topic", 1.0, 0.5),))]
-    legacy = render_drift_kind_movement_table(gens, exps)
-    filtered = render_metric_movement_table(gens, exps, namespace_filter="drift:")
-    assert legacy == filtered
 
 
 # ---------------------------------------------------------------------------
@@ -101,8 +88,8 @@ def test_no_namespace_filter_shows_all_namespaces() -> None:
         _experiment(
             "v1",
             "v0",
-            drift_movements=(_drift_mv("off_topic", 1.0, 0.5),),
             metric_movements=(
+                _drift_mv("off_topic", 1.0, 0.5),
                 _metric_mv("cost:tokens_spent", 2000.0, 1500.0),
                 _metric_mv("rubric:slide_structure", 3.0, 4.0),
                 _metric_mv("latency:p95_turn_ms", 1800.0, 1500.0),
@@ -126,8 +113,8 @@ def test_cost_namespace_filter_shows_only_cost() -> None:
         _experiment(
             "v1",
             "v0",
-            drift_movements=(_drift_mv("off_topic", 1.0, 0.5),),
             metric_movements=(
+                _drift_mv("off_topic", 1.0, 0.5),
                 _metric_mv("cost:tokens_spent", 2000.0, 1500.0),
                 _metric_mv("rubric:slide_structure", 3.0, 4.0),
             ),
@@ -143,13 +130,7 @@ def test_cost_namespace_filter_shows_only_cost() -> None:
 
 def test_empty_when_no_movements_in_namespace() -> None:
     gens = [_baseline("v0"), _child("v1", "v0")]
-    exps = [
-        _experiment(
-            "v1",
-            "v0",
-            drift_movements=(_drift_mv("off_topic", 1.0, 0.5),),
-        )
-    ]
+    exps = [_experiment("v1", "v0", metric_movements=(_drift_mv("off_topic", 1.0, 0.5),))]
     # Drift namespace has movements → non-empty.
     assert render_metric_movement_table(gens, exps, namespace_filter="drift:") != ""
     # Cost namespace doesn't → empty.
@@ -165,7 +146,7 @@ def test_tournament_section_keeps_legacy_drift_subsection_heading() -> None:
     """Back-compat: when only drift movements are present the section
     renders with the historical heading."""
     gens = [_baseline("v0"), _child("v1", "v0")]
-    exps = [_experiment("v1", "v0", drift_movements=(_drift_mv("off_topic", 1.0, 0.5),))]
+    exps = [_experiment("v1", "v0", metric_movements=(_drift_mv("off_topic", 1.0, 0.5),))]
     out = render_tournament_outcomes_section(gens, exps)
     assert "### Drift-kind movements across the promoted lineage" in out
     # No non-drift section when no non-drift movements.
@@ -178,8 +159,10 @@ def test_tournament_section_adds_non_drift_subsection_when_metric_movements_pres
         _experiment(
             "v1",
             "v0",
-            drift_movements=(_drift_mv("off_topic", 1.0, 0.5),),
-            metric_movements=(_metric_mv("cost:tokens_spent", 2000.0, 1500.0),),
+            metric_movements=(
+                _drift_mv("off_topic", 1.0, 0.5),
+                _metric_mv("cost:tokens_spent", 2000.0, 1500.0),
+            ),
         )
     ]
     out = render_tournament_outcomes_section(gens, exps)

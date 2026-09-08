@@ -22,7 +22,6 @@ up the evaluation callable, and calls
 from __future__ import annotations
 
 import asyncio
-import importlib
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
@@ -83,20 +82,14 @@ def _maybe_resolve_aux_llm(
     workspace path, which is the point of the backfill.
     """
 
-    dotted = config.raw.get("evaluation_call_llm") or config.runtime.get("evaluation_call_llm")
-    if not dotted:
-        return None
-    mod_name, _, attr = str(dotted).rpartition(".")
-    if not mod_name:
-        return None
+    from zicato.runtime_factory import resolve_role_call_llm
+
     try:
-        module = importlib.import_module(mod_name)
-    except ImportError:
+        return resolve_role_call_llm(
+            config.raw, role="evaluation", workspace_root=config.path.parent
+        )
+    except (ImportError, ValueError):
         return None
-    if not hasattr(module, attr):
-        return None
-    resolved: Callable[[str, str, str], Awaitable[str]] = getattr(module, attr)
-    return resolved
 
 
 async def _placeholder_aux(_system: str, _user: str, _model: str) -> str:

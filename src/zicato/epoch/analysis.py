@@ -582,10 +582,9 @@ def render_metric_movement_table(
     experiments: list[Experiment],
     namespace_filter: str | None = None,
 ) -> str:
-    """Render a per-metric rate table over the promoted lineage.
+    """Render metric changes over the promoted lineage.
 
-    Generalises :func:`render_drift_kind_movement_table` to any
-    namespace. ``namespace_filter`` is a string prefix (e.g.
+    Render any metric namespace. ``namespace_filter`` is a string prefix (e.g.
     ``"drift:"``, ``"cost:"``, ``"rubric:"``) that restricts the table
     to a single namespace; pass ``None`` to render every metric across
     every namespace.
@@ -595,18 +594,10 @@ def render_metric_movement_table(
     Rows are sorted by ``abs(net_change)`` descending and capped at
     :data:`_DRIFT_KIND_TABLE_LIMIT`.
 
-    For back-compat the column suffix is ``_rate`` and the row header
-    is ``drift_kind`` when ``namespace_filter == "drift:"`` (matches
-    the historical drift-only table verbatim); otherwise the columns
-    use ``_value`` and the header is ``metric``. Each row's display
-    name has the namespace prefix stripped when a single namespace
-    filter is in effect.
-
-    The hydration path reads both ``outcome.metric_movements`` (the
-    generalised surface) AND ``outcome.drift_movements`` lifted under
-    the ``"drift:"`` namespace; either populates the table so
-    operators don't lose drift signal even when only the older field
-    is filled in.
+    Drift counts are expressed as per-run rates: filtering to ``"drift:"``
+    uses the column suffix ``_rate`` and the row header ``drift_kind``.
+    Other metrics use ``_value`` columns and the header ``metric``.
+    A namespace filter also removes that prefix from each display name.
 
     Returns the empty string when no movements were recorded in the
     requested namespace.
@@ -634,8 +625,6 @@ def render_metric_movement_table(
         exp = exp_idx.get(child.id)
         if exp is None or exp.outcome is None:
             continue
-        for mv in exp.outcome.drift_movements:
-            _record(f"drift:{mv.kind}", step_idx, mv.from_rate, mv.to_rate)
         for mm in exp.outcome.metric_movements:
             _record(mm.metric_name, step_idx, mm.from_value, mm.to_value)
 
@@ -654,10 +643,7 @@ def render_metric_movement_table(
     rows.sort(key=lambda r: (-abs(r[2]), r[0]))
     rows = rows[:_DRIFT_KIND_TABLE_LIMIT]
 
-    # Column suffix: keep "_rate" for the drift namespace (back-compat)
-    # so the existing snapshot expectations don't shift; "_value" for
-    # any other namespace where "rate" would be a misnomer (cost,
-    # latency, rubric, ...).
+    # Drift counts use per-run rates; other namespaces retain their own units.
     col_suffix = "rate" if namespace_filter == "drift:" else "value"
     rate_cols = [f"{g.id}_{col_suffix}" for g in chain]
     if rate_cols:
@@ -685,23 +671,6 @@ def render_metric_movement_table(
         lines.append("| " + " | ".join(cells) + " |")
 
     return "\n".join(lines)
-
-
-def render_drift_kind_movement_table(
-    generations: list[Generation],
-    experiments: list[Experiment],
-) -> str:
-    """Render a per-drift-kind rate table over the promoted lineage.
-
-    Back-compat wrapper over :func:`render_metric_movement_table` with
-    ``namespace_filter="drift:"``. Output header and row format match
-    the pre-generalisation table verbatim (``drift_kind | severity |
-    {gen}_rate | ... | final_rate | net_change``) so existing tests
-    and consumers don't break.
-
-    Returns the empty string when no drift movements were recorded.
-    """
-    return render_metric_movement_table(generations, experiments, namespace_filter="drift:")
 
 
 # Figure markers naming a builder in :mod:`zicato.analyzer.report_figures`.
@@ -749,7 +718,7 @@ def render_tournament_outcomes_section(
     parts.append("### Score sparkline")
     parts.append("")
     parts.append(render_score_sparkline(generations, experiments))
-    drift_table = render_drift_kind_movement_table(generations, experiments)
+    drift_table = render_metric_movement_table(generations, experiments, namespace_filter="drift:")
     if drift_table:
         parts.append("")
         parts.append("### Drift-kind movements across the promoted lineage")
@@ -1213,7 +1182,6 @@ __all__ = [
     "REQUIRED_SECTIONS",
     "generate_analysis",
     "regenerate_in_progress_html",
-    "render_drift_kind_movement_table",
     "render_mermaid_lineage",
     "render_metric_movement_table",
     "render_score_sparkline",

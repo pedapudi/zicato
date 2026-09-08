@@ -360,13 +360,19 @@ def test_resolve_harmonograf_url_context_precedes_workspace(
 
     monkeypatch.delenv(RUNTIME_CONTEXT_ENV, raising=False)
     # Config-only.
-    assert resolve_harmonograf_url({"harmonograf_url": "cfg-host:1234"}) == "cfg-host:1234"
+    assert (
+        resolve_harmonograf_url({"integration": {"harmonograf_url": "cfg-host:1234"}})
+        == "cfg-host:1234"
+    )
     # No source at all.
     assert resolve_harmonograf_url(None) == ""
     assert resolve_harmonograf_url({}) == ""
     # Inherited context precedes workspace configuration.
     install_runtime_context(monkeypatch, tmp_path, web_url="env-host:9999")
-    assert resolve_harmonograf_url({"harmonograf_url": "cfg-host:1234"}) == "env-host:9999"
+    assert (
+        resolve_harmonograf_url({"integration": {"harmonograf_url": "cfg-host:1234"}})
+        == "env-host:9999"
+    )
 
 
 # ---------------------------------------------------------------------------

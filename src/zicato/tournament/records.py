@@ -81,27 +81,21 @@ class FieldTournamentRecord:
         body.update(
             tournament_id=self.tournament_id,
             epoch_id=self.epoch_id,
+            state=self.state,
             champion_generation_id=self.champion_generation_id,
             promoted_generation_id=self.promoted_generation_id,
         )
-        if "state" in body or self.state != "settled":
-            body["state"] = self.state
         return body
 
 
 def decode_field_tournament_record(value: Any) -> FieldTournamentRecord:
-    """Accept snapshots, including unstamped settled records without ``state``.
-
-    The field snapshot predates the explicit live/settled state. An absent
-    state retains its settled meaning and stays omitted when written again.
-    Format-3 receipts independently require an explicit settled payload.
-    """
+    """Accept a snapshot with an explicit in-progress or settled state."""
     if not isinstance(value, dict):
         raise RecordError("field tournament record must be an object")
     for key in ("tournament_id", "epoch_id", "structure", "ran_at", "champion_generation_id"):
         if not isinstance(value.get(key), str) or not value[key]:
             raise RecordError(f"field tournament record has invalid {key}")
-    state = value.get("state", "settled")
+    state = value.get("state")
     if not isinstance(state, str) or state not in {"in_progress", "settled"}:
         raise RecordError("field tournament record has invalid state")
     for key in ("promoted_generation_id", "decision", "reason"):

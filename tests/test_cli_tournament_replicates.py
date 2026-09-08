@@ -314,7 +314,7 @@ def test_fast_cli_refuses_a_champion_aggregate_for_another_generation(
     epoch_id = current_epoch_id(workspace)
     assert epoch_id is not None
     (workspace / "epochs" / epoch_id / "generations/v0/gen_score.json").write_text(
-        json.dumps({"scalar": 1.0, "generation_id": "v2", "base_seed": None})
+        json.dumps({"format_version": 1, "scalar": 1.0, "generation_id": "v2", "base_seed": None})
     )
     calls: list[dict[str, Any]] = []
 

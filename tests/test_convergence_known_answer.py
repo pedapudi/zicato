@@ -61,6 +61,7 @@ BOARD_SIZE = 5
 ADAPTER_BLOCK = {
     "kind": "import",
     "factory": "zicato_examples.target_0_convergence.harness:make_adapter",
+    "mutable_trees": [str(AGENT_DIR)],
 }
 
 
@@ -116,11 +117,17 @@ def _bootstrap_workspace(
                 "generation_source_backend": "git",
                 "created_at": "2026-07-01T00:00:00Z",
                 "adapter": ADAPTER_BLOCK,
-                "runtime": {
-                    "target_call_llm": "zicato_examples.target_0_convergence.mocks:target_llm",
-                    "evaluation_call_llm": "zicato_examples.target_0_convergence.mocks:aux_llm",
+                "runtime": {},
+                "models": {
+                    "engines": {
+                        "target": {
+                            "call_llm": "zicato_examples.target_0_convergence.mocks:target_llm"
+                        },
+                        "evaluation": {
+                            "call_llm": "zicato_examples.target_0_convergence.mocks:aux_llm"
+                        },
+                    }
                 },
-                "mutable_trees": [str(AGENT_DIR)],
             }
         )
     )
@@ -243,9 +250,11 @@ def test_gauntlet_converges_to_known_floor(tmp_path: Path) -> None:
         assert lp_path.exists(), entry.id
         profile = read_loss_profile(lp_path)
         assert profile.drift_loss == 1.0, entry.id
-        assert [(c.kind, c.severity, c.count) for c in profile.drift_counts] == [
-            ("unexpected_output", "info", 1)
-        ], entry.id
+        assert [
+            (c.name, c.severity, c.count)
+            for c in profile.metric_counts
+            if c.name.startswith("drift:")
+        ] == [("drift:unexpected_output", "info", 1)], entry.id
         passes[entry.id] = profile.pass_fail
     assert passes == {
         "conv_body": True,

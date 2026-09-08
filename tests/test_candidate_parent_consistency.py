@@ -45,11 +45,14 @@ def _workspace(
                 parent_generation_id=parent,
                 proposed_at="2026-06-01T00:00:00Z",
                 hypothesis=HypothesisSpec(
-                    "Reduce loss", (), "Measured difference", (), "unchanged"
+                    core_idea="Reduce loss",
+                    modulating=(),
+                    why="Measured difference",
+                    expected_pass_rate_delta="unchanged",
                 ),
                 patches=(),
                 outcome=None,
-                round_index=None if gid == "v0" else 0,
+                round_index=0,
             ),
         )
     generations = [{"id": generation_id, "parent_id": recorded_parent, "promoted": None}]
@@ -58,7 +61,7 @@ def _workspace(
     epoch = {"id": "selected", "generations": generations}
     if generation_id == "v0" and recorded_parent and ":" in recorded_parent:
         epoch["v0_parent"] = recorded_parent
-    write_lineage(layout.root, decode_lineage({"epochs": [epoch]}))
+    write_lineage(layout.root, decode_lineage({"format_version": 1, "epochs": [epoch]}))
     return WorkspacePaths(layout.root)
 
 

@@ -533,7 +533,7 @@ Suggestion(
     summary=<one line>,
     rationale=<why, naming the foreign source>,
     target_slice="train",                         # §5.3 default
-    draft_artifact=<entry_to_dict(entry), budget_s normalised>,   # the drafted BoardEntry JSON
+    draft_artifact=<entry_to_dict(entry)>,   # the drafted BoardEntry JSON
     proposed_op={"op": "add_board_entry", "args": {"entry": <draft_artifact>}},
     provenance=<§5.3 block with foreign_source>,
     admission=None,                               # until --probe

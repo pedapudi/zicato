@@ -229,8 +229,8 @@ def _hyp(direction: str, magnitude: str) -> str:
         {
             "core_idea": "tighten router",
             "modulating": ["router"],
-            "expected_drift_movements": [
-                {"kind": "off_topic", "direction": direction, "magnitude": magnitude}
+            "expected_metric_movements": [
+                {"metric_name": "drift:off_topic", "direction": direction, "magnitude": magnitude}
             ],
         }
     )
@@ -240,11 +240,11 @@ def _outcome(from_rate: float, to_rate: float) -> str:
     """A realised outcome moving off_topic from ``from_rate`` to ``to_rate``."""
     return json.dumps(
         {
-            "drift_movements": [
+            "metric_movements": [
                 {
-                    "kind": "off_topic",
-                    "from_rate": from_rate,
-                    "to_rate": to_rate,
+                    "metric_name": "drift:off_topic",
+                    "from_value": from_rate,
+                    "to_value": to_rate,
                     "hypothesis_match": True,
                 }
             ]

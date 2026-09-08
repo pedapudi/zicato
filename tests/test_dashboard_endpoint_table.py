@@ -30,7 +30,9 @@ import pytest
 from starlette.routing import Match, Route
 
 import zicato.dashboard.endpoints as endpoints_module
+from tests._console_scenarios import CONSOLE_EPOCH, build_swiss_all_rejected_workspace
 from tests._endpoint_snapshot_harness import (
+    RECORDED_WORKSPACES,
     ROUTE_PROBES,
     capture_route_snapshot,
     probe_urls,
@@ -45,7 +47,12 @@ from zicato.dashboard.endpoints import (
     route_name,
 )
 from zicato.dashboard.server import create_app
+from zicato.epoch.journal import read_experiment_contents
+from zicato.query import WorkspacePaths, build_round_timeline
 from zicato.query.contracts import ENDPOINT_PAYLOADS
+from zicato.tournament.records import read_field_tournament_record
+from zicato.tournament.scoring import read_gen_score
+from zicato.workspace import WorkspaceLayout
 
 _GOLDEN = Path(__file__).parent / "data" / "endpoint_route_snapshot.json"
 #: The URL behind every label of the golden, which the browser suite's
@@ -96,6 +103,32 @@ def test_table_driven_routes_serve_the_recorded_responses(tmp_path: Path, static
         assert json.dumps(snapshot[label]) == json.dumps(
             golden[label]
         ), f"{label} no longer serves its recorded response"
+
+
+def test_console_scenarios_publish_readable_records(tmp_path: Path) -> None:
+    """Scenario records must remain readable before responses are recorded."""
+    for scenario in RECORDED_WORKSPACES:
+        root = scenario.build(tmp_path / scenario.name)
+        layout = WorkspaceLayout.from_root(root)
+        for path in root.glob("epochs/*/generations/*/gen_score.json"):
+            score = read_gen_score(layout, path.parents[2].name, path.parent.name)
+            assert score is not None
+            assert score.generation_id == path.parent.name
+        for path in root.glob("epochs/*/generations/*/experiment.json"):
+            assert (
+                read_experiment_contents(root, path.parents[2].name, path.parent.name) is not None
+            )
+        for path in root.glob("epochs/*/tournaments/field-*.json"):
+            assert read_field_tournament_record(path).epoch_id == path.parents[1].name
+
+
+def test_round_timeline_retains_unapplied_proposal_status(tmp_path: Path) -> None:
+    root = build_swiss_all_rejected_workspace(tmp_path)
+    rounds = build_round_timeline(WorkspacePaths(root), CONSOLE_EPOCH)["rounds"]
+    assert [row["round_index"] for row in rounds] == [1]
+    assert rounds[0]["inflight"] is True
+    assert [row["id"] for row in rounds[0]["challengers"]] == ["v1", "v2", "v3", "v4"]
+    assert [row["status"] for row in rounds[0]["challengers"]] == ["rejected"] * 4
 
 
 def test_the_probe_table_is_recorded_beside_the_snapshot() -> None:

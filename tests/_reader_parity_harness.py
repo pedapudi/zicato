@@ -17,6 +17,7 @@ timestamp-first ``list_epoch_ids`` order (the intended fix).
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -28,12 +29,13 @@ from tests._workspace_support import (
     write_epoch,
     write_generation,
     write_lineage,
-    write_run,
     write_workspace_config,
 )
 from zicato import query as sr
 from zicato.query.epoch_view import build_epochs_summary
 from zicato.query.events_index import build_meta_loop_ledger
+from zicato.telemetry.reducer import write_loss_profile
+from zicato.testing import make_loss_profile
 
 # ---------------------------------------------------------------------------
 # The multi-epoch fixture
@@ -118,7 +120,7 @@ def build_fixture_workspace(tmp_path: Path) -> Path:
                 "created_at": spec["created_at"],
                 "closed": spec["closed"],
                 "goal": spec["goal"],
-                "contract_hash": f"hash-{eid}",
+                "contract_hash": hashlib.sha256(f"hash-{eid}".encode()).hexdigest(),
             },
             brief=f"# Brief {eid}\n\n## Goal\n\n{spec['goal']}\n",
             # A frozen scoring block carrying a (deterministic) tournament
@@ -170,11 +172,12 @@ def build_fixture_workspace(tmp_path: Path) -> Path:
                 gid,
                 experiment=experiment_record(
                     gid,
+                    epoch_id=eid,
                     parent_generation_id=None if gid == "v0" else "v0",
                     proposed_at=spec["created_at"],
-                    hypothesis={"summary": f"hyp {eid} {gid}"},
+                    hypothesis={"core_idea": f"hyp {eid} {gid}"},
                     outcome={
-                        "decision": "promoted" if promoted else "rejected",
+                        "tournament_decision": "promoted" if promoted else "rejected",
                         "scalar_score_delta": -0.05 if promoted else 0.02,
                     },
                 ),
@@ -182,19 +185,18 @@ def build_fixture_workspace(tmp_path: Path) -> Path:
                 indent=2,
             )
             for entry in ("t1", "t2"):
-                write_run(
-                    layout,
-                    eid,
-                    gid,
-                    entry,
-                    loss={
-                        "entry_id": entry,
-                        "run_id": f"{eid}-{gid}-{entry}",
-                        "drift_loss": 0.3 + 0.01 * gi,
-                        "pass_fail": True,
-                        "score": 0.9,
-                    },
-                    indent=2,
+                write_loss_profile(
+                    make_loss_profile(
+                        epoch_id=eid,
+                        generation_id=gid,
+                        entry_id=entry,
+                        run_id=f"{eid}-{gid}-{entry}",
+                        drift_loss=0.3 + 0.01 * gi,
+                        pass_fail=True,
+                        score=0.9,
+                        runtime_ms=0,
+                    ),
+                    layout.loss(eid, gid, entry),
                 )
 
     write_lineage(

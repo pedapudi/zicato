@@ -39,7 +39,7 @@ def _experiment(gen_id: str, idea: str) -> Experiment:
             core_idea=idea,
             modulating=("m1",),
             why="test",
-            expected_drift_movements=(),
+            expected_metric_movements=(),
             expected_pass_rate_delta="0.0",
             risks="",
         ),

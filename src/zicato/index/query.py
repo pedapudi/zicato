@@ -4,20 +4,11 @@ This module is the read side of the index — it owns connection
 construction and a small set of common ``SELECT`` helpers. It does not
 write; all writes go through :mod:`zicato.index.ingest`.
 
-Two design rules:
-
-* **WAL-friendly opens.** :func:`open_index` opens the database in WAL
-  journal mode so a reader (R9-2's analytics surface, the Rust
-  supervisor) does not block the orchestrator's live dual-writes and
-  vice versa. The connection's ``row_factory`` is :class:`sqlite3.Row`
-  so callers get name-addressable rows.
-* **Tolerate a missing database.** Every helper here is given a
-  ``db_path`` and is expected to be called against a workspace that may
-  never have been indexed. :func:`open_index` raises a clear
-  :class:`IndexNotBuiltError` (whose message points at ``zicato
-  reindex``); the convenience selectors below catch that and return an
-  empty result so a caller building a dashboard does not have to
-  special-case the first run.
+Connections open in read-only mode and require the supported schema. They
+never create a database or alter its journal mode. Name-addressable rows
+use ``sqlite3.Row``. Convenience selectors return empty results when the
+index is absent or incompatible; the repair owner rebuilds it from
+canonical workspace records.
 """
 
 from __future__ import annotations
@@ -31,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from zicato.core.types import EXPERIMENT_MEMORY_MAX_ENTRIES, PriorExperiment
-from zicato.index.schema import read_schema_version
+from zicato.index.schema import IndexSchemaError, read_schema_version, require_schema
 
 
 class IndexNotBuiltError(FileNotFoundError):
@@ -45,41 +36,20 @@ class IndexNotBuiltError(FileNotFoundError):
 
 
 def open_index(db_path: Path) -> sqlite3.Connection:
-    """Open the index database for reading.
-
-    The connection is configured for the index's concurrent-read
-    posture:
-
-    * ``row_factory = sqlite3.Row`` — callers index columns by name.
-    * WAL journal mode — readers never block the orchestrator's
-      dual-writes. ``PRAGMA journal_mode=WAL`` is a no-op when the file
-      was already created in WAL mode (the canonical case), and harmless
-      otherwise.
-    * ``PRAGMA busy_timeout`` — a short wait so a read that races a
-      writer's commit retries instead of raising ``database is locked``.
-
-    Raises
-    ------
-    IndexNotBuiltError
-        If ``db_path`` does not exist. The message suggests
-        ``zicato repair index``.
-
-    Notes
-    -----
-    The connection is *read-oriented* but not hard read-only — SQLite's
-    URI ``mode=ro`` would refuse to even create the WAL sidecar files,
-    which trips up some environments. We instead open normally and
-    simply never issue writes from this module.
-    """
+    """Open a supported index read-only; leave creation and repair to its owner."""
     if not db_path.exists():
         raise IndexNotBuiltError(
             f"zicato index database not found at {db_path}; "
             "run `zicato repair index` to build it from the workspace files"
         )
-    conn = sqlite3.connect(str(db_path))
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=5000")
+    conn = sqlite3.connect(f"{db_path.resolve().as_uri()}?mode=ro", uri=True)
+    try:
+        require_schema(read_schema_version(conn))
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout=5000")
+    except BaseException:
+        conn.close()
+        raise
     return conn
 
 
@@ -92,7 +62,7 @@ def index_schema_version(db_path: Path) -> int | None:
     """
     if not db_path.exists():
         return None
-    conn = sqlite3.connect(str(db_path))
+    conn = sqlite3.connect(f"{db_path.resolve().as_uri()}?mode=ro", uri=True)
     try:
         return read_schema_version(conn)
     finally:
@@ -100,64 +70,15 @@ def index_schema_version(db_path: Path) -> int | None:
 
 
 def _select(db_path: Path, sql: str, params: Sequence[Any] = ()) -> list[sqlite3.Row]:
-    """Run a read query, returning rows; ``[]`` when the index is missing.
-
-    Centralises the "tolerate a missing database" rule for the
-    convenience selectors below. A missing file yields an empty list
-    rather than an exception so dashboard-style callers can render an
-    empty state on a never-indexed workspace.
-    """
+    """Return query rows, or an empty result when the derived index is unavailable."""
     try:
         conn = open_index(db_path)
-    except IndexNotBuiltError:
+    except (IndexNotBuiltError, IndexSchemaError):
         return []
     try:
         return list(conn.execute(sql, tuple(params)).fetchall())
-    finally:
-        conn.close()
-
-
-def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
-    """Return the column names of ``table`` (empty when the table is absent)."""
-    try:
-        rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
     except sqlite3.Error:
-        return set()
-    return {r[1] for r in rows}
-
-
-def _select_optional_columns(
-    db_path: Path,
-    table: str,
-    base_columns: Sequence[str],
-    optional_columns: Sequence[str],
-    where: str,
-    params: Sequence[Any],
-) -> list[sqlite3.Row]:
-    """Select ``base_columns`` plus whichever ``optional_columns`` exist.
-
-    A column added in a later schema version (e.g. ``match_id`` in v4)
-    may be absent from an index at an earlier version that the read-only
-    dashboard opens without migrating. Rather than letting the ``SELECT``
-    fail with "no such column", this probes the live table for each optional
-    column and emits ``NULL AS <col>`` for any that are missing, so every
-    row loads with the field present-but-null. That is the compatibility
-    contract the dashboard relies on. Returns ``[]`` for a missing index.
-    """
-    try:
-        conn = open_index(db_path)
-    except IndexNotBuiltError:
         return []
-    try:
-        present = _table_columns(conn, table)
-        select_terms = list(base_columns)
-        for col in optional_columns:
-            if col in present:
-                select_terms.append(col)
-            else:
-                select_terms.append(f"NULL AS {col}")
-        sql = f"SELECT {', '.join(select_terms)} FROM {table} {where}"
-        return list(conn.execute(sql, tuple(params)).fetchall())
     finally:
         conn.close()
 
@@ -168,12 +89,7 @@ def _select_optional_columns(
 
 
 def all_epochs(db_path: Path) -> list[sqlite3.Row]:
-    """Return every indexed epoch, oldest first.
-
-    The selection includes ``parent_epoch_id`` (v2 column); a v1
-    database is upgraded in place on the next write so callers always
-    see the column on a read after any write.
-    """
+    """Return every indexed epoch and its parent coordinate, oldest first."""
     return _select(
         db_path,
         "SELECT epoch_id, contract_hash, created_at, closed, parent_epoch_id "
@@ -182,54 +98,26 @@ def all_epochs(db_path: Path) -> list[sqlite3.Row]:
 
 
 def generations_for_epoch(db_path: Path, epoch_id: str) -> list[sqlite3.Row]:
-    """Return every generation under ``epoch_id``, oldest first.
+    """Return generation lineage and visibility ratings, oldest first.
 
-    ``round_index`` (the v7 birth-round column) is selected as an
-    optional column: an index at an earlier schema version, opened read-only
-    without the migration, still loads each row with ``round_index``
-    present-but-null,
-    so a consumer can group ``Epoch -> Round -> {challengers}`` and
-    degrade on a null. The rating triple (``elo`` / ``elo_se`` /
-    ``elo_games``; v10 + v12, visibility-only) rides the same optional
-    contract — present-but-null on an index at an earlier schema version, or
-    on an unplayed generation. ``elo_se`` is null even in historical indexes
-    that stored a value, because match-ledger rows lack independent provenance.
-    """
-    return _select_optional_columns(
+    The birth round groups challengers within the epoch. Rating uncertainty is
+    unavailable because match-ledger rows lack independent provenance."""
+    return _select(
         db_path,
-        "generations",
-        [
-            "epoch_id",
-            "generation_id",
-            "parent_generation_id",
-            "promoted",
-            "created_at",
-            "NULL AS elo_se",
-        ],
-        ["round_index", "elo", "elo_games"],
-        "WHERE epoch_id = ? ORDER BY created_at, generation_id",
+        "SELECT epoch_id, generation_id, parent_generation_id, promoted, created_at, NULL AS "
+        "elo_se, round_index, elo, elo_games FROM generations WHERE epoch_id = ? ORDER BY "
+        "created_at, generation_id",
         (epoch_id,),
     )
 
 
 def runs_for_generation(db_path: Path, epoch_id: str, generation_id: str) -> list[sqlite3.Row]:
     """Return every run row under one generation, ordered by entry id."""
-    return _select_optional_columns(
+    return _select(
         db_path,
-        "runs",
-        (
-            "run_id",
-            "epoch_id",
-            "generation_id",
-            "entry_id",
-            "started_at",
-            "ended_at",
-            "aborted",
-            "runtime_ms",
-            "tournament_id",
-        ),
-        ("match_id",),
-        "WHERE epoch_id = ? AND generation_id = ? ORDER BY entry_id, run_id",
+        "SELECT run_id, epoch_id, generation_id, entry_id, started_at, ended_at, aborted, "
+        "runtime_ms, tournament_id, match_id FROM runs WHERE epoch_id = ? AND generation_id = "
+        "? ORDER BY entry_id, run_id",
         (epoch_id, generation_id),
     )
 
@@ -238,74 +126,34 @@ def loss_profiles_for_generation(
     db_path: Path, epoch_id: str, generation_id: str
 ) -> list[sqlite3.Row]:
     """Return every loss-profile row under one generation."""
-    return _select_optional_columns(
+    return _select(
         db_path,
-        "loss_profiles",
-        (
-            "run_id",
-            "epoch_id",
-            "generation_id",
-            "entry_id",
-            "drift_loss",
-            "pass_fail",
-            "runtime_ms",
-            "wall_clock_budget_exceeded",
-            "loss_json",
-            "tournament_id",
-        ),
-        ("match_id", "cached", "source_epoch", "source_run"),
-        "WHERE epoch_id = ? AND generation_id = ? ORDER BY entry_id, run_id",
+        "SELECT run_id, epoch_id, generation_id, entry_id, drift_loss, pass_fail, runtime_ms, "
+        "wall_clock_budget_exceeded, loss_json, tournament_id, match_id, cached, source_epoch,"
+        " source_run FROM loss_profiles WHERE epoch_id = ? AND generation_id = ? ORDER BY "
+        "entry_id, run_id",
         (epoch_id, generation_id),
     )
 
 
 def runs_for_tournament(db_path: Path, tournament_id: str) -> list[sqlite3.Row]:
-    """Return every ``runs`` row that belongs to one tournament round.
-
-    The FK was added in schema v2; a v1 database returns an empty list
-    because every row's ``tournament_id`` is ``NULL``. Run ``zicato
-    repair-tournament-fk`` to backfill the column on an existing v1+
-    workspace.
-    """
-    return _select_optional_columns(
+    """Return run rows belonging to one tournament round, ordered by entry id."""
+    return _select(
         db_path,
-        "runs",
-        (
-            "run_id",
-            "epoch_id",
-            "generation_id",
-            "entry_id",
-            "started_at",
-            "ended_at",
-            "aborted",
-            "runtime_ms",
-            "tournament_id",
-        ),
-        ("match_id",),
-        "WHERE tournament_id = ? ORDER BY entry_id, run_id",
+        "SELECT run_id, epoch_id, generation_id, entry_id, started_at, ended_at, aborted, "
+        "runtime_ms, tournament_id, match_id FROM runs WHERE tournament_id = ? ORDER BY "
+        "entry_id, run_id",
         (tournament_id,),
     )
 
 
 def loss_profiles_for_tournament(db_path: Path, tournament_id: str) -> list[sqlite3.Row]:
     """Return every ``loss_profiles`` row that belongs to one tournament round."""
-    return _select_optional_columns(
+    return _select(
         db_path,
-        "loss_profiles",
-        (
-            "run_id",
-            "epoch_id",
-            "generation_id",
-            "entry_id",
-            "drift_loss",
-            "pass_fail",
-            "runtime_ms",
-            "wall_clock_budget_exceeded",
-            "loss_json",
-            "tournament_id",
-        ),
-        ("match_id", "cached", "source_epoch", "source_run"),
-        "WHERE tournament_id = ? ORDER BY entry_id, run_id",
+        "SELECT run_id, epoch_id, generation_id, entry_id, drift_loss, pass_fail, runtime_ms, "
+        "wall_clock_budget_exceeded, loss_json, tournament_id, match_id, cached, source_epoch,"
+        " source_run FROM loss_profiles WHERE tournament_id = ? ORDER BY entry_id, run_id",
         (tournament_id,),
     )
 
@@ -313,7 +161,7 @@ def loss_profiles_for_tournament(db_path: Path, tournament_id: str) -> list[sqli
 def epoch_ancestry(db_path: Path, epoch_id: str) -> list[sqlite3.Row]:
     """Return the chain from ``epoch_id`` back to the workspace's first epoch.
 
-    Walks ``parent_epoch_id`` (the v2 column) one hop at a time,
+    Walks ``parent_epoch_id`` one hop at a time,
     starting from the row for ``epoch_id`` and following each row's
     parent until ``parent_epoch_id IS NULL`` (the workspace's first
     epoch) or a cycle is detected (a safety guard — the lineage DAG
@@ -325,7 +173,7 @@ def epoch_ancestry(db_path: Path, epoch_id: str) -> list[sqlite3.Row]:
     """
     try:
         conn = open_index(db_path)
-    except IndexNotBuiltError:
+    except (IndexNotBuiltError, IndexSchemaError):
         return []
     try:
         chain: list[sqlite3.Row] = []
@@ -916,111 +764,37 @@ def mutation_point_track_record(
 
 
 def tournaments_for_epoch(db_path: Path, epoch_id: str) -> list[sqlite3.Row]:
-    """Return every resolved tournament row under ``epoch_id``.
-
-    ``champion_eval_mode`` / ``champion_run_ref`` (the v8 per-round
-    champion-eval-provenance columns) are selected as optional columns: a
-    index at an earlier schema version, opened read-only without the
-    migration, still loads each row with both fields present-but-null, so a consumer can show
-    cached-vs-rerun per round and degrade on a null (treating a null mode
-    as ``"full"``).
-    """
-    return _select_optional_columns(
+    """Return resolved tournament rows and champion evaluation provenance."""
+    return _select(
         db_path,
-        "tournaments",
-        (
-            "tournament_id",
-            "epoch_id",
-            "parent_generation_id",
-            "child_generation_id",
-            "decision",
-            "parent_scalar",
-            "child_scalar",
-            "delta_scalar",
-            "rejection_reason",
-            "ran_at",
-        ),
-        ("champion_eval_mode", "champion_run_ref"),
-        "WHERE epoch_id = ? ORDER BY ran_at, tournament_id",
+        "SELECT tournament_id, epoch_id, parent_generation_id, child_generation_id, decision, "
+        "parent_scalar, child_scalar, delta_scalar, rejection_reason, ran_at, "
+        "champion_eval_mode, champion_run_ref FROM tournaments WHERE epoch_id = ? ORDER BY "
+        "ran_at, tournament_id",
         (epoch_id,),
     )
 
 
 def elo_for_epoch(db_path: Path, epoch_id: str) -> list[sqlite3.Row]:
-    """Return each generation's folded rating under ``epoch_id``.
+    """Return descriptive ratings and settled-game counts, oldest first.
 
-    The read side of the Bradley--Terry rating fold (``index/elo.py``;
-    FUNCTIONALITY-RECOMMENDATIONS.md §5): one row per generation carrying
-    ``generation_id``, ``parent_generation_id``, ``elo`` (its batch-fit
-    rating across the lineage's settled match ledger, on the Elo scale),
-    ``elo_se`` (always null without independent measurement provenance), and
-    ``elo_games`` (how many settled duels contributed to it), oldest first.
-
-    The rating is **read-only / for visibility** — it never gates
-    promotion. ``elo`` / ``elo_games`` land in schema v10 and ``elo_se`` in
-    v12: an index at an earlier schema version, opened read-only without the
-    migration, still loads each row with all three fields present-but-null
-    (``elo IS NULL`` means the point rating has not been computed).
-    Repairing the index does not establish independent uncertainty. A
-    generation that never played a settled duel also reads NULL (no games,
-    no rating). A never-indexed workspace yields ``[]``.
-    """
-    return _select_optional_columns(
+    Unplayed generations have no rating. The descriptive match ledger cannot
+    establish independent uncertainty, so elo_se is always null."""
+    return _select(
         db_path,
-        "generations",
-        ["epoch_id", "generation_id", "parent_generation_id", "created_at", "NULL AS elo_se"],
-        ["elo", "elo_games"],
-        "WHERE epoch_id = ? ORDER BY created_at, generation_id",
+        "SELECT epoch_id, generation_id, parent_generation_id, created_at, NULL AS elo_se, "
+        "elo, elo_games FROM generations WHERE epoch_id = ? ORDER BY created_at, generation_id",
         (epoch_id,),
     )
 
 
-def _select_if_table(
-    db_path: Path, table: str, sql: str, params: Sequence[Any] = ()
-) -> list[sqlite3.Row]:
-    """Run a read query, tolerating BOTH a missing index and a missing table.
-
-    The board-reflection tables land in schema v11; a pre-v11 index opened
-    read-only (without a migrating write) simply lacks them. This selector
-    probes ``sqlite_master`` for ``table`` first and returns ``[]`` when it is
-    absent — so a reflection reader degrades on a stale index rather than
-    raising ``no such table`` (the additive-migration back-compat contract the
-    other optional-column selectors already honour).
-    """
-    try:
-        conn = open_index(db_path)
-    except IndexNotBuiltError:
-        return []
-    try:
-        exists = conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
-            (table,),
-        ).fetchone()
-        if exists is None:
-            return []
-        return list(conn.execute(sql, tuple(params)).fetchall())
-    except sqlite3.Error:
-        return []
-    finally:
-        conn.close()
-
-
 def reflections_for_epoch(db_path: Path, epoch_id: str) -> list[sqlite3.Row]:
-    """Return every indexed reflection under ``epoch_id``, newest first.
+    """Return indexed reflection summaries, newest first.
 
-    The read side of the board-reflection projection (schema v11). Each row
-    carries the reflection's four-pillar bill-of-health summary
-    (``noise_floor_max_abs_delta`` / ``decision_flip_p`` / ``n_findings`` /
-    ``n_judges`` / ``verdict_counts_json``) plus its identity
-    (``mode`` / ``executed``). A never-indexed workspace — or one whose index
-    predates v11 — yields ``[]`` (the ``reflections`` table is simply absent,
-    which :func:`_select` tolerates), and the CLI/readers fall back to the
-    canonical files. The index is a projection; a reflection is readable with
-    no index at all.
-    """
-    return _select_if_table(
+    A missing or incompatible index yields no rows. Reflection readers can use
+    the canonical files without modifying the index."""
+    return _select(
         db_path,
-        "reflections",
         "SELECT reflection_id, epoch_id, created_at, mode, executed, "
         "noise_floor_max_abs_delta, decision_flip_p, n_findings, n_judges, "
         "verdict_counts_json FROM reflections WHERE epoch_id = ? "
@@ -1030,15 +804,9 @@ def reflections_for_epoch(db_path: Path, epoch_id: str) -> list[sqlite3.Row]:
 
 
 def reflection_row(db_path: Path, reflection_id: str) -> sqlite3.Row | None:
-    """Return one reflection's summary row, or ``None`` when absent.
-
-    ``None`` on a missing index, a pre-v11 index (no ``reflections`` table),
-    or an unknown ``reflection_id`` — the reader degrades rather than raises,
-    and the caller falls back to the canonical ``plan.json`` / ``findings.json``.
-    """
-    rows = _select_if_table(
+    """Return one indexed reflection summary, or None when unavailable."""
+    rows = _select(
         db_path,
-        "reflections",
         "SELECT reflection_id, epoch_id, created_at, mode, executed, "
         "noise_floor_max_abs_delta, decision_flip_p, n_findings, n_judges, "
         "verdict_counts_json FROM reflections WHERE reflection_id = ?",
@@ -1048,15 +816,9 @@ def reflection_row(db_path: Path, reflection_id: str) -> sqlite3.Row | None:
 
 
 def judge_scorecards_for_reflection(db_path: Path, reflection_id: str) -> list[sqlite3.Row]:
-    """Return every judge scorecard row for one reflection, by judge name.
-
-    The per-judge confusion-matrix projection (schema v11). A never-indexed
-    or pre-v11 workspace yields ``[]``; the reader falls back to the canonical
-    ``scorecards.json`` on disk.
-    """
-    return _select_if_table(
+    """Return indexed judge scorecards by name, or no rows when unavailable."""
+    return _select(
         db_path,
-        "judge_scorecards",
         "SELECT reflection_id, judge_name, tp, fp, fn, tn, ambiguous, "
         "precision, recall, f1, severity_accuracy, disagreement_rate, kappa, "
         "exercised, redundant_with_json FROM judge_scorecards "
@@ -1087,7 +849,7 @@ def index_counts(db_path: Path) -> dict[str, int]:
     out: dict[str, int] = dict.fromkeys(tables, 0)
     try:
         conn = open_index(db_path)
-    except IndexNotBuiltError:
+    except (IndexNotBuiltError, IndexSchemaError):
         return out
     try:
         for table in tables:

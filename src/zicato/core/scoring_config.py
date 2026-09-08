@@ -7,7 +7,7 @@ Split out of :mod:`zicato.core.types`; re-exported from there and from
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import MISSING, dataclass, field, fields
+from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Literal, get_args
 
@@ -66,43 +66,12 @@ def _knob(
     *,
     persisted_name: str | None = None,
     description: str | None = None,
-    recorded_path: str | None = None,
-    omit_at_default: bool = False,
     constraint: KnobConstraint | None = None,
 ) -> dict[str, Any]:
-    """Per-field knob metadata — the declarative source of truth.
-
-    Without it a scoring or proposer knob fans out across seven hand-kept
-    registries. This makes the field declaration the source those registries
-    DERIVE from, with the guard tables as the enforcement net.
-
-    ``omit_at_default`` — the field is dropped from the contract canonical
-    form at its persisted omission value. ``canonical_default`` metadata pins
-    that value when an authored default changes, preserving recorded identity.
-    ``historical_default`` and ``historical_default_factory`` preserve omitted
-    values in records that predate an authored default change. The canonicalizer's omit set
-    (:data:`zicato.epoch.contract._SCORING_OMIT_AT_DEFAULT_FIELDS`) is
-    DERIVED from this flag across the contract dataclasses; a frozen-literal
-    guard test pins the derived set so a metadata typo can never silently
-    move the contract hash.
-
-    ``constraint`` — the values the knob admits
-    (:class:`zicato.core.constraints.KnobConstraint`). ``__post_init__``
-    applies it through :func:`~zicato.core.constraints.validate_knobs`, and
-    configuration edits consult the same declaration through
-    :func:`~zicato.core.constraints.require_knob`, so an out-of-range value
-    is refused with one wording whichever surface catches it. ``None`` means
-    the field carries no machine-checkable domain (a bool, a mapping, a
-    knob whose rule needs prose).
-
-    Defaults stay on the field declaration; a rule too rich for a
-    ``KnobConstraint`` stays in ``__post_init__``.
-    """
+    """Declare a field's stored name, description, and accepted values."""
     return {
         "persisted_name": persisted_name,
         "description": description,
-        "recorded_path": recorded_path,
-        "omit_at_default": omit_at_default,
         "constraint": constraint,
     }
 
@@ -299,16 +268,12 @@ class ProposerQualityConfig:
     screen_entries: int = field(
         default=2,
         metadata=_knob(
-            omit_at_default=True,
             constraint=KnobConstraint(minimum=0),
-        )
-        | {"canonical_default": 0, "historical_default": 0},
+        ),
     )
     screen_veto_only: bool = field(
         default=False,
-        metadata=_knob(
-            omit_at_default=True,
-        ),
+        metadata=_knob(),
     )
 
     def __post_init__(self) -> None:
@@ -331,8 +296,7 @@ class ExperimentalConfig:
 
     Every feature is inactive by default. Recommended settings leave this
     block at its defaults. Safety enforcement remains ordinary policy.
-    Enabling a feature changes the evaluation contract. Historical field
-    paths are used only to read archived contracts.
+    Enabling a feature changes the evaluation contract.
 
     Fields
     ------
@@ -374,94 +338,66 @@ class ExperimentalConfig:
     max_generations_per_contract: int | None = field(
         default=None,
         metadata=_knob(
-            omit_at_default=True,
-            recorded_path="overfitting.max_generations_per_contract",
             constraint=KnobConstraint(minimum=1, allow_none=True),
         ),
     )
     random_baseline_every_n: int = field(
         default=0,
         metadata=_knob(
-            recorded_path="overfitting.random_baseline_every_n",
-            omit_at_default=True,
             constraint=KnobConstraint(minimum=0),
         ),
     )
     process_exemplars: int = field(
         default=0,
         metadata=_knob(
-            recorded_path="proposer_quality.process_exemplars",
-            omit_at_default=True,
             constraint=KnobConstraint(minimum=0),
         ),
     )
     recombine: bool = field(
         default=False,
-        metadata=_knob(
-            recorded_path="proposer_quality.recombine",
-            omit_at_default=True,
-        ),
+        metadata=_knob(),
     )
     genealogy: int = field(
         default=0,
         metadata=_knob(
-            recorded_path="proposer_quality.genealogy",
-            omit_at_default=True,
             constraint=KnobConstraint(minimum=0),
         ),
     )
     calibration_feedback: int = field(
         default=0,
         metadata=_knob(
-            recorded_path="proposer_quality.calibration_feedback",
-            omit_at_default=True,
             constraint=KnobConstraint(minimum=0),
         ),
     )
     recombine_merge: str = field(
         default="mechanical",
         metadata=_knob(
-            recorded_path="proposer_quality.recombine_merge",
-            omit_at_default=True,
             constraint=KnobConstraint(choices=RECOMBINE_MERGE_MODES),
         ),
     )
     diff_complexity_weight: float = field(
         default=0.0,
         metadata=_knob(
-            recorded_path="diff_complexity_weight",
-            omit_at_default=True,
             constraint=KnobConstraint(minimum=0),
         ),
     )
     diff_complexity_ceiling: float = field(
         default=0.0,
         metadata=_knob(
-            recorded_path="diff_complexity_ceiling",
-            omit_at_default=True,
             constraint=KnobConstraint(minimum=0),
         ),
     )
     cross_epoch_memory: bool = field(
         default=False,
-        metadata=_knob(
-            omit_at_default=True,
-            recorded_path="experiment_memory.cross_epoch",
-        ),
+        metadata=_knob(),
     )
     standing_rating: Literal["none", "bradley_terry"] = field(
         default="none",
-        metadata=_knob(
-            omit_at_default=True,
-            recorded_path="tournament.params.rating",
-        ),
+        metadata=_knob(),
     )
     resolver: Literal["none", "copeland", "ranked_pairs"] = field(
         default="none",
-        metadata=_knob(
-            omit_at_default=True,
-            recorded_path="tournament.params.resolver",
-        ),
+        metadata=_knob(),
     )
 
     def __post_init__(self) -> None:
@@ -855,13 +791,12 @@ class ScoringWeights:
     holdout_margin: float | None = field(
         default=None,
         metadata=_knob(
-            omit_at_default=True,
             constraint=KnobConstraint(minimum=0, allow_none=True),
         ),
     )
     holdout_entry_regression_budget: int = field(
         default=0,
-        metadata=_knob(omit_at_default=True, constraint=KnobConstraint(minimum=0)),
+        metadata=_knob(constraint=KnobConstraint(minimum=0)),
     )
     pass_rate_monotonicity: bool = field(
         default=True,
@@ -896,8 +831,7 @@ class ScoringWeights:
     )
     tournament_structure: TournamentStructure = field(
         default_factory=_default_tournament_structure,
-        metadata=_knob(persisted_name="tournament")
-        | {"historical_default_factory": TournamentStructure.gauntlet},
+        metadata=_knob(persisted_name="tournament"),
     )
     # Anti-overfitting controls (train/holdout split + proposer leakage
     # restriction). Modelled here so it factors into the contract hash
@@ -923,25 +857,18 @@ class ScoringWeights:
         default_factory=_default_proposer_quality_config,
         metadata=_knob(
             description="Candidate sampling, critique, screening, and field composition."
-        )
-        | {"historical_default_factory": lambda: ProposerQualityConfig(screen_entries=0)},
+        ),
     )
-    # Opt-ins for features without a measured case (issue #394's
-    # graduation namespace). Omitted from the canonical form while every
-    # flag is off, so a contract naming none of them keeps its hash; a
-    # flag turned on rolls the epoch. See :class:`ExperimentalConfig`.
+    # Optional features remain explicit in stored settings and contract identity.
     experimental: ExperimentalConfig = field(
         default_factory=_default_experimental_config,
         metadata=_knob(
-            omit_at_default=True,
             description="Explicit experimental evaluation and proposal features.",
         ),
     )
     goldfive: Mapping[str, Any] | None = field(
         default=None,
-        metadata=_knob(
-            omit_at_default=True,
-        ),
+        metadata=_knob(),
     )
     # Optional operator outcome-summarizer hook (Capability 2 of issue #18,
     # item 8). A dotted spec (``pkg.mod:fn`` / ``pkg.mod.fn``) resolved like
@@ -1037,7 +964,6 @@ class ScoringWeights:
     telemetry_dialect: str = field(
         default=DIALECT_GOLDFIVE,
         metadata=_knob(
-            omit_at_default=True,
             constraint=KnobConstraint(choices=tuple(sorted(KNOWN_TELEMETRY_DIALECTS))),
         ),
     )
@@ -1047,24 +973,18 @@ class ScoringWeights:
     # their default.
     block_on_containment_violation: bool = field(
         default=False,
-        metadata=_knob(
-            omit_at_default=True,
-        ),
+        metadata=_knob(),
     )
     block_on_gate_contradiction: bool = field(
         default=False,
-        metadata=_knob(
-            omit_at_default=True,
-        ),
+        metadata=_knob(),
     )
     # Folded over ``zicato.mutation.markers.BUILTIN_SYNTAXES`` and validated
     # by ``markers.syntax_table_from_config`` alone: core must not import
     # mutation, so no second validator lives here.
     mutation_surface: Mapping[str, Mapping[str, Any]] = field(
         default_factory=dict,
-        metadata=_knob(
-            omit_at_default=True,
-        ),
+        metadata=_knob(),
     )
 
     def __post_init__(self) -> None:
@@ -1161,58 +1081,15 @@ class ScoringWeights:
             raise ValueError(experimental_structure_refusal(structure))
 
     def to_json(self) -> dict[str, Any]:
-        """Serialise to a JSON-shaped dict via the field-enumerating serde.
+        """Write every effective scoring setting for storage and worker execution."""
+        from zicato.core.configuration import dataclass_to_jsonable  # noqa: PLC0415
 
-        The single source of truth for putting a :class:`ScoringWeights` on
-        the wire — used by BOTH the tournament runner (to hand weights to the
-        subprocess worker) and the frozen-contract snapshot. Because it walks
-        ``dataclasses.fields()`` (see
-        :mod:`zicato.epoch.contract_serde`) it covers every applicable field,
-        recursing into nested config dataclasses. An inactive optional
-        integration is omitted. Adding a field can therefore never silently
-        desync the worker into scoring under defaults — the historical
-        ``per_judge_weights`` /
-        ``pass_rate_monotonicity_scope`` / ``drift_kind_aggregation`` desync
-        class that two hand-aligned field lists kept re-introducing.
-
-        :meth:`from_json` is the exact inverse:
-        ``ScoringWeights.from_json(w.to_json()) == w`` for every field.
-        """
-        from zicato.epoch.contract_serde import dataclass_to_jsonable  # noqa: PLC0415
-
-        serialized = dataclass_to_jsonable(self)
-        if self.goldfive is None:
-            serialized.pop("goldfive")
-        return serialized
+        return dataclass_to_jsonable(self)
 
     @classmethod
-    def from_json(cls, data: Mapping[str, Any] | None) -> ScoringWeights:
-        """Reconstruct from a :meth:`to_json` dict, the inverse of it.
-
-        Tolerant of a partial / absent payload — a key absent from ``data``
-        falls back to the field's dataclass default (so a caller that does
-        not care about scoring weights, e.g. a stub-adapter test, can pass
-        ``None`` / ``{}`` and still get a usable default-weighted instance).
-        ``__post_init__`` re-validates the reconstructed transform specs, so a
-        corrupt payload fails fast here. Used by the subprocess worker to
-        rebuild the weights the runner serialised with :meth:`to_json`.
-
-        Defensive coercion: ``pass_rate_monotonicity_scope`` is a closed
-        ``Literal``; a token outside ``{"per_entry", "aggregate"}`` (a
-        corrupt / future args file) is coerced back to the default rather
-        than letting an out-of-domain string desync the worker's gate-view
-        from the parent's (issue #17). The field-enumerating serde itself
-        passes a bare ``Literal`` token through unchanged, so this guard
-        lives here at the deserialise seam.
-        """
-        from zicato.epoch.contract_serde import historical_scoring_from_json  # noqa: PLC0415
-
-        if not isinstance(data, Mapping):
-            return cls()
-        raw_scope = data.get("pass_rate_monotonicity_scope")
-        if raw_scope is not None and raw_scope not in ("per_entry", "aggregate"):
-            data = {**data, "pass_rate_monotonicity_scope": cls().pass_rate_monotonicity_scope}
-        return historical_scoring_from_json(data)
+    def from_json(cls, data: Mapping[str, Any]) -> ScoringWeights:
+        """Read scoring settings through the shared configuration validator."""
+        return scoring_weights_from_dict(data)
 
 
 def _freeze_json(value: Any) -> Any:
@@ -1228,58 +1105,6 @@ def _freeze_json(value: Any) -> Any:
     return value
 
 
-CONTRACT_KNOB_TYPES: tuple[type, ...] = (
-    ScoringWeights,
-    OverfittingConfig,
-    LadderConfig,
-    ProposerQualityConfig,
-    ExperimentalConfig,
-)
-
-
-@dataclass(frozen=True, slots=True)
-class ContractKnob:
-    """One runtime-derived scoring-contract field declaration."""
-
-    owner: type
-    name: str
-    default: object
-    omit_at_default: bool
-
-    @property
-    def key(self) -> str:
-        return f"{self.owner.__name__}.{self.name}"
-
-
-def contract_knobs() -> tuple[ContractKnob, ...]:
-    """Return the scoring contract's field registry in declaration order."""
-
-    knobs: list[ContractKnob] = []
-    for owner in CONTRACT_KNOB_TYPES:
-        for declared in fields(owner):
-            if declared.default is not MISSING:
-                default = declared.default
-            elif declared.default_factory is not MISSING:
-                default = declared.default_factory()
-            else:
-                default = MISSING
-            knobs.append(
-                ContractKnob(
-                    owner=owner,
-                    name=declared.name,
-                    default=default,
-                    omit_at_default=bool(declared.metadata.get("omit_at_default")),
-                )
-            )
-    return tuple(knobs)
-
-
-def omit_at_default_fields() -> frozenset[str]:
-    """Names omitted from canonical scoring while equal to their defaults."""
-
-    return frozenset(knob.name for knob in contract_knobs() if knob.omit_at_default)
-
-
 def scoring_weights_from_dict(d: Mapping[str, Any]) -> ScoringWeights:
     """Validate authored scoring values before constructing the contract.
 
@@ -1289,35 +1114,10 @@ def scoring_weights_from_dict(d: Mapping[str, Any]) -> ScoringWeights:
     fields declared as mappings; their values follow the declared type.
     """
     from zicato.core.configuration import (  # noqa: PLC0415
-        ConfigurationError,
         authored_dataclass_from_json,
-    )
-    from zicato.core.tournament import (  # noqa: PLC0415
-        DEFAULT_CONFIRMATION_BUDGET,
-        read_promote_confidence_threshold,
     )
 
     if isinstance(d, Mapping):
-        _reject_retired_scoring_keys(d)
-        overfitting = d.get("overfitting")
-        ladder = overfitting.get("ladder") if isinstance(overfitting, Mapping) else None
-        if isinstance(ladder, Mapping) and "noise_scale" in ladder:
-            raise ConfigurationError(
-                "scoring.overfitting.ladder.noise_scale",
-                "retired",
-                "remove a zero increment; otherwise set ladder.threshold to the previous "
-                "threshold (or promote_margin when null) plus noise_scale, then remove "
-                "noise_scale. Preserve the required improvement when migrating",
-            )
-        from zicato.epoch.contract_serde import recorded_experimental_values  # noqa: PLC0415
-
-        for name, (path, _value) in recorded_experimental_values(d).items():
-            raise ConfigurationError(
-                f"scoring.{path}",
-                "relocated",
-                f"move this authored setting to experimental.{name}; equivalent values preserve "
-                "the evaluation contract. Keep archived epoch files unchanged",
-            )
         tournament = d.get("tournament")
         if isinstance(tournament, Mapping):
             default = ScoringWeights().tournament_structure
@@ -1326,48 +1126,5 @@ def scoring_weights_from_dict(d: Mapping[str, Any]) -> ScoringWeights:
             resolved.setdefault(
                 "params", dict(default.params) if resolved["structure"] == default.structure else {}
             )
-            params = resolved["params"]
-            if (
-                isinstance(params, Mapping)
-                and read_promote_confidence_threshold(params) is not None
-            ):
-                resolved["params"] = {
-                    "promote_confidence_replicates": DEFAULT_CONFIRMATION_BUDGET,
-                    **params,
-                }
             d = {**d, "tournament": resolved}
     return authored_dataclass_from_json(ScoringWeights, d, path="scoring")
-
-
-#: Retired ``scoring.json`` keys, each mapped to a template naming what
-#: replaces it. The field-enumerating loader IGNORES unknown keys, so a
-#: retired one would otherwise degrade invisibly — the contract would score
-#: under a default the operator never chose, with no error and no epoch roll.
-#: Every entry here is a key that once shaped the scalar.
-_RETIRED_SCORING_KEYS: Mapping[str, str] = {
-    "pass_exponent": (
-        '`pass_exponent` is retired — express it as pass_transform={{"op": '
-        '"pow", "exponent": {raw}}} in scoring.json.'
-    ),
-    "drift_weight": (
-        "`drift_weight` is retired — drift is one metric channel among "
-        'several, so express it as namespace_weights={{"drift:": {raw}}} in '
-        "scoring.json."
-    ),
-    "runtime_weight": (
-        "`runtime_weight` is retired — runtime is one metric channel among "
-        'several, so express it as namespace_weights={{"runtime:": {raw}}} in '
-        "scoring.json."
-    ),
-}
-
-
-def _reject_retired_scoring_keys(d: Mapping[str, Any]) -> None:
-    """Reject any retired ``scoring.json`` key with a loud migration error.
-
-    A stale contract fails fast, naming the field that replaced the one it
-    uses, rather than loading with a silently defaulted scalar.
-    """
-    for key, template in _RETIRED_SCORING_KEYS.items():
-        if key in d:
-            raise ValueError(template.format(raw=d[key]))

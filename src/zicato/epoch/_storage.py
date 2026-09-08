@@ -77,15 +77,8 @@ def journal_key(epoch_id: str) -> str:
     return storage_key(_LAYOUT.journal(epoch_id))
 
 
-#: Version stamped into the CANONICAL JSON records (``experiment.json``,
-#: each epoch's ``config.json``, ``lineage.json``) at write time.
-#: A record with NO ``format_version`` key is treated as version 1 in this
-#: release, so a workspace or fixture written before the stamp keeps
-#: reading. The refusal therefore targets FUTURE incompatible shapes only.
-#: A record stamped with a HIGHER version was written by a newer zicato
-#: whose shape this build cannot promise to interpret, so the reader
-#: refuses with a clear error instead of silently misreading it. There are
-#: NO migration shims; bumping this constant is a deliberate format break.
+#: Supported stamp for canonical epoch, experiment, lineage, and score records.
+#: Owners with independently versioned formats pass their expected version.
 RECORD_FORMAT_VERSION = 1
 
 
@@ -109,24 +102,14 @@ def check_record_format(
     record_name: str,
     *,
     expected_version: int = RECORD_FORMAT_VERSION,
-    allow_missing: bool = True,
 ) -> None:
-    """Refuse a canonical record whose ``format_version`` this build cannot read.
-
-    The owner declares the accepted integer version and whether an absent
-    stamp is readable. Version-1 owners retain their unstamped-record policy;
-    settlement receipts require their explicit format-3 stamp.
-    """
+    """Require the owner's supported integer format stamp on a present record."""
     raw = body.get("format_version")
-    if raw is None and allow_missing:
-        return  # pre-stamp record — version 1 by definition this release
     if isinstance(raw, int) and not isinstance(raw, bool) and raw == expected_version:
         return
     raise RecordFormatError(
-        f"{record_name}: unsupported format_version {raw!r} is not readable by this "
-        f"zicato (expects {expected_version}); the record was written "
-        "by an incompatible (likely newer) version — upgrade zicato rather "
-        "than letting an old reader misinterpret it"
+        f"{record_name}: unsupported format_version {raw!r}; "
+        f"expected integer {expected_version}"
     )
 
 
