@@ -286,6 +286,31 @@ class TestTreeImportStatusRecord:
             tree_import_status=lambda: dict(status),
         )
 
+    def test_corrupt_source_record_refuses_health_assessment(self, tmp_path: Path) -> None:
+        from zicato.core.workspace import harness_load_path
+        from zicato.epoch._storage import RecordError
+        from zicato.health.inputs import epoch_tree_import_gaps
+
+        path = harness_load_path(tmp_path, "e1", "v1")
+        path.parent.mkdir(parents=True)
+        import json
+
+        valid = {
+            "schema": "zicato.harness_load/1",
+            "generation_id": "v1",
+            "entrypoint_file": "agent.py",
+        }
+        for changed in (
+            {"trees_never_imported": [42]},
+            {"generation_id": "v2"},
+            {"implementation": []},
+        ):
+            path.write_text(json.dumps({**valid, **changed}))
+            original = path.read_bytes()
+            with pytest.raises(RecordError, match="source"):
+                epoch_tree_import_gaps(tmp_path, "e1")
+            assert path.read_bytes() == original
+
     def test_verified_by_any_unit_wins_over_never_imported(self, tmp_path: Path) -> None:
         """A tree ANY unit imported is verified for the whole generation.
 
@@ -331,6 +356,32 @@ class TestTreeImportStatusRecord:
         record = read_json(harness_load_path(tmp_path, "e1", "v1"))
         assert record["entrypoint_file"] == "agent/agent.py"
         assert record["trees_never_imported"] == ["otherpkg"]
+
+        implementation = {
+            "factory_spec": "adapter:make",
+            "factory_file": None,
+            "factory_source_sha256": None,
+            "candidate_modules": {},
+        }
+        _verify_trees_after_run(
+            tmp_path,
+            epoch_id="e1",
+            generation_id="v1",
+            session=self._session({}),
+            snapshot_root=checkout,
+            implementation=implementation,
+        )
+        assert (
+            read_json(harness_load_path(tmp_path, "e1", "v1"))["implementation"] == implementation
+        )
+        _record_harness_load(
+            tmp_path,
+            epoch_id="e1",
+            generation_id="v1",
+            session=self._session({}, entrypoint_file=str(checkout / "agent" / "agent.py")),
+            snapshot_root=checkout,
+        )
+        assert "implementation" not in read_json(harness_load_path(tmp_path, "e1", "v1"))
 
     def test_a_tree_imported_from_outside_the_snapshot_fails_the_unit(self, tmp_path: Path) -> None:
         """Defence in depth: post-run, an outside-the-snapshot tree raises.
@@ -404,6 +455,7 @@ class TestTreeImportStatusRecord:
                 "schema": "zicato.harness_load/1",
                 "generation_id": "v1",
                 "entrypoint_file": "agent/agent.py",
+                "extension": {"nested": [1, None]},
             },
         )
         assert epoch_tree_import_gaps(tmp_path, "e1") == {}
@@ -424,6 +476,7 @@ class TestTreeImportStatusRecord:
         merged = read_json(harness_load_path(tmp_path, "e1", "v1"))
         assert merged["entrypoint_file"] == "agent/agent.py"
         assert merged["trees_verified"] == ["agent"]
+        assert merged["extension"] == {"nested": [1, None]}
 
 
 class TestBestOfNEmission:

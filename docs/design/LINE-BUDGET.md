@@ -50,9 +50,9 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 480,670 | +72,009 |
-| Production | 197,702 | 199,121 | +1,419 |
-| Production logic | 110,276 | 114,342 | +4,066 |
+| Total | 408,661 | 481,007 | +72,346 |
+| Production | 197,702 | 199,110 | +1,408 |
+| Production logic | 110,276 | 114,471 | +4,195 |
 
 The baseline row is the reference `f9052dd` measured by the classification the
 checker holds, which counts the console's hand-written entry point
@@ -84,36 +84,36 @@ production-logic series per subsystem along a branch's first-parent commits.
 
 | Subsystem | Total | Production | Production logic | Prose share |
 |---|---:|---:|---:|---:|
-| src/zicato/dashboard | 62,698 | 32,787 | 22,512 | 31.3% |
-| src/zicato/query | 20,472 | 20,472 | 12,586 | 38.5% |
-| src/zicato/epoch | 15,028 | 15,028 | 8,307 | 44.7% |
-| src/zicato/evolve | 11,852 | 11,852 | 7,343 | 38.0% |
+| src/zicato/dashboard | 62,801 | 32,815 | 22,538 | 31.3% |
+| src/zicato/query | 20,490 | 20,490 | 12,604 | 38.5% |
+| src/zicato/epoch | 15,000 | 15,000 | 8,305 | 44.6% |
+| src/zicato/evolve | 11,839 | 11,839 | 7,345 | 38.0% |
+| src/zicato/tournament | 11,743 | 11,743 | 6,691 | 43.0% |
 | src/zicato/reflection | 10,016 | 10,016 | 6,627 | 33.8% |
-| src/zicato/tournament | 11,669 | 11,669 | 6,620 | 43.3% |
 | crates/supervisor | 16,390 | 13,958 | 6,519 | 53.3% |
-| src/zicato/cli | 7,638 | 7,638 | 4,976 | 34.9% |
+| src/zicato/cli | 7,647 | 7,647 | 4,984 | 34.8% |
 | src/zicato/proposer | 9,761 | 9,761 | 4,897 | 49.8% |
 | src/zicato/analyzer | 7,563 | 7,563 | 4,757 | 37.1% |
 | src/zicato/core | 7,545 | 7,545 | 3,180 | 57.9% |
-| src/zicato/selection | 5,393 | 5,393 | 3,093 | 42.6% |
+| src/zicato/selection | 5,327 | 5,327 | 3,050 | 42.7% |
 | src/zicato/index | 5,451 | 5,451 | 2,822 | 48.2% |
 | src/zicato/runtime | 5,350 | 5,350 | 2,495 | 53.4% |
 | src/zicato/telemetry | 4,639 | 4,639 | 2,290 | 50.6% |
 | src/zicato/contract_draft | 2,510 | 2,510 | 1,647 | 34.4% |
-| src/zicato/health | 2,620 | 2,620 | 1,522 | 41.9% |
+| src/zicato/health | 2,604 | 2,604 | 1,515 | 41.8% |
 | src/zicato/mutation | 2,954 | 2,954 | 1,399 | 52.6% |
 | src/zicato/check | 1,771 | 1,771 | 1,146 | 35.3% |
 | src/zicato/board | 2,430 | 2,430 | 1,099 | 54.8% |
 | src/zicato/workspace | 1,995 | 1,995 | 944 | 52.7% |
 | src/zicato/adapters | 2,188 | 2,188 | 814 | 62.8% |
-| src/zicato/_tournament_worker.py | 1,398 | 1,398 | 769 | 45.0% |
+| src/zicato/judge_runtime | 1,780 | 1,780 | 803 | 54.9% |
+| src/zicato/_tournament_worker.py | 1,365 | 1,365 | 776 | 43.2% |
 | src/zicato/testing | 1,447 | 1,447 | 760 | 47.5% |
-| src/zicato/judge_runtime | 1,772 | 1,772 | 755 | 57.4% |
 | src/zicato/synthetic | 1,139 | 1,139 | 544 | 52.2% |
 | src/zicato/models_config.py | 656 | 656 | 511 | 22.1% |
 | src/zicato/scoring | 1,395 | 1,395 | 469 | 66.4% |
 | src/zicato/patterns | 804 | 804 | 417 | 48.1% |
-| src/zicato/storage | 1,008 | 1,008 | 354 | 64.9% |
+| src/zicato/storage | 1,016 | 1,016 | 355 | 65.1% |
 | src/zicato/logging_stream.py | 627 | 627 | 333 | 46.9% |
 | src/zicato/emulator | 675 | 675 | 306 | 54.7% |
 | src/zicato/example_workspace | 657 | 657 | 300 | 54.3% |
@@ -434,3 +434,6 @@ dropped rows named.
 | Remove the duplicate name for defaults (production) | 213,285 | -12 | 213,273 | Issue #395: remove the forwarding function and its duplicate public export. |
 | Remove the duplicate name for defaults (production logic) | 123,737 | -9 | 123,728 | Issue #395: callers use the existing configuration constructor; no replacement abstraction is introduced. |
 | Assert navigation while data is still loading (total) | 503,804 | +1 | 503,805 | Issue #405: observe navigation inside its handler while the request is held. Remove the helper thread and its one-second release timer. A delayed return from the test driver now passes; a read that blocks the input loop still fails. |
+| Validate saved records and reduce repeated execution (total) | 480,670 | +337 | 481,007 | Shared acceptance of saved result, judge and source records; focused recovery and browser checks; retained CI cost reports. Duplicate test setup and unused confirmation scheduling are removed. |
+| Validate saved records and reduce repeated execution (production) | 199,121 | -11 | 199,110 | Existing record owners replace consumer coercions. A round writer retains its sequence. The dashboard displays recorded tool values. Unused confirmation scheduling is deleted. |
+| Validate saved records and reduce repeated execution (production logic) | 114,342 | +129 | 114,471 | Shared validation of three saved formats and explicit failure propagation add logic, as does displaying tool arguments and results. Removing the unused pair-selection helper offsets part of that addition. |

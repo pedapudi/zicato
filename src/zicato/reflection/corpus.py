@@ -13,7 +13,7 @@ artifacts the loop already persisted — reads ``loss.json`` (+ every
 ``loss.r{n}`` replicate, so the A/A calibration slots at base ``1000`` and any
 prior reflection draws at base ``5000`` come along as **free pillar-1
 replicates**), and the capture sidecars ``result.json`` and ``judge_io.jsonl``
-via their tolerant readers. It stores PATHS and never copies bytes, so the
+via their shared record readers. It stores PATHS and never copies bytes, so the
 corpus is a lens over the lineage rather than a duplicate of it.
 
 Active (:func:`run_corpus`)
@@ -274,16 +274,16 @@ def _judge_decisions(
     if judge_io_records:
         decisions: list[dict[str, Any]] = []
         for rec in judge_io_records:
-            verdict = rec.get("verdict", {}) if isinstance(rec, dict) else {}
-            inp = rec.get("input", {}) if isinstance(rec, dict) else {}
+            verdict = rec["verdict"]
+            inp = rec["input"]
             decisions.append(
                 {
-                    "judge_name": str(rec.get("judge_name", "")),
-                    "fired": bool(verdict.get("drift_emitted", False)),
-                    "errored": str(verdict.get("kind", "")) == JUDGE_IO_ERROR_KIND,
-                    "severity": str(verdict.get("severity", "")),
-                    "claim": str(verdict.get("detail", "")),
-                    "transcript_span": inp.get("reasoning_sha256"),
+                    "judge_name": rec["judge_name"],
+                    "fired": verdict["drift_emitted"],
+                    "errored": verdict["kind"] == JUDGE_IO_ERROR_KIND,
+                    "severity": verdict["severity"],
+                    "claim": verdict["detail"],
+                    "transcript_span": inp["reasoning_sha256"],
                 }
             )
         return tuple(decisions)
@@ -410,7 +410,7 @@ def _unit_events_path_for(loss_path: Path) -> Path:
 
 
 def _read_sidecars(loss_path: Path, loss: Any) -> tuple[bool, list[dict[str, Any]]]:
-    """``(result_present, judge_io_records)`` via the tolerant capture readers."""
+    """Read accepted captures; present corruption refuses corpus construction."""
     from zicato.judge_runtime.io_capture import (  # noqa: PLC0415
         judge_io_path_for_loss,
         read_judge_io,
@@ -454,7 +454,7 @@ def ingest_lineage(
     that REFERENCES its ``loss.json`` / ``result.json`` / ``events.jsonl`` by
     path. The capture sidecars decide fidelity: a ``judge_io.jsonl`` sidecar ⇒
     ``verbatim``, else a ``result.json`` ⇒ ``result``, else ``preview``.
-    Missing / unreadable artifacts degrade the record, never crash.
+    Missing captures reduce fidelity; corrupt present captures refuse construction.
     """
     from zicato.core.workspace import run_dir as _run_dir  # noqa: PLC0415
     from zicato.tournament.unit_cache import own_code_board_draws  # noqa: PLC0415

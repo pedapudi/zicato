@@ -46,6 +46,18 @@ def _normalise_key(key: str) -> str:
     return cleaned
 
 
+def append_jsonl(path: Path, record: Any) -> None:
+    """Append one compact, newline-terminated record without replacing history.
+
+    The owner supplies sequence assignment and any interrupted-write recovery.
+    This write has no fsync or cross-process exclusion guarantee.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    line = json.dumps(record, separators=(",", ":"))
+    with path.open("a", encoding="utf-8") as stream:
+        stream.write(line + "\n")
+
+
 class FileStorageBackend(StorageBackend):
     """File-backed :class:`StorageBackend` rooted at a workspace directory.
 
@@ -179,11 +191,7 @@ class FileStorageBackend(StorageBackend):
         and ``\\n``-terminated — the newline-delimited-JSON convention the
         telemetry reducer reads back.
         """
-        path = self._path(key)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        line = json.dumps(record, separators=(",", ":"))
-        with path.open("a", encoding="utf-8") as fh:
-            fh.write(line + "\n")
+        append_jsonl(self._path(key), record)
 
     def read_jsonl(self, key: str) -> Iterator[Any]:
         """Yield the decoded records of the JSONL stream at ``key``.

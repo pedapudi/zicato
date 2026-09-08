@@ -169,6 +169,8 @@ def test_torn_tail_is_skipped_and_repaired(tmp_path):
     with log.path.open("a", encoding="utf-8") as fh:
         fh.write('{"seq":3,"ts":"2026-')
 
+    # Process recovery opens a new writer over the interrupted log.
+    log = RoundLog(tmp_path, "epoch-01", 5)
     # The reader tolerates the torn tail (skips it) and the fold still works.
     events = log.read()
     assert [env.seq for env in events] == [1, 2]
@@ -213,6 +215,7 @@ def test_unknown_event_types_read_as_raw_envelopes(tmp_path):
             )
             + "\n"
         )
+    log = RoundLog(tmp_path, "epoch-01", 7)
     log.append(RoundClosed())
 
     events = log.read()

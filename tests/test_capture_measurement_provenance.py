@@ -7,8 +7,10 @@ from pathlib import Path
 
 import pytest
 
+from zicato.core import RunResult
 from zicato.core.measurement import MeasurementDraw, measurement_artifact_path
 from zicato.core.workspace import run_id_for_unit
+from zicato.epoch._storage import RecordError
 from zicato.judge_runtime.io_capture import (
     JudgeIOFileSink,
     build_judge_io_record,
@@ -21,7 +23,7 @@ from zicato.reflection.adjudicator import _result_context, _verbatim_context
 from zicato.reflection.corpus import _read_sidecars
 from zicato.telemetry.reducer import write_loss_profile
 from zicato.testing.fixtures import make_loss_profile
-from zicato.tournament.unit_cache import read_run_result, unit_result_path
+from zicato.tournament.unit_cache import read_run_result, run_result_to_payload, unit_result_path
 
 
 @pytest.mark.parametrize("base_seed", [17, None], ids=["seeded", "explicitly-unseeded"])
@@ -57,14 +59,25 @@ def test_capture_fidelity_requires_complete_paired_identity(
     elif change == "run":
         provenance["run_id"] = "different-run"
     elif change == "missing":
-        provenance.clear()
+        provenance.pop("measurement")
+        provenance["run_id"] = "historical-run"
     elif change == "missing-seed":
         provenance["measurement"].pop("base_seed")
     elif change == "missing-run":
         provenance.pop("run_id")
     elif change == "malformed":
         provenance["measurement"]["base_seed"] = True
-    result = {"format_version": 1, "transcript": ["captured result"], **provenance}
+    result = run_result_to_payload(
+        RunResult(
+            run_id=run_id,
+            entry_id="entry",
+            transcript=("captured result",),
+            final_output="",
+            runtime_ms=1,
+        )
+    )
+    result.pop("run_id")
+    result.update(provenance)
     unit_result_path(loss_path).write_text(json.dumps(result))
     judge = build_judge_io_record(
         judge_name="judge",
@@ -79,6 +92,16 @@ def test_capture_fidelity_requires_complete_paired_identity(
     )
     judge.update(provenance)
     judge_io_path_for_loss(loss_path).write_text(json.dumps(judge) + "\n")
+
+    if change in {"malformed", "missing-run"}:
+        for read in (
+            lambda: read_run_result(unit_result_path(loss_path), expected=loss),
+            lambda: read_judge_io(judge_io_path_for_loss(loss_path), expected=loss),
+        ):
+            with pytest.raises(RecordError):
+                read()
+        assert "unreadable" in _run_result(loss_path, loss)
+        return
 
     available = change == "match"
     assert (_result_context(loss_path) is not None) is available
@@ -95,7 +118,15 @@ def test_historical_capture_remains_visible_without_measurement_certainty(tmp_pa
     loss = make_loss_profile()
     loss_path = tmp_path / "loss.json"
     write_loss_profile(loss, loss_path)
-    payload = {"format_version": 1, "transcript": ["historical result"]}
+    payload = run_result_to_payload(
+        RunResult(
+            run_id=loss.run_id,
+            entry_id=loss.entry_id,
+            transcript=("historical result",),
+            final_output="",
+            runtime_ms=1,
+        )
+    )
     unit_result_path(loss_path).write_text(json.dumps(payload))
     sink = JudgeIOFileSink(judge_io_path_for_loss(loss_path))
     sink.record(

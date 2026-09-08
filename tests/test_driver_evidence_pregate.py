@@ -189,9 +189,8 @@ def test_required_confirmation_retains_attempts_when_evidence_is_incomplete(
 
 
 def test_pregate_replicates_then_promotes_on_separation() -> None:
-    # The gauntlet promotes v1 on a single duel; the pre-gate then replicates
-    # the crowning duel (child wins every replicate) until the CIs separate,
-    # and finally crowns. The closest-CI duel restricts to the crowning pair.
+    # The gauntlet selects v1 on a single duel. Confirmation repeatedly measures
+    # v0 against v1 until the adjusted strength-difference bound clears the gate.
     s = make_strategy(TournamentStructure(structure="gauntlet"))
     champ = _champion("v0")
     challenger = _challenger("v1")

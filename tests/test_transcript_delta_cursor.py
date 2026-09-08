@@ -298,9 +298,10 @@ def test_terminal_event_flips_complete_and_verbatim_is_reported(tmp_path: Path) 
 
 
 def test_verbatim_available_tracks_a_valid_result_json(tmp_path: Path) -> None:
+    from zicato.core import RunResult
     from zicato.telemetry.reducer import write_loss_profile
     from zicato.testing.fixtures import make_loss_profile
-    from zicato.tournament.unit_cache import RUN_RESULT_FORMAT_VERSION
+    from zicato.tournament.unit_cache import run_result_to_payload
 
     path = _events_path(tmp_path)
     _opening(path)
@@ -310,9 +311,16 @@ def test_verbatim_available_tracks_a_valid_result_json(tmp_path: Path) -> None:
     # A truncated / wrong-version capture is NOT a verbatim capture.
     result.write_text('{"format_version": "nope"}', encoding="utf-8")
     assert _delta(tmp_path)["verbatim_available"] is False
+    assert "result capture" in _delta(tmp_path)["error"]
 
     result.write_text(
-        json.dumps({"format_version": RUN_RESULT_FORMAT_VERSION, "transcript": ["hi"]}),
+        json.dumps(
+            run_result_to_payload(
+                RunResult(
+                    run_id="run", entry_id=ENTRY, final_output="", transcript=("hi",), runtime_ms=1
+                )
+            )
+        ),
         encoding="utf-8",
     )
     assert _delta(tmp_path)["verbatim_available"] is True

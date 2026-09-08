@@ -312,7 +312,7 @@ def evidence_verdict(
             f"P(theta_child > theta_champion)={p:.3f} vs threshold {threshold:.2f}"
             f"; strength difference {difference.confidence_level:.3%} interval "
             f"[{difference.ci_lo:.3f}, {difference.ci_hi:.3f}]; "
-            f"replicate the closest duel "
+            f"repeat the selected candidate against the champion "
             f"({replicates_spent}/{replicate_budget} spent)"
         )
     else:
@@ -342,70 +342,6 @@ def evidence_verdict(
         champion_id=parent_id,
         challenger_id=child_id,
     )
-
-
-@dataclass(frozen=True, slots=True)
-class CandidateDuel:
-    """A pairing the driver may replicate, with its current CI gap.
-
-    ``ci_gap`` is the distance from zero to the nearer end of the pointwise
-    95% strength-difference interval. A negative value means that the interval
-    contains zero. The scheduler chooses the smallest gap as a heuristic for
-    an unresolved pairing; confirmation applies its own comparison allocation.
-    """
-
-    left_id: str
-    right_id: str
-    ci_gap: float
-
-
-def closest_ci_duel(
-    audit: Sequence[MatchupResult],
-    *,
-    restrict_to: tuple[str, str] | None = None,
-) -> CandidateDuel | None:
-    """The duel whose contestants' CIs are closest — the cheapest replicate.
-
-    Fits Bradley--Terry over the audit and scores each observed pairing by
-    its pointwise difference interval's distance from zero. This scheduling
-    heuristic does not claim an optimal information gain per replicate. ``restrict_to`` pins the
-    schedule to a single pairing (the crowning pair) when the operator only
-    wants to resolve the champion-vs-challenger duel; ``None`` considers the
-    whole field. Returns ``None`` when no fittable pairing exists.
-    """
-    duels = audit_duels(audit)
-    if not duels:
-        return None
-    rating = fit_bradley_terry(duels)
-
-    pairs: dict[frozenset[str], tuple[str, str]] = {}
-    for r in audit:
-        if r.left_id == r.right_id or not r.execution_complete:
-            continue
-        if r.outcome.delta_scalar == 0.0:
-            continue
-        key = frozenset({r.left_id, r.right_id})
-        if restrict_to is not None and key != frozenset(restrict_to):
-            continue
-        pairs.setdefault(key, (r.left_id, r.right_id))
-
-    best: CandidateDuel | None = None
-    for left_id, right_id in pairs.values():
-        if left_id not in rating or right_id not in rating:
-            continue
-        difference = strength_difference(rating, left_id, right_id)
-        gap = abs(difference.mean) - CI_Z * difference.se
-        cand = CandidateDuel(left_id=left_id, right_id=right_id, ci_gap=gap)
-        if (
-            best is None
-            or cand.ci_gap < best.ci_gap
-            or (
-                cand.ci_gap == best.ci_gap
-                and (cand.left_id, cand.right_id) < (best.left_id, best.right_id)
-            )
-        ):
-            best = cand
-    return best
 
 
 def rating_block(verdict: EvidenceVerdict) -> dict[str, Any]:
@@ -495,10 +431,8 @@ __all__ = [
     "EvidenceVerdict",
     "EvidenceAttempt",
     "disabled_rating_block",
-    "CandidateDuel",
     "read_promote_confidence_threshold",
     "read_replicate_budget",
     "evidence_verdict",
-    "closest_ci_duel",
     "rating_block",
 ]

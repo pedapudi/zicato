@@ -68,6 +68,9 @@ async def evaluation(system, user, model):
     return "evaluation"
 
 class Session:
+    def tree_import_status(self):
+        return {"candidate_target": "verified"}
+
     async def run(self, entry, sinks, config):
         context = config.run_context
         assert context.generation_id == entry.context["generation_id"]

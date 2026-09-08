@@ -46,6 +46,7 @@ from zicato.core.workspace import (
     run_id_for_unit,
     run_result_path,
 )
+from zicato.epoch._storage import RecordError
 from zicato.judge_runtime.io_capture import (
     JUDGE_IO_CLIP_CHARS,
     JUDGE_IO_CLIP_MARKER,
@@ -110,12 +111,13 @@ def _run_result(**overrides: Any) -> RunResult:
 
 
 def test_run_result_payload_round_trips(tmp_path: Path) -> None:
-    """Write the payload atomically; the tolerant reader returns it intact."""
+    """Write the payload atomically; the reader retains extension values intact."""
     from zicato.storage import atomic_write_json
 
     payload = run_result_to_payload(_run_result())
     assert payload["format_version"] == RUN_RESULT_FORMAT_VERSION
     assert payload["clipped"] is False
+    payload["extension"] = {"nested": [1, None, {"flag": True}]}
     path = tmp_path / "result.json"
     atomic_write_json(path, payload)
     assert read_run_result(path) == payload
@@ -134,25 +136,37 @@ def test_run_result_clip_guard() -> None:
     assert payload["transcript"][1].endswith(RUN_RESULT_CLIP_MARKER)
 
 
-def test_read_run_result_tolerates_defects(tmp_path: Path) -> None:
-    """Missing / garbage / non-object / wrong-format files all read as None."""
+def test_read_run_result_distinguishes_absence_and_corruption(tmp_path: Path) -> None:
+    """Only absence returns None; malformed complete records remain inspectable."""
     assert read_run_result(tmp_path / "absent.json") is None
 
     garbage = tmp_path / "garbage.json"
     garbage.write_text("{not json", encoding="utf-8")
-    assert read_run_result(garbage) is None
+    with pytest.raises(RecordError):
+        read_run_result(garbage)
 
     non_object = tmp_path / "array.json"
     non_object.write_text("[1, 2]", encoding="utf-8")
-    assert read_run_result(non_object) is None
+    with pytest.raises(RecordError):
+        read_run_result(non_object)
 
     unstamped = tmp_path / "unstamped.json"
     unstamped.write_text(json.dumps({"run_id": "x"}), encoding="utf-8")
-    assert read_run_result(unstamped) is None
+    with pytest.raises(RecordError):
+        read_run_result(unstamped)
 
     future = tmp_path / "future.json"
     future.write_text(json.dumps({"format_version": 2, "run_id": "x"}), encoding="utf-8")
-    assert read_run_result(future) is None
+    with pytest.raises(RecordError):
+        read_run_result(future)
+
+    valid = run_result_to_payload(_run_result())
+    for key, bad in (("transcript", [42]), ("runtime_ms", True), ("aborted", 0)):
+        future.write_text(json.dumps({**valid, key: bad}))
+        original = future.read_bytes()
+        with pytest.raises(RecordError):
+            read_run_result(future)
+        assert future.read_bytes() == original
 
 
 # ---------------------------------------------------------------------------
@@ -210,8 +224,10 @@ def test_judge_io_file_sink_one_line_per_call(tmp_path: Path) -> None:
     assert all(r["input"]["reasoning_sha256"] == expected_sha for r in records)
 
 
-def test_read_judge_io_tolerates_defects(tmp_path: Path) -> None:
-    """Missing file -> []; garbage / old-version / non-object lines skipped."""
+def test_read_judge_io_distinguishes_complete_corruption_and_unfinished_append(
+    tmp_path: Path,
+) -> None:
+    """Complete malformed rows cannot be silently removed from a judge record."""
     assert read_judge_io(tmp_path / "absent.jsonl") == []
 
     path = tmp_path / "judge_io.jsonl"
@@ -226,17 +242,29 @@ def test_read_judge_io_tolerates_defects(tmp_path: Path) -> None:
         severity="",
         detail="",
     )
+    good["extension"] = {"nested": [1, None, {"flag": True}]}
+    good["input"]["extension"] = "retained"
     lines = [
         "{torn line",
         json.dumps([1, 2]),
         json.dumps({"format_version": 99, "judge_name": "future"}),
         json.dumps({"judge_name": "unstamped"}),
-        json.dumps(good),
+        json.dumps({**good, "call_index": True}),
+        json.dumps({**good, "input": {**good["input"], "transcript_window": [42]}}),
+        json.dumps({**good, "verdict": {**good["verdict"], "drift_emitted": 1}}),
     ]
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    records = read_judge_io(path)
-    assert len(records) == 1
-    assert records[0]["judge_name"] == "j"
+    prefix = (json.dumps(good) + "\n").encode()
+    for line in lines:
+        raw = prefix + line.encode() + b"\n" + prefix
+        path.write_bytes(raw)
+        with pytest.raises(RecordError):
+            read_judge_io(path)
+        assert path.read_bytes() == raw
+    for tail in (b'{"unfinished":', b'{"text":"\xc3'):
+        path.write_bytes(prefix + tail)
+        assert read_judge_io(path) == [good]
+    path.write_bytes(prefix.rstrip(b"\n"))
+    assert read_judge_io(path) == [good]
 
 
 def test_judge_io_file_sink_swallows_unwritable_path(tmp_path: Path) -> None:
@@ -665,8 +693,9 @@ def test_worker_capture_failure_is_best_effort(tmp_path: Path) -> None:
     result = json.loads((tmp_path / "worker_result.json").read_text(encoding="utf-8"))
     assert result["schema"] == "zicato.tournament_worker.result/1"
     assert result["aborted"] is False
-    # The blocked capture paths read back as absent, tolerantly.
-    assert read_run_result(unit_result_path(loss_path)) is None
+    # Capture failure leaves the measurement valid and the read failure explicit.
+    with pytest.raises(RecordError):
+        read_run_result(unit_result_path(loss_path))
 
     from zicato.workspace import WorkspaceLayout
 

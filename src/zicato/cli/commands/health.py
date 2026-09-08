@@ -252,7 +252,13 @@ def health_cmd(workspace: str, epoch: str | None) -> None:
         workspace_dir, epoch_id
     )
     receipt_attention = epoch_settlement_receipt_attention(workspace_dir, epoch_id)
+    from zicato.epoch._storage import RecordError
     from zicato.health.summarizer import epoch_summarizer_failures
+
+    try:
+        tree_import_gaps = epoch_tree_import_gaps(workspace_dir, epoch_id)
+    except RecordError as exc:
+        raise click.ClickException(str(exc)) from exc
 
     report = assess_loop_health(
         losses_by_generation=losses_by_generation,
@@ -266,7 +272,7 @@ def health_cmd(workspace: str, epoch: str | None) -> None:
         evidence_gate_on=evidence_gate_on,
         preflight=epoch_preflight_record(workspace_dir, epoch_id),
         preflight_gate=workspace_preflight_gate(workspace_dir),
-        tree_import_gaps=epoch_tree_import_gaps(workspace_dir, epoch_id) or None,
+        tree_import_gaps=tree_import_gaps or None,
         settlement_receipt_attention=receipt_attention,
         summarizer_failures=epoch_summarizer_failures(workspace_dir, epoch_id),
         optional_failures=epoch_optional_failures(workspace_dir, epoch_id),

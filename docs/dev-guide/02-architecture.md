@@ -1042,11 +1042,11 @@ Each batch fans out under one `asyncio.gather`; `on_progress` fires
 right after a batch is scheduled (the strategy's pending set is
 populated, so `live_rounds()` carries the in-flight matchups with
 `winner: null`). Publishing before the matchups run is what makes the live
-bracket exist during the round rather than only after it. When a `pre_gate`
-is supplied, a `"promoted"`
-decision is held through the defer→replicate loop
-(`confirm_promotion_with_evidence` runs the closest-CI duel through
-`replicate_duel`, refits, and rechecks) before it is returned.
+bracket exist during the round rather than only after it. When confirmation is
+required, `confirm_promotion_with_evidence` holds a `"promoted"` decision while
+`replicate_duel` measures the selected champion and challenger. The fit uses
+only independent confirmation draws; promotion requires the adjusted
+strength-difference bound to clear the gate.
 `execute_field_tournament` supplies each seam as a module-level function
 bound to the round with `functools.partial`, so nothing on the driver's
 contract reads a shared local:

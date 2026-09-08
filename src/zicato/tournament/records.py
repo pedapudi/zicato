@@ -1,4 +1,4 @@
-"""Durable field-tournament snapshots and their shared JSON acceptance rules."""
+"""Durable tournament records and their shared JSON acceptance rules."""
 
 from __future__ import annotations
 
@@ -11,6 +11,53 @@ from typing import Any
 from zicato.epoch._storage import RecordError
 from zicato.storage import atomic_write_json
 from zicato.workspace import WorkspaceLayout
+
+HARNESS_LOAD_SCHEMA = "zicato.harness_load/1"
+
+
+def decode_harness_load(value: Any, *, generation_id: str) -> dict[str, Any]:
+    """Accept records of loaded source files, retaining extensions and historical omissions."""
+    if not isinstance(value, dict) or value.get("schema") != HARNESS_LOAD_SCHEMA:
+        raise RecordError("source record has an invalid schema")
+    if value.get("generation_id") != generation_id:
+        raise RecordError("source record has a different generation")
+    if not isinstance(value.get("entrypoint_file"), str):
+        raise RecordError("source entrypoint must be text")
+    for key in ("trees_verified", "trees_never_imported"):
+        if key in value and (
+            not isinstance(value[key], list)
+            or any(not isinstance(name, str) or not name for name in value[key])
+        ):
+            raise RecordError(f"source {key} must contain tree names")
+    if "implementation" in value:
+        implementation = value["implementation"]
+        if not isinstance(implementation, dict) or not isinstance(
+            implementation.get("factory_spec"), str
+        ):
+            raise RecordError("source implementation requires a factory specification")
+        for key in ("factory_file", "factory_source_sha256"):
+            if key not in implementation or (
+                implementation[key] is not None and not isinstance(implementation[key], str)
+            ):
+                raise RecordError(f"source implementation has invalid {key}")
+        modules = implementation.get("candidate_modules")
+        if not isinstance(modules, dict) or any(
+            not isinstance(name, str) or not isinstance(path, str) for name, path in modules.items()
+        ):
+            raise RecordError("source candidate modules must map names to paths")
+    return value
+
+
+def read_harness_load(path: Path, *, generation_id: str) -> dict[str, Any] | None:
+    """Read a source record; only an absent file has no provenance."""
+    try:
+        return decode_harness_load(
+            json.loads(path.read_text(encoding="utf-8")), generation_id=generation_id
+        )
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError, RecordError) as exc:
+        raise RecordError(f"source record {path}: {exc}") from exc
 
 
 @dataclass(frozen=True, slots=True)

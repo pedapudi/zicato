@@ -18,6 +18,7 @@ from pathlib import Path
 import zicato_examples.target_0_convergence as _t0_pkg
 from tests._contract_pins import resolved_contract_with_proposer
 from tests._foe_support import stand_in_proposer_block
+from tests._runtime_builders import seed_baseline
 from zicato.epoch.lifecycle import _scoring_from_dict, load_epoch, new_epoch
 from zicato.health.diagnostics import detect_margin_below_noise_floor
 from zicato.tournament.calibration import (
@@ -191,11 +192,9 @@ def test_measure_noise_floor_deterministic_adapter_is_zero(tmp_path: Path) -> No
     """K fresh draws of the same generation, through the real board-unit
     workers — the deterministic target scores identically every draw."""
     workspace, epoch_id = _bootstrap(tmp_path)
-    _run_rounds(workspace, epoch_id)  # seeds v0 + promotes v1
+    champion = seed_baseline(workspace, epoch_id)
 
     from zicato import adapter_factory, runtime_factory, workspace_loader
-    from zicato.core.types import Generation
-    from zicato.evolve.generation_phase import current_generation, snapshot_root
 
     workspace_config = workspace_loader.load_workspace_config(workspace)
     adapter = adapter_factory.make_adapter_from_config(workspace_config)
@@ -204,15 +203,6 @@ def test_measure_noise_floor_deterministic_adapter_is_zero(tmp_path: Path) -> No
         workspace_root=workspace,
         target_call_llm=t0_mocks.target_llm,
         evaluation_call_llm=t0_mocks.aux_llm,
-    )
-    champion_id = current_generation(workspace, epoch_id)
-    champion = Generation(
-        id=champion_id,
-        epoch_id=epoch_id,
-        parent_id=None,
-        snapshot_root=snapshot_root(workspace, epoch_id, champion_id),
-        created_at="",
-        promoted=True,
     )
     epoch_cfg = load_epoch(workspace, epoch_id)
 
@@ -245,7 +235,7 @@ def test_measure_noise_floor_deterministic_adapter_is_zero(tmp_path: Path) -> No
     reloaded = load_epoch(workspace, epoch_id)
     assert reloaded.noise_floor is not None
     assert reloaded.noise_floor["max_abs_delta"] == 0.0
-    assert reloaded.noise_floor["generation_id"] == champion_id
+    assert reloaded.noise_floor["generation_id"] == champion.id
     # A runtime measurement, never a contract input: the hash is untouched.
     assert reloaded.contract_hash == epoch_cfg.contract_hash
 
@@ -271,7 +261,7 @@ def test_board_audit_cli_measures_and_persists(tmp_path: Path) -> None:
     from zicato.cli.discovery import build_cli_root
 
     workspace, epoch_id = _bootstrap(tmp_path)
-    _run_rounds(workspace, epoch_id)
+    seed_baseline(workspace, epoch_id)
 
     runner = CliRunner()
     result = runner.invoke(

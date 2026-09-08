@@ -362,8 +362,10 @@ def _run_result(loss_path: Path, profile: Any) -> dict[str, Any]:
     """The ``result.json`` twin of one loss slot, or an empty dict."""
     from zicato.tournament.unit_cache import read_run_result, unit_result_path  # noqa: PLC0415
 
-    result = read_run_result(unit_result_path(loss_path), expected=profile)
-    return result if isinstance(result, dict) else {}
+    try:
+        return read_run_result(unit_result_path(loss_path), expected=profile) or {}
+    except RecordError as exc:
+        return {"unreadable": str(exc)}
 
 
 # ---------------------------------------------------------------------------
@@ -382,6 +384,7 @@ def _unit_outcome(profile: Any, result: dict[str, Any]) -> dict[str, Any]:
         "aborted": bool(aborted) if isinstance(aborted, bool) else None,
         "abort_reason": str(result.get("abort_reason") or ""),
         "not_completed_reason": getattr(profile, "not_completed_reason", None),
+        **({"unreadable": result["unreadable"]} if "unreadable" in result else {}),
     }
 
 
