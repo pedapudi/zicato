@@ -16,7 +16,8 @@ from typing import Any
 from uuid import uuid4
 from weakref import WeakSet
 
-from zicato.runtime._storage import lock_key
+from zicato.runtime._storage import active_tournament_log_key, lock_key, progress_log_key
+from zicato.runtime.channel import EventLog
 from zicato.runtime.paths import ensure_runtime_dirs, lock_guard_path
 from zicato.storage import workspace_backend
 from zicato.util.iso_time import now_iso as _utc_now_iso
@@ -29,6 +30,8 @@ class WorkspaceLockHeld(RuntimeError):
 @dataclass(eq=False, slots=True, weakref_slot=True)
 class _WriterLease:
     fd: int
+    progress_log: EventLog
+    tournament_log: EventLog
 
     def __post_init__(self) -> None:
         _writer_leases.add(self)
@@ -73,6 +76,25 @@ class WorkspaceLock:
     start_time: float | None = None
     owner_id: str | None = None
     _lease: _WriterLease | None = field(default=None, repr=False, compare=False)
+
+    @property
+    def progress_log(self) -> EventLog:
+        """Return the progress writer while this process holds its lease."""
+        return self._owned_lease().progress_log
+
+    @property
+    def tournament_log(self) -> EventLog:
+        """Return the shared tournament writer while this process holds its lease."""
+        return self._owned_lease().tournament_log
+
+    def _owned_lease(self) -> _WriterLease:
+        # The kernel lease stays exclusive until close; publication needs no
+        # repeated metadata read. Fork cleanup closes the inherited descriptor.
+        if self._lease is None or self._lease.fd < 0 or self.pid != os.getpid():
+            raise WorkspaceLockHeld(
+                f"workspace {self.workspace_root} requires its acquired writer handle"
+            )
+        return self._lease
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize inspection metadata without granting ownership."""
@@ -364,13 +386,17 @@ def acquire_workspace_lock(
     workspace_root = workspace_root.resolve()
     ensure_runtime_dirs(workspace_root)
     # Never unlink this guard: every contender must lock the same inode.
-    lease = _WriterLease(os.open(lock_guard_path(workspace_root), os.O_CREAT | os.O_RDWR, 0o600))
+    backend = workspace_backend(workspace_root, start=False)
+    lease = _WriterLease(
+        os.open(lock_guard_path(workspace_root), os.O_CREAT | os.O_RDWR, 0o600),
+        EventLog(backend, progress_log_key()),
+        EventLog(backend, active_tournament_log_key()),
+    )
     try:
         try:
             fcntl.flock(lease.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
             raise WorkspaceLockHeld(f"workspace {workspace_root} has an active writer") from exc
-        backend = workspace_backend(workspace_root, start=False)
         existing = backend.read_json(lock_key())
         if existing is not None:
             prior = WorkspaceLock.from_dict(existing)

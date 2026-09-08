@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
 from zicato.runtime import tournament_log
+from zicato.runtime.lock import acquire_workspace_lock
 from zicato.runtime.paths import active_tournament_log_path
 from zicato.runtime.state import (
     ActiveTournament,
@@ -43,7 +45,8 @@ def _sample() -> ActiveTournament:
 
 
 def test_write_produces_the_event_log_not_the_legacy_snapshot(tmp_path: Path) -> None:
-    write_active_tournament(tmp_path, _sample())
+    with acquire_workspace_lock(tmp_path, "test-publication") as writer:
+        write_active_tournament(writer, _sample())
     # The producer appends a typed, sequenced event.
     log_path = active_tournament_log_path(tmp_path)
     assert log_path.exists(), "the active-tournament event log is written"
@@ -57,12 +60,15 @@ def test_write_produces_the_event_log_not_the_legacy_snapshot(tmp_path: Path) ->
 
 
 def test_each_mutation_is_one_append_no_read_modify_write(tmp_path: Path) -> None:
-    write_active_tournament(tmp_path, _sample())
-    update_tournament_entry(tmp_path, "b0", "child", status="running")
-    update_tournament_partial_aggregate(tmp_path, challenger_agg={"scalar": 0.5})
-    update_tournament_projected(
-        tmp_path, {"v2": {"scalar": 0.4, "boards_done": 1, "boards_total": 4}}
-    )
+    with acquire_workspace_lock(tmp_path, "test-publication") as writer:
+        with patch.object(writer.tournament_log, "tail", wraps=writer.tournament_log.tail) as scan:
+            write_active_tournament(writer, _sample())
+            update_tournament_entry(writer, "b0", "child", status="running")
+            update_tournament_partial_aggregate(writer, challenger_agg={"scalar": 0.5})
+            update_tournament_projected(
+                writer, {"v2": {"scalar": 0.4, "boards_done": 1, "boards_total": 4}}
+            )
+        assert scan.call_count == 1
     lines = active_tournament_log_path(tmp_path).read_text().splitlines()
     # Four mutations → four appended events, monotonic gap-free seq.
     types = [json.loads(line)["type"] for line in lines]
@@ -77,9 +83,12 @@ def test_each_mutation_is_one_append_no_read_modify_write(tmp_path: Path) -> Non
 
 
 def test_fold_reproduces_the_snapshot_view(tmp_path: Path) -> None:
-    write_active_tournament(tmp_path, _sample())
-    update_tournament_entry(tmp_path, "b0", "child", status="running", started_at="t")
-    update_tournament_partial_aggregate(tmp_path, challenger_agg={"scalar": 0.5, "entry_count": 1})
+    with acquire_workspace_lock(tmp_path, "test-publication") as writer:
+        write_active_tournament(writer, _sample())
+        update_tournament_entry(writer, "b0", "child", status="running", started_at="t")
+        update_tournament_partial_aggregate(
+            writer, challenger_agg={"scalar": 0.5, "entry_count": 1}
+        )
     got = read_active_tournament(tmp_path)
     assert got is not None
     by_pair = {(e.entry_id, e.side): e for e in got.entries}
@@ -102,14 +111,15 @@ def test_snapshot_republish_supersedes_but_carries_runner_deltas(tmp_path: Path)
     ``projected`` / partial aggregates forward — so a republish + the
     runner's per-board deltas compose instead of clobbering to empty.
     """
-    write_active_tournament(tmp_path, _sample())
-    update_tournament_projected(
-        tmp_path, {"v2": {"scalar": 0.4, "boards_done": 1, "boards_total": 4}}
-    )
-    # The producer reads the folded view (carrying projected) and republishes.
-    folded = read_active_tournament(tmp_path)
-    assert folded is not None and folded.projected.get("v2")
-    write_active_tournament(tmp_path, folded)  # the carry-forward republish.
+    with acquire_workspace_lock(tmp_path, "test-publication") as writer:
+        write_active_tournament(writer, _sample())
+        update_tournament_projected(
+            writer, {"v2": {"scalar": 0.4, "boards_done": 1, "boards_total": 4}}
+        )
+        # The producer reads the folded view (carrying projected) and republishes.
+        folded = read_active_tournament(tmp_path)
+        assert folded is not None and folded.projected.get("v2")
+        write_active_tournament(writer, folded)  # the carry-forward republish.
     after = read_active_tournament(tmp_path)
     assert after is not None
     assert after.projected.get("v2", {}).get("scalar") == 0.4
@@ -125,13 +135,14 @@ def test_interleaved_writers_do_not_lose_updates(tmp_path: Path) -> None:
     fold are SEPARATE appends — neither clobbers the other even when their
     writes interleave (the ``_publish_active_tournament`` lost-update race).
     """
-    write_active_tournament(tmp_path, _sample())
-    # Interleave a per-entry transition (orchestrator) with a partial
-    # aggregate + projection (runner) — as two distinct writers would.
-    update_tournament_entry(tmp_path, "b0", "child", status="running")
-    update_tournament_partial_aggregate(tmp_path, challenger_agg={"scalar": 0.5})
-    update_tournament_entry(tmp_path, "b0", "parent", status="running")
-    update_tournament_partial_aggregate(tmp_path, champion_agg={"scalar": 0.9})
+    with acquire_workspace_lock(tmp_path, "test-publication") as writer:
+        write_active_tournament(writer, _sample())
+        # Interleave a per-entry transition (orchestrator) with a partial
+        # aggregate + projection (runner) — as two distinct writers would.
+        update_tournament_entry(writer, "b0", "child", status="running")
+        update_tournament_partial_aggregate(writer, challenger_agg={"scalar": 0.5})
+        update_tournament_entry(writer, "b0", "parent", status="running")
+        update_tournament_partial_aggregate(writer, champion_agg={"scalar": 0.9})
     got = read_active_tournament(tmp_path)
     assert got is not None
     by_pair = {(e.entry_id, e.side): e.status for e in got.entries}
@@ -174,10 +185,11 @@ def test_projected_update_folds_into_live_progress_in_the_reader(tmp_path: Path)
             }
         ],
     )
-    write_active_tournament(tmp_path, base)
-    update_tournament_projected(
-        tmp_path, {"v5": {"scalar": 9.6, "boards_done": 6, "boards_total": 8}}
-    )
+    with acquire_workspace_lock(tmp_path, "test-publication") as writer:
+        write_active_tournament(writer, base)
+        update_tournament_projected(
+            writer, {"v5": {"scalar": 9.6, "boards_done": 6, "boards_total": 8}}
+        )
     got = read_active_tournament(tmp_path)
     assert got is not None
     lane = got.rounds[0]["matches"][0]["live_progress"]["v5"]
@@ -204,7 +216,8 @@ def test_missing_live_state_ignores_and_preserves_saved_snapshot(
     if log_contents is not None:
         active_tournament_log_path(tmp_path).write_text(log_contents)
     assert read_active_tournament(tmp_path) is None
-    clear_active_tournament(tmp_path)
+    with acquire_workspace_lock(tmp_path, "test-publication") as writer:
+        clear_active_tournament(writer)
     assert snapshot.read_text() == saved
 
 

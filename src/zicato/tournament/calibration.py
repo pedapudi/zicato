@@ -242,6 +242,7 @@ async def measure_noise_floor(
         for draw in range(runs):
             replicate_index = CALIBRATION_REPLICATE_BASE + draw
             losses = await _run_board_units_fast(
+                writer=writer,
                 adapter=adapter,
                 child_gen=generation,
                 # Stamp the replicate index onto each entry's context, as the

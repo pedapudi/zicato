@@ -150,9 +150,19 @@ def _install_caching_telemetry_stubs(
     )
 
     async def _fake_run_single(
-        *, adapter, generation, entry, weights, config, workspace_root, epoch_id, side, match_id=""
+        *,
+        adapter,
+        generation,
+        entry,
+        weights,
+        config,
+        workspace_root,
+        epoch_id,
+        side,
+        writer,
+        match_id="",
     ):
-        del adapter, weights, side, match_id
+        del adapter, weights, side, writer, match_id
         if champion_run_log is not None:
             champion_run_log.append(generation.id)
         expectation_result = (

@@ -23,6 +23,7 @@ from pathlib import Path
 
 import pytest
 
+from zicato.runtime.lock import acquire_workspace_lock
 from zicato.runtime.spawn_permit import (
     MIN_AUTO_PERMITS,
     OPEN_PERMIT,
@@ -402,16 +403,18 @@ async def test_runner_asks_for_a_permit_and_always_releases_it(
     # A deliberately unserialisable adapter: the run takes the
     # ``prepare_failed`` early-return, the path most likely to skip the
     # release if the ``finally`` were placed wrongly. No worker is spawned.
-    loss = await runner_mod._run_single(
-        adapter=object(),
-        generation=generation,
-        entry=entry,
-        weights=ScoringWeights(),
-        config=config,
-        workspace_root=workspace,
-        epoch_id="e0",
-        side="parent",
-    )
+    with acquire_workspace_lock(workspace, "test-worker") as writer:
+        loss = await runner_mod._run_single(
+            writer=writer,
+            adapter=object(),
+            generation=generation,
+            entry=entry,
+            weights=ScoringWeights(),
+            config=config,
+            workspace_root=workspace,
+            epoch_id="e0",
+            side="parent",
+        )
     assert loss.abort_cause == "prepare_failed"
 
     assert asked == [(1, None)], "the runner must pass both permit settings through"
@@ -431,16 +434,18 @@ async def test_worker_spawn_failure_returns_an_aborted_loss(
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", _fail_spawn)
     workspace, generation, entry, config = _stub_run_inputs(tmp_path)
-    loss = await runner_mod._run_single(
-        adapter=StubAdapter(),
-        generation=generation,
-        entry=entry,
-        weights=ScoringWeights(),
-        config=config,
-        workspace_root=workspace,
-        epoch_id="e0",
-        side="parent",
-    )
+    with acquire_workspace_lock(workspace, "test-worker") as writer:
+        loss = await runner_mod._run_single(
+            writer=writer,
+            adapter=StubAdapter(),
+            generation=generation,
+            entry=entry,
+            weights=ScoringWeights(),
+            config=config,
+            workspace_root=workspace,
+            epoch_id="e0",
+            side="parent",
+        )
     assert loss.abort_cause == "prepare_failed"
 
 
@@ -471,6 +476,7 @@ async def test_two_concurrent_runs_serialise_under_a_one_permit_cap(
 
     async def _one(side: str) -> LossProfile:
         return await _run_single(
+            writer=writer,
             adapter=StubAdapter(),
             generation=generation,
             entry=entry,
@@ -481,10 +487,11 @@ async def test_two_concurrent_runs_serialise_under_a_one_permit_cap(
             side=side,
         )
 
-    losses = await asyncio.wait_for(
-        asyncio.gather(_one("parent"), _one("child")),
-        timeout=120.0,
-    )
+    with acquire_workspace_lock(workspace, "test-worker") as writer:
+        losses = await asyncio.wait_for(
+            asyncio.gather(_one("parent"), _one("child")),
+            timeout=120.0,
+        )
     assert all(isinstance(loss, LossProfile) for loss in losses)
 
     # And the cap is free again — nothing leaked out of either run.

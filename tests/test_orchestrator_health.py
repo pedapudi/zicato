@@ -34,7 +34,9 @@ from tests._orchestrator_harness import (
     run_evolve_once,
     target_call_llm,
 )
+from zicato.evolve.round_prepare import _assess_and_persist_loop_health
 from zicato.health.diagnostics import HealthFinding, LoopHealth
+from zicato.workspace_loader import load_current_board
 
 # ---------------------------------------------------------------------------
 # A pinned loop-health assessment
@@ -198,7 +200,7 @@ def test_evolve_once_critical_finding_logs_warning(
     assert any("no usable signal" in m for m in warnings)
 
 
-def test_evolve_once_dead_judge_finding_logs_loud_warning(
+def test_health_reporting_warns_when_declared_judges_never_fire(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
@@ -222,11 +224,15 @@ def test_evolve_once_dead_judge_finding_logs_loud_warning(
         healthy=False,
     )
 
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    _pin_health_assessment(monkeypatch, health=health, calls=calls)
     with caplog.at_level(logging.WARNING, logger="zicato.orchestrator"):
-        _, _, outcome = _run_one_round(monkeypatch, tmp_path, health=health, calls=calls)
+        _, health_critical = _assess_and_persist_loop_health(
+            workspace, epoch_id, 1, load_current_board(workspace)
+        )
 
     # A dead judge is a WARNING, not a CRITICAL — the loop is not "no signal".
-    assert outcome.health_critical is False
+    assert health_critical is False
 
     warnings = [
         rec.getMessage()
@@ -238,7 +244,7 @@ def test_evolve_once_dead_judge_finding_logs_loud_warning(
     assert any("audience_appropriate" in m for m in warnings)
 
 
-def test_evolve_once_tree_never_imported_logs_loud_warning(
+def test_health_reporting_warns_when_a_mutable_tree_was_not_imported(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
@@ -263,11 +269,15 @@ def test_evolve_once_tree_never_imported_logs_loud_warning(
         healthy=False,
     )
 
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    _pin_health_assessment(monkeypatch, health=health, calls=calls)
     with caplog.at_level(logging.WARNING, logger="zicato.orchestrator"):
-        _, _, outcome = _run_one_round(monkeypatch, tmp_path, health=health, calls=calls)
+        _, health_critical = _assess_and_persist_loop_health(
+            workspace, epoch_id, 1, load_current_board(workspace)
+        )
 
     # A warning, not a critical — the operator, not the detector, judges it.
-    assert outcome.health_critical is False
+    assert health_critical is False
     warnings = [
         rec.getMessage()
         for rec in caplog.records
@@ -277,7 +287,7 @@ def test_evolve_once_tree_never_imported_logs_loud_warning(
     assert any("goldfive" in m for m in warnings)
 
 
-def test_evolve_once_no_dead_judge_warning_when_absent(
+def test_health_reporting_omits_dead_judge_warning_when_absent(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
@@ -288,8 +298,10 @@ def test_evolve_once_no_dead_judge_warning_when_absent(
         HealthFinding(code="no_expectations", severity="info", summary="all good"),
         healthy=True,
     )
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    _pin_health_assessment(monkeypatch, health=health, calls=calls)
     with caplog.at_level(logging.WARNING, logger="zicato.orchestrator"):
-        _run_one_round(monkeypatch, tmp_path, health=health, calls=calls)
+        _assess_and_persist_loop_health(workspace, epoch_id, 1, load_current_board(workspace))
     assert not any("DECLARED JUDGE NEVER FIRED" in rec.getMessage() for rec in caplog.records)
 
 

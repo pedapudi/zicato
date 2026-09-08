@@ -69,13 +69,15 @@ def write_json(path: Path, data: Any, *, indent: int | None = None) -> Path:
 
 def write_tournament(root: Path, data: Mapping[str, Any]) -> None:
     """Publish a live tournament using the same event writer as execution."""
+    from zicato.runtime.lock import acquire_workspace_lock
     from zicato.runtime.state import ActiveTournament, write_active_tournament
 
     envelope = dict.fromkeys(
         ("tournament_id", "parent_generation_id", "child_generation_id", "epoch_id", "started_at"),
         "",
     )
-    write_active_tournament(root, ActiveTournament.from_dict({**envelope, **data}))
+    with acquire_workspace_lock(root, "reader-fixture") as writer:
+        write_active_tournament(writer, ActiveTournament.from_dict({**envelope, **data}))
 
 
 def write_text(path: Path, text: str) -> Path:

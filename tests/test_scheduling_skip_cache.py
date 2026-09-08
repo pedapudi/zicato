@@ -16,6 +16,7 @@ from tests._runtime_builders import make_generation, runtime_config
 from zicato.core import BoardEntry
 from zicato.core.runtime import RoundTokenLedger
 from zicato.core.workspace import run_id_for_unit
+from zicato.runtime.lock import acquire_workspace_lock
 from zicato.selection.evidence_gate import _count_pair_duels
 from zicato.selection.standings_ext import audit_duels, audit_matrix
 from zicato.selection.strategy import MatchupResult
@@ -69,74 +70,77 @@ async def test_budget_skip_retries_in_fresh_round_and_coalesces_requests(
 
     monkeypatch.setattr(runner, "_run_single", measured)
 
-    async def matchup(runtime: Any, identity: str) -> Any:
-        return await scheduling._run_replicated(
-            adapter=object(),
-            left_gen=parent,
-            right_gen=child,
-            board=board,
-            weights=deterministic_weights(),
-            config=runtime,
-            workspace_root=workspace,
-            epoch_id="e0",
-            replicates=replicates,
-            match_id=identity,
-            fast=True,
-        )
+    with acquire_workspace_lock(workspace, "test") as writer:
 
-    first = await matchup(
-        replace(config, max_tokens_per_round=100, token_ledger=RoundTokenLedger(100)),
-        "budget-limited-round",
-    )
-    assert len(calls) == 2
-    second, concurrent = await asyncio.gather(
-        matchup(config, "fresh-round"), matchup(config, "concurrent-matchup")
-    )
-    assert len(calls) == 2 * entries * replicates
-    assert len(set(calls)) == len(calls)
-    assert second[:2] == concurrent[:2]
-    for generation in (parent, child):
-        for entry in board:
-            for replicate in range(replicates):
-                slot = _unit_loss_path(
-                    workspace, "e0", generation.id, entry.id, replicate, base_seed=config.seed
-                )
-                attempts = list(slot.parent.glob(f"{slot.stem}.a*.json"))
-                expected_skip = replicate > 0 or entry.id != board[0].id
-                assert len(attempts) == int(expected_skip)
-                if expected_skip:
-                    skipped = json.loads(attempts[0].read_text())
-                    assert skipped["execution_started"] is False
-                    assert skipped["not_completed_reason"] == "scheduling_budget_exhausted"
-                    assert skipped["match_id"] == "budget-limited-round"
-                    assert skipped["tokens_spent"] == 0
-                assert read_loss_profile(slot).execution_started is True
-        assert first[3][generation.id].fresh == 1
+        async def matchup(runtime: Any, identity: str) -> Any:
+            return await scheduling._run_replicated(
+                writer=writer,
+                adapter=object(),
+                left_gen=parent,
+                right_gen=child,
+                board=board,
+                weights=deterministic_weights(),
+                config=runtime,
+                workspace_root=workspace,
+                epoch_id="e0",
+                replicates=replicates,
+                match_id=identity,
+                fast=True,
+            )
 
-    weights = deterministic_weights()
-    complete_verdict = "promoted" if improvement else "rejected"
-    first_verdict = "deferred" if entries * replicates > 1 else complete_verdict
-    for losses, expected in ((first, first_verdict), (second, complete_verdict)):
-        parent_agg = aggregate_generation_score(list(losses[0].values()), weights)
-        child_agg = aggregate_generation_score(list(losses[1].values()), weights)
-        verdict = evaluate_gate(
-            parent_agg,
-            child_agg,
-            weights,
+        first = await matchup(
+            replace(config, max_tokens_per_round=100, token_ledger=RoundTokenLedger(100)),
+            "budget-limited-round",
         )
-        assert verdict.decision == expected
-        audit = [MatchupResult("draw", "parent", "child", parent_agg, child_agg, verdict)]
-        if expected == "deferred":
-            assert "incomplete execution" in verdict.reason
-            assert audit_duels(audit) == []
-            assert not audit_matrix(audit).ids
-            assert _count_pair_duels(audit, "parent", "child") == 0
-        elif improvement:
-            assert audit_duels(audit) == [("child", "parent")]
-            assert _count_pair_duels(audit, "parent", "child") == 1
-        else:
-            assert audit_duels(audit) == []
-            assert _count_pair_duels(audit, "parent", "child") == 0
+        assert len(calls) == 2
+        second, concurrent = await asyncio.gather(
+            matchup(config, "fresh-round"), matchup(config, "concurrent-matchup")
+        )
+        assert len(calls) == 2 * entries * replicates
+        assert len(set(calls)) == len(calls)
+        assert second[:2] == concurrent[:2]
+        for generation in (parent, child):
+            for entry in board:
+                for replicate in range(replicates):
+                    slot = _unit_loss_path(
+                        workspace, "e0", generation.id, entry.id, replicate, base_seed=config.seed
+                    )
+                    attempts = list(slot.parent.glob(f"{slot.stem}.a*.json"))
+                    expected_skip = replicate > 0 or entry.id != board[0].id
+                    assert len(attempts) == int(expected_skip)
+                    if expected_skip:
+                        skipped = json.loads(attempts[0].read_text())
+                        assert skipped["execution_started"] is False
+                        assert skipped["not_completed_reason"] == "scheduling_budget_exhausted"
+                        assert skipped["match_id"] == "budget-limited-round"
+                        assert skipped["tokens_spent"] == 0
+                    assert read_loss_profile(slot).execution_started is True
+            assert first[3][generation.id].fresh == 1
+
+        weights = deterministic_weights()
+        complete_verdict = "promoted" if improvement else "rejected"
+        first_verdict = "deferred" if entries * replicates > 1 else complete_verdict
+        for losses, expected in ((first, first_verdict), (second, complete_verdict)):
+            parent_agg = aggregate_generation_score(list(losses[0].values()), weights)
+            child_agg = aggregate_generation_score(list(losses[1].values()), weights)
+            verdict = evaluate_gate(
+                parent_agg,
+                child_agg,
+                weights,
+            )
+            assert verdict.decision == expected
+            audit = [MatchupResult("draw", "parent", "child", parent_agg, child_agg, verdict)]
+            if expected == "deferred":
+                assert "incomplete execution" in verdict.reason
+                assert audit_duels(audit) == []
+                assert not audit_matrix(audit).ids
+                assert _count_pair_duels(audit, "parent", "child") == 0
+            elif improvement:
+                assert audit_duels(audit) == [("child", "parent")]
+                assert _count_pair_duels(audit, "parent", "child") == 1
+            else:
+                assert audit_duels(audit) == []
+                assert _count_pair_duels(audit, "parent", "child") == 0
 
 
 @pytest.mark.parametrize(

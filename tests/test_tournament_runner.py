@@ -131,6 +131,7 @@ def _stub_run_single(
         entry: BoardEntry,
         weights: ScoringWeights,
         config: RuntimeConfig,
+        writer: Any,
         workspace_root: Path,
         epoch_id: str,
         side: str,
@@ -368,6 +369,7 @@ def test_run_tournament_stamps_each_entry_on_the_correct_side(
         entry: BoardEntry,
         weights: ScoringWeights,
         config: RuntimeConfig,
+        writer: Any,
         workspace_root: Path,
         epoch_id: str,
         side: str,
@@ -376,8 +378,8 @@ def test_run_tournament_stamps_each_entry_on_the_correct_side(
         del adapter, weights, config
         # Exactly the transitions the real _run_single performs, keyed on
         # (entry_id, side).
-        update_tournament_entry(workspace_root, entry.id, side, status="running")
-        update_tournament_entry(workspace_root, entry.id, side, status="completed")
+        update_tournament_entry(writer, entry.id, side, status="running")
+        update_tournament_entry(writer, entry.id, side, status="completed")
         return dataclasses.replace(canned[(generation.id, entry.id)], epoch_id=epoch_id)
 
     monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
@@ -387,11 +389,11 @@ def test_run_tournament_stamps_each_entry_on_the_correct_side(
     captured: dict[str, Any] = {}
     real_clear = runner_mod._runtime_state()[0].clear_active_tournament
 
-    def capturing_clear(workspace_root: Path) -> None:
-        snap = read_active_tournament(workspace_root)
+    def capturing_clear(writer: Any) -> None:
+        snap = read_active_tournament(writer.workspace_root)
         if snap is not None:
             captured["tournament"] = snap
-        real_clear(workspace_root)
+        real_clear(writer)
 
     import zicato.runtime.state as _state_mod
 
@@ -576,6 +578,7 @@ def test_run_fast_mode_honours_replicates(monkeypatch: pytest.MonkeyPatch, tmp_p
         entry: BoardEntry,
         weights: ScoringWeights,
         config: RuntimeConfig,
+        writer: Any,
         workspace_root: Path,
         epoch_id: str,
         side: str,
@@ -667,6 +670,7 @@ def test_run_fast_mode_replicate_slots_reuse_the_unit_cache(
         entry: BoardEntry,
         weights: ScoringWeights,
         config: RuntimeConfig,
+        writer: Any,
         workspace_root: Path,
         epoch_id: str,
         side: str,
@@ -761,6 +765,7 @@ def test_run_fast_mode_stops_scheduling_slots_on_a_spent_token_budget(
         entry: BoardEntry,
         weights: ScoringWeights,
         config: RuntimeConfig,
+        writer: Any,
         workspace_root: Path,
         epoch_id: str,
         side: str,
@@ -1076,6 +1081,7 @@ class _ConcurrencyStub:
         entry: BoardEntry,
         weights: ScoringWeights,
         config: RuntimeConfig,
+        writer: Any,
         workspace_root: Path,
         epoch_id: str,
         side: str,
@@ -1175,6 +1181,7 @@ def test_run_tournament_runs_champion_and_challenger_concurrently(
             entry: BoardEntry,
             weights: ScoringWeights,
             config: RuntimeConfig,
+            writer: Any,
             workspace_root: Path,
             epoch_id: str,
             side: str,
@@ -1351,6 +1358,7 @@ def test_run_generation_surfaces_failure_under_concurrency(
         entry: BoardEntry,
         weights: ScoringWeights,
         config: RuntimeConfig,
+        writer: Any,
         workspace_root: Path,
         epoch_id: str,
         side: str,
@@ -1428,6 +1436,7 @@ def _capture_run_single(monkeypatch: pytest.MonkeyPatch) -> list[BoardEntry]:
         entry: BoardEntry,
         weights: ScoringWeights,
         config: RuntimeConfig,
+        writer: Any,
         workspace_root: Path,
         epoch_id: str,
         side: str,
@@ -1726,9 +1735,9 @@ def test_partial_aggregate_is_written_as_each_board_unit_completes(
     # Snapshot the running partial aggregate after every persist.
     counts: list[tuple[int, int]] = []
 
-    def _capturing_update(workspace_root: Path, **kw: Any) -> None:
-        _real_update(workspace_root, **kw)
-        t = read_active_tournament(workspace_root)
+    def _capturing_update(writer: Any, **kw: Any) -> None:
+        _real_update(writer, **kw)
+        t = read_active_tournament(writer.workspace_root)
         assert t is not None
         counts.append(
             (
@@ -1799,6 +1808,7 @@ def test_partial_aggregate_is_visible_before_all_boards_finish(
         entry: BoardEntry,
         weights: ScoringWeights,
         config: RuntimeConfig,
+        writer: Any,
         workspace_root: Path,
         epoch_id: str,
         side: str,
@@ -1900,11 +1910,11 @@ def test_fast_mode_persists_running_partial_aggregate(
 
     real_clear = _state_mod.clear_active_tournament
 
-    def capturing_clear(workspace_root: Path) -> None:
-        snap = read_active_tournament(workspace_root)
+    def capturing_clear(writer: Any) -> None:
+        snap = read_active_tournament(writer.workspace_root)
         if snap is not None:
             captured["tournament"] = snap
-        real_clear(workspace_root)
+        real_clear(writer)
 
     monkeypatch.setattr(_state_mod, "clear_active_tournament", capturing_clear)
 
@@ -1986,6 +1996,7 @@ def test_run_fast_mode_publishes_active_tournament(
         entry: BoardEntry,
         weights: ScoringWeights,
         config: RuntimeConfig,
+        writer: Any,
         workspace_root: Path,
         epoch_id: str,
         side: str,
@@ -1993,12 +2004,12 @@ def test_run_fast_mode_publishes_active_tournament(
     ) -> LossProfile:
         del adapter, weights, config
         # Mirror the real ``_run_single``'s state writes.
-        update_tournament_entry(workspace_root, entry.id, side, status="running")
+        update_tournament_entry(writer, entry.id, side, status="running")
         if "snapshot" not in midflight:
             snap = read_active_tournament(workspace_root)
             if snap is not None:
                 midflight["snapshot"] = snap
-        update_tournament_entry(workspace_root, entry.id, side, status="completed")
+        update_tournament_entry(writer, entry.id, side, status="completed")
         return dataclasses.replace(canned[(generation.id, entry.id)], epoch_id=epoch_id)
 
     monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
@@ -2095,6 +2106,7 @@ def test_run_fast_mode_challenger_progresses_through_running_then_completed(
         entry: BoardEntry,
         weights: ScoringWeights,
         config: RuntimeConfig,
+        writer: Any,
         workspace_root: Path,
         epoch_id: str,
         side: str,
@@ -2102,8 +2114,8 @@ def test_run_fast_mode_challenger_progresses_through_running_then_completed(
     ) -> LossProfile:
         del adapter, weights, config
         # The runner published the record up-front — these updates land.
-        update_tournament_entry(workspace_root, entry.id, side, status="running")
-        update_tournament_entry(workspace_root, entry.id, side, status="completed")
+        update_tournament_entry(writer, entry.id, side, status="running")
+        update_tournament_entry(writer, entry.id, side, status="completed")
         return dataclasses.replace(canned[(generation.id, entry.id)], epoch_id=epoch_id)
 
     monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
@@ -2114,11 +2126,11 @@ def test_run_fast_mode_challenger_progresses_through_running_then_completed(
 
     real_clear = _state_mod.clear_active_tournament
 
-    def capturing_clear(workspace_root: Path) -> None:
-        snap = read_active_tournament(workspace_root)
+    def capturing_clear(writer: Any) -> None:
+        snap = read_active_tournament(writer.workspace_root)
         if snap is not None:
             captured["tournament"] = snap
-        real_clear(workspace_root)
+        real_clear(writer)
 
     monkeypatch.setattr(_state_mod, "clear_active_tournament", capturing_clear)
 

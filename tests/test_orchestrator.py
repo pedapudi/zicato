@@ -64,7 +64,7 @@ from zicato.epoch.lifecycle import new_epoch
 def test_evolve_once_promotes_on_improvement(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """A child with strictly lower drift_loss and same pass_rate promotes."""
+    """One improving round publishes its candidate and diagnostic outputs."""
     workspace, epoch_id = bootstrap_workspace(tmp_path)
     install_stub_adapter_factory(monkeypatch)
     install_telemetry_stubs(
@@ -102,38 +102,75 @@ def test_evolve_once_promotes_on_improvement(
     journal = (workspace / "epochs" / epoch_id / "journal.md").read_text()
     assert "Tag the greeting literal for candidate v1." in journal
 
-
-def test_evolve_once_writes_a_real_health_round_report(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """An orchestrator-driven round writes a genuine ``health/round_N.json``.
-
-    Every other orchestrator test drives the REAL ``zicato.health``
-    package (unlike ``test_orchestrator_health.py``, which substitutes its
-    own fake ``zicato.health.diagnostics`` module) through this file's
-    shared ``install_telemetry_stubs`` reducer stub. That stub used to
-    omit ``split_judge_attributed_kind``, which ``detect_dead_judge``
-    imports — so the real ``assess_loop_health`` raised ``ImportError``
-    inside the orchestrator's best-effort wrapper on every one of these
-    tests, and no ``health/round_*.json`` was ever written. Nothing
-    asserted that file's existence, so the whole health tail silently
-    exercised nothing. This pins the fixed behaviour.
-    """
-    workspace, epoch_id = bootstrap_workspace(tmp_path)
-    install_stub_adapter_factory(monkeypatch)
-    install_telemetry_stubs(
-        monkeypatch,
-        canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
-        canned_pass_by_gen={"v0": True, "v1": True},
-    )
-
-    outcome = run_evolve_once(workspace, epoch_id, evaluation_call_llm)
-    assert outcome.tournament_decision == "promoted"
-
+    # The real health assessment publishes the selected epoch.
     report_path = workspace / "epochs" / epoch_id / "health" / "round_1.json"
     assert report_path.exists()
     body = json.loads(report_path.read_text())
     assert body["epoch_id"] == epoch_id
+
+    # Patches are stored separately from the experiment body.
+    v1 = workspace / "epochs" / epoch_id / "generations" / "v1"
+    body = json.loads((v1 / "experiment.json").read_text())
+    assert "patches" not in body
+    assert isinstance(body["patch_ids"], list)
+    assert len(body["patch_ids"]) == 1
+    assert (v1 / "patches" / f"{body['patch_ids'][0]}.json").exists()
+
+    from zicato.core.workspace import mutations_json_path
+
+    snapshot_path = mutations_json_path(workspace, epoch_id)
+    assert snapshot_path.exists()
+    points = json.loads(snapshot_path.read_text())
+    assert isinstance(points, list)
+    # Both registered mutation kinds appear in the persisted snapshot.
+    assert len(points) == 2
+    point = next(p for p in points if p["id"] == "greeting")
+    assert set(point.keys()) == {
+        "id",
+        "kind",
+        "file",
+        "line_start",
+        "line_end",
+        "content",
+        "content_hash",
+    }
+    assert point["id"] == "greeting"
+    assert point["kind"] == "span"
+    # Path fields are stringified for JSON.
+    assert isinstance(point["file"], str)
+    assert point["file"].endswith("agent.py")
+    assert isinstance(point["line_start"], int)
+    assert isinstance(point["line_end"], int)
+    assert '"hello"' in point["content"]
+    assert isinstance(point["content_hash"], str)
+    # No leftover .tmp file from the atomic write.
+    assert not snapshot_path.with_name(snapshot_path.name + ".tmp").exists()
+
+    # The analysis includes the round hypothesis and generation.
+    epoch_dir = workspace / "epochs" / epoch_id
+    md = epoch_dir / "analysis.md"
+    html = epoch_dir / "analysis.html"
+    assert md.is_file()
+    assert html.is_file()
+
+    md_text = md.read_text()
+    assert "epoch analysis report" in md_text.lower()
+    assert "<!-- EYEBROW -->" in md_text
+    for section in (
+        "## Abstract",
+        "## Introduction",
+        "## Methodology",
+        "## Experimental Results",
+        "## Conclusion & Next Directions",
+    ):
+        assert section in md_text, section
+    assert "Tag the greeting literal for candidate v1." in md_text
+    assert "v1" in md_text
+    assert html.read_text().startswith("<!DOCTYPE html>")
+
+    # Insights are also published for the round.
+    insights = epoch_dir / "insights"
+    assert insights.is_dir()
 
 
 def test_evolve_round_stamps_birth_round_index_on_lineage(
@@ -361,28 +398,6 @@ def test_evolve_n_rounds_stops_on_consecutive_rejections(
     assert all(o.tournament_decision == "rejected" for o in outcomes)
 
 
-def test_evolve_round_writes_per_patch_layout(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """The orchestrator persists patches via the per-patch storage layout."""
-    workspace, epoch_id = bootstrap_workspace(tmp_path)
-    install_stub_adapter_factory(monkeypatch)
-    install_telemetry_stubs(
-        monkeypatch,
-        canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
-        canned_pass_by_gen={"v0": True, "v1": True},
-    )
-
-    run_evolve_once(workspace, epoch_id, evaluation_call_llm)
-
-    v1 = workspace / "epochs" / epoch_id / "generations" / "v1"
-    body = json.loads((v1 / "experiment.json").read_text())
-    assert "patches" not in body  # inline form is NEVER written by new code
-    assert isinstance(body["patch_ids"], list)
-    assert len(body["patch_ids"]) == 1
-    assert (v1 / "patches" / f"{body['patch_ids'][0]}.json").exists()
-
-
 # ---------------------------------------------------------------------------
 # mutations.json per-epoch snapshot
 # ---------------------------------------------------------------------------
@@ -395,56 +410,6 @@ def test_mutations_json_path_helper(tmp_path: Path) -> None:
     p = mutations_json_path(tmp_path, "ep1")
     assert p == epoch_dir(tmp_path, "ep1") / "mutations.json"
     assert p.name == "mutations.json"
-
-
-def test_evolve_once_dumps_mutations_json(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """evolve_once snapshots the enumerated mutation surface to mutations.json.
-
-    The file lands at ``epochs/{epoch}/mutations.json`` and is a JSON
-    array of objects with exactly the
-    ``{id, kind, file, line_start, line_end, content, content_hash}``
-    shape — Path fields stringified.
-    """
-    workspace, epoch_id = bootstrap_workspace(tmp_path)
-    install_stub_adapter_factory(monkeypatch)
-    install_telemetry_stubs(
-        monkeypatch,
-        canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
-        canned_pass_by_gen={"v0": True, "v1": True},
-    )
-
-    from zicato.core.workspace import mutations_json_path
-
-    run_evolve_once(workspace, epoch_id, evaluation_call_llm)
-
-    snapshot_path = mutations_json_path(workspace, epoch_id)
-    assert snapshot_path.exists()
-    points = json.loads(snapshot_path.read_text())
-    assert isinstance(points, list)
-    # The stub snapshot carries a span marker (greeting) and a code
-    # region (greet_logic).
-    assert len(points) == 2
-    point = next(p for p in points if p["id"] == "greeting")
-    assert set(point.keys()) == {
-        "id",
-        "kind",
-        "file",
-        "line_start",
-        "line_end",
-        "content",
-        "content_hash",
-    }
-    assert point["id"] == "greeting"
-    assert point["kind"] == "span"
-    # Path fields are stringified for JSON.
-    assert isinstance(point["file"], str)
-    assert point["file"].endswith("agent.py")
-    assert isinstance(point["line_start"], int)
-    assert isinstance(point["line_end"], int)
-    assert '"hello"' in point["content"]
-    assert isinstance(point["content_hash"], str)
-    # No leftover .tmp file from the atomic write.
-    assert not snapshot_path.with_name(snapshot_path.name + ".tmp").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -493,57 +458,6 @@ def test_evolve_n_rounds_populates_heartbeat_metadata(
 # ---------------------------------------------------------------------------
 # Epoch analysis report regeneration (orchestrator wiring)
 # ---------------------------------------------------------------------------
-
-
-def test_evolve_once_regenerates_analysis_report(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """After a round, the comprehensive analysis report is regenerated."""
-    workspace, epoch_id = bootstrap_workspace(tmp_path)
-    install_stub_adapter_factory(monkeypatch)
-    install_telemetry_stubs(
-        monkeypatch,
-        canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
-        canned_pass_by_gen={"v0": True, "v1": True},
-    )
-
-    # No evaluation call is scripted: the per-round refresh re-templates the
-    # publication's data-bearing sections from workspace data and spends no
-    # tokens, and the proposal is a Foe episode rather than an aux call.
-    outcome = run_evolve_once(workspace, epoch_id, evaluation_call_llm)
-    assert outcome.tournament_decision == "promoted"
-
-    # The report landed as analysis.md + analysis.html under the epoch.
-    epoch_dir = workspace / "epochs" / epoch_id
-    md = epoch_dir / "analysis.md"
-    html = epoch_dir / "analysis.html"
-    assert md.is_file()
-    assert html.is_file()
-
-    md_text = md.read_text()
-    # The academic-paper section skeleton is present — headings carry NO
-    # explicit number; the HTML renderer auto-numbers them. The masthead's
-    # H1 is now the epoch name; the eyebrow line above it names the
-    # artifact.
-    assert "epoch analysis report" in md_text.lower()
-    assert "<!-- EYEBROW -->" in md_text
-    for section in (
-        "## Abstract",
-        "## Introduction",
-        "## Methodology",
-        "## Experimental Results",
-        "## Conclusion & Next Directions",
-    ):
-        assert section in md_text, section
-    # The round's own data landed: the candidate's hypothesis, as the
-    # episode stated it, and the generation it was stated for.
-    assert "Tag the greeting literal for candidate v1." in md_text
-    assert "v1" in md_text
-    assert html.read_text().startswith("<!DOCTYPE html>")
-
-    # The per-round insights artifact remains a separate, untouched path.
-    insights = epoch_dir / "insights"
-    assert insights.is_dir()
 
 
 def test_evolve_once_survives_report_generation_failure(

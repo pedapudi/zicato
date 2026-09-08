@@ -1,49 +1,20 @@
-"""The tournament live-state EVENT LOG.
+"""Read and fold the active tournament event log.
 
-Several writers publish the in-progress tournament's live state: the
-orchestrator's full-envelope republish (once per scheduled batch) and the
-runner's per-board-unit updates (entry transitions, partial aggregates,
-projected standings). Every update is appended to the same event log.
-
-So the state is instead a **single-writer, append-only EVENT LOG** built on
-:class:`zicato.runtime.channel.EventLog`. Every
-state transition is **one atomic append** — never a read-modify-write of
-a shared mutable file — so concurrent writers cannot lose each other's
-updates. A reader **folds the log into the live view**: an
-:class:`~zicato.runtime.state.ActiveTournament` reconstructed by replaying
-the events. "Settled" is just the terminal ``Snapshot`` event with
-``phase == "completed"``.
-
-Event vocabulary
-----------------
-Each event's ``payload`` carries only the delta its writer produces:
+The workspace writer lease retains one event writer for all matchups.
+Publication helpers in :mod:`zicato.runtime.state` append these event types:
 
 ``Snapshot``
-    A FULL :meth:`ActiveTournament.to_dict` envelope — the base/reset
-    state. Written by the orchestrator's republish, the gauntlet runner's
-    open, and the settle. A ``Snapshot`` RESETS the fold (it is the
-    authoritative whole-envelope state at that point), so the fold starts
-    from the LAST ``Snapshot`` and applies the delta events after it.
-``EntryUpdate`` (``{entry_id, side, updates}``)
-    One ``(entry_id, side)`` row's per-field overrides — the runner's
-    per-board entry transition (queued → running → completed + the loss
-    summary / drift snapshot / adk session id).
-``PartialAggregate`` (``{champion_agg?, challenger_agg?}``)
-    The running partial aggregate for one or both sides — the runner's
-    per-board aggregate fold.
-``ProjectedUpdate`` (``{projected}``)
-    The live projected-standing rows per in-flight competitor — the
-    runner's per-board projection. The fold merges them onto
-    ``projected`` AND folds them into the live rung ``live_progress``,
-    using the merge code in :mod:`zicato.runtime.state`.
+    A complete :meth:`ActiveTournament.to_dict` record that resets the fold.
+``EntryUpdate``
+    Per-field overrides for one ``(entry_id, side)`` row.
+``PartialAggregate``
+    Running aggregates for either or both tournament sides.
+``ProjectedUpdate``
+    Per-generation standings, also folded into live round progress.
 
-Writer and fold share those merge helpers rather than each implementing
-the semantics, so the two cannot drift apart.
-
-When no event log exists
-------------------------
-:func:`fold_active_tournament` returns ``None``. :func:`clear_log` removes
-only the event log; unrelated saved workspace files remain untouched.
+The fold starts at the last snapshot and applies later updates in order.
+An absent or empty log has no active tournament. The state module owns the
+row and round merge functions used during replay.
 """
 
 from __future__ import annotations
@@ -54,7 +25,6 @@ from typing import Any
 
 from zicato.runtime._storage import active_tournament_log_key
 from zicato.runtime.channel import EventLog
-from zicato.runtime.paths import ensure_runtime_dirs
 from zicato.storage import workspace_backend
 
 # Event type tokens — the single producer + the fold agree on these.
@@ -69,71 +39,9 @@ def _log(workspace_root: Path) -> EventLog:
     return EventLog(workspace_backend(workspace_root, start=False), active_tournament_log_key())
 
 
-# ---------------------------------------------------------------------------
-# Appenders — the single-writer producer surface. Each is ONE atomic append.
-# ---------------------------------------------------------------------------
-
-
-def append_snapshot(workspace_root: Path, envelope: dict[str, Any]) -> None:
-    """Append a full-envelope ``Snapshot`` event (the base/reset state).
-
-    ``envelope`` is an :meth:`ActiveTournament.to_dict` dict. A
-    ``Snapshot`` is the authoritative whole-envelope state at this point,
-    so the fold restarts from it — a republish that would have overwritten
-    the snapshot file appends a fresh ``Snapshot`` instead.
-    """
-    ensure_runtime_dirs(workspace_root)
-    _log(workspace_root).append(SNAPSHOT, envelope)
-
-
-def append_entry_update(
-    workspace_root: Path, entry_id: str, side: str, updates: dict[str, Any]
-) -> None:
-    """Append one ``EntryUpdate`` delta for the ``(entry_id, side)`` row."""
-    ensure_runtime_dirs(workspace_root)
-    _log(workspace_root).append(
-        ENTRY_UPDATE, {"entry_id": entry_id, "side": side, "updates": dict(updates)}
-    )
-
-
-def append_partial_aggregate(
-    workspace_root: Path,
-    *,
-    champion_agg: dict[str, Any] | None = None,
-    challenger_agg: dict[str, Any] | None = None,
-) -> None:
-    """Append a ``PartialAggregate`` delta for one or both sides."""
-    payload: dict[str, Any] = {}
-    if champion_agg is not None:
-        payload["champion_agg"] = dict(champion_agg)
-    if challenger_agg is not None:
-        payload["challenger_agg"] = dict(challenger_agg)
-    if not payload:
-        return
-    ensure_runtime_dirs(workspace_root)
-    _log(workspace_root).append(PARTIAL_AGGREGATE, payload)
-
-
-def append_projected_update(workspace_root: Path, projected: dict[str, dict[str, Any]]) -> None:
-    """Append a ``ProjectedUpdate`` delta (the live projected-standing rows)."""
-    if not projected:
-        return
-    ensure_runtime_dirs(workspace_root)
-    _log(workspace_root).append(
-        PROJECTED_UPDATE,
-        {"projected": {str(k): dict(v) for k, v in projected.items() if isinstance(v, dict)}},
-    )
-
-
 def has_log(workspace_root: Path) -> bool:
     """Return ``True`` iff a non-empty event log exists for this workspace."""
     return _log(workspace_root).tail() is not None
-
-
-def clear_log(workspace_root: Path) -> None:
-    """Remove the event log. A missing log is already clear."""
-    backend = workspace_backend(workspace_root, start=False)
-    backend.delete(active_tournament_log_key())
 
 
 # ---------------------------------------------------------------------------

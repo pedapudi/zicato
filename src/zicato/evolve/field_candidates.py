@@ -118,7 +118,7 @@ def _publish_proposing_field(
 
     champion_only = [{"generation_id": field_round.parent_id, "seed": 1, "role": "champion"}]
     _publish_active_tournament(
-        prepared.workspace_root,
+        prepared.writer,
         tournament_id=tournament_id,
         epoch_id=prepared.epoch_id,
         structure=prepared.tournament_spec.structure,
@@ -240,6 +240,7 @@ async def _settle_field_that_produced_nothing(
                 error,
             )
             return await _persist_rejected_round(
+                writer=prepared.writer,
                 workspace_root=prepared.workspace_root,
                 epoch_id=prepared.epoch_id,
                 parent_id=parent_id,

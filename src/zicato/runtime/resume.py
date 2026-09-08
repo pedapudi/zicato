@@ -79,7 +79,6 @@ from zicato.epoch.lineage import LineageGeneration
 from zicato.runtime.lock import WorkspaceLock
 from zicato.runtime.paths import (
     active_runs_dir,
-    active_tournament_log_path,
     heartbeat_path,
 )
 from zicato.workspace import (
@@ -163,7 +162,7 @@ def _latest_generation_id(workspace_root: Path, epoch_id: str) -> str | None:
     return numbered[-1] if numbered else None
 
 
-def clear_runtime_state(workspace_root: Path) -> None:
+def clear_runtime_state(writer: WorkspaceLock) -> None:
     """Discard the live ``runtime/`` state of a prior, dead evolve.
 
     Removes ``heartbeat.json``, the active-tournament event log, and every
@@ -179,14 +178,17 @@ def clear_runtime_state(workspace_root: Path) -> None:
     exists. Their generations' ``loss.json`` outputs, if any completed,
     survive under ``epochs/`` and are picked up by the unit cache.
     """
-    for path in (
-        heartbeat_path(workspace_root),
-        active_tournament_log_path(workspace_root),
-    ):
-        try:
-            path.unlink(missing_ok=True)
-        except OSError as exc:  # noqa: BLE001 — runtime cleanup is best-effort
-            log.debug("resume: could not remove %s: %s", path, exc)
+    tournament = writer.tournament_log
+    workspace_root = writer.workspace_root
+    try:
+        tournament.clear()
+    except OSError as exc:
+        log.debug("resume: could not clear tournament log: %s", exc)
+    path = heartbeat_path(workspace_root)
+    try:
+        path.unlink(missing_ok=True)
+    except OSError as exc:
+        log.debug("resume: could not remove %s: %s", path, exc)
     runs_dir = active_runs_dir(workspace_root)
     if runs_dir.is_dir():
         for child in runs_dir.iterdir():
@@ -535,7 +537,7 @@ def prepare_resume(
     # writes have landed.
     _discard_unrecorded_source(workspace_root, epoch_id, store)
     discarded_field = _discard_unrecorded_fields(workspace_root, epoch_id, store)
-    clear_runtime_state(workspace_root)
+    clear_runtime_state(writer)
     if discarded_field:
         return ResumePlan(
             discarded_generation_id=discarded_field[0],

@@ -21,7 +21,7 @@ The two shapes
 :class:`EventLog`
     Append-only, **single-writer**. Each entry is a typed :class:`Event`
     record carrying a monotonic ``seq`` and a ``ts``. ``append(type,
-    payload)`` is one atomic append; ``read(from_seq)`` returns the tail
+    payload)`` writes one JSONL record; ``read(from_seq)`` returns the tail
     of the log past a consumer's cursor; ``tail()`` returns the last
     event. Consumers hold a ``seq`` cursor and fold the log into a view —
     "settled" is just the terminal event. There is one source of truth
@@ -120,18 +120,16 @@ class EventLog:
 
     Single-writer contract
     -----------------------
-    Exactly one process appends to a given log. The ``seq`` is derived from
-    the current tail on each append, so a *second* concurrent writer would
-    assign a duplicate ``seq`` — the abstraction does not defend against
-    that because the migration targets each have a single producer by
-    design (the runner is the only writer of the tournament log, etc.).
-    The single-writer rule is the precondition that makes the gap-free
-    ``seq`` correct.
+    One writer instance serves each stream for its owner's lifetime. It
+    validates existing history on first append, then advances its sequence
+    after successful writes. A failed write invalidates that state so retry
+    validates the actual bytes. Independent reader instances remain safe;
+    callers must not append through another instance while this writer is live.
 
-    Reads are unrestricted and lock-free: any number of consumers can
-    :meth:`read` / :meth:`tail` concurrently with the writer. A reader sees
-    a prefix of the appended events — never a partial line — because each
-    append writes one complete ``\\n``-terminated line.
+    Runtime publication retains its two logs on the exclusive workspace lease.
+    Synchronous append calls from concurrent matchups share those same objects.
+    Reads remain independent and strict: an interrupted JSONL record can raise
+    until the runtime owner clears the stream during recovery.
     """
 
     def __init__(self, backend: StorageBackend, key: str) -> None:
@@ -142,6 +140,7 @@ class EventLog:
         """
         self._backend = backend
         self._key = key
+        self._next_seq: int | None = None
 
     @property
     def key(self) -> str:
@@ -151,18 +150,24 @@ class EventLog:
     def append(self, type: str, payload: Any = None) -> Event:
         """Append one event and return it with its assigned ``seq`` + ``ts``.
 
-        The ``seq`` is ``tail().seq + 1`` (or ``1`` for the first event),
-        read from the current stream tail — so appends are strictly
-        increasing and gap-free under the single-writer contract. The
-        append itself is one :meth:`StorageBackend.append_jsonl` call: a
-        single complete line, so a concurrent reader never observes a
-        half-written event.
+        The first sequence follows the validated tail. Subsequent appends use
+        the retained next sequence; failed writes force validation on retry.
         """
-        last = self.tail()
-        seq = 1 if last is None else last.seq + 1
+        if self._next_seq is None:
+            last = self.tail()
+            self._next_seq = 1 if last is None else last.seq + 1
+        seq = self._next_seq
         event = Event(seq=seq, ts=_utc_now_iso(), type=type, payload=payload)
+        # A failed append may have written bytes; retry must validate them.
+        self._next_seq = None
         self._backend.append_jsonl(self._key, event.to_record())
+        self._next_seq = seq + 1
         return event
+
+    def clear(self) -> None:
+        """Remove the stream and invalidate sequence state, including on failure."""
+        self._next_seq = None
+        self._backend.delete(self._key)
 
     def read(self, from_seq: int = 0) -> list[Event]:
         """Return every event with ``seq > from_seq``, in append order.
@@ -183,9 +188,8 @@ class EventLog:
     def tail(self) -> Event | None:
         """Return the last appended event, or ``None`` if the log is empty.
 
-        Used internally to derive the next ``seq`` and externally as the
-        "current state" of an event-sourced view (the terminal event *is*
-        the settled state).
+        Opening a writer derives its sequence from this validated tail.
+        Independent readers use it to inspect the last recorded transition.
         """
         last: Event | None = None
         for record in self._backend.read_jsonl(self._key):

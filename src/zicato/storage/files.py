@@ -50,12 +50,18 @@ def append_jsonl(path: Path, record: Any) -> None:
     """Append one compact, newline-terminated record without replacing history.
 
     The owner supplies sequence assignment and any interrupted-write recovery.
+    An unterminated suffix is refused; recovery belongs to the log owner.
     This write has no fsync or cross-process exclusion guarantee.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    line = json.dumps(record, separators=(",", ":"))
-    with path.open("a", encoding="utf-8") as stream:
-        stream.write(line + "\n")
+    line = (json.dumps(record, separators=(",", ":")) + "\n").encode("utf-8")
+    with path.open("a+b") as stream:
+        size = stream.seek(0, 2)
+        if size:
+            stream.seek(size - 1)
+            if stream.read(1) != b"\n":
+                raise ValueError(f"JSONL stream {path} has an unterminated JSONL record")
+        stream.write(line)
 
 
 class FileStorageBackend(StorageBackend):

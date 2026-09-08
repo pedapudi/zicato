@@ -1009,6 +1009,19 @@ name. Internal operations receive the already acquired `WorkspaceLock` and call
 lease, matching workspace, current process, and unchanged ownership metadata.
 A descriptor reconstructed from the JSON grants no mutation or release authority.
 
+The lease retains one progress EventLog and one tournament EventLog. Every runtime
+publication and clear operation receives that acquired writer. Concurrent matchups,
+standalone scheduling, and cleanup callbacks share the same log objects. Access
+requires a live lease in the current process; the append path does not reread the
+inspection metadata for each event. Fork cleanup and release invalidate that access.
+
+Each log validates existing history on its first append and retains the next
+sequence. A failed append or clear invalidates that state, so retry checks the
+actual file. Clears remove the file and reset its sequence together. Independent
+reader instances still read the complete stream and preserve strict JSONL decoding.
+The shared byte append checks the final byte on the same open file handle and
+refuses an unterminated suffix. It does not fsync the log or acquire another lock.
+
 The inspection record includes a unique owner identifier for each acquisition.
 Release removes metadata only when it still describes that acquisition, then
 closes the lease. Releasing a predecessor again cannot remove a successor owned
@@ -1096,10 +1109,11 @@ cached losses with a different snapshot).
 
 ### 7.8.2 Settlement recovery and tournament classification
 
-**Runtime cleanup.** `clear_runtime_state` deletes `heartbeat.json`, the
-active-tournament event log AND its snapshot file, and every
-`active_runs/*.json`. The workspace lock is not touched (acquisition already
-stole any stale one). Best-effort; an unlink race never aborts startup.
+**Runtime cleanup.** `clear_runtime_state(writer)` resets the retained tournament
+log and removes `heartbeat.json` and every `active_runs/*.json` file. The writer
+remains held. Progress is preserved during recovery within an invocation; loop
+startup clears it explicitly. File removal failures remain best-effort and leave
+sequence state invalidated so the next append validates the surviving bytes.
 
 **Settlement recovery.** Startup validates every `field_settlement.json`
 against its containing epoch and round before it reads the record's state. A

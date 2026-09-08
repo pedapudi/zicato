@@ -40,8 +40,8 @@ def test_round_emitter_recovers_bytes_after_failed_append(tmp_path, monkeypatch)
     @contextmanager
     def open_with_interruption(file, mode="r", *args, **kwargs):
         with original(file, mode, *args, **kwargs) as stream:
-            if file == path and mode == "a":
-                stream.write('{"seq":2')
+            if file == path and mode == "a+b":
+                stream.write(b'{"seq":2')
                 stream.flush()
                 raise OSError("interrupted append")
             yield stream

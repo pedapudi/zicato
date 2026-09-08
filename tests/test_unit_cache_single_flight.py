@@ -20,6 +20,7 @@ import pytest
 import zicato.tournament.runner as runner_mod
 from zicato.core import BoardEntry, Generation, LossProfile, RuntimeConfig, ScoringWeights
 from zicato.core.workspace import run_id_for_unit
+from zicato.runtime.lock import WorkspaceLock, acquire_workspace_lock
 from zicato.testing.fixtures import make_loss_profile
 from zicato.tournament.runner import _run_unit_cache_first
 from zicato.tournament.unit_cache import _UnitProvenance
@@ -67,6 +68,7 @@ def _workspace(tmp_path: Path) -> Path:
 
 async def _unit(
     *,
+    writer: WorkspaceLock,
     workspace: Path,
     generation: Generation,
     entry: BoardEntry,
@@ -77,6 +79,7 @@ async def _unit(
 ) -> LossProfile:
     """One call through the cache-first choke point, as a rung matchup makes it."""
     return await _run_unit_cache_first(
+        writer=writer,
         adapter=object(),
         generation=generation,
         entry=entry,
@@ -139,17 +142,25 @@ def test_concurrent_matchups_run_one_cold_unit_once(
     started: list[str] = []
     _stub_run_single(monkeypatch, started=started)
 
-    async def rung() -> None:
-        await asyncio.gather(
-            *(
-                _unit(workspace=workspace, generation=champion, entry=entry, match_id=f"rung0_m{i}")
-                for i in range(4)
+    with acquire_workspace_lock(workspace, "test") as writer:
+
+        async def rung() -> None:
+            await asyncio.gather(
+                *(
+                    _unit(
+                        writer=writer,
+                        workspace=workspace,
+                        generation=champion,
+                        entry=entry,
+                        match_id=f"rung0_m{i}",
+                    )
+                    for i in range(4)
+                )
             )
-        )
 
-    asyncio.run(rung())
+        asyncio.run(rung())
 
-    assert started == ["rung0_m0"]
+        assert started == ["rung0_m0"]
 
 
 def test_force_fresh_units_are_never_coalesced(
@@ -162,27 +173,31 @@ def test_force_fresh_units_are_never_coalesced(
     started: list[str] = []
     _stub_run_single(monkeypatch, started=started)
 
-    async def both() -> None:
-        await asyncio.gather(
-            _unit(
-                workspace=workspace,
-                generation=champion,
-                entry=entry,
-                match_id="m0",
-                force_fresh=True,
-            ),
-            _unit(
-                workspace=workspace,
-                generation=champion,
-                entry=entry,
-                match_id="m1",
-                force_fresh=True,
-            ),
-        )
+    with acquire_workspace_lock(workspace, "test") as writer:
 
-    asyncio.run(both())
+        async def both() -> None:
+            await asyncio.gather(
+                _unit(
+                    writer=writer,
+                    workspace=workspace,
+                    generation=champion,
+                    entry=entry,
+                    match_id="m0",
+                    force_fresh=True,
+                ),
+                _unit(
+                    writer=writer,
+                    workspace=workspace,
+                    generation=champion,
+                    entry=entry,
+                    match_id="m1",
+                    force_fresh=True,
+                ),
+            )
 
-    assert started == ["m0", "m1"]
+        asyncio.run(both())
+
+        assert started == ["m0", "m1"]
 
 
 def test_replicate_slots_are_independent_draws(
@@ -195,27 +210,31 @@ def test_replicate_slots_are_independent_draws(
     started: list[str] = []
     _stub_run_single(monkeypatch, started=started)
 
-    async def both() -> None:
-        await asyncio.gather(
-            _unit(
-                workspace=workspace,
-                generation=champion,
-                entry=entry,
-                match_id="r0",
-                replicate_index=0,
-            ),
-            _unit(
-                workspace=workspace,
-                generation=champion,
-                entry=entry,
-                match_id="r1",
-                replicate_index=1,
-            ),
-        )
+    with acquire_workspace_lock(workspace, "test") as writer:
 
-    asyncio.run(both())
+        async def both() -> None:
+            await asyncio.gather(
+                _unit(
+                    writer=writer,
+                    workspace=workspace,
+                    generation=champion,
+                    entry=entry,
+                    match_id="r0",
+                    replicate_index=0,
+                ),
+                _unit(
+                    writer=writer,
+                    workspace=workspace,
+                    generation=champion,
+                    entry=entry,
+                    match_id="r1",
+                    replicate_index=1,
+                ),
+            )
 
-    assert sorted(started) == ["r0", "r1"]
+        asyncio.run(both())
+
+        assert sorted(started) == ["r0", "r1"]
 
 
 def test_distinct_units_are_never_coalesced(
@@ -226,37 +245,43 @@ def test_distinct_units_are_never_coalesced(
     started: list[str] = []
     _stub_run_single(monkeypatch, started=started)
 
-    async def four() -> None:
-        await asyncio.gather(
-            _unit(
-                workspace=workspace,
-                generation=_generation(tmp_path, "v0"),
-                entry=_entry("a"),
-                match_id="v0a",
-            ),
-            _unit(
-                workspace=workspace,
-                generation=_generation(tmp_path, "v0"),
-                entry=_entry("b"),
-                match_id="v0b",
-            ),
-            _unit(
-                workspace=workspace,
-                generation=_generation(tmp_path, "v1"),
-                entry=_entry("a"),
-                match_id="v1a",
-            ),
-            _unit(
-                workspace=workspace,
-                generation=_generation(tmp_path, "v1"),
-                entry=_entry("b"),
-                match_id="v1b",
-            ),
-        )
+    with acquire_workspace_lock(workspace, "test") as writer:
 
-    asyncio.run(four())
+        async def four() -> None:
+            await asyncio.gather(
+                _unit(
+                    writer=writer,
+                    workspace=workspace,
+                    generation=_generation(tmp_path, "v0"),
+                    entry=_entry("a"),
+                    match_id="v0a",
+                ),
+                _unit(
+                    writer=writer,
+                    workspace=workspace,
+                    generation=_generation(tmp_path, "v0"),
+                    entry=_entry("b"),
+                    match_id="v0b",
+                ),
+                _unit(
+                    writer=writer,
+                    workspace=workspace,
+                    generation=_generation(tmp_path, "v1"),
+                    entry=_entry("a"),
+                    match_id="v1a",
+                ),
+                _unit(
+                    writer=writer,
+                    workspace=workspace,
+                    generation=_generation(tmp_path, "v1"),
+                    entry=_entry("b"),
+                    match_id="v1b",
+                ),
+            )
 
-    assert sorted(started) == ["v0a", "v0b", "v1a", "v1b"]
+        asyncio.run(four())
+
+        assert sorted(started) == ["v0a", "v0b", "v1a", "v1b"]
 
 
 def test_infra_abort_is_never_shared(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -274,28 +299,32 @@ def test_infra_abort_is_never_shared(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     _stub_run_single(monkeypatch, started=started, abort_cause="worker_crash")
     provenance: dict[str, _UnitProvenance] = {}
 
-    async def rung() -> tuple[LossProfile, ...]:
-        return await asyncio.gather(
-            _unit(
-                workspace=workspace,
-                generation=champion,
-                entry=entry,
-                match_id="m0",
-                provenance=provenance,
-            ),
-            _unit(
-                workspace=workspace,
-                generation=champion,
-                entry=entry,
-                match_id="m1",
-                provenance=provenance,
-            ),
-        )
+    with acquire_workspace_lock(workspace, "test") as writer:
 
-    asyncio.run(rung())
+        async def rung() -> tuple[LossProfile, ...]:
+            return await asyncio.gather(
+                _unit(
+                    writer=writer,
+                    workspace=workspace,
+                    generation=champion,
+                    entry=entry,
+                    match_id="m0",
+                    provenance=provenance,
+                ),
+                _unit(
+                    writer=writer,
+                    workspace=workspace,
+                    generation=champion,
+                    entry=entry,
+                    match_id="m1",
+                    provenance=provenance,
+                ),
+            )
 
-    assert started == ["m0", "m1"], "the aborted unit must be re-attempted, never reused"
-    assert provenance["v0"] == _UnitProvenance(cached=0, fresh=2)
+        asyncio.run(rung())
+
+        assert started == ["m0", "m1"], "the aborted unit must be re-attempted, never reused"
+        assert provenance["v0"] == _UnitProvenance(cached=0, fresh=2)
 
 
 def test_a_failed_evaluation_is_never_shared(
@@ -319,18 +348,32 @@ def test_a_failed_evaluation_is_never_shared(
 
     monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
 
-    async def rung() -> list[Any]:
-        return await asyncio.gather(
-            _unit(workspace=workspace, generation=champion, entry=entry, match_id="m0"),
-            _unit(workspace=workspace, generation=champion, entry=entry, match_id="m1"),
-            return_exceptions=True,
-        )
+    with acquire_workspace_lock(workspace, "test") as writer:
 
-    results = asyncio.run(rung())
+        async def rung() -> list[Any]:
+            return await asyncio.gather(
+                _unit(
+                    writer=writer,
+                    workspace=workspace,
+                    generation=champion,
+                    entry=entry,
+                    match_id="m0",
+                ),
+                _unit(
+                    writer=writer,
+                    workspace=workspace,
+                    generation=champion,
+                    entry=entry,
+                    match_id="m1",
+                ),
+                return_exceptions=True,
+            )
 
-    assert isinstance(results[0], RuntimeError)
-    assert isinstance(results[1], LossProfile), "the waiter must run its own unit, not inherit"
-    assert started == ["m0", "m1"]
+        results = asyncio.run(rung())
+
+        assert isinstance(results[0], RuntimeError)
+        assert isinstance(results[1], LossProfile), "the waiter must run its own unit, not inherit"
+        assert started == ["m0", "m1"]
 
 
 def test_a_cancelled_evaluation_leaves_the_waiter_a_clean_miss(
@@ -344,25 +387,39 @@ def test_a_cancelled_evaluation_leaves_the_waiter_a_clean_miss(
     hold = asyncio.Event()
     _stub_run_single(monkeypatch, started=started, hold=hold)
 
-    async def rung() -> LossProfile:
-        first = asyncio.create_task(
-            _unit(workspace=workspace, generation=champion, entry=entry, match_id="m0")
-        )
-        await asyncio.sleep(0)
-        waiter = asyncio.create_task(
-            _unit(workspace=workspace, generation=champion, entry=entry, match_id="m1")
-        )
-        await asyncio.sleep(0)
-        first.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await first
-        hold.set()
-        return await waiter
+    with acquire_workspace_lock(workspace, "test") as writer:
 
-    loss = asyncio.run(rung())
+        async def rung() -> LossProfile:
+            first = asyncio.create_task(
+                _unit(
+                    writer=writer,
+                    workspace=workspace,
+                    generation=champion,
+                    entry=entry,
+                    match_id="m0",
+                )
+            )
+            await asyncio.sleep(0)
+            waiter = asyncio.create_task(
+                _unit(
+                    writer=writer,
+                    workspace=workspace,
+                    generation=champion,
+                    entry=entry,
+                    match_id="m1",
+                )
+            )
+            await asyncio.sleep(0)
+            first.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await first
+            hold.set()
+            return await waiter
 
-    assert started == ["m0", "m1"]
-    assert loss.generation_id == "v0"
+        loss = asyncio.run(rung())
+
+        assert started == ["m0", "m1"]
+        assert loss.generation_id == "v0"
 
 
 def test_a_cancelled_waiter_leaves_the_running_unit_alive(
@@ -376,25 +433,39 @@ def test_a_cancelled_waiter_leaves_the_running_unit_alive(
     hold = asyncio.Event()
     _stub_run_single(monkeypatch, started=started, hold=hold)
 
-    async def rung() -> LossProfile:
-        leader = asyncio.create_task(
-            _unit(workspace=workspace, generation=champion, entry=entry, match_id="m0")
-        )
-        await asyncio.sleep(0)
-        follower = asyncio.create_task(
-            _unit(workspace=workspace, generation=champion, entry=entry, match_id="m1")
-        )
-        await asyncio.sleep(0)
-        follower.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await follower
-        hold.set()
-        return await leader
+    with acquire_workspace_lock(workspace, "test") as writer:
 
-    loss = asyncio.run(rung())
+        async def rung() -> LossProfile:
+            leader = asyncio.create_task(
+                _unit(
+                    writer=writer,
+                    workspace=workspace,
+                    generation=champion,
+                    entry=entry,
+                    match_id="m0",
+                )
+            )
+            await asyncio.sleep(0)
+            follower = asyncio.create_task(
+                _unit(
+                    writer=writer,
+                    workspace=workspace,
+                    generation=champion,
+                    entry=entry,
+                    match_id="m1",
+                )
+            )
+            await asyncio.sleep(0)
+            follower.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await follower
+            hold.set()
+            return await leader
 
-    assert started == ["m0"]
-    assert loss.generation_id == "v0"
+        loss = asyncio.run(rung())
+
+        assert started == ["m0"]
+        assert loss.generation_id == "v0"
 
 
 def test_provenance_counts_actual_worker_launches(
@@ -413,21 +484,24 @@ def test_provenance_counts_actual_worker_launches(
     _stub_run_single(monkeypatch, started=started)
     provenance: dict[str, _UnitProvenance] = {}
 
-    async def rung() -> None:
-        await asyncio.gather(
-            *(
-                _unit(
-                    workspace=workspace,
-                    generation=champion,
-                    entry=entry,
-                    match_id=f"m{i}",
-                    provenance=provenance,
+    with acquire_workspace_lock(workspace, "test") as writer:
+
+        async def rung() -> None:
+            await asyncio.gather(
+                *(
+                    _unit(
+                        writer=writer,
+                        workspace=workspace,
+                        generation=champion,
+                        entry=entry,
+                        match_id=f"m{i}",
+                        provenance=provenance,
+                    )
+                    for i in range(4)
                 )
-                for i in range(4)
             )
-        )
 
-    asyncio.run(rung())
+        asyncio.run(rung())
 
-    assert len(started) == 1
-    assert provenance["v0"] == _UnitProvenance(cached=3, fresh=1)
+        assert len(started) == 1
+        assert provenance["v0"] == _UnitProvenance(cached=3, fresh=1)

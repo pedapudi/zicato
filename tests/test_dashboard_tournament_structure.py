@@ -33,6 +33,7 @@ from zicato.query import (
     build_tournament_structure,
 )
 from zicato.query.runtime_view import _normalize_tournament_statuses
+from zicato.runtime.lock import acquire_workspace_lock
 from zicato.selection.strategy import SelectionDecision
 from zicato.tournament.records import field_tournament_record, write_field_tournament_record
 
@@ -301,25 +302,26 @@ def test_structure_reader_enriches_field_status_from_active(swiss_workspace: Pat
     structure — so a just-completed epoch's proposing step survives."""
     from zicato.runtime.state import ActiveTournament, write_active_tournament
 
-    write_active_tournament(
-        swiss_workspace,
-        ActiveTournament(
-            tournament_id=SWISS_TOURN,
-            parent_generation_id="",
-            child_generation_id="v1",
-            epoch_id=EPOCH,
-            started_at="2026-06-01T00:30:00Z",
-            phase="completed",
-            structure="swiss",
-            competitors=[
-                {"generation_id": "v0", "seed": 1, "role": "champion"},
-                {"generation_id": "v1", "seed": 2, "role": "challenger"},
-            ],
-            field_status=[
-                {"generation_id": "v1", "status": "applied", "reason": "", "seed": 2},
-            ],
-        ),
-    )
+    with acquire_workspace_lock(swiss_workspace, "test-publication") as writer:
+        write_active_tournament(
+            writer,
+            ActiveTournament(
+                tournament_id=SWISS_TOURN,
+                parent_generation_id="",
+                child_generation_id="v1",
+                epoch_id=EPOCH,
+                started_at="2026-06-01T00:30:00Z",
+                phase="completed",
+                structure="swiss",
+                competitors=[
+                    {"generation_id": "v0", "seed": 1, "role": "champion"},
+                    {"generation_id": "v1", "seed": 2, "role": "challenger"},
+                ],
+                field_status=[
+                    {"generation_id": "v1", "status": "applied", "reason": "", "seed": 2},
+                ],
+            ),
+        )
     st = build_tournament_structure(WorkspacePaths(swiss_workspace), EPOCH, SWISS_TOURN)
     # The settled bracket still comes from the index…
     assert st["source"] == "index"
@@ -336,27 +338,33 @@ def test_active_tournament_route_surfaces_field_status(
     so the live hero can render the proposing-step tracker."""
     from zicato.runtime.state import ActiveTournament, write_active_tournament
 
-    write_active_tournament(
-        swiss_workspace,
-        ActiveTournament(
-            tournament_id=SWISS_TOURN,
-            parent_generation_id="",
-            child_generation_id="",
-            epoch_id=EPOCH,
-            started_at="2026-06-01T00:30:00Z",
-            phase="proposing",
-            structure="swiss",
-            field_status=[
-                {"generation_id": "v1", "status": "rejected", "reason": "invalid JSON", "seed": 2},
-                {
-                    "generation_id": "v2",
-                    "status": "rejected",
-                    "reason": "empty response",
-                    "seed": 3,
-                },
-            ],
-        ),
-    )
+    with acquire_workspace_lock(swiss_workspace, "test-publication") as writer:
+        write_active_tournament(
+            writer,
+            ActiveTournament(
+                tournament_id=SWISS_TOURN,
+                parent_generation_id="",
+                child_generation_id="",
+                epoch_id=EPOCH,
+                started_at="2026-06-01T00:30:00Z",
+                phase="proposing",
+                structure="swiss",
+                field_status=[
+                    {
+                        "generation_id": "v1",
+                        "status": "rejected",
+                        "reason": "invalid JSON",
+                        "seed": 2,
+                    },
+                    {
+                        "generation_id": "v2",
+                        "status": "rejected",
+                        "reason": "empty response",
+                        "seed": 3,
+                    },
+                ],
+            ),
+        )
     app = create_app(swiss_workspace, static_dir, read_only=True)
     with TestClient(app) as c:
         r = c.get("/api/active-tournament")

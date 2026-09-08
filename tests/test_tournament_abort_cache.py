@@ -41,6 +41,7 @@ from zicato.core import (
 )
 from zicato.core.measurement import MeasurementDraw
 from zicato.core.workspace import loss_profile_path, run_id_for_unit
+from zicato.runtime.lock import acquire_workspace_lock
 from zicato.telemetry.reducer import read_loss_profile, write_loss_profile
 from zicato.testing.fixtures import make_loss_profile
 from zicato.tournament.runner import (
@@ -183,6 +184,7 @@ def _stub_run_single_returning(monkeypatch: pytest.MonkeyPatch, profile: LossPro
         entry: BoardEntry,
         weights: ScoringWeights,
         config: RuntimeConfig,
+        writer: Any,
         workspace_root: Path,
         epoch_id: str,
         side: str,
@@ -223,33 +225,35 @@ def test_infra_abort_is_not_cached(
     assert is_infra_abort_cause(infra.abort_cause) is True
     _stub_run_single_returning(monkeypatch, infra)
 
-    loss = asyncio.run(
-        _run_unit_cache_first(
-            adapter=object(),
-            generation=gen,
-            entry=entry,
-            weights=ScoringWeights(),
-            config=runtime_config(ws),
-            workspace_root=ws,
-            epoch_id="e0",
-            side="parent",
+    with acquire_workspace_lock(ws, "test") as writer:
+        loss = asyncio.run(
+            _run_unit_cache_first(
+                writer=writer,
+                adapter=object(),
+                generation=gen,
+                entry=entry,
+                weights=ScoringWeights(),
+                config=runtime_config(ws),
+                workspace_root=ws,
+                epoch_id="e0",
+                side="parent",
+            )
         )
-    )
-    # The unit ran and returned the infra-abort profile...
-    assert loss.abort_cause == cause
-    assert loss.execution_started is None
-    # ...but it was NOT persisted: the next cache lookup is a MISS.
-    assert (
-        _resolve_cached_unit(
-            workspace_root=ws,
-            epoch_id="e0",
-            generation_id=gen.id,
-            entry_id=entry.id,
-            replicate_index=0,
-            base_seed=None,
+        # The unit ran and returned the infra-abort profile...
+        assert loss.abort_cause == cause
+        assert loss.execution_started is None
+        # ...but it was NOT persisted: the next cache lookup is a MISS.
+        assert (
+            _resolve_cached_unit(
+                workspace_root=ws,
+                epoch_id="e0",
+                generation_id=gen.id,
+                entry_id=entry.id,
+                replicate_index=0,
+                base_seed=None,
+            )
+            is None
         )
-        is None
-    )
 
 
 def test_budget_abort_is_cached(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -272,42 +276,45 @@ def test_budget_abort_is_cached(monkeypatch: pytest.MonkeyPatch, tmp_path: Path)
     assert is_infra_abort_cause(budget.abort_cause) is False
     calls = _stub_run_single_returning(monkeypatch, budget)
 
-    asyncio.run(
-        _run_unit_cache_first(
-            adapter=object(),
-            generation=gen,
-            entry=entry,
-            weights=ScoringWeights(),
-            config=runtime_config(ws),
+    with acquire_workspace_lock(ws, "test") as writer:
+        asyncio.run(
+            _run_unit_cache_first(
+                writer=writer,
+                adapter=object(),
+                generation=gen,
+                entry=entry,
+                weights=ScoringWeights(),
+                config=runtime_config(ws),
+                workspace_root=ws,
+                epoch_id="e0",
+                side="parent",
+            )
+        )
+        cached = _resolve_cached_unit(
             workspace_root=ws,
             epoch_id="e0",
-            side="parent",
+            generation_id=gen.id,
+            entry_id=entry.id,
+            replicate_index=0,
+            base_seed=None,
         )
-    )
-    cached = _resolve_cached_unit(
-        workspace_root=ws,
-        epoch_id="e0",
-        generation_id=gen.id,
-        entry_id=entry.id,
-        replicate_index=0,
-        base_seed=None,
-    )
-    assert cached is not None
-    assert cached.abort_cause == BUDGET_ABORT_CAUSE
-    assert cached.execution_started is True
-    asyncio.run(
-        _run_unit_cache_first(
-            adapter=object(),
-            generation=gen,
-            entry=entry,
-            weights=ScoringWeights(),
-            config=runtime_config(ws),
-            workspace_root=ws,
-            epoch_id="e0",
-            side="parent",
+        assert cached is not None
+        assert cached.abort_cause == BUDGET_ABORT_CAUSE
+        assert cached.execution_started is True
+        asyncio.run(
+            _run_unit_cache_first(
+                writer=writer,
+                adapter=object(),
+                generation=gen,
+                entry=entry,
+                weights=ScoringWeights(),
+                config=runtime_config(ws),
+                workspace_root=ws,
+                epoch_id="e0",
+                side="parent",
+            )
         )
-    )
-    assert calls == ["v0"]
+        assert calls == ["v0"]
 
 
 def test_clean_run_is_cached(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -328,29 +335,31 @@ def test_clean_run_is_cached(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
     )
     _stub_run_single_returning(monkeypatch, clean)
 
-    asyncio.run(
-        _run_unit_cache_first(
-            adapter=object(),
-            generation=gen,
-            entry=entry,
-            weights=ScoringWeights(),
-            config=runtime_config(ws),
-            workspace_root=ws,
-            epoch_id="e0",
-            side="parent",
+    with acquire_workspace_lock(ws, "test") as writer:
+        asyncio.run(
+            _run_unit_cache_first(
+                writer=writer,
+                adapter=object(),
+                generation=gen,
+                entry=entry,
+                weights=ScoringWeights(),
+                config=runtime_config(ws),
+                workspace_root=ws,
+                epoch_id="e0",
+                side="parent",
+            )
         )
-    )
-    assert (
-        _resolve_cached_unit(
-            workspace_root=ws,
-            epoch_id="e0",
-            generation_id=gen.id,
-            entry_id=entry.id,
-            replicate_index=0,
-            base_seed=None,
+        assert (
+            _resolve_cached_unit(
+                workspace_root=ws,
+                epoch_id="e0",
+                generation_id=gen.id,
+                entry_id=entry.id,
+                replicate_index=0,
+                base_seed=None,
+            )
+            is not None
         )
-        is not None
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -390,6 +399,7 @@ def _stub_run_single_logging(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str,
         entry: BoardEntry,
         weights: ScoringWeights,
         config: RuntimeConfig,
+        writer: Any,
         workspace_root: Path,
         epoch_id: str,
         side: str,

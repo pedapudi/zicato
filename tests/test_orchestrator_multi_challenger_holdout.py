@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -84,6 +85,7 @@ def _install_per_entry_telemetry_stubs(
         entry: BoardEntry,
         weights: object,
         config: object,
+        writer: Any,
         workspace_root: Path,
         epoch_id: str,
         side: str,

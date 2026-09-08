@@ -126,6 +126,9 @@ def test_status_descriptor_cannot_release_writer(tmp_path: Path) -> None:
     try:
         status = locks.read_workspace_lock(tmp_path)
         assert status is not None
+        for name in ("progress_log", "tournament_log"):
+            with pytest.raises(locks.WorkspaceLockHeld):
+                getattr(status, name)
         locks.release_workspace_lock(status)
         assert lock_path(tmp_path).exists()
     finally:
@@ -143,6 +146,9 @@ def test_only_acquired_handle_authorizes_matching_workspace(tmp_path: Path) -> N
                 locks.validate_workspace_lock(handle, root)
     with pytest.raises(locks.WorkspaceLockHeld):
         locks.validate_workspace_lock(writer, tmp_path)
+    for name in ("progress_log", "tournament_log"):
+        with pytest.raises(locks.WorkspaceLockHeld):
+            getattr(writer, name)
 
 
 @pytest.mark.parametrize("rounds", [None, 1])

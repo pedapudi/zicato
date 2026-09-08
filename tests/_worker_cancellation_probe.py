@@ -19,6 +19,7 @@ from zicato.core import BoardEntry, RuntimeConfig, ScoringWeights
 from zicato.evolve import round_entry
 from zicato.runtime.lock import WorkspaceLockHeld, acquire_workspace_lock, pid_start_time
 from zicato.runtime.paths import active_run_path
+from zicato.runtime.writer import workspace_writer
 from zicato.tournament import runner, worker_transport
 
 
@@ -90,18 +91,26 @@ async def probe(workspace: Path, *, invocation: bool = False) -> None:
         nonlocal executions
         executions += 1
         assert executions == 1, "competing invocation reached execution"
-        return await runner._run_single(
-            adapter=DescendantAdapter(),
-            generation=generation,
-            entry=BoardEntry(
-                id="descendant", kind="single_turn", input="", wall_clock_budget_seconds=60
-            ),
-            weights=ScoringWeights(),
-            config=config,
-            workspace_root=workspace,
-            epoch_id="e0",
-            side="parent",
-        )
+        invocation_context = kwargs.get("invocation")
+        async with workspace_writer(
+            workspace,
+            writer=invocation_context.writer if invocation_context is not None else None,
+            instance_id=config.instance_id,
+            cleanup=lambda: runner.drain_worker_cleanup(workspace),
+        ) as writer:
+            return await runner._run_single(
+                writer=writer,
+                adapter=DescendantAdapter(),
+                generation=generation,
+                entry=BoardEntry(
+                    id="descendant", kind="single_turn", input="", wall_clock_budget_seconds=60
+                ),
+                weights=ScoringWeights(),
+                config=config,
+                workspace_root=workspace,
+                epoch_id="e0",
+                side="parent",
+            )
 
     with ExitStack() as patches:
         patches.enter_context(patch.object(asyncio, "create_subprocess_exec", spawn))

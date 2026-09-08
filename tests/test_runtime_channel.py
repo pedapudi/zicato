@@ -73,10 +73,22 @@ def test_eventlog_append_returns_event_with_seq_and_ts(backend: StorageBackend) 
     assert event.ts.endswith("Z")
 
 
-def test_eventlog_seq_is_monotonic_and_gap_free(backend: StorageBackend) -> None:
+def test_eventlog_seq_is_monotonic_and_gap_free(
+    backend: StorageBackend, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reads = 0
+    read = backend.read_jsonl
+
+    def counted(key: str):
+        nonlocal reads
+        reads += 1
+        return read(key)
+
+    monkeypatch.setattr(backend, "read_jsonl", counted)
     log = EventLog(backend, "runtime/test_log.jsonl")
     seqs = [log.append("E", {"i": i}).seq for i in range(10)]
     assert seqs == list(range(1, 11))
+    assert reads == 1
 
 
 def test_eventlog_seq_continues_across_fresh_handles(backend: StorageBackend) -> None:
@@ -150,6 +162,65 @@ def test_eventlog_separate_keys_are_independent(backend: StorageBackend) -> None
     b.append("Y")
     assert [e.seq for e in a.read()] == [1, 2]
     assert [e.seq for e in b.read()] == [1]  # independent seq space
+
+
+@pytest.mark.parametrize("committed", [False, True])
+def test_eventlog_rechecks_disk_after_failed_append(
+    backend: StorageBackend, monkeypatch: pytest.MonkeyPatch, committed: bool
+) -> None:
+    log = EventLog(backend, "runtime/test_log.jsonl")
+    log.append("Started")
+    append = backend.append_jsonl
+
+    def fail(key: str, record: object) -> None:
+        if committed:
+            append(key, record)
+        raise OSError("write interrupted")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(backend, "append_jsonl", fail)
+        with pytest.raises(OSError, match="write interrupted"):
+            log.append("Interrupted")
+    resumed = log.append("Resumed")
+    assert resumed.seq == (3 if committed else 2)
+    assert [event.type for event in log.read()] == (
+        ["Started", "Interrupted", "Resumed"] if committed else ["Started", "Resumed"]
+    )
+
+
+@pytest.mark.parametrize("deleted", [False, True])
+def test_eventlog_rechecks_disk_after_failed_clear(
+    backend: StorageBackend, monkeypatch: pytest.MonkeyPatch, deleted: bool
+) -> None:
+    log = EventLog(backend, "runtime/test_log.jsonl")
+    log.append("Started")
+    delete = backend.delete
+
+    def fail(key: str) -> None:
+        if deleted:
+            delete(key)
+        raise OSError("delete interrupted")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(backend, "delete", fail)
+        with pytest.raises(OSError, match="delete interrupted"):
+            log.clear()
+    assert log.append("Resumed").seq == (1 if deleted else 2)
+    assert [event.type for event in log.read()] == (
+        ["Resumed"] if deleted else ["Started", "Resumed"]
+    )
+
+
+@pytest.mark.parametrize(
+    "corrupt", [b"{broken}\n", b'{"seq":', b'{"seq":1,"ts":"t","type":"Started"}']
+)
+def test_eventlog_refuses_corruption_before_append(tmp_path: Path, corrupt: bytes) -> None:
+    backend = FileStorageBackend(tmp_path)
+    key = "events.jsonl"
+    (tmp_path / key).write_bytes(corrupt)
+    with pytest.raises(ValueError):
+        EventLog(backend, key).append("Started")
+    assert (tmp_path / key).read_bytes() == corrupt
 
 
 # ---------------------------------------------------------------------------

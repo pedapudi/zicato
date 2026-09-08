@@ -19,6 +19,7 @@ from starlette.testclient import TestClient
 
 from zicato.dashboard.server import create_app
 from zicato.query import WorkspacePaths, build_gate_breakdown
+from zicato.runtime.lock import acquire_workspace_lock
 
 EPOCH_ID = "2026-05-28_e0"
 
@@ -495,25 +496,26 @@ def test_gate_overlays_live_projected_challenger(tmp_path: Path) -> None:
         challenger=challenger,
         scoring={"promote_margin": 0.01},
     )
-    write_active_tournament(
-        ws,
-        ActiveTournament(
-            tournament_id="t-live",
-            parent_generation_id="v0",
-            child_generation_id="v1",
-            epoch_id=EPOCH_ID,
-            started_at="2026-05-28T00:30:00Z",
-            phase="running",
-            projected={
-                "v1": {
-                    "scalar": 9.8,
-                    "boards_done": 6,
-                    "boards_total": 8,
-                    "pass_rate": 1.0,
+    with acquire_workspace_lock(ws, "test-publication") as writer:
+        write_active_tournament(
+            writer,
+            ActiveTournament(
+                tournament_id="t-live",
+                parent_generation_id="v0",
+                child_generation_id="v1",
+                epoch_id=EPOCH_ID,
+                started_at="2026-05-28T00:30:00Z",
+                phase="running",
+                projected={
+                    "v1": {
+                        "scalar": 9.8,
+                        "boards_done": 6,
+                        "boards_total": 8,
+                        "pass_rate": 1.0,
+                    },
                 },
-            },
-        ),
-    )
+            ),
+        )
     result = build_gate_breakdown(WorkspacePaths(ws), EPOCH_ID, "v0", "v1")
 
     # The settled absolutes are still the on-disk aggregates…
@@ -550,18 +552,19 @@ def test_gate_live_overlay_ignores_unrelated_tournament(tmp_path: Path) -> None:
     )
     # A live tournament, but for a different challenger (v2) — the historical
     # v0->v1 breakdown must not pick up v2's projection.
-    write_active_tournament(
-        ws,
-        ActiveTournament(
-            tournament_id="t-live",
-            parent_generation_id="v1",
-            child_generation_id="v2",
-            epoch_id=EPOCH_ID,
-            started_at="2026-05-28T00:30:00Z",
-            phase="running",
-            projected={"v2": {"scalar": 5.0, "boards_done": 3, "boards_total": 8}},
-        ),
-    )
+    with acquire_workspace_lock(ws, "test-publication") as writer:
+        write_active_tournament(
+            writer,
+            ActiveTournament(
+                tournament_id="t-live",
+                parent_generation_id="v1",
+                child_generation_id="v2",
+                epoch_id=EPOCH_ID,
+                started_at="2026-05-28T00:30:00Z",
+                phase="running",
+                projected={"v2": {"scalar": 5.0, "boards_done": 3, "boards_total": 8}},
+            ),
+        )
     result = build_gate_breakdown(WorkspacePaths(ws), EPOCH_ID, "v0", "v1")
     assert result["live"] is None
 

@@ -20,6 +20,7 @@ import asyncio
 import json
 from dataclasses import replace as _replace
 from pathlib import Path
+from typing import Any
 
 import zicato_examples.target_0_convergence as _t0_pkg
 from tests._contract_pins import resolved_contract_with_proposer
@@ -791,6 +792,7 @@ def test_preflight_voids_on_infra_abort_instead_of_persisting_a_poisoned_floor(
         entry: object,
         weights: object,
         config: object,
+        writer: Any,
         workspace_root: Path,
         epoch_id: str,
         side: str,

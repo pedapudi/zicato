@@ -259,6 +259,7 @@ async def run_candidate_screen(
             try:
                 results.append(
                     await _screen_one_candidate(
+                        writer=writer,
                         index=index,
                         candidate=candidate,
                         adapter=adapter,
@@ -294,6 +295,7 @@ def _no_signal_result(reason: str) -> CandidateScreenResult:
 
 async def _screen_one_candidate(
     *,
+    writer: WorkspaceLock,
     index: int,
     candidate: Experiment,
     adapter: Any,
@@ -343,6 +345,7 @@ async def _screen_one_candidate(
                 round_index=round_index,
             )
             losses = await _run_board_units_fast(
+                writer=writer,
                 adapter=adapter,
                 child_gen=screen_gen,
                 # Stamped like the calibration/pre-flight draws: seeded
@@ -382,6 +385,7 @@ async def _screen_one_candidate(
             confirmed_flips = 0
             if flipped and budget_aborts == 0:
                 confirm_losses = await _run_board_units_fast(
+                    writer=writer,
                     adapter=adapter,
                     child_gen=screen_gen,
                     board=_stamp_replicate_index(flipped, SCREEN_REPLICATE_BASE + 1),

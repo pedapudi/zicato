@@ -33,10 +33,12 @@ from zicato.core.measurement import (
 )
 from zicato.core.workspace import measurement_from_run_id, run_dir, run_id_for_unit
 from zicato.judge_runtime.io_capture import judge_io_path_for_loss, read_judge_io
+from zicato.runtime.lock import acquire_workspace_lock
 from zicato.telemetry.reducer import read_loss_profile, write_loss_profile
 from zicato.testing.fixtures import make_loss_profile
 from zicato.tournament.artifacts import archive_unit_artifacts
-from zicato.tournament.runner import _run_single, run_fast_mode
+from zicato.tournament.runner import run_fast_mode
+from zicato.tournament.scheduling import _run_unit_cache_first
 from zicato.tournament.scoring import aggregate_generation_score
 from zicato.tournament.unit_cache import (
     _average_losses,
@@ -259,57 +261,72 @@ async def test_real_workers_preserve_other_seeds_and_complete_attempt_captures(
     directory = run_dir(workspace, "e0", "v0", "entry")
     snapshots: dict[object, dict[str, bytes]] = {}
     identities = set()
-    for seed in (17, 29, None):
-        loss = await _run_single(
+    with acquire_workspace_lock(workspace, "test") as writer:
+        for seed in (17, 29, None):
+            loss = await _run_unit_cache_first(
+                writer=writer,
+                adapter=_CaptureAdapter(),
+                generation=generation,
+                entry=entry,
+                weights=deterministic_weights(),
+                config=replace(config, seed=seed),
+                workspace_root=workspace,
+                epoch_id="e0",
+                side="child",
+                force_fresh=True,
+            )
+            assert loss.measurement == MeasurementDraw.from_index(0, base_seed=seed)
+            identities.add(loss.run_id)
+            path = measurement_artifact_path(directory, "loss", 0, base_seed=seed)
+            snapshots[seed] = {p.name: p.read_bytes() for p in path.parent.iterdir() if p.is_file()}
+            assert {"loss.json", "events.jsonl", "result.json", "judge_io.jsonl"} <= snapshots[
+                seed
+            ].keys()
+            assert (
+                json.loads(snapshots[seed]["result.json"])["measurement"]
+                == loss.measurement.to_json()
+            )
+            assert read_run_result(unit_result_path(path), expected=loss) is not None
+            captured_judges = read_judge_io(judge_io_path_for_loss(path), expected=loss)
+            assert captured_judges
+            assert all(
+                row["measurement"] == loss.measurement.to_json() and row["run_id"] == loss.run_id
+                for row in captured_judges
+            )
+        assert len(identities) == 3
+        assert not (directory / "loss.json").exists()
+        await _run_unit_cache_first(
+            writer=writer,
             adapter=_CaptureAdapter(),
             generation=generation,
             entry=entry,
             weights=deterministic_weights(),
-            config=replace(config, seed=seed),
+            config=replace(config, seed=17),
             workspace_root=workspace,
             epoch_id="e0",
             side="child",
+            force_fresh=True,
         )
-        assert loss.measurement == MeasurementDraw.from_index(0, base_seed=seed)
-        identities.add(loss.run_id)
-        path = measurement_artifact_path(directory, "loss", 0, base_seed=seed)
-        snapshots[seed] = {p.name: p.read_bytes() for p in path.parent.iterdir() if p.is_file()}
-        assert {"loss.json", "events.jsonl", "result.json", "judge_io.jsonl"} <= snapshots[
-            seed
-        ].keys()
-        assert (
-            json.loads(snapshots[seed]["result.json"])["measurement"] == loss.measurement.to_json()
-        )
-        assert read_run_result(unit_result_path(path), expected=loss) is not None
-        captured_judges = read_judge_io(judge_io_path_for_loss(path), expected=loss)
-        assert captured_judges
+        for seed in (29, None):
+            parent = measurement_artifact_path(directory, "loss", 0, base_seed=seed).parent
+            assert all(
+                (parent / name).read_bytes() == body for name, body in snapshots[seed].items()
+            )
+        parent = measurement_artifact_path(directory, "loss", 0, base_seed=17).parent
+        archives = list((parent / "attempts").glob("loss-*"))
+        assert len(archives) == 1
         assert all(
-            row["measurement"] == loss.measurement.to_json() and row["run_id"] == loss.run_id
-            for row in captured_judges
+            (archives[0] / name).read_bytes() == body for name, body in snapshots[17].items()
         )
-    assert len(identities) == 3
-    assert not (directory / "loss.json").exists()
-    await _run_single(
-        adapter=_CaptureAdapter(),
-        generation=generation,
-        entry=entry,
-        weights=deterministic_weights(),
-        config=replace(config, seed=17),
-        workspace_root=workspace,
-        epoch_id="e0",
-        side="child",
-    )
-    for seed in (29, None):
-        parent = measurement_artifact_path(directory, "loss", 0, base_seed=seed).parent
-        assert all((parent / name).read_bytes() == body for name, body in snapshots[seed].items())
-    parent = measurement_artifact_path(directory, "loss", 0, base_seed=17).parent
-    archives = list((parent / "attempts").glob("loss-*"))
-    assert len(archives) == 1
-    assert all((archives[0] / name).read_bytes() == body for name, body in snapshots[17].items())
-    archived_path = archives[0] / "loss.json"
-    archived_loss = read_loss_profile(archived_path)
-    assert read_run_result(unit_result_path(archived_path), expected=archived_loss) is not None
-    assert read_judge_io(judge_io_path_for_loss(archived_path), expected=archived_loss)
+        archived_path = archives[0] / "loss.json"
+        archived_loss = read_loss_profile(archived_path)
+        assert read_run_result(unit_result_path(archived_path), expected=archived_loss) is not None
+        assert read_judge_io(judge_io_path_for_loss(archived_path), expected=archived_loss)
+
+        from zicato.tournament.unit_cache import read_unit_loss_history
+
+        history = read_unit_loss_history(workspace, "e0", "v0", "entry", base_seed=17)
+        assert history == [archived_loss, read_loss_profile(parent / "loss.json")]
 
 
 def test_replicate_fold_retains_seed_provenance_without_claiming_unknown_draws() -> None:
@@ -383,24 +400,27 @@ async def test_forced_reruns_serialize_the_same_physical_slot(tmp_path: Path, mo
     generation = make_generation(tmp_path, "v0")
     entry = BoardEntry(id="entry", kind="single_turn", input="x", wall_clock_budget_seconds=1)
 
-    async def run():
-        return await scheduling._run_unit_cache_first(
-            adapter=object(),
-            generation=generation,
-            entry=entry,
-            weights=deterministic_weights(),
-            config=replace(runtime_config(tmp_path), seed=17),
-            workspace_root=tmp_path,
-            epoch_id="e0",
-            side="child",
-            force_fresh=True,
-        )
+    with acquire_workspace_lock(tmp_path, "test") as writer:
 
-    first, second = await asyncio.gather(run(), run())
-    assert calls == 2
-    assert [first.drift_loss, second.drift_loss] == [1.0, 2.0]
-    directory = run_dir(tmp_path, "e0", "v0", "entry")
-    path = measurement_artifact_path(directory, "loss", 0, base_seed=17)
-    archived = list((path.parent / "attempts").glob("loss-*/loss.json"))
-    assert len(archived) == 1
-    assert read_loss_profile(archived[0]).drift_loss == 1
+        async def run():
+            return await scheduling._run_unit_cache_first(
+                writer=writer,
+                adapter=object(),
+                generation=generation,
+                entry=entry,
+                weights=deterministic_weights(),
+                config=replace(runtime_config(tmp_path), seed=17),
+                workspace_root=tmp_path,
+                epoch_id="e0",
+                side="child",
+                force_fresh=True,
+            )
+
+        first, second = await asyncio.gather(run(), run())
+        assert calls == 2
+        assert [first.drift_loss, second.drift_loss] == [1.0, 2.0]
+        directory = run_dir(tmp_path, "e0", "v0", "entry")
+        path = measurement_artifact_path(directory, "loss", 0, base_seed=17)
+        archived = list((path.parent / "attempts").glob("loss-*/loss.json"))
+        assert len(archived) == 1
+        assert read_loss_profile(archived[0]).drift_loss == 1

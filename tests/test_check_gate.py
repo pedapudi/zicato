@@ -537,8 +537,8 @@ def test_a_span_marker_that_binds_to_nothing_is_advisory(
         tmp_path / ".zicato",
         config={
             "adapter": {
-                "kind": "adk",
-                "entrypoint": _VALID_ADK_ENTRYPOINT,
+                "kind": "import",
+                "factory": "tests.test_check_gate:_make_test_adapter",
                 "mutable_trees": [],
             }
         },
@@ -554,8 +554,8 @@ def test_an_unbound_marker_is_reported_from_enumerator_facts(tmp_path: Path) -> 
         tmp_path / ".zicato",
         config={
             "adapter": {
-                "kind": "adk",
-                "entrypoint": _VALID_ADK_ENTRYPOINT,
+                "kind": "import",
+                "factory": "tests.test_check_gate:_make_test_adapter",
                 "mutable_trees": [],
             }
         },
@@ -609,8 +609,8 @@ def test_a_missing_declared_tree_is_advisory(tmp_path: Path) -> None:
         root,
         config={
             "adapter": {
-                "kind": "adk",
-                "entrypoint": _VALID_ADK_ENTRYPOINT,
+                "kind": "import",
+                "factory": "tests.test_check_gate:_make_test_adapter",
                 "mutable_trees": [str(live), str(tmp_path / "gone")],
             }
         },
@@ -1162,8 +1162,8 @@ def test_a_role_whose_credential_is_unset_is_a_hard_stop(tmp_path: Path, monkeyp
         tmp_path / ".zicato",
         config={
             "adapter": {
-                "kind": "adk",
-                "entrypoint": _VALID_ADK_ENTRYPOINT,
+                "kind": "import",
+                "factory": "tests.test_check_gate:_make_test_adapter",
                 "mutable_trees": [],
             },
             "models": _models(

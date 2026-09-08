@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -90,7 +91,17 @@ def _stub_run_single(monkeypatch, canned, *, log: list):
     """Stub the per-run worker; log every (generation_id, entry_id) run."""
 
     async def fake_run_single(
-        *, adapter, generation, entry, weights, config, workspace_root, epoch_id, side, match_id=""
+        *,
+        adapter,
+        generation,
+        entry,
+        weights,
+        config,
+        writer: Any,
+        workspace_root,
+        epoch_id,
+        side,
+        match_id="",
     ):
         del adapter, weights, config, workspace_root, side, match_id
         log.append((generation.id, entry.id))
@@ -314,7 +325,17 @@ def _stub_run_single_persisting(monkeypatch, canned, *, log: list):
     """
 
     async def fake_run_single(
-        *, adapter, generation, entry, weights, config, workspace_root, epoch_id, side, match_id=""
+        *,
+        adapter,
+        generation,
+        entry,
+        weights,
+        config,
+        writer: Any,
+        workspace_root,
+        epoch_id,
+        side,
+        match_id="",
     ):
         del adapter, weights, side, match_id
         log.append((generation.id, entry.id))
@@ -438,7 +459,17 @@ def test_replicates_incremental_runs_only_missing(monkeypatch, tmp_path):
     log: list = []
 
     async def fake_run_single(
-        *, adapter, generation, entry, weights, config, workspace_root, epoch_id, side, match_id=""
+        *,
+        adapter,
+        generation,
+        entry,
+        weights,
+        config,
+        writer: Any,
+        workspace_root,
+        epoch_id,
+        side,
+        match_id="",
     ):
         del adapter, weights, side, match_id
         log.append((generation.id, entry.id))

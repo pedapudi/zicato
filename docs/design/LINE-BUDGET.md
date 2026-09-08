@@ -50,9 +50,9 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 481,014 | +72,353 |
-| Production | 197,702 | 199,110 | +1,408 |
-| Production logic | 110,276 | 114,471 | +4,195 |
+| Total | 408,661 | 481,209 | +72,548 |
+| Production | 197,702 | 198,948 | +1,246 |
+| Production logic | 110,276 | 114,507 | +4,231 |
 
 The baseline row is the reference `f9052dd` measured by the classification the
 checker holds, which counts the console's hand-written entry point
@@ -86,10 +86,10 @@ production-logic series per subsystem along a branch's first-parent commits.
 |---|---:|---:|---:|---:|
 | src/zicato/dashboard | 62,801 | 32,815 | 22,538 | 31.3% |
 | src/zicato/query | 20,490 | 20,490 | 12,604 | 38.5% |
-| src/zicato/epoch | 15,000 | 15,000 | 8,305 | 44.6% |
-| src/zicato/evolve | 11,839 | 11,839 | 7,345 | 38.0% |
-| src/zicato/tournament | 11,743 | 11,743 | 6,691 | 43.0% |
-| src/zicato/reflection | 10,016 | 10,016 | 6,627 | 33.8% |
+| src/zicato/epoch | 15,005 | 15,005 | 8,310 | 44.6% |
+| src/zicato/evolve | 11,787 | 11,787 | 7,336 | 37.8% |
+| src/zicato/tournament | 11,711 | 11,711 | 6,696 | 42.8% |
+| src/zicato/reflection | 10,043 | 10,043 | 6,654 | 33.7% |
 | crates/supervisor | 16,390 | 13,958 | 6,519 | 53.3% |
 | src/zicato/cli | 7,647 | 7,647 | 4,984 | 34.8% |
 | src/zicato/proposer | 9,761 | 9,761 | 4,897 | 49.8% |
@@ -97,7 +97,7 @@ production-logic series per subsystem along a branch's first-parent commits.
 | src/zicato/core | 7,545 | 7,545 | 3,180 | 57.9% |
 | src/zicato/selection | 5,327 | 5,327 | 3,050 | 42.7% |
 | src/zicato/index | 5,451 | 5,451 | 2,822 | 48.2% |
-| src/zicato/runtime | 5,350 | 5,350 | 2,495 | 53.4% |
+| src/zicato/runtime | 5,234 | 5,234 | 2,498 | 52.3% |
 | src/zicato/telemetry | 4,639 | 4,639 | 2,290 | 50.6% |
 | src/zicato/contract_draft | 2,510 | 2,510 | 1,647 | 34.4% |
 | src/zicato/health | 2,604 | 2,604 | 1,515 | 41.8% |
@@ -113,7 +113,7 @@ production-logic series per subsystem along a branch's first-parent commits.
 | src/zicato/models_config.py | 656 | 656 | 511 | 22.1% |
 | src/zicato/scoring | 1,395 | 1,395 | 469 | 66.4% |
 | src/zicato/patterns | 804 | 804 | 417 | 48.1% |
-| src/zicato/storage | 1,016 | 1,016 | 355 | 65.1% |
+| src/zicato/storage | 1,022 | 1,022 | 360 | 64.8% |
 | src/zicato/logging_stream.py | 627 | 627 | 333 | 46.9% |
 | src/zicato/emulator | 675 | 675 | 306 | 54.7% |
 | src/zicato/example_workspace | 657 | 657 | 300 | 54.3% |
@@ -437,3 +437,6 @@ dropped rows named.
 | Validate saved records and reduce repeated execution (total) | 480,670 | +344 | 481,014 | Shared acceptance of saved result, judge and source records; focused recovery and browser checks; retained CI cost reports. Duplicate test setup and unused confirmation scheduling are removed. |
 | Validate saved records and reduce repeated execution (production) | 199,121 | -11 | 199,110 | Existing record owners replace consumer coercions. A round writer retains its sequence. The dashboard displays recorded tool values. Unused confirmation scheduling is deleted. |
 | Validate saved records and reduce repeated execution (production logic) | 114,342 | +129 | 114,471 | Shared validation of three saved formats and explicit failure propagation add logic, as does displaying tool arguments and results. Removing the unused pair-selection helper offsets part of that addition. |
+| Retain runtime writers and reduce repeated test setup (total) | 481,014 | +195 | 481,209 | Issues #324, #385 and #411: remove repeated test setup and duplicate loss publication. Explicit writer scopes and interruption checks account for the net test increase. |
+| Retain runtime writers and reduce repeated test setup (production) | 199,110 | -162 | 198,948 | Issues #385 and #411: one workspace lease retains each runtime log. Delete five tournament publication wrappers, the duplicate progress helper and loss comparison used only by duplicate publication. |
+| Retain runtime writers and reduce repeated test setup (production logic) | 114,471 | +36 | 114,507 | Issue #385: forwarding the existing writer through execution and checking unfinished appends adds logic. Removing duplicate publication and its comparison helper offsets part of that addition. |

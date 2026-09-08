@@ -319,6 +319,7 @@ def _install_run_single_stub(
         entry: BoardEntry,
         weights: ScoringWeights,
         config: RuntimeConfig,
+        writer: Any,
         workspace_root: Path,
         epoch_id: str,
         side: str,

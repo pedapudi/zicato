@@ -19,6 +19,7 @@ from zicato.workspace import WorkspaceLayout, generation_round_number
 
 def test_prepared_round_is_immutable() -> None:
     session = PreparedRound(
+        writer=object(),
         workspace_root=Path("."),
         workspace_config={},
         epoch_id="e1",
