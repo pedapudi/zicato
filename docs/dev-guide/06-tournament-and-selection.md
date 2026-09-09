@@ -64,7 +64,7 @@ owns it, and the selection layer only *reads* its verdict.
 | File | What lives there | Approx. size |
 |---|---|---|
 | `src/zicato/tournament/runner.py` | The four public entry points (`run_tournament` full A/B, `run_fast_mode`, `run_matchup`, `confirm_crowning_holdout`), `_run_single` (the run lifecycle — the test suite's monkeypatch anchor), `_gate_with_regression`, `TournamentResult`, the progress-bumping sink | 1636 lines |
-| `src/zicato/tournament/scheduling.py` | The board-unit schedulers: `_run_replicated`, `_run_board_units_full` / `_run_board_units_full_budgeted` / `_run_board_units_fast`, `_run_unit_cache_first` (the cache-first choke point), `_run_full_board_unit`, `_IncrementalScorer`, `_effective_unit_semaphore`, `_token_budget_spent` | 1196 lines |
+| `src/zicato/tournament/scheduling.py` | The board-unit schedulers: `_run_replicated`, `_schedule_board_units`, `_run_board_units_full` / `_run_board_units_fast`, `_run_unit_cache_first` (the cache-first choke point), `_run_full_board_unit`, `_IncrementalScorer`, `_effective_unit_semaphore`, `_token_budget_spent` | 1196 lines |
 | `src/zicato/tournament/unit_cache.py` | The per-unit loss cache + provenance: `_unit_loss_path`, `_resolve_cached_unit`, `_persist_unit_loss`, `_skipped_unit_loss`, `_average_losses`, `_UnitProvenance` | 288 lines |
 | `src/zicato/tournament/worker_transport.py` | The process boundary: `adapter_worker_spec`, `_role_worker_spec` + `_callable_dotted_path`, `scrubbed_worker_env` + `_api_key_env_names`, `_configuration_spec`, `_checkout_run_snapshot`, `_aborted_loss_profile`, `_weights_spec`, `_entry_to_dict`, the `_stamp_*` context threaders, `_terminate_worker` | 923 lines |
 | `src/zicato/_tournament_worker.py` | The subprocess worker: the args-file protocol (`_load_args`), `_build_adapter`, `_drive_session`, `_evaluate_expectation`, the config re-pin, the abort provenance stamp, `main` | 838 lines |
@@ -1070,8 +1070,7 @@ should abort a tournament; if one does, that is the bug.
 | `run … could not be prepared for a subprocess: …` | WARNING | `prepare_failed` — a closure-local callable (§6.3.1), a non-ADK adapter with no `worker_spec`, or a disk-full checkout | `_run_single` |
 | `run …: worker result loss.json unreadable: …` | WARNING | `result_unreadable` — the worker "finished" but its `loss.json` was corrupt; aborted | `_run_single` |
 | `run …/… rN aborted by infra (…); NOT caching — re-running will re-attempt the unit` | INFO | an infra abort was NOT persisted, under the cache-only-budget-exhaustion rule — the next need is a correct MISS | `_run_unit_cache_first` |
-| `matchup …: per-round token budget reached; skipped k/N board unit(s) …` | WARNING | the token ledger latched; remaining units recorded as unstarted attempts for both sides | `_run_board_units_full` |
-| `matchup …: budget (wall-clock deadline or round token cap) reached after k/N board units; skipped m …` | WARNING | the matchup wall-clock cap (or token cap) tripped between batches | `_run_board_units_full_budgeted` |
+| `matchup …: evaluation budget reached; skipped …` | WARNING | The token budget or matchup deadline prevents further measurements; unstarted attempts are recorded. | `_run_board_units_full`, `_run_board_units_fast` |
 | `evidence pre-gate: replicate duel returned an already-audited draw (matchup_id …) — not appended …` | WARNING | the Bradley–Terry duplicate guard fired, under the distinct-draws-only rule — a replicate runner returned a duplicate draw | `confirm_promotion_with_evidence` |
 | `random-baseline placebo … was PROMOTED by the gate …` | WARNING | the placebo alarm — the gate promoted a no-op; the CRITICAL `placebo_promoted` health finding will fire; the champion pointer was NOT advanced, under the placebo-never-crowns rule | `_maybe_run_placebo_arm_gauntlet` |
 
@@ -1176,15 +1175,16 @@ on a fresh run, so a cache hit spends nothing).
 board-unit wall-clock, distinct from a single entry's
 `wall_clock_budget_seconds`. It bounds the failure mode where each unit is
 individually under budget but their sum grinds for hours (a racing final rung).
-When set, `_run_board_units_full_budgeted` launches units in board order,
-`parallelism` at a time, checking the deadline (and the token budget) between
-batches; once tripped, every remaining uncached unit is an unstarted attempt via
-`_skip_unit_side` and the cut is LOGGED at WARNING — never silently truncated.
+The shared scheduler, `_schedule_board_units`, admits entries in board order.
+With a deadline, it checks the deadline and token budget between batches of
+up to `parallelism` entries. Without a deadline, it checks the token budget
+after each concurrency permit is acquired. Both procedures settle admitted
+work before reporting its first failure in board order.
 
-The three schedulers share `_skip_unit_side`, whose one subtlety is that a
-budget **never clobbers a good result**: a unit already in the cache costs no
-wall-clock, so it is reused verbatim; a missing unit remains an unstarted
-attempt. Requested replicate slots are accounted for even after the budget
+The paired and challenger-only callers supply their measurement and omission
+operations. Both use `_skip_unit_side` after budget exhaustion: an eligible
+cached measurement is reused, while a missing measurement remains an unstarted
+attempt. Forced fresh measurements cannot substitute cached results. Requested replicate slots are accounted for even after the budget
 expires, and their omissions prevent a partial comparison from supporting a
 promotion.
 

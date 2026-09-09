@@ -50,7 +50,7 @@ and stamps; it never auto-rejects.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -67,6 +67,7 @@ from zicato.reflection.mining import (
     HINT_REGRESSION_ENTRY,
     HINT_RUBRIC_REVISION,
 )
+from zicato.reflection.suggestions import Suggestion
 from zicato.runtime.lock import WorkspaceLock
 from zicato.runtime.writer import workspace_writer
 
@@ -339,16 +340,16 @@ async def _noop_evaluation(system: str, user: str, model: str) -> str:  # pragma
 
 
 def admit(
-    suggestions: list[Any],
+    suggestions: list[Suggestion],
     *,
     probe: bool = False,
     workspace_root: Path,
     epoch_id: str,
-) -> list[Any]:
+) -> list[Suggestion]:
     """The sync admission seam: stamp admission records onto surface suggestions (§5).
 
-    The callable :func:`zicato.reflection.suggestions.resolve_admit` late-binds
-    and the CLI drives under ``--probe``. It resolves the same corpus context
+    The CLI calls this function only when ``--probe`` is requested. It resolves
+    the same corpus context that
     ``reflect run`` builds — the epoch board / scoring / experiments, and (only
     when spending) the champion / :class:`RuntimeConfig` / adapter — builds an
     :class:`AdmissionRequest` per suggestion (populating the §4 self-preference
@@ -363,9 +364,6 @@ def admit(
     """
     import asyncio  # noqa: PLC0415
 
-    from zicato.reflection import suggestions as surface  # noqa: PLC0415
-
-    sugs = [surface._as_suggestion(s) for s in suggestions]
     board = _load_epoch_board_entries(workspace_root, epoch_id)
     weights = _load_epoch_weights(workspace_root, epoch_id)
     experiments = _load_epoch_experiments(workspace_root, epoch_id)
@@ -377,16 +375,15 @@ def admit(
     if probe:
         champion, config, adapter = _probe_context(workspace_root, epoch_id)
 
-    out: list[Any] = []
-    for s in sugs:
+    out: list[Suggestion] = []
+    for s in suggestions:
         request = _request_from_suggestion(
             s, board=board, aux_family=aux_family, judge_family=judge_family
         )
         if request is None:
             out.append(s)  # no executable draft (a rubric revision) — leave unmeasured
             continue
-        record = _run(
-            asyncio,
+        record = asyncio.run(
             admit_suggestion(
                 request,
                 champion=champion or _placeholder_generation(workspace_root, epoch_id),
@@ -400,19 +397,8 @@ def admit(
                 spend=probe,
             ),
         )
-        out.append(_with_admission(s, record.to_json()))
+        out.append(replace(s, admission=record.to_json()))
     return out
-
-
-def _run(asyncio_mod: Any, coro: Any) -> AdmissionRecord:
-    return asyncio_mod.run(coro)  # type: ignore[no-any-return]
-
-
-def _with_admission(suggestion: Any, admission: dict[str, Any]) -> Any:
-    """Return ``suggestion`` with its ``admission`` field replaced (surface shape)."""
-    import dataclasses  # noqa: PLC0415
-
-    return dataclasses.replace(suggestion, admission=admission)
 
 
 def _request_from_suggestion(

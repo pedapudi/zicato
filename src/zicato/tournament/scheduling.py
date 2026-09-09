@@ -10,9 +10,8 @@ hall" — and the cache-first evaluation of each unit:
 * :func:`_run_full_board_unit` / :func:`_run_fast_board_unit` — run one
   entry as a board unit (champion + challenger concurrently in full mode,
   challenger alone in fast mode);
-* :func:`_run_board_units_full` / :func:`_run_board_units_full_budgeted`
-  / :func:`_run_board_units_fast` — the full / wall-clock-budgeted / fast
-  board-unit schedulers, bounded by :func:`_effective_unit_semaphore`;
+* :func:`_run_board_units_full` / :func:`_run_board_units_fast` share
+  :func:`_schedule_board_units` for concurrency and budget enforcement;
 * :func:`_run_unit_cache_first` — the single cache-first choke point
   through which EVERY board unit is evaluated;
 * :func:`_run_replicate_slots_full` / :func:`_run_replicate_slots_fast` —
@@ -561,6 +560,62 @@ def _effective_unit_semaphore(
     return asyncio.Semaphore(config.parallelism)
 
 
+async def _schedule_board_units(
+    *,
+    board: list[BoardEntry],
+    config: RuntimeConfig,
+    match_id: str,
+    run_unit: Callable[[BoardEntry], Awaitable[_UnitResultT]],
+    skip_unit: Callable[[BoardEntry], tuple[_UnitResultT, bool]],
+    matchup_deadline: float | None = None,
+    unit_semaphore: asyncio.Semaphore | None = None,
+) -> tuple[list[_UnitResultT], int]:
+    """Schedule entries in board order and settle all admitted work before raising.
+
+    Without a deadline, check tokens after acquiring each concurrency permit.
+    A deadline admits whole batches and checks both budgets between batches.
+    Existing measurements remain reusable after either budget expires.
+    """
+    from zicato.telemetry.meta_loop import SPAN_MATCHUP, meta_span
+
+    semaphore = _effective_unit_semaphore(unit_semaphore, config)
+    skipped = 0
+
+    async def bounded(entry: BoardEntry) -> _UnitResultT:
+        nonlocal skipped
+        async with (
+            meta_span(
+                entry.id, kind=SPAN_MATCHUP, meta={"entry_id": entry.id, "match_id": match_id}
+            ),
+            semaphore,
+        ):
+            if matchup_deadline is None and _token_budget_spent(config):
+                result, _ = skip_unit(entry)
+                skipped += 1
+                return result
+            return await run_unit(entry)
+
+    batch_size = max(1, config.parallelism) if matchup_deadline is not None else max(1, len(board))
+    results: list[_UnitResultT] = []
+    budget_spent = False
+    for start in range(0, len(board), batch_size):
+        batch = board[start : start + batch_size]
+        if matchup_deadline is not None and not budget_spent:
+            budget_spent = time.monotonic() >= matchup_deadline or _token_budget_spent(config)
+        if budget_spent:
+            for entry in batch:
+                result, was_skipped = skip_unit(entry)
+                results.append(result)
+                skipped += int(was_skipped)
+            continue
+        settled = await gather_owned(*(bounded(entry) for entry in batch), return_exceptions=True)
+        for settled_result in settled:
+            if isinstance(settled_result, BaseException):
+                raise settled_result
+            results.append(settled_result)
+    return results, skipped
+
+
 async def _run_board_units_full(
     *,
     writer: WorkspaceLock,
@@ -580,371 +635,84 @@ async def _run_board_units_full(
     matchup_deadline: float | None = None,
     unit_semaphore: asyncio.Semaphore | None = None,
 ) -> tuple[dict[str, LossProfile], dict[str, LossProfile]]:
-    """Run every board entry as a full-mode board unit, bounded concurrency.
-
-    The board entries are the "boards" of the tournament hall: up to
-    :attr:`RuntimeConfig.parallelism` BOARD UNITS play at once. The
-    semaphore counts board units rather than subprocesses — in full mode each
-    admitted unit runs champion + challenger concurrently (see
-    :func:`_run_full_board_unit`), so ``parallelism`` board units mean up
-    to ``2 * parallelism`` run subprocesses alive at once.
-
-    ``parallelism == 1`` admits exactly one board unit at a time, in
-    board order; the next entry's champion/challenger pair does not start
-    until the current entry's pair has fully settled (subprocess spawn,
-    wait, loss read-back, AND ``finally`` cleanup, on both sides). It is
-    This interleaves the two sides entry by entry rather than scoring the
-    whole parent board before the child board. The gate still compares two
-    fully-aggregated generations, so the decision is unaffected.
-
-    Result ordering is independent of completion order: the two ``entry.id ->
-    LossProfile`` maps are rebuilt by zipping the board (input order) with the
-    gather results (:func:`asyncio.gather` preserves submission order). Failure
-    handling follows one contract: a raising board unit does not cancel
-    in-flight siblings, and the first failure (board order) is re-raised after
-    every sibling has settled.
-
-    Each board unit is scored the instant its champion + challenger
-    runs settle — see :class:`_IncrementalScorer`. The running partial
-    aggregate is rewritten onto the live
-    :class:`~zicato.runtime.state.ActiveTournament` as every unit
-    finishes, so a reader (the dashboard) watches the server-side
-    ``scalar`` accumulate concurrently with the boards still in flight,
-    rather than seeing 0.00 until the whole round ends.
-
-    Returns ``(parent_losses, child_losses)`` — the per-entry champion
-    and challenger loss maps.
-
-    Matchup wall-clock budget (opt-in)
-    ----------------------------------
-    ``matchup_deadline`` (a :func:`time.monotonic` instant, or ``None``) is
-    the opt-in cap on the whole matchup's board-unit wall-clock. ``None`` ⇒
-    the uncapped path: every unit is launched together under one
-    :func:`asyncio.gather`. When a deadline IS
-    set the units are launched in board order, ``config.parallelism`` at a
-    time, and the deadline is checked between batches: once it has passed no
-    further unit launches. Each remaining unit is recorded as an unstarted
-    attempt; its measurement cache slot remains available for a later round.
-    The partial aggregate excludes omissions and cannot support promotion.
-    The scheduler logs how many units were skipped.
-    """
+    """Measure both candidates with shared concurrency and budget scheduling."""
     validate_measurement_interval(replicate_index, 1)
-    if matchup_deadline is not None:
-        return await _run_board_units_full_budgeted(
+    scorer = _IncrementalScorer(
+        weights,
+        writer=writer,
+        champion_id=parent_gen.id,
+        challenger_id=child_gen.id,
+        board_total=len(board),
+    )
+    effective_parent_force_fresh = force_fresh if parent_force_fresh is None else parent_force_fresh
+
+    async def run_unit(entry: BoardEntry) -> tuple[LossProfile, LossProfile]:
+        return await _run_full_board_unit(
             writer=writer,
             adapter=adapter,
             parent_gen=parent_gen,
             child_gen=child_gen,
-            board=board,
+            entry=entry,
             weights=weights,
             config=config,
             workspace_root=workspace_root,
             epoch_id=epoch_id,
+            scorer=scorer,
             match_id=match_id,
             replicate_index=replicate_index,
             force_fresh=force_fresh,
             parent_force_fresh=parent_force_fresh,
             provenance=provenance,
-            matchup_deadline=matchup_deadline,
-            unit_semaphore=unit_semaphore,
         )
 
-    semaphore = _effective_unit_semaphore(unit_semaphore, config)
-    # Thread both competitors' generation ids + the board size so the scorer
-    # writes the live PROJECTED standing per side (boards_done / boards_total)
-    # alongside the running partial aggregate. The dashboard marks these
-    # "projected" so an in-flight candidate shows a climbing standing.
-    scorer = _IncrementalScorer(
-        weights,
-        writer=writer,
-        champion_id=parent_gen.id,
-        challenger_id=child_gen.id,
-        board_total=len(board),
-    )
-
-    effective_parent_force_fresh = force_fresh if parent_force_fresh is None else parent_force_fresh
-    token_skipped = 0
-
-    async def _bounded(entry: BoardEntry) -> tuple[LossProfile, LossProfile]:
-        nonlocal token_skipped
-        from zicato.telemetry.meta_loop import SPAN_MATCHUP, meta_span  # noqa: PLC0415
-
-        # Matchup span opens BEFORE the semaphore, so the gap between its start
-        # and its first worker child (which begins only after the semaphore
-        # admits the unit) is the QUEUE WAIT — no separate acquire span needed
-        # (HARMONOGRAF.md §7). The combined ``async with`` keeps the body's
-        # indentation unchanged.
-        _mu_meta = {"entry_id": entry.id, "match_id": match_id}
-        async with (
-            meta_span(entry.id, kind=SPAN_MATCHUP, meta=_mu_meta),
-            semaphore,
-        ):
-            # Per-round token budget: the would-launch check, taken
-            # AFTER the semaphore admits this unit so a bounded-parallelism
-            # run consults the tally the earlier units actually produced.
-            # A spent budget skips the WHOLE pair (never one side of it),
-            # recording both sides exactly as the matchup-deadline path
-            # does. Inert (no ledger consulted) with the knob off.
-            if _token_budget_spent(config):
-                token_skipped += 1
-                parent_loss, _ = _skip_unit_side(
-                    generation=parent_gen,
-                    entry=entry,
-                    weights=weights,
-                    match_id=match_id,
-                    workspace_root=workspace_root,
-                    epoch_id=epoch_id,
-                    replicate_index=replicate_index,
-                    side_force_fresh=effective_parent_force_fresh,
-                    provenance=provenance,
-                    base_seed=config.seed,
-                )
-                child_loss, _ = _skip_unit_side(
-                    generation=child_gen,
-                    entry=entry,
-                    weights=weights,
-                    match_id=match_id,
-                    workspace_root=workspace_root,
-                    epoch_id=epoch_id,
-                    replicate_index=replicate_index,
-                    side_force_fresh=force_fresh,
-                    provenance=provenance,
-                    base_seed=config.seed,
-                )
-                return parent_loss, child_loss
-            return await _run_full_board_unit(
-                writer=writer,
-                adapter=adapter,
-                parent_gen=parent_gen,
-                child_gen=child_gen,
-                entry=entry,
-                weights=weights,
-                config=config,
-                workspace_root=workspace_root,
-                epoch_id=epoch_id,
-                scorer=scorer,
-                match_id=match_id,
-                replicate_index=replicate_index,
-                force_fresh=force_fresh,
-                parent_force_fresh=parent_force_fresh,
-                provenance=provenance,
-            )
-
-    results = await gather_owned(
-        *(_bounded(entry) for entry in board),
-        return_exceptions=True,
-    )
-    for result in results:
-        if isinstance(result, BaseException):
-            raise result
-    if token_skipped:
-        log.warning(
-            "matchup %s: per-round token budget reached; skipped %d/%d board "
-            "unit(s) (recorded as unstarted attempts for both sides) — "
-            "partial aggregate returned",
-            match_id or "(untagged)",
-            token_skipped,
-            len(board),
+    def skip_unit(entry: BoardEntry) -> tuple[tuple[LossProfile, LossProfile], bool]:
+        parent_loss, parent_skipped = _skip_unit_side(
+            generation=parent_gen,
+            entry=entry,
+            weights=weights,
+            match_id=match_id,
+            workspace_root=workspace_root,
+            epoch_id=epoch_id,
+            replicate_index=replicate_index,
+            side_force_fresh=effective_parent_force_fresh,
+            provenance=provenance,
+            base_seed=config.seed,
         )
-
-    parent_losses: dict[str, LossProfile] = {}
-    child_losses: dict[str, LossProfile] = {}
-    for entry, result in zip(board, results, strict=True):
-        # Every result is a (parent, child) tuple here: the loop above
-        # already re-raised on the first BaseException.
-        parent_loss, child_loss = result  # type: ignore[misc]
-        parent_losses[entry.id] = parent_loss
-        child_losses[entry.id] = child_loss
-    return parent_losses, child_losses
-
-
-async def _run_board_units_full_budgeted(
-    *,
-    writer: WorkspaceLock,
-    adapter: Any,
-    parent_gen: Generation,
-    child_gen: Generation,
-    board: list[BoardEntry],
-    weights: ScoringWeights,
-    config: RuntimeConfig,
-    workspace_root: Path,
-    epoch_id: str,
-    match_id: str,
-    replicate_index: int,
-    force_fresh: bool,
-    parent_force_fresh: bool | None = None,
-    provenance: dict[str, _UnitProvenance] | None,
-    matchup_deadline: float,
-    unit_semaphore: asyncio.Semaphore | None = None,
-) -> tuple[dict[str, LossProfile], dict[str, LossProfile]]:
-    """Budget-aware variant of :func:`_run_board_units_full`.
-
-    Launches board units in board order, ``config.parallelism`` at a time,
-    checking ``matchup_deadline`` (a :func:`time.monotonic` instant) BEFORE
-    each batch. When a shared ``unit_semaphore`` is supplied (cross-matchup
-    parallelism) each launched unit also acquires it, so this matchup's
-    in-flight units count against the round's ONE global concurrency cap
-    rather than only against this matchup's per-batch ceiling. Once the
-    deadline has passed no further unit is launched — every remaining unit
-    is recorded as an unstarted attempt (:func:`_skipped_unit_loss`).
-    Only executed units count as fresh in ``provenance``. Attempt records
-    preserve omitted units without populating the reusable measurement cache.
-
-    The number of skipped units is LOGGED at WARNING so a cut-short matchup
-    is never mistaken for full coverage. Returns the SAME ``(parent_losses,
-    child_losses)`` shape as the uncapped path, with one entry per board
-    entry. Aggregates exclude unstarted attempts and report incomplete entries;
-    the gate defers a comparison that lacks required measurements.
-    """
-    validate_measurement_interval(replicate_index, 1)
-    scorer = _IncrementalScorer(
-        weights,
-        writer=writer,
-        champion_id=parent_gen.id,
-        challenger_id=child_gen.id,
-        board_total=len(board),
-    )
-
-    parent_losses: dict[str, LossProfile] = {}
-    child_losses: dict[str, LossProfile] = {}
-    skipped = 0
-    budget_tripped = False
-
-    # The champion (parent) side may cache-read even when the child is
-    # force-fresh (``run_tournament``'s immutable-champion reuse). ``None``
-    # ⇒ uniform with ``force_fresh`` (back-compat).
-    effective_parent_force_fresh = force_fresh if parent_force_fresh is None else parent_force_fresh
-
-    async def _bounded(entry: BoardEntry) -> tuple[LossProfile, LossProfile]:
-        from zicato.telemetry.meta_loop import SPAN_MATCHUP, meta_span  # noqa: PLC0415
-
-        # A shared cross-matchup semaphore (when supplied) gates this unit
-        # against the round's one global cap; without it the per-batch
-        # ceiling below is the only bound (byte-identical to before).
-        # Either way the champion (parent) side cache-reads under
-        # ``parent_force_fresh`` (the immutable-champion reuse) while the
-        # child stays force-fresh per ``force_fresh``.
-        #
-        # The matchup span opens BEFORE the semaphore so the workers nest on
-        # the matchup lane (not directly on the round) — the SAME two-line
-        # tuple-CM the full/fast twins carry (:575/:881), so the gap between
-        # the span's start and its first worker child reads as the queue wait
-        # (HARMONOGRAF.md §7). Without the shared semaphore there is nothing
-        # to queue behind, so the span alone brackets the unit.
-        _mu_meta = {"entry_id": entry.id, "match_id": match_id}
-        if unit_semaphore is None:
-            async with meta_span(entry.id, kind=SPAN_MATCHUP, meta=_mu_meta):
-                return await _run_full_board_unit(
-                    writer=writer,
-                    adapter=adapter,
-                    parent_gen=parent_gen,
-                    child_gen=child_gen,
-                    entry=entry,
-                    weights=weights,
-                    config=config,
-                    workspace_root=workspace_root,
-                    epoch_id=epoch_id,
-                    scorer=scorer,
-                    match_id=match_id,
-                    replicate_index=replicate_index,
-                    force_fresh=force_fresh,
-                    parent_force_fresh=parent_force_fresh,
-                    provenance=provenance,
-                )
-        async with (
-            meta_span(entry.id, kind=SPAN_MATCHUP, meta=_mu_meta),
-            unit_semaphore,
-        ):
-            return await _run_full_board_unit(
-                writer=writer,
-                adapter=adapter,
-                parent_gen=parent_gen,
-                child_gen=child_gen,
-                entry=entry,
-                weights=weights,
-                config=config,
-                workspace_root=workspace_root,
-                epoch_id=epoch_id,
-                scorer=scorer,
-                match_id=match_id,
-                replicate_index=replicate_index,
-                force_fresh=force_fresh,
-                parent_force_fresh=parent_force_fresh,
-                provenance=provenance,
-            )
-
-    def _record_skip(entry: BoardEntry) -> bool:
-        """Persist + record both sides of an un-run board unit.
-
-        For each side, a unit ALREADY in the cache costs no wall-clock, so it
-        is reused verbatim (the budget never clobbers a good result and the
-        cache stays consistent). A genuine MISS — the unit would have had to
-        run — is recorded as an unstarted attempt instead. Returns ``True``
-        iff at least one side was actually skipped (a real miss synthesised),
-        so the caller only counts genuine skips toward the log tally.
-        """
-        any_skipped = False
-        for gen in (parent_gen, child_gen):
-            side_force_fresh = effective_parent_force_fresh if gen is parent_gen else force_fresh
-            loss, was_skipped = _skip_unit_side(
-                generation=gen,
-                entry=entry,
-                weights=weights,
-                match_id=match_id,
-                workspace_root=workspace_root,
-                epoch_id=epoch_id,
-                replicate_index=replicate_index,
-                side_force_fresh=side_force_fresh,
-                provenance=provenance,
-                base_seed=config.seed,
-            )
-            any_skipped = any_skipped or was_skipped
-            if gen is parent_gen:
-                parent_losses[entry.id] = loss
-            else:
-                child_losses[entry.id] = loss
-        return any_skipped
-
-    batch_size = max(1, config.parallelism)
-    for start in range(0, len(board), batch_size):
-        batch = board[start : start + batch_size]
-        if not budget_tripped and (
-            time.monotonic() >= matchup_deadline or _token_budget_spent(config)
-        ):
-            # A cap is spent (the matchup wall-clock deadline, or — when a
-            # round token ledger is bound — the per-round token budget):
-            # stop LAUNCHING. Every unit from here on is recorded as a
-            # unstarted attempt instead of being run.
-            budget_tripped = True
-        if budget_tripped:
-            for entry in batch:
-                if _record_skip(entry):
-                    skipped += 1
-            continue
-        results = await gather_owned(
-            *(_bounded(entry) for entry in batch),
-            return_exceptions=True,
+        child_loss, child_skipped = _skip_unit_side(
+            generation=child_gen,
+            entry=entry,
+            weights=weights,
+            match_id=match_id,
+            workspace_root=workspace_root,
+            epoch_id=epoch_id,
+            replicate_index=replicate_index,
+            side_force_fresh=force_fresh,
+            provenance=provenance,
+            base_seed=config.seed,
         )
-        for result in results:
-            if isinstance(result, BaseException):
-                raise result
-        for entry, result in zip(batch, results, strict=True):
-            parent_loss, child_loss = result  # type: ignore[misc]
-            parent_losses[entry.id] = parent_loss
-            child_losses[entry.id] = child_loss
+        return (parent_loss, child_loss), parent_skipped or child_skipped
 
+    results, skipped = await _schedule_board_units(
+        board=board,
+        config=config,
+        match_id=match_id,
+        run_unit=run_unit,
+        skip_unit=skip_unit,
+        matchup_deadline=matchup_deadline,
+        unit_semaphore=unit_semaphore,
+    )
     if skipped:
         log.warning(
-            "matchup %s: budget (wall-clock deadline or round token cap) "
-            "reached after %d/%d board units; "
-            "skipped %d remaining unit(s) (recorded as unstarted attempts "
-            "for both sides) — partial aggregate returned",
+            "matchup %s: evaluation budget reached; skipped %d/%d board units; "
+            "unstarted attempts are recorded and the aggregate is incomplete",
             match_id or "(untagged)",
-            len(board) - skipped,
-            len(board),
             skipped,
+            len(board),
         )
-    return parent_losses, child_losses
+    return (
+        {entry.id: result[0] for entry, result in zip(board, results, strict=True)},
+        {entry.id: result[1] for entry, result in zip(board, results, strict=True)},
+    )
 
 
 async def _run_board_units_fast(
@@ -963,32 +731,8 @@ async def _run_board_units_fast(
     provenance: dict[str, _UnitProvenance] | None = None,
     unit_semaphore: asyncio.Semaphore | None = None,
 ) -> dict[str, LossProfile]:
-    """Run every board entry as a fast-mode board unit, bounded concurrency.
-
-    A fast-mode board unit runs ONLY the challenger (child) — the
-    champion's cached ``gen_score.json`` aggregate is reused, so no
-    champion run is executed. Up to :attr:`RuntimeConfig.parallelism`
-    board units play at once; with one challenger run per unit, that is
-    up to ``parallelism`` run subprocesses alive at once (half the
-    full-mode ceiling).
-
-    ``parallelism == 1`` admits exactly one challenger run at a time, in
-    board order. Result ordering, failure surfacing (first failure in
-    board order, no sibling cancellation) match
-    :func:`_run_board_units_full`. Returns the per-entry challenger loss
-    map.
-
-    As in full mode, each board unit is scored the instant its
-    challenger run settles — see :class:`_IncrementalScorer` — so the
-    running partial aggregate (challenger side only; fast mode has no
-    champion run) is rewritten onto any live
-    :class:`~zicato.runtime.state.ActiveTournament` as every unit
-    finishes, concurrently with the boards still in flight.
-    """
+    """Measure the challenger while the caller retains the champion's score."""
     validate_measurement_interval(replicate_index, 1)
-    semaphore = _effective_unit_semaphore(unit_semaphore, config)
-    # Fast mode runs only the challenger; thread its generation id + the board
-    # size so the live projected standing accrues for the in-flight challenger.
     scorer = _IncrementalScorer(
         weights,
         writer=writer,
@@ -996,76 +740,54 @@ async def _run_board_units_fast(
         board_total=len(board),
     )
 
-    token_skipped = 0
-
-    async def _bounded(entry: BoardEntry) -> LossProfile:
-        nonlocal token_skipped
-        from zicato.telemetry.meta_loop import SPAN_MATCHUP, meta_span  # noqa: PLC0415
-
-        # Matchup span before the semaphore — queue wait is the gap to the
-        # first worker child (HARMONOGRAF.md §7; see the full-mode twin).
-        _mu_meta = {"entry_id": entry.id, "match_id": match_id}
-        async with (
-            meta_span(entry.id, kind=SPAN_MATCHUP, meta=_mu_meta),
-            semaphore,
-        ):
-            # Per-round token budget: the would-launch check, after
-            # the semaphore admits this unit (see the full-mode twin).
-            # Inert (no ledger consulted) with the knob off.
-            if _token_budget_spent(config):
-                token_skipped += 1
-                skipped_loss, _ = _skip_unit_side(
-                    generation=child_gen,
-                    entry=entry,
-                    weights=weights,
-                    match_id=match_id,
-                    workspace_root=workspace_root,
-                    epoch_id=epoch_id,
-                    replicate_index=replicate_index,
-                    side_force_fresh=force_fresh,
-                    provenance=provenance,
-                    base_seed=config.seed,
-                )
-                return skipped_loss
-            # Scored the instant it settles — concurrently with the sibling
-            # board units still running.
-            return await _run_fast_board_unit(
-                writer=writer,
-                adapter=adapter,
-                child_gen=child_gen,
-                entry=entry,
-                weights=weights,
-                config=config,
-                workspace_root=workspace_root,
-                epoch_id=epoch_id,
-                scorer=scorer,
-                match_id=match_id,
-                replicate_index=replicate_index,
-                force_fresh=force_fresh,
-                provenance=provenance,
-            )
-
-    results = await gather_owned(
-        *(_bounded(entry) for entry in board),
-        return_exceptions=True,
-    )
-    for result in results:
-        if isinstance(result, BaseException):
-            raise result
-    if token_skipped:
-        log.warning(
-            "matchup %s: per-round token budget reached; skipped %d/%d "
-            "fast-mode board unit(s) (recorded as unstarted attempts) — "
-            "partial aggregate returned",
-            match_id or "(untagged)",
-            token_skipped,
-            len(board),
+    async def run_unit(entry: BoardEntry) -> LossProfile:
+        return await _run_fast_board_unit(
+            writer=writer,
+            adapter=adapter,
+            child_gen=child_gen,
+            entry=entry,
+            weights=weights,
+            config=config,
+            workspace_root=workspace_root,
+            epoch_id=epoch_id,
+            scorer=scorer,
+            match_id=match_id,
+            replicate_index=replicate_index,
+            force_fresh=force_fresh,
+            provenance=provenance,
         )
 
-    losses: dict[str, LossProfile] = {}
-    for entry, result in zip(board, results, strict=True):
-        losses[entry.id] = result  # type: ignore[assignment]
-    return losses
+    def skip_unit(entry: BoardEntry) -> tuple[LossProfile, bool]:
+        return _skip_unit_side(
+            generation=child_gen,
+            entry=entry,
+            weights=weights,
+            match_id=match_id,
+            workspace_root=workspace_root,
+            epoch_id=epoch_id,
+            replicate_index=replicate_index,
+            side_force_fresh=force_fresh,
+            provenance=provenance,
+            base_seed=config.seed,
+        )
+
+    results, skipped = await _schedule_board_units(
+        board=board,
+        config=config,
+        match_id=match_id,
+        run_unit=run_unit,
+        skip_unit=skip_unit,
+        unit_semaphore=unit_semaphore,
+    )
+    if skipped:
+        log.warning(
+            "matchup %s: evaluation budget reached; skipped %d/%d challenger board units; "
+            "unstarted attempts are recorded and the aggregate is incomplete",
+            match_id or "(untagged)",
+            skipped,
+            len(board),
+        )
+    return {entry.id: result for entry, result in zip(board, results, strict=True)}
 
 
 async def _run_unit_cache_first(
@@ -1739,7 +1461,6 @@ __all__ = [
     "_effective_unit_semaphore",
     "_run_board_units_fast",
     "_run_board_units_full",
-    "_run_board_units_full_budgeted",
     "_run_fast_board_unit",
     "_run_full_board_unit",
     "_run_replicate_slots_fast",

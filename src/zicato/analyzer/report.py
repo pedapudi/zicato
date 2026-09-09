@@ -1382,6 +1382,35 @@ def _parse_prose_fenced(text: str) -> dict[str, str]:
     return out
 
 
+def write_html_companion(
+    workspace_root: Path,
+    epoch_id: str,
+    md_path: Path,
+    *,
+    report_md: str | None = None,
+    data: EpochReportData | None = None,
+) -> Path | None:
+    """Publish report HTML atomically, preserving Markdown if rendering fails.
+
+    Callers that assembled the report pass its text and captured data so the
+    figures use the same observations as the document's tables and prose.
+    """
+    if report_md is None:
+        try:
+            report_md = md_path.read_text(encoding="utf-8")
+        except OSError:
+            return None
+    html_path = md_path.with_suffix(".html")
+    try:
+        if data is None:
+            data = gather_epoch_report_data(workspace_root, epoch_id)
+        atomic_write_text(html_path, render_report_html(epoch_id, report_md, data=data), mode=None)
+    except Exception as exc:  # noqa: BLE001 — HTML failure must preserve Markdown
+        log.debug("epoch report: analysis.html render skipped (%s)", exc)
+        return None
+    return html_path
+
+
 def regenerate_epoch_report_deterministic(workspace_root: Path, epoch_id: str) -> bool:
     """Refresh a persisted report's DETERMINISTIC sections — no LLM call.
 
@@ -1423,14 +1452,7 @@ def regenerate_epoch_report_deterministic(workspace_root: Path, epoch_id: str) -
         return False
 
     atomic_write_text(md_path, new_md, mode=None)
-    try:
-        atomic_write_text(
-            md_path.with_suffix(".html"),
-            render_report_html(epoch_id, new_md, data=data),
-            mode=None,
-        )
-    except Exception as exc:  # noqa: BLE001 — HTML is non-critical
-        log.debug("epoch report: deterministic analysis.html refresh skipped (%s)", exc)
+    write_html_companion(workspace_root, epoch_id, md_path, report_md=new_md, data=data)
     return True
 
 
@@ -1456,14 +1478,7 @@ def restamp_persisted_report(workspace_root: Path, epoch_id: str) -> bool:
     if new_md == report_md:
         return False
     atomic_write_text(md_path, new_md, mode=None)
-    try:
-        atomic_write_text(
-            md_path.with_suffix(".html"),
-            render_report_html(epoch_id, new_md, data=data),
-            mode=None,
-        )
-    except Exception as exc:  # noqa: BLE001 — HTML is non-critical
-        log.debug("epoch report: analysis.html re-stamp skipped (%s)", exc)
+    write_html_companion(workspace_root, epoch_id, md_path, report_md=new_md, data=data)
     return True
 
 
@@ -1545,14 +1560,7 @@ async def generate_epoch_report(
     md_path = analysis_path(workspace_root, epoch_id)
     atomic_write_text(md_path, report_md, mode=None)
 
-    # The HTML companion is best-effort within the best-effort pass —
-    # the markdown is the canonical artifact, but the dashboard endpoint
-    # serves the HTML, so a render failure must not lose the markdown.
-    try:
-        html_path = md_path.with_suffix(".html")
-        atomic_write_text(html_path, render_report_html(epoch_id, report_md, data=data), mode=None)
-    except Exception as exc:  # noqa: BLE001 — HTML is non-critical
-        log.debug("epoch report: analysis.html render skipped (%s)", exc)
+    write_html_companion(workspace_root, epoch_id, md_path, report_md=report_md, data=data)
 
     return md_path
 

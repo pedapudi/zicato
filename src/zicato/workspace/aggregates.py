@@ -42,7 +42,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from zicato.workspace.layout import WorkspaceLayout
-from zicato.workspace.reads import generation_base_seed, read_loss, round_indices, run_entry_ids
+from zicato.workspace.reads import read_generation_losses, round_indices
 
 if TYPE_CHECKING:  # pragma: no cover — imported for annotations only
     from zicato.epoch.round_log import RoundLogEnvelope, RoundRecord
@@ -150,20 +150,7 @@ def per_judge_loss_totals(
     number contributes ``0.0``.
     """
     totals: dict[str, float] = {}
-    try:
-        selected_seed = generation_base_seed(layout, epoch_id, generation_id)
-    except ValueError:
-        return ()
-    for entry_id in run_entry_ids(layout, epoch_id, generation_id):
-        loss = read_loss(
-            layout,
-            epoch_id,
-            generation_id,
-            entry_id,
-            base_seed=selected_seed,
-        )
-        if loss is None:
-            continue
+    for loss in read_generation_losses(layout, epoch_id, generation_id).values():
         for row in judge_loss_rows(loss):
             totals[row.judge_name] = totals.get(row.judge_name, 0.0) + _as_float(row.weighted_loss)
     return tuple(sorted(totals.items()))

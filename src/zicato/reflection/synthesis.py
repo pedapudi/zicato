@@ -43,7 +43,6 @@ import logging
 import re
 import tempfile
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -71,6 +70,7 @@ from zicato.reflection.mining import (
     MINER_VERSION,
     MinedEpisode,
 )
+from zicato.reflection.suggestions import Suggestion
 from zicato.reflection.trace_import import ImportedTrace
 
 _LOG = logging.getLogger(__name__)
@@ -217,46 +217,69 @@ _PROVENANCE_CONTEXT_KEY: str = "synthesis_provenance"
 # ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True, slots=True)
-class Suggestion:
-    """One drafted, provenance-stamped eval-synthesis suggestion (§3).
+def _make_suggestion(
+    *,
+    suggestion_id: str,
+    suggestion_type: str,
+    synthesizer: str,
+    subject: str,
+    target_slice: str,
+    rationale: str,
+    provenance: dict[str, Any],
+    entry: BoardEntry | None = None,
+    judge: JudgeSpec | None = None,
+    target_entry_id: str | None = None,
+    evidence: dict[str, Any] | None = None,
+) -> Suggestion:
+    """Encode one draft in the record used by measurement, persistence, and review."""
+    from zicato.board.jsonl import entry_to_dict
+    from zicato.reflection.suggestions import (
+        ARTIFACT_BOARD_ENTRY,
+        ARTIFACT_JUDGE,
+        ARTIFACT_RUBRIC_REVISION,
+    )
 
-    Exactly one draft artifact is set: ``entry`` for the entry-shaped types
-    (regression / coverage / harder variant), ``judge`` for the judge-shaped
-    types (judge suggestion / rubric revision). ``target_entry_id`` names the
-    board entry a judge artifact attaches to (or whose judge a rubric revision
-    edits) so the apply seam can build the ``add_judge`` op; it is ``None`` when
-    the motivating episode did not resolve one.
-    """
-
-    suggestion_id: str
-    suggestion_type: str
-    synthesizer: str
-    subject: str
-    target_slice: str
-    rationale: str
-    provenance: dict[str, Any]
-    entry: BoardEntry | None = None
-    judge: JudgeSpec | None = None
-    target_entry_id: str | None = None
-    evidence: dict[str, Any] = field(default_factory=dict)
-
-    def to_json(self) -> dict[str, Any]:
-        from zicato.board.jsonl import entry_to_dict  # noqa: PLC0415
-
-        return {
-            "suggestion_id": self.suggestion_id,
-            "suggestion_type": self.suggestion_type,
-            "synthesizer": self.synthesizer,
-            "subject": self.subject,
-            "target_slice": self.target_slice,
-            "rationale": self.rationale,
-            "provenance": dict(self.provenance),
-            "entry": entry_to_dict(self.entry) if self.entry is not None else None,
-            "judge": _judge_to_json(self.judge) if self.judge is not None else None,
-            "target_entry_id": self.target_entry_id,
-            "evidence": dict(self.evidence),
-        }
+    provenance = dict(provenance)
+    provenance.setdefault("synthesizer", synthesizer)
+    proposed_op: dict[str, Any] | None = None
+    if entry is not None:
+        artifact_kind = ARTIFACT_BOARD_ENTRY
+        artifact = entry_to_dict(entry)
+        proposed_op = {"op": "add_board_entry", "args": {"entry": artifact}}
+    elif judge is not None:
+        artifact = _judge_to_json(judge)
+        if suggestion_type == SUGGESTION_RUBRIC_REVISION:
+            artifact_kind = ARTIFACT_RUBRIC_REVISION
+            provenance["proposed_op_reason"] = (
+                "rubric revision requires manual editing of the existing judge"
+            )
+        else:
+            artifact_kind = ARTIFACT_JUDGE
+            if target_entry_id:
+                proposed_op = {
+                    "op": "add_judge",
+                    "args": {"entry_id": target_entry_id, "judge": artifact},
+                }
+            else:
+                provenance["proposed_op_reason"] = (
+                    "judge suggestion did not resolve a target board entry to attach to"
+                )
+    else:
+        raise ValueError("a suggestion requires a drafted task or judge")
+    return Suggestion(
+        suggestion_id=suggestion_id,
+        suggestion_type=suggestion_type,
+        artifact_kind=artifact_kind,
+        subject=subject,
+        summary=_first_sentence(rationale),
+        rationale=rationale,
+        target_slice=target_slice,
+        draft_artifact=artifact,
+        proposed_op=proposed_op,
+        provenance=provenance,
+        evidence=evidence or {},
+        target_entry_id=target_entry_id,
+    )
 
 
 def _judge_to_json(judge: JudgeSpec) -> dict[str, Any]:
@@ -441,7 +464,7 @@ def _regression_suggestion(
         f"the behaviour. It targets the train slice, where a pinned past failure is a "
         f"regression working as intended."
     )
-    return Suggestion(
+    return _make_suggestion(
         suggestion_id=_suggestion_id(
             SUGGESTION_REGRESSION_ENTRY, SYNTH_MECHANICAL, new_id, provenance
         ),
@@ -508,7 +531,7 @@ def _harder_variant_suggestion(
         f"to restore discrimination without inventing a new scenario, and enters the incoming "
         f"rotation set so the proposer that saturated the original meets it blind."
     )
-    return Suggestion(
+    return _make_suggestion(
         suggestion_id=_suggestion_id(
             SUGGESTION_HARDER_VARIANT, SYNTH_MECHANICAL, new_id, provenance
         ),
@@ -656,7 +679,7 @@ def _rubric_revision_suggestion(
         f"tightening clause derived from the confirmed false fires, narrowing the judge without "
         f"rewriting its intent. It edits the existing judge in place; no new board slice is added."
     )
-    return Suggestion(
+    return _make_suggestion(
         suggestion_id=_suggestion_id(
             SUGGESTION_RUBRIC_REVISION, SYNTH_MECHANICAL, judge.name, provenance
         ),
@@ -751,7 +774,7 @@ async def _coverage_entry_suggestion(
         f"that surface and enters the incoming rotation set, giving the loop a measured channel "
         f"the motivating proposer meets blind."
     )
-    return Suggestion(
+    return _make_suggestion(
         suggestion_id=_suggestion_id(SUGGESTION_COVERAGE_ENTRY, SYNTH_LLM, draft.id, provenance),
         suggestion_type=SUGGESTION_COVERAGE_ENTRY,
         synthesizer=SYNTH_LLM,
@@ -804,7 +827,7 @@ async def _judge_suggestion(episode: MinedEpisode, aux_call_llm: CallLLM) -> Sug
         f"can measure it going forward. It enters the incoming rotation so the proposer meets the "
         f"new channel blind, and admission must adjudicate it with an independent model."
     )
-    return Suggestion(
+    return _make_suggestion(
         suggestion_id=_suggestion_id(SUGGESTION_JUDGE, SYNTH_LLM, judge.name, provenance),
         suggestion_type=SUGGESTION_JUDGE,
         synthesizer=SYNTH_LLM,
@@ -1158,7 +1181,7 @@ def _bootstrap_signal_suggestion(episode: MinedEpisode, trace: ImportedTrace) ->
         return None
 
     rationale = _bootstrap_signal_rationale(signal_kind, trace, episode, budget_s)
-    return Suggestion(
+    return _make_suggestion(
         suggestion_id=_suggestion_id(
             SUGGESTION_REGRESSION_ENTRY, SYNTH_MECHANICAL, trace.trace_id, provenance
         ),
@@ -1267,7 +1290,7 @@ async def _bootstrap_behavioral_suggestion(
         f"channel for that behaviour. It defaults to the train slice (§5.3): no zicato proposer "
         f"produced the trace, so the rotation collusion hazard is absent. {_SELF_TRACE_CAVEAT}"
     )
-    return Suggestion(
+    return _make_suggestion(
         suggestion_id=_suggestion_id(
             SUGGESTION_COVERAGE_ENTRY, SYNTH_LLM, trace.trace_id, provenance
         ),
@@ -1358,44 +1381,13 @@ def synthesize(
     workspace_root: Path | None = None,
     epoch_id: str | None = None,
     imported_traces: Sequence[ImportedTrace] = (),
-) -> list[Any]:
-    """The sync surface seam: ranked episodes → persisted-shape suggestions (§6).
+) -> list[Suggestion]:
+    """Draft evaluation changes and attach their source episodes' ranking values.
 
-    This is the callable :func:`zicato.reflection.suggestions.resolve_synthesize`
-    late-binds and the CLI drives. It bridges the two suggestion shapes: the
-    internal :class:`Suggestion` this module authors (a typed ``entry`` / ``judge``
-    draft) and the surface :class:`zicato.reflection.suggestions.Suggestion` the
-    persistence / apply / inbox contract reads (a ``draft_artifact`` + a
-    ``proposed_op``). The surface shape WINS — every path here terminates in it.
-
-    Steps:
-
-    1. Load the epoch board (the ``board_entries`` the async
-       :func:`synthesize_suggestions` needs to pin regressions / perturb dead
-       entries / host judges). A missing workspace / board degrades to an empty
-       board — the mechanical tier that needs a board entry then simply finds
-       none to draft, never a crash.
-    2. Resolve the evaluation callable ONLY when ``allow_llm`` (the LLM tier), the
-       SAME way reflection's own aux resolution works (``models.evaluation`` first,
-       using the selected named engine). When no aux is
-       configured the LLM tier is SKIPPED with a logged reason and the mechanical
-       tier still runs — the ``--allow-llm`` help says the LLM tier needs the
-       configured aux endpoint.
-    3. Run the async :func:`synthesize_suggestions` via :func:`asyncio.run` and
-       TRANSLATE each internal suggestion into the surface shape (§3): the typed
-       draft's canonical JSON becomes ``draft_artifact``; the ``proposed_op`` is
-       ``add_board_entry`` for entry drafts / ``add_judge`` for judge drafts /
-       ``None`` (a recorded gap) for a rubric revision; the ranking keys ride from
-       the motivating episode; the ``suggestion_id`` is kept verbatim.
-    4. Run the bootstrap tier (:func:`synthesize_bootstrap_suggestions`,
-       TRAJECTORY-BOOTSTRAP.md §5) over the SAME ranked episodes, threading
-       ``imported_traces`` so it can reach the reconstructions. The bootstrap
-       hints route only there — the existing tiers return nothing for them, so no
-       double-emission. With no ``imported_traces`` (the default) the tier
-       returns nothing and contributes no suggestions.
+    The same suggestion record passes through synthesis, measurement, and
+    persistence. Task placement preserves the withheld evaluation partition.
+    Model drafting occurs only when explicitly enabled.
     """
-    from zicato.reflection import suggestions as surface  # noqa: PLC0415
-
     board_entries = _load_epoch_board(workspace_root, epoch_id)
     aux: CallLLM | None = None
     if allow_llm:
@@ -1420,7 +1412,16 @@ def synthesize(
     )
     internal = _finalize([*internal, *bootstrap])
     episode_by_id = {e.episode_id: e for e in episodes}
-    return [_to_surface_suggestion(s, episode_by_id, surface) for s in internal]
+    return [
+        dataclasses.replace(
+            suggestion,
+            severity_rank=episode.severity_rank if episode else 0,
+            recency_key=episode.recency_key if episode else 0,
+            coverage_key=episode.coverage_key if episode else 0,
+        )
+        for suggestion in internal
+        for episode in [_motivating_episode(suggestion.provenance, episode_by_id)]
+    ]
 
 
 #: Bounded id-search attempts for landing a rotation-typed entry in holdout
@@ -1467,8 +1468,19 @@ def _land_rotation_entries(
             provenance["holdout_landing"] = "could not force holdout landing"
         # Re-stamp the (possibly-noted) provenance into the entry context so a
         # surfaced entry carries its own lineage through the board loader.
-        stamped = _stamp_provenance(landed_entry, provenance)
-        out.append(dataclasses.replace(s, entry=stamped, provenance=provenance))
+        from zicato.board.jsonl import entry_to_dict  # noqa: PLC0415
+
+        entry_provenance = dict(provenance)
+        entry_provenance.pop("synthesizer", None)
+        stamped = entry_to_dict(_stamp_provenance(landed_entry, entry_provenance))
+        out.append(
+            dataclasses.replace(
+                s,
+                draft_artifact=stamped,
+                proposed_op={"op": "add_board_entry", "args": {"entry": stamped}},
+                provenance=provenance,
+            )
+        )
     return out
 
 
@@ -1510,67 +1522,6 @@ def _load_epoch_weights(workspace_root: Path | None, epoch_id: str | None) -> An
     except Exception:  # noqa: BLE001 — a missing / bad scoring.json → defaults
         pass
     return ScoringWeights()
-
-
-def _to_surface_suggestion(
-    s: Suggestion, episode_by_id: dict[str, MinedEpisode], surface: Any
-) -> Any:
-    """Translate one internal :class:`Suggestion` into the surface shape (§3)."""
-    proposed_op_reason: str | None = None
-    if s.entry is not None:
-        artifact_kind = surface.ARTIFACT_BOARD_ENTRY
-        from zicato.board.jsonl import entry_to_dict  # noqa: PLC0415
-
-        draft_artifact = entry_to_dict(s.entry)
-        proposed_op: dict[str, Any] | None = {
-            "op": "add_board_entry",
-            "args": {"entry": draft_artifact},
-        }
-    elif s.judge is not None and s.suggestion_type == SUGGESTION_RUBRIC_REVISION:
-        artifact_kind = surface.ARTIFACT_RUBRIC_REVISION
-        draft_artifact = _judge_to_json(s.judge)
-        proposed_op = None
-        proposed_op_reason = "rubric revision requires manual editing of the existing judge"
-    elif s.judge is not None:
-        artifact_kind = surface.ARTIFACT_JUDGE
-        draft_artifact = _judge_to_json(s.judge)
-        if s.target_entry_id:
-            proposed_op = {
-                "op": "add_judge",
-                "args": {"entry_id": s.target_entry_id, "judge": draft_artifact},
-            }
-        else:
-            proposed_op = None
-            proposed_op_reason = (
-                "judge suggestion did not resolve a target board entry to attach to"
-            )
-    else:  # pragma: no cover — a suggestion always carries exactly one draft
-        artifact_kind = ""
-        draft_artifact = {}
-        proposed_op = None
-
-    episode = _motivating_episode(s.provenance, episode_by_id)
-    provenance = dict(s.provenance)
-    provenance.setdefault("synthesizer", s.synthesizer)
-    if proposed_op_reason is not None:
-        provenance["proposed_op_reason"] = proposed_op_reason
-
-    return surface.Suggestion(
-        suggestion_id=s.suggestion_id,
-        suggestion_type=s.suggestion_type,
-        artifact_kind=artifact_kind,
-        subject=s.subject,
-        summary=_first_sentence(s.rationale),
-        rationale=s.rationale,
-        target_slice=s.target_slice,
-        draft_artifact=draft_artifact,
-        proposed_op=proposed_op,
-        provenance=provenance,
-        admission=None,
-        severity_rank=episode.severity_rank if episode else 0,
-        recency_key=episode.recency_key if episode else 0,
-        coverage_key=episode.coverage_key if episode else 0,
-    )
 
 
 def _motivating_episode(

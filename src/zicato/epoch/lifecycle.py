@@ -708,7 +708,7 @@ def _write_stub_analysis(workspace_root: Path, epoch_id: str, out_path: Path) ->
             "## Journal snapshot\n\n"
             f"{journal_content}\n"
         )
-    from zicato.epoch.analysis import write_html_companion
+    from zicato.analyzer.report import write_html_companion
 
     write_html_companion(workspace_root, epoch_id, out_path)
 

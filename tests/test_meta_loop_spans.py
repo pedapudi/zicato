@@ -293,7 +293,7 @@ async def test_real_bounded_opens_matchup_span_with_worker_nested(
             elif variant == "fast":
                 await sched._run_board_units_fast(child_gen=_Gen("v1"), board=board, **common)
             else:
-                await sched._run_board_units_full_budgeted(
+                await sched._run_board_units_full(
                     parent_gen=_Gen("v0"),
                     child_gen=_Gen("v1"),
                     board=board,

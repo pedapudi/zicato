@@ -70,7 +70,6 @@ from zicato.tournament.scheduling import (  # noqa: F401
     _overlap_replicate_slots,
     _run_board_units_fast,
     _run_board_units_full,
-    _run_board_units_full_budgeted,
     _run_full_board_unit,
     _run_replicate_slots_fast,
     _run_replicated,

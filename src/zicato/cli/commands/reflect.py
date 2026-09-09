@@ -1097,6 +1097,7 @@ def suggest_cmd(
     """
     from zicato.reflection import suggestions as sug_mod  # noqa: PLC0415
     from zicato.reflection.mining import mine_episodes  # noqa: PLC0415
+    from zicato.reflection.synthesis import synthesize  # noqa: PLC0415
 
     workspace_root, resolved_epoch = _resolve_workspace_epoch(workspace, epoch_id)
     paths = _paths_for(workspace_root)
@@ -1127,46 +1128,21 @@ def suggest_cmd(
     episodes = mine_episodes(paths, resolved_epoch, imported_traces=imported_traces)
     click.echo(f"mined {len(episodes)} episode(s) from epoch {resolved_epoch!r}", err=True)
 
-    synthesize = sug_mod.resolve_synthesize()
-    if synthesize is None:
-        raise click.ClickException(
-            "no synthesis seam available (reflection.synthesis.synthesize is not "
-            "importable). Mining ran; suggestion drafting needs the synthesiser."
-        )
-    if imported_traces:
-        # The bootstrap tier needs the reconstructions to draft entries (§7's
-        # extended shim); the seam gains ``imported_traces=`` at integration.
-        raw_suggestions = synthesize(
-            episodes,
-            allow_llm=allow_llm,
-            workspace_root=workspace_root,
-            epoch_id=resolved_epoch,
-            imported_traces=imported_traces,
-        )
-    else:
-        raw_suggestions = synthesize(
-            episodes, allow_llm=allow_llm, workspace_root=workspace_root, epoch_id=resolved_epoch
-        )
-    suggestions = [sug_mod._as_suggestion(s) for s in raw_suggestions]
+    suggestions = synthesize(
+        episodes,
+        allow_llm=allow_llm,
+        workspace_root=workspace_root,
+        epoch_id=resolved_epoch,
+        imported_traces=imported_traces,
+    )
 
     if probe:
-        admit = sug_mod.resolve_admit()
-        if admit is None:
-            click.echo(
-                "warning: --probe requested but no admission-measurement seam is "
-                "available; persisting UNMEASURED suggestions.",
-                err=True,
-            )
-        else:
-            click.echo(
-                "--probe: spending champion budget on the live admission probes "
-                f"(A/A noise at base {sug_mod.SYNTHESIS_REPLICATE_BASE}).",
-                err=True,
-            )
-            admitted = admit(
-                suggestions, probe=True, workspace_root=workspace_root, epoch_id=resolved_epoch
-            )
-            suggestions = [sug_mod._as_suggestion(s) for s in admitted]
+        from zicato.reflection.admission import admit  # noqa: PLC0415
+
+        click.echo("--probe: measuring suggested evaluations using champion budget.", err=True)
+        suggestions = admit(
+            suggestions, probe=True, workspace_root=workspace_root, epoch_id=resolved_epoch
+        )
     else:
         cost = sug_mod.plan_cost(suggestions)
         click.echo(f"plan mode (no probe spent): {cost['note']}", err=True)

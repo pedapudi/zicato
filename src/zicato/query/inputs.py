@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,33 +15,17 @@ from zicato.query.paths import WorkspacePaths, _read_json_value, layout_of
 from zicato.workspace import generation_ids
 
 
-def _freeze(value: Any) -> Any:
-    if isinstance(value, dict):
-        return MappingProxyType({key: _freeze(item) for key, item in value.items()})
-    if isinstance(value, list):
-        return tuple(_freeze(item) for item in value)
-    return value
-
-
-def _copy(value: Any) -> Any:
-    if isinstance(value, Mapping):
-        return {key: _copy(item) for key, item in value.items()}
-    if isinstance(value, tuple):
-        return [_copy(item) for item in value]
-    return value
-
-
 @dataclass(frozen=True, slots=True)
 class CapturedJson:
-    """One parsed observation; consumers receive independent mutable copies."""
+    """An immutable JSON observation; consumers receive independent decoded copies."""
 
     _value: Any
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "_value", _freeze(self._value))
+        object.__setattr__(self, "_value", json.dumps(self._value))
 
     def copy(self) -> Any:
-        return _copy(self._value)
+        return json.loads(self._value)
 
 
 @dataclass(frozen=True, slots=True)

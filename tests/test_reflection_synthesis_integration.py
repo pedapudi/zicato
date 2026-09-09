@@ -116,7 +116,7 @@ def _run(args: list[str]) -> object:
 def test_unmocked_suggestion_is_persisted(tmp_path: Path) -> None:
     ws, epoch = _seed_workspace(tmp_path)
 
-    # NO monkeypatch of resolve_synthesize / resolve_admit — the real seams run.
+    # Real mining and synthesis must produce the persisted draft.
     result = _run(
         ["inspect", "reflection", "suggest", "--workspace", str(ws), "--reflection", _REFLECTION_ID]
     )

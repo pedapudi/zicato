@@ -3,8 +3,7 @@
 Synthesis produces draft artifacts; admission adds measured evidence. This owner
 validates the complete stored collection before exposing suggestions to review
 or draft application. Corruption cannot become an empty or partial inbox.
-The callable protocols resolve synthesis and admission only when requested;
-reading records never starts either operation.
+Reading records never starts synthesis or measurement.
 """
 
 from __future__ import annotations
@@ -13,8 +12,10 @@ import hashlib
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol, runtime_checkable
+from typing import Any
 
+from zicato.core.board import BoardEntry, JudgeMode, JudgeSpec, validate_board_entry
+from zicato.core.drift_kinds import DriftSeverity
 from zicato.core.measurement import SYNTHESIS_REPLICATE_BASE as SYNTHESIS_REPLICATE_BASE
 from zicato.epoch._storage import RecordError
 from zicato.storage import atomic_write_json
@@ -101,6 +102,35 @@ class Suggestion:
     recency_key: int = 0
     coverage_key: int = 0
     _json: str | None = field(default=None, repr=False, compare=False)
+
+    evidence: dict[str, Any] = field(default_factory=dict)
+    target_entry_id: str | None = None
+
+    @property
+    def entry(self) -> BoardEntry | None:
+        """Decode a drafted task from the same artifact that review displays."""
+        return (
+            validate_board_entry(self.draft_artifact)
+            if self.artifact_kind == ARTIFACT_BOARD_ENTRY
+            else None
+        )
+
+    @property
+    def judge(self) -> JudgeSpec | None:
+        """Decode a drafted judge from the same artifact that review displays."""
+        if self.artifact_kind not in (ARTIFACT_JUDGE, ARTIFACT_RUBRIC_REVISION):
+            return None
+        d = self.draft_artifact
+        return JudgeSpec(
+            name=d["name"],
+            mode=JudgeMode(d["mode"]),
+            body=d["body"],
+            severity=DriftSeverity(d["severity"]),
+        )
+
+    @property
+    def synthesizer(self) -> str:
+        return str(self.provenance.get("synthesizer", ""))
 
     def to_json(self) -> dict[str, Any]:
         values = {
@@ -198,15 +228,6 @@ def suggestion_id(suggestion_type: str, subject: str, source_episodes: tuple[str
     return "sug-" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:8]
 
 
-def _as_suggestion(item: Any) -> Suggestion:
-    """Coerce a seam result item (``Suggestion`` OR its JSON dict) to a suggestion."""
-    if isinstance(item, Suggestion):
-        return item
-    if isinstance(item, dict):
-        return Suggestion.from_json(item)
-    raise TypeError(f"not a suggestion or suggestion dict: {type(item).__name__}")
-
-
 def rank_suggestions(suggestions: list[Suggestion]) -> list[Suggestion]:
     """Sort by ``(−severity, −recency, −coverage, suggestion_id)`` — a TOTAL order.
 
@@ -217,78 +238,6 @@ def rank_suggestions(suggestions: list[Suggestion]) -> list[Suggestion]:
         suggestions,
         key=lambda s: (-s.severity_rank, -s.recency_key, -s.coverage_key, s.suggestion_id),
     )
-
-
-# --- the two seams (mirrors of the doc; late-bound to the sibling modules) --
-
-
-@runtime_checkable
-class SynthesizeSeam(Protocol):
-    """Synthesis: ranked episodes → suggestions (EVAL-SYNTHESIS.md §3).
-
-    The synthesiser loads the epoch board (to pin regressions / perturb dead
-    entries / host judges) from ``workspace_root`` + ``epoch_id``, and resolves
-    the evaluation callable for the LLM tier only when ``allow_llm``.
-
-    ``imported_traces`` (TRAJECTORY-BOOTSTRAP.md §7) carries the foreign-trace
-    reconstructions the bootstrap tier drafts entries from; it defaults to empty
-    so every existing caller stays valid and the seam is a no-op for them.
-    """
-
-    def __call__(
-        self,
-        episodes: Any,
-        *,
-        allow_llm: bool = False,
-        workspace_root: Path | None = None,
-        epoch_id: str | None = None,
-        imported_traces: Any = (),
-    ) -> list[Any]: ...
-
-
-@runtime_checkable
-class AdmitSeam(Protocol):
-    """Admission: suggestions → admission-stamped suggestions (EVAL-SYNTHESIS.md §5)."""
-
-    def __call__(
-        self,
-        suggestions: Any,
-        *,
-        probe: bool = False,
-        workspace_root: Path | None = None,
-        epoch_id: str | None = None,
-    ) -> list[Any]: ...
-
-
-def _resolve_seam(module_name: str, attr: str) -> Any | None:
-    """Import ``zicato.reflection.<module_name>`` and return its ``attr`` callable.
-
-    ``importlib`` (not a static import) so this file type-checks and imports
-    cleanly BEFORE the sibling workstreams land — the parallel-build discipline.
-    Absent module / attribute ⇒ ``None`` (the honest degrade).
-    """
-    import importlib  # noqa: PLC0415
-
-    try:
-        module = importlib.import_module(f"zicato.reflection.{module_name}")
-    except ImportError:
-        return None
-    fn = getattr(module, attr, None)
-    return fn if callable(fn) else None
-
-
-def resolve_synthesize() -> SynthesizeSeam | None:
-    """Late-bind ``reflection.synthesis.synthesize``, or ``None``.
-
-    A monkeypatch point for the CLI round-trip tests (which inject a fake synth
-    seam) and the honest degrade when the sibling has not landed yet.
-    """
-    return _resolve_seam("synthesis", "synthesize")
-
-
-def resolve_admit() -> AdmitSeam | None:
-    """Late-bind ``reflection.admission.admit``, or ``None``."""
-    return _resolve_seam("admission", "admit")
 
 
 # --- persistence (beside findings.json — the reflection idiom) --------------
@@ -526,9 +475,7 @@ __all__ = [
     "SUGGESTION_REGRESSION_ENTRY",
     "SUGGESTION_RUBRIC_REVISION",
     "SYNTHESIS_REPLICATE_BASE",
-    "AdmitSeam",
     "Suggestion",
-    "SynthesizeSeam",
     "format_admission",
     "format_admission_compact",
     "plan_cost",
@@ -536,8 +483,6 @@ __all__ = [
     "read_suggestions",
     "render_suggestions_md",
     "render_suggestions_table",
-    "resolve_admit",
-    "resolve_synthesize",
     "suggestion_id",
     "write_suggestions",
 ]
