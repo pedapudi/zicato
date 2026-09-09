@@ -1086,8 +1086,6 @@ def test_backfill_handles_missing_db(tmp_path: Path) -> None:
     assert result == {"updated": 0, "scanned": 0}
 
 
-
-
 # ---------------------------------------------------------------------------
 # round_index — birth round of a generation (v7)
 # ---------------------------------------------------------------------------

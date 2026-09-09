@@ -50,7 +50,7 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 472,550 | +63,889 |
+| Total | 408,661 | 472,548 | +63,887 |
 | Production | 197,702 | 190,095 | -7,607 |
 | Production logic | 110,276 | 110,735 | +459 |
 
@@ -453,6 +453,6 @@ dropped rows named.
 | Recorded round outcomes and decision explanations (total) | 473,423 | -32 | 473,391 | Issue #524: committed rounds own outcomes; readers derive journals, promotion status, and recorded gate explanations. All tournament formats and both candidate storage implementations remain. |
 | Recorded round outcomes and decision explanations (production) | 191,187 | -366 | 190,821 | Issue #524: committed rounds own outcomes; readers derive journals, promotion status, and recorded gate explanations. All tournament formats and both candidate storage implementations remain. |
 | Recorded round outcomes and decision explanations (production logic) | 111,228 | -58 | 111,170 | Issue #524: committed rounds own outcomes; readers derive journals, promotion status, and recorded gate explanations. All tournament formats and both candidate storage implementations remain. |
-| Recorded tournament reads and simpler test execution (total) | 473,391 | -841 | 472,550 | Issue #526: readers and reports use recorded primary promotions and complete tournament structures; diagrams display framework summaries and recorded explanations. One parity test process covers all eight deterministic configurations. |
+| Recorded tournament reads and simpler test execution (total) | 473,391 | -843 | 472,548 | Issue #526: readers and reports use recorded primary promotions and complete tournament structures; diagrams display framework summaries and recorded explanations. One parity test process covers all eight deterministic configurations. |
 | Recorded tournament reads and simpler test execution (production) | 190,821 | -726 | 190,095 | Issue #526: readers and reports use recorded primary promotions and complete tournament structures; diagrams display framework summaries and recorded explanations. One parity test process covers all eight deterministic configurations. |
 | Recorded tournament reads and simpler test execution (production logic) | 111,170 | -435 | 110,735 | Issue #526: readers and reports use recorded primary promotions and complete tournament structures; diagrams display framework summaries and recorded explanations. One parity test process covers all eight deterministic configurations. |
