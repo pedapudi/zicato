@@ -139,22 +139,7 @@ _STRING_LITERAL_RE = re.compile(
 
 
 def _resolve_store(paths: WorkspacePaths) -> tuple[GenerationStore | None, str]:
-    """The workspace's generation store, or ``(None, reason)`` when there is none.
-
-    Mirrors :func:`zicato.query.file_view._resolve_store` — the
-    mutation-site browser is backend-neutral by routing every read through
-    the store seam, exactly like the file-tree browser it sits beside.
-
-    Naming a source backend is workspace configuration, so building the
-    store can fail on the CONFIGURATION rather than on any generation: a
-    workspace whose ``config.json`` predates ``generation_source_backend``,
-    or whose value contradicts the source data on disk, has no store at
-    all. That is a condition the reader must report rather than raise on:
-    every view here already answers from records when a tree cannot be read,
-    so a store that cannot be built degrades onto the same records path and
-    reports the reason. The dashboard is read-only and must never answer 500
-    for a workspace it was merely pointed at.
-    """
+    """Resolve source storage for file and mutation views, retaining failure reasons."""
     try:
         return default_generation_store(paths.root), ""
     except (FileNotFoundError, OSError, ValueError) as exc:

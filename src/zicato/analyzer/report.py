@@ -83,6 +83,7 @@ from zicato.analyzer.report_sections import (
 )
 from zicato.aux_timeout import aux_call_timeout_s
 from zicato.core.settings import AuxConfig
+from zicato.core.types import Experiment
 from zicato.core.workspace import analysis_path
 from zicato.storage import atomic_write_text
 
@@ -1389,6 +1390,7 @@ def write_html_companion(
     *,
     report_md: str | None = None,
     data: EpochReportData | None = None,
+    recorded_experiments: tuple[list[tuple[str, Experiment]], list[str]] | None = None,
 ) -> Path | None:
     """Publish report HTML atomically, preserving Markdown if rendering fails.
 
@@ -1403,7 +1405,9 @@ def write_html_companion(
     html_path = md_path.with_suffix(".html")
     try:
         if data is None:
-            data = gather_epoch_report_data(workspace_root, epoch_id)
+            data = gather_epoch_report_data(
+                workspace_root, epoch_id, recorded_experiments=recorded_experiments
+            )
         atomic_write_text(html_path, render_report_html(epoch_id, report_md, data=data), mode=None)
     except Exception as exc:  # noqa: BLE001 — HTML failure must preserve Markdown
         log.debug("epoch report: analysis.html render skipped (%s)", exc)

@@ -25,6 +25,7 @@ from zicato.query.paths import (
     _read_json_value,
     _resolve_epoch_id,
     coerce_float,
+    finite_float,
     layout_of,
     read_current_epoch,
 )
@@ -569,21 +570,6 @@ def build_matchup_detail(paths: WorkspacePaths, generation_id: str) -> dict[str,
 # files so a completed tournament's outcomes survive without the index.
 
 
-def _opt_score(value: Any) -> float | None:
-    """Coerce a raw ``score`` field into a finite float in ``[0, 1]`` or ``None``.
-
-    The continuous per-entry outcome (#18). ``None`` (the back-compat
-    default) when the field is absent, a bool, or a non-finite number —
-    every such case degrades to the bool ``pass_fail`` display upstream.
-    """
-    if isinstance(value, bool) or not isinstance(value, int | float):
-        return None
-    f = float(value)
-    if f != f or f in (float("inf"), float("-inf")):  # NaN / inf guard
-        return None
-    return f
-
-
 def _opt_metrics(value: Any) -> dict[str, float] | None:
     """Coerce a raw ``metrics`` field into ``{name: finite float}`` or ``None``.
 
@@ -635,7 +621,7 @@ def _read_run_loss_files(
             # Continuous per-entry outcome + its optional precision/recall
             # decomposition (#18). ``None`` for a loss.json written before
             # the ``score`` field existed.
-            "score": _opt_score(loss.get("score")),
+            "score": finite_float(loss.get("score")),
             "metrics": _opt_metrics(loss.get("metrics")),
             "run_id": (loss.get("run_id") if isinstance(loss.get("run_id"), str) else run_entry_id),
             # Seam-1 drift-reduction provenance (#19). ``None`` on a
@@ -891,8 +877,8 @@ def build_matchup_grid(
         # the better side. Folded under the scalar block so the candidate /
         # board views can show a board-level score summary alongside the
         # per-entry scores.
-        p_mean = _opt_score(parent_score.get("mean_score"))
-        c_mean = _opt_score(child_score.get("mean_score"))
+        p_mean = finite_float(parent_score.get("mean_score"))
+        c_mean = finite_float(child_score.get("mean_score"))
         if p_mean is not None or c_mean is not None:
             scalar["mean_score"] = {
                 "parent": p_mean,

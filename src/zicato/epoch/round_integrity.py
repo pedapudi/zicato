@@ -110,9 +110,8 @@ from typing import Any
 
 from zicato.epoch.round_log import (
     RoundLog,
-    RoundLogEnvelope,
-    RoundOpened,
     RoundRecord,
+    final_attempt_events,
     fold_round_record,
     round_log_path,
     rounds_dir,
@@ -775,39 +774,6 @@ def _relative_log_path(workspace_root: Path, epoch_id: str, round_index: int) ->
         return path.as_posix()
 
 
-def _final_attempt_span(events: list[RoundLogEnvelope]) -> list[RoundLogEnvelope]:
-    """The envelopes from the LAST ``round_opened`` onward.
-
-    One round log can hold MORE THAN ONE attempt at the same round index,
-    and the fold cannot tell them apart: ``fold_round_record`` accumulates
-    across the whole stream and reduces the lifecycle markers to two
-    booleans, so a second attempt's events land on top of the first's.
-
-    The index gets reused because ``_epoch_round_base``
-    (``evolve/loop.py``) derives the next round index from the highest
-    *persisted* ``experiment.round_index``. A round that emitted
-    ``patches_applied`` but died before ``write_experiment`` never consumes
-    its index, so the next invocation opens the same one and appends to the
-    same append-only log. (The same function returns 0 outright when the
-    workspace cannot be read, which restarts numbering over every existing
-    log.)
-
-    Classifying the union would let a prior attempt's tokens vouch for this
-    one — the earlier attempt's sampled candidate satisfying
-    ``proposer_reached`` for an attempt that only ever saw a 401. Slicing to
-    the final span is the honest read: the last attempt is the one whose
-    outcome the epoch actually carries.
-
-    A stream with no ``round_opened`` is returned whole, so a torn or empty
-    log still folds to "never opened" and voids by rule 1.
-    """
-    last_open = -1
-    for index, envelope in enumerate(events):
-        if isinstance(envelope.event, RoundOpened):
-            last_open = index
-    return events if last_open < 0 else events[last_open:]
-
-
 def round_integrity(
     workspace_root: Path,
     epoch_id: str,
@@ -822,7 +788,7 @@ def round_integrity(
     honest verdict for a round directory with nothing in it.
 
     Only the FINAL attempt span is classified — see
-    :func:`_final_attempt_span`, and note that this is the one place the
+    :func:`final_attempt_events`, and note that this is the one place the
     reader looks at raw envelopes rather than the folded record, because
     the fold has no attempt scope.
 
@@ -850,7 +816,7 @@ def round_integrity(
             log_path=log_path,
         )
     return classify_round(
-        fold_round_record(_final_attempt_span(events)),
+        fold_round_record(final_attempt_events(events)),
         round_index=round_index,
         log_path=log_path,
         infra_markers=infra_markers,

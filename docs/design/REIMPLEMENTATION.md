@@ -139,7 +139,7 @@ copy with a single implementation:
 - `dotted_path.py` — reuse the existing `zicato/import_path.py::import_dotted_path`
   for `judge_runtime/builder.py:289` and `synthetic/adversarial.py:62`
 - `floats.py` — one finiteness/NaN/inf guard (replaces `_is_finite`,
-  `_opt_score`, `_coerce_float`, …)
+  `finite_float`, `_coerce_float`, …)
 - camel→snake — one implementation (replaces `state_reader.to_snake:152`,
   `reducer._camel_to_snake:246`, `transcript._snake_deep:65`, `aggregator`)
 

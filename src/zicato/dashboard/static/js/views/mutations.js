@@ -87,18 +87,8 @@ export async function render(host, ctx, params) {
       const surfaceError = String((mut && mut.error) || '');
       return { epochId, gens, sites, patchedBySite, pinnedSite, detail, patchesByGen, baselineStr, note, baselineGen, surfaceError };
     },
-    digest: (d) => JSON.stringify({
-      epochId: d.epochId, gens: d.gens,
-      sites: d.sites.map((s) => [s.mutation_id, s.file, s.role, s.line_start, s.line_end, (s.patched_generation_ids || []).join(',')]),
-      pinned: pinned || null,
-      pinnedGen: pinnedGen || null,
-      baselineLen: d.baselineStr == null ? -1 : d.baselineStr.length,
-      patched: d.pinnedSite ? [...d.patchesByGen.keys()] : null,
-      note: d.note, baselineGen: d.baselineGen, surfaceError: d.surfaceError,
-      versions: (d.detail && Array.isArray(d.detail.versions))
-        ? d.detail.versions.map((v) => [v.generation_id, v.provenance, v.note || v.error || '',
-          v.content == null ? -1 : v.content.length])
-        : null,
+    digest: ({ patchedBySite, patchesByGen, ...data }) => JSON.stringify({
+      ...data, pinned, pinnedGen, patches: [...patchesByGen],
     }),
     build: (d) => {
       const { epochId, gens, sites, patchedBySite, pinnedSite, detail, patchesByGen, baselineStr, note, baselineGen, surfaceError } = d;

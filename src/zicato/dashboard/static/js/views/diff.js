@@ -163,16 +163,7 @@ export async function render(host, ctx, params) {
   const fileNote = String((fileDiff && fileDiff.provenance_note) || '');
 
   const digest = JSON.stringify({
-    epochId, genId, pinned, fileNote, detailNote,
-    base: baseGen || '',
-    // The picked/default distinction paints the strip, so it gates the
-    // repaint in its own right rather than riding on `base`.
-    picked: pickedBase || '',
-    picker: gens.map((g) => g.generation_id).join(','),
-    fileParent: (fileDiff && fileDiff.parent_generation_id) || '',
-    patches: myPatches.map((p) => [p.mutation_id || p.id, p.op, String(p.new_content || '').length, (p.rationale || '').length]),
-    baselines: ids.map((id) => [id, baselineById.get(id) == null ? -1 : baselineById.get(id).length, baselineGenById.get(id) || '', mixedById.get(id) ? 1 : 0, againstById.get(id) || '']),
-    files: fileEntries.map((f) => [f.path || f.file, String(f.old_content || '').length, String(f.new_content || '').length, f.reconstructed ? 1 : 0, f.note || '']),
+    epochId, genId, pinned, askedBase, patchesResp, mut, gens, details, fileDiff,
   });
 
   gatedSwap(host, digest, () => {

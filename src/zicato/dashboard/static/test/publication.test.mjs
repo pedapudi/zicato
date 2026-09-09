@@ -222,7 +222,7 @@ test('publication (A8): analysis_html_inline is FOLDED into the digest (a re-ren
   // the SAME markdown, a DIFFERENT server render — the exact case a digest
   // blind to analysis_html_inline would refuse to repaint.
   await renderWith(host, withServedHtml({
-    analysis_html_inline: SERVED_HTML.replace('Served Paper Title', 'Regenerated Paper Title'),
+    analysis_html_inline: SERVED_HTML.replace('Served Paper Title', 'Edited Paper Title'),
   }));
   assert(host.getAttribute('data-t-digest') !== first,
     'a re-rendered server paper (same markdown) flips the digest');
@@ -310,6 +310,20 @@ test('publication (A10): the score / metrics / won_by / session fields are FOLDE
   const base2 = host2.getAttribute('data-t-digest');
   await renderWith(host2, handed);
   assert(host2.getAttribute('data-t-digest') !== base2, 'won_by changing hands flips the digest');
+});
+
+test('publication: a Markdown correction of the same length redraws the report', async () => {
+  const host = document.createElement('div');
+  await renderWith(host, F);
+  const first = host.firstChild;
+  const corrected = ANALYSIS_MD.replace('Keep the clause.', 'Drop the clause.');
+  assertEqual(corrected.length, ANALYSIS_MD.length, 'the correction preserves text length');
+  await renderWith(host, { ...F, [`/api/epoch/${EPOCH}/analysis`]: { analysis_md: corrected } });
+  assert(host.firstChild !== first, 'changed report text redraws the article');
+  assert(host.textContent.includes('Drop the clause.'), 'the corrected text is visible');
+  const updated = host.firstChild;
+  await renderWith(host, { ...F, [`/api/epoch/${EPOCH}/analysis`]: { analysis_md: corrected } });
+  assert(host.firstChild === updated, 'unchanged report text preserves the article');
 });
 
 await run();

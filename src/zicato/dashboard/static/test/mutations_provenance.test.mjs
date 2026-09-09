@@ -186,4 +186,31 @@ test('mutations: the diff column stops claiming v0 when the server will not', as
   assertEqual(labels(fromSnapshot)[0], 'champion baseline · v0', 'snapshot path names v0');
 });
 
+test('mutations: a patch correction of the same length updates the displayed source', async () => {
+  const params = { epochId: EPOCH, mutId: 'researcher_instr', gen: 'v1' };
+  const host = await renderSurface('', params);
+  const first = host.firstChild;
+  const fetch = globalThis.fetch;
+  globalThis.fetch = async (path) => {
+    const response = await fetch(path);
+    const body = await response.json();
+    if (path.includes('/patches')) {
+      body.patches[0].new_content = body.patches[0].new_content.replace('rewritten', 'corrected');
+    }
+    return { ...response, json: async () => body };
+  };
+  try {
+    data.invalidate();
+    await mutations.render(host, CTX, params);
+    assert(host.firstChild !== first, 'the source correction redraws the view');
+    assert(textOf(host).includes('corrected instruction'), 'the corrected source is visible');
+    const corrected = host.firstChild;
+    data.invalidate();
+    await mutations.render(host, CTX, params);
+    assert(host.firstChild === corrected, 'unchanged source preserves the view');
+  } finally {
+    globalThis.fetch = fetch;
+  }
+});
+
 run();

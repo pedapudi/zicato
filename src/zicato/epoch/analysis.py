@@ -1115,7 +1115,9 @@ async def generate_analysis(
     out_path = analysis_path(workspace_root, epoch_id)
     atomic_write_text(out_path, "\n".join(composed), mode=None)
 
-    write_html_companion(workspace_root, epoch_id, out_path)
+    write_html_companion(
+        workspace_root, epoch_id, out_path, recorded_experiments=(records, unreadable)
+    )
     return out_path
 
 

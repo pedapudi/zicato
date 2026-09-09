@@ -1110,7 +1110,7 @@ was written never consumes its index, so the next invocation reopens it and
 appends. The two families of aggregate therefore take *opposite* slices:
 
 - **gate / decision / generation / unit facts** come from the FINAL attempt
-  span only (the same slice `round_integrity._final_attempt_span` takes), because
+  span only (the same slice `round_log.final_attempt_events` takes), because
   a dead attempt's gate is not the round's outcome and counting it could credit a
   second promotion to a round the epoch settled once;
 - **proposal-failure and cost facts** come from EVERY attempt, because a failed

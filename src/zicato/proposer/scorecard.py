@@ -91,8 +91,8 @@ from zicato.epoch.round_log import (
     ProposalEpisodeSettled,
     RoundLog,
     RoundLogEnvelope,
-    RoundOpened,
     RoundRecord,
+    final_attempt_events,
     fold_round_record,
 )
 from zicato.mutation.validator import POST_APPLY_CHECKS, classify_post_apply_error
@@ -314,23 +314,6 @@ def _round_indices(workspace_root: Path, epoch_id: str) -> list[int]:
     return round_indices(WorkspaceLayout.from_root(workspace_root), epoch_id)
 
 
-def _final_attempt_span(events: list[RoundLogEnvelope]) -> list[RoundLogEnvelope]:
-    """The envelopes from the LAST ``round_opened`` onward.
-
-    One round log can hold MORE THAN ONE attempt at the same round index: a
-    round that applied patches but died before its experiment was written never
-    consumes its index, so the next invocation reopens it and APPENDS to the
-    same log (:func:`zicato.epoch.round_integrity._final_attempt_span`, which
-    this mirrors). ``fold_round_record`` accumulates across the whole stream and
-    cannot tell the attempts apart.
-    """
-    last_open = -1
-    for index, envelope in enumerate(events):
-        if isinstance(envelope.event, RoundOpened):
-            last_open = index
-    return events if last_open < 0 else events[last_open:]
-
-
 def _read_rounds(
     workspace_root: Path, epoch_id: str
 ) -> list[tuple[list[RoundLogEnvelope], RoundRecord]]:
@@ -369,7 +352,7 @@ def _read_rounds(
             events = RoundLog(workspace_root, epoch_id, index).read()
         except (OSError, ValueError):
             continue
-        out.append((events, fold_round_record(_final_attempt_span(events))))
+        out.append((events, fold_round_record(final_attempt_events(events))))
     return out
 
 

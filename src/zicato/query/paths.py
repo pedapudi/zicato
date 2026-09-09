@@ -215,6 +215,12 @@ def coerce_float(value: Any) -> float | None:
     return float(value)
 
 
+def finite_float(value: Any) -> float | None:
+    """Read a finite numeric value; booleans and other values are unavailable."""
+    number = coerce_float(value)
+    return number if number is not None and _is_finite(number) else None
+
+
 def coerce_numeric_dict(value: Any) -> dict[str, float]:
     """A ``{str: float}`` projection of a raw mapping (non-numeric dropped)."""
     if not isinstance(value, dict):

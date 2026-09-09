@@ -956,7 +956,21 @@ def fold_round_record(events: list[RoundLogEnvelope]) -> RoundRecord:
     )
 
 
+def final_attempt_events(events: list[RoundLogEnvelope]) -> list[RoundLogEnvelope]:
+    """Read only the last attempt when an interrupted round reuses its log.
+
+    Earlier attempts cannot supply evidence for the final attempt. A log
+    without an opening event is retained so its missing opening remains visible.
+    """
+    last_open = -1
+    for index, envelope in enumerate(events):
+        if isinstance(envelope.event, RoundOpened):
+            last_open = index
+    return events if last_open < 0 else events[last_open:]
+
+
 __all__ = [
+    "final_attempt_events",
     "ROUND_LOG_FILENAME",
     "rounds_dir",
     "round_dir",

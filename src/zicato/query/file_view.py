@@ -50,13 +50,15 @@ from __future__ import annotations
 from typing import Any
 
 from zicato.epoch._storage import RecordError
-from zicato.epoch.genstore import GenerationStore, default_generation_store
+from zicato.epoch.genstore import GenerationStore
 from zicato.epoch.journal import patch_body, read_generation_patches
 from zicato.query.mutation_view import (
     FROM_RECORDS,
     FROM_SNAPSHOT,
     SPANS_CAPTION,
     SPANS_UNREACHABLE_CAPTION,
+    _has_tree,
+    _resolve_store,
     reconstructed_spans,
     recorded_generation_ids,
 )
@@ -73,42 +75,6 @@ _MAX_INLINE_BYTES = 512 * 1024
 #: Byte-count threshold past which a file is reported as binary on a
 #: failed UTF-8 decode rather than rendered.
 _DECODE_ERRORS = "replace"
-
-
-def _resolve_store(paths: WorkspacePaths) -> tuple[GenerationStore | None, str]:
-    """The workspace's generation store, or ``(None, reason)`` when there is none.
-
-    ``WorkspacePaths.root`` is the ``.zicato/`` directory — exactly the
-    ``workspace_root`` :func:`default_generation_store` expects, so the
-    config-knob backend selection happens for free.
-
-    Building the store can fail on the workspace's CONFIGURATION rather
-    than on any one generation: a ``config.json`` predating
-    ``generation_source_backend``, or a value the source data on disk
-    contradicts, leaves the workspace with no store at all. Every view
-    below already answers for a generation whose tree it cannot walk, so
-    that failure degrades onto the same path and reports the reason
-    instead of raising. The dashboard is read-only and must not answer 500
-    for a workspace it was merely pointed at; every reader here degrades to
-    an empty-or-``None`` shape.
-    """
-    try:
-        return default_generation_store(paths.root), ""
-    except (FileNotFoundError, OSError, ValueError) as exc:
-        return None, str(exc)
-
-
-def _has_tree(store: GenerationStore | None, epoch_id: str, generation_id: str) -> bool:
-    """Return ``True`` when the generation still has a materialised tree.
-
-    No store at all answers the same as no tree.
-    """
-    if store is None:
-        return False
-    try:
-        return store.has_generation(epoch_id, generation_id)
-    except (OSError, ValueError):
-        return False
 
 
 #: What a view says when a RECORDED generation's tree is gone. Whole-tree

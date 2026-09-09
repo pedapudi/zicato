@@ -23,13 +23,12 @@ from pathlib import Path
 from tests._proposal_evidence import render_proposal_evidence
 from zicato.core.types import MutationPoint
 from zicato.proposer.calibration import (
-    _CORE_IDEA_MAX,
     CalibrationClaim,
     CalibrationClaimItem,
     CalibrationSummary,
     sample_calibration,
 )
-from zicato.proposer.genealogy import GenealogyRecord
+from zicato.proposer.genealogy import _CORE_IDEA_MAX, GenealogyRecord
 from zicato.proposer.prompts import (
     render_calibration_block,
 )
