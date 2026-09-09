@@ -13,15 +13,21 @@ pin the server payloads that replaced them:
 from __future__ import annotations
 
 import json
-import sqlite3
 from pathlib import Path
 
 import pytest
 from starlette.testclient import TestClient
 
+from tests._console_scenarios import (
+    EpochSpec,
+    FieldRecord,
+    Gen,
+    build_scenario,
+    record_gate_comparisons,
+)
 from tests._workspace_support import write_generation, write_lineage, write_tournament
 from zicato.dashboard.server import create_app
-from zicato.index.schema import apply_schema
+from zicato.index.ingest import rebuild_index
 from zicato.query import (
     WorkspacePaths,
     build_racing_field,
@@ -58,33 +64,33 @@ def _base_workspace(tmp_path: Path) -> Path:
     return ws
 
 
-def _racing_workspace(tmp_path: Path) -> Path:
-    """Per-challenger racing records mirroring the frontend's old join input.
-
-    v1/v2 are cut at rung 0; v3/v4 reach rung 1; v3 reaches the
-    ``racing-final`` gate and is promoted (lineage v0 -> v3).
-    """
-    ws = _base_workspace(tmp_path)
-    _write_json(
-        ws / "epochs" / EPOCH / "scoring.json",
-        {"tournament": {"structure": "racing", "params": {"eta": 2, "board_fraction": 0.25}}},
-    )
-    conn = sqlite3.connect(ws / "index.db")
-    apply_schema(conn)
-    conn.executemany(
-        (
-            "INSERT INTO generations(epoch_id, generation_id, parent_generation_id,"
-            " promoted, created_at) VALUES(?,?,?,?,?)"
+def _field(champion, challengers, *, primary, rounds=(), state="settled", structure="racing"):
+    return FieldRecord(
+        challengers[0],
+        structure,
+        competitors=tuple(
+            [{"generation_id": champion, "role": "champion"}]
+            + [{"generation_id": gid, "role": "challenger"} for gid in challengers]
         ),
-        [
-            (EPOCH, "v0", None, 1, "2026-06-01T00:00:00Z"),
-            (EPOCH, "v1", "v0", 0, "2026-06-01T00:10:00Z"),
-            (EPOCH, "v2", "v0", 0, "2026-06-01T00:11:00Z"),
-            (EPOCH, "v3", "v0", 1, "2026-06-01T00:12:00Z"),
-            (EPOCH, "v4", "v0", 0, "2026-06-01T00:13:00Z"),
-        ],
+        rounds=rounds,
+        champion=champion,
+        promoted=primary or "",
+        decision="promoted" if primary else "rejected",
+        state=state,
     )
-    params = json.dumps({"eta": 2, "board_fraction": 0.25})
+
+
+def _scenario(tmp_path, generations, fields=()):
+    ws = build_scenario(
+        tmp_path, EpochSpec(EPOCH, tuple(generations), "2026-06-01T00:00:00Z", fields=tuple(fields))
+    )
+    record_gate_comparisons(ws)
+    rebuild_index(ws)
+    return ws
+
+
+def _racing_workspace(tmp_path: Path) -> Path:
+    """A completed racing field with two rungs and its final comparison."""
     per_challenger = [
         ("v1", [{"match_id": "rung0_m0", "opponent": "v0", "won": False, "delta_scalar": 25.0}]),
         ("v2", [{"match_id": "rung0_m1", "opponent": "v0", "won": False, "delta_scalar": 3.3}]),
@@ -104,41 +110,60 @@ def _racing_workspace(tmp_path: Path) -> Path:
             ],
         ),
     ]
-    for i, (chall, rounds) in enumerate(per_challenger):
-        conn.execute(
-            (
-                "INSERT INTO tournaments(tournament_id, epoch_id, parent_generation_id,"
-                " child_generation_id, decision, parent_scalar, child_scalar, "
-                "delta_scalar, rejection_reason, ran_at, structure, "
-                "structure_params_json, competitors_json, rounds_json, standings_json) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
-            ),
-            (
-                f"{EPOCH}:v0->{chall}",
-                EPOCH,
+    gens = [Gen("v0", scalar=0.5)]
+    for gid, matches in per_challenger:
+        gens.append(
+            Gen(
+                gid,
                 "v0",
-                chall,
-                "promoted" if chall == "v3" else "rejected",
-                0.5,
-                0.4,
-                -0.1,
-                None,
-                f"2026-06-01T00:3{i}:00Z",
-                "racing",
-                params,
-                json.dumps(["v0", chall]),
-                json.dumps(rounds),
-                json.dumps([]),
-            ),
+                "promoted" if gid == "v3" else "rejected",
+                scalar=0.4,
+                structure="racing",
+                matches=tuple(matches),
+            )
         )
-    conn.commit()
-    conn.close()
-    return ws
-
-
-# ---------------------------------------------------------------------------
-# The racing-field join.
-# ---------------------------------------------------------------------------
+    rounds = (
+        {
+            "round_index": 0,
+            "matches": [
+                {
+                    "match_id": "rung0",
+                    "competitors": ["v1", "v2", "v3", "v4"],
+                    "cut": ["v1", "v2"],
+                    "survivors": ["v3", "v4"],
+                    "board_fraction": 0.25,
+                    "deltas": {"v1": 25.0, "v2": 3.3, "v3": -0.16, "v4": 0.002},
+                }
+            ],
+        },
+        {
+            "round_index": 1,
+            "matches": [
+                {
+                    "match_id": "rung1",
+                    "competitors": ["v3", "v4"],
+                    "cut": ["v4"],
+                    "survivors": ["v3"],
+                    "board_fraction": 0.5,
+                }
+            ],
+        },
+        {
+            "round_index": 2,
+            "matches": [
+                {
+                    "match_id": "racing-final",
+                    "competitors": ["v0", "v3"],
+                    "winner": "v3",
+                    "decision": "promoted",
+                    "delta_scalar": -32.19,
+                    "board_fraction": 1.0,
+                }
+            ],
+        },
+    )
+    field = _field("v0", ["v1", "v2", "v3", "v4"], primary="v3", rounds=rounds)
+    return _scenario(tmp_path, gens, [field])
 
 
 def test_racing_field_joins_rungs_and_gate(tmp_path: Path) -> None:
@@ -194,107 +219,30 @@ def test_racing_field_endpoint(tmp_path: Path, static_dir: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _gauntlet_workspace(tmp_path: Path) -> Path:
-    """Two settled gauntlet matchup rounds: v1 rejected, then v2 promoted."""
-    ws = _base_workspace(tmp_path)
-    gens_dir = ws / "epochs" / EPOCH / "generations"
-    _write_json(gens_dir / "v0" / "experiment.json", {"parent_generation_id": None})
-    _write_json(
-        gens_dir / "v1" / "experiment.json",
-        {"parent_generation_id": "v0", "outcome": {"tournament_decision": "rejected"}},
-    )
-    _write_json(
-        gens_dir / "v2" / "experiment.json",
-        {
-            "parent_generation_id": "v0",
-            "round_index": 1,
-            "outcome": {"tournament_decision": "promoted"},
-        },
-    )
-    _write_json(
-        ws / "lineage.json",
-        {
-            "epochs": [
-                {
-                    "id": EPOCH,
-                    "generations": [
-                        {"id": "v0", "parent_id": None, "promoted": True},
-                        {"id": "v1", "parent_id": "v0", "promoted": False},
-                        {"id": "v2", "parent_id": "v0", "promoted": True},
-                    ],
-                }
-            ]
-        },
-    )
-    conn = sqlite3.connect(ws / "index.db")
-    apply_schema(conn)
-    conn.executemany(
-        (
-            "INSERT INTO generations(epoch_id, generation_id, parent_generation_id,"
-            " promoted, created_at) VALUES(?,?,?,?,?)"
-        ),
+def _gauntlet_workspace(tmp_path: Path, *, round_indices=(0, 1)) -> Path:
+    """Two declared gauntlet outcomes with explicit birth rounds."""
+    return _scenario(
+        tmp_path,
         [
-            (EPOCH, "v0", None, 1, "2026-06-01T00:00:00Z"),
-            (EPOCH, "v1", "v0", 0, "2026-06-01T00:10:00Z"),
-            (EPOCH, "v2", "v0", 1, "2026-06-01T00:20:00Z"),
-        ],
-    )
-    conn.executemany(
-        (
-            "INSERT INTO loss_profiles(run_id, epoch_id, generation_id, entry_id, "
-            "drift_loss, pass_fail, loss_json) VALUES(?,?,?,?,?,?,?)"
-        ),
-        [
-            ("r0", EPOCH, "v0", "e1", 0.5, 1, None),
-            ("r1", EPOCH, "v1", "e1", 0.9, 0, None),
-            ("r2", EPOCH, "v2", "e1", 0.3, 1, None),
-        ],
-    )
-    conn.executemany(
-        "INSERT INTO tournaments(tournament_id, epoch_id, parent_generation_id, "
-        "child_generation_id, decision, parent_scalar, child_scalar, delta_scalar, "
-        "rejection_reason, ran_at, structure, structure_params_json, competitors_json, "
-        "rounds_json, standings_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        [
-            (
-                f"{EPOCH}:v0->v1",
-                EPOCH,
-                "v0",
+            Gen("v0", scalar=0.5, entries=(("e1", 0.5, True),)),
+            Gen(
                 "v1",
-                "rejected",
-                0.5,
-                0.9,
-                0.4,
-                None,
-                "2026-06-01T00:15:00Z",
-                "gauntlet",
-                None,
-                None,
-                None,
-                None,
-            ),
-            (
-                f"{EPOCH}:v0->v2",
-                EPOCH,
                 "v0",
+                "rejected",
+                scalar=0.9,
+                entries=(("e1", 0.9, False),),
+                round_index=round_indices[0],
+            ),
+            Gen(
                 "v2",
+                "v0",
                 "promoted",
-                0.5,
-                0.3,
-                -0.2,
-                None,
-                "2026-06-01T00:25:00Z",
-                "gauntlet",
-                None,
-                None,
-                None,
-                None,
+                scalar=0.3,
+                entries=(("e1", 0.3, True),),
+                round_index=round_indices[1],
             ),
         ],
     )
-    conn.commit()
-    conn.close()
-    return ws
 
 
 def test_round_timeline_from_gauntlet_matchups(tmp_path: Path) -> None:
@@ -324,25 +272,8 @@ def test_round_timeline_from_gauntlet_matchups(tmp_path: Path) -> None:
 
 
 def test_round_timeline_prefers_round_index_stamp(tmp_path: Path) -> None:
-    """A per-gen ``round_index`` stamp is the authoritative birth round."""
-    ws = _gauntlet_workspace(tmp_path)
-    gens_dir = ws / "epochs" / EPOCH / "generations"
-    _write_json(
-        gens_dir / "v1" / "experiment.json",
-        {
-            "parent_generation_id": "v0",
-            "round_index": 0,
-            "outcome": {"tournament_decision": "rejected"},
-        },
-    )
-    _write_json(
-        gens_dir / "v2" / "experiment.json",
-        {
-            "parent_generation_id": "v0",
-            "round_index": 0,
-            "outcome": {"tournament_decision": "promoted"},
-        },
-    )
+    """A shared birth round groups both challengers under its recorded promotion."""
+    ws = _gauntlet_workspace(tmp_path, round_indices=(0, 0))
     tl = build_round_timeline(WorkspacePaths(ws), EPOCH)
     assert tl["source"] == "round_index"
     rounds = tl["rounds"]
@@ -352,212 +283,57 @@ def test_round_timeline_prefers_round_index_stamp(tmp_path: Path) -> None:
     assert rounds[0]["gate"] == {"kind": "promoted", "gen": "v2"}
 
 
-def _field_round_workspace(tmp_path: Path) -> Path:
-    """A racing epoch with a round AFTER a promotion, persisted with FIELD rows.
-
-    v0 is the carried champion. Round 0 fields v1..v5 and v5 WINS. Round 1
-    fields v6/v7 against the NEW champion v5. Each round carries a field-level
-    row (3+ competitors, so ``_upsert_field_tournament`` writes one) whose
-    parent/child columns are EMPTY by design, beside the per-challenger duel
-    rows. ``competitors`` uses the real ``competitors_meta`` shape: the
-    champion FIRST, role-tagged.
-    """
-    ws = _base_workspace(tmp_path)
-    _write_json(
-        ws / "epochs" / EPOCH / "scoring.json",
-        {"tournament": {"structure": "racing", "params": {"eta": 2, "board_fraction": 0.25}}},
-    )
-    gens_dir = ws / "epochs" / EPOCH / "generations"
-    _write_json(gens_dir / "v0" / "experiment.json", {"parent_generation_id": None})
-    for gid in ("v1", "v2", "v3", "v4"):
-        _write_json(
-            gens_dir / gid / "experiment.json",
-            {
-                "parent_generation_id": "v0",
-                "round_index": 0,
-                "outcome": {"tournament_decision": "rejected"},
-            },
+def _field_round_workspace(tmp_path: Path, *, third_round: str | None = None) -> Path:
+    """One promotion followed by a held champion, with optional further evaluation."""
+    values = [
+        ("v0", 0.5),
+        ("v1", 0.9),
+        ("v2", 0.88),
+        ("v3", 0.86),
+        ("v4", 0.84),
+        ("v5", 0.3),
+        ("v6", 0.6),
+        ("v7", 0.61),
+    ]
+    if third_round is not None:
+        values.extend([("v8", 0.7), ("v9", 0.8)])
+    gens = []
+    for gid, scalar in values:
+        index = int(gid[1:])
+        parent = None if index == 0 else "v0" if index <= 5 else "v5"
+        decision = (
+            None
+            if index == 0 or (index >= 8 and third_round == "running")
+            else "promoted"
+            if gid == "v5"
+            else "rejected"
         )
-    _write_json(
-        gens_dir / "v5" / "experiment.json",
-        {
-            "parent_generation_id": "v0",
-            "round_index": 0,
-            "outcome": {"tournament_decision": "promoted"},
-        },
-    )
-    for gid in ("v6", "v7"):
-        _write_json(
-            gens_dir / gid / "experiment.json",
-            {
-                "parent_generation_id": "v5",
-                "round_index": 1,
-                "outcome": {"tournament_decision": "rejected"},
-            },
-        )
-    lineage = [{"id": "v0", "parent_id": None, "promoted": True}]
-    lineage += [{"id": g, "parent_id": "v0", "promoted": False} for g in ("v1", "v2", "v3", "v4")]
-    lineage += [{"id": "v5", "parent_id": "v0", "promoted": True}]
-    lineage += [{"id": g, "parent_id": "v5", "promoted": False} for g in ("v6", "v7")]
-    _write_json(ws / "lineage.json", {"epochs": [{"id": EPOCH, "generations": lineage}]})
-
-    def _comps(champion: str, challengers: list[str]) -> str:
-        return json.dumps(
-            [{"generation_id": champion, "seed": 1, "role": "champion"}]
-            + [
-                {"generation_id": c, "seed": i + 2, "role": "challenger"}
-                for i, c in enumerate(challengers)
-            ]
-        )
-
-    conn = sqlite3.connect(ws / "index.db")
-    apply_schema(conn)
-    parents = {"v1": "v0", "v2": "v0", "v3": "v0", "v4": "v0", "v5": "v0", "v6": "v5", "v7": "v5"}
-    conn.executemany(
-        (
-            "INSERT INTO generations(epoch_id, generation_id, parent_generation_id,"
-            " promoted, created_at) VALUES(?,?,?,?,?)"
-        ),
-        [(EPOCH, "v0", None, 1, "2026-06-01T00:00:00Z")]
-        + [
-            (EPOCH, g, parents[g], 1 if g == "v5" else 0, f"2026-06-01T0{i + 1}:00:00Z")
-            for i, g in enumerate(("v1", "v2", "v3", "v4", "v5", "v6", "v7"))
-        ],
-    )
-    conn.executemany(
-        (
-            "INSERT INTO loss_profiles(run_id, epoch_id, generation_id, entry_id, "
-            "drift_loss, pass_fail, loss_json) VALUES(?,?,?,?,?,?,?)"
-        ),
-        [
-            (f"r_{g}", EPOCH, g, "e1", loss, 1, None)
-            for g, loss in [
-                ("v0", 0.50),
-                ("v1", 0.90),
-                ("v2", 0.88),
-                ("v3", 0.86),
-                ("v4", 0.84),
-                ("v5", 0.30),
-                ("v6", 0.60),
-                ("v7", 0.61),
-            ]
-        ],
-    )
-    rows = []
-    for i, gid in enumerate(("v1", "v2", "v3", "v4")):
-        rows.append(
-            (
-                f"{EPOCH}:v0->{gid}",
-                EPOCH,
-                "v0",
+        gens.append(
+            Gen(
                 gid,
-                "rejected",
-                0.5,
-                0.9,
-                0.4,
-                None,
-                f"2026-06-01T01:0{i}:00Z",
-                "racing",
-                None,
-                _comps("v0", [gid]),
-                None,
-                None,
+                parent,
+                decision,
+                scalar=scalar,
+                entries=(("e1", scalar, True),),
+                round_index=0 if index <= 5 else 1 if index <= 7 else 2,
+                structure="racing",
+                champion_eval_mode="fast-degraded" if index >= 8 else "full",
             )
         )
-    rows.append(
-        (
-            f"{EPOCH}:v0->v5",
-            EPOCH,
-            "v0",
-            "v5",
-            "promoted",
-            0.5,
-            0.3,
-            -0.2,
-            None,
-            "2026-06-01T01:05:00Z",
-            "racing",
-            None,
-            _comps("v0", ["v5"]),
-            None,
-            None,
-        )
-    )
-    # round 0's FIELD row — champion v0, empty parent/child.
-    rows.append(
-        (
-            f"{EPOCH}:field:v1",
-            EPOCH,
-            "",
-            "",
-            "promoted",
-            None,
-            None,
-            None,
-            "",
-            "2026-06-01T01:06:00Z",
-            "racing",
-            None,
-            _comps("v0", ["v1", "v2", "v3", "v4", "v5"]),
-            json.dumps([]),
-            json.dumps([]),
-        )
-    )
-    for i, gid in enumerate(("v6", "v7")):
-        rows.append(
-            (
-                f"{EPOCH}:v5->{gid}",
-                EPOCH,
+    fields = [
+        _field("v0", ["v1", "v2", "v3", "v4", "v5"], primary="v5"),
+        _field("v5", ["v6", "v7"], primary=None),
+    ]
+    if third_round is not None:
+        fields.append(
+            _field(
                 "v5",
-                gid,
-                "rejected",
-                0.3,
-                0.6,
-                0.3,
-                None,
-                f"2026-06-01T02:0{i}:00Z",
-                "racing",
-                None,
-                _comps("v5", [gid]),
-                None,
-                None,
+                ["v8", "v9"],
+                primary=None,
+                state="in_progress" if third_round == "running" else "settled",
             )
         )
-    # round 1's FIELD row — champion v5, empty parent/child.
-    rows.append(
-        (
-            f"{EPOCH}:field:v6",
-            EPOCH,
-            "",
-            "",
-            "rejected",
-            None,
-            None,
-            None,
-            "",
-            "2026-06-01T02:06:00Z",
-            "racing",
-            None,
-            _comps("v5", ["v6", "v7"]),
-            json.dumps([]),
-            json.dumps([]),
-        )
-    )
-    conn.executemany(
-        (
-            "INSERT INTO tournaments(tournament_id, epoch_id, parent_generation_id,"
-            " child_generation_id, decision, parent_scalar, child_scalar, "
-            "delta_scalar, rejection_reason, ran_at, structure, "
-            "structure_params_json, competitors_json, rounds_json, standings_json) "
-            "VALUES("
-        )
-        + (",").join(("?") * 15)
-        + (")"),
-        rows,
-    )
-    conn.commit()
-    conn.close()
-    return ws
+    return _scenario(tmp_path, gens, fields)
 
 
 def test_field_round_names_the_new_champion_after_a_promotion(tmp_path: Path) -> None:
@@ -583,229 +359,45 @@ def test_field_round_names_the_new_champion_after_a_promotion(tmp_path: Path) ->
 
 
 def test_field_round_champion_metadata_comes_from_that_round(tmp_path: Path) -> None:
-    """A held champion's scalar and provenance come from the current field."""
-    ws = _field_round_workspace(tmp_path)
-    conn = sqlite3.connect(ws / "index.db")
-    # Round 1 has its own measurement.  Round 2 must not borrow it merely
-    # because v5 remains the champion.
-    conn.execute(
-        "UPDATE tournaments SET parent_scalar = ?, champion_eval_mode = ?, champion_run_ref = ? "
-        "WHERE tournament_id = ?",
-        (0.31, "fast", "round-1", f"{EPOCH}:v5->v6"),
-    )
-    comps = json.dumps(
-        [
-            {"generation_id": "v5", "seed": 1, "role": "champion"},
-            {"generation_id": "v8", "seed": 2, "role": "challenger"},
-            {"generation_id": "v9", "seed": 3, "role": "challenger"},
-        ]
-    )
-    conn.executemany(
-        "INSERT INTO tournaments("
-        "tournament_id, epoch_id, parent_generation_id, child_generation_id, decision, "
-        "parent_scalar, child_scalar, delta_scalar, rejection_reason, ran_at, structure, "
-        "structure_params_json, competitors_json, rounds_json, standings_json, "
-        "champion_eval_mode, champion_run_ref) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        [
-            (
-                f"{EPOCH}:v5->v8",
-                EPOCH,
-                "v5",
-                "v8",
-                "rejected",
-                0.42,
-                0.7,
-                0.28,
-                None,
-                "2026-06-01T03:00:00Z",
-                "racing",
-                None,
-                comps,
-                None,
-                None,
-                "fast-degraded",
-                "round-2",
-            ),
-            (
-                f"{EPOCH}:v5->v9",
-                EPOCH,
-                "v5",
-                "v9",
-                "rejected",
-                0.42,
-                0.8,
-                0.38,
-                None,
-                "2026-06-01T03:01:00Z",
-                "racing",
-                None,
-                comps,
-                None,
-                None,
-                "fast-degraded",
-                "round-2",
-            ),
-            (
-                f"{EPOCH}:field:v8",
-                EPOCH,
-                "",
-                "",
-                "rejected",
-                None,
-                None,
-                None,
-                "",
-                "2026-06-01T03:02:00Z",
-                "racing",
-                None,
-                comps,
-                json.dumps([]),
-                json.dumps([]),
-                None,
-                None,
-            ),
-        ],
-    )
-    conn.commit()
-    conn.close()
-    gens_dir = ws / "epochs" / EPOCH / "generations"
-    for gid in ("v8", "v9"):
-        _write_json(
-            gens_dir / gid / "experiment.json",
-            {
-                "parent_generation_id": "v5",
-                "round_index": 2,
-                "outcome": {"tournament_decision": "rejected"},
-            },
-        )
-    # lineage.json is the SOLE authority for topology (DQ14) — experiment.json is
-    # proposal metadata. Without these rows v8/v9 read back parentless with
-    # promoted=None, i.e. as seeds rather than as v5's challengers, and the round
-    # this test names would not be the round it describes.
-    lineage = json.loads((ws / "lineage.json").read_text(encoding="utf-8"))
-    lineage["epochs"][0]["generations"] += [
-        {"id": "v8", "parent_id": "v5", "promoted": False},
-        {"id": "v9", "parent_id": "v5", "promoted": False},
-    ]
-    _write_json(ws / "lineage.json", lineage)
+    """A held champion's scalar and evaluation mode come from the recorded round."""
+    from dataclasses import replace
 
-    timeline = build_round_timeline(WorkspacePaths(ws), EPOCH)
-    champion = timeline["rounds"][2]["champion"]
+    from zicato.epoch.settlement_receipt import read_settlement_receipt, write_settlement_receipt
+
+    ws = _field_round_workspace(tmp_path, third_round="settled")
+    for round_index, scalar in [(1, 0.31), (2, 0.42)]:
+        receipt = read_settlement_receipt(ws, EPOCH, round_index)
+        write_settlement_receipt(
+            ws,
+            replace(
+                receipt,
+                candidates=tuple(
+                    replace(candidate, parent_scalar=scalar) for candidate in receipt.candidates
+                ),
+            ),
+        )
+    champion = build_round_timeline(WorkspacePaths(ws), EPOCH)["rounds"][2]["champion"]
     assert champion == {
         "id": "v5",
         "scalar": pytest.approx(0.42),
         "eval_mode": "fast-degraded",
-        "run_ref": "round-2",
+        "run_ref": f"epochs/{EPOCH}/generations/v5",
         "from_record": True,
     }
 
 
-def test_field_round_with_no_crowning_row_reports_an_unknown_eval_mode(
-    tmp_path: Path,
-) -> None:
-    """A round that has not been evaluated says so, rather than claiming a re-run.
-
-    ``_open_field_tournament`` dual-writes the field row at OPEN — before any
-    per-challenger crowning row for that round exists — so mid-round the reader
-    can resolve WHO defends (the role tag) while nothing yet says HOW it was
-    evaluated. That is genuinely unknown, and the round timeline already spells
-    unknown as ``eval_mode: None`` (an unmatched record, and the live in-flight
-    round). Defaulting it to ``"full"`` would make the tree paint
-    "defends · re-run" for work that has not happened.
-    """
-    ws = _field_round_workspace(tmp_path)
-    conn = sqlite3.connect(ws / "index.db")
-    # Round 2 opens: its field row lands with the role-tagged competitors, and
-    # v8/v9 have been applied — but no v5->v8 / v5->v9 duel row exists yet.
-    comps = json.dumps(
-        [
-            {"generation_id": "v5", "seed": 1, "role": "champion"},
-            {"generation_id": "v8", "seed": 2, "role": "challenger"},
-            {"generation_id": "v9", "seed": 3, "role": "challenger"},
-        ]
-    )
-    conn.execute(
-        "INSERT INTO tournaments("
-        "tournament_id, epoch_id, parent_generation_id, child_generation_id, decision, "
-        "parent_scalar, child_scalar, delta_scalar, rejection_reason, ran_at, structure, "
-        "structure_params_json, competitors_json, rounds_json, standings_json) "
-        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        (
-            f"{EPOCH}:field:v8",
-            EPOCH,
-            "",
-            "",
-            "",
-            None,
-            None,
-            None,
-            "",
-            "2026-06-01T03:02:00Z",
-            "racing",
-            None,
-            comps,
-            json.dumps([]),
-            json.dumps([]),
-        ),
-    )
-    conn.commit()
-    conn.close()
-    gens_dir = ws / "epochs" / EPOCH / "generations"
-    for gid in ("v8", "v9"):
-        _write_json(
-            gens_dir / gid / "experiment.json",
-            {"parent_generation_id": "v5", "round_index": 2},
-        )
-    lineage = json.loads((ws / "lineage.json").read_text(encoding="utf-8"))
-    lineage["epochs"][0]["generations"] += [
-        {"id": "v8", "parent_id": "v5", "promoted": None},
-        {"id": "v9", "parent_id": "v5", "promoted": None},
-    ]
-    _write_json(ws / "lineage.json", lineage)
-
+def test_field_round_with_no_crowning_row_reports_an_unknown_eval_mode(tmp_path: Path) -> None:
+    """An opened tournament names its defender without inventing an evaluation mode."""
+    ws = _field_round_workspace(tmp_path, third_round="running")
     champion = build_round_timeline(WorkspacePaths(ws), EPOCH)["rounds"][2]["champion"]
-    # WHO defends is known — the record tags it.
     assert champion["id"] == "v5"
-    # HOW it was evaluated is not. tree.js renders None as plain "defends";
-    # "full" would render "defends · re-run".
     assert champion["eval_mode"] is None
     assert champion["run_ref"] is None
 
 
 def test_round_timeline_drops_a_numerically_stamped_seed(tmp_path: Path) -> None:
-    """A stamped seed is not a round: no phantom round 0 with an empty field.
-
-    ``write_seed_experiment`` persists ``round_index: 0`` on the parentless seed.
-    The bucketing skipped the seed only when its stamp was ABSENT, so a stamped
-    one formed a bucket of its own — and since the carried champion is never a
-    minted challenger, that bucket emptied downstream into a round where the old
-    champion "defends" nothing. Epochs stamped this way are already on disk (the
-    stamps are never rewritten), so the reader has to hold the line too.
-    """
-    ws = _gauntlet_workspace(tmp_path)
-    gens_dir = ws / "epochs" / EPOCH / "generations"
-    # the seed, exactly as write_seed_experiment leaves it: parentless, stamped 0.
-    _write_json(
-        gens_dir / "v0" / "experiment.json",
-        {"parent_generation_id": None, "round_index": 0},
-    )
-    # the real field, stamped 1 — what an epoch gets when the base counted the seed.
-    _write_json(
-        gens_dir / "v1" / "experiment.json",
-        {
-            "parent_generation_id": "v0",
-            "round_index": 1,
-            "outcome": {"tournament_decision": "rejected"},
-        },
-    )
-    _write_json(
-        gens_dir / "v2" / "experiment.json",
-        {
-            "parent_generation_id": "v0",
-            "round_index": 1,
-            "outcome": {"tournament_decision": "promoted"},
-        },
-    )
+    """A baseline's zero stamp does not create an empty tournament round."""
+    ws = _gauntlet_workspace(tmp_path, round_indices=(1, 1))
     tl = build_round_timeline(WorkspacePaths(ws), EPOCH)
     assert tl["source"] == "round_index"
     rounds = tl["rounds"]
@@ -866,8 +458,7 @@ def test_round_timeline_endpoint_and_empty_degrade(tmp_path: Path, static_dir: P
 
 
 def _elim_workspace(tmp_path: Path) -> Path:
-    """One settled single-elim tournament, rounds MIS-ORDERED on purpose."""
-    ws = _base_workspace(tmp_path)
+    """An elimination record with its final listed before the opening matches."""
     rounds = [
         # the final FIRST — the server must serve it sorted (WB rounds first).
         {
@@ -896,47 +487,26 @@ def _elim_workspace(tmp_path: Path) -> Path:
             ],
         },
     ]
-    conn = sqlite3.connect(ws / "index.db")
-    apply_schema(conn)
-    conn.executemany(
-        (
-            "INSERT INTO generations(epoch_id, generation_id, parent_generation_id,"
-            " promoted, created_at) VALUES(?,?,?,?,?)"
-        ),
+    field = _field(
+        "v0", ["v1", "v2", "v3"], primary="v1", rounds=tuple(rounds), structure="single_elim"
+    )
+    return _scenario(
+        tmp_path,
         [
-            (EPOCH, "v0", None, 1, "2026-06-01T00:00:00Z"),
-            (EPOCH, "v1", "v0", 1, "2026-06-01T01:00:00Z"),
+            Gen("v0", scalar=1.0),
+            *[
+                Gen(
+                    gid,
+                    "v0",
+                    "promoted" if gid == "v1" else "rejected",
+                    scalar=0.5,
+                    structure="single_elim",
+                )
+                for gid in ["v1", "v2", "v3"]
+            ],
         ],
+        [field],
     )
-    conn.execute(
-        (
-            "INSERT INTO tournaments(tournament_id, epoch_id, parent_generation_id,"
-            " child_generation_id, decision, parent_scalar, child_scalar, "
-            "delta_scalar, rejection_reason, ran_at, structure, "
-            "structure_params_json, competitors_json, rounds_json, standings_json) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
-        ),
-        (
-            f"{EPOCH}:field:v1",
-            EPOCH,
-            "",
-            "v1",
-            "promoted",
-            None,
-            None,
-            None,
-            None,
-            "2026-06-01T02:00:00Z",
-            "single_elim",
-            json.dumps({}),
-            json.dumps([{"generation_id": "v1"}, {"generation_id": "v2"}, {"generation_id": "v3"}]),
-            json.dumps(rounds),
-            json.dumps([]),
-        ),
-    )
-    conn.commit()
-    conn.close()
-    return ws
 
 
 def test_tournament_structure_serves_the_elim_model(tmp_path: Path, static_dir: Path) -> None:
