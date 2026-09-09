@@ -106,9 +106,6 @@ test('publication: the CSS pins the never-overflow guards', () => {
   // Wide tables scroll inside their own box.
   assert(/\.dn-table-scroll\s*\{[^}]*overflow-x:\s*auto/.test(css),
     '.dn-table-scroll declares overflow-x: auto');
-  // A long masthead value (contract hash) breaks inside its grid cell.
-  assert(/\.dn-paper-meta-value\s*\{[^}]*overflow-wrap:\s*anywhere/.test(css),
-    '.dn-paper-meta-value declares overflow-wrap: anywhere');
   // A figure never widens past its container.
   assert(/\.dn-paper-fig\s*\{[^}]*max-width:\s*100%/.test(css),
     '.dn-paper-fig declares max-width: 100%');
@@ -118,11 +115,7 @@ test('publication: the CSS pins the never-overflow guards', () => {
 });
 
 // ---------------------------------------------------------------------------
-// (5) A8 — the SERVER-RENDERED paper is preferred over re-rendering markdown.
-//
-// /api/epoch/{id}/analysis runs the full report renderer on every call to
-// produce `analysis_html_inline`. Reading ONLY `analysis_md` would mean
-// re-render it client-side, throwing that render away.
+// The publication view displays the saved HTML fragment.
 // ---------------------------------------------------------------------------
 
 

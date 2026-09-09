@@ -934,7 +934,7 @@ The workspace writer retains the `ActiveTournament` state and its sequenced
 | Event | Payload | Reader operation |
 |---|---|---|
 | `Snapshot` | Complete `ActiveTournament.to_dict()` envelope | Replace the accumulated state |
-| `Update` | Changed top-level fields, each containing its complete replacement value | Replace those fields in the accumulated state |
+| `Update` | `fields` contains complete replacement values; `entries` maps fixed array positions to complete board-entry rows | Replace the named fields and entry rows in the accumulated state |
 
 `write_active_tournament` calculates display progress and appends a snapshot.
 Entry transitions, partial aggregates, and competitor projections use the

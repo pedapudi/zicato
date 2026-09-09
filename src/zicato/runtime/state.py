@@ -875,10 +875,15 @@ def _update_active_tournament(writer: WorkspaceLock, **updates: Any) -> None:
         return
     updated = _complete_tournament_progress(replace(current, **updates))
     before, after = current.to_dict(), updated.to_dict()
+    entries = {
+        str(index): entry
+        for index, entry in enumerate(after.pop("entries"))
+        if entry != before["entries"][index]
+    }
     fields = {key: value for key, value in after.items() if value != before[key]}
-    if fields:
+    if fields or entries:
         lease.tournament_state = None
-        writer.tournament_log.append("Update", fields)
+        writer.tournament_log.append("Update", {"fields": fields, "entries": entries})
     lease.tournament_state = updated
 
 

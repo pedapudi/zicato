@@ -50,9 +50,9 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 473,401 | +64,740 |
-| Production | 197,702 | 191,164 | -6,538 |
-| Production logic | 110,276 | 111,206 | +930 |
+| Total | 408,661 | 473,423 | +64,762 |
+| Production | 197,702 | 191,187 | -6,515 |
+| Production logic | 110,276 | 111,228 | +952 |
 
 The baseline row is the reference `f9052dd` measured by the classification the
 checker holds, which counts the console's hand-written entry point
@@ -84,19 +84,19 @@ production-logic series per subsystem along a branch's first-parent commits.
 
 | Subsystem | Total | Production | Production logic | Prose share |
 |---|---:|---:|---:|---:|
-| src/zicato/dashboard | 62,026 | 32,180 | 22,145 | 31.2% |
+| src/zicato/dashboard | 62,019 | 32,180 | 22,145 | 31.2% |
 | src/zicato/query | 19,709 | 19,709 | 12,257 | 37.8% |
 | src/zicato/epoch | 13,973 | 13,973 | 7,797 | 44.2% |
 | src/zicato/evolve | 11,402 | 11,402 | 7,240 | 36.5% |
 | src/zicato/reflection | 9,855 | 9,855 | 6,590 | 33.1% |
-| crates/supervisor | 16,312 | 13,897 | 6,479 | 53.4% |
+| crates/supervisor | 16,327 | 13,912 | 6,494 | 53.3% |
 | src/zicato/tournament | 11,066 | 11,066 | 6,425 | 41.9% |
 | src/zicato/proposer | 9,521 | 9,521 | 4,772 | 49.9% |
 | src/zicato/cli | 7,088 | 7,088 | 4,697 | 33.7% |
 | src/zicato/analyzer | 7,212 | 7,212 | 4,613 | 36.0% |
 | src/zicato/selection | 5,278 | 5,278 | 3,060 | 42.0% |
 | src/zicato/core | 6,401 | 6,401 | 2,813 | 56.1% |
-| src/zicato/runtime | 5,181 | 5,181 | 2,517 | 51.4% |
+| src/zicato/runtime | 5,189 | 5,189 | 2,524 | 51.4% |
 | src/zicato/index | 4,409 | 4,409 | 2,399 | 45.6% |
 | src/zicato/telemetry | 4,505 | 4,505 | 2,198 | 51.2% |
 | src/zicato/contract_draft | 2,468 | 2,468 | 1,622 | 34.3% |
@@ -447,6 +447,6 @@ dropped rows named.
 | Shared report observations and display comparisons (total) | 473,917 | -145 | 473,772 | Issue #519: reuse experiment observations, source storage readers, proposer formatting, final round attempts and finite scores. Complete display inputs replace partial comparisons. Two repeated Swiss executions share the existing complete-tournament assertions. |
 | Shared report observations and display comparisons (production) | 193,133 | -177 | 192,956 | Issue #519: reuse experiment observations, source storage readers, proposer formatting, final round attempts and finite scores. Complete display inputs replace partial comparisons. Two repeated Swiss executions share the existing complete-tournament assertions. |
 | Shared report observations and display comparisons (production logic) | 112,050 | -54 | 111,996 | Issue #519: reuse experiment observations, source storage readers, proposer formatting, final round attempts and finite scores. Complete display inputs replace partial comparisons. Two repeated Swiss executions share the existing complete-tournament assertions. |
-| Measurement records, tournament progress and reports (total) | 473,772 | -371 | 473,401 | Issue #522: explicit measurements replace integer ranges; tournaments publish complete display values; one report assembly publishes recorded prose and measured results. Existing visualizations and evaluation rules remain. |
-| Measurement records, tournament progress and reports (production) | 192,956 | -1,792 | 191,164 | Issue #522: explicit measurements replace integer ranges; tournaments publish complete display values; one report assembly publishes recorded prose and measured results. Existing visualizations and evaluation rules remain. |
-| Measurement records, tournament progress and reports (production logic) | 111,996 | -790 | 111,206 | Issue #522: explicit measurements replace integer ranges; tournaments publish complete display values; one report assembly publishes recorded prose and measured results. Existing visualizations and evaluation rules remain. |
+| Measurement records, tournament progress and reports (total) | 473,772 | -349 | 473,423 | Issue #522: explicit measurements replace integer ranges; tournaments publish complete display values; one report assembly publishes recorded prose and measured results. Existing visualizations and evaluation rules remain. |
+| Measurement records, tournament progress and reports (production) | 192,956 | -1,769 | 191,187 | Issue #522: explicit measurements replace integer ranges; tournaments publish complete display values; one report assembly publishes recorded prose and measured results. Existing visualizations and evaluation rules remain. |
+| Measurement records, tournament progress and reports (production logic) | 111,996 | -768 | 111,228 | Issue #522: explicit measurements replace integer ranges; tournaments publish complete display values; one report assembly publishes recorded prose and measured results. Existing visualizations and evaluation rules remain. |

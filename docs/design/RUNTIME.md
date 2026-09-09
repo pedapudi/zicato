@@ -223,10 +223,11 @@ before it escalates.
 ### 2.3 `active_tournament.events.jsonl` — published tournament display state
 
 Each record contains `seq`, `ts`, `type`, and `payload`. `Snapshot` carries a
-complete `ActiveTournament` envelope. `Update` carries complete replacement
-values for changed top-level fields. Readers replay records in order: a
-snapshot resets the state, and an update replaces the named fields. Collection
-fields such as `entries`, `rounds`, and `projected` are replaced in full.
+complete `ActiveTournament` envelope. `Update.fields` carries complete replacement
+values for changed top-level fields. `Update.entries` maps array positions to
+complete board-entry rows. Entry positions stay fixed until the next snapshot,
+so updating one row does not copy the whole board into the log. Readers apply
+these replacements in order without calculating display values.
 
 The acquired workspace writer retains the published tournament state and log
 sequence. It computes pending-match progress, queued rounds, lane counts, and

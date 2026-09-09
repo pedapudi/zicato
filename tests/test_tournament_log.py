@@ -61,8 +61,13 @@ def test_write_produces_the_event_log_not_the_legacy_snapshot(tmp_path: Path) ->
 
 def test_each_mutation_is_one_append_no_read_modify_write(tmp_path: Path) -> None:
     with acquire_workspace_lock(tmp_path, "test-publication") as writer:
+        snapshot = _sample()
+        snapshot.entries.extend(
+            ActiveTournamentEntry(entry_id=f"entry-{i}", side="child", status="queued")
+            for i in range(1000)
+        )
         with patch.object(writer.tournament_log, "tail", wraps=writer.tournament_log.tail) as scan:
-            write_active_tournament(writer, _sample())
+            write_active_tournament(writer, snapshot)
             update_tournament_entry(writer, "b0", "child", status="running")
             update_tournament_partial_aggregate(writer, challenger_agg={"scalar": 0.5})
             update_tournament_projected(
@@ -75,6 +80,7 @@ def test_each_mutation_is_one_append_no_read_modify_write(tmp_path: Path) -> Non
     seqs = [json.loads(line)["seq"] for line in lines]
     assert types == ["Snapshot", "Update", "Update", "Update"]
     assert seqs == [1, 2, 3, 4]
+    assert len(lines[1].encode()) < 1024, "one entry update must not copy the whole board"
 
 
 # ---------------------------------------------------------------------------

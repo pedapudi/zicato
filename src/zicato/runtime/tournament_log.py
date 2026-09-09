@@ -2,6 +2,7 @@
 
 The owned runtime writer calculates display progress before appending. Readers
 replay the last snapshot and later replacements without tournament rules.
+Entry updates replace complete rows at positions fixed by the snapshot.
 """
 
 from __future__ import annotations
@@ -34,5 +35,7 @@ def fold_active_tournament(workspace_root: Path) -> Any | None:
         if event.type == SNAPSHOT:
             current = dict(event.payload)
         elif event.type == UPDATE and current is not None:
-            current.update(event.payload)
+            current.update(event.payload["fields"])
+            for index, entry in event.payload["entries"].items():
+                current["entries"][int(index)] = entry
     return ActiveTournament.from_dict(current) if current is not None else None

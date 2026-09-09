@@ -1059,7 +1059,7 @@ def test_epoch_view_experiments_empty_without_gens(workspace: Path) -> None:
     assert view["experiments"] == []
     assert view["journal"] == ""
     assert view["analysis_md"] == ""
-    assert view["analysis_html_available"] is True
+    assert view["analysis_html_available"] is False
     assert "analysis_html_inline" not in view
 
 

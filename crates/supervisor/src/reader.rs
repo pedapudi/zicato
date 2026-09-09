@@ -229,12 +229,27 @@ fn fold_active_tournament_value_with_stats(
         match ty {
             "Snapshot" => current = payload.clone(),
             "Update" => {
-                if let (Some(fields), Some(view)) = (payload.as_object(), current.as_object_mut()) {
+                if let (Some(fields), Some(view)) = (
+                    payload.get("fields").and_then(|v| v.as_object()),
+                    current.as_object_mut(),
+                ) {
                     view.extend(
                         fields
                             .iter()
                             .map(|(key, value)| (key.clone(), value.clone())),
                     );
+                }
+                if let (Some(updates), Some(entries)) = (
+                    payload.get("entries").and_then(|v| v.as_object()),
+                    current.get_mut("entries").and_then(|v| v.as_array_mut()),
+                ) {
+                    for (index, entry) in updates {
+                        if let Some(row) =
+                            index.parse::<usize>().ok().and_then(|i| entries.get_mut(i))
+                        {
+                            *row = entry.clone();
+                        }
+                    }
                 }
             }
             _ => {}
@@ -687,8 +702,8 @@ mod tests {
         let (_t, p) = make_ws();
         let log = [
             r#"{"seq":1,"ts":"t","type":"Snapshot","payload":{"tournament_id":"t1","entries":[{"entry_id":"b0","side":"child","status":"queued"},{"entry_id":"b0","side":"parent","status":"queued"}]}}"#,
-            r#"{"seq":2,"ts":"t","type":"Update","payload":{"entries":[{"entry_id":"b0","side":"child","status":"running"},{"entry_id":"b0","side":"parent","status":"queued"}]}}"#,
-            r#"{"seq":3,"ts":"t","type":"Update","payload":{"partial_challenger_agg":{"scalar":0.5},"standings":[{"generation_id":"v1","rank":1}],"projected":{"v1":{"scalar":0.25}}}}"#,
+            r#"{"seq":2,"ts":"t","type":"Update","payload":{"fields":{},"entries":{"0":{"entry_id":"b0","side":"child","status":"running"},"1":{"entry_id":"b0","side":"parent","status":"queued"}}}}"#,
+            r#"{"seq":3,"ts":"t","type":"Update","payload":{"fields":{"partial_challenger_agg":{"scalar":0.5},"standings":[{"generation_id":"v1","rank":1}],"projected":{"v1":{"scalar":0.25}}},"entries":{}}}"#,
         ]
         .join("\n");
         std::fs::write(p.active_tournament_log(), log).unwrap();
@@ -759,8 +774,8 @@ mod tests {
         let (_t, p) = make_ws();
         let log = [
             r#"{"seq":1,"ts":"t","type":"Snapshot","payload":{"tournament_id":"t1","entries":[]}}"#,
-            r#"{"seq":2,"ts":"t","type":"Update","payload":{"entries":[]}}"#,
-            r#"{"seq":3,"ts":"t","type":"Update","payload":{"partial_challenger_agg":{"scalar":0.5}}}"#,
+            r#"{"seq":2,"ts":"t","type":"Update","payload":{"fields":{},"entries":{}}}"#,
+            r#"{"seq":3,"ts":"t","type":"Update","payload":{"fields":{"partial_challenger_agg":{"scalar":0.5}},"entries":{}}}"#,
         ]
         .join("\n");
         std::fs::write(p.active_tournament_log(), log).unwrap();
@@ -780,7 +795,7 @@ mod tests {
             r#"{"seq":1,"ts":"t","type":"Snapshot","payload":{"tournament_id":"t1","entries":[]}}"#,
             r#"{"seq":2,"ts":"t","type":"EntryUp"#, // torn mid-line
             r#"not json at all"#,                   // garbage
-            r#"{"seq":3,"ts":"t","type":"Update","payload":{"partial_challenger_agg":{"scalar":0.9}}}"#,
+            r#"{"seq":3,"ts":"t","type":"Update","payload":{"fields":{"partial_challenger_agg":{"scalar":0.9}},"entries":{}}}"#,
         ]
         .join("\n");
         std::fs::write(p.active_tournament_log(), log).unwrap();
@@ -802,9 +817,9 @@ mod tests {
         let (_t, p) = make_ws();
         let log = [
             r#"{"seq":1,"ts":"t","type":"Snapshot","payload":{"tournament_id":"t1","entries":[]}}"#,
-            r#"{"seq":2,"ts":"t","type":"Update","payload":{}}"#,
-            r#"{"seq":5,"ts":"t","type":"Update","payload":{}}"#,
-            r#"{"seq":3,"ts":"t","type":"Update","payload":{}}"#,
+            r#"{"seq":2,"ts":"t","type":"Update","payload":{"fields":{},"entries":{}}}"#,
+            r#"{"seq":5,"ts":"t","type":"Update","payload":{"fields":{},"entries":{}}}"#,
+            r#"{"seq":3,"ts":"t","type":"Update","payload":{"fields":{},"entries":{}}}"#,
         ]
         .join("\n");
         std::fs::write(p.active_tournament_log(), log).unwrap();
