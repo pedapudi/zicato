@@ -46,31 +46,11 @@ EXPERIMENTAL_STRATEGY_REGISTRY: dict[str, type[SelectionStrategy]] = {
     SwissStrategy.structure: SwissStrategy,
 }
 
-#: The per-structure default ``replicates`` (when ``params["replicates"]`` is
-#: unset), DERIVED from each strategy's own ``_default_replicates`` ClassVar —
-#: the SINGLE SOURCE OF TRUTH. A strategy resolves its own default in
-#: ``__init__`` against the same ClassVar this map reads, so the map and the
-#: live strategy can never disagree: changing one changes both. The builder
-#: cost estimator reads this instead of assuming a flat ``1``, so the cost
-#: meter matches the schedule a structure actually runs (the under-reporting
-#: bug class — swiss/elim default to 2, not 1). Keyed by structure token,
-#: over both registries: the cost meter prices an experimental draft too.
-STRUCTURE_DEFAULT_REPLICATES: dict[str, int] = {
-    structure: cls._default_replicates
-    for structure, cls in (*STRATEGY_REGISTRY.items(), *EXPERIMENTAL_STRATEGY_REGISTRY.items())
-}
-
 
 def default_replicates_for(structure: str) -> int:
-    """The default ``replicates`` for a structure when the param is unset.
-
-    Reads :data:`STRUCTURE_DEFAULT_REPLICATES` (derived from the strategy's
-    own ``_default_replicates``), falling back to ``1`` for an unknown
-    structure token so a caller never raises on a stray token — it simply
-    gets the universal single-run default. This is the lookup the builder
-    cost estimator uses so its default matches each strategy's actual default.
-    """
-    return STRUCTURE_DEFAULT_REPLICATES.get(structure, 1)
+    """Read the replicate default directly from the declaring strategy class."""
+    strategy = STRATEGY_REGISTRY.get(structure) or EXPERIMENTAL_STRATEGY_REGISTRY.get(structure)
+    return strategy._default_replicates if strategy is not None else 1
 
 
 def make_strategy(
@@ -96,7 +76,7 @@ def make_strategy(
         board-aware structures (racing) default to the full epoch board
         without the operator having to list every id on the CLI, while
         leaving board-agnostic structures (gauntlet, single/double-elim,
-        swiss) untouched — they simply ignore the param.
+        swiss) untouched.
     replicates:
         The replicate count in effect for the epoch
         (:func:`zicato.selection.replicates.resolve_replicates`), injected
@@ -108,7 +88,7 @@ def make_strategy(
         usable one, injected as ``params["noise_floor_delta_std"]``. Racing
         resolves its rung cuts from it
         (:class:`zicato.selection.strategies.racing.RacingStrategy`); the
-        other structures ignore it. ``None`` injects nothing, and racing
+        other structures receive no injected floor. ``None`` injects nothing, and racing
         then cuts by rank alone.
     experimental:
         The contract's optional structure, standings-rating and leader-resolver
@@ -141,25 +121,28 @@ def make_strategy(
             f"registered structures are: {valid}"
         )
     params = dict(spec.params)
-    if experimental.standing_rating != "none":
+    if "rating" in cls.parameter_names and experimental.standing_rating != "none":
         params["rating"] = experimental.standing_rating
-    if experimental.resolver != "none":
+    if "resolver" in cls.parameter_names and experimental.resolver != "none":
         params["resolver"] = experimental.resolver
     # Default ``board_ids`` to the epoch's full board when the operator
     # did not pin a subset. Explicit ``params["board_ids"]`` always wins.
-    if board_ids is not None and "board_ids" not in params:
+    if "board_ids" in cls.parameter_names and board_ids is not None and "board_ids" not in params:
         params["board_ids"] = tuple(str(x) for x in board_ids)
     if replicates is not None and "replicates" not in params:
-        params["replicates"] = int(replicates)
-    if noise_floor_delta_std is not None and "noise_floor_delta_std" not in params:
-        params["noise_floor_delta_std"] = float(noise_floor_delta_std)
+        params["replicates"] = replicates
+    if (
+        "noise_floor_delta_std" in cls.parameter_names
+        and noise_floor_delta_std is not None
+        and "noise_floor_delta_std" not in params
+    ):
+        params["noise_floor_delta_std"] = noise_floor_delta_std
     return cls(params)
 
 
 __all__ = [
     "EXPERIMENTAL_STRATEGY_REGISTRY",
     "STRATEGY_REGISTRY",
-    "STRUCTURE_DEFAULT_REPLICATES",
     "default_replicates_for",
     "make_strategy",
 ]

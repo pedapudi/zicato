@@ -199,6 +199,11 @@ inputs and independent copies of mutable JSON values. Captures retain
 absence and read errors for the response lifetime. They are neither a
 cross-file transaction nor a process cache; the next request reads again.
 
+The polled epoch response carries analysis markdown and the availability
+of the saved HTML file. The publication view fetches rendered HTML from
+`/api/epoch/{epoch_id}/analysis`. Its `analysis_html_inline` field contains
+the report fragment, or an empty string when no fragment is available.
+
 Generation identity includes the epoch. The overview serves
 `champion_record` with its epoch, generation, recorded decision, and rating
 uncertainty. Terminal Home renders that record and includes its decision

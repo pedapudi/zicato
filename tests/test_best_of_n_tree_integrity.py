@@ -1,43 +1,20 @@
-"""Best-of-N tree integrity — the MOUNTED child tree matches the SELECTION.
+"""Selected best-of-three candidates agree with stored and measured trees.
 
-Known-answer e2e over the target_0 planted-defect contract with
-``proposer_quality.best_of_n = 3`` (the shipped DEFAULT slate width).
+Two complete rounds use the planted-defect example, real proposal episodes,
+subprocess tournament workers, and the Git generation store. The gauntlet
+samples its slate serially; the two-challenger racing field samples each
+slate concurrently. The critic selects slot zero while the final slot carries
+a worse policy, so incorrect tree selection changes the known scalar.
 
-The invariant under test (WS-CONC rework)
------------------------------------------
-Each slate slot now validates into its OWN per-slot SCRATCH tree, and the
-CHOSEN candidate is derived into the real ``next_id`` exactly once, after
-selection, by one unconditional final derive. So the post-condition this
-suite pins is: **after ``propose`` returns, the mounted ``next_id`` tree
-matches the CHOSEN candidate, and no scratch residue is left behind** — no
-extra generation ever appears in the store's namespace (every scratch tree is
-off-namespace and invisible to ``list_generations``), and no ``ztw-slate-*``
-temp directory survives the round. This replaces the pre-rework invariant
-("re-derive the chosen candidate only when it is not the last-validated one"):
-the shared ``next_id`` derive that every slot used to race on is gone, so the
-old last-writer-wins mismatch it guarded against cannot arise.
+Both rounds check proposal repair, persisted patches, committed and mounted
+tree agreement, containment, and scratch cleanup. The field also checks that
+its distinct hypotheses describe distinct applied policies.
 
-Both pipelines are exercised at ``propose_parallelism`` **1 AND 4** — the
-serial reference and the concurrent gather — and the invariant must hold
-identically at both (the deterministic post-gather pass makes the observable
-outcome independent of the knob).
-
-Both evolve pipelines are driven for real (subprocess tournament workers, the
-default git generation store):
-
-* GAUNTLET — a scripted 3-candidate slate whose critic picks candidate 0
-  (the best token set, the known floor) while the LAST-sampled candidate is a
-  strictly worse ``fabricate-metrics`` decoy. The round must promote at the
-  chosen candidate's exact known scalar and the persisted generation tree
-  must carry the chosen candidate's patch content, not the decoy's.
-* FIELD (racing, field_size=2) — per-challenger slates with the same shape.
-  Every applied challenger's tree must agree with its persisted experiment
-  (the same experiment whose hypothesis signature the field-diversity check
-  judged), and the best chosen arm must survive to the known floor.
-
-The slate payloads + the scripted critic live in the importable
-module-level :mod:`tests._best_of_n_slate_support` (worker-boundary rule:
-role callables cross the subprocess boundary as dotted paths).
+Both structures use the same candidate-production owner. Direct tests in
+``test_slate_concurrency.py`` compare serial and concurrent slate results and
+events, force out-of-order completion with real Git mounts, and check cleanup
+after cancellation or sibling failure. Those tests cover scheduling variations
+without repeating the complete tournament for each structure and width.
 """
 
 from __future__ import annotations
@@ -226,13 +203,10 @@ def _patch_content(workspace: Path, epoch_id: str, generation_id: str) -> str:
     return str(experiment.patches[0].new_content).strip().strip("\"'")
 
 
-@pytest.mark.parametrize("propose_parallelism", [1, 4])
 def test_gauntlet_mounts_the_chosen_candidate_tree(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, propose_parallelism: int
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The critic picks candidate 0; the round must score + persist THAT
-    candidate's tree, not the last-sampled decoy's — at serial AND gathered
-    propose-parallelism, with no scratch residue left behind."""
+    """Serial proposal sampling persists and scores the critic's chosen tree."""
     # Route the in-process slate scratch (``ztw-slate-*``) into a test-local
     # temp dir so the residue check cannot collide with a sibling xdist worker.
     scratch_tmp = tmp_path / "tmp"
@@ -244,7 +218,7 @@ def test_gauntlet_mounts_the_chosen_candidate_tree(
             "structure": "gauntlet",
             "params": {"replicates": 1, "promote_confidence_threshold": None},
         },
-        propose_parallelism=propose_parallelism,
+        propose_parallelism=1,
         policies=slate_mocks.GAUNTLET_POLICIES,
     )
 
@@ -296,15 +270,10 @@ def test_gauntlet_mounts_the_chosen_candidate_tree(
     _assert_no_scratch_residue(workspace, epoch_id, scratch_tmp, {"v0", "v1"})
 
 
-@pytest.mark.parametrize("propose_parallelism", [1, 4])
 def test_field_mounts_each_chosen_candidate_tree(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, propose_parallelism: int
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Racing field of 2, each challenger proposed through a best-of-3 slate:
-    every applied challenger's tree must match its persisted experiment (the
-    experiment whose diversity signature `_mint_challenger_field` judged),
-    and the best chosen arm survives to the known floor — at serial AND
-    gathered propose-parallelism, with no scratch residue."""
+    """Concurrent slates preserve each field candidate's tree and hypothesis."""
     scratch_tmp = tmp_path / "tmp"
     scratch_tmp.mkdir()
     monkeypatch.setattr(tempfile, "tempdir", str(scratch_tmp))
@@ -319,7 +288,7 @@ def test_field_mounts_each_chosen_candidate_tree(
                 "board_fraction": 0.4,
             },
         },
-        propose_parallelism=propose_parallelism,
+        propose_parallelism=4,
         policies=slate_mocks.FIELD_POLICIES,
     )
 

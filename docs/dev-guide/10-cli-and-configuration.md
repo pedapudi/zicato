@@ -74,7 +74,10 @@ Operations have edit semantics as well as value types. A nullable argument may
 mean no edit, and a mapping may replace an entire mapping. Read the owning
 signature before changing a caller; do not assume an update merges nested
 values. Editable and frozen scoring use the same strict configuration decoder.
-Do not add another acceptance policy in an operation.
+Do not add another acceptance policy in an operation. Tournament strategy
+construction validates parameters for the selected format. Draft validation,
+cost estimation, and publication use that same check. Switching formats keeps
+explicit parameter edits; remove incompatible settings before publication.
 
 ## 10.3 Estimating evaluation cost
 
@@ -83,10 +86,13 @@ a board-run estimate, and a tuple of `CostLine` entries. It estimates the
 schedule. Physical worker launches and execution cost also depend on cache
 hits, early termination, missing candidates, and confirmation outcomes.
 
-The estimator reads the strategy's default replicate count when the contract
-does not pin one. It includes the structure schedule, holdout confirmation,
-candidate screening, independent crowning confirmation, and any enabled
-placebo cadence. Racing sums its growing board slices and final duel.
+The estimator reads the strategy's resolved field size, replicate count, and
+format settings. Gauntlet has one challenger. Swiss pairings include the
+champion. Racing sizes its early rounds from the configured task subset and
+uses the full training board for its final duel.
+
+The estimate includes holdout confirmation, candidate screening, independent
+crowning confirmation, and any enabled placebo cadence.
 
 Independent crowning confirmation can spend up to `budget × 2 × train_entries`
 board runs: each draw evaluates both fixed contestants on the train board.

@@ -181,8 +181,7 @@
         "journal": "",
         "goal": "Name sorts first, created last — the bug mirror.",
         "analysis_md": "",
-        "analysis_html_available": false,
-        "analysis_html_inline": ""
+        "analysis_html_available": false
       },
       "paused": false,
       "generated_at": "<masked>"
@@ -518,8 +517,7 @@
       "journal": "",
       "goal": "Name sorts first, created last — the bug mirror.",
       "analysis_md": "",
-      "analysis_html_available": false,
-      "analysis_html_inline": ""
+      "analysis_html_available": false
     }
   },
   "epoch/scoped": {
@@ -701,8 +699,7 @@
       "journal": "",
       "goal": "First epoch chronologically.",
       "analysis_md": "",
-      "analysis_html_available": false,
-      "analysis_html_inline": ""
+      "analysis_html_available": false
     }
   },
   "epoch/rejected-scope": {
@@ -3872,8 +3869,7 @@
       "journal": "",
       "goal": "Make the presentation agent crisper.",
       "analysis_md": "",
-      "analysis_html_available": false,
-      "analysis_html_inline": ""
+      "analysis_html_available": false
     }
   },
   "console/lineage": {
@@ -8363,8 +8359,7 @@
       "journal": "",
       "goal": "Identity.",
       "analysis_md": "",
-      "analysis_html_available": false,
-      "analysis_html_inline": ""
+      "analysis_html_available": false
     }
   },
   "identity/lineage": {
@@ -9425,8 +9420,7 @@
       "journal": "",
       "goal": "g",
       "analysis_md": "",
-      "analysis_html_available": false,
-      "analysis_html_inline": ""
+      "analysis_html_available": false
     }
   },
   "racing_ladder/lineage": {
@@ -10705,8 +10699,7 @@
       "journal": "",
       "goal": "g",
       "analysis_md": "",
-      "analysis_html_available": false,
-      "analysis_html_inline": ""
+      "analysis_html_available": false
     }
   },
   "racing_no_records/lineage": {
@@ -12174,8 +12167,7 @@
       "journal": "",
       "goal": "g",
       "analysis_md": "",
-      "analysis_html_available": false,
-      "analysis_html_inline": ""
+      "analysis_html_available": false
     }
   },
   "two_epochs/lineage": {
@@ -12643,8 +12635,7 @@
       "journal": "",
       "goal": "g",
       "analysis_md": "",
-      "analysis_html_available": false,
-      "analysis_html_inline": ""
+      "analysis_html_available": false
     }
   },
   "two_epochs/older/lineage": {
@@ -13337,8 +13328,7 @@
       "journal": "",
       "goal": "g",
       "analysis_md": "",
-      "analysis_html_available": false,
-      "analysis_html_inline": ""
+      "analysis_html_available": false
     }
   },
   "two_epochs/newer/lineage": {
@@ -13771,8 +13761,7 @@
       "journal": "",
       "goal": "g",
       "analysis_md": "",
-      "analysis_html_available": false,
-      "analysis_html_inline": ""
+      "analysis_html_available": false
     }
   },
   "racing_round_settled/lineage": {
@@ -15239,8 +15228,7 @@
       "journal": "",
       "goal": "g",
       "analysis_md": "",
-      "analysis_html_available": false,
-      "analysis_html_inline": ""
+      "analysis_html_available": false
     }
   },
   "racing_round_live/lineage": {
@@ -15930,8 +15918,7 @@
       "journal": "",
       "goal": "g",
       "analysis_md": "",
-      "analysis_html_available": false,
-      "analysis_html_inline": ""
+      "analysis_html_available": false
     }
   },
   "single_elim/lineage": {
@@ -17435,8 +17422,7 @@
       "journal": "",
       "goal": "g",
       "analysis_md": "",
-      "analysis_html_available": false,
-      "analysis_html_inline": ""
+      "analysis_html_available": false
     }
   },
   "swiss/lineage": {
@@ -18653,8 +18639,7 @@
       "journal": "",
       "goal": "g",
       "analysis_md": "",
-      "analysis_html_available": false,
-      "analysis_html_inline": ""
+      "analysis_html_available": false
     }
   },
   "double_elim/lineage": {
@@ -20236,8 +20221,7 @@
       "journal": "",
       "goal": "g",
       "analysis_md": "",
-      "analysis_html_available": false,
-      "analysis_html_inline": ""
+      "analysis_html_available": false
     }
   },
   "swiss_proposing/lineage": {
@@ -20817,8 +20801,7 @@
       "journal": "",
       "goal": "g",
       "analysis_md": "",
-      "analysis_html_available": false,
-      "analysis_html_inline": ""
+      "analysis_html_available": false
     }
   },
   "swiss_all_rejected/lineage": {
@@ -21361,8 +21344,7 @@
       "journal": "",
       "goal": "g",
       "analysis_md": "",
-      "analysis_html_available": false,
-      "analysis_html_inline": ""
+      "analysis_html_available": false
     }
   },
   "swiss_all_applied/lineage": {
@@ -22180,8 +22162,7 @@
       "journal": "",
       "goal": "g",
       "analysis_md": "",
-      "analysis_html_available": false,
-      "analysis_html_inline": ""
+      "analysis_html_available": false
     }
   },
   "swiss_rated/lineage": {
@@ -23235,8 +23216,7 @@
       "journal": "",
       "goal": "g",
       "analysis_md": "",
-      "analysis_html_available": false,
-      "analysis_html_inline": ""
+      "analysis_html_available": false
     }
   },
   "racing_field/lineage": {
@@ -24998,8 +24978,7 @@
       "journal": "",
       "goal": "g",
       "analysis_md": "",
-      "analysis_html_available": false,
-      "analysis_html_inline": ""
+      "analysis_html_available": false
     }
   },
   "swiss_empty/lineage": {

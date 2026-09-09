@@ -299,11 +299,47 @@ def test_remove_board_entry() -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize(
+    ("structure", "params", "expected_runs", "expected_lines"),
+    [
+        ("gauntlet", {}, 8, {"duel runs": 8}),
+        ("swiss", {"field_size": 3, "rounds_n": 1}, 16, {"swiss-pairing runs": 16}),
+        (
+            "racing",
+            {"field_size": 4, "board_ids": ["e0", "e1"]},
+            16,
+            {"rung 0 runs": 4, "rung 1 runs": 4, "racing-final runs": 8},
+        ),
+    ],
+    ids=("gauntlet-single-challenger", "swiss-champion-pairing", "racing-selected-board"),
+)
+def test_cost_uses_scheduled_field_and_board(
+    structure: str,
+    params: dict[str, object],
+    expected_runs: int,
+    expected_lines: dict[str, int],
+) -> None:
+    """Count one challenger, the Swiss champion, and selected racing slices."""
+    draft = _gauntlet_draft()
+    draft.entries = _board(8)
+    _no_holdout(draft)
+    ops.set_experimental(draft, tournament_structures=True)
+    ops.set_structure(draft, structure)
+    ops.set_param(draft, "replicates", 1)
+    for key, value in params.items():
+        ops.set_param(draft, key, value)
+
+    estimate = ops.estimate_cost(draft)
+    assert estimate.board_runs_per_round == expected_runs
+    lines = {line.label: line.runs for line in estimate.breakdown}
+    for label, runs in expected_lines.items():
+        assert lines[label] == runs
+
+
 def test_cost_gauntlet() -> None:
     draft = _gauntlet_draft()
     draft.entries = _board(5)
     ops.set_structure(draft, "gauntlet")
-    ops.set_param(draft, "field_size", 1)
     ops.set_param(draft, "replicates", 2)
     est = ops.estimate_cost(draft)
     # 1 field × 2 replicates × 5 board = 10 (no holdout on a 5-board: below
@@ -372,7 +408,6 @@ def test_cost_includes_holdout_confirm_runs() -> None:
     # 12 entries, two explicitly tagged holdout → holdout split active.
     draft.entries = _board(12)
     ops.set_structure(draft, "gauntlet")
-    ops.set_param(draft, "field_size", 1)
     ops.set_param(draft, "replicates", 1)
     ops.set_holdout(draft, tags=["e0", "e1"])
     est = ops.estimate_cost(draft)
@@ -445,7 +480,7 @@ def test_cost_unset_replicates_per_structure_defaults() -> None:
     # unset, for EVERY structure: the base default is now 2 (the noise-aware
     # posture) — gauntlet/elim/swiss inherit or pin it — while racing pins 1
     # (its replication is intrinsic to the escalating board slices). (Each
-    # computed over an 8-board, field 4, holdout off.)
+    # computed over an 8-board, holdout off; field structures use field 4.)
     expected = {
         "gauntlet": 2,
         "single_elim": 2,
@@ -459,7 +494,8 @@ def test_cost_unset_replicates_per_structure_defaults() -> None:
         _no_holdout(draft)
         ops.set_experimental(draft, tournament_structures=True)
         ops.set_structure(draft, structure)
-        ops.set_param(draft, "field_size", 4)
+        if structure != "gauntlet":
+            ops.set_param(draft, "field_size", 4)
         # ``replicates`` UNSET → the estimator resolves the structure default.
         est_default = ops.estimate_cost(draft)
         ops.set_param(draft, "replicates", default)
@@ -503,6 +539,8 @@ def test_validate_field_size_one_degrades_to_gauntlet() -> None:
     draft = TournamentDraft()
     draft.entries = _board(4)
     ops.set_experimental(draft, tournament_structures=True)
+    ops.set_param(draft, "eta", None)
+    ops.set_param(draft, "board_fraction", None)
     ops.set_structure(draft, "swiss")
     ops.set_param(draft, "field_size", 1)
     codes = {w.code for w in ops.validate(draft)}
@@ -531,6 +569,8 @@ def test_validate_replicates_recommended_for_brackets() -> None:
     draft = TournamentDraft()
     draft.entries = _board(8)
     ops.set_experimental(draft, tournament_structures=True)
+    ops.set_param(draft, "eta", None)
+    ops.set_param(draft, "board_fraction", None)
     ops.set_structure(draft, "single_elim")
     ops.set_param(draft, "field_size", 4)
     ops.set_param(draft, "replicates", 1)
@@ -583,7 +623,6 @@ def test_cost_includes_candidate_screen_runs_when_opted_in() -> None:
     draft.entries = _board(10)
     _no_holdout(draft)
     ops.set_structure(draft, "gauntlet")
-    ops.set_param(draft, "field_size", 1)
     ops.set_param(draft, "replicates", 1)
 
     # Screening starts off: no candidate-screen line.
@@ -1047,7 +1086,6 @@ def test_cost_evidence_gate_confirm_budget_is_priced() -> None:
     draft.entries = _board(10)
     _no_holdout(draft)
     ops.set_structure(draft, "gauntlet")
-    ops.set_param(draft, "field_size", 1)
     ops.set_param(draft, "replicates", 1)
 
     # Gate off: no crowning-confirm line.
@@ -1082,7 +1120,6 @@ def test_cost_best_of_n_evaluation_line_excluded_from_headline() -> None:
     draft.entries = _board(10)
     _no_holdout(draft)
     ops.set_structure(draft, "gauntlet")
-    ops.set_param(draft, "field_size", 1)
     ops.set_param(draft, "replicates", 1)
 
     # Default best_of_n is 3: the evaluation line appears (1 × 3 calls)…
@@ -1113,7 +1150,9 @@ def test_cost_placebo_cadence_amortized() -> None:
     draft.entries = _board(10)
     _no_holdout(draft)
     ops.set_structure(draft, "gauntlet")
-    ops.set_param(draft, "field_size", 1)
+    ops.set_param(draft, "field_size", None)
+    ops.set_param(draft, "eta", None)
+    ops.set_param(draft, "board_fraction", None)
     ops.set_param(draft, "replicates", 2)
 
     est_off = ops.estimate_cost(draft)

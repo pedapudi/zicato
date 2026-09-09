@@ -50,9 +50,9 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 474,397 | +65,736 |
-| Production | 197,702 | 193,849 | -3,853 |
-| Production logic | 110,276 | 112,299 | +2,023 |
+| Total | 408,661 | 474,476 | +65,815 |
+| Production | 197,702 | 193,808 | -3,894 |
+| Production logic | 110,276 | 112,321 | +2,045 |
 
 The baseline row is the reference `f9052dd` measured by the classification the
 checker holds, which counts the console's hand-written entry point
@@ -84,22 +84,22 @@ production-logic series per subsystem along a branch's first-parent commits.
 
 | Subsystem | Total | Production | Production logic | Prose share |
 |---|---:|---:|---:|---:|
-| src/zicato/dashboard | 62,777 | 32,787 | 22,523 | 31.3% |
-| src/zicato/query | 19,972 | 19,972 | 12,336 | 38.2% |
+| src/zicato/dashboard | 62,791 | 32,787 | 22,523 | 31.3% |
+| src/zicato/query | 19,954 | 19,954 | 12,335 | 38.2% |
 | src/zicato/epoch | 14,199 | 14,199 | 7,916 | 44.2% |
 | src/zicato/evolve | 11,763 | 11,763 | 7,324 | 37.7% |
-| src/zicato/reflection | 10,002 | 10,002 | 6,634 | 33.7% |
+| src/zicato/reflection | 10,000 | 10,000 | 6,632 | 33.7% |
 | src/zicato/tournament | 11,457 | 11,457 | 6,573 | 42.6% |
 | crates/supervisor | 16,336 | 13,921 | 6,495 | 53.3% |
 | src/zicato/proposer | 9,571 | 9,571 | 4,788 | 50.0% |
 | src/zicato/cli | 7,112 | 7,112 | 4,720 | 33.6% |
 | src/zicato/analyzer | 7,448 | 7,448 | 4,692 | 37.0% |
-| src/zicato/selection | 5,325 | 5,325 | 3,048 | 42.8% |
-| src/zicato/core | 6,628 | 6,628 | 2,937 | 55.7% |
+| src/zicato/selection | 5,304 | 5,304 | 3,067 | 42.2% |
+| src/zicato/core | 6,625 | 6,625 | 2,936 | 55.7% |
 | src/zicato/runtime | 5,231 | 5,231 | 2,495 | 52.3% |
 | src/zicato/index | 4,421 | 4,421 | 2,409 | 45.5% |
 | src/zicato/telemetry | 4,504 | 4,504 | 2,197 | 51.2% |
-| src/zicato/contract_draft | 2,506 | 2,506 | 1,643 | 34.4% |
+| src/zicato/contract_draft | 2,511 | 2,511 | 1,652 | 34.2% |
 | src/zicato/health | 2,608 | 2,608 | 1,519 | 41.8% |
 | src/zicato/mutation | 2,954 | 2,954 | 1,405 | 52.4% |
 | src/zicato/check | 1,769 | 1,769 | 1,144 | 35.3% |
@@ -121,7 +121,7 @@ production-logic series per subsystem along a branch's first-parent commits.
 | src/zicato/driver_imports.py | 206 | 206 | 161 | 21.8% |
 | src/zicato/runtime_factory.py | 160 | 160 | 132 | 17.5% |
 | src/zicato/config.py | 159 | 159 | 118 | 25.8% |
-| src/zicato/workspace_loader.py | 238 | 238 | 105 | 55.9% |
+| src/zicato/workspace_loader.py | 236 | 236 | 103 | 56.4% |
 | src/zicato/integrations | 143 | 143 | 100 | 30.1% |
 | src/zicato/util | 175 | 175 | 94 | 46.3% |
 | src/zicato/reasoning.py | 112 | 112 | 83 | 25.9% |
@@ -440,3 +440,5 @@ dropped rows named.
 | Retain runtime writers and reduce repeated test setup (total) | 481,014 | +201 | 481,215 | Issues #324, #385 and #411: remove repeated test setup and duplicate loss publication. Explicit writer scopes and interruption checks account for the net test increase. |
 | Retain runtime writers and reduce repeated test setup (production) | 199,110 | -162 | 198,948 | Issues #385 and #411: one workspace lease retains each runtime log. Delete five tournament publication wrappers, the duplicate progress helper and loss comparison used only by duplicate publication. |
 | Retain runtime writers and reduce repeated test setup (production logic) | 114,471 | +36 | 114,507 | Issue #385: forwarding the existing writer through execution and checking unfinished appends adds logic. Removing duplicate publication and its comparison helper offsets part of that addition. |
+| Validate tournament parameters and reduce repeated tests (total) | 474,397 | +79 | 474,476 | Issues #324 and #388: share parsed strategy settings, reject unsupported input before publication, and preserve independent cost and process assertions. Matched test execution uses fewer subprocesses. |
+| Validate tournament parameters and reduce repeated tests (production logic) | 112,299 | +22 | 112,321 | Issues #324 and #388: share parsed strategy settings, reject unsupported input before publication, and preserve independent cost and process assertions. Matched test execution uses fewer subprocesses. |

@@ -139,7 +139,9 @@ def test_every_replicate_tier_is_a_recorded_settings_tier() -> None:
 def test_make_strategy_injects_the_count_only_when_the_contract_pins_none() -> None:
     sized = make_strategy(_gauntlet(), replicates=5, noise_floor_delta_std=0.02)
     assert sized.replicates() == 5
-    assert sized.params["noise_floor_delta_std"] == 0.02
+    assert "noise_floor_delta_std" not in sized.params
+    racing = make_strategy(TournamentStructure("racing"), noise_floor_delta_std=0.02)
+    assert racing.params["noise_floor_delta_std"] == 0.02
     pinned = make_strategy(_gauntlet(replicates=1), replicates=5)
     assert pinned.replicates() == 1
     untouched = make_strategy(_gauntlet())

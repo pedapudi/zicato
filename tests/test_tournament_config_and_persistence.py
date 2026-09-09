@@ -26,10 +26,15 @@ from zicato.workspace_loader import (
 # ---------------------------------------------------------------------------
 
 
-def test_absent_tournament_block_defaults_to_gauntlet() -> None:
-    spec = tournament_structure_from_dict(None)
-    assert spec.structure == "gauntlet"
-    assert spec.params == {}
+@pytest.mark.parametrize("raw, message", [(None, "expected an object"), ({}, "required field")])
+def test_standalone_tournament_requires_an_explicit_structure(raw, message) -> None:
+    with pytest.raises(ValueError, match=message):
+        tournament_structure_from_dict(raw)
+
+
+def test_direct_tournament_requires_an_explicit_structure() -> None:
+    with pytest.raises(TypeError, match="structure"):
+        TournamentStructure()  # type: ignore[call-arg]
 
 
 def test_scoring_parses_swiss_block_with_params() -> None:

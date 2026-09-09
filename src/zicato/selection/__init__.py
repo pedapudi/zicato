@@ -27,7 +27,6 @@ from zicato.selection.rating import (
 from zicato.selection.registry import (
     EXPERIMENTAL_STRATEGY_REGISTRY,
     STRATEGY_REGISTRY,
-    STRUCTURE_DEFAULT_REPLICATES,
     default_replicates_for,
     make_strategy,
 )
@@ -66,7 +65,6 @@ __all__ = [
     "make_strategy",
     "STRATEGY_REGISTRY",
     "EXPERIMENTAL_STRATEGY_REGISTRY",
-    "STRUCTURE_DEFAULT_REPLICATES",
     "default_replicates_for",
     "resolve_tournament",
     "evaluate_tournament",

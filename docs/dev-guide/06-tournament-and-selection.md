@@ -71,7 +71,7 @@ owns it, and the selection layer only *reads* its verdict.
 | `src/zicato/tournament/gate.py` | `evaluate_gate` (the three rungs), `GateOutcome`, `holdout_confirms`, `diff_size_evidence`, the tolerance constants | 566 lines |
 | `src/zicato/selection/strategy.py` | The `SelectionStrategy` ABC + the value types (`Contestant`, `Matchup`, `MatchupResult`, `SelectionDecision`, `Standing`, `RoundRecord`, `MatchRecord`), `pending_match_record`, `rung_for_match_id` | 564 lines |
 | `src/zicato/selection/driver.py` | `resolve_tournament` (the structure-agnostic walk), `confirm_promotion_with_evidence` (the BT defer→replicate→inconclusive loop) | 400 lines |
-| `src/zicato/selection/registry.py` | `STRATEGY_REGISTRY`, `make_strategy`, `STRUCTURE_DEFAULT_REPLICATES`, `default_replicates_for` | 110 lines |
+| `src/zicato/selection/registry.py` | `STRATEGY_REGISTRY`, `make_strategy`, `default_replicates_for` | 110 lines |
 | `src/zicato/selection/strategies/*.py` | `gauntlet` (164), `racing` (467), and the `ChampionGateStrategy` base | — |
 | `src/zicato/selection/experimental/*.py` | `single_elim` (413), `double_elim` (474), `swiss` (413) — admitted only by `experimental.tournament_structures` | — |
 | `src/zicato/selection/evidence_gate.py` | The Bradley–Terry pre-gate: `evidence_verdict`, `EVIDENCE_REPLICATE_BASE`, `MIN_CREDIBLE_DUELS`, `read_promote_confidence_threshold`, `rating_block` | 438 lines |
@@ -1431,9 +1431,9 @@ with an unconsulted incomplete record and launches no duel. A withheld or
 incomplete result also defers; only released negative evidence rejects. These
 distinctions survive field settlement, experiment outcomes, and lineage.
 
-### 6.7.4 One default gauntlet round, end to end (worked trace)
+### 6.7.4 One explicitly configured gauntlet round
 
-The default strategy requests one challenger and schedules one matchup. The
+The gauntlet strategy requests one challenger and schedules one matchup. The
 same shared pipeline used by wider structures handles it:
 
 ```
@@ -1556,14 +1556,13 @@ in-flight `active_tournament` envelope is byte-compatible with its settled one:
 schedules nothing pending (the gauntlet) yields exactly `rounds()` — no
 special-casing in the orchestrator.
 
-### 6.8.3 The default-replicates single source of truth
+### 6.8.3 Strategy classes own replicate defaults
 
-`_default_replicates` is a `ClassVar` on the base (`2` — the noise-aware
-posture) that racing overrides to `1`. It is the single source of truth for the
-strategy's `__init__`, each scheduled `Matchup`, the public `replicates()`
-diagnostic, and the builder cost estimator via
-`STRUCTURE_DEFAULT_REPLICATES`. The cost meter therefore prices the same
-replicate count that execution schedules.
+The base class declares `_default_replicates = 2`; racing overrides it with
+`1`. The base constructor resolves an explicit count or that class default.
+Scheduled matchups, cost estimation, and diagnostics read the resulting
+`replicates()` value. Replicate sizing reads the same class declaration through
+`default_replicates_for`.
 
 ---
 
@@ -1608,17 +1607,19 @@ orchestrator publish the live bracket/ladder WHILE the round runs, with
 
 ## 6.10 The five strategies
 
-`make_strategy(spec, board_ids, experimental_structures=...)` (`registry.py`)
-maps a structure token to a fresh strategy. `STRATEGY_REGISTRY` holds
-`gauntlet` and `racing`; `EXPERIMENTAL_STRATEGY_REGISTRY` holds `single_elim`,
-`double_elim` and `swiss`, which resolve only when the caller passes the
-contract's `experimental.tournament_structures` flag as `True` — otherwise the
-call raises, naming the token and the key. An unknown token raises with the
-valid keys listed (defence-in-depth — the config loader already validated at
-load time, and `ScoringWeights` refuses an experimental structure without the
-opt-in). Any
-structure constructed with `field_size == 1` degrades to gauntlet semantics
-organically.
+`make_strategy(spec, board_ids=..., experimental=...)` in `registry.py`
+constructs the selected strategy. The standard registry contains `gauntlet`
+and `racing`. The experimental registry contains `single_elim`, `double_elim`,
+and `swiss`; these require `experimental.tournament_structures = true`.
+
+Each strategy declares its accepted parameter names. The base constructor
+rejects unsupported names and resolves the replicate count once. Numeric
+readers use the shared configuration type rules and declared bounds. Missing
+optional values use defaults; invalid supplied values produce errors. Draft
+validation and cost estimation construct the same strategy.
+
+Gauntlet always requests one challenger. The field strategies also accept
+`field_size = 1` for a single challenger against the champion.
 
 | Structure | Shape | `_default_replicates` | Notable params | Maps to (SELECTION.md) |
 |---|---|---|---|---|
@@ -1762,18 +1763,16 @@ strong candidate dies to one unlucky run otherwise" — which is why
 
 ### 6.10.5 The opt-in rating / resolver layer
 
-Two `TournamentStructure.params` knobs re-order a non-gauntlet structure's
-INTERNAL standings/leader pick, while never touching the gate itself. Both are
-opt-in and cost **zero new board runs**: they are derived entirely from the
-audit the strategy already accumulated. The glue is
-`zicato.selection.standings_ext`, which reads the knobs and converts the flat
-`MatchupResult` audit into the inputs the pure layers
-consume (`audit_duels` → BT outcomes; `audit_matrix` → the resolver matrix).
+The optional `experimental.standing_rating` and `experimental.resolver`
+settings control standings and finalist selection in supporting strategies.
+The registry injects their validated values into those strategies.
+`zicato.selection.standings_ext` derives ratings and duel matrices from
+recorded matchup results, without scheduling additional board runs.
 
 | Knob | Values | Effect | Reads |
 |---|---|---|---|
-| `rating` | `bradley_terry` | order the standings by fitted latent strength (`rating_order`) instead of Copeland/scalar; unrated contestants sort after rated ones | `zicato.selection.rating.fit_bradley_terry` |
-| `resolver` | `copeland` / `ranked_pairs` | propose the internal leader from the duel matrix (Condorcet fast path → Smith prune → the resolver) instead of the top standing | `zicato.selection.resolve.resolve_leader` (§6.12) |
+| `experimental.standing_rating` | `bradley_terry` | order the standings by fitted latent strength (`rating_order`) instead of Copeland/scalar; unrated contestants sort after rated ones | `zicato.selection.rating.fit_bradley_terry` |
+| `experimental.resolver` | `copeland` / `ranked_pairs` | propose the internal leader from the duel matrix (Condorcet fast path → Smith prune → the resolver) instead of the top standing | `zicato.selection.resolve.resolve_leader` (§6.12) |
 
 The pure rating fit (`rating.py`) maximizes the Bradley–Terry log likelihood
 with a Gaussian ridge prior. Centered strengths retain joint covariance.
@@ -1798,11 +1797,8 @@ the ones that read these knobs. Its contract, from the code:
 ```
 — `src/zicato/selection/evidence_gate.py`, `evidence_verdict`
 
-> ⚠️ TRAP — both `resolver` and `rating` read defensively from the opaque
-> `params` map: an absent, unrecognised, or out-of-range value
-> returns `None` and leaves the strategy on its unchanged default path. Keep
-> that discipline in any new knob — `params` is operator-supplied, so a knob
-> that raises on a bad value turns a typo into a crashed tournament.
+Author these settings under `experimental`. Putting `rating` or `resolver`
+in the authored tournament parameter mapping raises a configuration error.
 
 ---
 
@@ -1876,12 +1872,10 @@ pre-gate AND reached the inconclusive state, so every other run's runtime tree
 holds no such record. `read_inconclusive` /
 `list_inconclusive` are tolerant readers (absent ⇒ `None`/`[]`).
 
-> ⚠️ TRAP — the pre-gate's `threshold` and `replicate_budget` live in the opaque
-> `TournamentStructure.params` map rather than on `ScoringWeights`, because an
-> absent param adds nothing to the contract's canonical form. Adding the
-> pre-gate to the codebase therefore rolls no existing epoch's hash, and a
-> contract that does not opt in leaves the whole parity surface unchanged
-> (`read_promote_confidence_threshold` returns `None`).
+The confirmation threshold and replicate budget are
+`promote_confidence_threshold` and `promote_confidence_replicates` in
+`TournamentStructure.params`. Their shared declarations validate values.
+Complete effective scoring settings participate in contract identity.
 
 ---
 
@@ -2010,17 +2004,17 @@ Scenario: you want a new `"round_robin"` structure — every contestant duels
 every other, Copeland-ranked, then a champion-gate of the leader. Nine steps.
 
 **Step 1 — the strategy class.** Add `src/zicato/selection/strategies/round_robin.py`
-subclassing `SelectionStrategy`. Set the two ClassVars and resolve `replicates`
-in `__init__` against the base default:
+subclassing `SelectionStrategy`. Declare its name, default replicate count,
+and any additional accepted parameter names. The base constructor resolves
+replication:
 
 ```python
 class RoundRobinStrategy(SelectionStrategy):
     structure = "round_robin"
-    _default_replicates = 2          # inherit the noise-aware default
+    _default_replicates = 2
 
     def __init__(self, params: dict[str, Any] | None = None) -> None:
         super().__init__(params)
-        self._replicates = max(1, _param_int(self.params, "replicates", self._default_replicates))
         ...
 ```
 
@@ -2047,31 +2041,24 @@ STRATEGY_REGISTRY: dict[str, type[SelectionStrategy]] = {
 }
 ```
 
-`STRUCTURE_DEFAULT_REPLICATES` derives from each class's `_default_replicates`
-automatically — you get the default-replicates single source of truth for free
-(§6.8.3). Also add `"round_robin"` to
-`zicato.core.types.VALID_TOURNAMENT_STRUCTURES` so the config loader validates
-the token at load time.
+`default_replicates_for` reads the registered class's `_default_replicates`.
+Add `"round_robin"` to `zicato.core.types.VALID_TOURNAMENT_STRUCTURES` so the
+configuration loader accepts the name.
 
 **Step 3 — default replicates.** If your structure's replication is intrinsic
 (like racing's escalating slices), pin `_default_replicates = 1`; otherwise
 inherit `2`. Do NOT hardcode a replicate count anywhere else — every consumer
 reads the ClassVar (§6.8.3).
 
-**Step 4 — contract parameters.** Add the structure's parameters to the typed
-contract operations and validate them before publishing a draft. Document their
-defaults and accepted values alongside the strategy. The field-declaration
-rules are in 10-cli-and-configuration.md §10.7.
+**Step 4 — contract parameters.** Extend the strategy's `parameter_names` with
+the settings it consumes. Resolve values in that strategy using the shared
+numeric readers and configuration declarations. Document defaults and accepted
+values alongside the implementation.
 
-**Step 5 — the cost meter.** The contract cost estimator multiplies board size ×
-`field_size` × `default_replicates_for(structure)` × the structure's own
-matchup count. If your structure schedules a non-obvious number of duels
-(round-robin is `n·(n−1)/2` + 1 crowning), teach the estimator your matchup
-count. An estimator that does not know your matchup count under-reports the
-cost, which is the failure `STRUCTURE_DEFAULT_REPLICATES` closes for the
-replicate factor — see `registry.py`'s comment on the swiss/elim default of 2.
-Exercise each added cost line with a draft fixture in
-`tests/test_contract_operations.py`, checking the expected number of board runs.
+**Step 5 — cost estimation.** Read the constructed strategy's field size,
+replicate count, and format settings. Implement the schedule arithmetic in
+`contract_draft.operations.estimate_cost`. Test expected board-run counts
+with independently calculated numbers in `tests/test_contract_operations.py`.
 
 **Step 6 — the gate-owns-decisions invariant.** Re-read your `record_result` and
 `champion`, and assert in a test that with a gate that always REJECTS your

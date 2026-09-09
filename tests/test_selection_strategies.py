@@ -501,3 +501,43 @@ def test_resolve_tournament_drives_gauntlet() -> None:
 
     dec = asyncio.run(resolve_tournament(s, request_field=request_field, run_matchup=run_matchup))
     assert dec.promoted_generation_id == "v1"
+
+
+@pytest.mark.parametrize("structure", [*STRATEGY_REGISTRY, *EXPERIMENTAL_STRATEGY_REGISTRY])
+def test_strategy_rejects_unknown_parameters_and_invalid_numbers(structure: str) -> None:
+    from zicato.core.scoring_config import ExperimentalConfig
+
+    cls = (STRATEGY_REGISTRY | EXPERIMENTAL_STRATEGY_REGISTRY)[structure]
+    with pytest.raises(ValueError, match="unsupported tournament parameters: replicatess"):
+        make_strategy(
+            TournamentStructure(structure, {"replicatess": 3}),
+            experimental=ExperimentalConfig(tournament_structures=True),
+        )
+    for value in ("2", True, 2.5, float("nan"), float("inf"), 0, -1):
+        with pytest.raises(ValueError, match="replicates"):
+            cls({"replicates": value})
+    for key, value in (
+        ("promote_confidence_threshold", float("nan")),
+        ("promote_confidence_replicates", 2.5),
+    ):
+        with pytest.raises(ValueError, match=key):
+            cls({key: value})
+
+
+def test_format_specific_numeric_parameters_reject_invalid_values() -> None:
+    from zicato.selection.experimental.swiss import SwissStrategy
+    from zicato.selection.strategies.racing import RacingStrategy
+
+    for cls, key, value in (
+        (SwissStrategy, "rounds_n", 2.5),
+        (SwissStrategy, "field_size", True),
+        (RacingStrategy, "eta", "2"),
+        (RacingStrategy, "board_fraction", float("nan")),
+        (RacingStrategy, "rung0_board_size", 2.5),
+        (RacingStrategy, "matchup_budget_seconds", float("inf")),
+        (RacingStrategy, "final_rung_budget_seconds", "fast"),
+        (RacingStrategy, "noise_floor_delta_std", float("nan")),
+        (RacingStrategy, "board_ids", [1]),
+    ):
+        with pytest.raises(ValueError, match=key):
+            cls({key: value})

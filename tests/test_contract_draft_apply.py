@@ -576,3 +576,14 @@ def test_board_meta_change_rolls_epoch_via_file_hash(workspace: Path) -> None:
     assert new_hash != stored_hash
     header = _first_line(workspace.parent / "board.jsonl")
     assert header.get("board_meta") is True
+
+
+def test_apply_refuses_unknown_tournament_parameter_before_publication(workspace: Path) -> None:
+    draft = TournamentDraft.from_workspace(workspace)
+    paths = [workspace.parent / name for name in ("board.jsonl", "brief.md", "scoring.json")]
+    before = {path: path.read_bytes() for path in paths}
+    ops.set_param(draft, "replicatess", 3)
+    with pytest.raises(ValueError, match="unsupported tournament parameters: replicatess"):
+        ops.apply(draft, workspace, confirm=True)
+    assert {path: path.read_bytes() for path in paths} == before
+    assert not (workspace / "contract-publication.json").exists()

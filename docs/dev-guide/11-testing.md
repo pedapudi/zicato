@@ -79,10 +79,9 @@ worker fixtures. Tests that modify shared process state must restore it.
 
 ## 11.1 Tiers and markers
 
-The suite runs in two tiers. The DEFAULT tier is what a bare `pytest`
-gives you and what the inner loop uses; the SLOW tier contains tests each
-measured at 15 s or more ON ITS OWN. Together they are about five of the
-six minutes a full run takes.
+The suite runs in two tiers. Bare `pytest` runs the default tier during
+implementation. The slow tier contains individual tests measured at 15 seconds
+or more when run alone.
 
 A merge needs both groups. Pull requests run them as separate required checks.
 During implementation, select the relevant tests. A complete local run is
@@ -98,7 +97,7 @@ addopts = "-n 4 -m 'not node and not cascade_oc'"
 markers = [
     "node: shells out to the standalone Node test harness (run via `make node-test`)",
     "slow: one test measured at 15 s or more (statistical characterizations and end-to-end simulations); deselected ONLY by a bare `pytest` (see tests/conftest.py) — naming a file or a test runs it, `-m slow` runs the tier alone, and `make test` and CI run both tiers",
-    "integration: crosses a process or network boundary (worker subprocesses, live servers, git subprocesses); its runtime IS its coverage, so it is never a candidate for stubbing",
+    "integration: crosses a process or network boundary (worker subprocesses, live servers, git subprocesses); retain the real operations that establish the tested behavior",
     "cascade_oc: the opt-in evaluation-cascade OC measurement suite (CASCADE.md §4); EXCLUDED from the default run via addopts — run with `-m cascade_oc`",
 ]
 ```
@@ -113,13 +112,9 @@ The four markers and what they tag:
 | `cascade_oc` | the opt-in evaluation-cascade measurement suite | NO — run it with `-m cascade_oc` |
 | `integration` | any test crossing a process or network boundary | YES — most are fast |
 
-`slow` and `integration` answer different questions and must not be
-conflated. `slow` is about a test's measured RUNTIME, and so about which
-tier schedules it. `integration` is about what a test TOUCHES, and so
-about what may never be stubbed away. All four combinations occur: the
-`cascade_oc` smoke run is slow and touches nothing outside the process,
-`tests/test_subprocess_workers.py` spawns eighteen real workers in about
-25 s total and stays in the default tier.
+`slow` describes measured duration and determines which tier runs a test.
+`integration` identifies tests that cross a process or network boundary.
+A test can carry either marker, both markers, or neither.
 
 Membership in `slow` is a MEASUREMENT, and the measurement is SERIAL —
 `pytest -n0 --durations=0 <the test>`, marked when the total reaches 15 s.
@@ -163,14 +158,14 @@ zero and exited 0. `tests/test_slow_tier_registry.py` pins all four forms.
 > `-m "slow and not node and not cascade_oc"` — `-m slow` on its own
 > re-enables the Node shim and the cascade measurement.
 
-> ⛔ NEVER stub an `integration` test's real subprocess / server / git call
-> to "speed it up". That marker's whole point is that the runtime IS the
-> coverage: a worker-isolation test proves a real subprocess writes to a
-> real discarded checkout; a live-server test proves a real port binds. Stub
-> it and you have kept the assertion and deleted the thing it asserts. If a
-> test is genuinely too slow for the inner loop, MEASURE it and mark it
-> `slow` — that moves it to the tier CI still runs, which is the sanctioned
-> way to get it out of your way.
+> Preserve real operations that establish the tested behavior. A worker
+> isolation test needs a real subprocess and discarded checkout; a server
+> binding test needs a real port. Remove unrelated setup and repeated
+> executions when existing tests retain their assertions and distinct failure
+> cases. Tests of report formatting can supply measured inputs directly.
+> Measure subprocess starts, child CPU time, and elapsed time under matching
+> conditions. Moving a test to the slow tier does not reduce complete
+> verification cost.
 
 `make check` consumes the complete verification plan in `tools/verify.py`.
 It runs checks sequentially and bounds worker processes and native threads;
@@ -1976,11 +1971,10 @@ uv run pytest tests/path::test_name -q      # MUST be GREEN
 
 ## 11.16 Recipe: add a test that spawns real workers
 
-Some contracts can only be proven by a REAL subprocess (worker isolation,
-budget escalation, config-crossing-the-boundary). These are `integration`
-tests whose runtime IS the coverage, so nothing in them may be stubbed. The
-discipline is about staying bounded and leaving nothing behind — which is
-also what keeps them in the default tier, where almost all of them belong.
+Worker isolation, forced termination, and configuration delivery to workers
+require real subprocesses. Keep those operations in their integration tests.
+Bound execution time and assert cleanup; unrelated setup can use direct
+calls to the functions that own it.
 
 **Step 1 — Make the worker's behaviour a module-level importable adapter.**
 Under the dotted-path-callable rule, add a named adapter + `make_*` factory to

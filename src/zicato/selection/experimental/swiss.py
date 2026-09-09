@@ -41,6 +41,7 @@ class SwissStrategy(ChampionGateStrategy):
     """Fixed-round Swiss, then a champion-gate confirmation of the leader."""
 
     structure = "swiss"
+    parameter_names = ChampionGateStrategy.parameter_names | {"rating", "resolver", "rounds_n"}
     _default_replicates = 2
     _final_match_id = "swiss-final"
     _final_label = "Champion gate"
@@ -49,7 +50,7 @@ class SwissStrategy(ChampionGateStrategy):
         super().__init__(params)
         self._field: list[Contestant] = []  # champion + challengers
         self._by_id: dict[str, Contestant] = {}
-        self._rounds_n = max(1, _param_int(self.params, "rounds_n", 4))
+        self.rounds_n = max(1, _param_int(self.params, "rounds_n", 4))
         self._stage_index = 0
         self._pending: dict[str, tuple[Contestant, Contestant]] = {}
         self._copeland: dict[str, int] = {}
@@ -82,7 +83,7 @@ class SwissStrategy(ChampionGateStrategy):
         if self._pending:
             return ()
         # All Swiss rounds played → schedule the champion-gate confirmation.
-        if self._stage_index >= self._rounds_n:
+        if self._stage_index >= self.rounds_n:
             return self._maybe_final()
         return self._schedule_swiss_round()
 

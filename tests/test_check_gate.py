@@ -181,6 +181,12 @@ def _finding(root: Path, code: str, *, live_contract: bool = True) -> Finding:
     return finding
 
 
+@pytest.fixture
+def mutation_findings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Assemble mutation findings without unrelated worker import probes."""
+    monkeypatch.setattr("zicato.check.report.VALIDATORS", (validators.dead_surface,))
+
+
 def _entry(entry_id: str, **extra: object) -> dict:
     return {
         "id": entry_id,
@@ -522,6 +528,7 @@ def test_malformed_scoring_is_a_hard_stop(tmp_path: Path, contents: str) -> None
         ("tail.py", '# zicato:mutable id="orphan"\nCOUNT = 3\n', "no string literal"),
     ],
 )
+@pytest.mark.usefixtures("mutation_findings")
 def test_a_span_marker_that_binds_to_nothing_is_advisory(
     tmp_path: Path, filename: str, body: str, reason: str
 ) -> None:
@@ -548,6 +555,7 @@ def test_a_span_marker_that_binds_to_nothing_is_advisory(
     assert _findings(root)["unbound_span_marker"] is False
 
 
+@pytest.mark.usefixtures("mutation_findings")
 def test_an_unbound_marker_is_reported_from_enumerator_facts(tmp_path: Path) -> None:
     """The id, the location, and the reason — not a scrape of a log line."""
     root = _workspace(
@@ -571,6 +579,7 @@ def test_an_unbound_marker_is_reported_from_enumerator_facts(tmp_path: Path) -> 
     assert "not Python" in finding.detail["reason"]
 
 
+@pytest.mark.usefixtures("mutation_findings")
 def test_a_tree_contributing_no_point_is_advisory(tmp_path: Path) -> None:
     """One dead tree among live ones is a stale path, not an empty surface.
 
@@ -599,6 +608,7 @@ def test_a_tree_contributing_no_point_is_advisory(tmp_path: Path) -> None:
     assert "empty_mutation_surface" not in findings
 
 
+@pytest.mark.usefixtures("mutation_findings")
 def test_a_missing_declared_tree_is_advisory(tmp_path: Path) -> None:
     """A stale path alongside a live one does not stop a run that works."""
     root = tmp_path / ".zicato"

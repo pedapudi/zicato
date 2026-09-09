@@ -24,9 +24,9 @@ from zicato.core.types import (
     ScoringWeights,
     TournamentStructure,
 )
-from zicato.selection.registry import default_replicates_for
-from zicato.selection.strategies.racing import SLICE_SCHEDULES
-from zicato.selection.strategy import _param_float, _param_int
+from zicato.selection.experimental.swiss import SwissStrategy
+from zicato.selection.registry import make_strategy
+from zicato.selection.strategies.racing import SLICE_SCHEDULES, RacingStrategy
 
 if TYPE_CHECKING:
     from zicato.runtime.lock import WorkspaceLock
@@ -997,14 +997,9 @@ def estimate_cost(draft: TournamentDraft) -> CostEstimate:
     train_ids, holdout_ids = split_board(draft.entries, draft.scoring.overfitting)
     board_size = len(train_ids)
     holdout_size = len(holdout_ids)
-    # ``replicates`` defaults to the STRUCTURE's own default (swiss / elim
-    # default to 2 — replication rather than bracket shape is their noise lever),
-    # NOT a flat 1. The default is read from the selection layer's
-    # single source of truth (each strategy's ``_default_replicates``), so the
-    # meter cannot under-report the schedule a structure actually runs. An
-    # EXPLICIT ``replicates`` in params is honored verbatim.
-    replicates = max(1, _param_int(params, "replicates", default_replicates_for(structure)))
-    field_size = max(1, _param_int(params, "field_size", 2))
+    strategy = make_strategy(ts, board_ids=train_ids, experimental=draft.scoring.experimental)
+    replicates = strategy.replicates()
+    field_size = strategy.field_size()
 
     lines: list[CostLine] = []
 
@@ -1031,8 +1026,9 @@ def estimate_cost(draft: TournamentDraft) -> CostEstimate:
             )
         )
     elif structure == "swiss":
-        rounds_n = max(1, _param_int(params, "rounds_n", 4))
-        pairings = max(1, field_size // 2)
+        assert isinstance(strategy, SwissStrategy)
+        rounds_n = strategy.rounds_n
+        pairings = (field_size + 1) // 2
         per_round = rounds_n * pairings * replicates * board_size
         lines.append(
             CostLine(
@@ -1043,8 +1039,9 @@ def estimate_cost(draft: TournamentDraft) -> CostEstimate:
             )
         )
     elif structure == "racing":
+        assert isinstance(strategy, RacingStrategy)
         per_round, racing_lines = _racing_cost(
-            params,
+            strategy,
             field_size=field_size,
             replicates=replicates,
             board_size=board_size,
@@ -1157,7 +1154,7 @@ def estimate_cost(draft: TournamentDraft) -> CostEstimate:
 
 
 def _racing_cost(
-    params: Any,
+    strategy: RacingStrategy,
     *,
     field_size: int,
     replicates: int,
@@ -1171,10 +1168,12 @@ def _racing_cost(
     full board), and the field is halved by ``eta`` each rung. A final
     full-board duel confirms the survivor against the champion.
     """
-    eta = max(2, _param_int(params, "eta", 2))
-    board_fraction = _param_float(params, "board_fraction", 0.25)
-    rung0 = _param_int(params, "rung0_board_size", 0)
-    base_slice = rung0 if rung0 > 0 else max(1, math.ceil(board_size * board_fraction))
+    eta = strategy.eta
+    rung0 = strategy.rung0_board_size
+    racing_board_size = len(strategy.board_ids)
+    base_slice = (
+        rung0 if rung0 > 0 else max(1, math.ceil(racing_board_size * strategy.board_fraction))
+    )
 
     lines: list[CostLine] = []
     alive = max(1, field_size)
@@ -1182,7 +1181,7 @@ def _racing_cost(
     total = 0
     # Guard against a pathological field that never shrinks.
     while alive > 1 and rung < 32:
-        slice_size = min(board_size, base_slice * (eta**rung))
+        slice_size = min(racing_board_size, base_slice * (eta**rung))
         rung_runs = alive * replicates * slice_size
         total += rung_runs
         lines.append(
@@ -1192,7 +1191,7 @@ def _racing_cost(
                 f"alive {alive} × replicates {replicates} × slice {slice_size}",
             )
         )
-        if slice_size >= board_size:
+        if slice_size >= racing_board_size:
             break
         alive = max(1, alive // eta)
         rung += 1
@@ -1214,7 +1213,9 @@ def validate(
     *,
     noise_floor_max_abs_delta: float | None = None,
 ) -> list[Warning]:
-    """Return advisory warnings about the draft (never blocking).
+    """Validate tournament parameters, then return advisory warnings about the draft.
+
+    Invalid parameters raise before publication; the returned warnings are advisory.
 
     Checks include:
 
@@ -1252,9 +1253,10 @@ def validate(
     warnings: list[Warning] = []
     ts = draft.scoring.tournament_structure
     structure = ts.structure
-    params = ts.params
-    field_size = max(1, _param_int(params, "field_size", 2))
-    replicates = max(1, _param_int(params, "replicates", 1))
+    train_ids, _ = split_board(draft.entries, draft.scoring.overfitting)
+    strategy = make_strategy(ts, board_ids=train_ids, experimental=draft.scoring.experimental)
+    field_size = strategy.field_size()
+    replicates = strategy.replicates()
 
     if structure != "gauntlet" and field_size == 1:
         warnings.append(
@@ -1284,15 +1286,18 @@ def validate(
         )
 
     if structure == "racing" and draft.entries:
-        board_fraction = _param_float(params, "board_fraction", 0.25)
-        rung0 = _param_int(params, "rung0_board_size", 0)
-        train_ids, _ = split_board(draft.entries, of)
-        slice_size = rung0 if rung0 > 0 else max(1, math.ceil(len(train_ids) * board_fraction))
+        assert isinstance(strategy, RacingStrategy)
+        board_fraction = strategy.board_fraction
+        rung0 = strategy.rung0_board_size
+        board_size = len(strategy.board_ids)
+        slice_size = min(
+            board_size, rung0 if rung0 > 0 else max(1, math.ceil(board_size * board_fraction))
+        )
         warnings.append(
             Warning(
                 "racing_rung0_slice",
                 f"racing rung-0 slice = {slice_size} entries "
-                f"(ceil(board_fraction {board_fraction} × board {len(train_ids)})).",
+                f"(board_fraction {board_fraction}, board {board_size}, rung0_board_size {rung0}).",
                 severity="info",
             )
         )
@@ -1325,7 +1330,7 @@ def validate(
             read_promote_confidence_threshold,
         )
 
-        gate_on = read_promote_confidence_threshold(params) is not None
+        gate_on = read_promote_confidence_threshold(ts.params) is not None
         margin = draft.scoring.promote_margin
         if not gate_on and margin <= floor:
             warnings.append(

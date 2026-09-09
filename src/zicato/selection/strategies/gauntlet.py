@@ -23,7 +23,6 @@ from zicato.selection.strategy import (
     SelectionDecision,
     SelectionStrategy,
     Standing,
-    _param_int,
 )
 
 
@@ -38,10 +37,6 @@ class GauntletStrategy(SelectionStrategy):
         self._challenger: Contestant | None = None
         self._result: MatchupResult | None = None
         self._scheduled = False
-        # ``replicates`` is the §9-lever-1 knob; the gauntlet inherits the
-        # base ``_default_replicates`` (2 — the noise-aware default). Pin
-        # ``"replicates": 1`` selects one run for deterministic harnesses.
-        self._replicates = max(1, _param_int(self.params, "replicates", self._default_replicates))
 
     def field_size(self) -> int:
         return 1

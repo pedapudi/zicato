@@ -90,7 +90,7 @@ def test_threshold_refuses_invalid_values(value: object) -> None:
     with pytest.raises(ValueError, match="promote_confidence_threshold"):
         read_promote_confidence_threshold(params)
     with pytest.raises(ValueError, match="promote_confidence_threshold"):
-        TournamentStructure(params=params)
+        TournamentStructure("gauntlet", params=params)
 
 
 def test_threshold_reader_accepts_valid() -> None:
