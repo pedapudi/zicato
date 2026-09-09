@@ -30,6 +30,7 @@ from typing import Any
 
 from zicato.core.types import TournamentStructure
 from zicato.selection.registry import default_replicates_for
+from zicato.selection.strategy import _param_int
 from zicato.tournament.detectable_effect import (
     REPLICATE_SIZING_CAP,
     minimum_detectable_effect,
@@ -94,20 +95,10 @@ class ReplicateSetting:
 
 
 def pinned_replicates(params: Mapping[str, Any]) -> int | None:
-    """The contract's ``params["replicates"]`` as a count, or ``None`` when unpinned.
-
-    Reads the value the way every strategy's ``__init__`` does: an integer
-    at or above one. An absent, unparseable, or non-positive value is
-    unpinned, so the structure default applies there too.
-    """
-    raw = params.get("replicates")
-    if raw is None or isinstance(raw, bool):
+    """The explicit contract count, validated by the strategy's integer reader."""
+    if params.get("replicates") is None:
         return None
-    try:
-        count = int(raw)
-    except (TypeError, ValueError):
-        return None
-    return count if count >= 1 else None
+    return _param_int(params, "replicates", 1)
 
 
 def usable_delta_std(floor: Mapping[str, Any] | None) -> float | None:

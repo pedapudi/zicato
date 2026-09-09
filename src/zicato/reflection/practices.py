@@ -554,6 +554,7 @@ def check_statistical_power(
     """
     from zicato.reflection.analysis import power_analysis, sigma_from_noise_floor  # noqa: PLC0415
     from zicato.selection.registry import default_replicates_for  # noqa: PLC0415
+    from zicato.selection.replicates import pinned_replicates  # noqa: PLC0415
 
     rationale = "when the min detectable Δ exceeds the margin the loop is theater (ch.04 §3, §13)."
     sigma = sigma_from_noise_floor(noise_floor)
@@ -569,10 +570,7 @@ def check_statistical_power(
     ts = getattr(weights, "tournament_structure", None)
     params = getattr(ts, "params", {}) or {}
     structure = str(getattr(ts, "structure", ""))
-    try:
-        k = max(1, int(params.get("replicates", default_replicates_for(structure))))
-    except (TypeError, ValueError):
-        k = max(1, default_replicates_for(structure))
+    k = pinned_replicates(params) or default_replicates_for(structure)
     n = _train_board_size(board_entries, getattr(weights, "overfitting", None))
     margin = float(getattr(weights, "promote_margin", 0.0))
     pa = power_analysis(sigma=sigma, k=k, n=n, confidence=POWER_CONFIDENCE)

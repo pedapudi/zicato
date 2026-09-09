@@ -314,7 +314,7 @@ addopts = "-n 4 -m 'not node and not cascade_oc'"
 markers = [
     "node: shells out to the standalone Node test harness (run via `make node-test`)",
     "slow: one test measured at 15 s or more ALONE (`-n0`; statistical characterizations and end-to-end simulations); deselected ONLY by a bare `pytest` (see tests/conftest.py) — naming a file, a test or a `-k` keyword runs it, `-m slow` runs the tier alone, and `make test` and tools/parity.sh run both tiers",
-    "integration: crosses a process or network boundary (worker subprocesses, live servers, git subprocesses); its runtime IS its coverage, so it is never a candidate for stubbing",
+    "integration: crosses a process or network boundary (worker subprocesses, live servers, git subprocesses); retain the real operations that establish the tested behavior",
     "cascade_oc: the opt-in evaluation-cascade OC measurement suite (CASCADE.md §4); EXCLUDED from the default run via addopts — run with `-m cascade_oc`",
 ]
 # With the package under src/, an editable install puts `zicato` on

@@ -32,13 +32,15 @@ from zicato.epoch.preflight import (
     VERDICT_OK,
     VERDICT_REFUSE,
     VERDICT_WARN,
+    PreflightReport,
     degraded_content_for,
     effective_gate_verdict,
     preflight_verdict,
+    preflight_window_verdict,
     run_contract_preflight,
 )
 from zicato.health.diagnostics import detect_preflight_verdict
-from zicato.tournament.calibration import CALIBRATION_REPLICATE_BASE
+from zicato.tournament.calibration import CALIBRATION_REPLICATE_BASE, NoiseFloor
 from zicato_examples.target_0_convergence import mocks as t0_mocks
 
 EXAMPLE_DIR = Path(_t0_pkg.__file__).resolve().parent
@@ -579,6 +581,31 @@ def test_inert_first_point_no_longer_decides_the_verdict(tmp_path: Path) -> None
     assert probes["docs_tone"].signal == 0.0, "the inert point moved nothing"
     assert probes["style_rules"].signal == report.signal
 
+    # Both real probes must persist under distinct reserved draw identities.
+    from zicato import workspace_loader
+    from zicato.epoch.preflight import PREFLIGHT_REPLICATE_SPAN
+    from zicato.epoch.screen import SCREEN_REPLICATE_BASE
+    from zicato.tournament.unit_cache import _unit_loss_path
+
+    n_probes = len(report.probed_points)
+    assert n_probes == 2
+    # Reserved preflight slots must end before screening so neither operation
+    # can reuse the other's measurements.
+    assert PREFLIGHT_REPLICATE_BASE + PREFLIGHT_REPLICATE_SPAN <= SCREEN_REPLICATE_BASE
+    assert n_probes <= PREFLIGHT_REPLICATE_SPAN
+
+    entry_id = workspace_loader.load_current_board(workspace)[0].id
+    for ordinal in range(n_probes):
+        # Cached under the CHAMPION's id — the degraded trees are ephemeral.
+        assert _unit_loss_path(
+            workspace,
+            epoch_id,
+            "v0",
+            entry_id,
+            PREFLIGHT_REPLICATE_BASE + ordinal,
+            base_seed=None,
+        ).exists(), f"probe {ordinal} did not draw its own reserved cache slot"
+
 
 def test_single_point_probe_reproduces_the_pre_fix_measurement(tmp_path: Path) -> None:
     """``probe_points=1`` is the pre-#106 behaviour, and it is now opt-in.
@@ -611,49 +638,12 @@ def test_explicit_pin_probes_exactly_the_named_point(tmp_path: Path) -> None:
         _run_preflight(workspace, epoch_id, degrade_mutation_id="not_a_point")
 
 
-def test_probe_draws_use_distinct_reserved_cache_slots(tmp_path: Path) -> None:
-    """Probe ``j`` draws at ``PREFLIGHT_REPLICATE_BASE + j``.
-
-    One slot per probe: sharing a slot would make probe 2 a cache HIT on probe
-    1's degraded tree and silently report the first probe's number twice. The
-    slots stay inside the pre-flight's reserved range (below reflection's
-    5000), so no tournament or audit evidence is touched.
-    """
-    from zicato import workspace_loader
-    from zicato.epoch.preflight import PREFLIGHT_REPLICATE_SPAN
-    from zicato.epoch.screen import SCREEN_REPLICATE_BASE
-    from zicato.tournament.unit_cache import _unit_loss_path
-
-    workspace, epoch_id = _bootstrap(tmp_path, agent_dir=_inert_first_point_agent(tmp_path))
-    report, _floor = _run_preflight(workspace, epoch_id)
-    n_probes = len(report.probed_points)
-    assert n_probes == 2
-    # The block the pre-flight owns must stop short of the screen's — squatting
-    # a neighbour's range makes their idempotence a lie (dev-guide ch.04 §8.2).
-    assert PREFLIGHT_REPLICATE_BASE + PREFLIGHT_REPLICATE_SPAN <= SCREEN_REPLICATE_BASE
-    assert n_probes <= PREFLIGHT_REPLICATE_SPAN
-
-    entry_id = workspace_loader.load_current_board(workspace)[0].id
-    for ordinal in range(n_probes):
-        # Cached under the CHAMPION's id — the degraded trees are ephemeral.
-        assert _unit_loss_path(
-            workspace,
-            epoch_id,
-            "v0",
-            entry_id,
-            PREFLIGHT_REPLICATE_BASE + ordinal,
-            base_seed=None,
-        ).exists(), f"probe {ordinal} did not draw its own reserved cache slot"
-
-
 # ---------------------------------------------------------------------------
 # Issue #112 — the promote_margin window
 # ---------------------------------------------------------------------------
 
 
-def test_margin_above_the_degradation_signal_warns_but_never_refuses(
-    tmp_path: Path,
-) -> None:
+def test_margin_above_the_degradation_signal_warns_but_never_refuses() -> None:
     """A margin larger than the measured movement is worth saying — not enforcing.
 
     The contract out-signals its noise (verdict OK), and the margin sits above
@@ -663,11 +653,21 @@ def test_margin_above_the_degradation_signal_warns_but_never_refuses(
     point was destroyed — which does not bound how far a challenger can improve
     (issue #119). The finding stays; the enforcement goes.
     """
-    weights = _scoring_from_dict(json.loads(SCORING_PATH.read_text()))
-    # Above any scalar movement target_0's single mutation point can produce.
-    weights = _replace(weights, promote_margin=99.0)
-    workspace, epoch_id = _bootstrap(tmp_path, weights=weights)
-    report, _floor = _run_preflight(workspace, epoch_id)
+    report = _report()
+    verdict, signal = preflight_verdict(
+        report.champion_scalars, report.degraded_scalar, report.noise_floor_max_abs_delta
+    )
+    window_verdict, window_failure = preflight_window_verdict(
+        report.noise_floor_max_abs_delta, 99.0, signal
+    )
+    report = _replace(
+        report,
+        verdict=verdict,
+        signal=signal,
+        promote_margin=99.0,
+        window_verdict=window_verdict,
+        window_failure=window_failure,
+    )
 
     assert report.verdict == VERDICT_OK, "the signal DOES clear the noise floor"
     assert report.signal > 0.0
@@ -702,13 +702,14 @@ def test_recommended_margin_uses_paired_loss_spread() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_board_preflight_cli_measures_and_persists(tmp_path: Path) -> None:
+def test_board_preflight_cli_forwards_measurement_and_persists(tmp_path: Path, monkeypatch) -> None:
     from click.testing import CliRunner
 
     from zicato.cli.discovery import build_cli_root
 
     workspace, epoch_id = _bootstrap(tmp_path)
     seed_baseline(workspace, epoch_id)
+    measurement = _mock_preflight(monkeypatch, epoch_id)
 
     runner = CliRunner()
     result = runner.invoke(
@@ -727,6 +728,13 @@ def test_board_preflight_cli_measures_and_persists(tmp_path: Path) -> None:
         ],
     )
     assert result.exit_code == 0, result.output
+    measurement.assert_awaited_once()
+    requested = measurement.call_args.kwargs
+    assert requested["runs"] == 3
+    assert requested["epoch_id"] == epoch_id
+    assert requested["generation"].id == "v0"
+    assert requested["config"].target_call_llm is t0_mocks.target_llm
+    assert requested["config"].evaluation_call_llm is t0_mocks.aux_llm
     assert "Contract pre-flight" in result.output
     assert "degradation signal" in result.output
     assert "verdict:           OK" in result.output
@@ -744,21 +752,40 @@ def test_board_preflight_cli_measures_and_persists(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_epoch_open_hook_persists_verdict(tmp_path: Path) -> None:
-    from zicato.evolve.loop import evolve_n_rounds
+def test_epoch_open_hook_persists_verdict(tmp_path: Path, monkeypatch) -> None:
+    from zicato import adapter_factory, runtime_factory, workspace_loader
+    from zicato.evolve.round_prepare import _maybe_contract_preflight
+    from zicato.runtime.lock import acquire_workspace_lock
 
     workspace, epoch_id = _bootstrap(tmp_path, extra_config={"contract_preflight": 3})
-    asyncio.run(
-        evolve_n_rounds(
-            rounds=1,
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            target_call_llm=t0_mocks.target_llm,
-            evaluation_call_llm=t0_mocks.aux_llm,
-            auto_epoch=False,
-            fast_mode=True,
+    measurement = _mock_preflight(monkeypatch, epoch_id)
+    parent = seed_baseline(workspace, epoch_id)
+    workspace_config = workspace_loader.load_workspace_config(workspace)
+    epoch_cfg = load_epoch(workspace, epoch_id)
+    with acquire_workspace_lock(workspace, "preflight-test") as writer:
+        asyncio.run(
+            _maybe_contract_preflight(
+                writer=writer,
+                workspace_root=workspace,
+                epoch_id=epoch_id,
+                epoch_cfg=epoch_cfg,
+                workspace_config=workspace_config,
+                adapter=adapter_factory.make_adapter_from_config(workspace_config),
+                parent_gen=parent,
+                board=workspace_loader.load_current_board(workspace),
+                weights=epoch_cfg.scoring,
+                config=runtime_factory.make_runtime_config(
+                    workspace_config, workspace_root=workspace
+                ),
+                disable_drift=(),
+                judge_only=False,
+            )
         )
-    )
+    measurement.assert_awaited_once()
+    requested = measurement.call_args.kwargs
+    assert requested["runs"] == 3
+    assert requested["generation"] == parent
+    assert requested["writer"] is writer
 
     cfg = load_epoch(workspace, epoch_id)
     assert cfg.preflight is not None
@@ -889,9 +916,7 @@ class _HookConfig:
         self.preflight_probe_mutation_ids: tuple[str, ...] = ()
 
 
-def _report(*, runs: int = 3, verdict: str = VERDICT_OK) -> object:
-    from zicato.epoch.preflight import PreflightReport
-
+def _report(*, runs: int = 3, verdict: str = VERDICT_OK) -> PreflightReport:
     return PreflightReport(
         epoch_id="e0",
         generation_id="v0",
@@ -906,6 +931,27 @@ def _report(*, runs: int = 3, verdict: str = VERDICT_OK) -> object:
         degraded_file="agent/policy.py",
         measured_at="2026-08-17T00:00:00Z",
     )
+
+
+def _floor(report: PreflightReport) -> NoiseFloor:
+    return NoiseFloor(
+        generation_id=report.generation_id,
+        epoch_id=report.epoch_id,
+        runs=report.noise_floor_runs,
+        scalars=report.champion_scalars,
+        max_abs_delta=report.noise_floor_max_abs_delta,
+        delta_std=0.0,
+        measured_at=report.measured_at,
+    )
+
+
+def _mock_preflight(monkeypatch, epoch_id: str):
+    from unittest.mock import AsyncMock
+
+    report = _replace(_report(), epoch_id=epoch_id)
+    measurement = AsyncMock(return_value=(report, _floor(report)))
+    monkeypatch.setattr("zicato.epoch.preflight.run_contract_preflight", measurement)
+    return measurement
 
 
 def _preflight_hook(
@@ -928,17 +974,8 @@ def _preflight_hook(
     import zicato.epoch.lifecycle as lifecycle
     import zicato.epoch.preflight as preflight_mod
     from zicato.evolve.round_prepare import _maybe_contract_preflight
-    from zicato.tournament.calibration import NoiseFloor
 
-    floor = NoiseFloor(
-        generation_id="v0",
-        epoch_id="e0",
-        runs=3,
-        scalars=(1.0, 1.0, 1.0),
-        max_abs_delta=0.0,
-        delta_std=0.0,
-        measured_at="2026-08-17T00:00:00Z",
-    )
+    floor = _floor(_report())
 
     async def _fake_preflight(*, runs: int, on_probe=None, **_kw: object) -> object:
         total = runs + 1

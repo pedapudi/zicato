@@ -182,9 +182,7 @@ def tournament_structure_from_dict(raw: Any) -> TournamentStructure:
     """Validate the supplied settings using their field declarations."""
     from zicato.core.configuration import authored_dataclass_from_json  # noqa: PLC0415
 
-    return authored_dataclass_from_json(
-        TournamentStructure, {} if raw is None else raw, path="scoring.tournament"
-    )
+    return authored_dataclass_from_json(TournamentStructure, raw, path="scoring.tournament")
 
 
 def activate_mutation_surface(workspace_root: Path) -> tuple[str, ...]:

@@ -82,7 +82,7 @@ async def test_cache_reuse_requires_the_requested_execution_seed(
 @pytest.mark.parametrize("parameter", ["replicates", "promote_confidence_replicates"])
 def test_authored_replication_refuses_crossing_measurement_ranges(parameter: str) -> None:
     with pytest.raises(ValueError, match="1000|measurement"):
-        TournamentStructure(params={parameter: 1001})
+        TournamentStructure("gauntlet", params={parameter: 1001})
 
 
 @pytest.mark.asyncio

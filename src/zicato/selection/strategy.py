@@ -24,7 +24,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar, Literal
 
+from zicato.core.configuration import validate_authored_value
 from zicato.core.measurement import MeasurementDraw
+from zicato.core.tournament import (
+    TOURNAMENT_PARAM_CONSTRAINTS,
+    read_promote_confidence_threshold,
+    read_replicate_budget,
+)
 from zicato.core.types import Experiment, TournamentDecision
 from zicato.tournament.gate import GateOutcome
 
@@ -322,28 +328,30 @@ class SelectionStrategy(ABC):
     #: racing pins ``1`` (its replication is intrinsic to the escalating
     #: board slices). Pin ``"replicates": 1`` in the structure params for the
     #: historical single-run duel (deterministic harnesses do). EVERY
-    #: consumer that needs "the default replicates for this structure" reads
-    #: it from here: the strategy ``__init__`` resolves
-    #: ``params["replicates"]`` against it, and the builder cost estimator
-    #: reads it via
-    #: :data:`zicato.selection.registry.STRUCTURE_DEFAULT_REPLICATES` so the
-    #: meter can never under-report by assuming a flat ``1``.
+    #: consumer reads this declaration. Strategy construction resolves the
+    #: parameter once; draft validation and cost estimation use that strategy.
     _default_replicates: ClassVar[int] = 2
+
+    parameter_names: ClassVar[frozenset[str]] = frozenset(TOURNAMENT_PARAM_CONSTRAINTS)
 
     def __init__(self, params: dict[str, Any] | None = None) -> None:
         self.params: dict[str, Any] = dict(params or {})
+        if unknown := self.params.keys() - self.parameter_names:
+            raise ValueError(
+                f"{self.structure} has unsupported tournament parameters: "
+                f"{', '.join(sorted(unknown))}; accepted: {', '.join(sorted(self.parameter_names))}"
+            )
+        self._replicates = _param_int(self.params, "replicates", self._default_replicates)
+        read_promote_confidence_threshold(self.params)
+        read_replicate_budget(self.params)
 
     def replicates(self) -> int:
         """The per-duel replicate count this strategy resolved.
 
-        Every concrete strategy resolves ``params["replicates"]`` against its
-        ``_default_replicates`` in ``__init__`` (into ``self._replicates``);
-        this is the public read used by cost estimation and diagnostics.
-        Matchup execution receives the same value on each scheduled
-        :class:`Matchup`. Falls back to the class default for a strategy that
-        has not stored the attribute.
+        The base constructor resolves it once against the structure default.
+        Cost estimates and scheduled matchups consume this same count.
         """
-        return int(getattr(self, "_replicates", self._default_replicates))
+        return self._replicates
 
     @abstractmethod
     def field_size(self) -> int:
@@ -529,37 +537,26 @@ def rung_for_match_id(match_id: str | None) -> str | None:
 
 
 def _param_int(params: Mapping[str, Any], key: str, default: int) -> int:
-    """Read an int param defensively (semantics validation is the strategy's)."""
-    try:
-        return int(params.get(key, default))
-    except (TypeError, ValueError):
-        return default
+    """Read an integer without substituting defaults for invalid input."""
+    raw = params.get(key, default)
+    validate_authored_value(int, raw, path=f"tournament.params.{key}")
+    if constraint := TOURNAMENT_PARAM_CONSTRAINTS.get(key):
+        constraint.check(key, raw)
+    return int(raw)
 
 
 def _param_float(params: Mapping[str, Any], key: str, default: float) -> float:
-    """Read a float param defensively."""
-    try:
-        return float(params.get(key, default))
-    except (TypeError, ValueError):
-        return default
+    """Read a finite number under the shared JSON type rules."""
+    raw = params.get(key, default)
+    validate_authored_value(float, raw, path=f"tournament.params.{key}")
+    return float(raw)
 
 
-def _param_opt_float(params: dict[str, Any], key: str) -> float | None:
-    """Read an OPTIONAL float param: absent / null / unparseable ⇒ ``None``.
-
-    Unlike :func:`_param_float` there is no scalar default — the field is a
-    genuine opt-in switch where "unset" must remain distinguishable from any
-    numeric value (used for wall-clock budgets, where ``None`` means "no
-    cap"). A non-positive value is also treated as "unset" so ``0`` cannot
-    accidentally cap a matchup to nothing.
-    """
-    raw = params.get(key, None)
-    if raw is None:
+def _param_opt_float(params: Mapping[str, Any], key: str) -> float | None:
+    """Null or a non-positive value disables an optional numeric setting."""
+    if params.get(key) is None:
         return None
-    try:
-        value = float(raw)
-    except (TypeError, ValueError):
-        return None
+    value = _param_float(params, key, 0.0)
     return value if value > 0.0 else None
 
 

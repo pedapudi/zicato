@@ -38,6 +38,7 @@ import math
 from collections.abc import Sequence
 from typing import Any
 
+from zicato.core.configuration import validate_authored_value
 from zicato.selection.strategies.champion_gate import ChampionGateStrategy
 from zicato.selection.strategy import (
     Contestant,
@@ -94,6 +95,16 @@ class RacingStrategy(ChampionGateStrategy):
     """Successive-halving rungs, then a final full-board champion-gate duel."""
 
     structure = "racing"
+    parameter_names = ChampionGateStrategy.parameter_names | {
+        "eta",
+        "board_fraction",
+        "rung0_board_size",
+        "board_ids",
+        "slice_schedule",
+        "matchup_budget_seconds",
+        "final_rung_budget_seconds",
+        "noise_floor_delta_std",
+    }
     _final_match_id = "racing-final"
     _final_label = "Champion gate"
     # The rungs run board slices; the crowning duel runs the whole board.
@@ -101,17 +112,17 @@ class RacingStrategy(ChampionGateStrategy):
     # Racing's replication is INTRINSIC — the escalating board slices are the
     # sample rather than per-duel ``replicates`` — so it pins 1 even though the base
     # default is now 2 (a per-duel replicate would re-run a slice, not
-    # enlarge it). Declared explicitly so the shared default-replicates map
-    # reads a stable value.
+    # enlarge it). Replicate sizing reads this class declaration.
     _default_replicates = 1
 
     def __init__(self, params: dict[str, Any] | None = None) -> None:
         super().__init__(params)
-        self._eta = max(2, _param_int(self.params, "eta", 2))
-        self._board_fraction = _param_float(self.params, "board_fraction", 0.25)
-        self._rung0 = _param_int(self.params, "rung0_board_size", 0)  # 0 ⇒ use fraction
+        self.eta = max(2, _param_int(self.params, "eta", 2))
+        self.board_fraction = _param_float(self.params, "board_fraction", 0.25)
+        self.rung0_board_size = _param_int(self.params, "rung0_board_size", 0)  # 0 ⇒ use fraction
         raw_ids = self.params.get("board_ids", ())
-        self._board_ids: tuple[str, ...] = tuple(str(x) for x in raw_ids)
+        validate_authored_value(tuple[str, ...], raw_ids, path="tournament.params.board_ids")
+        self.board_ids: tuple[str, ...] = tuple(raw_ids)
         self._slice_schedule = str(self.params.get("slice_schedule", PREFIX_SLICE_SCHEDULE))
         if self._slice_schedule not in SLICE_SCHEDULES:
             valid = ", ".join(repr(s) for s in SLICE_SCHEDULES)
@@ -119,9 +130,9 @@ class RacingStrategy(ChampionGateStrategy):
                 f"racing slice_schedule must be one of {valid}; got {self._slice_schedule!r}"
             )
         self._slice_board_ids = (
-            _shuffled_order(self._board_ids)
+            _shuffled_order(self.board_ids)
             if self._slice_schedule == SHUFFLED_SLICE_SCHEDULE
-            else self._board_ids
+            else self.board_ids
         )
 
         # --- Matchup-level wall-clock budgets (opt-in; None ⇒ uncapped). ---
@@ -162,28 +173,28 @@ class RacingStrategy(ChampionGateStrategy):
 
     # -- board-slice helpers ----------------------------------------------
 
-    def _rung_board_size(self) -> int:
-        total = len(self._board_ids)
+    def board_size_at_rung(self, rung: int) -> int:
+        total = len(self.board_ids)
         if total == 0:
             return 0
-        if self._rung0 > 0:
-            base = self._rung0
+        if self.rung0_board_size > 0:
+            base = self.rung0_board_size
         else:
-            base = max(1, int(math.ceil(total * self._board_fraction)))
-        size = int(base * (self._eta**self._rung))
+            base = max(1, int(math.ceil(total * self.board_fraction)))
+        size = int(base * (self.eta**rung))
         return min(total, size)
 
     def _rung_board_subset(self) -> tuple[str, ...] | None:
-        if not self._board_ids:
+        if not self.board_ids:
             return None  # whole board
-        size = self._rung_board_size()
+        size = self.board_size_at_rung(self._rung)
         return self._slice_board_ids[:size]
 
     def _rung_fraction(self) -> float:
-        total = len(self._board_ids)
+        total = len(self.board_ids)
         if total == 0:
             return 1.0
-        return self._rung_board_size() / total
+        return self.board_size_at_rung(self._rung) / total
 
     def _is_final_rung(self) -> bool:
         # A rung is final when the slice is the full board or only one
@@ -204,8 +215,8 @@ class RacingStrategy(ChampionGateStrategy):
         """
         if self._noise_delta_std is None:
             return None
-        total = len(self._board_ids)
-        size = self._rung_board_size()
+        total = len(self.board_ids)
+        size = self.board_size_at_rung(self._rung)
         if total == 0 or size == 0:
             return None
         unit_sd = self._noise_delta_std * math.sqrt(total / 2.0)
@@ -321,7 +332,7 @@ class RacingStrategy(ChampionGateStrategy):
             self._alive,
             key=lambda c: (self._rung_scalars.get(c.generation_id, float("inf")), c.generation_id),
         )
-        keep_n = max(1, int(math.floor(len(ranked) / self._eta)))
+        keep_n = max(1, int(math.floor(len(ranked) / self.eta)))
         # A candidate the rung's sample cannot separate from the last
         # survivor advances too: the next rung's larger slice resolves it.
         gap = self._rung_detectable_gap()
@@ -400,7 +411,7 @@ class RacingStrategy(ChampionGateStrategy):
         last-known scalar so the lane has a stable benchmark to race
         against, even while its per-duel ``projected`` is re-aggregated.
         """
-        total = self._rung_board_size()
+        total = self.board_size_at_rung(self._rung)
         progress: dict[str, dict[str, Any]] = {}
         champion_id = self._champion.generation_id if self._champion is not None else None
         lanes: list[str] = []

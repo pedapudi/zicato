@@ -46,6 +46,7 @@ class DoubleEliminationStrategy(ChampionGateStrategy):
     """Winners' + losers' bracket, then a grand-final champion-gate duel."""
 
     structure = "double_elim"
+    parameter_names = ChampionGateStrategy.parameter_names | {"rating", "resolver"}
     _default_replicates = 2
     _final_match_id = "GF"
     _final_label = "Grand final"

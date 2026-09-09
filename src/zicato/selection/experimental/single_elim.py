@@ -36,6 +36,7 @@ class SingleEliminationStrategy(ChampionGateStrategy):
     """Bracket over challengers, then a final champion-gate duel."""
 
     structure = "single_elim"
+    parameter_names = ChampionGateStrategy.parameter_names | {"rating", "resolver"}
     # Replicated duels — the noise lever, and the base default too.
     _default_replicates = 2
     _final_match_id = "final"

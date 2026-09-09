@@ -24,9 +24,9 @@ from zicato.core.types import (
     ScoringWeights,
     TournamentStructure,
 )
-from zicato.selection.registry import default_replicates_for
-from zicato.selection.strategies.racing import SLICE_SCHEDULES
-from zicato.selection.strategy import _param_float, _param_int
+from zicato.selection.experimental.swiss import SwissStrategy
+from zicato.selection.registry import make_strategy
+from zicato.selection.strategies.racing import RacingStrategy
 
 if TYPE_CHECKING:
     from zicato.runtime.lock import WorkspaceLock
@@ -221,30 +221,12 @@ def set_structure(draft: TournamentDraft, structure: str) -> DraftPatch:
     )
 
 
-#: Structure params whose value is a closed vocabulary rather than a number.
-#: The params object is otherwise opaque to the data layer, but an unchecked
-#: typo here would sail through the draft, roll the epoch on save, and only
-#: surface as a ``ValueError`` from ``make_strategy`` at round start — costing
-#: a round to learn about a misspelling. Validating at edit time makes it a
-#: field-precise 400 instead (the same reasoning as ``_LADDER_TYPES`` below).
-_PARAM_CHOICES: dict[str, tuple[str, ...]] = {"slice_schedule": SLICE_SCHEDULES}
-
-
 @authored_edit
 def set_param(draft: TournamentDraft, key: str, value: Any) -> DraftPatch:
-    """Set one structure param (``field_size``, ``replicates``, …).
+    """Set a tournament parameter; ``None`` removes the override.
 
-    The params object is opaque to the data layer (per-key semantics are
-    the selection strategy's), so the value is stored verbatim — except for
-    the closed-vocabulary keys in :data:`_PARAM_CHOICES`, which are checked
-    against the strategy's accepted values. Setting a value of ``None``
-    removes the key.
+    Strategy construction validates the resulting settings before publication.
     """
-    if value is not None and key in _PARAM_CHOICES:
-        allowed = _PARAM_CHOICES[key]
-        if value not in allowed:
-            choices = ", ".join(repr(c) for c in allowed)
-            raise ValueError(f"{key} must be one of {choices}, got {value!r}")
     old = draft.scoring.tournament_structure
     params = dict(old.params)
     prev = params.get(key)
@@ -997,14 +979,9 @@ def estimate_cost(draft: TournamentDraft) -> CostEstimate:
     train_ids, holdout_ids = split_board(draft.entries, draft.scoring.overfitting)
     board_size = len(train_ids)
     holdout_size = len(holdout_ids)
-    # ``replicates`` defaults to the STRUCTURE's own default (swiss / elim
-    # default to 2 — replication rather than bracket shape is their noise lever),
-    # NOT a flat 1. The default is read from the selection layer's
-    # single source of truth (each strategy's ``_default_replicates``), so the
-    # meter cannot under-report the schedule a structure actually runs. An
-    # EXPLICIT ``replicates`` in params is honored verbatim.
-    replicates = max(1, _param_int(params, "replicates", default_replicates_for(structure)))
-    field_size = max(1, _param_int(params, "field_size", 2))
+    strategy = make_strategy(ts, board_ids=train_ids, experimental=draft.scoring.experimental)
+    replicates = strategy.replicates()
+    field_size = strategy.field_size()
 
     lines: list[CostLine] = []
 
@@ -1031,8 +1008,9 @@ def estimate_cost(draft: TournamentDraft) -> CostEstimate:
             )
         )
     elif structure == "swiss":
-        rounds_n = max(1, _param_int(params, "rounds_n", 4))
-        pairings = max(1, field_size // 2)
+        assert isinstance(strategy, SwissStrategy)
+        rounds_n = strategy.rounds_n
+        pairings = (field_size + 1) // 2
         per_round = rounds_n * pairings * replicates * board_size
         lines.append(
             CostLine(
@@ -1042,17 +1020,10 @@ def estimate_cost(draft: TournamentDraft) -> CostEstimate:
                 f"× board {board_size}",
             )
         )
-    elif structure == "racing":
-        per_round, racing_lines = _racing_cost(
-            params,
-            field_size=field_size,
-            replicates=replicates,
-            board_size=board_size,
-        )
+    else:
+        assert isinstance(strategy, RacingStrategy)
+        per_round, racing_lines = _racing_cost(strategy, board_size)
         lines.extend(racing_lines)
-    else:  # pragma: no cover — structure validated upstream
-        per_round = field_size * replicates * board_size
-        lines.append(CostLine("duel runs", per_round, "fallback"))
 
     holdout_confirm = holdout_size * replicates
     if holdout_confirm:
@@ -1156,13 +1127,7 @@ def estimate_cost(draft: TournamentDraft) -> CostEstimate:
     )
 
 
-def _racing_cost(
-    params: Any,
-    *,
-    field_size: int,
-    replicates: int,
-    board_size: int,
-) -> tuple[int, list[CostLine]]:
+def _racing_cost(strategy: RacingStrategy, board_size: int) -> tuple[int, list[CostLine]]:
     """Successive-halving rung sum + the final full-board champion duel.
 
     Mirrors :class:`zicato.selection.strategies.racing.RacingStrategy`'s
@@ -1171,18 +1136,14 @@ def _racing_cost(
     full board), and the field is halved by ``eta`` each rung. A final
     full-board duel confirms the survivor against the champion.
     """
-    eta = max(2, _param_int(params, "eta", 2))
-    board_fraction = _param_float(params, "board_fraction", 0.25)
-    rung0 = _param_int(params, "rung0_board_size", 0)
-    base_slice = rung0 if rung0 > 0 else max(1, math.ceil(board_size * board_fraction))
-
+    replicates = strategy.replicates()
     lines: list[CostLine] = []
-    alive = max(1, field_size)
+    alive = strategy.field_size()
     rung = 0
     total = 0
     # Guard against a pathological field that never shrinks.
     while alive > 1 and rung < 32:
-        slice_size = min(board_size, base_slice * (eta**rung))
+        slice_size = strategy.board_size_at_rung(rung)
         rung_runs = alive * replicates * slice_size
         total += rung_runs
         lines.append(
@@ -1192,9 +1153,9 @@ def _racing_cost(
                 f"alive {alive} × replicates {replicates} × slice {slice_size}",
             )
         )
-        if slice_size >= board_size:
+        if slice_size >= len(strategy.board_ids):
             break
-        alive = max(1, alive // eta)
+        alive = max(1, alive // strategy.eta)
         rung += 1
     final_runs = replicates * board_size
     total += final_runs
@@ -1214,7 +1175,9 @@ def validate(
     *,
     noise_floor_max_abs_delta: float | None = None,
 ) -> list[Warning]:
-    """Return advisory warnings about the draft (never blocking).
+    """Validate tournament parameters, then return advisory warnings about the draft.
+
+    Invalid parameters raise before publication; the returned warnings are advisory.
 
     Checks include:
 
@@ -1252,9 +1215,10 @@ def validate(
     warnings: list[Warning] = []
     ts = draft.scoring.tournament_structure
     structure = ts.structure
-    params = ts.params
-    field_size = max(1, _param_int(params, "field_size", 2))
-    replicates = max(1, _param_int(params, "replicates", 1))
+    train_ids, _ = split_board(draft.entries, draft.scoring.overfitting)
+    strategy = make_strategy(ts, board_ids=train_ids, experimental=draft.scoring.experimental)
+    field_size = strategy.field_size()
+    replicates = strategy.replicates()
 
     if structure != "gauntlet" and field_size == 1:
         warnings.append(
@@ -1284,15 +1248,12 @@ def validate(
         )
 
     if structure == "racing" and draft.entries:
-        board_fraction = _param_float(params, "board_fraction", 0.25)
-        rung0 = _param_int(params, "rung0_board_size", 0)
-        train_ids, _ = split_board(draft.entries, of)
-        slice_size = rung0 if rung0 > 0 else max(1, math.ceil(len(train_ids) * board_fraction))
+        assert isinstance(strategy, RacingStrategy)
+        slice_size = strategy.board_size_at_rung(0)
         warnings.append(
             Warning(
                 "racing_rung0_slice",
-                f"racing rung-0 slice = {slice_size} entries "
-                f"(ceil(board_fraction {board_fraction} × board {len(train_ids)})).",
+                f"racing rung-0 slice = {slice_size} entries.",
                 severity="info",
             )
         )
@@ -1325,7 +1286,7 @@ def validate(
             read_promote_confidence_threshold,
         )
 
-        gate_on = read_promote_confidence_threshold(params) is not None
+        gate_on = read_promote_confidence_threshold(ts.params) is not None
         margin = draft.scoring.promote_margin
         if not gate_on and margin <= floor:
             warnings.append(
@@ -1653,6 +1614,7 @@ def candidate_scoring(draft: TournamentDraft) -> dict[str, Any]:
     from zicato.epoch.lifecycle import scoring_to_dict
     from zicato.workspace_loader import scoring_weights_from_dict
 
+    make_strategy(draft.scoring.tournament_structure, experimental=draft.scoring.experimental)
     after = scoring_to_dict(draft.scoring)
     if draft.source is None or draft.source.file("scoring").text is None:
         scoring_weights_from_dict(after)

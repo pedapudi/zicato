@@ -51,6 +51,7 @@ class ChampionGateStrategy(SelectionStrategy):
     #: The matchup id of the crowning duel. Constant per structure, so the
     #: id a result is matched against is the id the duel was scheduled under.
     _final_match_id: ClassVar[str]
+    parameter_names = SelectionStrategy.parameter_names | {"field_size"}
     #: The label of the :class:`RoundRecord` the crowning duel is recorded
     #: under, settled and in-flight alike.
     _final_label: ClassVar[str]
@@ -65,9 +66,9 @@ class ChampionGateStrategy(SelectionStrategy):
 
     def __init__(self, params: dict[str, Any] | None = None) -> None:
         super().__init__(params)
+        self._field_size = max(1, _param_int(self.params, "field_size", 2))
         self._champion: Contestant | None = None
         self._challengers: list[Contestant] = []
-        self._replicates = max(1, _param_int(self.params, "replicates", self._default_replicates))
         # Every MatchupResult in record order, including the crowning duel.
         self._audit: list[MatchupResult] = []
         # The rounds the structure has closed, oldest first.
@@ -88,7 +89,7 @@ class ChampionGateStrategy(SelectionStrategy):
 
     def field_size(self) -> int:
         """How many challengers the proposer must emit this round."""
-        return max(1, _param_int(self.params, "field_size", 2))
+        return self._field_size
 
     def seed(self, champion: Contestant, challengers: Sequence[Contestant]) -> None:
         """Record the champion and the applied field.

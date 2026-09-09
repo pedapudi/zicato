@@ -211,6 +211,9 @@ and paths. `ScoringWeights.to_json` and epoch configuration publication use it.
 that decoder. Unknown fields, missing required fields, and invalid types or
 constraints produce a configuration error identifying the failing path.
 Optional authored fields use their declared defaults before serialization.
+Omitting the authored tournament setting selects the complete racing default.
+A standalone `TournamentStructure` requires an explicit `structure`; use
+`TournamentStructure.gauntlet()` for an explicit gauntlet specification.
 
 The Python field `tournament_structure` has the declared persisted name
 `tournament`. Readers, writers, schema generation, and hashing derive that

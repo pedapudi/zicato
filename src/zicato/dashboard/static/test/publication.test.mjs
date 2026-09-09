@@ -162,9 +162,23 @@ async function renderWith(host, fixtures) {
   await publication.render(host, ctx, { epochId: EPOCH });
 }
 
-test('publication (A8): a non-empty analysis_html_inline is PREFERRED over the markdown re-render', async () => {
+test('publication: fetches the rendered paper from the dedicated analysis endpoint', async () => {
   const host = document.createElement('div');
-  await renderWith(host, withServedHtml());
+  data.invalidate();
+  installFixtureMap({ ...withServedHtml(), '/api/epoch': { epoch_id: EPOCH } });
+  const requests = [];
+  const fetch = globalThis.fetch;
+  globalThis.fetch = (...args) => {
+    requests.push(String(args[0]));
+    return fetch(...args);
+  };
+  try {
+    await publication.render(host, ctx, {});
+  } finally {
+    globalThis.fetch = fetch;
+  }
+  assert(requests.includes('/api/epoch'), 'the epoch response resolves the publication epoch');
+  assert(requests.includes(`/api/epoch/${EPOCH}/analysis`), 'the dedicated endpoint supplies the paper');
   const served = allByClass(host, 'dn-paper-served')[0];
   assert(served, 'the server fragment is mounted');
   // the harness does not parse innerHTML (it flags the write instead), so the

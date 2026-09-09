@@ -248,13 +248,11 @@ class TournamentStructure:
     Fields
     ------
     structure:
-        One of :data:`VALID_TOURNAMENT_STRUCTURES`. Defaults to
-        ``"gauntlet"`` in this retained-record constructor. Authored scoring
+        Required: one of :data:`VALID_TOURNAMENT_STRUCTURES`. Authored scoring
         resolves omission through its complete racing specification.
     params:
         A structure-specific JSON object, stored and round-tripped
-        verbatim as an opaque ``Mapping[str, Any]`` (the same
-        forward-compat posture :attr:`BoardEntry.context` takes). Per-key
+        verbatim as a ``Mapping[str, Any]``. Per-key
         semantics (``field_size``, ``swiss.rounds_n``, ``racing.eta`` /
         ``board_fraction`` / ``rung0_board_size``, …) are owned by the
         selection strategy that reads them; the data layer enforces that
@@ -268,7 +266,6 @@ class TournamentStructure:
     """
 
     structure: str = field(
-        default="gauntlet",
         metadata={"constraint": KnobConstraint(choices=VALID_TOURNAMENT_STRUCTURES)},
     )
     params: Mapping[str, Any] = field(default_factory=dict)

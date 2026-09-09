@@ -722,12 +722,6 @@ def build_epoch_view(
       no experiment of the relevant kind carries a finite delta.
     * ``journal`` — ``journal.md`` text (empty string when absent).
     * ``analysis_md`` — ``analysis.md`` text (empty string when absent).
-    * ``analysis_html_inline`` — ALWAYS the empty string on this view.
-      The paper-styled fragment is rendered by
-      :func:`build_epoch_analysis` on its own route; rendering it here
-      too put a full report render on the most frequently polled
-      payload for a field nothing read off it. The key is kept because
-      dropping it would change the payload shape.
     * ``analysis_html_available`` — ``True`` when ``analysis.html``
       exists on disk; the frontend can link directly to
       ``/api/epoch/{id}/analysis.html``.
@@ -903,18 +897,6 @@ def build_epoch_view(
     analysis_md = _read_text_best_effort(epoch_dir / "analysis.md")
     view["analysis_md"] = analysis_md
     view["analysis_html_available"] = (epoch_dir / "analysis.html").is_file()
-    # The paper-styled fragment is rendered by ``build_epoch_analysis`` on the
-    # DEDICATED ``/api/epoch/{id}/analysis`` route — the one the publication
-    # view actually fetches — and NOT here.
-    #
-    # Rendering it on the plain ``/api/epoch`` read as well would mean a full
-    # ``gather_epoch_report_data`` and report render on the most frequently
-    # polled payload in the dashboard, for a field no client reads off THIS
-    # view. The key stays (its absence would be a payload-shape
-    # change, and every reader-parity fixture pins it) but it is now always the
-    # empty string here, which is what those fixtures already record. A caller
-    # that wants the fragment asks the route whose job it is.
-    view["analysis_html_inline"] = ""
 
     return view
 

@@ -1011,17 +1011,9 @@ def test_epoch_view_includes_experiments_journal_analysis(workspace: Path) -> No
     assert "Two experiments" in view["analysis_md"]
     assert "analysis_html_available" in view
     assert view["analysis_html_available"] is False
-    # The inline paper-styled fragment is NOT rendered on this view. It used
-    # to be, which put a full report render on the most frequently polled
-    # payload in the dashboard for a field no client read off it — the
-    # publication view fetches the dedicated /api/epoch/{id}/analysis route.
-    # The key stays (dropping it would change the payload shape, and every
-    # reader-parity fixture pins it) and is always empty here.
-    assert "analysis_html_inline" in view
-    assert view["analysis_html_inline"] == ""
+    assert "analysis_html_inline" not in view
 
-    # …and the route whose job it IS still renders the fragment, from the
-    # same markdown. Asserted here so moving the render did not lose it.
+    # The dedicated analysis response renders the same markdown.
     from zicato.query import build_epoch_analysis  # noqa: PLC0415
 
     analysis = build_epoch_analysis(WorkspacePaths(workspace), view["epoch_id"])
@@ -1046,8 +1038,7 @@ def test_epoch_view_experiments_empty_without_gens(workspace: Path) -> None:
     assert view["journal"] == ""
     assert view["analysis_md"] == ""
     assert view["analysis_html_available"] is False
-    # No analysis -> no inline fragment (empty string, not missing key).
-    assert view["analysis_html_inline"] == ""
+    assert "analysis_html_inline" not in view
 
 
 def test_epoch_view_analysis_html_available_flag(workspace: Path) -> None:
@@ -1332,7 +1323,7 @@ def test_epoch_journal_md_endpoint_invalid_id(client: TestClient) -> None:
 
 
 def test_epoch_analysis_endpoint(client: TestClient, workspace: Path) -> None:
-    """GET /api/epoch/{id}/analysis returns { epoch_id, analysis_md, analysis_html_available }."""
+    """The dedicated analysis endpoint renders the publication fragment."""
     epoch_id = "2026-05-16_e0"
     epoch_dir = workspace / "epochs" / epoch_id
     _write(epoch_dir / "analysis.md", "# Analysis\n\nTwo experiments.\n")
@@ -1344,9 +1335,7 @@ def test_epoch_analysis_endpoint(client: TestClient, workspace: Path) -> None:
     assert "Two experiments" in body["analysis_md"]
     assert "analysis_html_available" in body
     assert body["analysis_html_available"] is False
-    # The endpoint also returns a paper-styled inline HTML fragment so
-    # the Epoch view's Analysis section can render the report as a
-    # paper card inline (same renderer as the standalone analysis.html).
+    # The publication view reads the rendered fragment from this endpoint.
     assert "analysis_html_inline" in body
     assert "paper paper-card" in body["analysis_html_inline"]
     # Inline fragment must be a fragment (no DOCTYPE), self-contained
@@ -1356,6 +1345,10 @@ def test_epoch_analysis_endpoint(client: TestClient, workspace: Path) -> None:
     assert "<style>" in inline
     assert 'href="http' not in inline
     assert 'src="http' not in inline
+
+    epoch_response = client.get("/api/epoch")
+    assert epoch_response.status_code == 200
+    assert "analysis_html_inline" not in epoch_response.json()
 
 
 def test_epoch_analysis_html_endpoint_present(client: TestClient, workspace: Path) -> None:
