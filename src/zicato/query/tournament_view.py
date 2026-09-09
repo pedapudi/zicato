@@ -32,8 +32,7 @@ from zicato.query.ratings import RATING_FIELDS, rating_by_generation
 from zicato.query.replicate_scores import replicate_scores, standard_error
 from zicato.query.runtime_view import read_active_tournament_dict
 from zicato.tournament.scoring import read_gen_score
-from zicato.workspace import read_loss, run_entry_ids
-from zicato.workspace.reads import generation_base_seed
+from zicato.workspace.reads import read_generation_losses
 
 
 def _champion_lineage(generations: list[dict[str, Any]]) -> list[str]:
@@ -623,24 +622,10 @@ def _read_run_loss_files(
     yet yields ``{}``.
     """
     out: dict[str, dict[str, Any]] = {}
-    layout = layout_of(paths)
-    try:
-        selected_seed = generation_base_seed(layout, epoch_id, generation_id)
-    except ValueError:
-        return {}
-    for run_entry_id in run_entry_ids(layout, epoch_id, generation_id):
-        loss = read_loss(
-            layout,
-            epoch_id,
-            generation_id,
-            run_entry_id,
-            base_seed=selected_seed,
-        )
-        if loss is None:
-            continue
-        entry_id = loss.get("entry_id")
-        if not isinstance(entry_id, str) or not entry_id:
-            entry_id = run_entry_id
+    for run_entry_id, loss in read_generation_losses(
+        layout_of(paths), epoch_id, generation_id
+    ).items():
+        entry_id = loss["entry_id"]
         drift = loss.get("drift_loss")
         prov = loss.get("scoring_provenance")
         cell: dict[str, Any] = {

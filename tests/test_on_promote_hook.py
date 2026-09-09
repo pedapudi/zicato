@@ -346,6 +346,8 @@ def test_gauntlet_promotion_fires_the_hook_once(
     # names the generation the hook was told about.
     marker = workspace / "epochs" / epoch_id / "current_generation"
     assert marker.read_text().strip() == "v1"
+    assert _findings(_health_report(workspace, epoch_id, 1), "on_promote_hook_failed") == []
+    assert _settlement_receipt(workspace, epoch_id)["promotion_hook"]["state"] == "succeeded"
 
 
 def test_a_rejected_round_never_fires_the_hook(
@@ -455,24 +457,6 @@ def test_a_failing_hook_leaves_the_promotion_standing(
         "adapter_name": "hooked-stub",
         "failure_type": "ConnectionError",
     }
-
-
-def test_a_successful_hook_raises_no_finding(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """The finding is a failure signal, not a promotion log line."""
-    workspace, epoch_id = bootstrap_workspace(tmp_path)
-    _install_hooked_adapter_factory(monkeypatch)
-    install_telemetry_stubs(
-        monkeypatch,
-        canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
-        canned_pass_by_gen={"v0": True, "v1": True},
-    )
-
-    run_evolve_once(workspace, epoch_id, evaluation_call_llm)
-
-    assert _findings(_health_report(workspace, epoch_id, 1), "on_promote_hook_failed") == []
-    assert _settlement_receipt(workspace, epoch_id)["promotion_hook"]["state"] == "succeeded"
 
 
 # ---------------------------------------------------------------------------

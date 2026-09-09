@@ -209,6 +209,13 @@ pythonpath = ["."]
 > test flakes only in the full run, the first suspect is a shared resource it
 > did not isolate — never "xdist is flaky".
 
+The epoch-transition tests use one scripted proposal per candidate while
+retaining field evaluation, contract changes, interrupted settlement, and
+recovery. Proposal sampling at the shipped defaults has dedicated complete-loop
+coverage. A successful promotion test also checks its persisted hook status
+and absence of a hook-failure finding. The critical-health test checks the
+warning, returned summary, and saved report from the same round.
+
 ### 11.1.2 Running only what a change can reach
 
 `make test-affected` runs the Python tests reached by branch changes,

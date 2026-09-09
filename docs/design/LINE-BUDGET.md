@@ -50,9 +50,9 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 474,441 | +65,780 |
-| Production | 197,702 | 193,765 | -3,937 |
-| Production logic | 110,276 | 112,291 | +2,015 |
+| Total | 408,661 | 474,402 | +65,741 |
+| Production | 197,702 | 193,619 | -4,083 |
+| Production logic | 110,276 | 112,283 | +2,007 |
 
 The baseline row is the reference `f9052dd` measured by the classification the
 checker holds, which counts the console's hand-written entry point
@@ -85,9 +85,9 @@ production-logic series per subsystem along a branch's first-parent commits.
 | Subsystem | Total | Production | Production logic | Prose share |
 |---|---:|---:|---:|---:|
 | src/zicato/dashboard | 62,791 | 32,787 | 22,523 | 31.3% |
-| src/zicato/query | 19,954 | 19,954 | 12,335 | 38.2% |
+| src/zicato/query | 19,939 | 19,939 | 12,320 | 38.2% |
 | src/zicato/epoch | 14,199 | 14,199 | 7,916 | 44.2% |
-| src/zicato/evolve | 11,763 | 11,763 | 7,324 | 37.7% |
+| src/zicato/evolve | 11,616 | 11,616 | 7,318 | 37.0% |
 | src/zicato/reflection | 10,000 | 10,000 | 6,632 | 33.7% |
 | src/zicato/tournament | 11,457 | 11,457 | 6,573 | 42.6% |
 | crates/supervisor | 16,336 | 13,921 | 6,495 | 53.3% |
@@ -104,7 +104,7 @@ production-logic series per subsystem along a branch's first-parent commits.
 | src/zicato/mutation | 2,954 | 2,954 | 1,405 | 52.4% |
 | src/zicato/check | 1,769 | 1,769 | 1,144 | 35.3% |
 | src/zicato/board | 2,412 | 2,412 | 1,097 | 54.5% |
-| src/zicato/workspace | 1,968 | 1,968 | 935 | 52.5% |
+| src/zicato/workspace | 1,984 | 1,984 | 948 | 52.2% |
 | src/zicato/adapters | 2,197 | 2,197 | 821 | 62.6% |
 | src/zicato/judge_runtime | 1,778 | 1,778 | 801 | 54.9% |
 | src/zicato/testing | 1,446 | 1,446 | 759 | 47.5% |

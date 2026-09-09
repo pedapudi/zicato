@@ -622,8 +622,8 @@ pipeline above:
   and Bradley–Terry evidence confirmation live in `selection/driver.py`.
 - **`round_context.py`** — the pre-propose ("screen") context builders that
   assemble the proposer-context inputs once per round
-  (`_build_candidate_screen_runner`, `_build_recombination_pair`,
-  `_build_genealogy_items`, `_build_calibration_summary`) — the builders the
+  (`_build_candidate_screen_runner`, `_build_candidate_history`,
+  `_build_calibration_summary`) — the builders the
   Target above wanted moved "beside their consuming stage."
 - **`propose_apply.py`** — the propose → apply → admit stage: `_propose_child`
   (the shared propose shape), `_propose_and_apply_challenger` (the field path's

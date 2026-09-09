@@ -201,6 +201,22 @@ def read_events_history(
     return out
 
 
+def read_generation_losses(
+    layout: WorkspaceLayout, epoch_id: str, generation_id: str
+) -> dict[str, dict[str, Any]]:
+    """Read accepted canonical losses using the generation's selected seed."""
+    try:
+        selected_seed = generation_base_seed(layout, epoch_id, generation_id)
+    except ValueError:
+        return {}
+    losses = {}
+    for entry_id in run_entry_ids(layout, epoch_id, generation_id):
+        loss = read_loss(layout, epoch_id, generation_id, entry_id, base_seed=selected_seed)
+        if loss is not None:
+            losses[entry_id] = loss
+    return losses
+
+
 def read_loss(
     layout: WorkspaceLayout,
     epoch_id: str,
