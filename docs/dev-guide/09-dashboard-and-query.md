@@ -1432,8 +1432,8 @@ still decide whether the resulting payload changes the DOM.
 
 A view is `async render(host, ctx, params)`. It FETCHES its data (via the
 null-degrading `data.js` accessors), folds a **content digest** of ONLY the
-structural/content fields (timestamps and heartbeat fields EXCLUDED, floats
-rounded to their rendered precision), and calls `gatedSwap(host, digest,
+structural/content fields (changing request timestamps and heartbeat fields
+excluded), and calls `gatedSwap(host, digest,
 build)`. `gatedSwap` writes DOM only when the digest differs from the one
 this host last painted:
 
@@ -1494,11 +1494,15 @@ beat flip it:
 > A digest folds WHAT is rendered (scalars rounded to display precision,
 > ids, tri-state flags, counts), never WHEN.
 
-> ✅ ALWAYS round a folded float to its rendered precision (`.toFixed(3)` for
-> a scalar shown to 3 dp). A raw float flips the digest on a change below the
-> visible precision — a repaint the operator cannot even see. The `svg.js`
-> figure digests do the same (`metaLoopLedgerDigest` quantizes the floor to
-> 3 dp — "a fraction moving past 2dp flips it"). Round WHAT the figure draws.
+Publication, patch diff, and mutation views compare their complete persisted
+display inputs. Comparing text lengths or counts misses corrections that retain
+the same size. Their responses contain saved records, not a changing request
+clock. Maps are converted to entries so their contents participate in comparison.
+The browser tests check both visible corrections and unchanged element identity.
+
+Figures that compare selected numeric values round them to their rendered
+precision. For example, `metaLoopLedgerDigest` rounds the displayed floor to
+three decimal places. Do not shorten source text or reports to their lengths.
 
 The heavier chrome surfaces (the tree sidebar, the breadcrumb, the
 loop-control cluster) apply the same discipline INLINE — each keeps its

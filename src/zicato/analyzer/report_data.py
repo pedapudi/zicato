@@ -452,14 +452,6 @@ def _movement_dicts(
     return tuple(asdict(m) for m in movements)
 
 
-def _as_float(value: Any) -> float:
-    """Coerce ``value`` to ``float``, defaulting to ``0.0`` on failure."""
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return 0.0
-
-
 def _cumulate_scalar(generations: list[GenerationView]) -> list[GenerationView]:
     """Return a copy of ``generations`` with ``cumulative_scalar`` filled.
 
@@ -492,8 +484,16 @@ def _cumulate_scalar(generations: list[GenerationView]) -> list[GenerationView]:
 # ---------------------------------------------------------------------------
 
 
-def gather_epoch_report_data(workspace_root: Path, epoch_id: str) -> EpochReportData:
+def gather_epoch_report_data(
+    workspace_root: Path,
+    epoch_id: str,
+    *,
+    recorded_experiments: tuple[list[tuple[str, Experiment]], list[str]] | None = None,
+) -> EpochReportData:
     """Walk one epoch's workspace tree into a frozen :class:`EpochReportData`.
+
+    An epoch-close caller supplies the experiment records already read for its
+    narrative, so HTML generation uses the same experiment observations.
 
     Missing artifacts retain their empty/default representation. A present
     corrupt board or unreadable brief raises RecordError before publication;
@@ -519,7 +519,12 @@ def gather_epoch_report_data(workspace_root: Path, epoch_id: str) -> EpochReport
         brief_text = ""
     journal_text = _read_text(layout.journal(epoch_id), _MAX_JOURNAL_CHARS)
 
-    experiments, unreadable_generations = read_epoch_experiments(layout.root, epoch_id)
+    experiments, read_errors = (
+        read_epoch_experiments(layout.root, epoch_id)
+        if recorded_experiments is None
+        else recorded_experiments
+    )
+    unreadable_generations = list(read_errors)
     raw_generations = []
     for gen_id_dir, experiment in experiments:
         try:

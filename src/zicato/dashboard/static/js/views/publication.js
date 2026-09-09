@@ -118,35 +118,10 @@ export async function render(host, ctx, params) {
   const epochLive = epochIsLive(state, epochId);
   const figures = { gens, scalarByGen, matchups, grids, ctx, epochId, epochLive };
 
+  // Compare the complete display inputs so equal-length corrections redraw.
   const digest = JSON.stringify({
-    epochId, mdLen: md.length,
-    // the SERVER-rendered fragment is what actually paints when present, so its
-    // length gates the swap too — a re-run `epoch analyze` that changes the
-    // rendered paper repaints, an identical re-render stays byte-identical.
-    htmlLen: inlineHtml.length,
-    gens: gens.map((g) => [g.id, g.parent, g.promoted, scalarByGen.has(g.id) ? scalarByGen.get(g.id).toFixed(3) : null]),
-    // every entry_grid field the per-match-up table RENDERS folds here: the two
-    // drift losses + verdict, the continuous #18 score pair and their Δ, the
-    // replicate spread, the precision/recall metrics, `won_by`, `decided_by`,
-    // and the two session ids that decide whether a harmonograf deep link
-    // paints — plus the grid-level `drift_present`, which decides whether the
-    // drift columns exist at all.
-    grids: grids.map((gr) => gr ? [gr.drift_present !== false, Array.isArray(gr.entry_grid) ? gr.entry_grid.map((r) => [
-      r.entry_id, r.parent_drift_loss, r.child_drift_loss, r.verdict, r.decided_by || null,
-      svg.isNum(r.parent_score) ? r.parent_score.toFixed(3) : null,
-      svg.isNum(r.child_score) ? r.child_score.toFixed(3) : null,
-      svg.isNum(r.delta_score) ? r.delta_score.toFixed(4) : null,
-      svg.isNum(r.score_se) ? r.score_se.toFixed(4) : null,
-      metricsDigest(r.parent_metrics), metricsDigest(r.child_metrics),
-      r.won_by == null ? null : String(r.won_by),
-      r.parent_session_id || null, r.child_session_id || null,
-    ]) : null] : null),
-    // the harmonograf deep links are liveness-gated (core/harmonograf.js), so a
-    // server coming up / a run ending must repaint the link column. Same fold
-    // the candidate dossier uses (`hgLive`).
-    hgLive: harmonografIsLive(),
-    // the scores table's pending label is tense-bound, so its liveness folds too.
-    epochLive: epochLive ? 1 : 0,
+    epochId, md, inlineHtml, gens, scalars: [...scalarByGen], matchups, grids,
+    hgLive: harmonografIsLive(), epochLive,
   });
 
   gatedSwap(host, digest, () => {

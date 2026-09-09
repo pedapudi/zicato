@@ -50,9 +50,9 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 473,917 | +65,256 |
-| Production | 197,702 | 193,133 | -4,569 |
-| Production logic | 110,276 | 112,050 | +1,774 |
+| Total | 408,661 | 473,772 | +65,111 |
+| Production | 197,702 | 192,956 | -4,746 |
+| Production logic | 110,276 | 111,996 | +1,720 |
 
 The baseline row is the reference `f9052dd` measured by the classification the
 checker holds, which counts the console's hand-written entry point
@@ -84,16 +84,16 @@ production-logic series per subsystem along a branch's first-parent commits.
 
 | Subsystem | Total | Production | Production logic | Prose share |
 |---|---:|---:|---:|---:|
-| src/zicato/dashboard | 62,791 | 32,787 | 22,523 | 31.3% |
-| src/zicato/query | 19,924 | 19,924 | 12,309 | 38.2% |
-| src/zicato/epoch | 14,168 | 14,168 | 7,902 | 44.2% |
+| src/zicato/dashboard | 62,807 | 32,743 | 22,493 | 31.3% |
+| src/zicato/query | 19,850 | 19,850 | 12,290 | 38.1% |
+| src/zicato/epoch | 14,150 | 14,150 | 7,904 | 44.1% |
 | src/zicato/evolve | 11,616 | 11,616 | 7,318 | 37.0% |
 | src/zicato/reflection | 9,882 | 9,882 | 6,603 | 33.2% |
 | crates/supervisor | 16,336 | 13,921 | 6,495 | 53.3% |
 | src/zicato/tournament | 11,177 | 11,177 | 6,439 | 42.4% |
-| src/zicato/proposer | 9,571 | 9,571 | 4,788 | 50.0% |
+| src/zicato/proposer | 9,521 | 9,521 | 4,772 | 49.9% |
 | src/zicato/cli | 7,088 | 7,088 | 4,697 | 33.7% |
-| src/zicato/analyzer | 7,443 | 7,443 | 4,683 | 37.1% |
+| src/zicato/analyzer | 7,452 | 7,452 | 4,692 | 37.0% |
 | src/zicato/selection | 5,304 | 5,304 | 3,067 | 42.2% |
 | src/zicato/core | 6,625 | 6,625 | 2,936 | 55.7% |
 | src/zicato/runtime | 5,231 | 5,231 | 2,495 | 52.3% |
@@ -444,3 +444,6 @@ dropped rows named.
 | Shared analysis and execution (total) | 474,402 | -485 | 473,917 | Issue #519: shared scheduling, report publication, measurement reads, immutable query inputs, and one evaluation suggestion representation. Tournament visualizations and proposal and evaluation rules remain. |
 | Shared analysis and execution (production) | 193,619 | -486 | 193,133 | Issue #519: shared scheduling, report publication, measurement reads, immutable query inputs, and one evaluation suggestion representation. Tournament visualizations and proposal and evaluation rules remain. |
 | Shared analysis and execution (production logic) | 112,283 | -233 | 112,050 | Issue #519: shared scheduling, report publication, measurement reads, immutable query inputs, and one evaluation suggestion representation. Tournament visualizations and proposal and evaluation rules remain. |
+| Shared report observations and display comparisons (total) | 473,917 | -145 | 473,772 | Issue #519: reuse experiment observations, source storage readers, proposer formatting, final round attempts and finite scores. Complete display inputs replace partial comparisons. Two repeated Swiss executions share the existing complete-tournament assertions. |
+| Shared report observations and display comparisons (production) | 193,133 | -177 | 192,956 | Issue #519: reuse experiment observations, source storage readers, proposer formatting, final round attempts and finite scores. Complete display inputs replace partial comparisons. Two repeated Swiss executions share the existing complete-tournament assertions. |
+| Shared report observations and display comparisons (production logic) | 112,050 | -54 | 111,996 | Issue #519: reuse experiment observations, source storage readers, proposer formatting, final round attempts and finite scores. Complete display inputs replace partial comparisons. Two repeated Swiss executions share the existing complete-tournament assertions. |

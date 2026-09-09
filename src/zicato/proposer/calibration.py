@@ -39,12 +39,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-#: Cap on the ``core_idea`` carried per recent claim. The core idea is
-#: proposer-authored (in-envelope) — but budget-capped with a head-only,
-#: elision-marked truncation so a pathologically long hypothesis line cannot
-#: balloon the rendered block (the genealogy ``_CORE_IDEA_MAX`` discipline,
-#: PROPOSER.md §2.8).
-_CORE_IDEA_MAX = 240
+from zicato.proposer.genealogy import _band_outcome, _core_idea
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,34 +128,6 @@ def _natural_gid(gid: str) -> tuple[str, int]:
     head = gid.rstrip("0123456789")
     tail = gid[len(head) :]
     return (head, int(tail)) if tail.isdigit() else (gid, -1)
-
-
-def _core_idea(text: str) -> str:
-    """Normalize + cap the proposer's core idea (head-only, elided).
-
-    Whitespace is collapsed to one line and the line is head-capped to
-    :data:`_CORE_IDEA_MAX` with a trailing ellipsis, so an over-long hypothesis
-    line cannot balloon the rendered block (the genealogy ``_core_idea`` cap).
-    """
-    line = " ".join(text.strip().split())
-    if len(line) <= _CORE_IDEA_MAX:
-        return line
-    return line[: _CORE_IDEA_MAX - 1].rstrip() + "…"
-
-
-def _band_outcome(delta: float | None) -> str:
-    """Band a whole-candidate Δscalar through the experiment-memory vocabulary.
-
-    Reuses :func:`zicato.proposer.prompts._bucket_scalar_delta` (lazy import —
-    the render module imports THIS one, so a top-level import would cycle) so
-    the exact number never escapes and no new banding primitive is introduced.
-    An unsettled candidate (``None``) renders no band.
-    """
-    if delta is None:
-        return ""
-    from zicato.proposer.prompts import _bucket_scalar_delta  # noqa: PLC0415
-
-    return _bucket_scalar_delta(delta)
 
 
 def _grade(claim: CalibrationClaim) -> str:

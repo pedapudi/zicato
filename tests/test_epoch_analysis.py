@@ -73,8 +73,20 @@ async def test_generate_analysis_writes_file(
 
 
 async def test_generate_analysis_inlines_experiments(
-    workspace: Path, board_file: Path, rubric_file: Path
+    workspace: Path, board_file: Path, rubric_file: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from zicato.analyzer import report_data
+    from zicato.epoch import analysis
+
+    reads: list[str] = []
+    original = analysis.read_epoch_experiments
+
+    def read_once(root: Path, epoch_id: str):
+        reads.append(epoch_id)
+        return original(root, epoch_id)
+
+    monkeypatch.setattr(analysis, "read_epoch_experiments", read_once)
+    monkeypatch.setattr(report_data, "read_epoch_experiments", read_once)
     cfg = new_epoch(workspace, "beta", board_file, rubric_file, ScoringWeights())
     # Drop an experiment.json under generations/v1.
     epath = experiment_json_path(workspace, cfg.id, "v1")
@@ -106,6 +118,7 @@ async def test_generate_analysis_inlines_experiments(
     await generate_analysis(workspace, cfg.id, stub_call)
     assert "exp_beta_v1" in captured["user"]
     assert "Tighten the writer prompt." in captured["user"]
+    assert reads == [cfg.id], "narrative and HTML share the same experiment observations"
 
 
 async def test_generate_analysis_handles_missing_journal(

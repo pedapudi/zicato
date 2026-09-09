@@ -38,6 +38,7 @@ from zicato.query.paths import (
     _read_json_value,
     _resolve_epoch_id,
     coerce_float,
+    finite_float,
     layout_of,
 )
 from zicato.query.replicate_scores import cell_replicate_draws
@@ -230,21 +231,6 @@ def _opt_int(value: Any) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int | float):
         return None
     return int(value)
-
-
-def _opt_score_val(value: Any) -> float | None:
-    """Coerce a raw ``score`` field into a finite float, else ``None``.
-
-    Mirrors ``tournament_view._opt_score``: a bool, a non-number, or a
-    non-finite value degrades to ``None`` so a cell built from replicate files
-    reads its continuous score exactly as the matchup grid does.
-    """
-    if isinstance(value, bool) or not isinstance(value, int | float):
-        return None
-    f = float(value)
-    if f != f or f in (float("inf"), float("-inf")):
-        return None
-    return f
 
 
 def _score_from_loss_json(row: Any) -> float | None:
@@ -546,7 +532,7 @@ def _aggregate_cell(rows: list[Any], draws: list[Any] | None = None) -> dict[str
                 (
                     _opt_bool(getattr(d, "pass_fail", None)),
                     coerce_float(getattr(d, "drift_loss", None)),
-                    _opt_score_val(getattr(d, "score", None)),
+                    finite_float(getattr(d, "score", None)),
                     getattr(d, "runtime_ms", None),
                 )
             )
@@ -1629,15 +1615,12 @@ def facet_scores_for_generation(
                 agg = {}
         scored = int(agg.get("expectation_count") or 0)
         return {
-            # The scalar is a LOSS and unbounded above, so it goes through the
-            # plain finite-float guard — NOT ``_opt_score_val``, whose contract
-            # is a score in ``[0, 1]``.
             "scalar": coerce_float(agg.get("scalar")) if agg else None,
             # ``mean_score`` reports 1.0 by convention when NOTHING was
             # scored (so the (1 - mean) term contributes zero). That is the
             # right default for the scalar and the wrong one to display, so
             # the honest ``None`` replaces it here.
-            "mean_score": _opt_score_val(agg.get("mean_score")) if scored else None,
+            "mean_score": finite_float(agg.get("mean_score")) if scored else None,
             "scored_count": scored,
             # Entries the board puts in this slice — including any that did
             # not run. ``ran_count`` is how many of them produced a profile,

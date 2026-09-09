@@ -185,6 +185,24 @@ def test_swiss_field_runs_end_to_end_and_promotes(
         canned_pass_by_gen={"v0": True, "v1": True, "v2": True},
     )
 
+    seen: list[tuple[str, str]] = []
+    import zicato.evolve.field as field
+
+    real = field._propose_and_apply_challenger
+
+    async def _wrapped(*args: object, **kwargs: object) -> object:
+        on_status = kwargs.get("on_status")
+
+        def _tap(record: dict) -> None:
+            seen.append((str(record.get("generation_id")), str(record.get("status"))))
+            if on_status is not None:
+                on_status(record)  # type: ignore[operator]
+
+        kwargs["on_status"] = _tap
+        return await real(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(field, "_propose_and_apply_challenger", _wrapped)
+
     outcome = run_evolve_once(workspace, epoch_id, evaluation_call_llm)
 
     # A challenger from the field was crowned over the champion.
@@ -273,6 +291,31 @@ def test_swiss_field_runs_end_to_end_and_promotes(
     # Journal carries an entry for both challengers.
     journal = (workspace / "epochs" / epoch_id / "journal.md").read_text()
     assert journal.count("Tag the greeting literal for candidate") >= 2
+
+    # Each slot announces "proposing" before it settles to "applied".
+    assert ("v1", "proposing") in seen
+    assert ("v2", "proposing") in seen
+    v1_prop = seen.index(("v1", "proposing"))
+    v1_applied = seen.index(("v1", "applied"))
+    assert v1_prop < v1_applied
+
+    by_gen = {f["generation_id"]: f for f in active.field_status}
+    assert set(by_gen) == {"v1", "v2"}
+    for gid in ("v1", "v2"):
+        assert by_gen[gid]["status"] == "applied"
+        assert by_gen[gid]["reason"] == ""
+        assert by_gen[gid]["seed"] >= 2
+    # Seeds match the competitor seeding (challengers 2, 3 in mint order).
+    assert {by_gen["v1"]["seed"], by_gen["v2"]["seed"]} == {2, 3}
+
+    # The structure endpoint surfaces field_status for the current epoch.
+    from zicato.query import WorkspacePaths, build_tournament_structure
+
+    paths = WorkspacePaths(workspace)
+    struct = build_tournament_structure(paths, epoch_id, active.tournament_id)
+    struct_by_gen = {f["generation_id"]: f for f in struct["field_status"]}
+    assert set(struct_by_gen) == {"v1", "v2"}
+    assert all(f["status"] == "applied" for f in struct["field_status"])
 
 
 def test_a_round_spends_one_proposal_episode_per_candidate(
@@ -506,45 +549,6 @@ def test_gauntlet_does_not_take_multi_path(monkeypatch: pytest.MonkeyPatch, tmp_
     assert not (gens / "v2").exists()
 
 
-def test_field_status_records_applied_challengers(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """The settled ActiveTournament envelope carries a ``field_status``
-    record per challenger the proposer minted, each ``status="applied"``
-    with a seed — the proposing-step tracker's live data source."""
-    workspace, epoch_id = _bootstrap_swiss_workspace(tmp_path, field_size=2, rounds_n=1)
-    install_stub_adapter_factory(monkeypatch)
-    install_telemetry_stubs(
-        monkeypatch,
-        canned_loss_by_gen={"v0": 2.0, "v1": 0.5, "v2": 1.5},
-        canned_pass_by_gen={"v0": True, "v1": True, "v2": True},
-    )
-
-    run_evolve_once(workspace, epoch_id, evaluation_call_llm)
-
-    from zicato.runtime.state import read_active_tournament
-
-    active = read_active_tournament(workspace)
-    assert active is not None
-    by_gen = {f["generation_id"]: f for f in active.field_status}
-    assert set(by_gen) == {"v1", "v2"}
-    for gid in ("v1", "v2"):
-        assert by_gen[gid]["status"] == "applied"
-        assert by_gen[gid]["reason"] == ""
-        assert by_gen[gid]["seed"] >= 2
-    # Seeds match the competitor seeding (challengers 2, 3 in mint order).
-    assert {by_gen["v1"]["seed"], by_gen["v2"]["seed"]} == {2, 3}
-
-    # The structure endpoint surfaces field_status for the current epoch.
-    from zicato.query import WorkspacePaths, build_tournament_structure
-
-    paths = WorkspacePaths(workspace)
-    struct = build_tournament_structure(paths, epoch_id, active.tournament_id)
-    struct_by_gen = {f["generation_id"]: f for f in struct["field_status"]}
-    assert set(struct_by_gen) == {"v1", "v2"}
-    assert all(f["status"] == "applied" for f in struct["field_status"])
-
-
 def test_field_status_when_all_challengers_rejected(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -640,50 +644,6 @@ def test_field_status_carries_per_attempt_validation_reason(
     assert v2["attempts"] == 1
     assert len(v2["attempt_reasons"]) == 1
     assert all("file_findability" in r for r in v2["attempt_reasons"])
-
-
-def test_field_status_publishes_proposing_phase_live(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """The orchestrator publishes a ``phase="proposing"`` envelope as each
-    challenger slot ENTERS the field (status ``"proposing"``) — before the
-    whole batch is minted — so the dashboard reads the proposal phase live,
-    not only once it settles. We assert the on_status callback receives a
-    ``"proposing"`` record per slot ahead of its terminal record."""
-    workspace, epoch_id = _bootstrap_swiss_workspace(tmp_path, field_size=2, rounds_n=1)
-    install_stub_adapter_factory(monkeypatch)
-    install_telemetry_stubs(
-        monkeypatch,
-        canned_loss_by_gen={"v0": 2.0, "v1": 0.5, "v2": 1.5},
-        canned_pass_by_gen={"v0": True, "v1": True, "v2": True},
-    )
-
-    seen: list[tuple[str, str]] = []
-    import zicato.evolve.field as field
-
-    real = field._propose_and_apply_challenger
-
-    async def _wrapped(*args: object, **kwargs: object) -> object:
-        on_status = kwargs.get("on_status")
-
-        def _tap(record: dict) -> None:
-            seen.append((str(record.get("generation_id")), str(record.get("status"))))
-            if on_status is not None:
-                on_status(record)  # type: ignore[operator]
-
-        kwargs["on_status"] = _tap
-        return await real(*args, **kwargs)  # type: ignore[arg-type]
-
-    monkeypatch.setattr(field, "_propose_and_apply_challenger", _wrapped)
-
-    run_evolve_once(workspace, epoch_id, evaluation_call_llm)
-
-    # Each slot announces "proposing" before it settles to "applied".
-    assert ("v1", "proposing") in seen
-    assert ("v2", "proposing") in seen
-    v1_prop = seen.index(("v1", "proposing"))
-    v1_applied = seen.index(("v1", "applied"))
-    assert v1_prop < v1_applied
 
 
 def test_field_status_absent_is_empty_and_back_compatible() -> None:

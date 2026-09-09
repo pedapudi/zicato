@@ -350,4 +350,23 @@ test('patch diff: a base that matches the parent at the site is not flagged', as
   assert(!textOf(host).includes('change alone'), 'identical content is not a mixed diff');
 });
 
+test('patch diff: edits of the same length update both displayed source columns', async () => {
+  const host = await renderDiff({}, { mutId: SITE });
+  const first = host.firstChild;
+  const versions = [
+    { generation_id: 'v3', content: V3_TEXT.replace('v3', 'v4'), provenance: 'snapshot' },
+    { generation_id: 'v5', content: V5_TEXT.replace('v5', 'v6'), provenance: 'snapshot' },
+  ];
+  const patches = [{ id: 'p5', mutation_id: SITE, op: 'replace', new_content: versions[1].content, rationale: 'sharper brief' }];
+  data.invalidate(); install({ versions, patches });
+  await diff.render(host, CTX, { epochId: EPOCH, gen: 'v5', mutId: SITE });
+  assert(host.firstChild !== first, 'changed source redraws the diff');
+  assert(textOf(host).includes('v4 instruction'), 'the corrected parent content is visible');
+  assert(textOf(host).includes('v6 instruction'), 'the corrected candidate content is visible');
+  const updated = host.firstChild;
+  data.invalidate(); install({ versions, patches });
+  await diff.render(host, CTX, { epochId: EPOCH, gen: 'v5', mutId: SITE });
+  assert(host.firstChild === updated, 'unchanged source preserves the diff');
+});
+
 await run();

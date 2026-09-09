@@ -37,6 +37,7 @@ from zicato.query.paths import (
     _preview,
     _read_json_value,
     coerce_float,
+    finite_float,
     layout_of,
     read_current_epoch,
 )
@@ -53,7 +54,6 @@ from zicato.query.tournament_view import (
     _champion_lineage,
     _gen_score_view,
     _opt_metrics,
-    _opt_score,
     _tournament_id_for,
 )
 from zicato.workspace import judge_loss_rows
@@ -327,7 +327,7 @@ def build_per_entry_for_generation(
         lj = _opt_json(row["loss_json"])
         if not isinstance(lj, dict):
             return None, None
-        return _opt_score(lj.get("score")), _opt_metrics(lj.get("metrics"))
+        return finite_float(lj.get("score")), _opt_metrics(lj.get("metrics"))
 
     unreadable: dict[str, str] = {}
     try:
@@ -390,7 +390,7 @@ def build_per_entry_for_generation(
     # summary. Folded alongside the per-entry scores so the dossier can
     # show a single board-level score number.
     try:
-        gen_mean_score = _opt_score(
+        gen_mean_score = finite_float(
             _gen_score_view(paths, epoch_id, generation_id).get("mean_score")
         )
     except RecordError as exc:
