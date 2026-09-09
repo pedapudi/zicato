@@ -71,22 +71,15 @@ class FieldRound:
 
 
 def current_generation(workspace_root: Path, epoch_id: str) -> str:
-    from zicato.epoch.settlement_receipt import iter_settlement_receipts
+    from zicato.epoch.settlement_receipt import recorded_champion
 
-    primary = None
-    for receipt in iter_settlement_receipts(workspace_root, epoch_id):
-        if receipt.state == "committed" and receipt.primary_id is not None:
-            primary = receipt.primary_id
-    if primary is not None:
-        return primary
+    champion = recorded_champion(workspace_root, epoch_id)
+    if champion is not None:
+        return champion
     layout = WorkspaceLayout.from_root(workspace_root)
-    candidates = generation_ids(layout, epoch_id)
-    if "v0" not in candidates:
-        raise FileNotFoundError(
-            f"no generations under {layout.generations_dir(epoch_id)}; "
-            "the epoch has no baseline yet"
-        )
-    return "v0"
+    raise FileNotFoundError(
+        f"no generations under {layout.generations_dir(epoch_id)}; the epoch has no baseline yet"
+    )
 
 
 def safe_parent(workspace_root: Path, epoch_id: str | None) -> str:

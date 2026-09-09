@@ -72,9 +72,13 @@
     "comparison": {
       "candidate_sigma": null,
       "champion_sigma": null,
+      "compared_score_count": 0,
       "delta_sigma": null,
       "drift_present": false,
-      "entries": {}
+      "entries": {},
+      "entry_count": 0,
+      "mean_delta_score": null,
+      "passed_count": 0
     },
     "drilldown": null,
     "episode_export": null,
@@ -185,6 +189,7 @@
     "comparison": {
       "candidate_sigma": 0.62,
       "champion_sigma": 0.6,
+      "compared_score_count": 2,
       "delta_sigma": 0.020000000000000018,
       "drift_present": true,
       "entries": {
@@ -206,7 +211,10 @@
           "score_replicates": 1,
           "score_se": null
         }
-      }
+      },
+      "entry_count": 0,
+      "mean_delta_score": 0.0,
+      "passed_count": 0
     },
     "drilldown": {
       "entry_id": "t1",

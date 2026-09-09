@@ -206,7 +206,7 @@ def load_lineage(workspace_root: Path) -> Lineage:
                 row = by_id.get(candidate.generation_id)
                 if row is None:
                     raise RecordError("round result names a candidate absent from ancestry")
-                if row["round_index"] != receipt.round_index:
+                if row.get("round_index") != receipt.round_index:
                     raise RecordError("round result disagrees with candidate birth round")
                 outcome = candidate.outcome
                 row.update(
@@ -506,83 +506,6 @@ def discard_pending_generations(
     return removed
 
 
-def validate_generation_resolutions(
-    workspace_root: Path,
-    epoch_id: str,
-    resolutions: dict[str, dict[str, Any]],
-    *,
-    require_resolved: bool,
-) -> None:
-    """Validate settlement facts against lineage without changing the DAG."""
-    _validated_resolution_rows(
-        workspace_root, epoch_id, resolutions, require_resolved=require_resolved
-    )
-
-
-def _validated_resolution_rows(
-    workspace_root: Path,
-    epoch_id: str,
-    resolutions: dict[str, dict[str, Any]],
-    *,
-    require_resolved: bool,
-) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
-    lineage = load_lineage(workspace_root)
-    validate_generation_resolution_rows(
-        lineage, epoch_id, resolutions, require_resolved=require_resolved
-    )
-    raw = lineage.to_dict()
-    entry = _find_epoch(raw, epoch_id)
-    assert entry is not None
-    return raw, {row["id"]: row for row in entry["generations"]}
-
-
-def validate_generation_resolution_rows(
-    lineage: Lineage,
-    epoch_id: str,
-    resolutions: dict[str, dict[str, Any]],
-    *,
-    require_resolved: bool,
-) -> dict[str, LineageGeneration]:
-    """Compare settlement facts with loaded lineage rows without reading files."""
-    if not resolutions:
-        raise ValueError("lineage resolution requires at least one generation")
-    entry = lineage.epoch(epoch_id)
-    if entry is None:
-        raise RuntimeError(f"lineage does not contain exactly one epoch {epoch_id!r}")
-    by_id = {row.id: row for row in entry.generations}
-
-    for generation_id, resolution in resolutions.items():
-        current = by_id.get(generation_id)
-        if current is None:
-            raise RuntimeError(f"lineage lacks settlement generation {generation_id!r}")
-        for key in ("parent_id", "created_at", "round_index"):
-            if getattr(current, key) != resolution[key]:
-                raise RuntimeError(f"lineage generation {generation_id!r} conflicts on {key}")
-        promoted = current.promoted
-        if promoted is not None and promoted is not resolution["promoted"]:
-            raise RuntimeError(f"lineage generation {generation_id!r} has a different verdict")
-        if promoted is not None:
-            parent_scalar = resolution["parent_scalar"]
-            child_scalar = resolution["child_scalar"]
-            expected = {
-                "rejection_reason": resolution["rejection_reason"] if promoted is False else "",
-                "parent_scalar": parent_scalar,
-                "child_scalar": child_scalar,
-                "delta_scalar": (
-                    child_scalar - parent_scalar
-                    if child_scalar is not None and parent_scalar is not None
-                    else None
-                ),
-            }
-            if any(getattr(current, key) != value for key, value in expected.items()):
-                raise RuntimeError(
-                    f"lineage generation {generation_id!r} has different settlement facts"
-                )
-        if require_resolved and promoted is None:
-            raise RuntimeError(f"lineage generation {generation_id!r} lacks its settlement verdict")
-    return by_id
-
-
 def _indexed_generation_rows(
     entry: dict[str, Any],
     epoch_id: str,
@@ -630,7 +553,6 @@ __all__ = [
     "mark_closed",
     "append_to_lineage",
     "discard_pending_generations",
-    "validate_generation_resolutions",
     "load_lineage",
     "render_lineage_summary",
 ]

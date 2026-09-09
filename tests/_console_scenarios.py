@@ -2187,18 +2187,11 @@ __all__ = [
 def record_gate_comparisons(root: Path) -> None:
     """Complete settled visualization fixtures with execution's recorded explanations."""
     import json
-    from dataclasses import replace
 
+    from tests._workspace_support import complete_round
     from zicato.core.types import ScoringWeights
     from zicato.epoch.journal import read_epoch_experiments
-    from zicato.epoch.settlement_receipt import (
-        IndexProjection,
-        SettlementCandidate,
-        decode_settlement_receipt,
-        new_settlement_receipt,
-        read_settlement_receipt,
-        write_settlement_receipt,
-    )
+    from zicato.epoch.settlement_receipt import read_settlement_receipt
     from zicato.query import WorkspacePaths
     from zicato.query.tournament_view import _gen_score_view
     from zicato.tournament.gate import evaluate_gate
@@ -2206,7 +2199,6 @@ def record_gate_comparisons(root: Path) -> None:
     from zicato.workspace import list_epoch_ids
 
     layout = WorkspaceLayout.from_root(root)
-    ancestry = json.loads(layout.lineage_path.read_text())
     for epoch_id in list_epoch_ids(layout):
         weights = ScoringWeights.from_json(json.loads(layout.scoring(epoch_id).read_text()))
         experiments, errors = read_epoch_experiments(root, epoch_id)
@@ -2224,7 +2216,7 @@ def record_gate_comparisons(root: Path) -> None:
                 continue
             field = fields.get(f"{epoch_id}:field:{group[0].generation_id}")
             # Partial and deliberately ungrouped scenarios have no completed round.
-            if field is None and len(group) > 1:
+            if field is None and len({e.parent_generation_id for e in group}) > 1:
                 continue
             if field is not None and (
                 field["state"] != "settled"
@@ -2236,23 +2228,12 @@ def record_gate_comparisons(root: Path) -> None:
                 != {experiment.generation_id for experiment in group}
             ):
                 continue
-            candidates = []
             gates = []
             for experiment in group:
                 parent = _gen_score_view(
                     WorkspacePaths(root), epoch_id, experiment.parent_generation_id
                 )
                 child = _gen_score_view(WorkspacePaths(root), epoch_id, experiment.generation_id)
-                candidates.append(
-                    SettlementCandidate.from_outcome(
-                        experiment_id=experiment.id,
-                        generation_id=experiment.generation_id,
-                        created_at=experiment.proposed_at,
-                        parent_scalar=parent.get("scalar"),
-                        child_scalar=child.get("scalar"),
-                        outcome=experiment.outcome,
-                    )
-                )
                 if "scalar" not in parent or "scalar" not in child:
                     continue
                 gate = evaluate_gate(parent, child, weights)
@@ -2265,40 +2246,41 @@ def record_gate_comparisons(root: Path) -> None:
                         "child_aggregate": child,
                     }
                 )
-            if len(candidates) != len(group):
-                continue
             promoted = [
-                candidate.generation_id
-                for candidate in candidates
-                if candidate.outcome.tournament_decision == "promoted"
+                experiment.generation_id
+                for experiment in group
+                if experiment.outcome.tournament_decision == "promoted"
             ]
-            receipt = new_settlement_receipt(
-                settlement_id=hashlib.sha256(f"{epoch_id}/{round_index}".encode()).hexdigest()[:32],
-                epoch_id=epoch_id,
+            if field is None:
+                if len(promoted) > 1:
+                    continue
+                field = {
+                    "tournament_id": f"{epoch_id}:field:{group[0].generation_id}",
+                    "epoch_id": epoch_id,
+                    "structure": group[0].outcome.structure,
+                    "structure_params": {},
+                    "competitors": [
+                        {"generation_id": group[0].parent_generation_id, "role": "champion"},
+                        *[{"generation_id": e.generation_id, "role": "challenger"} for e in group],
+                    ],
+                    "rounds": [],
+                    "standings": [],
+                    "field_status": [],
+                    "champion_generation_id": group[0].parent_generation_id,
+                    "promoted_generation_id": next(iter(promoted), ""),
+                    "decision": "promoted" if promoted else "rejected",
+                    "state": "settled",
+                    "ran_at": group[0].proposed_at,
+                    "reason": "",
+                }
+            complete_round(
+                root,
+                epoch_id,
+                [experiment.generation_id for experiment in group],
                 round_index=round_index,
                 primary_id=(field["promoted_generation_id"] or None)
                 if field
                 else next(iter(promoted), None),
-                candidates=tuple(candidates),
                 field_record=field,
+                gate_results=gates,
             )
-            body = receipt.to_dict()
-            body["gate_results"] = gates
-            receipt = replace(
-                decode_settlement_receipt(body),
-                state="committed",
-                index_projection=IndexProjection("succeeded", ""),
-            )
-            write_settlement_receipt(root, receipt)
-            by_id = {experiment.generation_id: experiment for experiment in group}
-            for epoch in ancestry["epochs"]:
-                if epoch["id"] == epoch_id:
-                    for generation in epoch["generations"]:
-                        if generation["id"] in by_id:
-                            generation["round_index"] = round_index
-            for experiment in group:
-                path = layout.experiment(epoch_id, experiment.generation_id)
-                proposal = json.loads(path.read_text())
-                proposal["outcome"] = None
-                path.write_text(json.dumps(proposal))
-    layout.lineage_path.write_text(json.dumps(ancestry))

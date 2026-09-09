@@ -44,35 +44,28 @@ def read_recorded_heads(paths: WorkspacePaths, epoch_id: str) -> list[RecordedHe
 
 
 def head_of_round(heads: list[RecordedHead], tournament_id: str | None) -> str | None:
-    """The recorded head of ONE round, or ``None`` when no record names one.
-
-    Matched on the field-tournament id EXACTLY: the durable snapshot and the
-    served bracket record carry the same ``{epoch}:field:{first challenger}``
-    id, so no heuristic is needed and none is used. Matching on a competitor
-    overlap would let round N+1's record claim round N, because its champion
-    is one of round N's challengers.
-
-    The returned id is the record's verbatim claim. Whether it belongs to the
-    round's lineage-promoted set is the CALLER's check, so a record that names
-    a generation outside that set stays visible as a disagreement instead of
-    being silently dropped here.
-    """
+    """Read a tournament's primary promotion by its exact recorded identity."""
     if not tournament_id:
         return None
     match = next((h for h in heads if h.tournament_id == tournament_id), None)
     return match.generation_id or None if match is not None else None
 
 
-def recorded_head_ids(heads: list[RecordedHead]) -> frozenset[str]:
-    """Every generation the epoch's records name as a promoted head.
+def current_champion(paths: WorkspacePaths, epoch_id: str) -> str | None:
+    """Read the committed champion; an unreadable record supplies no inferred winner."""
+    from zicato.epoch.settlement_receipt import recorded_champion
 
-    Both recorded forms count: a round's own crowned head, and the defender
-    every later round names — a generation defends a round only by having
-    headed the one before it. For a reader that needs to know WHETHER an id
-    was ever a head (resolving a branched spine) rather than which round it
-    headed. The epoch's seed rides in as round 0's defender, which is
-    harmless: it is the spine's root by construction.
-    """
-    return frozenset(
-        gid for head in heads for gid in (head.generation_id, head.champion_generation_id) if gid
-    )
+    try:
+        return recorded_champion(paths.root, epoch_id)
+    except (OSError, ValueError, RuntimeError):
+        return None
+
+
+def champion_history(paths: WorkspacePaths, epoch_id: str) -> list[str]:
+    """Read the baseline and committed primary promotions in round order."""
+    from zicato.epoch.settlement_receipt import recorded_champions
+
+    try:
+        return recorded_champions(paths.root, epoch_id)
+    except (OSError, ValueError, RuntimeError):
+        return []

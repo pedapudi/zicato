@@ -1053,19 +1053,19 @@ confirm on the holdout, persist the audit.
 **Why eight.** One capture pins one configuration, and the evolve round
 branches on three axes that select different code: the tournament
 structure the frozen contract declares, the runtime mode, and how many
-rounds the invocation runs. Each lane has its own golden and its own gate,
-so a red names the configuration that moved:
+rounds the invocation runs. Each configuration has its own golden and named test case.
+The `MOCK-GOLDEN` group runs all eight in one test process:
 
-| Gate | Structure · mode · rounds | What only this lane executes |
+| Test configuration | Structure · mode · rounds | Distinct execution coverage |
 | --- | --- | --- |
-| `MOCK-GOLDEN` | racing field 4 · full · 1 | the multi-challenger rungs, cuts, and crowning duel |
-| `MOCK-GOLDEN-GAUNTLET` | gauntlet · full · 1 | the `field_n == 1` branches: one crowning duel with no rungs or cuts, and the crowning holdout confirmation on it |
-| `MOCK-GOLDEN-GAUNTLET-FAST` | gauntlet · fast · 1 | cache-first slot resolution under a single challenger, and a fast round's crowning holdout confirmation |
-| `MOCK-GOLDEN-RACING-FAST` | racing field 4 · fast · 1 | every rung resolving both competitors through the unit cache |
-| `MOCK-GOLDEN-TWO-ROUND-RACING` | racing field 4 · full · 2 | the between-round carry-over: the promoted head advancing off the seeded `v0`, the crowned generation defending the next round, that generation's patched snapshot supplying the next round's mutable surface, round directories numbering on from `0`, and round 1's settled snapshot naming round 0's winner as its champion |
-| `MOCK-GOLDEN-SWISS` | swiss field 4 · full · 1 | fixed-round pairings over champion + challengers, Copeland standings, and the leader's final champion-gate confirmation |
-| `MOCK-GOLDEN-SINGLE-ELIM` | single_elim field 4 · full · 1 | challenger-vs-challenger bracket nodes (no incumbent, so the gate's preferred side wins), then the champion-vs-survivor final |
-| `MOCK-GOLDEN-DOUBLE-ELIM` | double_elim field 4 · full · 1 | the losers' bracket second life and the grand final feeding the champion gate |
+| racing full | racing field 4 · full · 1 | the multi-challenger rungs, cuts, and crowning duel |
+| gauntlet full | gauntlet · full · 1 | the `field_n == 1` branches: one crowning duel with no rungs or cuts, and the crowning holdout confirmation on it |
+| gauntlet fast | gauntlet · fast · 1 | cache-first slot resolution under a single challenger, and a fast round's crowning holdout confirmation |
+| racing fast | racing field 4 · fast · 1 | every rung resolving both competitors through the unit cache |
+| two round racing | racing field 4 · full · 2 | the between-round carry-over: the promoted head advancing off the seeded `v0`, the crowned generation defending the next round, that generation's patched snapshot supplying the next round's mutable surface, round directories numbering on from `0`, and round 1's settled snapshot naming round 0's winner as its champion |
+| swiss | swiss field 4 · full · 1 | fixed-round pairings over champion + challengers, Copeland standings, and the leader's final champion-gate confirmation |
+| single elim | single_elim field 4 · full · 1 | challenger-vs-challenger bracket nodes (no incumbent, so the gate's preferred side wins), then the champion-vs-survivor final |
+| double elim | double_elim field 4 · full · 1 | the losers' bracket second life and the grand final feeding the champion gate |
 
 The last three structures are the ones the unified round pipeline reaches
 through registries that no other lane touches end to end; their contracts

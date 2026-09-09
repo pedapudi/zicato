@@ -1071,6 +1071,19 @@ def build_reader_fixture_workspace(tmp_path: Path) -> Path:
     for epoch_id in EPOCH_IDS:
         _write_epoch(ws, epoch_id)
     _write_lineage(ws)
+    from tests._workspace_support import complete_round
+
+    for epoch_id in EPOCH_IDS:
+        for generation_id in _epoch_generation_ids(epoch_id):
+            if generation_id != "v0":
+                complete_round(
+                    ws,
+                    epoch_id,
+                    [generation_id],
+                    primary_id=generation_id
+                    if _decision_for(generation_id) == "promoted"
+                    else None,
+                )
     # The derived SQLite index is part of a materialized workspace: the
     # reflection mining reader consults it for the candidate axis, so a
     # fixture without one would pin that reader's degraded path instead of

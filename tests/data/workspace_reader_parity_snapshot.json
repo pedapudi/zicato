@@ -492,6 +492,10 @@
       }
     ],
     "brief_text": "# Brief e10\n\n## Goal\n\nReduce plan thrash without losing citations.\n",
+    "champion_history": [
+      "v0",
+      "v1"
+    ],
     "closed": false,
     "closed_at": "",
     "contract_hash": "1963b3707a3f50d0e62f522f0b5b959ac8aa5e6300b3a7cdbac40dfb27aba994",
@@ -655,7 +659,37 @@
       "screen_entries": 0,
       "screen_veto_only": false
     },
-    "round_records": [],
+    "round_records": [
+      {
+        "closed": false,
+        "contract_hash": "",
+        "decision": "",
+        "decision_provenance": {},
+        "evidence_trail": [],
+        "frontier_updates": [],
+        "gates": [],
+        "generation_ids": [],
+        "harness_entrypoint_files": {},
+        "harness_never_imported_trees": {},
+        "holdout": null,
+        "last_seq": 0,
+        "opened": false,
+        "proposal": {
+          "attempts": 0,
+          "candidates_sampled": 0,
+          "candidates_screened": 0,
+          "critique_index": null,
+          "critique_reason": "",
+          "episode_outcomes": [],
+          "errors": [],
+          "experiment_ids": [],
+          "recombined_sampled": 0,
+          "screen_vetoes": 0
+        },
+        "units": [],
+        "validation_findings": []
+      }
+    ],
     "scoring": {
       "block_on_containment_violation": false,
       "block_on_gate_contradiction": false,
@@ -798,6 +832,13 @@
       }
     ],
     "brief_text": "# Brief e2\n\n## Goal\n\nReduce plan thrash without losing citations.\n",
+    "champion_history": [
+      "v0",
+      "v1",
+      "v4",
+      "v7",
+      "v10"
+    ],
     "closed": true,
     "closed_at": "2026-01-31T00:00:00Z",
     "contract_hash": "72f882d7f59d9b344f3c861099ba3a6d6923a5e48f0a861227ee0ccc3b01a8d9",
@@ -1818,6 +1859,209 @@
         "validation_findings": []
       },
       {
+        "closed": false,
+        "contract_hash": "",
+        "decision": "",
+        "decision_provenance": {},
+        "evidence_trail": [],
+        "frontier_updates": [],
+        "gates": [],
+        "generation_ids": [],
+        "harness_entrypoint_files": {},
+        "harness_never_imported_trees": {},
+        "holdout": null,
+        "last_seq": 0,
+        "opened": false,
+        "proposal": {
+          "attempts": 0,
+          "candidates_sampled": 0,
+          "candidates_screened": 0,
+          "critique_index": null,
+          "critique_reason": "",
+          "episode_outcomes": [],
+          "errors": [],
+          "experiment_ids": [],
+          "recombined_sampled": 0,
+          "screen_vetoes": 0
+        },
+        "units": [],
+        "validation_findings": []
+      },
+      {
+        "closed": false,
+        "contract_hash": "",
+        "decision": "",
+        "decision_provenance": {},
+        "evidence_trail": [],
+        "frontier_updates": [],
+        "gates": [],
+        "generation_ids": [],
+        "harness_entrypoint_files": {},
+        "harness_never_imported_trees": {},
+        "holdout": null,
+        "last_seq": 0,
+        "opened": false,
+        "proposal": {
+          "attempts": 0,
+          "candidates_sampled": 0,
+          "candidates_screened": 0,
+          "critique_index": null,
+          "critique_reason": "",
+          "episode_outcomes": [],
+          "errors": [],
+          "experiment_ids": [],
+          "recombined_sampled": 0,
+          "screen_vetoes": 0
+        },
+        "units": [],
+        "validation_findings": []
+      },
+      {
+        "closed": false,
+        "contract_hash": "",
+        "decision": "",
+        "decision_provenance": {},
+        "evidence_trail": [],
+        "frontier_updates": [],
+        "gates": [],
+        "generation_ids": [],
+        "harness_entrypoint_files": {},
+        "harness_never_imported_trees": {},
+        "holdout": null,
+        "last_seq": 0,
+        "opened": false,
+        "proposal": {
+          "attempts": 0,
+          "candidates_sampled": 0,
+          "candidates_screened": 0,
+          "critique_index": null,
+          "critique_reason": "",
+          "episode_outcomes": [],
+          "errors": [],
+          "experiment_ids": [],
+          "recombined_sampled": 0,
+          "screen_vetoes": 0
+        },
+        "units": [],
+        "validation_findings": []
+      },
+      {
+        "closed": false,
+        "contract_hash": "",
+        "decision": "",
+        "decision_provenance": {},
+        "evidence_trail": [],
+        "frontier_updates": [],
+        "gates": [],
+        "generation_ids": [],
+        "harness_entrypoint_files": {},
+        "harness_never_imported_trees": {},
+        "holdout": null,
+        "last_seq": 0,
+        "opened": false,
+        "proposal": {
+          "attempts": 0,
+          "candidates_sampled": 0,
+          "candidates_screened": 0,
+          "critique_index": null,
+          "critique_reason": "",
+          "episode_outcomes": [],
+          "errors": [],
+          "experiment_ids": [],
+          "recombined_sampled": 0,
+          "screen_vetoes": 0
+        },
+        "units": [],
+        "validation_findings": []
+      },
+      {
+        "closed": false,
+        "contract_hash": "",
+        "decision": "",
+        "decision_provenance": {},
+        "evidence_trail": [],
+        "frontier_updates": [],
+        "gates": [],
+        "generation_ids": [],
+        "harness_entrypoint_files": {},
+        "harness_never_imported_trees": {},
+        "holdout": null,
+        "last_seq": 0,
+        "opened": false,
+        "proposal": {
+          "attempts": 0,
+          "candidates_sampled": 0,
+          "candidates_screened": 0,
+          "critique_index": null,
+          "critique_reason": "",
+          "episode_outcomes": [],
+          "errors": [],
+          "experiment_ids": [],
+          "recombined_sampled": 0,
+          "screen_vetoes": 0
+        },
+        "units": [],
+        "validation_findings": []
+      },
+      {
+        "closed": false,
+        "contract_hash": "",
+        "decision": "",
+        "decision_provenance": {},
+        "evidence_trail": [],
+        "frontier_updates": [],
+        "gates": [],
+        "generation_ids": [],
+        "harness_entrypoint_files": {},
+        "harness_never_imported_trees": {},
+        "holdout": null,
+        "last_seq": 0,
+        "opened": false,
+        "proposal": {
+          "attempts": 0,
+          "candidates_sampled": 0,
+          "candidates_screened": 0,
+          "critique_index": null,
+          "critique_reason": "",
+          "episode_outcomes": [],
+          "errors": [],
+          "experiment_ids": [],
+          "recombined_sampled": 0,
+          "screen_vetoes": 0
+        },
+        "units": [],
+        "validation_findings": []
+      },
+      {
+        "closed": false,
+        "contract_hash": "",
+        "decision": "",
+        "decision_provenance": {},
+        "evidence_trail": [],
+        "frontier_updates": [],
+        "gates": [],
+        "generation_ids": [],
+        "harness_entrypoint_files": {},
+        "harness_never_imported_trees": {},
+        "holdout": null,
+        "last_seq": 0,
+        "opened": false,
+        "proposal": {
+          "attempts": 0,
+          "candidates_sampled": 0,
+          "candidates_screened": 0,
+          "critique_index": null,
+          "critique_reason": "",
+          "episode_outcomes": [],
+          "errors": [],
+          "experiment_ids": [],
+          "recombined_sampled": 0,
+          "screen_vetoes": 0
+        },
+        "units": [],
+        "validation_findings": []
+      },
+      {
         "closed": true,
         "contract_hash": "72f882d7f59d9b344f3c861099ba3a6d6923a5e48f0a861227ee0ccc3b01a8d9",
         "decision": "promoted",
@@ -2227,42 +2471,7 @@
         "why": "Plan thrash dominates the drift profile."
       },
       "id": "exp-e10-v1",
-      "outcome": {
-        "champion_eval_mode": "full",
-        "drift_loss_delta": -0.02,
-        "eliminated_in_round": null,
-        "evidence": null,
-        "final_rank": null,
-        "generalization_gap": null,
-        "holdout": null,
-        "holdout_loss": null,
-        "match_record": [],
-        "metric_movements": [
-          {
-            "from_value": 3.0,
-            "hypothesis_match": true,
-            "metric_name": "drift:plan_thrash",
-            "note": "",
-            "to_value": 2.0
-          },
-          {
-            "from_value": 500,
-            "hypothesis_match": true,
-            "metric_name": "cost:tokens_spent",
-            "note": "",
-            "to_value": 480
-          }
-        ],
-        "operator_override": false,
-        "operator_override_reason": "",
-        "pass_rate_delta": 0.01,
-        "ran_at": "2026-01-02T06:00:00Z",
-        "rejection_reason": "",
-        "scalar_score_delta": -0.02,
-        "structure": "gauntlet",
-        "tournament_decision": "promoted",
-        "train_loss": null
-      },
+      "outcome": null,
       "parent_generation_id": "v0",
       "patch_ids": [
         "p1"
@@ -2317,42 +2526,7 @@
         "why": "Plan thrash dominates the drift profile."
       },
       "id": "exp-e2-v1",
-      "outcome": {
-        "champion_eval_mode": "full",
-        "drift_loss_delta": -0.02,
-        "eliminated_in_round": null,
-        "evidence": null,
-        "final_rank": null,
-        "generalization_gap": null,
-        "holdout": null,
-        "holdout_loss": null,
-        "match_record": [],
-        "metric_movements": [
-          {
-            "from_value": 3.0,
-            "hypothesis_match": true,
-            "metric_name": "drift:plan_thrash",
-            "note": "",
-            "to_value": 2.0
-          },
-          {
-            "from_value": 500,
-            "hypothesis_match": true,
-            "metric_name": "cost:tokens_spent",
-            "note": "",
-            "to_value": 480
-          }
-        ],
-        "operator_override": false,
-        "operator_override_reason": "",
-        "pass_rate_delta": 0.01,
-        "ran_at": "2026-01-02T06:00:00Z",
-        "rejection_reason": "",
-        "scalar_score_delta": -0.02,
-        "structure": "gauntlet",
-        "tournament_decision": "promoted",
-        "train_loss": null
-      },
+      "outcome": null,
       "parent_generation_id": "v0",
       "patch_ids": [
         "p1"
@@ -2386,42 +2560,7 @@
         "why": "Plan thrash dominates the drift profile."
       },
       "id": "exp-e2-v2",
-      "outcome": {
-        "champion_eval_mode": "full",
-        "drift_loss_delta": -0.04,
-        "eliminated_in_round": null,
-        "evidence": null,
-        "final_rank": null,
-        "generalization_gap": null,
-        "holdout": null,
-        "holdout_loss": null,
-        "match_record": [],
-        "metric_movements": [
-          {
-            "from_value": 3.0,
-            "hypothesis_match": true,
-            "metric_name": "drift:plan_thrash",
-            "note": "",
-            "to_value": 2.0
-          },
-          {
-            "from_value": 500,
-            "hypothesis_match": true,
-            "metric_name": "cost:tokens_spent",
-            "note": "",
-            "to_value": 480
-          }
-        ],
-        "operator_override": false,
-        "operator_override_reason": "",
-        "pass_rate_delta": 0.02,
-        "ran_at": "2026-01-03T06:00:00Z",
-        "rejection_reason": "below promote margin",
-        "scalar_score_delta": 0.005,
-        "structure": "gauntlet",
-        "tournament_decision": "rejected",
-        "train_loss": null
-      },
+      "outcome": null,
       "parent_generation_id": "v1",
       "patch_ids": [
         "p2"
@@ -2455,42 +2594,7 @@
         "why": "Plan thrash dominates the drift profile."
       },
       "id": "exp-e2-v3",
-      "outcome": {
-        "champion_eval_mode": "full",
-        "drift_loss_delta": -0.06,
-        "eliminated_in_round": null,
-        "evidence": null,
-        "final_rank": null,
-        "generalization_gap": null,
-        "holdout": null,
-        "holdout_loss": null,
-        "match_record": [],
-        "metric_movements": [
-          {
-            "from_value": 3.0,
-            "hypothesis_match": true,
-            "metric_name": "drift:plan_thrash",
-            "note": "",
-            "to_value": 2.0
-          },
-          {
-            "from_value": 500,
-            "hypothesis_match": true,
-            "metric_name": "cost:tokens_spent",
-            "note": "",
-            "to_value": 480
-          }
-        ],
-        "operator_override": false,
-        "operator_override_reason": "",
-        "pass_rate_delta": 0.03,
-        "ran_at": "2026-01-04T06:00:00Z",
-        "rejection_reason": "below promote margin",
-        "scalar_score_delta": 0.005,
-        "structure": "gauntlet",
-        "tournament_decision": "rejected",
-        "train_loss": null
-      },
+      "outcome": null,
       "parent_generation_id": "v2",
       "patch_ids": [
         "p3"
@@ -2524,42 +2628,7 @@
         "why": "Plan thrash dominates the drift profile."
       },
       "id": "exp-e2-v4",
-      "outcome": {
-        "champion_eval_mode": "full",
-        "drift_loss_delta": -0.08,
-        "eliminated_in_round": null,
-        "evidence": null,
-        "final_rank": null,
-        "generalization_gap": null,
-        "holdout": null,
-        "holdout_loss": null,
-        "match_record": [],
-        "metric_movements": [
-          {
-            "from_value": 3.0,
-            "hypothesis_match": true,
-            "metric_name": "drift:plan_thrash",
-            "note": "",
-            "to_value": 2.0
-          },
-          {
-            "from_value": 500,
-            "hypothesis_match": true,
-            "metric_name": "cost:tokens_spent",
-            "note": "",
-            "to_value": 480
-          }
-        ],
-        "operator_override": false,
-        "operator_override_reason": "",
-        "pass_rate_delta": 0.04,
-        "ran_at": "2026-01-05T06:00:00Z",
-        "rejection_reason": "",
-        "scalar_score_delta": -0.02,
-        "structure": "gauntlet",
-        "tournament_decision": "promoted",
-        "train_loss": null
-      },
+      "outcome": null,
       "parent_generation_id": "v3",
       "patch_ids": [
         "p4"
@@ -2593,42 +2662,7 @@
         "why": "Plan thrash dominates the drift profile."
       },
       "id": "exp-e2-v5",
-      "outcome": {
-        "champion_eval_mode": "full",
-        "drift_loss_delta": -0.1,
-        "eliminated_in_round": null,
-        "evidence": null,
-        "final_rank": null,
-        "generalization_gap": null,
-        "holdout": null,
-        "holdout_loss": null,
-        "match_record": [],
-        "metric_movements": [
-          {
-            "from_value": 3.0,
-            "hypothesis_match": true,
-            "metric_name": "drift:plan_thrash",
-            "note": "",
-            "to_value": 2.0
-          },
-          {
-            "from_value": 500,
-            "hypothesis_match": true,
-            "metric_name": "cost:tokens_spent",
-            "note": "",
-            "to_value": 480
-          }
-        ],
-        "operator_override": false,
-        "operator_override_reason": "",
-        "pass_rate_delta": 0.05,
-        "ran_at": "2026-01-06T06:00:00Z",
-        "rejection_reason": "below promote margin",
-        "scalar_score_delta": 0.005,
-        "structure": "gauntlet",
-        "tournament_decision": "rejected",
-        "train_loss": null
-      },
+      "outcome": null,
       "parent_generation_id": "v4",
       "patch_ids": [
         "p5"
@@ -2662,42 +2696,7 @@
         "why": "Plan thrash dominates the drift profile."
       },
       "id": "exp-e2-v6",
-      "outcome": {
-        "champion_eval_mode": "full",
-        "drift_loss_delta": -0.12,
-        "eliminated_in_round": null,
-        "evidence": null,
-        "final_rank": null,
-        "generalization_gap": null,
-        "holdout": null,
-        "holdout_loss": null,
-        "match_record": [],
-        "metric_movements": [
-          {
-            "from_value": 3.0,
-            "hypothesis_match": true,
-            "metric_name": "drift:plan_thrash",
-            "note": "",
-            "to_value": 2.0
-          },
-          {
-            "from_value": 500,
-            "hypothesis_match": true,
-            "metric_name": "cost:tokens_spent",
-            "note": "",
-            "to_value": 480
-          }
-        ],
-        "operator_override": false,
-        "operator_override_reason": "",
-        "pass_rate_delta": 0.06,
-        "ran_at": "2026-01-07T06:00:00Z",
-        "rejection_reason": "below promote margin",
-        "scalar_score_delta": 0.005,
-        "structure": "gauntlet",
-        "tournament_decision": "deferred",
-        "train_loss": null
-      },
+      "outcome": null,
       "parent_generation_id": "v5",
       "patch_ids": [
         "p6"
@@ -2731,42 +2730,7 @@
         "why": "Plan thrash dominates the drift profile."
       },
       "id": "exp-e2-v7",
-      "outcome": {
-        "champion_eval_mode": "full",
-        "drift_loss_delta": -0.14,
-        "eliminated_in_round": null,
-        "evidence": null,
-        "final_rank": null,
-        "generalization_gap": null,
-        "holdout": null,
-        "holdout_loss": null,
-        "match_record": [],
-        "metric_movements": [
-          {
-            "from_value": 3.0,
-            "hypothesis_match": true,
-            "metric_name": "drift:plan_thrash",
-            "note": "",
-            "to_value": 2.0
-          },
-          {
-            "from_value": 500,
-            "hypothesis_match": true,
-            "metric_name": "cost:tokens_spent",
-            "note": "",
-            "to_value": 480
-          }
-        ],
-        "operator_override": false,
-        "operator_override_reason": "",
-        "pass_rate_delta": 0.07,
-        "ran_at": "2026-01-08T06:00:00Z",
-        "rejection_reason": "",
-        "scalar_score_delta": -0.02,
-        "structure": "gauntlet",
-        "tournament_decision": "promoted",
-        "train_loss": null
-      },
+      "outcome": null,
       "parent_generation_id": "v6",
       "patch_ids": [
         "p7"
@@ -2800,42 +2764,7 @@
         "why": "Plan thrash dominates the drift profile."
       },
       "id": "exp-e2-v8",
-      "outcome": {
-        "champion_eval_mode": "full",
-        "drift_loss_delta": -0.16,
-        "eliminated_in_round": null,
-        "evidence": null,
-        "final_rank": null,
-        "generalization_gap": null,
-        "holdout": null,
-        "holdout_loss": null,
-        "match_record": [],
-        "metric_movements": [
-          {
-            "from_value": 3.0,
-            "hypothesis_match": true,
-            "metric_name": "drift:plan_thrash",
-            "note": "",
-            "to_value": 2.0
-          },
-          {
-            "from_value": 500,
-            "hypothesis_match": true,
-            "metric_name": "cost:tokens_spent",
-            "note": "",
-            "to_value": 480
-          }
-        ],
-        "operator_override": false,
-        "operator_override_reason": "",
-        "pass_rate_delta": 0.08,
-        "ran_at": "2026-01-09T06:00:00Z",
-        "rejection_reason": "below promote margin",
-        "scalar_score_delta": 0.005,
-        "structure": "gauntlet",
-        "tournament_decision": "rejected",
-        "train_loss": null
-      },
+      "outcome": null,
       "parent_generation_id": "v7",
       "patch_ids": [
         "p8"
@@ -2869,42 +2798,7 @@
         "why": "Plan thrash dominates the drift profile."
       },
       "id": "exp-e2-v9",
-      "outcome": {
-        "champion_eval_mode": "full",
-        "drift_loss_delta": -0.18,
-        "eliminated_in_round": null,
-        "evidence": null,
-        "final_rank": null,
-        "generalization_gap": null,
-        "holdout": null,
-        "holdout_loss": null,
-        "match_record": [],
-        "metric_movements": [
-          {
-            "from_value": 3.0,
-            "hypothesis_match": true,
-            "metric_name": "drift:plan_thrash",
-            "note": "",
-            "to_value": 2.0
-          },
-          {
-            "from_value": 500,
-            "hypothesis_match": true,
-            "metric_name": "cost:tokens_spent",
-            "note": "",
-            "to_value": 480
-          }
-        ],
-        "operator_override": false,
-        "operator_override_reason": "",
-        "pass_rate_delta": 0.09,
-        "ran_at": "2026-01-10T06:00:00Z",
-        "rejection_reason": "below promote margin",
-        "scalar_score_delta": 0.005,
-        "structure": "gauntlet",
-        "tournament_decision": "rejected",
-        "train_loss": null
-      },
+      "outcome": null,
       "parent_generation_id": "v8",
       "patch_ids": [
         "p9"
@@ -2938,42 +2832,7 @@
         "why": "Plan thrash dominates the drift profile."
       },
       "id": "exp-e2-v10",
-      "outcome": {
-        "champion_eval_mode": "full",
-        "drift_loss_delta": -0.2,
-        "eliminated_in_round": null,
-        "evidence": null,
-        "final_rank": null,
-        "generalization_gap": null,
-        "holdout": null,
-        "holdout_loss": null,
-        "match_record": [],
-        "metric_movements": [
-          {
-            "from_value": 3.0,
-            "hypothesis_match": true,
-            "metric_name": "drift:plan_thrash",
-            "note": "",
-            "to_value": 2.0
-          },
-          {
-            "from_value": 500,
-            "hypothesis_match": true,
-            "metric_name": "cost:tokens_spent",
-            "note": "",
-            "to_value": 480
-          }
-        ],
-        "operator_override": false,
-        "operator_override_reason": "",
-        "pass_rate_delta": 0.1,
-        "ran_at": "2026-01-11T06:00:00Z",
-        "rejection_reason": "",
-        "scalar_score_delta": -0.02,
-        "structure": "gauntlet",
-        "tournament_decision": "promoted",
-        "train_loss": null
-      },
+      "outcome": null,
       "parent_generation_id": "v9",
       "patch_ids": [
         "p10"
@@ -11034,10 +10893,19 @@
     "turns_completed": null,
     "wall_clock_budget_exceeded": false
   },
-  "zicato.workspace.round_indices::e10": [],
+  "zicato.workspace.round_indices::e10": [
+    1
+  ],
   "zicato.workspace.round_indices::e2": [
     1,
     2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
     10
   ],
   "zicato.workspace.run_entry_ids::e10::v0": [

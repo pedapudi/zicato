@@ -276,6 +276,10 @@ def epoch_workspace(tmp_path: Path) -> tuple[Path, str]:
             "rationale": "0.7 -> 0.95",
         },
     )
+    from tests._workspace_support import complete_round
+
+    complete_round(ws, epoch, ["v1"], primary_id="v1", round_index=0)
+    complete_round(ws, epoch, ["v2"], primary_id=None, round_index=1)
     return ws, epoch
 
 
@@ -1671,7 +1675,7 @@ def test_gather_orders_generations_identically_via_inner_and_outer_root(tmp_path
 # assumed a promotion had happened.
 
 
-def _cv_data(*generations: object) -> EpochReportData:
+def _cv_data(*generations: object, champions: tuple[str, ...] = ("v0",)) -> EpochReportData:
     """An ``EpochReportData`` carrying only the fields these tests read."""
     kwargs: dict[str, object] = {}
     for f in dataclasses.fields(EpochReportData):
@@ -1688,7 +1692,7 @@ def _cv_data(*generations: object) -> EpochReportData:
                 if "bool" in annotation
                 else ""
             )
-    return EpochReportData(**kwargs)  # type: ignore[arg-type]
+    return EpochReportData(**kwargs, champion_history=champions)  # type: ignore[arg-type]
 
 
 def _cv_gen(gid: str, parent: str, decision: str, delta: float = 0.0) -> GenerationView:
@@ -1723,7 +1727,9 @@ def test_final_scalar_follows_the_champion_past_a_trailing_rejection() -> None:
     data = _cv_data(
         _cv_gen("v0", "", "baseline"),
         _cv_gen("v1", "v0", "promoted", -0.30),
+        _cv_gen("v11", "v0", "promoted", -0.50),
         _cv_gen("v2", "v1", "rejected", +0.50),
+        champions=("v0", "v1"),
     )
     assert data.final_scalar == pytest.approx(-0.30), "the promoted v1, not the rejected v2"
     assert data.latest_rejected_scalar == pytest.approx(0.20), "v2's counterfactual, named as such"

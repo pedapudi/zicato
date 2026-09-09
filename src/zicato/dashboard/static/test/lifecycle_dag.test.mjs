@@ -818,7 +818,7 @@ test('lifecycle Σ node: exposes candidate-Σ vs champion-Σ and the Δ between 
   assert(!hasNativeTitle(agg), 'the Σ node carries NO native <title>');
   const sigmaTip = hovercardTextOf(agg);
   assert(/summed over this rung’s board slice/.test(sigmaTip), 'the Σ hovercard explains the aggregation over the slice');
-  assert(/SAME boards/.test(sigmaTip), 'the Σ hovercard links Σ→GATE: the gate compares these scalars on the same boards');
+  assert(/observed drift totals/.test(hovercardTextOf(agg)), 'the summary identifies its observed quantities');
 });
 
 test('lifecycle GATE node: names the deciding rule + the Δ — a POSITIVE Δ rejection explains "worse than champion"', () => {
@@ -838,10 +838,23 @@ test('lifecycle GATE node: names the deciding rule + the Δ — a POSITIVE Δ re
   assert(!hasNativeTitle(gate), 'the GATE node carries NO native <title> tooltip');
   const gateTip = hovercardTextOf(gate);
   assert(gateTip, 'the GATE node exposes an explanation via the hovercard');
-  assert(/3-rule/.test(gateTip), 'the hovercard frames the gate as a 3-rule test');
-  assert(/SCALAR-MARGIN rule/i.test(gateTip), 'the hovercard names the scalar-margin rule as the decider');
-  assert(/worse than champion/.test(gateTip), 'a positive-Δ rejection explains it is WORSE than the champion');
-  assert(/\+75\.7/.test(gateTip), 'the hovercard shows the decisive +Δ');
+  assert(/Promotion decision: rejected/.test(gateTip), 'the hovercard displays the recorded decision');
+  assert(/Scalar margin/.test(gateTip), 'the hovercard names the recorded deciding rule');
+  assert(gateTip.includes(gateExplain.reason), 'the hovercard preserves the recorded reason');
+  assert(gateTip.includes('75.71'), 'the recorded loss change remains visible');
+});
+
+test('a deferred gate displays the recorded reason even when the observed score improves', () => {
+  const gateExplain = { decision: 'deferred', decidingRule: 'confirmation',
+    decidingLabel: 'Confirmation incomplete', detail: 'Two required measurements are missing.',
+    reason: 'No promotion decision was made.', deltaScalar: -12 };
+  const node = dag.lifecycleDag({ genId: 'v1', parentId: 'v0', decision: 'deferred',
+    entries: [{ entry_id: 'a', pass_fail: true, score: 1 }], gateExplain });
+  const gate = node.querySelectorAll('[class]').find((n) =>
+    (n.getAttribute('class') || '').split(/\s+/).includes('ezn-gate-node'));
+  const text = hovercardTextOf(gate);
+  assert(text.includes('deferred') && text.includes(gateExplain.detail), 'recorded confirmation remains unresolved');
+  assert(text.includes(gateExplain.reason), 'the explanation is displayed verbatim');
 });
 
 test('lifecycle GATE node: a MONOTONICITY rejection explains the regressed predicate even when the scalar is BETTER', () => {
@@ -850,7 +863,7 @@ test('lifecycle GATE node: a MONOTONICITY rejection explains the regressed predi
   // regressed a predicate that had been passing (pass-rate monotonicity). This
   // is the "smaller Σ but rejected" case made legible.
   const gateExplain = { decision: 'rejected', decidingRule: 'pass_rate_monotonicity', decidingLabel: 'Pass-rate monotonicity',
-    deltaScalar: -5.0, margin: null, regressed: 'no_fabricated_numbers', reason: 'regressed a passing predicate' };
+    deltaScalar: -5.0, margin: null, regressed: 'no_fabricated_numbers', detail: 'regressed no_fabricated_numbers', reason: 'regressed a passing predicate' };
   const svgNode = dag.lifecycleDag({ genId: 'v1', parentId: 'v0', entries, decision: 'rejected', height: 360,
     deltaScalar: -5.0, gateExplain });
   const gate = svgNode.querySelectorAll('[class]').filter((n) =>
@@ -859,9 +872,9 @@ test('lifecycle GATE node: a MONOTONICITY rejection explains the regressed predi
   assertEqual(gate.getAttribute('data-regressed'), 'no_fabricated_numbers', 'the GATE node carries the regressed predicate');
   const monoTip = hovercardTextOf(gate);
   assert(!hasNativeTitle(gate), 'the GATE node carries NO native <title>');
-  assert(/Scalar may be better, BUT/.test(monoTip), 'the hovercard says the scalar is better BUT it still failed a rule');
+  assert(monoTip.includes(gateExplain.reason), 'the recorded explanation is displayed verbatim');
   assert(/no_fabricated_numbers/.test(monoTip), 'the hovercard names the regressed predicate');
-  assert(/rule 2/.test(monoTip), 'the hovercard identifies it as the pass-rate-monotonicity rule (rule 2)');
+  assert(/Pass-rate monotonicity/.test(monoTip), 'the recorded rule label is displayed');
 });
 
 test('lifecycle DAG: de-crowded to ONE concise key line + a "?" info hovercard (the verbose how-to is gone from the figure), omitted for a baseline', () => {
@@ -887,7 +900,7 @@ test('lifecycle DAG: de-crowded to ONE concise key line + a "?" info hovercard (
   assertEqual(info.getAttribute('tabindex'), '0', 'the "?" affordance is keyboard-focusable');
   const howto = hovercardTextOf(info);
   assert(/parent → patch → board/.test(howto), 'the hovercard carries the parent→patch→board walkthrough');
-  assert(/3-rule test/.test(howto), 'the hovercard carries the 3-rule gate detail');
+  assert(/recorded promotion decision/.test(howto), 'the help directs readers to the recorded decision');
   assert(/per-run values/.test(howto), 'the hovercard carries the hover/click affordance detail');
 
   // a baseline (seed) has no gate, so no key + no info affordance.
@@ -1071,7 +1084,9 @@ test('lifecycle DAG (integration): the candidate view feeds the champion compari
   assertEqual(gate.getAttribute('data-deciding-rule'), 'scalar_margin', 'the rendered GATE node names the scalar-margin rule');
   assert(hovercard.hasHovercard(gate) && !hasNativeTitle(gate), 'the rendered GATE uses the hovercard, not a native <title>');
   const gtitle = hovercardTextOf(gate);
-  assert(/worse than champion/.test(gtitle), 'the rendered GATE explains the rejection as worse-than-champion (resolves "smaller Σ but rejected")');
+  const servedGate = recorded('console/gate/v0/v1');
+  assert(gtitle.includes(servedGate.reason), 'the rendered gate preserves the recorded reason');
+  assert(gtitle.includes('rejected'), 'the recorded decision remains visible');
 
   // the Σ node carries the candidate-vs-champion Σ Δ.
   const agg = dagSvg.querySelectorAll('[class]').filter((n) =>

@@ -55,6 +55,7 @@ function scoredDag(overrides) {
   return dag.lifecycleDag(Object.assign({
     genId: 'v2', parentId: 'v1', decision: 'promoted', promoted: true,
     championId: 'v1', entries: SCORED_ENTRIES, compare: SCORED_COMPARE, driftPresent: false,
+    comparisonSummary: { mean_delta_score: (0.585 - 0.041) / 3, compared_score_count: 3 },
   }, overrides || {}));
 }
 
@@ -112,20 +113,20 @@ test('BOARD stage: an unmeasured spread renders `--`, never ±0.000', () => {
     'the aria-label states the spread is unavailable rather than reading a zero');
 });
 
-test('Σ node: the mean of the served Δs — the figure’s own arithmetic, reconciling with the gate', () => {
-  const svgNode = scoredDag();
+test('Σ node: display the framework summary verbatim', () => {
+  const svgNode = scoredDag({ comparisonSummary: { mean_delta_score: 0.123, compared_score_count: 3 } });
   const agg = sigmaNodeOf(svgNode);
   assert(agg && agg.getAttribute('data-channel') === 'score', 'the Σ node rendered on the score channel');
-  const mean = (0.585 - 0.041 + 0.0) / 3;
+  const mean = 0.123;
   assertEqual(agg.getAttribute('data-delta-sigma'), svg.fmtSigned(mean, 3),
-    'Σ is the MEAN of the per-entry Δs — the movement in the board-level mean score');
+    'the served summary wins over any browser recomputation');
   assert(/Σ Δ score/.test(textOf(agg)), 'the node is labelled for the channel it aggregates');
   assert(/3 entries/.test(textOf(agg)), 'and says how many entries it averaged');
   assert(/mean of the per-entry/.test(hovercardTextOf(agg)),
     'the hovercard states the identity rather than leaving the reader to infer it');
 });
 
-test('Σ node: only entries BOTH sides ran feed the mean (the gate’s own restriction)', () => {
+test('Σ node: only entries BOTH sides ran feed the mean (the framework comparison selection)', () => {
   const svgNode = scoredDag({
     entries: SCORED_ENTRIES.concat([{ entry_id: 'challenger_only', drift_loss: 0, pass_fail: true, score: 0.9 }]),
   });

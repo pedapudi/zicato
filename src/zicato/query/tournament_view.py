@@ -29,49 +29,12 @@ from zicato.query.paths import (
     layout_of,
     read_current_epoch,
 )
+from zicato.query.promoted_head import champion_history
 from zicato.query.ratings import RATING_FIELDS, rating_by_generation
 from zicato.query.replicate_scores import replicate_scores, standard_error
 from zicato.query.runtime_view import read_active_tournament_dict
 from zicato.tournament.scoring import read_gen_score
 from zicato.workspace.reads import read_generation_losses
-
-
-def _champion_lineage(generations: list[dict[str, Any]]) -> list[str]:
-    promoted = {
-        g["generation_id"] for g in generations if g.get("promoted") and g.get("generation_id")
-    }
-    if not promoted:
-        return []
-    parent = {
-        g["generation_id"]: g.get("parent_generation_id")
-        for g in generations
-        if g.get("promoted") and g.get("generation_id")
-    }
-    roots = sorted(
-        gid for gid in promoted if parent.get(gid) is None or parent.get(gid) not in promoted
-    )
-    if not roots:
-        return []
-    root = roots[0]
-    child_of: dict[str, str] = {}
-    for g in generations:
-        if not g.get("promoted"):
-            continue
-        p = g.get("parent_generation_id")
-        c = g.get("generation_id")
-        if isinstance(p, str) and isinstance(c, str) and p in promoted:
-            child_of[p] = c
-    chain = [root]
-    seen = {root}
-    cur = root
-    while cur in child_of:
-        nxt = child_of[cur]
-        if nxt in seen:
-            break
-        chain.append(nxt)
-        seen.add(nxt)
-        cur = nxt
-    return chain
 
 
 def build_bracket(
@@ -94,6 +57,13 @@ def build_bracket(
         )
     except sqlite3.Error:
         return {"epoch_id": epoch_id, "champion_lineage": [], "matchups": []}
+    except RecordError as exc:
+        return {
+            "epoch_id": epoch_id,
+            "champion_lineage": [],
+            "matchups": [],
+            "unreadable": str(exc),
+        }
 
 
 def _bracket_from_conn(
@@ -107,21 +77,7 @@ def _bracket_from_conn(
     if epoch_id is None:
         return {"epoch_id": None, "champion_lineage": [], "matchups": []}
 
-    gen_rows = _query(
-        conn,
-        "SELECT epoch_id, generation_id, parent_generation_id, promoted "
-        "FROM generations WHERE epoch_id = ?",
-        (epoch_id,),
-    )
-    generations = [
-        {
-            "generation_id": r["generation_id"],
-            "parent_generation_id": r["parent_generation_id"],
-            "promoted": bool(r["promoted"]),
-        }
-        for r in gen_rows
-    ]
-    champion_lineage = _champion_lineage(generations)
+    champion_lineage = champion_history(paths, epoch_id)
 
     tour_rows = _query(
         conn,
@@ -154,192 +110,31 @@ def _bracket_from_conn(
         if not _is_field_tournament_id(r["tournament_id"])
     ]
 
-    struct_rows = _query(
-        conn,
-        "SELECT tournament_id, structure, structure_params_json, "
-        "competitors_json, rounds_json, standings_json, ran_at, "
-        "parent_generation_id, child_generation_id, parent_scalar, "
-        "champion_eval_mode, champion_run_ref "
-        "FROM tournaments WHERE epoch_id = ? ORDER BY ran_at ASC, tournament_id ASC",
-        (epoch_id,),
-    )
+    from zicato.epoch.settlement_receipt import iter_settlement_receipts
+    from zicato.tournament.records import field_tournament_records
 
-    # The per-round CHAMPION (id + scalar + eval provenance: champion_eval_mode
-    # / champion_run_ref — cached vs re-run) is carried on the per-CHALLENGER
-    # rows: each has parent_generation_id = the round's champion. A FIELD row
-    # has an EMPTY parent (a field is a round rather than a duel), so resolve a field
-    # record's champion from a sibling per-challenger row keyed by the
-    # CHALLENGER (whose child is one of the field's competitors).
-    champ_by_child: dict[str, dict[str, Any]] = {}
-    for r in struct_rows:
-        cg = r["child_generation_id"]
-        pg = r["parent_generation_id"]
-        if cg and pg:
-            champ_by_child[str(cg)] = {
-                "id": str(pg),
-                "scalar": r["parent_scalar"],
-                "eval_mode": r["champion_eval_mode"],
-                "run_ref": r["champion_run_ref"],
-            }
-
-    def _field_champion(comps: list[Any]) -> dict[str, Any] | None:
-        """The champion of a FIELD row, whose own parent column is empty.
-
-        A field row is a round rather than a duel, so ``_upsert_field_tournament``
-        leaves its parent/child columns empty on purpose. The champion has to
-        come from the competitor list, and the two ways of reading that list
-        are NOT equivalent:
-
-        * The record TAGS the champion (``role: "champion"`` — the shape
-          ``competitors_meta`` writes, champion first). Read the tag.
-        * Borrowing "the first competitor that appears in ``champ_by_child``"
-          reads the champion's OWN crowning duel, whose parent is the champion
-          it BEAT. That named the PREVIOUS champion on every round after a
-          promotion, so a beaten champion went on defending every later round.
-
-        The champion's scalar and eval provenance (cached vs re-run) still ride
-        on the crowning row of a CHALLENGER IN THIS FIELD, whose parent IS this
-        round's champion — that borrow is correct and is what the old code was
-        reaching for. Keying it to this field's own challengers is what keeps a
-        HELD champion's provenance on the CURRENT round: one champion defends
-        several rounds, so an unrestricted search finds its earliest defence and
-        reports that round's scalar and cached-vs-fresh mode instead.
-
-        For a record whose competitors carry no role (hand-built, or written
-        before the tag), fall back on the structural fact that a field's
-        champion COMPETES in the field: prefer a borrowed champion that is
-        itself one of the competitors, walked in competitor order. Both
-        paths are deterministic: the tagged path's sibling lookup walks
-        ``champ_by_child`` in insertion order (rows arrive ``ORDER BY
-        ran_at, tournament_id``), the untagged path walks the record's own
-        competitor order.
-        """
-        ids = [str(c.get("generation_id") if isinstance(c, dict) else c) for c in comps]
-        in_field = set(ids)
-        tagged = next(
-            (
-                str(c.get("generation_id") or "")
-                for c in comps
-                if isinstance(c, dict) and str(c.get("role") or "") == "champion"
-            ),
-            "",
-        )
-        if tagged:
-            sibling = next(
-                (
-                    v
-                    for k, v in champ_by_child.items()
-                    if str(v.get("id")) == tagged and k in in_field and k != tagged
-                ),
-                None,
-            )
-            base = dict(sibling) if sibling else {}
-            base["id"] = tagged
-            return base
-        for key in ids:
-            borrowed = champ_by_child.get(key)
-            if borrowed is not None and str(borrowed.get("id")) in in_field:
-                return dict(borrowed)
-        for key in ids:
-            if key in champ_by_child:
-                return dict(champ_by_child[key])
-        return None
-
-    def _champion_for(row: sqlite3.Row, comps: list[Any]) -> dict[str, Any] | None:
-        # a per-challenger / gauntlet row carries the champion directly; a
-        # field row has no parent of its own, so ``_field_champion`` reads it
-        # off the competitor list.
-        cid = row["parent_generation_id"]
-        base = (
-            {
-                "id": str(cid),
-                "scalar": row["parent_scalar"],
-                "eval_mode": row["champion_eval_mode"] or "full",
-                "run_ref": row["champion_run_ref"],
-            }
-            if cid is not None and str(cid) != ""
-            else None
-        )
-        if base is None:
-            base = _field_champion(comps)
-        if base is None:
-            return None
-        sc = base.get("scalar")
-        return {
-            "id": base["id"],
-            "scalar": coerce_float(sc),
-            # No default here: every path that read a ROW already applied the
-            # "NULL ⇒ full" rule above, so an absent mode means there was no
-            # row to read. That is a round whose champion has not been
-            # evaluated yet, because the field row is written at OPEN, before
-            # any crowning row. That is unknown, and the round timeline already
-            # carries ``eval_mode: None`` for it; the tree renders plain
-            # "defends" rather than claiming "defends · re-run".
-            "eval_mode": base.get("eval_mode"),
-            "run_ref": base.get("run_ref"),
-        }
-
-    # FIELD-level rows (``{epoch}:field:{first_challenger}``) carry the
-    # whole round's settled structure — round pairings + Copeland
-    # standings + competitor field — for swiss / elim. When one exists
-    # for a structure, the per-challenger ``{epoch}:{parent}->{child}``
-    # rows of THAT structure are NOT the structure view's source (they
-    # flatten one challenger's crowning duel, the wrong shape for the
-    # ladder), so we drop them from the structure list and let the
-    # field record stand. The per-challenger rows remain in the index
-    # (the gauntlet matchup list + crowning columns still read them);
-    # they are merely excluded from this structure-aware envelope.
-    # Racing DOES write a field record (the persist gates only on
-    # competitor count), so racing lands in this set and its
-    # per-challenger rows are suppressed like any other field structure —
-    # the field row is then the round's only servable record, which is
-    # why its champion resolution must read the role tag.
-    field_structures = {
-        _normalize_structure(r["structure"])
-        for r in struct_rows
-        if _is_field_tournament_id(r["tournament_id"])
+    receipts = {
+        receipt.field_record["tournament_id"]: receipt
+        for receipt in iter_settlement_receipts(paths.root, epoch_id)
+        if receipt.state == "committed" and receipt.field_record is not None
     }
     tournaments: list[dict[str, Any]] = []
     epoch_structure = "gauntlet"
     epoch_structure_params: dict[str, Any] = {}
-    for r in struct_rows:
-        structure = _normalize_structure(r["structure"])
-        params = _opt_json(r["structure_params_json"])
-        params = params if isinstance(params, dict) else {}
-        # The epoch's structure is the contract-frozen value; every
-        # tournament in the epoch shares it, so the last non-gauntlet
-        # value wins (they should all agree).
-        if structure != "gauntlet":
-            epoch_structure = structure
-            epoch_structure_params = params
-        # Suppress a per-challenger row whose structure has a field
-        # record — the field record is the authoritative view.
-        if structure in field_structures and not _is_field_tournament_id(r["tournament_id"]):
-            continue
-        competitors = _opt_json(r["competitors_json"])
-        rounds = _opt_json(r["rounds_json"])
-        standings = _opt_json(r["standings_json"])
-        comp_list = competitors if isinstance(competitors, list) else []
-        # The per-round CHAMPION — id + loss + eval provenance (cached vs
-        # re-run) read CANONICALLY from the records, so the frontend reads the
-        # champion spine instead of reconstructing it.
-        # An elim record is enriched with the served elim model (sorted
-        # rounds + bracket_side/loser + gen_states) — the per-round minis
-        # read these entries by tournamentRef, so the model must ride here
-        # exactly as it does on /api/tournament-structure.
-        tournaments.append(
-            attach_elim_states(
-                {
-                    "tournament_id": r["tournament_id"],
-                    "structure": structure,
-                    "structure_params": params,
-                    "competitors": comp_list,
-                    "rounds": rounds if isinstance(rounds, list) else [],
-                    "standings": standings if isinstance(standings, list) else [],
-                    "champion": _champion_for(r, comp_list),
-                }
-            )
-        )
+    for record in field_tournament_records(paths.root, epoch_id):
+        body = record.to_dict()
+        receipt = receipts.get(record.tournament_id)
+        candidate = receipt.candidates[0] if receipt is not None else None
+        champion_id = record.champion_generation_id
+        body["champion"] = {
+            "id": champion_id,
+            "scalar": candidate.parent_scalar if candidate is not None else None,
+            "eval_mode": candidate.outcome.champion_eval_mode if candidate is not None else None,
+            "run_ref": f"epochs/{epoch_id}/generations/{champion_id}" if candidate else None,
+        }
+        tournaments.append(attach_elim_states(body))
+        epoch_structure = body["structure"]
+        epoch_structure_params = body["structure_params"]
 
     # No tournament ROW resolved a non-gauntlet structure — e.g. a run torn
     # down before any bracket completed leaves zero rows, so the scan above
@@ -1217,50 +1012,6 @@ def _scalar_pair(
     return parent, child, delta
 
 
-def _structure_from_index(
-    paths: WorkspacePaths, epoch_id: str, tournament_id: str
-) -> dict[str, Any] | None:
-    """The settled structure state from the SQLite ``tournaments`` row.
-
-    Returns ``None`` when the index is unavailable or the row is missing,
-    allowing the caller to inspect active and canonical tournament records.
-    """
-    try:
-        with open_index_ro(paths.index_db) as conn:
-            rows = _query(
-                conn,
-                "SELECT structure, structure_params_json, competitors_json, "
-                "rounds_json, standings_json, field_status_json FROM tournaments "
-                "WHERE epoch_id = ? AND tournament_id = ? LIMIT 1",
-                (epoch_id, tournament_id),
-            )
-            if not rows:
-                return None
-            r = rows[0]
-            params = _opt_json(r["structure_params_json"])
-            competitors = _opt_json(r["competitors_json"])
-            rounds = _opt_json(r["rounds_json"])
-            standings = _opt_json(r["standings_json"])
-            field_status = _opt_json(r["field_status_json"])
-            # A gauntlet row has no structure internals; active or canonical
-            # tournament records can provide the remaining detail.
-            if rounds is None and standings is None and competitors is None:
-                return None
-            return _structure_envelope(
-                epoch_id,
-                tournament_id,
-                "index",
-                structure=r["structure"],
-                structure_params=params,
-                competitors=competitors,
-                rounds=rounds,
-                standings=standings,
-                field_status=field_status,
-            )
-    except (_IndexAbsent, sqlite3.Error):
-        return None
-
-
 def _structure_from_active(
     paths: WorkspacePaths, epoch_id: str, tournament_id: str
 ) -> dict[str, Any] | None:
@@ -1345,87 +1096,16 @@ def build_tournament_structure(
     """Serve recorded bracket, standings, and progress for the visualizations.
 
     Completed round records contain the actual matches and results. The active
-    record supplies running progress. The index supplies a derived copy when
-    no canonical or active record is available. Missing structure stays empty.
+    record supplies running progress. Missing structure stays empty.
     """
     if not epoch_id or not tournament_id:
         return _empty_tournament_structure(epoch_id, tournament_id, "unavailable")
-    for resolver in (_structure_from_records, _structure_from_index, _structure_from_active):
+    for resolver in (_structure_from_records, _structure_from_active):
         result = resolver(paths, epoch_id, tournament_id)
         if result is not None:
-            enriched = _enrich_field_status(paths, epoch_id, tournament_id, result)
-            enriched = _enrich_override_status(paths, epoch_id, tournament_id, enriched)
-            enriched = _enrich_diversity(paths, epoch_id, enriched)
+            enriched = _enrich_diversity(paths, epoch_id, result)
             return _enrich_standings_ratings(paths, epoch_id, enriched)
     return _empty_tournament_structure(epoch_id, tournament_id, "unavailable")
-
-
-def _enrich_override_status(
-    paths: WorkspacePaths, epoch_id: str, tournament_id: str, result: dict[str, Any]
-) -> dict[str, Any]:
-    """Attach recorded operator actions and all promoted candidates to a view."""
-    if result.get("override_status") or result.get("promoted_generation_ids"):
-        return result  # already carried by the winning resolver — never clobber
-    from zicato.tournament.records import field_tournament_records
-
-    challengers = set(_challenger_generation_ids(result))
-    try:
-        records = field_tournament_records(paths.root, epoch_id)
-    except (OSError, ValueError, RuntimeError) as exc:
-        return {**result, "unreadable": str(exc)}
-    for stored in records:
-        record = stored.to_dict()
-        override_status = record.get("override_status")
-        promoted_ids = record.get("promoted_generation_ids")
-        if not (isinstance(override_status, dict) and override_status) and not (
-            isinstance(promoted_ids, list) and promoted_ids
-        ):
-            continue
-        # Match this record to the queried structure: same tournament_id, or
-        # (the common case, since the durable id is field-keyed) an overlap of
-        # the competitor generation ids.
-        rec_competitors = {
-            str(c.get("generation_id", ""))
-            for c in (record.get("competitors") or [])
-            if isinstance(c, dict)
-        }
-        if record.get("tournament_id") != tournament_id and not (
-            challengers and challengers & rec_competitors
-        ):
-            continue
-        if isinstance(override_status, dict) and override_status:
-            result["override_status"] = {
-                str(gid): dict(prov)
-                for gid, prov in override_status.items()
-                if isinstance(prov, dict)
-            }
-        if isinstance(promoted_ids, list) and promoted_ids:
-            result["promoted_generation_ids"] = [str(g) for g in promoted_ids]
-        break
-    return result
-
-
-def _enrich_field_status(
-    paths: WorkspacePaths, epoch_id: str, tournament_id: str, result: dict[str, Any]
-) -> dict[str, Any]:
-    """Backfill ``field_status`` from the live envelope when the resolved
-    structure lacks it.
-
-    The per-experiment index row carries the settled bracket but not the
-    proposing-step outcomes (the per-challenger applied/rejected records
-    live only on ``active_tournament.events.jsonl``, which the multi-challenger
-    path retains with ``phase="completed"``). So when the winning resolver
-    is the index (or any source whose ``field_status`` is empty) but the
-    live envelope still matches this coordinate, lift its ``field_status``
-    onto the result so a just-completed epoch's proposing step survives.
-    Purely additive — never overwrites a non-empty field-status.
-    """
-    if result.get("field_status"):
-        return result
-    active = _structure_from_active(paths, epoch_id, tournament_id)
-    if active is not None and active.get("field_status"):
-        result["field_status"] = active["field_status"]
-    return result
 
 
 def _challenger_generation_ids(result: dict[str, Any]) -> list[str]:

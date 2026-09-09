@@ -379,13 +379,7 @@ def _per_entry_flip_rates(
 
 
 def _lineage_nodes(paths: WorkspacePaths, epoch_id: str) -> dict[str, dict[str, Any]]:
-    """The epoch's lineage nodes keyed by generation id (EVAL-VIEW.md §3.1).
-
-    The lineage view is THE promotion authority. ``lineage.json`` owns parent
-    and promoted state; experiment outcomes are journal detail, never a second
-    topology source. Best-effort: an unreadable workspace yields ``{}`` and the
-    caller falls back to the index bool.
-    """
+    """Read ancestry with committed outcomes; unreadable data remains unknown."""
     from zicato.query.lineage_view import build_lineage_view  # noqa: PLC0415
 
     try:
@@ -397,41 +391,6 @@ def _lineage_nodes(paths: WorkspacePaths, epoch_id: str) -> dict[str, dict[str, 
         for node in view.get("generations", [])
         if isinstance(node, dict) and isinstance(node.get("generation_id"), str)
     }
-
-
-def _seed_id(nodes: dict[str, dict[str, Any]]) -> str | None:
-    """The epoch's SEED — the parentless generation the reign starts from.
-
-    A recorded parent may be absent, ``None``, or the empty string older
-    workspaces write; all three mean "no parent". When an epoch records more
-    than one root (a re-seeded epoch) the sorted-first id wins, matching
-    :func:`~zicato.query.tournament_view._champion_lineage`'s root choice.
-    """
-    roots = sorted(gid for gid, node in nodes.items() if not node.get("parent_generation_id"))
-    return roots[0] if roots else None
-
-
-def _spine_ids(nodes: dict[str, dict[str, Any]]) -> list[str]:
-    """The champion spine in reign order — the promoted chain, ANCHORED AT THE SEED.
-
-    The seed is the epoch's baseline champion: it reigns from round 0 and keeps
-    reigning until a challenger beats it. So an epoch whose challengers were all
-    rejected still HAS a spine — ``[v0]`` — and a one-generation spine is a real
-    trajectory (the seed's own outcome on each entry) rather than an absent
-    one. Dropping it would make the dossier claim "no champion-spine
-    trajectory" for an epoch whose spine is plainly recorded.
-
-    The promoted chain itself comes from the shared
-    :func:`~zicato.query.tournament_view._champion_lineage` walk; the seed is
-    prepended only when the chain does not already start there.
-    """
-    from zicato.query.tournament_view import _champion_lineage  # noqa: PLC0415
-
-    chain = _champion_lineage(list(nodes.values()))
-    seed = _seed_id(nodes)
-    if seed is not None and seed not in chain:
-        chain = [seed, *chain]
-    return chain
 
 
 def _candidate_axis(paths: WorkspacePaths, epoch_id: str) -> list[dict[str, Any]]:
@@ -450,22 +409,11 @@ def _candidate_axis(paths: WorkspacePaths, epoch_id: str) -> list[dict[str, Any]
     except Exception:  # noqa: BLE001 — best-effort
         rows = []
 
-    # The generation graph the seed + spine are derived from: the index rows,
-    # OVERLAID by the lineage nodes. Lineage is authoritative wherever it has a
-    # node; the
-    # index row carries a generation lineage never walked (the degrade path).
-    nodes: dict[str, dict[str, Any]] = {}
-    for r in rows:
-        gid = _row_get(r, "generation_id")
-        if isinstance(gid, str) and gid:
-            nodes[gid] = {
-                "generation_id": gid,
-                "parent_generation_id": _row_get(r, "parent_generation_id"),
-                "promoted": _opt_bool(_row_get(r, "promoted")),
-            }
-    nodes.update(_lineage_nodes(paths, epoch_id))
-    spine = set(_spine_ids(nodes))
-    seed = _seed_id(nodes)
+    nodes = _lineage_nodes(paths, epoch_id)
+    from zicato.query.promoted_head import champion_history
+
+    spine = set(champion_history(paths, epoch_id))
+    seed = "v0" if "v0" in nodes else None
 
     axis: list[dict[str, Any]] = []
     for r in rows:
@@ -477,7 +425,7 @@ def _candidate_axis(paths: WorkspacePaths, epoch_id: str) -> list[dict[str, Any]
         # about the same generation. An in-flight / never-raced candidate serves
         # ``null``, NEVER a collapsed ``false``, which would report an
         # undecided promotion as a rejection (:mod:`zicato.query.decisions`).
-        promoted = nodes[gid].get("promoted")
+        promoted = nodes.get(gid, {}).get("promoted")
         axis.append(
             {
                 "generation_id": gid,
@@ -489,8 +437,8 @@ def _candidate_axis(paths: WorkspacePaths, epoch_id: str) -> list[dict[str, Any]
                 "seed": gid == seed,
                 # The reign: the promoted chain anchored at the seed (§3.1).
                 "champion_spine": gid in spine,
-                "decision": nodes[gid].get("decision"),
-                "decision_label": nodes[gid].get("decision_label"),
+                "decision": nodes.get(gid, {}).get("decision"),
+                "decision_label": nodes.get(gid, {}).get("decision_label"),
                 "elo": coerce_float(_row_get(r, "elo")),
                 "elo_se": coerce_float(_row_get(r, "elo_se")),
             }

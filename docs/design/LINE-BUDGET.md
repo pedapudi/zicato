@@ -50,9 +50,9 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 473,391 | +64,730 |
-| Production | 197,702 | 190,821 | -6,881 |
-| Production logic | 110,276 | 111,170 | +894 |
+| Total | 408,661 | 472,550 | +63,889 |
+| Production | 197,702 | 190,095 | -7,607 |
+| Production logic | 110,276 | 110,735 | +459 |
 
 The baseline row is the reference `f9052dd` measured by the classification the
 checker holds, which counts the console's hand-written entry point
@@ -84,16 +84,16 @@ production-logic series per subsystem along a branch's first-parent commits.
 
 | Subsystem | Total | Production | Production logic | Prose share |
 |---|---:|---:|---:|---:|
-| src/zicato/dashboard | 62,019 | 32,180 | 22,145 | 31.2% |
-| src/zicato/query | 19,300 | 19,300 | 12,017 | 37.7% |
-| src/zicato/epoch | 13,970 | 13,970 | 7,827 | 44.0% |
-| src/zicato/evolve | 11,269 | 11,269 | 7,192 | 36.2% |
+| src/zicato/dashboard | 61,997 | 32,136 | 22,125 | 31.2% |
+| src/zicato/query | 18,740 | 18,740 | 11,696 | 37.6% |
+| src/zicato/epoch | 13,896 | 13,896 | 7,759 | 44.2% |
+| src/zicato/evolve | 11,262 | 11,262 | 7,185 | 36.2% |
 | src/zicato/tournament | 11,254 | 11,254 | 6,604 | 41.3% |
 | src/zicato/reflection | 9,855 | 9,855 | 6,590 | 33.1% |
 | crates/supervisor | 16,401 | 13,945 | 6,536 | 53.1% |
 | src/zicato/proposer | 9,521 | 9,521 | 4,772 | 49.9% |
 | src/zicato/cli | 7,088 | 7,088 | 4,697 | 33.7% |
-| src/zicato/analyzer | 7,206 | 7,206 | 4,610 | 36.0% |
+| src/zicato/analyzer | 7,165 | 7,165 | 4,591 | 35.9% |
 | src/zicato/selection | 5,278 | 5,278 | 3,060 | 42.0% |
 | src/zicato/core | 6,393 | 6,393 | 2,808 | 56.1% |
 | src/zicato/runtime | 5,186 | 5,186 | 2,524 | 51.3% |
@@ -453,3 +453,6 @@ dropped rows named.
 | Recorded round outcomes and decision explanations (total) | 473,423 | -32 | 473,391 | Issue #524: committed rounds own outcomes; readers derive journals, promotion status, and recorded gate explanations. All tournament formats and both candidate storage implementations remain. |
 | Recorded round outcomes and decision explanations (production) | 191,187 | -366 | 190,821 | Issue #524: committed rounds own outcomes; readers derive journals, promotion status, and recorded gate explanations. All tournament formats and both candidate storage implementations remain. |
 | Recorded round outcomes and decision explanations (production logic) | 111,228 | -58 | 111,170 | Issue #524: committed rounds own outcomes; readers derive journals, promotion status, and recorded gate explanations. All tournament formats and both candidate storage implementations remain. |
+| Recorded tournament reads and simpler test execution (total) | 473,391 | -841 | 472,550 | Issue #526: readers and reports use recorded primary promotions and complete tournament structures; diagrams display framework summaries and recorded explanations. One parity test process covers all eight deterministic configurations. |
+| Recorded tournament reads and simpler test execution (production) | 190,821 | -726 | 190,095 | Issue #526: readers and reports use recorded primary promotions and complete tournament structures; diagrams display framework summaries and recorded explanations. One parity test process covers all eight deterministic configurations. |
+| Recorded tournament reads and simpler test execution (production logic) | 111,170 | -435 | 110,735 | Issue #526: readers and reports use recorded primary promotions and complete tournament structures; diagrams display framework summaries and recorded explanations. One parity test process covers all eight deterministic configurations. |

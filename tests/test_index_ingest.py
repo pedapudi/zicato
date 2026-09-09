@@ -1086,30 +1086,6 @@ def test_backfill_handles_missing_db(tmp_path: Path) -> None:
     assert result == {"updated": 0, "scanned": 0}
 
 
-def test_backfill_recovers_champion_lineage(tmp_path: Path) -> None:
-    """The dashboard's champion-lineage walker recovers v0 -> v1 -> v3 after backfill.
-
-    Uses the canonical :func:`_champion_lineage` from the dashboard so
-    the test exercises the exact same logic the gauntlet's API surface
-    runs. Before the backfill (or before the writer fix) the rows lie
-    and the spine collapses to just ``v0``. After the backfill the
-    spine is the full champion chain.
-    """
-    from zicato.query.tournament_view import _champion_lineage  # noqa: PLC0415
-
-    ws, eid = _build_chain_workspace(tmp_path)
-    db = ws / "index.db"
-    _corrupt_generations_table(db)
-
-    def _spine() -> list[str]:
-        rows = generations_for_epoch(db, eid)
-        return _champion_lineage([_row_dict(r) for r in rows])
-
-    # Before the backfill the corrupted projection collapses the spine.
-    assert _spine() == ["v0"]
-    backfill_generations(ws)
-    # After the backfill the full champion chain is recoverable.
-    assert _spine() == ["v0", "v1", "v3"]
 
 
 # ---------------------------------------------------------------------------

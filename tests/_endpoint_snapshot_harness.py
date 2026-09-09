@@ -517,8 +517,7 @@ def _record(
     *,
     prefix: str,
 ) -> None:
-    if prefix:
-        scenarios.record_gate_comparisons(ws)
+    scenarios.record_gate_comparisons(ws)
     root = str(ws)
     with TestClient(create_app(ws, static_dir, read_only=True)) as client:
         for label, url in probes:

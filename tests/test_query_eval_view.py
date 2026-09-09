@@ -220,7 +220,7 @@ def _write_calibration_replicate(
 def _seed_index(workspace: Path) -> None:
     from zicato.tournament.scoring import write_gen_score
 
-    for generation_id in ("g0", "g1", "g2"):
+    for generation_id in ("v0", "g1", "g2"):
         write_gen_score(
             workspace,
             EPOCH,
@@ -234,18 +234,18 @@ def _seed_index(workspace: Path) -> None:
             "INSERT INTO epochs(epoch_id, contract_hash, created_at, closed) VALUES(?,?,?,?)",
             (EPOCH, "h", "2026-07-01", 0),
         )
-        # g0 seed (promoted), g1 promoted child, g2 rejected child.
-        _gen_row(conn, EPOCH, "g0", None, 1, 0, "2026-07-01")
-        _gen_row(conn, EPOCH, "g1", "g0", 1, 1, "2026-07-02")
-        _gen_row(conn, EPOCH, "g2", "g0", 0, 1, "2026-07-02")
+        # v0 seed (promoted), g1 promoted child, g2 rejected child.
+        _gen_row(conn, EPOCH, "v0", None, 1, 0, "2026-07-01")
+        _gen_row(conn, EPOCH, "g1", "v0", 1, 1, "2026-07-02")
+        _gen_row(conn, EPOCH, "g2", "v0", 0, 1, "2026-07-02")
 
         # ONE loss_profiles row per (gen, entry) — the PK the pipeline emits.
         _lp_row(
-            conn, EPOCH, "g0", "entryA", drift=0.2, passes=True, runtime=10, tour="T0", score=0.9
+            conn, EPOCH, "v0", "entryA", drift=0.2, passes=True, runtime=10, tour="T0", score=0.9
         )
-        _lp_row(conn, EPOCH, "g0", "entryB", drift=0.0, passes=True, runtime=5, tour="T0")
+        _lp_row(conn, EPOCH, "v0", "entryB", drift=0.0, passes=True, runtime=5, tour="T0")
         _lp_row(
-            conn, EPOCH, "g0", "entryC", drift=0.1, passes=True, runtime=5, tour="T0", cached=True
+            conn, EPOCH, "v0", "entryC", drift=0.1, passes=True, runtime=5, tour="T0", cached=True
         )
         _lp_row(conn, EPOCH, "g1", "entryA", drift=0.3, passes=True, runtime=10, tour="T1")
         _lp_row(conn, EPOCH, "g2", "entryA", drift=0.5, passes=False, runtime=10, tour="T1")
@@ -260,7 +260,7 @@ def _seed(workspace: Path, *, with_calibration: bool = True) -> None:
     config: dict = {"id": EPOCH, "created_at": "2026-07-01", "closed": False}
     if with_calibration:
         config["noise_floor"] = {
-            "generation_id": "g0",
+            "generation_id": "v0",
             "runs": 3,
             "max_abs_delta": 0.06,
             "base_seed": None,
@@ -291,9 +291,9 @@ def _seed(workspace: Path, *, with_calibration: bool = True) -> None:
                 {
                     "id": EPOCH,
                     "generations": [
-                        {"id": "g0", "parent_id": None, "promoted": None},
-                        {"id": "g1", "parent_id": "g0", "promoted": True},
-                        {"id": "g2", "parent_id": "g0", "promoted": False},
+                        {"id": "v0", "parent_id": None, "promoted": None},
+                        {"id": "g1", "parent_id": "v0", "promoted": True},
+                        {"id": "g2", "parent_id": "v0", "promoted": False},
                     ],
                 }
             ]
@@ -302,14 +302,14 @@ def _seed(workspace: Path, *, with_calibration: bool = True) -> None:
     (workspace / "current_epoch").write_text(EPOCH, encoding="utf-8")
 
     # The canonical per-entry loss.json each candidate wrote (drives the matrix
-    # cells AND build_matchup_grid's parent/child verdicts). g0/entryA carries a
+    # cells AND build_matchup_grid's parent/child verdicts). v0/entryA carries a
     # SECOND duel replicate (loss.r1.json, index 1 — a real evidence slot) so its
     # cell is genuinely REPLICATED off the durable files, not a fabricated count.
-    _write_run_loss(workspace, EPOCH, "g0", "entryA", passes=True, drift=0.2, runtime=10, score=0.9)
+    _write_run_loss(workspace, EPOCH, "v0", "entryA", passes=True, drift=0.2, runtime=10, score=0.9)
     _write_run_loss(
         workspace,
         EPOCH,
-        "g0",
+        "v0",
         "entryA",
         passes=True,
         drift=0.4,
@@ -317,25 +317,29 @@ def _seed(workspace: Path, *, with_calibration: bool = True) -> None:
         replicate=MeasurementDraw(MeasurementPurpose.TOURNAMENT, 1),
         score=0.7,
     )
-    _write_run_loss(workspace, EPOCH, "g0", "entryB", passes=True, drift=0.0, runtime=5)
+    _write_run_loss(workspace, EPOCH, "v0", "entryB", passes=True, drift=0.0, runtime=5)
     _write_run_loss(
-        workspace, EPOCH, "g0", "entryC", passes=True, drift=0.1, runtime=5, cached=True
+        workspace, EPOCH, "v0", "entryC", passes=True, drift=0.1, runtime=5, cached=True
     )
     _write_run_loss(workspace, EPOCH, "g1", "entryA", passes=True, drift=0.3, runtime=10)
     _write_run_loss(workspace, EPOCH, "g2", "entryA", passes=False, drift=0.5, runtime=10)
 
     # The experiment records: g1 promoted, g2 rejected (each a settled matchup vs
-    # its parent g0). g0 is the seed — no experiment.json → the axis falls back to
+    # its parent v0). v0 is the seed — no experiment.json → the axis falls back to
     # the index promoted bool (True), exercising the fallback path.
-    _write_experiment(workspace, EPOCH, "g1", "g0", "promoted")
-    _write_experiment(workspace, EPOCH, "g2", "g0", "rejected")
+    _write_experiment(workspace, EPOCH, "g1", "v0", "promoted")
+    _write_experiment(workspace, EPOCH, "g2", "v0", "rejected")
+    from tests._workspace_support import complete_round
+
+    complete_round(workspace, EPOCH, ["g1"], primary_id="g1", round_index=0)
+    complete_round(workspace, EPOCH, ["g2"], primary_id=None, round_index=1)
 
     if with_calibration:
         # entryA: T, T, F → flip 1/3 ; entryB: all pass → 0.0 ; entryC: no draws.
         for i, p in enumerate([True, True, False]):
             _write_calibration_replicate(
                 workspace,
-                "g0",
+                "v0",
                 "entryA",
                 passes=p,
                 replicate=MeasurementDraw(MeasurementPurpose.CALIBRATION, i),
@@ -343,7 +347,7 @@ def _seed(workspace: Path, *, with_calibration: bool = True) -> None:
         for i, p in enumerate([True, True, True]):
             _write_calibration_replicate(
                 workspace,
-                "g0",
+                "v0",
                 "entryB",
                 passes=p,
                 replicate=MeasurementDraw(MeasurementPurpose.CALIBRATION, i),
@@ -354,10 +358,10 @@ def _seed(workspace: Path, *, with_calibration: bool = True) -> None:
 def _seed_dead(workspace: Path) -> None:
     """A GAUNTLET whose instrument has a genuinely DEAD channel (§5 WS-HEALTH).
 
-    The champion g0 faces THREE challengers (g1, g2, g3). entryD runs on all four
+    The champion v0 faces THREE challengers (g1, g2, g3). entryD runs on all four
     and always AGREES → zero discrimination over 3 both-sides matchups → DEAD
     (this is the "champion faces 3 challengers ⇒ discrimination_pairs=3" pin).
-    entryE runs on g0/g1/g2 only → 2 both-sides matchups → below the 3-comparison
+    entryE runs on v0/g1/g2 only → 2 both-sides matchups → below the 3-comparison
     threshold → "insufficient comparisons", never dead (the honesty boundary).
     """
     edir = workspace / "epochs" / DEAD_EP
@@ -381,9 +385,9 @@ def _seed_dead(workspace: Path) -> None:
                 {
                     "id": DEAD_EP,
                     "generations": [
-                        {"id": "g0", "parent_id": None, "promoted": None},
+                        {"id": "v0", "parent_id": None, "promoted": None},
                         *(
-                            {"id": gid, "parent_id": "g0", "promoted": False}
+                            {"id": gid, "parent_id": "v0", "promoted": False}
                             for gid in ("g1", "g2", "g3")
                         ),
                     ],
@@ -393,14 +397,14 @@ def _seed_dead(workspace: Path) -> None:
     )
     (workspace / "current_epoch").write_text(DEAD_EP, encoding="utf-8")
 
-    # entryD on every gen (always pass → always-agree); entryE on g0/g1/g2 only.
-    for gen in ("g0", "g1", "g2", "g3"):
+    # entryD on every gen (always pass → always-agree); entryE on v0/g1/g2 only.
+    for gen in ("v0", "g1", "g2", "g3"):
         _write_run_loss(workspace, DEAD_EP, gen, "entryD", passes=True, drift=0.1, runtime=10)
-    for gen in ("g0", "g1", "g2"):
+    for gen in ("v0", "g1", "g2"):
         _write_run_loss(workspace, DEAD_EP, gen, "entryE", passes=True, drift=0.1, runtime=10)
-    # The three settled matchups: each challenger raced g0 and was rejected.
+    # The three settled matchups: each challenger raced v0 and was rejected.
     for gen in ("g1", "g2", "g3"):
-        _write_experiment(workspace, DEAD_EP, gen, "g0", "rejected")
+        _write_experiment(workspace, DEAD_EP, gen, "v0", "rejected")
 
     conn = sqlite3.connect(str(workspace / "index.db"))
     try:
@@ -409,12 +413,12 @@ def _seed_dead(workspace: Path) -> None:
             "INSERT INTO epochs(epoch_id, contract_hash, created_at, closed) VALUES(?,?,?,?)",
             (DEAD_EP, "h", "2026-07-02", 0),
         )
-        _gen_row(conn, DEAD_EP, "g0", None, 1, 0, "2026-07-02")
+        _gen_row(conn, DEAD_EP, "v0", None, 1, 0, "2026-07-02")
         for i, gid in enumerate(("g1", "g2", "g3"), start=1):
-            _gen_row(conn, DEAD_EP, gid, "g0", 0, 1, f"2026-07-0{2 + i}")
+            _gen_row(conn, DEAD_EP, gid, "v0", 0, 1, f"2026-07-0{2 + i}")
             _lp_row(conn, DEAD_EP, gid, "entryD", drift=0.1, passes=True, runtime=10)
-        _lp_row(conn, DEAD_EP, "g0", "entryD", drift=0.1, passes=True, runtime=10)
-        _lp_row(conn, DEAD_EP, "g0", "entryE", drift=0.1, passes=True, runtime=10)
+        _lp_row(conn, DEAD_EP, "v0", "entryD", drift=0.1, passes=True, runtime=10)
+        _lp_row(conn, DEAD_EP, "v0", "entryE", drift=0.1, passes=True, runtime=10)
         _lp_row(conn, DEAD_EP, "g1", "entryE", drift=0.1, passes=True, runtime=10)
         _lp_row(conn, DEAD_EP, "g2", "entryE", drift=0.1, passes=True, runtime=10)
         conn.commit()
@@ -433,12 +437,12 @@ def test_matrix_axes_and_ordering(tmp_path: Path) -> None:
     assert m["found"] is True
     assert m["epoch_id"] == EPOCH
     # Columns in round order; champion spine = the SEED plus the promoted chain.
-    assert [c["generation_id"] for c in m["candidates"]] == ["g0", "g1", "g2"]
+    assert [c["generation_id"] for c in m["candidates"]] == ["v0", "g1", "g2"]
     assert [c["champion_spine"] for c in m["candidates"]] == [True, True, False]
-    # The parentless g0 is the SEED — the baseline the reign starts from.
+    # The parentless v0 is the SEED — the baseline the reign starts from.
     assert [c["seed"] for c in m["candidates"]] == [True, False, False]
     # Tristate promoted, from the ONE lineage classifier: g1 promoted / g2
-    # rejected, and g0 NULL — nothing on disk recorded a decision for the seed
+    # rejected, and v0 NULL — nothing on disk recorded a decision for the seed
     # (it faced no gate), so the axis reports "no decision" rather than
     # inheriting the index bool. The index's `promoted` column is a weaker
     # record than lineage — the June workspace stamps 0 on a generation lineage
@@ -456,7 +460,8 @@ def test_matrix_tristate_promoted_null(tmp_path: Path) -> None:
     # An in-flight generation (experiment.json with NO decision) serves promoted
     # null — never a collapsed False (the Class-B bug), never on the spine.
     _seed(tmp_path)
-    _write_experiment(tmp_path, EPOCH, "g2", "g0", None)  # overwrite g2 → undecided
+    (tmp_path / "epochs" / EPOCH / "rounds" / "1" / "field_settlement.json").unlink()
+    _write_experiment(tmp_path, EPOCH, "g2", "v0", None)  # overwrite g2 → undecided
     write_lineage(
         WorkspaceLayout(tmp_path),
         {
@@ -464,9 +469,9 @@ def test_matrix_tristate_promoted_null(tmp_path: Path) -> None:
                 {
                     "id": EPOCH,
                     "generations": [
-                        {"id": "g0", "parent_id": None, "promoted": None},
-                        {"id": "g1", "parent_id": "g0", "promoted": True},
-                        {"id": "g2", "parent_id": "g0", "promoted": None},
+                        {"id": "v0", "parent_id": None, "promoted": None},
+                        {"id": "g1", "parent_id": "v0", "promoted": True, "round_index": 0},
+                        {"id": "g2", "parent_id": "v0", "promoted": None},
                     ],
                 }
             ]
@@ -482,16 +487,16 @@ def test_matrix_cell_aggregation_and_evidence(tmp_path: Path) -> None:
     _seed(tmp_path)
     m = ev.build_eval_matrix(_paths(tmp_path), EPOCH)
     cell = {(e["entry_id"]): row for e, row in zip(m["entries"], m["cells"], strict=True)}
-    a_g0 = cell["entryA"][0]  # replicated cell — TWO real files (r0 + r1)
-    assert a_g0["replicates"] == 2
-    assert a_g0["evidence"] == "replicated"
-    assert abs(a_g0["drift_loss"] - 0.3) < 1e-9
-    assert abs(a_g0["score"] - 0.8) < 1e-9
-    assert a_g0["pass_ratio"] == 1.0
-    assert a_g0["pass_fail"] is True
-    assert a_g0["cached"] is False
-    assert a_g0["runtime_ms_mean"] == 15.0
-    # entryB has one run under g0 (single evidence), and no cell for g1/g2.
+    a_v0 = cell["entryA"][0]  # replicated cell — TWO real files (r0 + r1)
+    assert a_v0["replicates"] == 2
+    assert a_v0["evidence"] == "replicated"
+    assert abs(a_v0["drift_loss"] - 0.3) < 1e-9
+    assert abs(a_v0["score"] - 0.8) < 1e-9
+    assert a_v0["pass_ratio"] == 1.0
+    assert a_v0["pass_fail"] is True
+    assert a_v0["cached"] is False
+    assert a_v0["runtime_ms_mean"] == 15.0
+    # entryB has one run under v0 (single evidence), and no cell for g1/g2.
     b = cell["entryB"]
     assert b[0]["evidence"] == "single"
     assert b[1] is None and b[2] is None
@@ -508,7 +513,7 @@ def test_matrix_flip_rates_from_calibration(tmp_path: Path) -> None:
     assert flags["entryA"]["flip_rate_measured"] is True
     assert flags["entryA"]["calibration_runs"] == 3
     # The calibration generation is threaded onto every row (N4 — staleness).
-    assert flags["entryA"]["calibration_generation"] == "g0"
+    assert flags["entryA"]["calibration_generation"] == "v0"
     # entryB never flipped.
     assert flags["entryB"]["flip_rate"] == 0.0
     # entryC has no calibration draws → unmeasured, NOT 0.0.
@@ -516,7 +521,7 @@ def test_matrix_flip_rates_from_calibration(tmp_path: Path) -> None:
     assert flags["entryC"]["flip_rate_measured"] is False
     assert m["calibration"] == {
         "measured": True,
-        "generation_id": "g0",
+        "generation_id": "v0",
         "runs": 3,
         "max_abs_delta": 0.06,
         "base_seed": None,
@@ -562,10 +567,10 @@ def test_dossier_instrument_and_discrimination(tmp_path: Path) -> None:
     inst = d["instrument"]
     assert abs(inst["flip_rate"] - 1 / 3) < 1e-9
     assert inst["flip_rate_measured"] is True
-    # Reign matchups (g0,g1) agree + (g0,g2) split → 1/2 over 2 comparisons.
+    # Reign matchups (v0,g1) agree + (v0,g2) split → 1/2 over 2 comparisons.
     assert inst["discrimination"] == 0.5
     assert inst["discrimination_pairs"] == 2
-    assert inst["replicate_total"] == 3  # one index row per (gen, entry): g0/g1/g2
+    assert inst["replicate_total"] == 3  # one index row per (gen, entry): v0/g1/g2
     assert inst["runtime_ms_max"] == 10.0
     assert inst["cached_share"] == 0.0
 
@@ -574,11 +579,11 @@ def test_dossier_trajectory_and_attribution(tmp_path: Path) -> None:
     _seed(tmp_path)
     d = ev.build_eval_dossier(_paths(tmp_path), EPOCH, "entryA")
     traj = {t["generation_id"]: t for t in d["trajectory"]}
-    assert traj["g0"]["replicates"] == 2  # from the two on-disk replicate files
-    assert traj["g0"]["champion_spine"] is True
+    assert traj["v0"]["replicates"] == 2  # from the two on-disk replicate files
+    assert traj["v0"]["champion_spine"] is True
     assert traj["g2"]["champion_spine"] is False
-    # First spine gen to pass is g0; both spine gens pass → no regression.
-    assert d["attribution"]["first_passed_by"] == "g0"
+    # First spine gen to pass is v0; both spine gens pass → no regression.
+    assert d["attribution"]["first_passed_by"] == "v0"
     assert d["attribution"]["regressed_by"] == []
 
 
@@ -589,7 +594,7 @@ def test_dossier_holdout_and_cached_entry(tmp_path: Path) -> None:
     assert d["slice"] == "holdout"
     assert d["tag"] == "holdout"
     assert d["instrument"]["cached_share"] == 1.0
-    # entryC ran only on g0 (never both-sided in a matchup) → nothing to discriminate.
+    # entryC ran only on v0 (never both-sided in a matchup) → nothing to discriminate.
     assert d["instrument"]["discrimination"] is None
     assert d["instrument"]["discrimination_pairs"] == 0
 
@@ -849,70 +854,13 @@ def test_endpoint_eval_health(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# The JUNE-SHAPED workspace (issue #207 §2/§3) — the decisions live in
-# lineage.json, NOT in experiment.json.
-# ---------------------------------------------------------------------------
-#
-# Every real pre-stamp workspace looks like this: the orchestrator wrote each
-# generation's ``experiment.json`` with ``outcome: null`` at PROPOSE time and
-# never rewrote it at settle time; the gate journalled the decision to
-# ``lineage.json`` instead. So ``/api/lineage`` reports a settled promoted /
-# rejected while the experiment record on disk still reads undecided.
-#
-# The eval matrix used to classify off ``experiment.json`` ALONE, which made it
-# report ``promoted: null`` for every candidate — six columns of "racing…" on an
-# epoch that finished in June — and, because the spine is the promoted set, an
-# empty champion spine, which is what made the board dossier claim there was no
-# trajectory. Both reds are pinned below.
-
-
-def _seed_june_shaped(workspace: Path) -> None:
-    """``_seed`` with the decisions moved to lineage.json (the June shape)."""
-    _seed(workspace)
-    # Every experiment record is present but UNDECIDED (outcome: null).
-    for gid, parent in (("g0", None), ("g1", "g0"), ("g2", "g0")):
-        _write_experiment(workspace, EPOCH, gid, parent, None)
-    # lineage.json carries the settled truth: the seed reigns, g1 won, g2 lost.
-    write_lineage(
-        WorkspaceLayout(workspace),
-        {
-            "epochs": [
-                {
-                    "id": EPOCH,
-                    "generations": [
-                        {"id": "g0", "parent_id": None, "promoted": True},
-                        {"id": "g1", "parent_id": "g0", "promoted": True},
-                        {"id": "g2", "parent_id": "g0", "promoted": False},
-                    ],
-                }
-            ]
-        },
-    )
-
-
-def test_matrix_reads_settled_decisions_from_lineage(tmp_path: Path) -> None:
-    # RED (#207 §2): a settled REJECTION recorded only in lineage.json must
-    # render as rejected, not as a never-raced null the UI spells "racing…".
-    _seed_june_shaped(tmp_path)
-    m = ev.build_eval_matrix(_paths(tmp_path), EPOCH)
-    by_gen = {c["generation_id"]: c for c in m["candidates"]}
-    assert by_gen["g2"]["promoted"] is False
-    assert by_gen["g1"]["promoted"] is True
-    assert by_gen["g0"]["promoted"] is True
-    # The matrix and /api/lineage now answer from the ONE classifier, so they
-    # cannot disagree about the same generation.
-    from zicato.query.lineage_view import build_lineage_view
-
-    lineage = build_lineage_view(_paths(tmp_path), EPOCH, include_ratings=False)
-    assert {n["generation_id"]: n["promoted"] for n in lineage["generations"]} == {
-        g: c["promoted"] for g, c in by_gen.items()
-    }
-
-
 def test_spine_includes_the_seed_when_every_challenger_was_rejected(tmp_path: Path) -> None:
     # RED (#207 §3): an epoch whose challengers were ALL rejected still has a
     # spine — the seed alone — and a one-generation spine is a real trajectory.
-    _seed_june_shaped(tmp_path)
+    _seed(tmp_path)
+    import shutil
+
+    shutil.rmtree(tmp_path / "epochs" / EPOCH / "rounds")
     # Demote g1 so the seed is the only reigning generation.
     write_lineage(
         WorkspaceLayout(tmp_path),
@@ -921,9 +869,9 @@ def test_spine_includes_the_seed_when_every_challenger_was_rejected(tmp_path: Pa
                 {
                     "id": EPOCH,
                     "generations": [
-                        {"id": "g0", "parent_id": None, "promoted": True},
-                        {"id": "g1", "parent_id": "g0", "promoted": False},
-                        {"id": "g2", "parent_id": "g0", "promoted": False},
+                        {"id": "v0", "parent_id": None, "promoted": True},
+                        {"id": "g1", "parent_id": "v0", "promoted": False},
+                        {"id": "g2", "parent_id": "v0", "promoted": False},
                     ],
                 }
             ]
@@ -931,12 +879,12 @@ def test_spine_includes_the_seed_when_every_challenger_was_rejected(tmp_path: Pa
     )
     m = ev.build_eval_matrix(_paths(tmp_path), EPOCH)
     by_gen = {c["generation_id"]: c for c in m["candidates"]}
-    assert by_gen["g0"]["seed"] is True and by_gen["g0"]["champion_spine"] is True
-    assert [g for g, c in by_gen.items() if c["champion_spine"]] == ["g0"]
+    assert by_gen["v0"]["seed"] is True and by_gen["v0"]["champion_spine"] is True
+    assert [g for g, c in by_gen.items() if c["champion_spine"]] == ["v0"]
 
     d = ev.build_eval_dossier(_paths(tmp_path), EPOCH, "entryA")
     spine = [t for t in d["trajectory"] if t["champion_spine"]]
-    assert [t["generation_id"] for t in spine] == ["g0"]
+    assert [t["generation_id"] for t in spine] == ["v0"]
     # The seed's own reading on the entry IS the trajectory point.
     assert spine[0]["drift_loss"] is not None
     assert d["trajectory_reason"] is None  # there is something to plot
@@ -945,19 +893,25 @@ def test_spine_includes_the_seed_when_every_challenger_was_rejected(tmp_path: Pa
 def test_seed_is_on_the_spine_even_with_nothing_promoted(tmp_path: Path) -> None:
     # The seed anchors the reign whether or not anything recorded a promotion
     # for it: it is the champion the epoch started from.
-    _seed_june_shaped(tmp_path)
+    _seed(tmp_path)
+    import shutil
+
+    shutil.rmtree(tmp_path / "epochs" / EPOCH / "rounds")
     write_lineage(WorkspaceLayout(tmp_path), {"epochs": [{"id": EPOCH, "generations": []}]})
     m = ev.build_eval_matrix(_paths(tmp_path), EPOCH)
     by_gen = {c["generation_id"]: c for c in m["candidates"]}
-    assert by_gen["g0"]["promoted"] is None  # no decision was ever recorded
-    assert by_gen["g0"]["seed"] is True and by_gen["g0"]["champion_spine"] is True
+    assert by_gen["v0"]["promoted"] is None  # no decision was ever recorded
+    assert by_gen["v0"]["seed"] is True and by_gen["v0"]["champion_spine"] is True
 
 
 def test_empty_spine_panels_carry_distinct_reasons(tmp_path: Path) -> None:
     # #207 §3: each genuinely-empty panel names WHY, and the reasons differ by
     # cause — a seed that failed the entry reads differently from a spine that
     # never ran it.
-    _seed_june_shaped(tmp_path)
+    _seed(tmp_path)
+    import shutil
+
+    shutil.rmtree(tmp_path / "epochs" / EPOCH / "rounds")
     write_lineage(
         WorkspaceLayout(tmp_path),
         {
@@ -965,9 +919,9 @@ def test_empty_spine_panels_carry_distinct_reasons(tmp_path: Path) -> None:
                 {
                     "id": EPOCH,
                     "generations": [
-                        {"id": "g0", "parent_id": None, "promoted": True},
-                        {"id": "g1", "parent_id": "g0", "promoted": False},
-                        {"id": "g2", "parent_id": "g0", "promoted": False},
+                        {"id": "v0", "parent_id": None, "promoted": True},
+                        {"id": "g1", "parent_id": "v0", "promoted": False},
+                        {"id": "g2", "parent_id": "v0", "promoted": False},
                     ],
                 }
             ]
@@ -978,7 +932,7 @@ def test_empty_spine_panels_carry_distinct_reasons(tmp_path: Path) -> None:
     # entryA: the seed RAN it and PASSED it → first-passed-by is real, and the
     # one-generation spine explains why nothing could have regressed.
     passed = ev.build_eval_dossier(p, EPOCH, "entryA")
-    assert passed["attribution"]["first_passed_by"] == "g0"
+    assert passed["attribution"]["first_passed_by"] == "v0"
     assert passed["attribution"]["first_passed_reason"] is None
     assert "one-generation spine cannot regress" in passed["attribution"]["regressed_reason"]
 
@@ -986,15 +940,15 @@ def test_empty_spine_panels_carry_distinct_reasons(tmp_path: Path) -> None:
     # that the seed failed it and nothing later was promoted — never "not yet".
     conn = sqlite3.connect(str(tmp_path / "index.db"))
     try:
-        conn.execute("UPDATE loss_profiles SET pass_fail = 0 WHERE run_id = 'g0:entryB'")
+        conn.execute("UPDATE loss_profiles SET pass_fail = 0 WHERE run_id = 'v0:entryB'")
         conn.commit()
     finally:
         conn.close()
-    _write_run_loss(tmp_path, EPOCH, "g0", "entryB", passes=False, drift=0.9, runtime=5)
+    _write_run_loss(tmp_path, EPOCH, "v0", "entryB", passes=False, drift=0.9, runtime=5)
     failed = ev.build_eval_dossier(p, EPOCH, "entryB")
     assert failed["attribution"]["first_passed_by"] is None
     assert failed["attribution"]["first_passed_reason"] == (
-        "The seed (g0) did not pass this entry, and no later generation was promoted."
+        "The seed (v0) did not pass this entry, and no later generation was promoted."
     )
     assert "yet" not in failed["attribution"]["first_passed_reason"]
 

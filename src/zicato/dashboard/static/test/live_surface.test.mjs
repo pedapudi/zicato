@@ -603,6 +603,13 @@ test('live racing model: a completed rung ACCUMULATES — when rung-1 starts, ru
 });
 
 // (d) a no-op repeat render (same digest) does NOT rebuild the ladder.
+function completedBoards(field, done) {
+  const match = field.rounds.flatMap((round) => round.matches).find((match) => match.pending && !match.queued);
+  match.done = done;
+  for (const lane of Object.values(match.live_progress || {})) lane.done = done;
+  return field;
+}
+
 test('live racing model: a no-op heartbeat (same progress) yields a STABLE digest — the ladder is not rebuilt', () => {
   const heartbeat = { phase: 'tournament:round_0:rung0_m1', generation_id: 'v5' };
   const activeRuns = [{ generation_id: 'v5', entry_id: 'b0', run_id: 'r0', progress: 0.4 }];
@@ -613,7 +620,7 @@ test('live racing model: a no-op heartbeat (same progress) yields a STABLE diges
 
   // a REAL change (a board landed → done count grows) MUST change the digest.
   const c = STRUCT.buildLiveModel(
-    liveRacingField(),
+    completedBoards(liveRacingField(), 1),
     heartbeat,
     [{ generation_id: 'v5', entry_id: 'b0', run_id: 'r0', progress: 1.0 }],
     epochGens,
@@ -973,7 +980,7 @@ test('live swiss model: a no-op repeat render leaves the swiss-ladder node ident
   const a = STRUCT.buildLiveModel(liveSwissField(), heartbeat, activeRuns, epochGens);
   const b = STRUCT.buildLiveModel(liveSwissField(), heartbeat, activeRuns, epochGens);
   assertEqual(STRUCT.structureDigest(a), STRUCT.structureDigest(b), 'two identical live swiss ticks share a digest');
-  const c = STRUCT.buildLiveModel(liveSwissField(), heartbeat, [{ generation_id: 'v0', entry_id: 'b0', run_id: 'r0', progress: 1.0 }], epochGens);
+  const c = STRUCT.buildLiveModel(completedBoards(liveSwissField(), 1), heartbeat, [{ generation_id: 'v0', entry_id: 'b0', run_id: 'r0', progress: 1.0 }], epochGens);
   assert(STRUCT.structureDigest(a) !== STRUCT.structureDigest(c), 'a board landing changes the swiss digest');
 
   const host = document.createElement('div');
@@ -1041,7 +1048,7 @@ test('live elim model: a no-op repeat render leaves the bracket node identity un
   const a = STRUCT.buildLiveModel(liveElimField(), heartbeat, activeRuns, epochGens);
   const b = STRUCT.buildLiveModel(liveElimField(), heartbeat, activeRuns, epochGens);
   assertEqual(STRUCT.structureDigest(a), STRUCT.structureDigest(b), 'two identical live elim ticks share a digest');
-  const c = STRUCT.buildLiveModel(liveElimField(), heartbeat, [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r0', progress: 1.0 }], epochGens);
+  const c = STRUCT.buildLiveModel(completedBoards(liveElimField(), 1), heartbeat, [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r0', progress: 1.0 }], epochGens);
   assert(STRUCT.structureDigest(a) !== STRUCT.structureDigest(c), 'a board landing changes the elim digest');
 
   const host = document.createElement('div');

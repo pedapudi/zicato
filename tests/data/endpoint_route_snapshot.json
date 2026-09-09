@@ -25,7 +25,12 @@
                 "id": "v1",
                 "parent_id": "v0",
                 "promoted": false,
-                "created_at": "2026-01-01T00:00:00Z"
+                "created_at": "2026-01-01T00:00:00Z",
+                "round_index": 0,
+                "rejection_reason": "",
+                "parent_scalar": 0.5,
+                "child_scalar": 0.49,
+                "delta_scalar": -0.010000000000000009
               }
             ]
           },
@@ -651,25 +656,25 @@
           },
           "patch_ids": [],
           "outcome": {
-            "ran_at": "",
-            "pass_rate_delta": 0.0,
-            "drift_loss_delta": 0.0,
-            "scalar_score_delta": 0.02,
-            "tournament_decision": "rejected",
-            "rejection_reason": "",
-            "metric_movements": [],
-            "structure": "gauntlet",
-            "final_rank": null,
-            "eliminated_in_round": null,
-            "match_record": [],
             "champion_eval_mode": "full",
-            "holdout": null,
-            "train_loss": null,
-            "holdout_loss": null,
+            "drift_loss_delta": 0.0,
+            "eliminated_in_round": null,
+            "evidence": null,
+            "final_rank": null,
             "generalization_gap": null,
+            "holdout": null,
+            "holdout_loss": null,
+            "match_record": [],
+            "metric_movements": [],
             "operator_override": false,
             "operator_override_reason": "",
-            "evidence": null
+            "pass_rate_delta": 0.0,
+            "ran_at": "",
+            "rejection_reason": "",
+            "scalar_score_delta": 0.02,
+            "structure": "gauntlet",
+            "tournament_decision": "rejected",
+            "train_loss": null
           },
           "patches": {},
           "decision": "rejected",
@@ -734,6 +739,9 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 0,
+          "parent_scalar": 0.5,
+          "child_scalar": 0.49,
+          "delta_scalar": -0.010000000000000009,
           "elo": null,
           "elo_se": null,
           "elo_games": null
@@ -780,6 +788,9 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 0,
+          "parent_scalar": 0.5,
+          "child_scalar": 0.49,
+          "delta_scalar": -0.010000000000000009,
           "elo": null,
           "elo_se": null,
           "elo_games": null
@@ -948,14 +959,14 @@
           "epoch_id": "e1",
           "proposer_agent_id": "builtin:default",
           "proposer_skills": [],
-          "rounds": 0,
+          "rounds": 1,
           "rounds_complete": 0,
           "proposals": 0,
           "promote_rate": {
             "k": 0,
-            "n": 0,
-            "value": null,
-            "provisional": false
+            "n": 1,
+            "value": 0.0,
+            "provisional": true
           },
           "validation_failure_rate": {
             "k": 0,
@@ -1217,14 +1228,14 @@
           "epoch_id": "e1",
           "proposer_agent_id": "builtin:default",
           "proposer_skills": [],
-          "rounds": 0,
+          "rounds": 1,
           "rounds_complete": 0,
           "proposals": 0,
           "promote_rate": {
             "k": 0,
-            "n": 0,
-            "value": null,
-            "provisional": false
+            "n": 1,
+            "value": 0.0,
+            "provisional": true
           },
           "validation_failure_rate": {
             "k": 0,
@@ -1476,14 +1487,14 @@
         "epoch_id": "e1",
         "proposer_agent_id": "builtin:default",
         "proposer_skills": [],
-        "rounds": 0,
+        "rounds": 1,
         "rounds_complete": 0,
         "proposals": 0,
         "promote_rate": {
           "k": 0,
-          "n": 0,
-          "value": null,
-          "provisional": false
+          "n": 1,
+          "value": 0.0,
+          "provisional": true
         },
         "validation_failure_rate": {
           "k": 0,
@@ -1571,14 +1582,14 @@
           "epoch_id": "e1",
           "proposer_agent_id": "builtin:default",
           "proposer_skills": [],
-          "rounds": 0,
+          "rounds": 1,
           "rounds_complete": 0,
           "proposals": 0,
           "promote_rate": {
             "k": 0,
-            "n": 0,
-            "value": null,
-            "provisional": false
+            "n": 1,
+            "value": 0.0,
+            "provisional": true
           },
           "validation_failure_rate": {
             "k": 0,
@@ -2241,6 +2252,9 @@
         "decision": "rejected",
         "decision_label": "rejected",
         "round_index": 0,
+        "parent_scalar": 0.5,
+        "child_scalar": 0.49,
+        "delta_scalar": -0.010000000000000009,
         "elo": null,
         "elo_se": null,
         "elo_games": null
@@ -2263,25 +2277,25 @@
         },
         "patch_ids": [],
         "outcome": {
-          "ran_at": "",
-          "pass_rate_delta": 0.0,
-          "drift_loss_delta": 0.0,
-          "scalar_score_delta": 0.02,
-          "tournament_decision": "rejected",
-          "rejection_reason": "",
-          "metric_movements": [],
-          "structure": "gauntlet",
-          "final_rank": null,
-          "eliminated_in_round": null,
-          "match_record": [],
           "champion_eval_mode": "full",
-          "holdout": null,
-          "train_loss": null,
-          "holdout_loss": null,
+          "drift_loss_delta": 0.0,
+          "eliminated_in_round": null,
+          "evidence": null,
+          "final_rank": null,
           "generalization_gap": null,
+          "holdout": null,
+          "holdout_loss": null,
+          "match_record": [],
+          "metric_movements": [],
           "operator_override": false,
           "operator_override_reason": "",
-          "evidence": null
+          "pass_rate_delta": 0.0,
+          "ran_at": "",
+          "rejection_reason": "",
+          "scalar_score_delta": 0.02,
+          "structure": "gauntlet",
+          "tournament_decision": "rejected",
+          "train_loss": null
         },
         "patches": {},
         "decision": "rejected",
@@ -2424,7 +2438,11 @@
         "champion_sigma": 0.6,
         "candidate_sigma": 0.62,
         "delta_sigma": 0.020000000000000018,
-        "drift_present": true
+        "drift_present": true,
+        "mean_delta_score": 0.0,
+        "compared_score_count": 2,
+        "passed_count": 0,
+        "entry_count": 0
       },
       "gates": [
         {
@@ -2441,12 +2459,41 @@
             "margin": 0.01,
             "regressed_predicate": null,
             "regressed_namespace": null,
-            "delta_scalar": null,
-            "delta_pass_rate": null,
+            "delta_scalar": -0.010000000000000009,
+            "delta_pass_rate": 0.0,
             "champion_scalar": 0.5,
             "challenger_scalar": 0.49,
             "live": null,
-            "rules": [],
+            "rules": [
+              {
+                "detail": "disabled",
+                "fired": false,
+                "id": "regression_suite",
+                "label": "Regression suite",
+                "status": "skipped"
+              },
+              {
+                "detail": "0.50 → 0.49 (-0.01; needs ≤ -0.01)",
+                "fired": false,
+                "id": "scalar_margin",
+                "label": "Scalar margin",
+                "status": "pass"
+              },
+              {
+                "detail": "all preserved",
+                "fired": false,
+                "id": "pass_rate_monotonicity",
+                "label": "Pass-rate monotonicity",
+                "status": "pass"
+              },
+              {
+                "detail": "namespace aggregates not recorded",
+                "fired": false,
+                "id": "namespace_monotonicity",
+                "label": "Namespace monotonicity",
+                "status": "unknown"
+              }
+            ],
             "scalar_components": {
               "champion": null,
               "challenger": null
@@ -3062,12 +3109,41 @@
       "margin": 0.01,
       "regressed_predicate": null,
       "regressed_namespace": null,
-      "delta_scalar": null,
-      "delta_pass_rate": null,
+      "delta_scalar": -0.010000000000000009,
+      "delta_pass_rate": 0.0,
       "champion_scalar": 0.5,
       "challenger_scalar": 0.49,
       "live": null,
-      "rules": [],
+      "rules": [
+        {
+          "detail": "disabled",
+          "fired": false,
+          "id": "regression_suite",
+          "label": "Regression suite",
+          "status": "skipped"
+        },
+        {
+          "detail": "0.50 → 0.49 (-0.01; needs ≤ -0.01)",
+          "fired": false,
+          "id": "scalar_margin",
+          "label": "Scalar margin",
+          "status": "pass"
+        },
+        {
+          "detail": "all preserved",
+          "fired": false,
+          "id": "pass_rate_monotonicity",
+          "label": "Pass-rate monotonicity",
+          "status": "pass"
+        },
+        {
+          "detail": "namespace aggregates not recorded",
+          "fired": false,
+          "id": "namespace_monotonicity",
+          "label": "Namespace monotonicity",
+          "status": "unknown"
+        }
+      ],
       "scalar_components": {
         "champion": null,
         "challenger": null
@@ -3929,35 +4005,63 @@
       ],
       "tournaments": [
         {
-          "tournament_id": "2026-05-30_e0:v0->v1",
-          "structure": "gauntlet",
-          "structure_params": {},
+          "champion_generation_id": "v0",
           "competitors": [
-            "v0",
-            "v1"
+            {
+              "generation_id": "v0",
+              "role": "champion"
+            },
+            {
+              "generation_id": "v1",
+              "role": "challenger"
+            }
           ],
+          "decision": "rejected",
+          "epoch_id": "2026-05-30_e0",
+          "field_status": [],
+          "promoted_generation_id": "",
+          "ran_at": "2026-05-30T00:30:00Z",
+          "reason": "",
           "rounds": [],
           "standings": [],
+          "state": "settled",
+          "structure": "gauntlet",
+          "structure_params": {},
+          "tournament_id": "2026-05-30_e0:field:v1",
           "champion": {
             "id": "v0",
-            "scalar": null,
+            "scalar": 70.94,
             "eval_mode": "full",
             "run_ref": "epochs/2026-05-30_e0/generations/v0"
           }
         },
         {
-          "tournament_id": "2026-05-30_e0:v0->v2",
-          "structure": "gauntlet",
-          "structure_params": {},
+          "champion_generation_id": "v0",
           "competitors": [
-            "v0",
-            "v2"
+            {
+              "generation_id": "v0",
+              "role": "champion"
+            },
+            {
+              "generation_id": "v2",
+              "role": "challenger"
+            }
           ],
+          "decision": "rejected",
+          "epoch_id": "2026-05-30_e0",
+          "field_status": [],
+          "promoted_generation_id": "",
+          "ran_at": "2026-05-30T01:30:00Z",
+          "reason": "",
           "rounds": [],
           "standings": [],
+          "state": "settled",
+          "structure": "gauntlet",
+          "structure_params": {},
+          "tournament_id": "2026-05-30_e0:field:v2",
           "champion": {
             "id": "v0",
-            "scalar": null,
+            "scalar": 70.94,
             "eval_mode": "full",
             "run_ref": "epochs/2026-05-30_e0/generations/v0"
           }
@@ -4061,7 +4165,7 @@
           "detail": {
             "epoch_id": "2026-05-30_e0",
             "storage_key": "epochs/2026-05-30_e0/rounds/0/field_settlement.json",
-            "exception_type": "RuntimeError",
+            "exception_type": "RecordError",
             "message": "lineage generation 'v1' conflicts on created_at",
             "recommendation": "inspect the retained receipt before running another settlement; zicato cannot safely infer its commit state"
           }
@@ -4073,7 +4177,7 @@
           "detail": {
             "epoch_id": "2026-05-30_e0",
             "storage_key": "epochs/2026-05-30_e0/rounds/1/field_settlement.json",
-            "exception_type": "RuntimeError",
+            "exception_type": "RecordError",
             "message": "lineage generation 'v2' conflicts on created_at",
             "recommendation": "inspect the retained receipt before running another settlement; zicato cannot safely infer its commit state"
           }
@@ -4093,7 +4197,7 @@
           "round_index": 0,
           "champion": {
             "id": "v0",
-            "scalar": 83.0,
+            "scalar": 70.94,
             "eval_mode": "full",
             "run_ref": "epochs/2026-05-30_e0/generations/v0",
             "from_record": true
@@ -4110,20 +4214,34 @@
             "kind": "held",
             "gen": null
           },
-          "tournament_id": "2026-05-30_e0:v0->v1",
+          "tournament_id": "2026-05-30_e0:field:v1",
           "tournament": {
-            "tournament_id": "2026-05-30_e0:v0->v1",
-            "structure": "gauntlet",
-            "structure_params": {},
+            "champion_generation_id": "v0",
             "competitors": [
-              "v0",
-              "v1"
+              {
+                "generation_id": "v0",
+                "role": "champion"
+              },
+              {
+                "generation_id": "v1",
+                "role": "challenger"
+              }
             ],
+            "decision": "rejected",
+            "epoch_id": "2026-05-30_e0",
+            "field_status": [],
+            "promoted_generation_id": "",
+            "ran_at": "2026-05-30T00:30:00Z",
+            "reason": "",
             "rounds": [],
             "standings": [],
+            "state": "settled",
+            "structure": "gauntlet",
+            "structure_params": {},
+            "tournament_id": "2026-05-30_e0:field:v1",
             "champion": {
               "id": "v0",
-              "scalar": null,
+              "scalar": 70.94,
               "eval_mode": "full",
               "run_ref": "epochs/2026-05-30_e0/generations/v0"
             }
@@ -4134,7 +4252,7 @@
           "round_index": 1,
           "champion": {
             "id": "v0",
-            "scalar": 83.0,
+            "scalar": 70.94,
             "eval_mode": "full",
             "run_ref": "epochs/2026-05-30_e0/generations/v0",
             "from_record": true
@@ -4151,20 +4269,34 @@
             "kind": "held",
             "gen": null
           },
-          "tournament_id": "2026-05-30_e0:v0->v2",
+          "tournament_id": "2026-05-30_e0:field:v2",
           "tournament": {
-            "tournament_id": "2026-05-30_e0:v0->v2",
-            "structure": "gauntlet",
-            "structure_params": {},
+            "champion_generation_id": "v0",
             "competitors": [
-              "v0",
-              "v2"
+              {
+                "generation_id": "v0",
+                "role": "champion"
+              },
+              {
+                "generation_id": "v2",
+                "role": "challenger"
+              }
             ],
+            "decision": "rejected",
+            "epoch_id": "2026-05-30_e0",
+            "field_status": [],
+            "promoted_generation_id": "",
+            "ran_at": "2026-05-30T01:30:00Z",
+            "reason": "",
             "rounds": [],
             "standings": [],
+            "state": "settled",
+            "structure": "gauntlet",
+            "structure_params": {},
+            "tournament_id": "2026-05-30_e0:field:v2",
             "champion": {
               "id": "v0",
-              "scalar": null,
+              "scalar": 70.94,
               "eval_mode": "full",
               "run_ref": "epochs/2026-05-30_e0/generations/v0"
             }
@@ -4175,16 +4307,16 @@
       "waterfall": [
         {
           "round_index": 0,
-          "from": 83.0,
-          "to": 83.0,
+          "from": 70.94,
+          "to": 70.94,
           "delta": 0.0,
           "promoted": false,
           "gen": null
         },
         {
           "round_index": 1,
-          "from": 83.0,
-          "to": 83.0,
+          "from": 70.94,
+          "to": 70.94,
           "delta": 0.0,
           "promoted": false,
           "gen": null
@@ -5127,7 +5259,11 @@
         "champion_sigma": null,
         "candidate_sigma": 166.0,
         "delta_sigma": null,
-        "drift_present": true
+        "drift_present": true,
+        "mean_delta_score": null,
+        "compared_score_count": 0,
+        "passed_count": 0,
+        "entry_count": 2
       },
       "gates": [
         {
@@ -5724,7 +5860,11 @@
         "champion_sigma": 166.0,
         "candidate_sigma": 703.0,
         "delta_sigma": 537.0,
-        "drift_present": true
+        "drift_present": true,
+        "mean_delta_score": null,
+        "compared_score_count": 0,
+        "passed_count": 0,
+        "entry_count": 2
       },
       "gates": [
         {
@@ -6156,7 +6296,11 @@
         "champion_sigma": 60.5,
         "candidate_sigma": 61.0,
         "delta_sigma": 0.5,
-        "drift_present": true
+        "drift_present": true,
+        "mean_delta_score": null,
+        "compared_score_count": 0,
+        "passed_count": 0,
+        "entry_count": 1
       },
       "gates": [
         {
@@ -6616,7 +6760,11 @@
         "champion_sigma": 166.0,
         "candidate_sigma": 703.0,
         "delta_sigma": 537.0,
-        "drift_present": true
+        "drift_present": true,
+        "mean_delta_score": null,
+        "compared_score_count": 0,
+        "passed_count": 0,
+        "entry_count": 2
       },
       "gates": [
         {
@@ -6960,7 +7108,11 @@
         "champion_sigma": null,
         "candidate_sigma": 166.0,
         "delta_sigma": null,
-        "drift_present": true
+        "drift_present": true,
+        "mean_delta_score": null,
+        "compared_score_count": 0,
+        "passed_count": 0,
+        "entry_count": 2
       },
       "gates": [
         {
@@ -7557,7 +7709,11 @@
         "champion_sigma": 166.0,
         "candidate_sigma": 703.0,
         "delta_sigma": 537.0,
-        "drift_present": true
+        "drift_present": true,
+        "mean_delta_score": null,
+        "compared_score_count": 0,
+        "passed_count": 0,
+        "entry_count": 2
       },
       "gates": [
         {
@@ -7989,7 +8145,11 @@
         "champion_sigma": 60.5,
         "candidate_sigma": 61.0,
         "delta_sigma": 0.5,
-        "drift_present": true
+        "drift_present": true,
+        "mean_delta_score": null,
+        "compared_score_count": 0,
+        "passed_count": 0,
+        "entry_count": 1
       },
       "gates": [
         {
@@ -8445,18 +8605,32 @@
       ],
       "tournaments": [
         {
-          "tournament_id": "2026-08-01_identity:v0->v2",
-          "structure": "gauntlet",
-          "structure_params": {},
+          "champion_generation_id": "v0",
           "competitors": [
-            "v0",
-            "v2"
+            {
+              "generation_id": "v0",
+              "role": "champion"
+            },
+            {
+              "generation_id": "v2",
+              "role": "challenger"
+            }
           ],
+          "decision": "rejected",
+          "epoch_id": "2026-08-01_identity",
+          "field_status": [],
+          "promoted_generation_id": "",
+          "ran_at": "2026-08-01T00:30:00Z",
+          "reason": "",
           "rounds": [],
           "standings": [],
+          "state": "settled",
+          "structure": "gauntlet",
+          "structure_params": {},
+          "tournament_id": "2026-08-01_identity:field:v2",
           "champion": {
             "id": "v0",
-            "scalar": null,
+            "scalar": 0.72,
             "eval_mode": "full",
             "run_ref": "epochs/2026-08-01_identity/generations/v0"
           }
@@ -8475,7 +8649,7 @@
           "round_index": 0,
           "champion": {
             "id": "v0",
-            "scalar": 0.65,
+            "scalar": 0.72,
             "eval_mode": "full",
             "run_ref": "epochs/2026-08-01_identity/generations/v0",
             "from_record": true
@@ -8492,20 +8666,34 @@
             "kind": "held",
             "gen": null
           },
-          "tournament_id": "2026-08-01_identity:v0->v2",
+          "tournament_id": "2026-08-01_identity:field:v2",
           "tournament": {
-            "tournament_id": "2026-08-01_identity:v0->v2",
-            "structure": "gauntlet",
-            "structure_params": {},
+            "champion_generation_id": "v0",
             "competitors": [
-              "v0",
-              "v2"
+              {
+                "generation_id": "v0",
+                "role": "champion"
+              },
+              {
+                "generation_id": "v2",
+                "role": "challenger"
+              }
             ],
+            "decision": "rejected",
+            "epoch_id": "2026-08-01_identity",
+            "field_status": [],
+            "promoted_generation_id": "",
+            "ran_at": "2026-08-01T00:30:00Z",
+            "reason": "",
             "rounds": [],
             "standings": [],
+            "state": "settled",
+            "structure": "gauntlet",
+            "structure_params": {},
+            "tournament_id": "2026-08-01_identity:field:v2",
             "champion": {
               "id": "v0",
-              "scalar": null,
+              "scalar": 0.72,
               "eval_mode": "full",
               "run_ref": "epochs/2026-08-01_identity/generations/v0"
             }
@@ -8516,8 +8704,8 @@
       "waterfall": [
         {
           "round_index": 0,
-          "from": 0.65,
-          "to": 0.65,
+          "from": 0.72,
+          "to": 0.72,
           "delta": 0.0,
           "promoted": false,
           "gen": null
@@ -8919,7 +9107,11 @@
         "champion_sigma": 2.6,
         "candidate_sigma": 2.6,
         "delta_sigma": 0.0,
-        "drift_present": true
+        "drift_present": true,
+        "mean_delta_score": null,
+        "compared_score_count": 0,
+        "passed_count": 3,
+        "entry_count": 4
       },
       "gates": [
         {
@@ -9416,7 +9608,6 @@
         "decision": "promoted",
         "decision_label": "promoted",
         "round_index": 0,
-        "child_scalar": 63.5,
         "elo": 1668.297188382394,
         "elo_se": null,
         "elo_games": 6
@@ -9484,7 +9675,6 @@
           "decision": "promoted",
           "decision_label": "promoted",
           "round_index": 0,
-          "child_scalar": 63.5,
           "elo": 1668.297188382394,
           "elo_se": null,
           "elo_games": 6
@@ -9606,12 +9796,7 @@
       ],
       "tournaments": [
         {
-          "tournament_id": "2026-06-01_e0:field:v1",
-          "structure": "racing",
-          "structure_params": {
-            "board_fraction": 0.25,
-            "eta": 2
-          },
+          "champion_generation_id": "v0",
           "competitors": [
             {
               "generation_id": "v0",
@@ -9639,6 +9824,13 @@
               "seed": 5
             }
           ],
+          "decision": "promoted",
+          "delta_scalar": null,
+          "epoch_id": "2026-06-01_e0",
+          "field_status": [],
+          "promoted_generation_id": "v3",
+          "ran_at": "2026-06-01T01:00:00Z",
+          "reason": "",
           "rounds": [
             {
               "label": "Rung 0",
@@ -9713,6 +9905,13 @@
             }
           ],
           "standings": [],
+          "state": "settled",
+          "structure": "racing",
+          "structure_params": {
+            "board_fraction": 0.25,
+            "eta": 2
+          },
+          "tournament_id": "2026-06-01_e0:field:v1",
           "champion": {
             "id": "v0",
             "scalar": null,
@@ -9768,12 +9967,7 @@
           },
           "tournament_id": "2026-06-01_e0:field:v1",
           "tournament": {
-            "tournament_id": "2026-06-01_e0:field:v1",
-            "structure": "racing",
-            "structure_params": {
-              "board_fraction": 0.25,
-              "eta": 2
-            },
+            "champion_generation_id": "v0",
             "competitors": [
               {
                 "generation_id": "v0",
@@ -9801,6 +9995,13 @@
                 "seed": 5
               }
             ],
+            "decision": "promoted",
+            "delta_scalar": null,
+            "epoch_id": "2026-06-01_e0",
+            "field_status": [],
+            "promoted_generation_id": "v3",
+            "ran_at": "2026-06-01T01:00:00Z",
+            "reason": "",
             "rounds": [
               {
                 "label": "Rung 0",
@@ -9875,6 +10076,13 @@
               }
             ],
             "standings": [],
+            "state": "settled",
+            "structure": "racing",
+            "structure_params": {
+              "board_fraction": 0.25,
+              "eta": 2
+            },
+            "tournament_id": "2026-06-01_e0:field:v1",
             "champion": {
               "id": "v0",
               "scalar": null,
@@ -10181,7 +10389,6 @@
         "decision": "promoted",
         "decision_label": "promoted",
         "round_index": 0,
-        "child_scalar": 63.5,
         "elo": 1668.297188382394,
         "elo_se": null,
         "elo_games": 6
@@ -10348,7 +10555,11 @@
         "champion_sigma": null,
         "candidate_sigma": 63.5,
         "delta_sigma": null,
-        "drift_present": true
+        "drift_present": true,
+        "mean_delta_score": null,
+        "compared_score_count": 0,
+        "passed_count": 0,
+        "entry_count": 1
       },
       "gates": [
         {
@@ -10788,15 +10999,29 @@
       ],
       "tournaments": [
         {
-          "tournament_id": "2026-06-01_e0:v0->v1",
-          "structure": "racing",
-          "structure_params": {},
+          "champion_generation_id": "v0",
           "competitors": [
-            "v0",
-            "v1"
+            {
+              "generation_id": "v0",
+              "role": "champion"
+            },
+            {
+              "generation_id": "v1",
+              "role": "challenger"
+            }
           ],
+          "decision": "rejected",
+          "epoch_id": "2026-06-01_e0",
+          "field_status": [],
+          "promoted_generation_id": "",
+          "ran_at": "2026-06-01T00:10:00Z",
+          "reason": "",
           "rounds": [],
           "standings": [],
+          "state": "settled",
+          "structure": "racing",
+          "structure_params": {},
+          "tournament_id": "2026-06-01_e0:field:v1",
           "champion": {
             "id": "v0",
             "scalar": null,
@@ -10835,17 +11060,31 @@
             "kind": "held",
             "gen": null
           },
-          "tournament_id": "2026-06-01_e0:v0->v1",
+          "tournament_id": "2026-06-01_e0:field:v1",
           "tournament": {
-            "tournament_id": "2026-06-01_e0:v0->v1",
-            "structure": "racing",
-            "structure_params": {},
+            "champion_generation_id": "v0",
             "competitors": [
-              "v0",
-              "v1"
+              {
+                "generation_id": "v0",
+                "role": "champion"
+              },
+              {
+                "generation_id": "v1",
+                "role": "challenger"
+              }
             ],
+            "decision": "rejected",
+            "epoch_id": "2026-06-01_e0",
+            "field_status": [],
+            "promoted_generation_id": "",
+            "ran_at": "2026-06-01T00:10:00Z",
+            "reason": "",
             "rounds": [],
             "standings": [],
+            "state": "settled",
+            "structure": "racing",
+            "structure_params": {},
+            "tournament_id": "2026-06-01_e0:field:v1",
             "champion": {
               "id": "v0",
               "scalar": null,
@@ -11287,188 +11526,342 @@
       ],
       "tournaments": [
         {
-          "tournament_id": "2026-05-31_many:v0->v1",
-          "structure": "gauntlet",
-          "structure_params": {},
+          "champion_generation_id": "v0",
           "competitors": [
-            "v0",
-            "v1"
+            {
+              "generation_id": "v0",
+              "role": "champion"
+            },
+            {
+              "generation_id": "v1",
+              "role": "challenger"
+            }
           ],
+          "decision": "rejected",
+          "epoch_id": "2026-05-31_many",
+          "field_status": [],
+          "promoted_generation_id": "",
+          "ran_at": "2026-05-31T00:10:00Z",
+          "reason": "",
           "rounds": [],
           "standings": [],
+          "state": "settled",
+          "structure": "gauntlet",
+          "structure_params": {},
+          "tournament_id": "2026-05-31_many:field:v1",
           "champion": {
             "id": "v0",
-            "scalar": null,
+            "scalar": 100.0,
             "eval_mode": "full",
             "run_ref": "epochs/2026-05-31_many/generations/v0"
           }
         },
         {
-          "tournament_id": "2026-05-31_many:v0->v2",
-          "structure": "gauntlet",
-          "structure_params": {},
+          "champion_generation_id": "v0",
           "competitors": [
-            "v0",
-            "v2"
+            {
+              "generation_id": "v0",
+              "role": "champion"
+            },
+            {
+              "generation_id": "v2",
+              "role": "challenger"
+            }
           ],
+          "decision": "rejected",
+          "epoch_id": "2026-05-31_many",
+          "field_status": [],
+          "promoted_generation_id": "",
+          "ran_at": "2026-05-31T00:20:00Z",
+          "reason": "",
           "rounds": [],
           "standings": [],
+          "state": "settled",
+          "structure": "gauntlet",
+          "structure_params": {},
+          "tournament_id": "2026-05-31_many:field:v2",
           "champion": {
             "id": "v0",
-            "scalar": null,
+            "scalar": 100.0,
             "eval_mode": "full",
             "run_ref": "epochs/2026-05-31_many/generations/v0"
           }
         },
         {
-          "tournament_id": "2026-05-31_many:v0->v3",
-          "structure": "gauntlet",
-          "structure_params": {},
+          "champion_generation_id": "v0",
           "competitors": [
-            "v0",
-            "v3"
+            {
+              "generation_id": "v0",
+              "role": "champion"
+            },
+            {
+              "generation_id": "v3",
+              "role": "challenger"
+            }
           ],
+          "decision": "rejected",
+          "epoch_id": "2026-05-31_many",
+          "field_status": [],
+          "promoted_generation_id": "",
+          "ran_at": "2026-05-31T00:30:00Z",
+          "reason": "",
           "rounds": [],
           "standings": [],
+          "state": "settled",
+          "structure": "gauntlet",
+          "structure_params": {},
+          "tournament_id": "2026-05-31_many:field:v3",
           "champion": {
             "id": "v0",
-            "scalar": null,
+            "scalar": 100.0,
             "eval_mode": "full",
             "run_ref": "epochs/2026-05-31_many/generations/v0"
           }
         },
         {
-          "tournament_id": "2026-05-31_many:v0->v4",
-          "structure": "gauntlet",
-          "structure_params": {},
+          "champion_generation_id": "v0",
           "competitors": [
-            "v0",
-            "v4"
+            {
+              "generation_id": "v0",
+              "role": "champion"
+            },
+            {
+              "generation_id": "v4",
+              "role": "challenger"
+            }
           ],
+          "decision": "rejected",
+          "epoch_id": "2026-05-31_many",
+          "field_status": [],
+          "promoted_generation_id": "",
+          "ran_at": "2026-05-31T00:40:00Z",
+          "reason": "",
           "rounds": [],
           "standings": [],
+          "state": "settled",
+          "structure": "gauntlet",
+          "structure_params": {},
+          "tournament_id": "2026-05-31_many:field:v4",
           "champion": {
             "id": "v0",
-            "scalar": null,
+            "scalar": 100.0,
             "eval_mode": "full",
             "run_ref": "epochs/2026-05-31_many/generations/v0"
           }
         },
         {
-          "tournament_id": "2026-05-31_many:v0->v5",
-          "structure": "gauntlet",
-          "structure_params": {},
+          "champion_generation_id": "v0",
           "competitors": [
-            "v0",
-            "v5"
+            {
+              "generation_id": "v0",
+              "role": "champion"
+            },
+            {
+              "generation_id": "v5",
+              "role": "challenger"
+            }
           ],
+          "decision": "rejected",
+          "epoch_id": "2026-05-31_many",
+          "field_status": [],
+          "promoted_generation_id": "",
+          "ran_at": "2026-05-31T00:50:00Z",
+          "reason": "",
           "rounds": [],
           "standings": [],
+          "state": "settled",
+          "structure": "gauntlet",
+          "structure_params": {},
+          "tournament_id": "2026-05-31_many:field:v5",
           "champion": {
             "id": "v0",
-            "scalar": null,
+            "scalar": 100.0,
             "eval_mode": "full",
             "run_ref": "epochs/2026-05-31_many/generations/v0"
           }
         },
         {
-          "tournament_id": "2026-05-31_many:v0->v6",
-          "structure": "gauntlet",
-          "structure_params": {},
+          "champion_generation_id": "v0",
           "competitors": [
-            "v0",
-            "v6"
+            {
+              "generation_id": "v0",
+              "role": "champion"
+            },
+            {
+              "generation_id": "v6",
+              "role": "challenger"
+            }
           ],
+          "decision": "rejected",
+          "epoch_id": "2026-05-31_many",
+          "field_status": [],
+          "promoted_generation_id": "",
+          "ran_at": "2026-05-31T01:00:00Z",
+          "reason": "",
           "rounds": [],
           "standings": [],
+          "state": "settled",
+          "structure": "gauntlet",
+          "structure_params": {},
+          "tournament_id": "2026-05-31_many:field:v6",
           "champion": {
             "id": "v0",
-            "scalar": null,
+            "scalar": 100.0,
             "eval_mode": "full",
             "run_ref": "epochs/2026-05-31_many/generations/v0"
           }
         },
         {
-          "tournament_id": "2026-05-31_many:v0->v7",
-          "structure": "gauntlet",
-          "structure_params": {},
+          "champion_generation_id": "v0",
           "competitors": [
-            "v0",
-            "v7"
+            {
+              "generation_id": "v0",
+              "role": "champion"
+            },
+            {
+              "generation_id": "v7",
+              "role": "challenger"
+            }
           ],
+          "decision": "rejected",
+          "epoch_id": "2026-05-31_many",
+          "field_status": [],
+          "promoted_generation_id": "",
+          "ran_at": "2026-05-31T01:10:00Z",
+          "reason": "",
           "rounds": [],
           "standings": [],
+          "state": "settled",
+          "structure": "gauntlet",
+          "structure_params": {},
+          "tournament_id": "2026-05-31_many:field:v7",
           "champion": {
             "id": "v0",
-            "scalar": null,
+            "scalar": 100.0,
             "eval_mode": "full",
             "run_ref": "epochs/2026-05-31_many/generations/v0"
           }
         },
         {
-          "tournament_id": "2026-05-31_many:v0->v8",
-          "structure": "gauntlet",
-          "structure_params": {},
+          "champion_generation_id": "v0",
           "competitors": [
-            "v0",
-            "v8"
+            {
+              "generation_id": "v0",
+              "role": "champion"
+            },
+            {
+              "generation_id": "v8",
+              "role": "challenger"
+            }
           ],
+          "decision": "rejected",
+          "epoch_id": "2026-05-31_many",
+          "field_status": [],
+          "promoted_generation_id": "",
+          "ran_at": "2026-05-31T01:20:00Z",
+          "reason": "",
           "rounds": [],
           "standings": [],
+          "state": "settled",
+          "structure": "gauntlet",
+          "structure_params": {},
+          "tournament_id": "2026-05-31_many:field:v8",
           "champion": {
             "id": "v0",
-            "scalar": null,
+            "scalar": 100.0,
             "eval_mode": "full",
             "run_ref": "epochs/2026-05-31_many/generations/v0"
           }
         },
         {
-          "tournament_id": "2026-05-31_many:v0->v9",
-          "structure": "gauntlet",
-          "structure_params": {},
+          "champion_generation_id": "v0",
           "competitors": [
-            "v0",
-            "v9"
+            {
+              "generation_id": "v0",
+              "role": "champion"
+            },
+            {
+              "generation_id": "v9",
+              "role": "challenger"
+            }
           ],
+          "decision": "rejected",
+          "epoch_id": "2026-05-31_many",
+          "field_status": [],
+          "promoted_generation_id": "",
+          "ran_at": "2026-05-31T01:30:00Z",
+          "reason": "",
           "rounds": [],
           "standings": [],
+          "state": "settled",
+          "structure": "gauntlet",
+          "structure_params": {},
+          "tournament_id": "2026-05-31_many:field:v9",
           "champion": {
             "id": "v0",
-            "scalar": null,
+            "scalar": 100.0,
             "eval_mode": "full",
             "run_ref": "epochs/2026-05-31_many/generations/v0"
           }
         },
         {
-          "tournament_id": "2026-05-31_many:v0->v10",
-          "structure": "gauntlet",
-          "structure_params": {},
+          "champion_generation_id": "v0",
           "competitors": [
-            "v0",
-            "v10"
+            {
+              "generation_id": "v0",
+              "role": "champion"
+            },
+            {
+              "generation_id": "v10",
+              "role": "challenger"
+            }
           ],
+          "decision": "rejected",
+          "epoch_id": "2026-05-31_many",
+          "field_status": [],
+          "promoted_generation_id": "",
+          "ran_at": "2026-05-31T01:40:00Z",
+          "reason": "",
           "rounds": [],
           "standings": [],
+          "state": "settled",
+          "structure": "gauntlet",
+          "structure_params": {},
+          "tournament_id": "2026-05-31_many:field:v10",
           "champion": {
             "id": "v0",
-            "scalar": null,
+            "scalar": 100.0,
             "eval_mode": "full",
             "run_ref": "epochs/2026-05-31_many/generations/v0"
           }
         },
         {
-          "tournament_id": "2026-05-31_many:v0->v11",
-          "structure": "gauntlet",
-          "structure_params": {},
+          "champion_generation_id": "v0",
           "competitors": [
-            "v0",
-            "v11"
+            {
+              "generation_id": "v0",
+              "role": "champion"
+            },
+            {
+              "generation_id": "v11",
+              "role": "challenger"
+            }
           ],
+          "decision": "rejected",
+          "epoch_id": "2026-05-31_many",
+          "field_status": [],
+          "promoted_generation_id": "",
+          "ran_at": "2026-05-31T01:50:00Z",
+          "reason": "",
           "rounds": [],
           "standings": [],
+          "state": "settled",
+          "structure": "gauntlet",
+          "structure_params": {},
+          "tournament_id": "2026-05-31_many:field:v11",
           "champion": {
             "id": "v0",
-            "scalar": null,
+            "scalar": 100.0,
             "eval_mode": "full",
             "run_ref": "epochs/2026-05-31_many/generations/v0"
           }
@@ -11504,20 +11897,34 @@
             "kind": "held",
             "gen": null
           },
-          "tournament_id": "2026-05-31_many:v0->v1",
+          "tournament_id": "2026-05-31_many:field:v1",
           "tournament": {
-            "tournament_id": "2026-05-31_many:v0->v1",
-            "structure": "gauntlet",
-            "structure_params": {},
+            "champion_generation_id": "v0",
             "competitors": [
-              "v0",
-              "v1"
+              {
+                "generation_id": "v0",
+                "role": "champion"
+              },
+              {
+                "generation_id": "v1",
+                "role": "challenger"
+              }
             ],
+            "decision": "rejected",
+            "epoch_id": "2026-05-31_many",
+            "field_status": [],
+            "promoted_generation_id": "",
+            "ran_at": "2026-05-31T00:10:00Z",
+            "reason": "",
             "rounds": [],
             "standings": [],
+            "state": "settled",
+            "structure": "gauntlet",
+            "structure_params": {},
+            "tournament_id": "2026-05-31_many:field:v1",
             "champion": {
               "id": "v0",
-              "scalar": null,
+              "scalar": 100.0,
               "eval_mode": "full",
               "run_ref": "epochs/2026-05-31_many/generations/v0"
             }
@@ -11545,20 +11952,34 @@
             "kind": "held",
             "gen": null
           },
-          "tournament_id": "2026-05-31_many:v0->v2",
+          "tournament_id": "2026-05-31_many:field:v2",
           "tournament": {
-            "tournament_id": "2026-05-31_many:v0->v2",
-            "structure": "gauntlet",
-            "structure_params": {},
+            "champion_generation_id": "v0",
             "competitors": [
-              "v0",
-              "v2"
+              {
+                "generation_id": "v0",
+                "role": "champion"
+              },
+              {
+                "generation_id": "v2",
+                "role": "challenger"
+              }
             ],
+            "decision": "rejected",
+            "epoch_id": "2026-05-31_many",
+            "field_status": [],
+            "promoted_generation_id": "",
+            "ran_at": "2026-05-31T00:20:00Z",
+            "reason": "",
             "rounds": [],
             "standings": [],
+            "state": "settled",
+            "structure": "gauntlet",
+            "structure_params": {},
+            "tournament_id": "2026-05-31_many:field:v2",
             "champion": {
               "id": "v0",
-              "scalar": null,
+              "scalar": 100.0,
               "eval_mode": "full",
               "run_ref": "epochs/2026-05-31_many/generations/v0"
             }
@@ -11586,20 +12007,34 @@
             "kind": "held",
             "gen": null
           },
-          "tournament_id": "2026-05-31_many:v0->v3",
+          "tournament_id": "2026-05-31_many:field:v3",
           "tournament": {
-            "tournament_id": "2026-05-31_many:v0->v3",
-            "structure": "gauntlet",
-            "structure_params": {},
+            "champion_generation_id": "v0",
             "competitors": [
-              "v0",
-              "v3"
+              {
+                "generation_id": "v0",
+                "role": "champion"
+              },
+              {
+                "generation_id": "v3",
+                "role": "challenger"
+              }
             ],
+            "decision": "rejected",
+            "epoch_id": "2026-05-31_many",
+            "field_status": [],
+            "promoted_generation_id": "",
+            "ran_at": "2026-05-31T00:30:00Z",
+            "reason": "",
             "rounds": [],
             "standings": [],
+            "state": "settled",
+            "structure": "gauntlet",
+            "structure_params": {},
+            "tournament_id": "2026-05-31_many:field:v3",
             "champion": {
               "id": "v0",
-              "scalar": null,
+              "scalar": 100.0,
               "eval_mode": "full",
               "run_ref": "epochs/2026-05-31_many/generations/v0"
             }
@@ -11627,20 +12062,34 @@
             "kind": "held",
             "gen": null
           },
-          "tournament_id": "2026-05-31_many:v0->v4",
+          "tournament_id": "2026-05-31_many:field:v4",
           "tournament": {
-            "tournament_id": "2026-05-31_many:v0->v4",
-            "structure": "gauntlet",
-            "structure_params": {},
+            "champion_generation_id": "v0",
             "competitors": [
-              "v0",
-              "v4"
+              {
+                "generation_id": "v0",
+                "role": "champion"
+              },
+              {
+                "generation_id": "v4",
+                "role": "challenger"
+              }
             ],
+            "decision": "rejected",
+            "epoch_id": "2026-05-31_many",
+            "field_status": [],
+            "promoted_generation_id": "",
+            "ran_at": "2026-05-31T00:40:00Z",
+            "reason": "",
             "rounds": [],
             "standings": [],
+            "state": "settled",
+            "structure": "gauntlet",
+            "structure_params": {},
+            "tournament_id": "2026-05-31_many:field:v4",
             "champion": {
               "id": "v0",
-              "scalar": null,
+              "scalar": 100.0,
               "eval_mode": "full",
               "run_ref": "epochs/2026-05-31_many/generations/v0"
             }
@@ -11668,20 +12117,34 @@
             "kind": "held",
             "gen": null
           },
-          "tournament_id": "2026-05-31_many:v0->v5",
+          "tournament_id": "2026-05-31_many:field:v5",
           "tournament": {
-            "tournament_id": "2026-05-31_many:v0->v5",
-            "structure": "gauntlet",
-            "structure_params": {},
+            "champion_generation_id": "v0",
             "competitors": [
-              "v0",
-              "v5"
+              {
+                "generation_id": "v0",
+                "role": "champion"
+              },
+              {
+                "generation_id": "v5",
+                "role": "challenger"
+              }
             ],
+            "decision": "rejected",
+            "epoch_id": "2026-05-31_many",
+            "field_status": [],
+            "promoted_generation_id": "",
+            "ran_at": "2026-05-31T00:50:00Z",
+            "reason": "",
             "rounds": [],
             "standings": [],
+            "state": "settled",
+            "structure": "gauntlet",
+            "structure_params": {},
+            "tournament_id": "2026-05-31_many:field:v5",
             "champion": {
               "id": "v0",
-              "scalar": null,
+              "scalar": 100.0,
               "eval_mode": "full",
               "run_ref": "epochs/2026-05-31_many/generations/v0"
             }
@@ -11709,20 +12172,34 @@
             "kind": "held",
             "gen": null
           },
-          "tournament_id": "2026-05-31_many:v0->v6",
+          "tournament_id": "2026-05-31_many:field:v6",
           "tournament": {
-            "tournament_id": "2026-05-31_many:v0->v6",
-            "structure": "gauntlet",
-            "structure_params": {},
+            "champion_generation_id": "v0",
             "competitors": [
-              "v0",
-              "v6"
+              {
+                "generation_id": "v0",
+                "role": "champion"
+              },
+              {
+                "generation_id": "v6",
+                "role": "challenger"
+              }
             ],
+            "decision": "rejected",
+            "epoch_id": "2026-05-31_many",
+            "field_status": [],
+            "promoted_generation_id": "",
+            "ran_at": "2026-05-31T01:00:00Z",
+            "reason": "",
             "rounds": [],
             "standings": [],
+            "state": "settled",
+            "structure": "gauntlet",
+            "structure_params": {},
+            "tournament_id": "2026-05-31_many:field:v6",
             "champion": {
               "id": "v0",
-              "scalar": null,
+              "scalar": 100.0,
               "eval_mode": "full",
               "run_ref": "epochs/2026-05-31_many/generations/v0"
             }
@@ -11750,20 +12227,34 @@
             "kind": "held",
             "gen": null
           },
-          "tournament_id": "2026-05-31_many:v0->v7",
+          "tournament_id": "2026-05-31_many:field:v7",
           "tournament": {
-            "tournament_id": "2026-05-31_many:v0->v7",
-            "structure": "gauntlet",
-            "structure_params": {},
+            "champion_generation_id": "v0",
             "competitors": [
-              "v0",
-              "v7"
+              {
+                "generation_id": "v0",
+                "role": "champion"
+              },
+              {
+                "generation_id": "v7",
+                "role": "challenger"
+              }
             ],
+            "decision": "rejected",
+            "epoch_id": "2026-05-31_many",
+            "field_status": [],
+            "promoted_generation_id": "",
+            "ran_at": "2026-05-31T01:10:00Z",
+            "reason": "",
             "rounds": [],
             "standings": [],
+            "state": "settled",
+            "structure": "gauntlet",
+            "structure_params": {},
+            "tournament_id": "2026-05-31_many:field:v7",
             "champion": {
               "id": "v0",
-              "scalar": null,
+              "scalar": 100.0,
               "eval_mode": "full",
               "run_ref": "epochs/2026-05-31_many/generations/v0"
             }
@@ -11791,20 +12282,34 @@
             "kind": "held",
             "gen": null
           },
-          "tournament_id": "2026-05-31_many:v0->v8",
+          "tournament_id": "2026-05-31_many:field:v8",
           "tournament": {
-            "tournament_id": "2026-05-31_many:v0->v8",
-            "structure": "gauntlet",
-            "structure_params": {},
+            "champion_generation_id": "v0",
             "competitors": [
-              "v0",
-              "v8"
+              {
+                "generation_id": "v0",
+                "role": "champion"
+              },
+              {
+                "generation_id": "v8",
+                "role": "challenger"
+              }
             ],
+            "decision": "rejected",
+            "epoch_id": "2026-05-31_many",
+            "field_status": [],
+            "promoted_generation_id": "",
+            "ran_at": "2026-05-31T01:20:00Z",
+            "reason": "",
             "rounds": [],
             "standings": [],
+            "state": "settled",
+            "structure": "gauntlet",
+            "structure_params": {},
+            "tournament_id": "2026-05-31_many:field:v8",
             "champion": {
               "id": "v0",
-              "scalar": null,
+              "scalar": 100.0,
               "eval_mode": "full",
               "run_ref": "epochs/2026-05-31_many/generations/v0"
             }
@@ -11832,20 +12337,34 @@
             "kind": "held",
             "gen": null
           },
-          "tournament_id": "2026-05-31_many:v0->v9",
+          "tournament_id": "2026-05-31_many:field:v9",
           "tournament": {
-            "tournament_id": "2026-05-31_many:v0->v9",
-            "structure": "gauntlet",
-            "structure_params": {},
+            "champion_generation_id": "v0",
             "competitors": [
-              "v0",
-              "v9"
+              {
+                "generation_id": "v0",
+                "role": "champion"
+              },
+              {
+                "generation_id": "v9",
+                "role": "challenger"
+              }
             ],
+            "decision": "rejected",
+            "epoch_id": "2026-05-31_many",
+            "field_status": [],
+            "promoted_generation_id": "",
+            "ran_at": "2026-05-31T01:30:00Z",
+            "reason": "",
             "rounds": [],
             "standings": [],
+            "state": "settled",
+            "structure": "gauntlet",
+            "structure_params": {},
+            "tournament_id": "2026-05-31_many:field:v9",
             "champion": {
               "id": "v0",
-              "scalar": null,
+              "scalar": 100.0,
               "eval_mode": "full",
               "run_ref": "epochs/2026-05-31_many/generations/v0"
             }
@@ -11873,20 +12392,34 @@
             "kind": "held",
             "gen": null
           },
-          "tournament_id": "2026-05-31_many:v0->v10",
+          "tournament_id": "2026-05-31_many:field:v10",
           "tournament": {
-            "tournament_id": "2026-05-31_many:v0->v10",
-            "structure": "gauntlet",
-            "structure_params": {},
+            "champion_generation_id": "v0",
             "competitors": [
-              "v0",
-              "v10"
+              {
+                "generation_id": "v0",
+                "role": "champion"
+              },
+              {
+                "generation_id": "v10",
+                "role": "challenger"
+              }
             ],
+            "decision": "rejected",
+            "epoch_id": "2026-05-31_many",
+            "field_status": [],
+            "promoted_generation_id": "",
+            "ran_at": "2026-05-31T01:40:00Z",
+            "reason": "",
             "rounds": [],
             "standings": [],
+            "state": "settled",
+            "structure": "gauntlet",
+            "structure_params": {},
+            "tournament_id": "2026-05-31_many:field:v10",
             "champion": {
               "id": "v0",
-              "scalar": null,
+              "scalar": 100.0,
               "eval_mode": "full",
               "run_ref": "epochs/2026-05-31_many/generations/v0"
             }
@@ -11914,20 +12447,34 @@
             "kind": "held",
             "gen": null
           },
-          "tournament_id": "2026-05-31_many:v0->v11",
+          "tournament_id": "2026-05-31_many:field:v11",
           "tournament": {
-            "tournament_id": "2026-05-31_many:v0->v11",
-            "structure": "gauntlet",
-            "structure_params": {},
+            "champion_generation_id": "v0",
             "competitors": [
-              "v0",
-              "v11"
+              {
+                "generation_id": "v0",
+                "role": "champion"
+              },
+              {
+                "generation_id": "v11",
+                "role": "challenger"
+              }
             ],
+            "decision": "rejected",
+            "epoch_id": "2026-05-31_many",
+            "field_status": [],
+            "promoted_generation_id": "",
+            "ran_at": "2026-05-31T01:50:00Z",
+            "reason": "",
             "rounds": [],
             "standings": [],
+            "state": "settled",
+            "structure": "gauntlet",
+            "structure_params": {},
+            "tournament_id": "2026-05-31_many:field:v11",
             "champion": {
               "id": "v0",
-              "scalar": null,
+              "scalar": 100.0,
               "eval_mode": "full",
               "run_ref": "epochs/2026-05-31_many/generations/v0"
             }
@@ -12878,12 +13425,7 @@
       ],
       "tournaments": [
         {
-          "tournament_id": "2026-06-01_e0:field:v1",
-          "structure": "racing",
-          "structure_params": {
-            "board_fraction": 0.25,
-            "eta": 2
-          },
+          "champion_generation_id": "v0",
           "competitors": [
             {
               "generation_id": "v0",
@@ -12911,6 +13453,13 @@
               "seed": 5
             }
           ],
+          "decision": "promoted",
+          "delta_scalar": null,
+          "epoch_id": "2026-06-01_e0",
+          "field_status": [],
+          "promoted_generation_id": "v4",
+          "ran_at": "2026-06-01T01:00:00Z",
+          "reason": "",
           "rounds": [
             {
               "label": "Rung 0",
@@ -12961,9 +13510,16 @@
             }
           ],
           "standings": [],
+          "state": "settled",
+          "structure": "racing",
+          "structure_params": {
+            "board_fraction": 0.25,
+            "eta": 2
+          },
+          "tournament_id": "2026-06-01_e0:field:v1",
           "champion": {
             "id": "v0",
-            "scalar": null,
+            "scalar": 50.0,
             "eval_mode": "full",
             "run_ref": "epochs/2026-06-01_e0/generations/v0"
           }
@@ -13016,12 +13572,7 @@
           },
           "tournament_id": "2026-06-01_e0:field:v1",
           "tournament": {
-            "tournament_id": "2026-06-01_e0:field:v1",
-            "structure": "racing",
-            "structure_params": {
-              "board_fraction": 0.25,
-              "eta": 2
-            },
+            "champion_generation_id": "v0",
             "competitors": [
               {
                 "generation_id": "v0",
@@ -13049,6 +13600,13 @@
                 "seed": 5
               }
             ],
+            "decision": "promoted",
+            "delta_scalar": null,
+            "epoch_id": "2026-06-01_e0",
+            "field_status": [],
+            "promoted_generation_id": "v4",
+            "ran_at": "2026-06-01T01:00:00Z",
+            "reason": "",
             "rounds": [
               {
                 "label": "Rung 0",
@@ -13099,9 +13657,16 @@
               }
             ],
             "standings": [],
+            "state": "settled",
+            "structure": "racing",
+            "structure_params": {
+              "board_fraction": 0.25,
+              "eta": 2
+            },
+            "tournament_id": "2026-06-01_e0:field:v1",
             "champion": {
               "id": "v0",
-              "scalar": null,
+              "scalar": 50.0,
               "eval_mode": "full",
               "run_ref": "epochs/2026-06-01_e0/generations/v0"
             }
@@ -13876,7 +14441,6 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 0,
-          "parent_scalar": 54.0,
           "elo": 1452.2531897272277,
           "elo_se": null,
           "elo_games": 3
@@ -13890,7 +14454,6 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 0,
-          "parent_scalar": 54.0,
           "elo": 1372.3767830819158,
           "elo_se": null,
           "elo_games": 2
@@ -13983,13 +14546,7 @@
       ],
       "tournaments": [
         {
-          "tournament_id": "2026-05-30_e0:field:v1",
-          "structure": "racing",
-          "structure_params": {
-            "board_fraction": 0.5,
-            "eta": 2,
-            "field_size": 4
-          },
+          "champion_generation_id": "v0",
           "competitors": [
             {
               "generation_id": "v0",
@@ -14012,6 +14569,13 @@
               "seed": 4
             }
           ],
+          "decision": "promoted",
+          "delta_scalar": null,
+          "epoch_id": "2026-05-30_e0",
+          "field_status": [],
+          "promoted_generation_id": "v1",
+          "ran_at": "2026-05-30T03:00:00Z",
+          "reason": "",
           "rounds": [
             {
               "label": "Rung 0",
@@ -14072,9 +14636,17 @@
               "status": "alive"
             }
           ],
+          "state": "settled",
+          "structure": "racing",
+          "structure_params": {
+            "board_fraction": 0.5,
+            "eta": 2,
+            "field_size": 4
+          },
+          "tournament_id": "2026-05-30_e0:field:v1",
           "champion": {
             "id": "v0",
-            "scalar": null,
+            "scalar": 54.0,
             "eval_mode": "full",
             "run_ref": "epochs/2026-05-30_e0/generations/v0"
           }
@@ -14122,13 +14694,7 @@
           },
           "tournament_id": "2026-05-30_e0:field:v1",
           "tournament": {
-            "tournament_id": "2026-05-30_e0:field:v1",
-            "structure": "racing",
-            "structure_params": {
-              "board_fraction": 0.5,
-              "eta": 2,
-              "field_size": 4
-            },
+            "champion_generation_id": "v0",
             "competitors": [
               {
                 "generation_id": "v0",
@@ -14151,6 +14717,13 @@
                 "seed": 4
               }
             ],
+            "decision": "promoted",
+            "delta_scalar": null,
+            "epoch_id": "2026-05-30_e0",
+            "field_status": [],
+            "promoted_generation_id": "v1",
+            "ran_at": "2026-05-30T03:00:00Z",
+            "reason": "",
             "rounds": [
               {
                 "label": "Rung 0",
@@ -14211,9 +14784,17 @@
                 "status": "alive"
               }
             ],
+            "state": "settled",
+            "structure": "racing",
+            "structure_params": {
+              "board_fraction": 0.5,
+              "eta": 2,
+              "field_size": 4
+            },
+            "tournament_id": "2026-05-30_e0:field:v1",
             "champion": {
               "id": "v0",
-              "scalar": null,
+              "scalar": 54.0,
               "eval_mode": "full",
               "run_ref": "epochs/2026-05-30_e0/generations/v0"
             }
@@ -14855,7 +15436,11 @@
         "champion_sigma": null,
         "candidate_sigma": 40.0,
         "delta_sigma": null,
-        "drift_present": true
+        "drift_present": true,
+        "mean_delta_score": null,
+        "compared_score_count": 0,
+        "passed_count": 1,
+        "entry_count": 1
       },
       "gates": [
         {
@@ -15431,13 +16016,7 @@
       "matchups": [],
       "tournaments": [
         {
-          "tournament_id": "2026-05-30_e0:field:v1",
-          "structure": "racing",
-          "structure_params": {
-            "board_fraction": 0.5,
-            "eta": 2,
-            "field_size": 4
-          },
+          "champion_generation_id": "v0",
           "competitors": [
             {
               "generation_id": "v0",
@@ -15460,8 +16039,23 @@
               "seed": 4
             }
           ],
+          "decision": "",
+          "delta_scalar": null,
+          "epoch_id": "2026-05-30_e0",
+          "field_status": [],
+          "promoted_generation_id": "",
+          "ran_at": "2026-05-30T03:00:00Z",
+          "reason": "",
           "rounds": [],
           "standings": [],
+          "state": "in_progress",
+          "structure": "racing",
+          "structure_params": {
+            "board_fraction": 0.5,
+            "eta": 2,
+            "field_size": 4
+          },
+          "tournament_id": "2026-05-30_e0:field:v1",
           "champion": {
             "id": "v0",
             "scalar": null,
@@ -15512,13 +16106,7 @@
           },
           "tournament_id": "2026-05-30_e0:field:v1",
           "tournament": {
-            "tournament_id": "2026-05-30_e0:field:v1",
-            "structure": "racing",
-            "structure_params": {
-              "board_fraction": 0.5,
-              "eta": 2,
-              "field_size": 4
-            },
+            "champion_generation_id": "v0",
             "competitors": [
               {
                 "generation_id": "v0",
@@ -15541,8 +16129,23 @@
                 "seed": 4
               }
             ],
+            "decision": "",
+            "delta_scalar": null,
+            "epoch_id": "2026-05-30_e0",
+            "field_status": [],
+            "promoted_generation_id": "",
+            "ran_at": "2026-05-30T03:00:00Z",
+            "reason": "",
             "rounds": [],
             "standings": [],
+            "state": "in_progress",
+            "structure": "racing",
+            "structure_params": {
+              "board_fraction": 0.5,
+              "eta": 2,
+              "field_size": 4
+            },
+            "tournament_id": "2026-05-30_e0:field:v1",
             "champion": {
               "id": "v0",
               "scalar": null,
@@ -15586,29 +16189,91 @@
       "competitors": [
         {
           "generation_id": "v0",
-          "role": "champion",
-          "seed": 1
+          "seed": 1,
+          "role": "champion"
         },
         {
           "generation_id": "v1",
-          "role": "challenger",
-          "seed": 2
+          "seed": 2,
+          "role": "challenger"
         },
         {
           "generation_id": "v2",
-          "role": "challenger",
-          "seed": 3
+          "seed": 3,
+          "role": "challenger"
         },
         {
           "generation_id": "v3",
-          "role": "challenger",
-          "seed": 4
+          "seed": 4,
+          "role": "challenger"
         }
       ],
-      "rounds": [],
-      "standings": [],
+      "rounds": [
+        {
+          "stage_index": 0,
+          "label": "Rung 0",
+          "matches": [
+            {
+              "match_id": "rung0",
+              "competitors": [
+                "v0",
+                "v1",
+                "v2",
+                "v3"
+              ],
+              "survivors": [
+                "v1",
+                "v2"
+              ],
+              "cut": [
+                "v3"
+              ],
+              "board_fraction": 0.5
+            }
+          ],
+          "queued": false
+        },
+        {
+          "stage_index": 1,
+          "label": "Rung 1",
+          "matches": [
+            {
+              "match_id": "rung1",
+              "competitors": [
+                "v1",
+                "v2"
+              ],
+              "survivors": [],
+              "cut": [],
+              "board_fraction": 1.0
+            }
+          ],
+          "queued": false
+        }
+      ],
+      "standings": [
+        {
+          "generation_id": "v1",
+          "rank": 1,
+          "scalar": 40.0,
+          "status": "alive",
+          "elo": null,
+          "elo_se": null,
+          "elo_games": null
+        },
+        {
+          "generation_id": "v0",
+          "rank": 2,
+          "scalar": 54.0,
+          "status": "alive",
+          "role": "champion",
+          "elo": null,
+          "elo_se": null,
+          "elo_games": null
+        }
+      ],
       "field_status": [],
-      "source": "index",
+      "source": "active",
       "diversity": {
         "field_size": 3,
         "distinct_ideas": 1,
@@ -16162,11 +16827,7 @@
       ],
       "tournaments": [
         {
-          "tournament_id": "2026-05-30_e0:field:v1",
-          "structure": "single_elim",
-          "structure_params": {
-            "seed_order": "scalar"
-          },
+          "champion_generation_id": "v0",
           "competitors": [
             {
               "generation_id": "v0",
@@ -16189,6 +16850,13 @@
               "seed": 4
             }
           ],
+          "decision": "promoted",
+          "delta_scalar": null,
+          "epoch_id": "2026-05-30_e0",
+          "field_status": [],
+          "promoted_generation_id": "v1",
+          "ran_at": "2026-05-30T03:00:00Z",
+          "reason": "",
           "rounds": [
             {
               "label": "Semifinal",
@@ -16264,9 +16932,15 @@
               "wins": 1
             }
           ],
+          "state": "settled",
+          "structure": "single_elim",
+          "structure_params": {
+            "seed_order": "scalar"
+          },
+          "tournament_id": "2026-05-30_e0:field:v1",
           "champion": {
             "id": "v0",
-            "scalar": null,
+            "scalar": 70.0,
             "eval_mode": "full",
             "run_ref": "epochs/2026-05-30_e0/generations/v0"
           },
@@ -16387,11 +17061,7 @@
           },
           "tournament_id": "2026-05-30_e0:field:v1",
           "tournament": {
-            "tournament_id": "2026-05-30_e0:field:v1",
-            "structure": "single_elim",
-            "structure_params": {
-              "seed_order": "scalar"
-            },
+            "champion_generation_id": "v0",
             "competitors": [
               {
                 "generation_id": "v0",
@@ -16414,6 +17084,13 @@
                 "seed": 4
               }
             ],
+            "decision": "promoted",
+            "delta_scalar": null,
+            "epoch_id": "2026-05-30_e0",
+            "field_status": [],
+            "promoted_generation_id": "v1",
+            "ran_at": "2026-05-30T03:00:00Z",
+            "reason": "",
             "rounds": [
               {
                 "label": "Semifinal",
@@ -16489,9 +17166,15 @@
                 "wins": 1
               }
             ],
+            "state": "settled",
+            "structure": "single_elim",
+            "structure_params": {
+              "seed_order": "scalar"
+            },
+            "tournament_id": "2026-05-30_e0:field:v1",
             "champion": {
               "id": "v0",
-              "scalar": null,
+              "scalar": 70.0,
               "eval_mode": "full",
               "run_ref": "epochs/2026-05-30_e0/generations/v0"
             },
@@ -17183,7 +17866,11 @@
         "champion_sigma": null,
         "candidate_sigma": 71.0,
         "delta_sigma": null,
-        "drift_present": true
+        "drift_present": true,
+        "mean_delta_score": null,
+        "compared_score_count": 0,
+        "passed_count": 1,
+        "entry_count": 1
       },
       "gates": [
         {
@@ -17655,11 +18342,7 @@
       ],
       "tournaments": [
         {
-          "tournament_id": "2026-05-30_e0:field:v1",
-          "structure": "swiss",
-          "structure_params": {
-            "rounds": 2
-          },
+          "champion_generation_id": "v0",
           "competitors": [
             {
               "generation_id": "v0",
@@ -17677,6 +18360,13 @@
               "seed": 3
             }
           ],
+          "decision": "promoted",
+          "delta_scalar": null,
+          "epoch_id": "2026-05-30_e0",
+          "field_status": [],
+          "promoted_generation_id": "v1",
+          "ran_at": "2026-05-30T03:00:00Z",
+          "reason": "",
           "rounds": [
             {
               "label": "Round 1",
@@ -17727,9 +18417,15 @@
               "wins": 0
             }
           ],
+          "state": "settled",
+          "structure": "swiss",
+          "structure_params": {
+            "rounds": 2
+          },
+          "tournament_id": "2026-05-30_e0:field:v1",
           "champion": {
             "id": "v0",
-            "scalar": null,
+            "scalar": 70.0,
             "eval_mode": "full",
             "run_ref": "epochs/2026-05-30_e0/generations/v0"
           }
@@ -17772,11 +18468,7 @@
           },
           "tournament_id": "2026-05-30_e0:field:v1",
           "tournament": {
-            "tournament_id": "2026-05-30_e0:field:v1",
-            "structure": "swiss",
-            "structure_params": {
-              "rounds": 2
-            },
+            "champion_generation_id": "v0",
             "competitors": [
               {
                 "generation_id": "v0",
@@ -17794,6 +18486,13 @@
                 "seed": 3
               }
             ],
+            "decision": "promoted",
+            "delta_scalar": null,
+            "epoch_id": "2026-05-30_e0",
+            "field_status": [],
+            "promoted_generation_id": "v1",
+            "ran_at": "2026-05-30T03:00:00Z",
+            "reason": "",
             "rounds": [
               {
                 "label": "Round 1",
@@ -17844,9 +18543,15 @@
                 "wins": 0
               }
             ],
+            "state": "settled",
+            "structure": "swiss",
+            "structure_params": {
+              "rounds": 2
+            },
+            "tournament_id": "2026-05-30_e0:field:v1",
             "champion": {
               "id": "v0",
-              "scalar": null,
+              "scalar": 70.0,
               "eval_mode": "full",
               "run_ref": "epochs/2026-05-30_e0/generations/v0"
             }
@@ -18362,7 +19067,11 @@
         "champion_sigma": null,
         "candidate_sigma": 71.0,
         "delta_sigma": null,
-        "drift_present": true
+        "drift_present": true,
+        "mean_delta_score": null,
+        "compared_score_count": 0,
+        "passed_count": 1,
+        "entry_count": 1
       },
       "gates": [
         {
@@ -18924,11 +19633,7 @@
       ],
       "tournaments": [
         {
-          "tournament_id": "2026-05-30_e0:field:v1",
-          "structure": "double_elim",
-          "structure_params": {
-            "grand_final_reset": true
-          },
+          "champion_generation_id": "v0",
           "competitors": [
             {
               "generation_id": "v0",
@@ -18951,6 +19656,13 @@
               "seed": 4
             }
           ],
+          "decision": "promoted",
+          "delta_scalar": null,
+          "epoch_id": "2026-05-30_e0",
+          "field_status": [],
+          "promoted_generation_id": "v1",
+          "ran_at": "2026-05-30T03:00:00Z",
+          "reason": "",
           "rounds": [
             {
               "label": "Semifinal",
@@ -19046,9 +19758,15 @@
               "wins": 2
             }
           ],
+          "state": "settled",
+          "structure": "double_elim",
+          "structure_params": {
+            "grand_final_reset": true
+          },
+          "tournament_id": "2026-05-30_e0:field:v1",
           "champion": {
             "id": "v0",
-            "scalar": null,
+            "scalar": 70.0,
             "eval_mode": "full",
             "run_ref": "epochs/2026-05-30_e0/generations/v0"
           },
@@ -19175,11 +19893,7 @@
           },
           "tournament_id": "2026-05-30_e0:field:v1",
           "tournament": {
-            "tournament_id": "2026-05-30_e0:field:v1",
-            "structure": "double_elim",
-            "structure_params": {
-              "grand_final_reset": true
-            },
+            "champion_generation_id": "v0",
             "competitors": [
               {
                 "generation_id": "v0",
@@ -19202,6 +19916,13 @@
                 "seed": 4
               }
             ],
+            "decision": "promoted",
+            "delta_scalar": null,
+            "epoch_id": "2026-05-30_e0",
+            "field_status": [],
+            "promoted_generation_id": "v1",
+            "ran_at": "2026-05-30T03:00:00Z",
+            "reason": "",
             "rounds": [
               {
                 "label": "Semifinal",
@@ -19297,9 +20018,15 @@
                 "wins": 2
               }
             ],
+            "state": "settled",
+            "structure": "double_elim",
+            "structure_params": {
+              "grand_final_reset": true
+            },
+            "tournament_id": "2026-05-30_e0:field:v1",
             "champion": {
               "id": "v0",
-              "scalar": null,
+              "scalar": 70.0,
               "eval_mode": "full",
               "run_ref": "epochs/2026-05-30_e0/generations/v0"
             },
@@ -20023,7 +20750,11 @@
         "champion_sigma": null,
         "candidate_sigma": 71.0,
         "delta_sigma": null,
-        "drift_present": true
+        "drift_present": true,
+        "mean_delta_score": null,
+        "compared_score_count": 0,
+        "passed_count": 1,
+        "entry_count": 1
       },
       "gates": [
         {
@@ -20515,11 +21246,7 @@
       ],
       "tournaments": [
         {
-          "tournament_id": "2026-05-30_e0:field:v1",
-          "structure": "swiss",
-          "structure_params": {
-            "rounds": 2
-          },
+          "champion_generation_id": "v0",
           "competitors": [
             {
               "generation_id": "v0",
@@ -20537,6 +21264,32 @@
               "seed": 3
             }
           ],
+          "decision": "promoted",
+          "delta_scalar": null,
+          "epoch_id": "2026-05-30_e0",
+          "field_status": [
+            {
+              "generation_id": "v1",
+              "reason": "",
+              "seed": 2,
+              "status": "applied"
+            },
+            {
+              "generation_id": "v2",
+              "reason": "proposer returned invalid JSON",
+              "seed": 3,
+              "status": "rejected"
+            },
+            {
+              "generation_id": "v3",
+              "reason": "",
+              "seed": 4,
+              "status": "applied"
+            }
+          ],
+          "promoted_generation_id": "v1",
+          "ran_at": "2026-05-30T03:00:00Z",
+          "reason": "",
           "rounds": [
             {
               "label": "Round 1",
@@ -20587,9 +21340,15 @@
               "wins": 0
             }
           ],
+          "state": "settled",
+          "structure": "swiss",
+          "structure_params": {
+            "rounds": 2
+          },
+          "tournament_id": "2026-05-30_e0:field:v1",
           "champion": {
             "id": "v0",
-            "scalar": null,
+            "scalar": 70.0,
             "eval_mode": "full",
             "run_ref": "epochs/2026-05-30_e0/generations/v0"
           }
@@ -20632,11 +21391,7 @@
           },
           "tournament_id": "2026-05-30_e0:field:v1",
           "tournament": {
-            "tournament_id": "2026-05-30_e0:field:v1",
-            "structure": "swiss",
-            "structure_params": {
-              "rounds": 2
-            },
+            "champion_generation_id": "v0",
             "competitors": [
               {
                 "generation_id": "v0",
@@ -20654,6 +21409,32 @@
                 "seed": 3
               }
             ],
+            "decision": "promoted",
+            "delta_scalar": null,
+            "epoch_id": "2026-05-30_e0",
+            "field_status": [
+              {
+                "generation_id": "v1",
+                "reason": "",
+                "seed": 2,
+                "status": "applied"
+              },
+              {
+                "generation_id": "v2",
+                "reason": "proposer returned invalid JSON",
+                "seed": 3,
+                "status": "rejected"
+              },
+              {
+                "generation_id": "v3",
+                "reason": "",
+                "seed": 4,
+                "status": "applied"
+              }
+            ],
+            "promoted_generation_id": "v1",
+            "ran_at": "2026-05-30T03:00:00Z",
+            "reason": "",
             "rounds": [
               {
                 "label": "Round 1",
@@ -20704,9 +21485,15 @@
                 "wins": 0
               }
             ],
+            "state": "settled",
+            "structure": "swiss",
+            "structure_params": {
+              "rounds": 2
+            },
+            "tournament_id": "2026-05-30_e0:field:v1",
             "champion": {
               "id": "v0",
-              "scalar": null,
+              "scalar": 70.0,
               "eval_mode": "full",
               "run_ref": "epochs/2026-05-30_e0/generations/v0"
             }
@@ -21634,11 +22421,7 @@
       ],
       "tournaments": [
         {
-          "tournament_id": "2026-05-30_e0:field:v1",
-          "structure": "swiss",
-          "structure_params": {
-            "rounds": 2
-          },
+          "champion_generation_id": "v0",
           "competitors": [
             {
               "generation_id": "v0",
@@ -21656,6 +22439,26 @@
               "seed": 3
             }
           ],
+          "decision": "promoted",
+          "delta_scalar": null,
+          "epoch_id": "2026-05-30_e0",
+          "field_status": [
+            {
+              "generation_id": "v1",
+              "reason": "",
+              "seed": 2,
+              "status": "applied"
+            },
+            {
+              "generation_id": "v2",
+              "reason": "",
+              "seed": 3,
+              "status": "applied"
+            }
+          ],
+          "promoted_generation_id": "v1",
+          "ran_at": "2026-05-30T03:00:00Z",
+          "reason": "",
           "rounds": [
             {
               "label": "Round 1",
@@ -21706,9 +22509,15 @@
               "wins": 0
             }
           ],
+          "state": "settled",
+          "structure": "swiss",
+          "structure_params": {
+            "rounds": 2
+          },
+          "tournament_id": "2026-05-30_e0:field:v1",
           "champion": {
             "id": "v0",
-            "scalar": null,
+            "scalar": 70.0,
             "eval_mode": "full",
             "run_ref": "epochs/2026-05-30_e0/generations/v0"
           }
@@ -21751,11 +22560,7 @@
           },
           "tournament_id": "2026-05-30_e0:field:v1",
           "tournament": {
-            "tournament_id": "2026-05-30_e0:field:v1",
-            "structure": "swiss",
-            "structure_params": {
-              "rounds": 2
-            },
+            "champion_generation_id": "v0",
             "competitors": [
               {
                 "generation_id": "v0",
@@ -21773,6 +22578,26 @@
                 "seed": 3
               }
             ],
+            "decision": "promoted",
+            "delta_scalar": null,
+            "epoch_id": "2026-05-30_e0",
+            "field_status": [
+              {
+                "generation_id": "v1",
+                "reason": "",
+                "seed": 2,
+                "status": "applied"
+              },
+              {
+                "generation_id": "v2",
+                "reason": "",
+                "seed": 3,
+                "status": "applied"
+              }
+            ],
+            "promoted_generation_id": "v1",
+            "ran_at": "2026-05-30T03:00:00Z",
+            "reason": "",
             "rounds": [
               {
                 "label": "Round 1",
@@ -21823,9 +22648,15 @@
                 "wins": 0
               }
             ],
+            "state": "settled",
+            "structure": "swiss",
+            "structure_params": {
+              "rounds": 2
+            },
+            "tournament_id": "2026-05-30_e0:field:v1",
             "champion": {
               "id": "v0",
-              "scalar": null,
+              "scalar": 70.0,
               "eval_mode": "full",
               "run_ref": "epochs/2026-05-30_e0/generations/v0"
             }
@@ -22322,17 +23153,17 @@
           "decision_label": "undecided"
         }
       ],
-      "current_champion": "v1",
+      "current_champion": "v0",
       "champion_record": {
-        "generation_id": "v1",
+        "generation_id": "v0",
         "epoch_id": "2026-05-30_e0",
-        "parent_generation_id": "v0",
+        "parent_generation_id": null,
         "promoted": true,
-        "created_at": "2026-05-30T00:10:00Z",
-        "decision": "promoted",
-        "decision_label": "promoted",
+        "created_at": "2026-05-30T00:00:00Z",
+        "decision": "baseline",
+        "decision_label": "seed (v0)",
         "round_index": 0,
-        "elo": 1715.7262843565688,
+        "elo": 1536.5705873121794,
         "elo_se": null,
         "elo_games": 6
       },
@@ -22497,8 +23328,7 @@
         "rounds": 5
       },
       "champion_lineage": [
-        "v0",
-        "v1"
+        "v0"
       ],
       "matchups": [
         {
@@ -22540,11 +23370,7 @@
       ],
       "tournaments": [
         {
-          "tournament_id": "2026-05-30_e0:field:v1",
-          "structure": "swiss",
-          "structure_params": {
-            "rounds": 5
-          },
+          "champion_generation_id": "v0",
           "competitors": [
             {
               "generation_id": "v0",
@@ -22577,6 +23403,13 @@
               "seed": 6
             }
           ],
+          "decision": "promoted",
+          "delta_scalar": null,
+          "epoch_id": "2026-05-30_e0",
+          "field_status": [],
+          "promoted_generation_id": "v1",
+          "ran_at": "2026-05-30T03:00:00Z",
+          "reason": "",
           "rounds": [
             {
               "label": "Round 1",
@@ -22688,11 +23521,17 @@
               "wins": 0
             }
           ],
+          "state": "settled",
+          "structure": "swiss",
+          "structure_params": {
+            "rounds": 5
+          },
+          "tournament_id": "2026-05-30_e0:field:v1",
           "champion": {
             "id": "v0",
             "scalar": null,
-            "eval_mode": "full",
-            "run_ref": "epochs/2026-05-30_e0/generations/v0"
+            "eval_mode": null,
+            "run_ref": null
           }
         }
       ]
@@ -22710,8 +23549,8 @@
           "champion": {
             "id": "v0",
             "scalar": 70.0,
-            "eval_mode": "full",
-            "run_ref": "epochs/2026-05-30_e0/generations/v0",
+            "eval_mode": null,
+            "run_ref": null,
             "from_record": true
           },
           "challengers": [
@@ -22748,11 +23587,7 @@
           },
           "tournament_id": "2026-05-30_e0:field:v1",
           "tournament": {
-            "tournament_id": "2026-05-30_e0:field:v1",
-            "structure": "swiss",
-            "structure_params": {
-              "rounds": 5
-            },
+            "champion_generation_id": "v0",
             "competitors": [
               {
                 "generation_id": "v0",
@@ -22785,6 +23620,13 @@
                 "seed": 6
               }
             ],
+            "decision": "promoted",
+            "delta_scalar": null,
+            "epoch_id": "2026-05-30_e0",
+            "field_status": [],
+            "promoted_generation_id": "v1",
+            "ran_at": "2026-05-30T03:00:00Z",
+            "reason": "",
             "rounds": [
               {
                 "label": "Round 1",
@@ -22896,11 +23738,17 @@
                 "wins": 0
               }
             ],
+            "state": "settled",
+            "structure": "swiss",
+            "structure_params": {
+              "rounds": 5
+            },
+            "tournament_id": "2026-05-30_e0:field:v1",
             "champion": {
               "id": "v0",
               "scalar": null,
-              "eval_mode": "full",
-              "run_ref": "epochs/2026-05-30_e0/generations/v0"
+              "eval_mode": null,
+              "run_ref": null
             }
           },
           "source": "round_index"
@@ -23571,20 +24419,7 @@
       ],
       "tournaments": [
         {
-          "tournament_id": "2026-05-30_e0:field:v1",
-          "structure": "racing",
-          "structure_params": {
-            "rungs": [
-              {
-                "fraction": 0.5,
-                "keep": 0.5
-              },
-              {
-                "fraction": 1.0,
-                "keep": 0.5
-              }
-            ]
-          },
+          "champion_generation_id": "v0",
           "competitors": [
             {
               "generation_id": "v0",
@@ -23607,6 +24442,13 @@
               "seed": 4
             }
           ],
+          "decision": "promoted",
+          "delta_scalar": null,
+          "epoch_id": "2026-05-30_e0",
+          "field_status": [],
+          "promoted_generation_id": "v1",
+          "ran_at": "2026-05-30T03:00:00Z",
+          "reason": "",
           "rounds": [
             {
               "label": "Rung 1",
@@ -23661,9 +24503,24 @@
               "status": "champion"
             }
           ],
+          "state": "settled",
+          "structure": "racing",
+          "structure_params": {
+            "rungs": [
+              {
+                "fraction": 0.5,
+                "keep": 0.5
+              },
+              {
+                "fraction": 1.0,
+                "keep": 0.5
+              }
+            ]
+          },
+          "tournament_id": "2026-05-30_e0:field:v1",
           "champion": {
             "id": "v0",
-            "scalar": null,
+            "scalar": 70.0,
             "eval_mode": "full",
             "run_ref": "epochs/2026-05-30_e0/generations/v0"
           }
@@ -23711,20 +24568,7 @@
           },
           "tournament_id": "2026-05-30_e0:field:v1",
           "tournament": {
-            "tournament_id": "2026-05-30_e0:field:v1",
-            "structure": "racing",
-            "structure_params": {
-              "rungs": [
-                {
-                  "fraction": 0.5,
-                  "keep": 0.5
-                },
-                {
-                  "fraction": 1.0,
-                  "keep": 0.5
-                }
-              ]
-            },
+            "champion_generation_id": "v0",
             "competitors": [
               {
                 "generation_id": "v0",
@@ -23747,6 +24591,13 @@
                 "seed": 4
               }
             ],
+            "decision": "promoted",
+            "delta_scalar": null,
+            "epoch_id": "2026-05-30_e0",
+            "field_status": [],
+            "promoted_generation_id": "v1",
+            "ran_at": "2026-05-30T03:00:00Z",
+            "reason": "",
             "rounds": [
               {
                 "label": "Rung 1",
@@ -23801,9 +24652,24 @@
                 "status": "champion"
               }
             ],
+            "state": "settled",
+            "structure": "racing",
+            "structure_params": {
+              "rungs": [
+                {
+                  "fraction": 0.5,
+                  "keep": 0.5
+                },
+                {
+                  "fraction": 1.0,
+                  "keep": 0.5
+                }
+              ]
+            },
+            "tournament_id": "2026-05-30_e0:field:v1",
             "champion": {
               "id": "v0",
-              "scalar": null,
+              "scalar": 70.0,
               "eval_mode": "full",
               "run_ref": "epochs/2026-05-30_e0/generations/v0"
             }
@@ -24444,7 +25310,11 @@
         "champion_sigma": null,
         "candidate_sigma": 71.0,
         "delta_sigma": null,
-        "drift_present": true
+        "drift_present": true,
+        "mean_delta_score": null,
+        "compared_score_count": 0,
+        "passed_count": 1,
+        "entry_count": 1
       },
       "gates": [
         {
@@ -24819,35 +25689,63 @@
       ],
       "tournaments": [
         {
-          "tournament_id": "2026-06-02_fn:v0->v1",
-          "structure": "swiss",
-          "structure_params": {},
+          "champion_generation_id": "v0",
           "competitors": [
-            "v0",
-            "v1"
+            {
+              "generation_id": "v0",
+              "role": "champion"
+            },
+            {
+              "generation_id": "v1",
+              "role": "challenger"
+            }
           ],
+          "decision": "rejected",
+          "epoch_id": "2026-06-02_fn",
+          "field_status": [],
+          "promoted_generation_id": "",
+          "ran_at": "2026-06-02T00:10:00Z",
+          "reason": "",
           "rounds": [],
           "standings": [],
+          "state": "settled",
+          "structure": "swiss",
+          "structure_params": {},
+          "tournament_id": "2026-06-02_fn:field:v1",
           "champion": {
             "id": "v0",
-            "scalar": null,
+            "scalar": 50.0,
             "eval_mode": "full",
             "run_ref": "epochs/2026-06-02_fn/generations/v0"
           }
         },
         {
-          "tournament_id": "2026-06-02_fn:v0->v2",
-          "structure": "swiss",
-          "structure_params": {},
+          "champion_generation_id": "v0",
           "competitors": [
-            "v0",
-            "v2"
+            {
+              "generation_id": "v0",
+              "role": "champion"
+            },
+            {
+              "generation_id": "v2",
+              "role": "challenger"
+            }
           ],
+          "decision": "rejected",
+          "epoch_id": "2026-06-02_fn",
+          "field_status": [],
+          "promoted_generation_id": "",
+          "ran_at": "2026-06-02T00:20:00Z",
+          "reason": "",
           "rounds": [],
           "standings": [],
+          "state": "settled",
+          "structure": "swiss",
+          "structure_params": {},
+          "tournament_id": "2026-06-02_fn:field:v2",
           "champion": {
             "id": "v0",
-            "scalar": null,
+            "scalar": 50.0,
             "eval_mode": "full",
             "run_ref": "epochs/2026-06-02_fn/generations/v0"
           }
@@ -24883,20 +25781,34 @@
             "kind": "held",
             "gen": null
           },
-          "tournament_id": "2026-06-02_fn:v0->v1",
+          "tournament_id": "2026-06-02_fn:field:v1",
           "tournament": {
-            "tournament_id": "2026-06-02_fn:v0->v1",
-            "structure": "swiss",
-            "structure_params": {},
+            "champion_generation_id": "v0",
             "competitors": [
-              "v0",
-              "v1"
+              {
+                "generation_id": "v0",
+                "role": "champion"
+              },
+              {
+                "generation_id": "v1",
+                "role": "challenger"
+              }
             ],
+            "decision": "rejected",
+            "epoch_id": "2026-06-02_fn",
+            "field_status": [],
+            "promoted_generation_id": "",
+            "ran_at": "2026-06-02T00:10:00Z",
+            "reason": "",
             "rounds": [],
             "standings": [],
+            "state": "settled",
+            "structure": "swiss",
+            "structure_params": {},
+            "tournament_id": "2026-06-02_fn:field:v1",
             "champion": {
               "id": "v0",
-              "scalar": null,
+              "scalar": 50.0,
               "eval_mode": "full",
               "run_ref": "epochs/2026-06-02_fn/generations/v0"
             }
@@ -24924,20 +25836,34 @@
             "kind": "held",
             "gen": null
           },
-          "tournament_id": "2026-06-02_fn:v0->v2",
+          "tournament_id": "2026-06-02_fn:field:v2",
           "tournament": {
-            "tournament_id": "2026-06-02_fn:v0->v2",
-            "structure": "swiss",
-            "structure_params": {},
+            "champion_generation_id": "v0",
             "competitors": [
-              "v0",
-              "v2"
+              {
+                "generation_id": "v0",
+                "role": "champion"
+              },
+              {
+                "generation_id": "v2",
+                "role": "challenger"
+              }
             ],
+            "decision": "rejected",
+            "epoch_id": "2026-06-02_fn",
+            "field_status": [],
+            "promoted_generation_id": "",
+            "ran_at": "2026-06-02T00:20:00Z",
+            "reason": "",
             "rounds": [],
             "standings": [],
+            "state": "settled",
+            "structure": "swiss",
+            "structure_params": {},
+            "tournament_id": "2026-06-02_fn:field:v2",
             "champion": {
               "id": "v0",
-              "scalar": null,
+              "scalar": 50.0,
               "eval_mode": "full",
               "run_ref": "epochs/2026-06-02_fn/generations/v0"
             }
@@ -25047,18 +25973,32 @@
       ],
       "tournaments": [
         {
-          "tournament_id": "2026-05-30_e0:v0->v1",
-          "structure": "gauntlet",
-          "structure_params": {},
+          "champion_generation_id": "v0",
           "competitors": [
-            "v0",
-            "v1"
+            {
+              "generation_id": "v0",
+              "role": "champion"
+            },
+            {
+              "generation_id": "v1",
+              "role": "challenger"
+            }
           ],
+          "decision": "rejected",
+          "epoch_id": "2026-05-30_e0",
+          "field_status": [],
+          "promoted_generation_id": "",
+          "ran_at": "2026-05-30T00:10:00Z",
+          "reason": "",
           "rounds": [],
           "standings": [],
+          "state": "settled",
+          "structure": "gauntlet",
+          "structure_params": {},
+          "tournament_id": "2026-05-30_e0:field:v1",
           "champion": {
             "id": "v0",
-            "scalar": null,
+            "scalar": 60.5,
             "eval_mode": "full",
             "run_ref": "epochs/2026-05-30_e0/generations/v0"
           }
@@ -25094,20 +26034,34 @@
             "kind": "held",
             "gen": null
           },
-          "tournament_id": "2026-05-30_e0:v0->v1",
+          "tournament_id": "2026-05-30_e0:field:v1",
           "tournament": {
-            "tournament_id": "2026-05-30_e0:v0->v1",
-            "structure": "gauntlet",
-            "structure_params": {},
+            "champion_generation_id": "v0",
             "competitors": [
-              "v0",
-              "v1"
+              {
+                "generation_id": "v0",
+                "role": "champion"
+              },
+              {
+                "generation_id": "v1",
+                "role": "challenger"
+              }
             ],
+            "decision": "rejected",
+            "epoch_id": "2026-05-30_e0",
+            "field_status": [],
+            "promoted_generation_id": "",
+            "ran_at": "2026-05-30T00:10:00Z",
+            "reason": "",
             "rounds": [],
             "standings": [],
+            "state": "settled",
+            "structure": "gauntlet",
+            "structure_params": {},
+            "tournament_id": "2026-05-30_e0:field:v1",
             "champion": {
               "id": "v0",
-              "scalar": null,
+              "scalar": 60.5,
               "eval_mode": "full",
               "run_ref": "epochs/2026-05-30_e0/generations/v0"
             }
@@ -25270,6 +26224,9 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 0,
+          "parent_scalar": 100.0,
+          "child_scalar": 110.0,
+          "delta_scalar": 10.0,
           "elo": 1432.6284178467063,
           "elo_se": null,
           "elo_games": 1
@@ -25283,6 +26240,9 @@
           "decision": "promoted",
           "decision_label": "promoted",
           "round_index": 0,
+          "parent_scalar": 100.0,
+          "child_scalar": 80.0,
+          "delta_scalar": -20.0,
           "elo": 1643.5352589649522,
           "elo_se": null,
           "elo_games": 3
@@ -25296,6 +26256,9 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 1,
+          "parent_scalar": 80.0,
+          "child_scalar": 85.0,
+          "delta_scalar": 5.0,
           "elo": 1455.9548980639272,
           "elo_se": null,
           "elo_games": 1
@@ -25309,6 +26272,9 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 1,
+          "parent_scalar": 80.0,
+          "child_scalar": 90.0,
+          "delta_scalar": 10.0,
           "elo": 1455.9548980639272,
           "elo_se": null,
           "elo_games": 1
@@ -25414,69 +26380,71 @@
       ],
       "tournaments": [
         {
-          "tournament_id": "e-model:v0->v1",
-          "structure": "gauntlet",
-          "structure_params": {},
+          "champion_generation_id": "v0",
           "competitors": [
-            "v0",
-            "v1"
+            {
+              "generation_id": "v0",
+              "role": "champion"
+            },
+            {
+              "generation_id": "v1",
+              "role": "challenger"
+            },
+            {
+              "generation_id": "v2",
+              "role": "challenger"
+            }
           ],
+          "decision": "promoted",
+          "epoch_id": "e-model",
+          "field_status": [],
+          "promoted_generation_id": "v2",
+          "ran_at": "2026-06-03T00:10:00Z",
+          "reason": "",
           "rounds": [],
           "standings": [],
+          "state": "settled",
+          "structure": "gauntlet",
+          "structure_params": {},
+          "tournament_id": "e-model:field:v1",
           "champion": {
             "id": "v0",
-            "scalar": null,
+            "scalar": 100.0,
             "eval_mode": "full",
             "run_ref": "epochs/e-model/generations/v0"
           }
         },
         {
-          "tournament_id": "e-model:v0->v2",
-          "structure": "gauntlet",
-          "structure_params": {},
+          "champion_generation_id": "v2",
           "competitors": [
-            "v0",
-            "v2"
+            {
+              "generation_id": "v2",
+              "role": "champion"
+            },
+            {
+              "generation_id": "v3",
+              "role": "challenger"
+            },
+            {
+              "generation_id": "v4",
+              "role": "challenger"
+            }
           ],
+          "decision": "rejected",
+          "epoch_id": "e-model",
+          "field_status": [],
+          "promoted_generation_id": "",
+          "ran_at": "2026-06-03T00:30:00Z",
+          "reason": "",
           "rounds": [],
           "standings": [],
-          "champion": {
-            "id": "v0",
-            "scalar": null,
-            "eval_mode": "full",
-            "run_ref": "epochs/e-model/generations/v0"
-          }
-        },
-        {
-          "tournament_id": "e-model:v2->v3",
+          "state": "settled",
           "structure": "gauntlet",
           "structure_params": {},
-          "competitors": [
-            "v2",
-            "v3"
-          ],
-          "rounds": [],
-          "standings": [],
-          "champion": {
-            "id": "v2",
-            "scalar": null,
-            "eval_mode": "full",
-            "run_ref": "epochs/e-model/generations/v2"
-          }
-        },
-        {
-          "tournament_id": "e-model:v2->v4",
-          "structure": "gauntlet",
-          "structure_params": {},
-          "competitors": [
-            "v2",
-            "v4"
-          ],
-          "rounds": [],
-          "standings": [],
+          "tournament_id": "e-model:field:v3",
           "champion": {
             "id": "v2",
-            "scalar": null,
+            "scalar": 80.0,
             "eval_mode": "full",
             "run_ref": "epochs/e-model/generations/v2"
           }
@@ -25517,20 +26485,38 @@
             "kind": "promoted",
             "gen": "v2"
           },
-          "tournament_id": "e-model:v0->v1",
+          "tournament_id": "e-model:field:v1",
           "tournament": {
-            "tournament_id": "e-model:v0->v1",
-            "structure": "gauntlet",
-            "structure_params": {},
+            "champion_generation_id": "v0",
             "competitors": [
-              "v0",
-              "v1"
+              {
+                "generation_id": "v0",
+                "role": "champion"
+              },
+              {
+                "generation_id": "v1",
+                "role": "challenger"
+              },
+              {
+                "generation_id": "v2",
+                "role": "challenger"
+              }
             ],
+            "decision": "promoted",
+            "epoch_id": "e-model",
+            "field_status": [],
+            "promoted_generation_id": "v2",
+            "ran_at": "2026-06-03T00:10:00Z",
+            "reason": "",
             "rounds": [],
             "standings": [],
+            "state": "settled",
+            "structure": "gauntlet",
+            "structure_params": {},
+            "tournament_id": "e-model:field:v1",
             "champion": {
               "id": "v0",
-              "scalar": null,
+              "scalar": 100.0,
               "eval_mode": "full",
               "run_ref": "epochs/e-model/generations/v0"
             }
@@ -25563,20 +26549,38 @@
             "kind": "held",
             "gen": null
           },
-          "tournament_id": "e-model:v2->v3",
+          "tournament_id": "e-model:field:v3",
           "tournament": {
-            "tournament_id": "e-model:v2->v3",
-            "structure": "gauntlet",
-            "structure_params": {},
+            "champion_generation_id": "v2",
             "competitors": [
-              "v2",
-              "v3"
+              {
+                "generation_id": "v2",
+                "role": "champion"
+              },
+              {
+                "generation_id": "v3",
+                "role": "challenger"
+              },
+              {
+                "generation_id": "v4",
+                "role": "challenger"
+              }
             ],
+            "decision": "rejected",
+            "epoch_id": "e-model",
+            "field_status": [],
+            "promoted_generation_id": "",
+            "ran_at": "2026-06-03T00:30:00Z",
+            "reason": "",
             "rounds": [],
             "standings": [],
+            "state": "settled",
+            "structure": "gauntlet",
+            "structure_params": {},
+            "tournament_id": "e-model:field:v3",
             "champion": {
               "id": "v2",
-              "scalar": null,
+              "scalar": 80.0,
               "eval_mode": "full",
               "run_ref": "epochs/e-model/generations/v2"
             }
@@ -25786,9 +26790,7 @@
       ],
       "tournaments": [
         {
-          "tournament_id": "e-model:field:v1",
-          "structure": "swiss",
-          "structure_params": {},
+          "champion_generation_id": "v0",
           "competitors": [
             {
               "generation_id": "v0",
@@ -25806,19 +26808,28 @@
               "seed": 3
             }
           ],
+          "decision": "promoted",
+          "delta_scalar": null,
+          "epoch_id": "e-model",
+          "field_status": [],
+          "promoted_generation_id": "v2",
+          "ran_at": "2026-06-03T01:00:00Z",
+          "reason": "",
           "rounds": [],
           "standings": [],
+          "state": "settled",
+          "structure": "swiss",
+          "structure_params": {},
+          "tournament_id": "e-model:field:v1",
           "champion": {
             "id": "v0",
-            "scalar": null,
+            "scalar": 100.0,
             "eval_mode": "full",
             "run_ref": "epochs/e-model/generations/v0"
           }
         },
         {
-          "tournament_id": "e-model:field:v3",
-          "structure": "swiss",
-          "structure_params": {},
+          "champion_generation_id": "v2",
           "competitors": [
             {
               "generation_id": "v2",
@@ -25836,11 +26847,22 @@
               "seed": 3
             }
           ],
+          "decision": "rejected",
+          "delta_scalar": null,
+          "epoch_id": "e-model",
+          "field_status": [],
+          "promoted_generation_id": "",
+          "ran_at": "2026-06-03T02:00:00Z",
+          "reason": "",
           "rounds": [],
           "standings": [],
+          "state": "settled",
+          "structure": "swiss",
+          "structure_params": {},
+          "tournament_id": "e-model:field:v3",
           "champion": {
             "id": "v2",
-            "scalar": null,
+            "scalar": 80.0,
             "eval_mode": "full",
             "run_ref": "epochs/e-model/generations/v2"
           }
@@ -25883,9 +26905,7 @@
           },
           "tournament_id": "e-model:field:v1",
           "tournament": {
-            "tournament_id": "e-model:field:v1",
-            "structure": "swiss",
-            "structure_params": {},
+            "champion_generation_id": "v0",
             "competitors": [
               {
                 "generation_id": "v0",
@@ -25903,11 +26923,22 @@
                 "seed": 3
               }
             ],
+            "decision": "promoted",
+            "delta_scalar": null,
+            "epoch_id": "e-model",
+            "field_status": [],
+            "promoted_generation_id": "v2",
+            "ran_at": "2026-06-03T01:00:00Z",
+            "reason": "",
             "rounds": [],
             "standings": [],
+            "state": "settled",
+            "structure": "swiss",
+            "structure_params": {},
+            "tournament_id": "e-model:field:v1",
             "champion": {
               "id": "v0",
-              "scalar": null,
+              "scalar": 100.0,
               "eval_mode": "full",
               "run_ref": "epochs/e-model/generations/v0"
             }
@@ -25942,9 +26973,7 @@
           },
           "tournament_id": "e-model:field:v3",
           "tournament": {
-            "tournament_id": "e-model:field:v3",
-            "structure": "swiss",
-            "structure_params": {},
+            "champion_generation_id": "v2",
             "competitors": [
               {
                 "generation_id": "v2",
@@ -25962,11 +26991,22 @@
                 "seed": 3
               }
             ],
+            "decision": "rejected",
+            "delta_scalar": null,
+            "epoch_id": "e-model",
+            "field_status": [],
+            "promoted_generation_id": "",
+            "ran_at": "2026-06-03T02:00:00Z",
+            "reason": "",
             "rounds": [],
             "standings": [],
+            "state": "settled",
+            "structure": "swiss",
+            "structure_params": {},
+            "tournament_id": "e-model:field:v3",
             "champion": {
               "id": "v2",
-              "scalar": null,
+              "scalar": 80.0,
               "eval_mode": "full",
               "run_ref": "epochs/e-model/generations/v2"
             }
@@ -26109,35 +27149,63 @@
       ],
       "tournaments": [
         {
-          "tournament_id": "e-model:v0->v1",
-          "structure": "gauntlet",
-          "structure_params": {},
+          "champion_generation_id": "v0",
           "competitors": [
-            "v0",
-            "v1"
+            {
+              "generation_id": "v0",
+              "role": "champion"
+            },
+            {
+              "generation_id": "v1",
+              "role": "challenger"
+            }
           ],
+          "decision": "rejected",
+          "epoch_id": "e-model",
+          "field_status": [],
+          "promoted_generation_id": "",
+          "ran_at": "2026-06-03T00:10:00Z",
+          "reason": "",
           "rounds": [],
           "standings": [],
+          "state": "settled",
+          "structure": "gauntlet",
+          "structure_params": {},
+          "tournament_id": "e-model:field:v1",
           "champion": {
             "id": "v0",
-            "scalar": null,
+            "scalar": 70.0,
             "eval_mode": "full",
             "run_ref": "epochs/e-model/generations/v0"
           }
         },
         {
-          "tournament_id": "e-model:v0->v2",
-          "structure": "gauntlet",
-          "structure_params": {},
+          "champion_generation_id": "v0",
           "competitors": [
-            "v0",
-            "v2"
+            {
+              "generation_id": "v0",
+              "role": "champion"
+            },
+            {
+              "generation_id": "v2",
+              "role": "challenger"
+            }
           ],
+          "decision": "rejected",
+          "epoch_id": "e-model",
+          "field_status": [],
+          "promoted_generation_id": "",
+          "ran_at": "2026-06-03T00:20:00Z",
+          "reason": "",
           "rounds": [],
           "standings": [],
+          "state": "settled",
+          "structure": "gauntlet",
+          "structure_params": {},
+          "tournament_id": "e-model:field:v2",
           "champion": {
             "id": "v0",
-            "scalar": null,
+            "scalar": 70.0,
             "eval_mode": "full",
             "run_ref": "epochs/e-model/generations/v0"
           }
@@ -26173,20 +27241,34 @@
             "kind": "held",
             "gen": null
           },
-          "tournament_id": "e-model:v0->v1",
+          "tournament_id": "e-model:field:v1",
           "tournament": {
-            "tournament_id": "e-model:v0->v1",
-            "structure": "gauntlet",
-            "structure_params": {},
+            "champion_generation_id": "v0",
             "competitors": [
-              "v0",
-              "v1"
+              {
+                "generation_id": "v0",
+                "role": "champion"
+              },
+              {
+                "generation_id": "v1",
+                "role": "challenger"
+              }
             ],
+            "decision": "rejected",
+            "epoch_id": "e-model",
+            "field_status": [],
+            "promoted_generation_id": "",
+            "ran_at": "2026-06-03T00:10:00Z",
+            "reason": "",
             "rounds": [],
             "standings": [],
+            "state": "settled",
+            "structure": "gauntlet",
+            "structure_params": {},
+            "tournament_id": "e-model:field:v1",
             "champion": {
               "id": "v0",
-              "scalar": null,
+              "scalar": 70.0,
               "eval_mode": "full",
               "run_ref": "epochs/e-model/generations/v0"
             }
@@ -26214,20 +27296,34 @@
             "kind": "held",
             "gen": null
           },
-          "tournament_id": "e-model:v0->v2",
+          "tournament_id": "e-model:field:v2",
           "tournament": {
-            "tournament_id": "e-model:v0->v2",
-            "structure": "gauntlet",
-            "structure_params": {},
+            "champion_generation_id": "v0",
             "competitors": [
-              "v0",
-              "v2"
+              {
+                "generation_id": "v0",
+                "role": "champion"
+              },
+              {
+                "generation_id": "v2",
+                "role": "challenger"
+              }
             ],
+            "decision": "rejected",
+            "epoch_id": "e-model",
+            "field_status": [],
+            "promoted_generation_id": "",
+            "ran_at": "2026-06-03T00:20:00Z",
+            "reason": "",
             "rounds": [],
             "standings": [],
+            "state": "settled",
+            "structure": "gauntlet",
+            "structure_params": {},
+            "tournament_id": "e-model:field:v2",
             "champion": {
               "id": "v0",
-              "scalar": null,
+              "scalar": 70.0,
               "eval_mode": "full",
               "run_ref": "epochs/e-model/generations/v0"
             }
@@ -26281,6 +27377,9 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 0,
+          "parent_scalar": 100.0,
+          "child_scalar": 110.0,
+          "delta_scalar": 10.0,
           "elo": 1430.3290655773244,
           "elo_se": null,
           "elo_games": 1
@@ -26294,6 +27393,9 @@
           "decision": "promoted",
           "decision_label": "promoted",
           "round_index": 0,
+          "parent_scalar": 100.0,
+          "child_scalar": 80.0,
+          "delta_scalar": -20.0,
           "elo": 1569.6709344226756,
           "elo_se": null,
           "elo_games": 1
@@ -26365,35 +27467,36 @@
       ],
       "tournaments": [
         {
-          "tournament_id": "e-model:v0->v1",
-          "structure": "gauntlet",
-          "structure_params": {},
+          "champion_generation_id": "v0",
           "competitors": [
-            "v0",
-            "v1"
+            {
+              "generation_id": "v0",
+              "role": "champion"
+            },
+            {
+              "generation_id": "v1",
+              "role": "challenger"
+            },
+            {
+              "generation_id": "v2",
+              "role": "challenger"
+            }
           ],
+          "decision": "promoted",
+          "epoch_id": "e-model",
+          "field_status": [],
+          "promoted_generation_id": "v2",
+          "ran_at": "2026-06-03T00:10:00Z",
+          "reason": "",
           "rounds": [],
           "standings": [],
-          "champion": {
-            "id": "v0",
-            "scalar": null,
-            "eval_mode": "full",
-            "run_ref": "epochs/e-model/generations/v0"
-          }
-        },
-        {
-          "tournament_id": "e-model:v0->v2",
+          "state": "settled",
           "structure": "gauntlet",
           "structure_params": {},
-          "competitors": [
-            "v0",
-            "v2"
-          ],
-          "rounds": [],
-          "standings": [],
+          "tournament_id": "e-model:field:v1",
           "champion": {
             "id": "v0",
-            "scalar": null,
+            "scalar": 100.0,
             "eval_mode": "full",
             "run_ref": "epochs/e-model/generations/v0"
           }
@@ -26434,20 +27537,38 @@
             "kind": "promoted",
             "gen": "v2"
           },
-          "tournament_id": "e-model:v0->v1",
+          "tournament_id": "e-model:field:v1",
           "tournament": {
-            "tournament_id": "e-model:v0->v1",
-            "structure": "gauntlet",
-            "structure_params": {},
+            "champion_generation_id": "v0",
             "competitors": [
-              "v0",
-              "v1"
+              {
+                "generation_id": "v0",
+                "role": "champion"
+              },
+              {
+                "generation_id": "v1",
+                "role": "challenger"
+              },
+              {
+                "generation_id": "v2",
+                "role": "challenger"
+              }
             ],
+            "decision": "promoted",
+            "epoch_id": "e-model",
+            "field_status": [],
+            "promoted_generation_id": "v2",
+            "ran_at": "2026-06-03T00:10:00Z",
+            "reason": "",
             "rounds": [],
             "standings": [],
+            "state": "settled",
+            "structure": "gauntlet",
+            "structure_params": {},
+            "tournament_id": "e-model:field:v1",
             "champion": {
               "id": "v0",
-              "scalar": null,
+              "scalar": 100.0,
               "eval_mode": "full",
               "run_ref": "epochs/e-model/generations/v0"
             }
@@ -26550,18 +27671,32 @@
       ],
       "tournaments": [
         {
-          "tournament_id": "e-model:v0->v1",
-          "structure": "gauntlet",
-          "structure_params": {},
+          "champion_generation_id": "v0",
           "competitors": [
-            "v0",
-            "v1"
+            {
+              "generation_id": "v0",
+              "role": "champion"
+            },
+            {
+              "generation_id": "v1",
+              "role": "challenger"
+            }
           ],
+          "decision": "promoted",
+          "epoch_id": "e-model",
+          "field_status": [],
+          "promoted_generation_id": "v1",
+          "ran_at": "2026-06-03T00:10:00Z",
+          "reason": "",
           "rounds": [],
           "standings": [],
+          "state": "settled",
+          "structure": "gauntlet",
+          "structure_params": {},
+          "tournament_id": "e-model:field:v1",
           "champion": {
             "id": "v0",
-            "scalar": null,
+            "scalar": 100.0,
             "eval_mode": "full",
             "run_ref": "epochs/e-model/generations/v0"
           }
@@ -26597,20 +27732,34 @@
             "kind": "promoted",
             "gen": "v1"
           },
-          "tournament_id": "e-model:v0->v1",
+          "tournament_id": "e-model:field:v1",
           "tournament": {
-            "tournament_id": "e-model:v0->v1",
-            "structure": "gauntlet",
-            "structure_params": {},
+            "champion_generation_id": "v0",
             "competitors": [
-              "v0",
-              "v1"
+              {
+                "generation_id": "v0",
+                "role": "champion"
+              },
+              {
+                "generation_id": "v1",
+                "role": "challenger"
+              }
             ],
+            "decision": "promoted",
+            "epoch_id": "e-model",
+            "field_status": [],
+            "promoted_generation_id": "v1",
+            "ran_at": "2026-06-03T00:10:00Z",
+            "reason": "",
             "rounds": [],
             "standings": [],
+            "state": "settled",
+            "structure": "gauntlet",
+            "structure_params": {},
+            "tournament_id": "e-model:field:v1",
             "champion": {
               "id": "v0",
-              "scalar": null,
+              "scalar": 100.0,
               "eval_mode": "full",
               "run_ref": "epochs/e-model/generations/v0"
             }
@@ -26746,35 +27895,63 @@
       ],
       "tournaments": [
         {
-          "tournament_id": "e-model:v0->v1",
-          "structure": "gauntlet",
-          "structure_params": {},
+          "champion_generation_id": "v0",
           "competitors": [
-            "v0",
-            "v1"
+            {
+              "generation_id": "v0",
+              "role": "champion"
+            },
+            {
+              "generation_id": "v1",
+              "role": "challenger"
+            }
           ],
+          "decision": "promoted",
+          "epoch_id": "e-model",
+          "field_status": [],
+          "promoted_generation_id": "v1",
+          "ran_at": "2026-06-03T00:10:00Z",
+          "reason": "",
           "rounds": [],
           "standings": [],
+          "state": "settled",
+          "structure": "gauntlet",
+          "structure_params": {},
+          "tournament_id": "e-model:field:v1",
           "champion": {
             "id": "v0",
-            "scalar": null,
+            "scalar": 100.0,
             "eval_mode": "full",
             "run_ref": "epochs/e-model/generations/v0"
           }
         },
         {
-          "tournament_id": "e-model:v1->v5",
-          "structure": "gauntlet",
-          "structure_params": {},
+          "champion_generation_id": "v1",
           "competitors": [
-            "v1",
-            "v5"
+            {
+              "generation_id": "v1",
+              "role": "champion"
+            },
+            {
+              "generation_id": "v5",
+              "role": "challenger"
+            }
           ],
+          "decision": "rejected",
+          "epoch_id": "e-model",
+          "field_status": [],
+          "promoted_generation_id": "",
+          "ran_at": "2026-06-03T00:20:00Z",
+          "reason": "",
           "rounds": [],
           "standings": [],
+          "state": "settled",
+          "structure": "gauntlet",
+          "structure_params": {},
+          "tournament_id": "e-model:field:v5",
           "champion": {
             "id": "v1",
-            "scalar": null,
+            "scalar": 80.0,
             "eval_mode": "full",
             "run_ref": "epochs/e-model/generations/v1"
           }
@@ -26810,20 +27987,34 @@
             "kind": "promoted",
             "gen": "v1"
           },
-          "tournament_id": "e-model:v0->v1",
+          "tournament_id": "e-model:field:v1",
           "tournament": {
-            "tournament_id": "e-model:v0->v1",
-            "structure": "gauntlet",
-            "structure_params": {},
+            "champion_generation_id": "v0",
             "competitors": [
-              "v0",
-              "v1"
+              {
+                "generation_id": "v0",
+                "role": "champion"
+              },
+              {
+                "generation_id": "v1",
+                "role": "challenger"
+              }
             ],
+            "decision": "promoted",
+            "epoch_id": "e-model",
+            "field_status": [],
+            "promoted_generation_id": "v1",
+            "ran_at": "2026-06-03T00:10:00Z",
+            "reason": "",
             "rounds": [],
             "standings": [],
+            "state": "settled",
+            "structure": "gauntlet",
+            "structure_params": {},
+            "tournament_id": "e-model:field:v1",
             "champion": {
               "id": "v0",
-              "scalar": null,
+              "scalar": 100.0,
               "eval_mode": "full",
               "run_ref": "epochs/e-model/generations/v0"
             }
@@ -26851,20 +28042,34 @@
             "kind": "held",
             "gen": null
           },
-          "tournament_id": "e-model:v1->v5",
+          "tournament_id": "e-model:field:v5",
           "tournament": {
-            "tournament_id": "e-model:v1->v5",
-            "structure": "gauntlet",
-            "structure_params": {},
+            "champion_generation_id": "v1",
             "competitors": [
-              "v1",
-              "v5"
+              {
+                "generation_id": "v1",
+                "role": "champion"
+              },
+              {
+                "generation_id": "v5",
+                "role": "challenger"
+              }
             ],
+            "decision": "rejected",
+            "epoch_id": "e-model",
+            "field_status": [],
+            "promoted_generation_id": "",
+            "ran_at": "2026-06-03T00:20:00Z",
+            "reason": "",
             "rounds": [],
             "standings": [],
+            "state": "settled",
+            "structure": "gauntlet",
+            "structure_params": {},
+            "tournament_id": "e-model:field:v5",
             "champion": {
               "id": "v1",
-              "scalar": null,
+              "scalar": 80.0,
               "eval_mode": "full",
               "run_ref": "epochs/e-model/generations/v1"
             }
@@ -26934,7 +28139,9 @@
       "epoch_id": "e-model",
       "structure": "gauntlet",
       "structure_params": {},
-      "champion_lineage": [],
+      "champion_lineage": [
+        "v0"
+      ],
       "matchups": [],
       "tournaments": []
     }
@@ -27039,7 +28246,9 @@
       "epoch_id": "e-model",
       "structure": "swiss",
       "structure_params": {},
-      "champion_lineage": [],
+      "champion_lineage": [
+        "v0"
+      ],
       "matchups": [
         {
           "champion": "v0",
@@ -27062,35 +28271,63 @@
       ],
       "tournaments": [
         {
-          "tournament_id": "e-model:v0->v1",
-          "structure": "swiss",
-          "structure_params": {},
+          "champion_generation_id": "v0",
           "competitors": [
-            "v0",
-            "v1"
+            {
+              "generation_id": "v0",
+              "role": "champion"
+            },
+            {
+              "generation_id": "v1",
+              "role": "challenger"
+            }
           ],
+          "decision": "rejected",
+          "epoch_id": "e-model",
+          "field_status": [],
+          "promoted_generation_id": "",
+          "ran_at": "2026-06-03T00:10:00Z",
+          "reason": "",
           "rounds": [],
           "standings": [],
+          "state": "settled",
+          "structure": "swiss",
+          "structure_params": {},
+          "tournament_id": "e-model:field:v1",
           "champion": {
             "id": "v0",
-            "scalar": null,
+            "scalar": 5.0,
             "eval_mode": "full",
             "run_ref": "epochs/e-model/generations/v0"
           }
         },
         {
-          "tournament_id": "e-model:v0->v2",
-          "structure": "swiss",
-          "structure_params": {},
+          "champion_generation_id": "v0",
           "competitors": [
-            "v0",
-            "v2"
+            {
+              "generation_id": "v0",
+              "role": "champion"
+            },
+            {
+              "generation_id": "v2",
+              "role": "challenger"
+            }
           ],
+          "decision": "rejected",
+          "epoch_id": "e-model",
+          "field_status": [],
+          "promoted_generation_id": "",
+          "ran_at": "2026-06-03T00:20:00Z",
+          "reason": "",
           "rounds": [],
           "standings": [],
+          "state": "settled",
+          "structure": "swiss",
+          "structure_params": {},
+          "tournament_id": "e-model:field:v2",
           "champion": {
             "id": "v0",
-            "scalar": null,
+            "scalar": 5.0,
             "eval_mode": "fast",
             "run_ref": "epochs/e-model/generations/v0"
           }
@@ -27126,20 +28363,34 @@
             "kind": "held",
             "gen": null
           },
-          "tournament_id": "e-model:v0->v1",
+          "tournament_id": "e-model:field:v1",
           "tournament": {
-            "tournament_id": "e-model:v0->v1",
-            "structure": "swiss",
-            "structure_params": {},
+            "champion_generation_id": "v0",
             "competitors": [
-              "v0",
-              "v1"
+              {
+                "generation_id": "v0",
+                "role": "champion"
+              },
+              {
+                "generation_id": "v1",
+                "role": "challenger"
+              }
             ],
+            "decision": "rejected",
+            "epoch_id": "e-model",
+            "field_status": [],
+            "promoted_generation_id": "",
+            "ran_at": "2026-06-03T00:10:00Z",
+            "reason": "",
             "rounds": [],
             "standings": [],
+            "state": "settled",
+            "structure": "swiss",
+            "structure_params": {},
+            "tournament_id": "e-model:field:v1",
             "champion": {
               "id": "v0",
-              "scalar": null,
+              "scalar": 5.0,
               "eval_mode": "full",
               "run_ref": "epochs/e-model/generations/v0"
             }
@@ -27167,20 +28418,34 @@
             "kind": "held",
             "gen": null
           },
-          "tournament_id": "e-model:v0->v2",
+          "tournament_id": "e-model:field:v2",
           "tournament": {
-            "tournament_id": "e-model:v0->v2",
-            "structure": "swiss",
-            "structure_params": {},
+            "champion_generation_id": "v0",
             "competitors": [
-              "v0",
-              "v2"
+              {
+                "generation_id": "v0",
+                "role": "champion"
+              },
+              {
+                "generation_id": "v2",
+                "role": "challenger"
+              }
             ],
+            "decision": "rejected",
+            "epoch_id": "e-model",
+            "field_status": [],
+            "promoted_generation_id": "",
+            "ran_at": "2026-06-03T00:20:00Z",
+            "reason": "",
             "rounds": [],
             "standings": [],
+            "state": "settled",
+            "structure": "swiss",
+            "structure_params": {},
+            "tournament_id": "e-model:field:v2",
             "champion": {
               "id": "v0",
-              "scalar": null,
+              "scalar": 5.0,
               "eval_mode": "fast",
               "run_ref": "epochs/e-model/generations/v0"
             }
@@ -27324,35 +28589,63 @@
       ],
       "tournaments": [
         {
-          "tournament_id": "e-model:v0->v1",
-          "structure": "gauntlet",
-          "structure_params": {},
+          "champion_generation_id": "v0",
           "competitors": [
-            "v0",
-            "v1"
+            {
+              "generation_id": "v0",
+              "role": "champion"
+            },
+            {
+              "generation_id": "v1",
+              "role": "challenger"
+            }
           ],
+          "decision": "promoted",
+          "epoch_id": "e-model",
+          "field_status": [],
+          "promoted_generation_id": "v1",
+          "ran_at": "2026-06-03T00:10:00Z",
+          "reason": "",
           "rounds": [],
           "standings": [],
+          "state": "settled",
+          "structure": "gauntlet",
+          "structure_params": {},
+          "tournament_id": "e-model:field:v1",
           "champion": {
             "id": "v0",
-            "scalar": null,
+            "scalar": 20.0,
             "eval_mode": "full",
             "run_ref": "epochs/e-model/generations/v0"
           }
         },
         {
-          "tournament_id": "e-model:v1->v2",
-          "structure": "gauntlet",
-          "structure_params": {},
+          "champion_generation_id": "v1",
           "competitors": [
-            "v1",
-            "v2"
+            {
+              "generation_id": "v1",
+              "role": "champion"
+            },
+            {
+              "generation_id": "v2",
+              "role": "challenger"
+            }
           ],
+          "decision": "rejected",
+          "epoch_id": "e-model",
+          "field_status": [],
+          "promoted_generation_id": "",
+          "ran_at": "2026-06-03T00:20:00Z",
+          "reason": "",
           "rounds": [],
           "standings": [],
+          "state": "settled",
+          "structure": "gauntlet",
+          "structure_params": {},
+          "tournament_id": "e-model:field:v2",
           "champion": {
             "id": "v1",
-            "scalar": null,
+            "scalar": 14.0,
             "eval_mode": "full",
             "run_ref": "epochs/e-model/generations/v1"
           }
@@ -27388,20 +28681,34 @@
             "kind": "promoted",
             "gen": "v1"
           },
-          "tournament_id": "e-model:v0->v1",
+          "tournament_id": "e-model:field:v1",
           "tournament": {
-            "tournament_id": "e-model:v0->v1",
-            "structure": "gauntlet",
-            "structure_params": {},
+            "champion_generation_id": "v0",
             "competitors": [
-              "v0",
-              "v1"
+              {
+                "generation_id": "v0",
+                "role": "champion"
+              },
+              {
+                "generation_id": "v1",
+                "role": "challenger"
+              }
             ],
+            "decision": "promoted",
+            "epoch_id": "e-model",
+            "field_status": [],
+            "promoted_generation_id": "v1",
+            "ran_at": "2026-06-03T00:10:00Z",
+            "reason": "",
             "rounds": [],
             "standings": [],
+            "state": "settled",
+            "structure": "gauntlet",
+            "structure_params": {},
+            "tournament_id": "e-model:field:v1",
             "champion": {
               "id": "v0",
-              "scalar": null,
+              "scalar": 20.0,
               "eval_mode": "full",
               "run_ref": "epochs/e-model/generations/v0"
             }
@@ -27429,20 +28736,34 @@
             "kind": "held",
             "gen": null
           },
-          "tournament_id": "e-model:v1->v2",
+          "tournament_id": "e-model:field:v2",
           "tournament": {
-            "tournament_id": "e-model:v1->v2",
-            "structure": "gauntlet",
-            "structure_params": {},
+            "champion_generation_id": "v1",
             "competitors": [
-              "v1",
-              "v2"
+              {
+                "generation_id": "v1",
+                "role": "champion"
+              },
+              {
+                "generation_id": "v2",
+                "role": "challenger"
+              }
             ],
+            "decision": "rejected",
+            "epoch_id": "e-model",
+            "field_status": [],
+            "promoted_generation_id": "",
+            "ran_at": "2026-06-03T00:20:00Z",
+            "reason": "",
             "rounds": [],
             "standings": [],
+            "state": "settled",
+            "structure": "gauntlet",
+            "structure_params": {},
+            "tournament_id": "e-model:field:v2",
             "champion": {
               "id": "v1",
-              "scalar": null,
+              "scalar": 14.0,
               "eval_mode": "full",
               "run_ref": "epochs/e-model/generations/v1"
             }

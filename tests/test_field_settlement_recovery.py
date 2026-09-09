@@ -961,10 +961,9 @@ def test_every_settlement_candidate_must_name_a_parent(
         pytest.param("parent_id", "v9", id="parent"),
         pytest.param("created_at", "2099-01-01T00:00:00Z", id="created-at"),
         pytest.param("round_index", 7, id="round"),
-        pytest.param("promoted", True, id="verdict"),
     ),
 )
-def test_lineage_coordinates_and_verdict_must_match_before_replay(
+def test_lineage_coordinates_must_match_before_replay(
     field: str,
     replacement: Any,
     pending_settlement: tuple[Path, str, dict[str, Any]],

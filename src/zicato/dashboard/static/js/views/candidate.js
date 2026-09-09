@@ -390,7 +390,7 @@ function resolveCandidate(dossier, genId, genList, experiments, scalarByGen, cha
     // for the seed, which was never proposed.
     episode,
     primaryDelta, championId, championScalar, scalarByGen, progression,
-    compare, driftPresent, championSigma, candidateSigma, deltaSigma, gateExplain,
+    compare, driftPresent, championSigma, candidateSigma, deltaSigma, gateExplain, comparisonSummary: cmp,
     entryParam, exps, judges, drillRow, drillHeader, inflight, cached, cachedProvenance,
     interruptedBoards, endedAt: liveness.endedAt,
     projected, radar, generalization, scorecard,
@@ -875,12 +875,14 @@ function candidateDigest(s) {
         svg.isNum(c.champDrift) ? c.champDrift.toFixed(3) : null];
     }) : null,
     driftPresent: s.driftPresent,
+    comparisonSummary: s.comparisonSummary,
     candSigma: svg.isNum(s.candidateSigma) ? s.candidateSigma.toFixed(3) : null,
     champSigma: svg.isNum(s.championSigma) ? s.championSigma.toFixed(3) : null,
     deltaSigma: svg.isNum(s.deltaSigma) ? s.deltaSigma.toFixed(3) : null,
     gateExplain: s.gateExplain ? [s.gateExplain.decidingRule, s.gateExplain.decision,
       svg.isNum(s.gateExplain.deltaScalar) ? s.gateExplain.deltaScalar.toFixed(3) : null,
-      svg.isNum(s.gateExplain.margin) ? s.gateExplain.margin.toFixed(3) : null, s.gateExplain.regressed] : null,
+      svg.isNum(s.gateExplain.margin) ? s.gateExplain.margin.toFixed(3) : null, s.gateExplain.regressed,
+      s.gateExplain.detail, s.gateExplain.reason, s.gateExplain.decidingLabel] : null,
     // the RADAR silhouette model — folded in so a change to any axis (scalar,
     // pass-rate, per-judge) or its live/projected state repaints, but a no-op
     // heartbeat stays byte-identical. Delegates to svg.radarSilhouetteDigest.
@@ -1124,6 +1126,7 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
     // candidate-vs-champion comparison (so the circles + Σ explain the Δ the
     // gate sees) and the gate-rule explanation (which of the 3 rules decided).
     championId, compare: s.compare, driftPresent: s.driftPresent,
+    comparisonSummary: s.comparisonSummary,
     championSigma: s.championSigma,
     candidateSigma: s.candidateSigma, deltaSigma: s.deltaSigma, gateExplain: s.gateExplain,
     // no height is passed: lifecycleDag DERIVES its viewBox height
@@ -1139,10 +1142,7 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
     onRun: (eid) => ctx.navigate('board', { epochId, entry: eid, gen: genId }),
     onPatch: baseline ? null : () => ctx.navigate('diff', { epochId, gen: genId }),
   }));
-  // ONE concise caption — the verbose parent→patch→…→terminal walkthrough, the
-  // 3-rule gate detail and the click/hover affordances moved into the figure's
-  // "?" info hovercard (and the GATE/Σ hovercards), so the figure reads clean at
-  // a glance with detail on demand (de-crowd).
+  // The caption names the diagram's stages; hovercards explain the recorded decision.
   dagCard.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text: baseline ? 'parent → patch → board → Σ → gate → terminal · click a board node → its drill-down' : 'parent → patch → board → Σ → gate → terminal · hover the “?” for how to read it' }));
   host.appendChild(section('Lifecycle · cause → effect → verdict', dagCard));
 

@@ -244,7 +244,7 @@ def test_field_readers_expose_corruption_instead_of_dropping_records(tmp_path: P
     from zicato.epoch._storage import RecordError
     from zicato.index.ingest import _load_field_tournaments
     from zicato.query.paths import WorkspacePaths
-    from zicato.query.tournament_view import _enrich_override_status
+    from zicato.query.tournament_view import build_tournament_structure
 
     path = tmp_path / "epochs/epoch/tournaments/field-v1.json"
     path.parent.mkdir(parents=True)
@@ -254,8 +254,16 @@ def test_field_readers_expose_corruption_instead_of_dropping_records(tmp_path: P
         _load_field_tournaments(tmp_path, "epoch")
     with pytest.raises(RecordError, match="field-v1.json"):
         read_field_tournament_record(path)
-    projected = _enrich_override_status(paths, "epoch", "epoch:field:v1", {})
+    projected = build_tournament_structure(paths, "epoch", "epoch:field:v1")
     assert "field-v1.json" in projected["unreadable"]
+    import sqlite3
+
+    from zicato.index.schema import apply_schema
+    from zicato.query.tournament_view import build_bracket
+
+    with sqlite3.connect(paths.index_db) as connection:
+        apply_schema(connection)
+    assert "field-v1.json" in build_bracket(paths, "epoch")["unreadable"]
 
 
 @pytest.mark.parametrize("state", ["in_progress", "settled", "omitted", None, True, "pending"])

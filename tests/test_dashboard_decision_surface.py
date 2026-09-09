@@ -100,6 +100,10 @@ def _seed_workspace(tmp_path: Path) -> Path:
         ws / "epochs" / OTHER / "generations" / "w0" / "experiment.json",
         {"parent_generation_id": None},
     )
+    from tests._workspace_support import complete_round
+
+    for index, (gid, primary) in enumerate((("v1", "v1"), ("v2", None), ("v3", "v3"))):
+        complete_round(ws, EPOCH, [gid], primary_id=primary, round_index=index)
     return ws
 
 
@@ -251,3 +255,30 @@ def test_epoch_endpoint_serves_decision_surface(tmp_path: Path, static_dir: Path
     by_gen = {e["generation_id"]: e for e in payload["experiments"]}
     assert by_gen["v2"]["decision"] == "rejected"
     assert by_gen["v4"]["promoted"] is None
+
+
+def test_candidate_summary_keeps_task_observations_separate_from_gate_weights() -> None:
+    from zicato.query.candidate_view import _comparison
+
+    summary = _comparison(
+        {
+            "entry_grid": [
+                {"entry_id": "a", "delta_score": 0.4, "weight": 9},
+                {"entry_id": "b", "delta_score": -0.2, "weight": 1},
+                {"entry_id": "c", "delta_score": None, "child_score": 0.8},
+            ]
+        },
+        {
+            "entries": [
+                {"entry_id": "a", "pass_fail": False},
+                {"entry_id": "a", "pass_fail": True},
+                {"entry_id": "b", "pass_fail": False},
+                {"entry_id": "c", "pass_fail": None},
+            ]
+        },
+    )
+    assert summary["mean_delta_score"] == 0.1
+    assert summary["compared_score_count"] == 2
+    assert summary["passed_count"] == 1
+    assert summary["entry_count"] == 3
+    assert _comparison(None, {"entries": []})["mean_delta_score"] is None

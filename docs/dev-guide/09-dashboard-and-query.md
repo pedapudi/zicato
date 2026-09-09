@@ -71,7 +71,7 @@ controls layout and interaction.
 | `src/zicato/query/file_view.py` | `build_file_index`, `build_generation_tree`, `read_generation_file`, `build_generation_patches`, `build_generation_diff` — a generation's source tree, one file of it, its patch set, and its diff against its parent, read through the `GenerationStore` protocol; when a tree is gone the diff carries the patched spans reconstructed from records, with `provenance` saying so | 550 lines |
 | `src/zicato/query/mutation_view.py` | `build_mutation_index`, `build_mutation_detail`, `reconstructed_spans` — an epoch's mutation surface from the `v0` tree or, when the tree is gone, from the frozen `mutations.json`, and one site's content in every generation whose patch touched it | 805 lines |
 | `src/zicato/query/reflection_view.py` | `list_reflections`, `build_reflection_summary` (four-pillar bill of health), `build_judge_scorecards`, `build_adjudication_xray` (transcript + judge verdict + meta-judge record), `entry_candidate_matrix` (reflection-independent, off the index loss tables) — the Instrument-lens feed (BOARD-REFLECTION.md R4). Index-first, file-fallback; the x-ray reads `result.json` / `judge_io` rather than re-running the adjudicator's events-preview reconstruction | ~430 lines |
-| `src/zicato/query/epoch_view.py` | `build_epoch_view`, `build_environment`'s epoch slice, `_current_champion` (reigning spine end), `build_workspace_view`, `compute_board_split` | 35 KB |
+| `src/zicato/query/epoch_view.py` | `build_epoch_view`, `build_environment`'s epoch slice, `current_champion` in `query/promoted_head.py`, `build_workspace_view`, `compute_board_split` | 35 KB |
 | `src/zicato/query/gate_view.py` | `build_gate_breakdown` (+ `deciding_rule`), `build_score_trajectory`, `build_health_report`, `build_rating_view`, `build_drift_movements` | 56 KB |
 | `src/zicato/query/tournament_view.py` | `build_bracket`, `build_tournament_structure`, `build_matchup_detail`, `build_matchup_grid` | 51 KB |
 | `src/zicato/query/{judge,hypothesis,lineage,events_index,run_log}_view.py` | per-judge matrices, hypothesis/calibration accuracy, lineage feed, `/api/environment` coalescer + meta-loop ledger, the run-log tail. `judge_view.build_per_entry_for_generation` serves the dossier; its `facet_scores` block comes from `eval_view.facet_scores_for_generation` | — |
@@ -239,23 +239,23 @@ the reason the two servers (Python + Rust) can agree.
 
 ### 9.2.1 Bug #4 — the client champion-scan (first vs reigning)
 
-The canonical breach: a JS view walked the generations list itself and
-picked "the champion" as the FIRST generation it found with a promotion,
-rather than the LAST — the *reigning* champion is the END of the promoted
-spine rather than its root. The two disagree the moment an epoch promotes more
-than once. The fix moved the walk server-side, into one function, and the
-client reads its answer:
+A browser scan once selected the first promoted candidate instead of the
+reigning champion. Promotion flags also cannot identify the primary candidate
+when one round retains several promising candidates.
 
-```python
-def _current_champion(experiments: list[dict[str, Any]]) -> str | None:
-    """The REIGNING champion generation id, or ``None``.
+The completed round record names the primary promotion. The framework reads
+committed rounds in order through `recorded_champions` in
+`src/zicato/epoch/settlement_receipt.py`. The history starts at the baseline,
+`v0`; the last recorded primary is the reigning champion. Query readers and
+reports use these identities directly. The browser receives `current_champion`
+and draws the recorded answer.
 
-    Walks the promoted champion spine (the same chain
-    ``_champion_lineage`` builds) and returns its LAST id — the reigning
-    champion, never the first promotion.
-    """
-```
-— `src/zicato/query/epoch_view.py`, `_current_champion` (docstring)
+The candidate comparison supplies the unweighted mean of paired task score
+deltas, the number of compared tasks, and pass counts. These are observations,
+separate from the weighted aggregate and statistical checks used for promotion.
+The gate tooltip displays the evaluator's recorded decision, rule, and reason.
+Live completion bars use published completion counts; activity within a running
+task does not count as another completed board entry.
 
 > ⛔ NEVER re-derive "the champion", "the winner", "the latest generation",
 > or a decision on the client from a list the server already ordered. This
@@ -2350,7 +2350,7 @@ def build_promotion_cadence(paths: WorkspacePaths, epoch_id: str) -> dict[str, A
 Coerce every numeric with `coerce_float` and every pass flag with
 `_opt_bool`; classify any decision token through `decisions.canonical_decision`
 / `promoted_tristate`. Emit ONE spelling per field. Do NOT re-derive
-"the champion" — read `_current_champion` if you need it, because the server
+"the champion" — read `current_champion` if you need it, because the server
 owns that decision and the champion is the reigning spine end.
 
 **Step 2 — Export it from the package face.** Add the name to the import
@@ -2575,7 +2575,7 @@ Where to add (and what will catch) a regression, by concern:
 | digest-gated render: no-op DOM identity, seq skip gate, four run-states | node `seq_render_gate.test.mjs`, `pipeline_stepper.test.mjs` |
 | the pipeline projection (`_project_pipeline`) | `tests/test_dashboard_loop_view.py` (pure inference) + `pipeline_stepper.test.mjs` |
 | controls: read-only 403, two-step confirm, paused readback | node `loop_controls.test.mjs`, `override_taxonomy.test.mjs`, `tests/test_dashboard_gate_endpoint.py` |
-| `_current_champion` reigning-spine (the client champion-scan regression, two-promotion lineage) | `tests/test_dashboard_decision_surface.py::test_current_champion_is_the_spine_end` (+ the seed fallback beside it) |
+| `current_champion` reigning-spine (the client champion-scan regression, two-promotion lineage) | `tests/test_dashboard_decision_surface.py::test_current_champion_is_the_spine_end` (+ the seed fallback beside it) |
 | which member of a promoted SET is the head — `gate.gen`, the round-timeline spine, and `current_champion` on a BRANCHING lineage | `tests/test_dashboard_promoted_head.py` |
 | the tree crown per epoch (the same client champion-scan defect across epochs, multi-epoch fixture) | node `epoch_scoping.test.mjs` |
 | the whole Node behaviour suite (digest / no-op / mock parity) | `src/zicato/dashboard/static/test/run-all.mjs` via `make node-test` |

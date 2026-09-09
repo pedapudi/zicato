@@ -874,9 +874,7 @@ export function championScalarOf(st, benchmarkId) {
   return null;
 }
 
-// shared: attribute in-flight /api/active-runs to per-gen board units (gen →
-// { count, sumProgress }), scoped to this epoch's gens. The unified live model
-// folds these into per-match done counts.
+// Count running tasks for each candidate in the displayed epoch.
 function inflightByGen(activeRuns, epochGens) {
   const genSet = epochGens ? new Set([...epochGens].map(String)) : null;
   const map = new Map();
@@ -884,9 +882,8 @@ function inflightByGen(activeRuns, epochGens) {
     const g = String(r.generation_id || '');
     if (!g) continue;
     if (genSet && !genSet.has(g)) continue;
-    const p = svg.isNum(r.progress) ? r.progress : 0;
-    const cur = map.get(g) || { count: 0, sumProgress: 0 };
-    cur.count += 1; cur.sumProgress += p;
+    const cur = map.get(g) || { count: 0 };
+    cur.count += 1;
     map.set(g, cur);
   }
   return map;
@@ -904,13 +901,10 @@ export function buildLiveModel(at, heartbeat, activeRuns, epochGens) {
       const lanes = Object.fromEntries(Object.entries(match.live_progress || {}).map(([gid, lane]) => [
         gid, {
           ...lane, inflight: inflight.get(gid)?.count || lane.inflight || 0,
-          done: Math.max(lane.done || 0, Math.floor(inflight.get(gid)?.sumProgress || 0)),
         },
       ]));
       return {
         ...match, live_progress: lanes,
-        done: Math.max(match.done || 0, Math.floor((match.competitors || []).reduce(
-          (sum, gid) => sum + (inflight.get(gid)?.sumProgress || 0), 0))),
         inflight: (match.competitors || []).reduce((sum, gid) => sum + (inflight.get(gid)?.count || 0), 0),
       };
     }),
@@ -1252,8 +1246,6 @@ export function gauntletModel(st) {
     // (champion + delta_scalar), else leave null (queued).
     let scalar = (s && svg.isNum(s.scalar)) ? s.scalar : null;
     let delta = (m && svg.isNum(m.delta_scalar)) ? m.delta_scalar : null;
-    if (scalar == null && championScalar != null && delta != null) scalar = championScalar + delta;
-    if (delta == null && scalar != null && championScalar != null) delta = scalar - championScalar;
 
     // outcome: the SERVER'S decision only — the match's recorded decision or
     // the standings' champion/eliminated status. An absent decision renders
