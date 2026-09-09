@@ -385,7 +385,7 @@ def test_racing_overlay_folds_runner_projected_into_live_progress(tmp_path: Path
     assert progress["v1"]["projected_scalar"] == 0.3
     # boards_total stays the strategy's rung-slice size (overlay never shrinks it
     # to the per-duel projected total once the strategy set it).
-    assert progress["v0"]["boards_total"] == strategy._rung_board_size()
+    assert progress["v0"]["boards_total"] == strategy.board_size_at_rung(strategy._rung)
     for lane in progress.values():
         if "boards_done" in lane:
             assert lane["boards_done"] <= lane["boards_total"]

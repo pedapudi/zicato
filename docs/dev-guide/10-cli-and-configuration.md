@@ -89,7 +89,8 @@ hits, early termination, missing candidates, and confirmation outcomes.
 The estimator reads the strategy's resolved field size, replicate count, and
 format settings. Gauntlet has one challenger. Swiss pairings include the
 champion. Racing sizes its early rounds from the configured task subset and
-uses the full training board for its final duel.
+uses the full training board for its final duel. Execution, cost estimation,
+and draft diagnostics share the strategy's calculation of the number of tasks.
 
 The estimate includes holdout confirmation, candidate screening, independent
 crowning confirmation, and any enabled placebo cadence.

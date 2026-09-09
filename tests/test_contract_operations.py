@@ -65,18 +65,17 @@ def test_set_param_and_remove() -> None:
     assert patch.changed["replicates"]["to"] is None
 
 
-def test_set_param_validates_closed_vocabulary_keys() -> None:
-    # A typo'd schedule would otherwise be stored verbatim, roll the epoch on
-    # save, and only raise from make_strategy at round start. Catch it here so
-    # the dispatch turns it into a field-precise 400.
+def test_draft_validation_checks_schedule_parameters() -> None:
     draft = TournamentDraft()
-    with pytest.raises(ValueError, match="slice_schedule must be one of"):
-        ops.set_param(draft, "slice_schedule", "shuffled")
-    assert "slice_schedule" not in draft.scoring.tournament_structure.params
+    ops.set_param(draft, "slice_schedule", "shuffled")
+    for validate in (ops.validate, ops.candidate_scoring):
+        with pytest.raises(ValueError, match="slice_schedule must be one of"):
+            validate(draft)
 
     for schedule in ("prefix", "shuffled_v1"):
         ops.set_param(draft, "slice_schedule", schedule)
         assert draft.scoring.tournament_structure.params["slice_schedule"] == schedule
+        ops.validate(draft)
     # Removing the override restores the default.
     ops.set_param(draft, "slice_schedule", None)
     assert "slice_schedule" not in draft.scoring.tournament_structure.params

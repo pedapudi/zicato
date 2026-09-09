@@ -173,7 +173,7 @@ class RacingStrategy(ChampionGateStrategy):
 
     # -- board-slice helpers ----------------------------------------------
 
-    def _rung_board_size(self) -> int:
+    def board_size_at_rung(self, rung: int) -> int:
         total = len(self.board_ids)
         if total == 0:
             return 0
@@ -181,20 +181,20 @@ class RacingStrategy(ChampionGateStrategy):
             base = self.rung0_board_size
         else:
             base = max(1, int(math.ceil(total * self.board_fraction)))
-        size = int(base * (self.eta**self._rung))
+        size = int(base * (self.eta**rung))
         return min(total, size)
 
     def _rung_board_subset(self) -> tuple[str, ...] | None:
         if not self.board_ids:
             return None  # whole board
-        size = self._rung_board_size()
+        size = self.board_size_at_rung(self._rung)
         return self._slice_board_ids[:size]
 
     def _rung_fraction(self) -> float:
         total = len(self.board_ids)
         if total == 0:
             return 1.0
-        return self._rung_board_size() / total
+        return self.board_size_at_rung(self._rung) / total
 
     def _is_final_rung(self) -> bool:
         # A rung is final when the slice is the full board or only one
@@ -216,7 +216,7 @@ class RacingStrategy(ChampionGateStrategy):
         if self._noise_delta_std is None:
             return None
         total = len(self.board_ids)
-        size = self._rung_board_size()
+        size = self.board_size_at_rung(self._rung)
         if total == 0 or size == 0:
             return None
         unit_sd = self._noise_delta_std * math.sqrt(total / 2.0)
@@ -411,7 +411,7 @@ class RacingStrategy(ChampionGateStrategy):
         last-known scalar so the lane has a stable benchmark to race
         against, even while its per-duel ``projected`` is re-aggregated.
         """
-        total = self._rung_board_size()
+        total = self.board_size_at_rung(self._rung)
         progress: dict[str, dict[str, Any]] = {}
         champion_id = self._champion.generation_id if self._champion is not None else None
         lanes: list[str] = []

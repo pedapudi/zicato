@@ -20,6 +20,7 @@ from zicato.evolve import round_entry
 from zicato.runtime.lock import WorkspaceLockHeld, acquire_workspace_lock, pid_start_time
 from zicato.runtime.paths import active_run_path
 from zicato.runtime.writer import workspace_writer
+from zicato.storage import atomic_write_json
 from zicato.tournament import runner, worker_transport
 
 
@@ -40,7 +41,7 @@ class DescendantAdapter(SleepingAdapter):
         os.close(writer)
         assert os.read(reader, 5) == b"ready"
         os.close(reader)
-        (generation_root / "descendant.json").write_text(json.dumps({"pid": child_pid}))
+        atomic_write_json(generation_root / "descendant.json", {"pid": child_pid})
         return super().load(generation_root)
 
 

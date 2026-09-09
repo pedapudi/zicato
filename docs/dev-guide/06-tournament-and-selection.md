@@ -1724,7 +1724,7 @@ and only the FINAL full-board rung applies the champion gate. It pins `_default_
 the authoritative per-lane `live_progress` topology (§6.5.5). Its `match_id`
 forms (`rung0_m2`, `racing-final`) are what `rung_for_match_id` projects to the
 dashboard's rung labels. The board slice grows by `eta` per rung
-(`_rung_board_size`: `base * eta**rung`, capped at the full board), the cut
+(`board_size_at_rung`: `base * eta**rung`, capped at the full board), the cut
 keeps the top `1/eta` by rung scalar (`_apply_cut`: `keep_n = max(1,
 floor(len/eta))`), and `_is_final_rung` fires when the slice reaches the full
 board or one challenger remains — the only rung the gate touches.

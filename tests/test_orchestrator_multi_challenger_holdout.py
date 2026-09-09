@@ -51,7 +51,9 @@ _STRUCTURES = ["swiss", "single_elim", "double_elim", "racing"]
 
 
 def _struct_params(structure: str, field_size: int) -> dict[str, object]:
-    params: dict[str, object] = {"field_size": field_size, "replicates": 1}
+    params: dict[str, object] = {"replicates": 1}
+    if structure != "gauntlet":
+        params["field_size"] = field_size
     if structure == "swiss":
         params["rounds_n"] = 1
     if structure == "racing":

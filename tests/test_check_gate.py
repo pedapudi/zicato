@@ -850,14 +850,15 @@ def test_tournament_override_validation_preserves_every_canonical_file(
     root = _workspace(
         tmp_path / ".zicato",
         config={
+            "contract": {"scoring_path": str(tmp_path / "scoring.json")},
             "adapter": {
                 "kind": "adk",
                 "entrypoint": _VALID_ADK_ENTRYPOINT if valid else "missing.module:agent",
                 "mutable_trees": [],
-            }
+            },
         },
         board=[_entry("e1", expectation={"kind": "expected_text", "spec": "hi"})],
-        scoring={"pass_weight": 1.3},
+        scoring={"pass_weight": 1.3, "tournament": {"structure": "racing", "params": {}}},
         trees={"harness": _MUTABLE.format(point_id="p")},
     )
 
