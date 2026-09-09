@@ -1,30 +1,12 @@
-"""Round-pipeline **round-context** stage — the pre-propose context builders.
+"""Assemble proposal inputs from the round's accepted workspace records.
 
-This is the round pipeline's pre-propose (screen) seam: the four builders that
-assemble the round's proposer-context inputs ONCE per round, beside each other,
-and thread them as plain DATA onto
-:class:`~zicato.proposer.agent.ProposerContext` so the proposer stack stays
-IO-free:
+Candidate combination and proposal ancestry share one experiment walk and one
+ranking query. Their selectors remain independent; only combination reads task
+outcomes, and only training outcomes contribute to its counts. The proposer
+receives the selected edits and summaries through its existing context.
 
-* :func:`_build_candidate_screen_runner` — the best-of-N candidate-screen
-  closure (``proposer_quality.screen_entries`` / ``best_of_n``);
-* :func:`_build_recombination_pair` (+ the pure slot rule
-  :func:`_recombine_pair_for_slot`) — the mechanical recombination pair;
-* :func:`_build_genealogy_items` — the genealogy channel;
-* :func:`_build_calibration_summary` — the critic-calibration channel.
-
-Each builder is OFF by default (a contract opt-in flips it on) and every read
-is best-effort, so an unbuilt index / unreadable record simply yields the OFF
-value and a byte-identical round. Every consumer imports the name it wants
-from this module directly, with no re-export in between: ``evolve_once`` takes
-all four builders, ``evolve.candidate_batch`` takes the slot rule, and the
-candidate-screen, decision-procedure and best-of-N tests take the two they
-exercise. Stable collaborators
-(``ingest._index_db_path``, ``lifecycle_services._beat``, the heartbeat helper)
-are direct top-level imports; the heavier ``epoch`` / ``proposer`` / ``query`` /
-``index`` siblings stay lazy call-time imports. The module logger is named
-``zicato.orchestrator``, so a log record names the orchestrator
-wherever the builder lives.
+Screening and critic calibration retain their own inputs. Disabled channels
+perform no reads, and unavailable optional evidence does not stop a round.
 """
 
 from __future__ import annotations
@@ -124,6 +106,96 @@ def _recombine_pair_for_slot(recombine_pair: Any, offset: int) -> Any:
     return recombine_pair if offset == 0 else None
 
 
+def _build_candidate_history(
+    *,
+    weights: Any,
+    workspace_root: Path,
+    epoch_id: str,
+    parent_id: str,
+    train_entry_ids: frozenset[str],
+    mutations: list[Any],
+) -> tuple[Any, tuple[Any, ...]]:
+    """Share experiment and ranking reads across the enabled proposal channels."""
+    if not (
+        (weights.experimental.recombine and weights.proposer_quality.best_of_n > 1)
+        or weights.experimental.genealogy > 0
+    ):
+        return None, ()
+    from zicato.epoch.journal import read_epoch_experiments  # noqa: PLC0415
+
+    try:
+        experiments, unreadable = read_epoch_experiments(workspace_root, epoch_id)
+    except Exception as exc:  # noqa: BLE001 — optional history cannot stop a round
+        log.debug("candidate history unavailable for %s (%s)", epoch_id, exc)
+        return None, ()
+    for reason in unreadable:
+        log.debug("candidate history skipped a record: %s", reason)
+    elo_by_gid: dict[str, float] = {}
+    try:
+        from zicato.index.query import elo_for_epoch  # noqa: PLC0415
+
+        for row in elo_for_epoch(_index_db_path(workspace_root), epoch_id):
+            if row["elo"] is not None:
+                elo_by_gid[str(row["generation_id"])] = float(row["elo"])
+    except Exception as exc:  # noqa: BLE001 — rankings are optional
+        log.debug("candidate rankings unavailable for %s (%s)", epoch_id, exc)
+    pair = _build_recombination_pair(
+        weights=weights,
+        workspace_root=workspace_root,
+        epoch_id=epoch_id,
+        parent_id=parent_id,
+        train_entry_ids=train_entry_ids,
+        mutations=mutations,
+        experiments=experiments,
+        elo_by_gid=elo_by_gid,
+    )
+    k = weights.experimental.genealogy
+    if k <= 0:
+        return pair, ()
+    try:
+        from zicato.core.experiment import PLACEBO_HYPOTHESIS_MARKER  # noqa: PLC0415
+        from zicato.proposer.genealogy import (  # noqa: PLC0415
+            GenealogyRecord,
+            sample_genealogy,
+        )
+
+        records: list[GenealogyRecord] = []
+        for _gid, exp in experiments:
+            if exp.outcome is None or exp.outcome.tournament_decision is None:
+                continue
+            hyp = exp.hypothesis
+            patch_text = "\n".join(p.new_content or "" for p in exp.patches)
+            records.append(
+                GenealogyRecord(
+                    generation_id=exp.generation_id,
+                    parent_generation_id=exp.parent_generation_id,
+                    decision=exp.outcome.tournament_decision,
+                    round_index=exp.round_index,
+                    core_idea=hyp.core_idea,
+                    patch_mutation_ids=frozenset(p.mutation_id for p in exp.patches),
+                    patch_op_kinds=tuple(p.op for p in exp.patches),
+                    patch_text=patch_text,
+                    scalar_score_delta=exp.outcome.scalar_score_delta,
+                    is_placebo=hyp.core_idea.startswith(PLACEBO_HYPOTHESIS_MARKER),
+                )
+            )
+        if not records:
+            return pair, ()  # no settled history yet — nothing to build a lineage from
+
+        items = sample_genealogy(records, elo_by_gid, k, champion_id=parent_id)
+        if items:
+            log.debug(
+                "genealogy: sampled %d item(s) (%d parent, %d inspiration)",
+                len(items),
+                sum(1 for it in items if it.kind == "parent"),
+                sum(1 for it in items if it.kind == "inspiration"),
+            )
+        return pair, items
+    except Exception as exc:  # noqa: BLE001 — genealogy must never fail a round
+        log.debug("genealogy: sampling skipped (%s)", exc)
+        return pair, ()
+
+
 def _build_recombination_pair(
     *,
     weights: Any,
@@ -132,48 +204,15 @@ def _build_recombination_pair(
     parent_id: str,
     train_entry_ids: frozenset[str],
     mutations: list[Any],
+    experiments: Sequence[tuple[str, Experiment]],
+    elo_by_gid: dict[str, float],
 ) -> Any:
-    """Select this round's recombination pair, or ``None`` when OFF.
-
-    ``None`` — the DEFAULT — unless the contract opts in with
-    ``experimental.recombine`` AND ``best_of_n > 1`` (a single-sample
-    proposer has no slate slot to mint into): the propose path then carries
-    no pair at all and is byte-identical.
-
-    The IO half of the recombination selector, built ONCE per round beside
-    the screen builder and threaded as plain DATA
-    (:attr:`~zicato.proposer.agent.ProposerContext.recombine_pair` — the
-    selection depends only on round-start state, so the proposer stack
-    stays IO-free). Reads, all best-effort:
-
-    * the current epoch's durable experiment RECORDS (the ``generations/``
-      records tree outlives GC — snapshots are pruned, records never are),
-      each through :func:`zicato.epoch.journal.read_experiment` GUARDED —
-      an unreadable/incomplete record (a missing patch file) simply drops
-      that candidate. The pool is capped at the
-      :data:`~zicato.epoch.recombine.RECOMBINE_POOL_MAX` most-recent
-      settled REJECTS.
-    * per-candidate improved/regressed entry sets via
-      :func:`zicato.query.tournament_view.build_matchup_grid` (disk
-      ``loss.json`` — durable, index-free), INTERSECTED with this round's
-      TRAIN entry ids before they are counted: entry ids never leave this
-      builder — the :class:`~zicato.proposer.recombine.RecombinationPair`
-      carries counts + patches + hypothesis text only (the envelope
-      boundary; a holdout entry can never influence the selection).
-    * ONE best-effort Elo read (:func:`zicato.index.query.elo_for_epoch`)
-      for the ranking's summed-Elo key; an absent index default-fills.
-
-    The pure engine (:mod:`zicato.epoch.recombine`) then applies the 8
-    eligibility predicates and the 4-key deterministic ranking. ANY
-    exception anywhere → DEBUG log → ``None`` → a byte-identical round
-    (recombination must never fail a propose step).
-    """
+    """Select complementary rejected edits using shared history and training outcomes."""
     quality = weights.proposer_quality
     if not weights.experimental.recombine or quality.best_of_n <= 1:
         return None
     try:
         from zicato.core.experiment import PLACEBO_HYPOTHESIS_MARKER  # noqa: PLC0415
-        from zicato.epoch.journal import read_experiment  # noqa: PLC0415
         from zicato.epoch.recombine import (  # noqa: PLC0415
             RECOMBINE_POOL_MAX,
             ParentCandidate,
@@ -181,28 +220,13 @@ def _build_recombination_pair(
             rank_pairs,
         )
         from zicato.proposer.recombine import RecombinationPair  # noqa: PLC0415
-        from zicato.query.paths import WorkspacePaths  # noqa: PLC0415
-        from zicato.query.tournament_view import build_matchup_grid  # noqa: PLC0415
+        from zicato.workspace.reads import read_generation_losses  # noqa: PLC0415
 
-        # Most recent generation first: the recombination pool draws from the
-        # newest settled rejects.
         layout = WorkspaceLayout.from_root(workspace_root)
-        gen_ids = list(reversed(generation_ids(layout, epoch_id)))
-
-        # One pass over the records: collect the pool of most-recent
-        # settled rejects (capped) and the already-tried pair set (#5 —
-        # every PERSISTED recombined_from, whatever its decision: a
-        # round-spending mint never re-mints; a vetoed, unpersisted one
-        # may retry because it never reached disk).
-        pool: list[Any] = []
+        pool: list[Experiment] = []
         tried: set[frozenset[str]] = set()
-        for gid in gen_ids:
+        for gid, exp in reversed(experiments):
             if gid == parent_id:
-                continue
-            try:
-                exp = read_experiment(workspace_root, epoch_id, gid)
-            except Exception as exc:  # noqa: BLE001 — unreadable record: skip
-                log.debug("recombine: record %s/%s unreadable (%s)", epoch_id, gid, exc)
                 continue
             if len(exp.recombined_from) == 2:
                 # A prior mint records its pair as tried (any outcome) but is
@@ -218,48 +242,15 @@ def _build_recombination_pair(
         if len(pool) < 2:
             return None
 
-        # ONE best-effort Elo read for the whole pool (fresh per round —
-        # the fold runs at every ingest, so the index is as settled as it
-        # will get at round start). Absent index / missing rows → {}.
-        elo_by_gid: dict[str, float] = {}
-        try:
-            from zicato.index.query import elo_for_epoch  # noqa: PLC0415
-
-            # The canonical index location every consumer uses
-            # (``zicato repair index`` reconciles ``{workspace_root}/index.db``).
-            for row in elo_for_epoch(_index_db_path(workspace_root), epoch_id):
-                if row["elo"] is not None:
-                    elo_by_gid[str(row["generation_id"])] = float(row["elo"])
-        except Exception as exc:  # noqa: BLE001 — Elo is advisory ranking material
-            log.debug("recombine: Elo read skipped (%s)", exc)
-
-        paths = WorkspacePaths(workspace_root)
+        parent_losses = read_generation_losses(layout, epoch_id, parent_id)
         candidates: list[ParentCandidate] = []
         for exp in pool:
-            grid = build_matchup_grid(paths, epoch_id, parent_id, exp.generation_id)
+            child_losses = read_generation_losses(layout, epoch_id, exp.generation_id)
             improved: set[str] = set()
             regressed: set[str] = set()
-            for row in grid.get("entry_grid", []):
-                entry_id = str(row.get("entry_id", ""))
-                if entry_id not in train_entry_ids:
-                    continue  # the envelope point: holdout never counts
-                # PASS-FLIP sets rather than the grid's drift-only ``won_by``:
-                # per-run drift folds every remaining defect into EVERY entry's
-                # loss, so a strictly-better challenger "wins" all entries on
-                # drift and two single-fix parents could never read as
-                # complementary. The pass bit is the per-entry signal a fix
-                # actually owns: improved = a champion-failing entry this
-                # challenger passes; regressed = the inverse. KNOWN NARROWING:
-                # a pair whose improvements are PURELY drift-side (no pass flip
-                # — e.g. two independent verbosity fixes on an all-passing
-                # board) is invisible to this selector and never recombines
-                # mechanically. That is by design: per-entry drift deltas are
-                # noisy single-sample verdicts, the same reason cross-regression
-                # ranks rather than filters. Such pairs remain reachable
-                # through the in-context genealogy channel; a drift-delta-with-
-                # confirmation variant is a documented future seam.
-                parent_pass = row.get("parent_pass")
-                child_pass = row.get("child_pass")
+            for entry_id in train_entry_ids:
+                parent_pass = parent_losses.get(entry_id, {}).get("pass_fail")
+                child_pass = child_losses.get(entry_id, {}).get("pass_fail")
                 if parent_pass is False and child_pass is True:
                     improved.add(entry_id)
                 elif parent_pass is True and child_pass is False:
@@ -332,119 +323,6 @@ def _build_recombination_pair(
     except Exception as exc:  # noqa: BLE001 — recombination must never fail a round
         log.debug("recombine: pair selection skipped (%s)", exc)
         return None
-
-
-def _build_genealogy_items(
-    *,
-    weights: Any,
-    workspace_root: Path,
-    epoch_id: str,
-    parent_id: str,
-) -> tuple[Any, ...]:
-    """Sample this round's genealogy items, or ``()`` when OFF.
-
-    ``()`` — the DEFAULT — unless the contract opts in with
-    ``experimental.genealogy > 0``: the propose path then carries no items
-    at all and is byte-identical.
-
-    The IO half of the genealogy channel, built ONCE per round beside the
-    recombination + screen builders and threaded as plain DATA (a
-    ``tuple[GenealogyItem, ...]`` on
-    :attr:`~zicato.proposer.agent.ProposerContext.genealogy` — all best-of-N
-    slots see the same items, so the proposer can merge/diverge in context).
-    Reads, all best-effort:
-
-    * the current epoch's durable experiment RECORDS (the ``generations/``
-      records tree outlives GC), each through
-      :func:`zicato.epoch.journal.read_experiment` GUARDED — an
-      unreadable/incomplete record simply drops that candidate. Every settled
-      record is a genealogy CANDIDATE; the pure sampler partitions promoted
-      (the champion spine) from rejected (the inspiration pool).
-    * ONE best-effort Elo read (:func:`zicato.index.query.elo_for_epoch`) for
-      the greedy walk's tie-break; an absent index default-fills.
-
-    The pure sampler (:mod:`zicato.proposer.genealogy`) then selects parents +
-    the greedy max--min-Jaccard inspirations, banding every whole-candidate
-    outcome and capping every diff excerpt — ENVELOPE-CLEAN by construction (no
-    per-entry read happens here, so no entry id can leave). ANY exception
-    anywhere → DEBUG log → ``()`` → a byte-identical round (genealogy must
-    never fail a propose step).
-    """
-    quality = getattr(weights, "experimental", None)
-    k = int(getattr(quality, "genealogy", 0) or 0)
-    if k <= 0:
-        return ()
-    try:
-        from zicato.core.experiment import PLACEBO_HYPOTHESIS_MARKER  # noqa: PLC0415
-        from zicato.epoch.journal import read_experiment  # noqa: PLC0415
-        from zicato.proposer.genealogy import (  # noqa: PLC0415
-            GenealogyRecord,
-            sample_genealogy,
-        )
-
-        records: list[GenealogyRecord] = []
-        for gid in generation_ids(WorkspaceLayout.from_root(workspace_root), epoch_id):
-            # NB: the reigning champion (``parent_id``) is NOT skipped — the
-            # pure sampler walks the champion's ``parent_generation_id`` chain
-            # from ``champion_id``, so the champion's own promoted record is the
-            # spine ANCHOR (the head of "the winning line to build on"). It only
-            # ever surfaces as a PARENT (promoted → never the rejected
-            # inspiration pool), so no anchor double-counts as an inspiration.
-            try:
-                exp = read_experiment(workspace_root, epoch_id, gid)
-            except Exception as exc:  # noqa: BLE001 — unreadable record: skip
-                log.debug("genealogy: record %s/%s unreadable (%s)", epoch_id, gid, exc)
-                continue
-            # The genealogy reads settled decisions. A record with no
-            # outcome, or an outcome recording no decision, is still in
-            # flight and neither anchors the spine nor inspires.
-            if exp.outcome is None or exp.outcome.tournament_decision is None:
-                continue
-            hyp = exp.hypothesis
-            patch_text = "\n".join(p.new_content or "" for p in exp.patches)
-            records.append(
-                GenealogyRecord(
-                    generation_id=exp.generation_id,
-                    parent_generation_id=exp.parent_generation_id,
-                    decision=exp.outcome.tournament_decision,
-                    round_index=exp.round_index,
-                    core_idea=hyp.core_idea,
-                    patch_mutation_ids=frozenset(p.mutation_id for p in exp.patches),
-                    patch_op_kinds=tuple(p.op for p in exp.patches),
-                    patch_text=patch_text,
-                    scalar_score_delta=exp.outcome.scalar_score_delta,
-                    is_placebo=hyp.core_idea.startswith(PLACEBO_HYPOTHESIS_MARKER),
-                )
-            )
-        if not records:
-            return ()  # no settled history yet — nothing to build a lineage from
-
-        # ONE best-effort Elo read for the greedy walk's tie-break (fresh per
-        # round — the fold runs at every ingest). Absent index → {}.
-        elo_by_gid: dict[str, float] = {}
-        try:
-            from zicato.index.query import elo_for_epoch  # noqa: PLC0415
-
-            for row in elo_for_epoch(_index_db_path(workspace_root), epoch_id):
-                if row["elo"] is not None:
-                    elo_by_gid[str(row["generation_id"])] = float(row["elo"])
-        except Exception as exc:  # noqa: BLE001 — Elo is advisory tie-break material
-            log.debug("genealogy: Elo read skipped (%s)", exc)
-
-        # The pure sampler partitions promoted (spine) from rejected
-        # (inspiration pool), re-caps the pool, and does the greedy walk.
-        items = sample_genealogy(records, elo_by_gid, k, champion_id=parent_id)
-        if items:
-            log.debug(
-                "genealogy: sampled %d item(s) (%d parent, %d inspiration)",
-                len(items),
-                sum(1 for it in items if it.kind == "parent"),
-                sum(1 for it in items if it.kind == "inspiration"),
-            )
-        return items
-    except Exception as exc:  # noqa: BLE001 — genealogy must never fail a round
-        log.debug("genealogy: sampling skipped (%s)", exc)
-        return ()
 
 
 def _build_calibration_summary(

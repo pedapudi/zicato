@@ -179,11 +179,14 @@ def test_evolve_once_critical_finding_logs_warning(
             severity="critical",
             summary="degenerate scoring: every generation scores identically",
         ),
+        HealthFinding(code="stalled_loop", severity="warning", summary="pass-rate plateau"),
         healthy=False,
     )
 
     with caplog.at_level(logging.WARNING, logger="zicato.orchestrator"):
-        _, _, outcome = _run_one_round(monkeypatch, tmp_path, health=health, calls=calls)
+        workspace, epoch_id, outcome = _run_one_round(
+            monkeypatch, tmp_path, health=health, calls=calls
+        )
 
     # The outcome is flagged critical and the summary names the problem.
     assert outcome.health_critical is True
@@ -198,6 +201,14 @@ def test_evolve_once_critical_finding_logs_warning(
     ]
     assert any("LOOP HEALTH CRITICAL" in m for m in warnings)
     assert any("no usable signal" in m for m in warnings)
+
+    report = workspace / "epochs" / epoch_id / "health" / "round_1.json"
+    body = json.loads(report.read_text(encoding="utf-8"))
+    assert body["has_critical"] is True
+    assert body["healthy"] is False
+    assert len(body["findings"]) == 2
+    severities = {f["severity"] for f in body["findings"]}
+    assert severities == {"critical", "warning"}
 
 
 def test_health_reporting_warns_when_declared_judges_never_fire(
@@ -303,27 +314,6 @@ def test_health_reporting_omits_dead_judge_warning_when_absent(
     with caplog.at_level(logging.WARNING, logger="zicato.orchestrator"):
         _assess_and_persist_loop_health(workspace, epoch_id, 1, load_current_board(workspace))
     assert not any("DECLARED JUDGE NEVER FIRED" in rec.getMessage() for rec in caplog.records)
-
-
-def test_evolve_once_critical_persisted_in_report(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """The persisted round report records the critical finding."""
-    calls: list[tuple[Any, ...]] = []
-    health = _report(
-        HealthFinding(code="degenerate_scoring", severity="critical", summary="degenerate scoring"),
-        HealthFinding(code="stalled_loop", severity="warning", summary="pass-rate plateau"),
-        healthy=False,
-    )
-    workspace, epoch_id, _ = _run_one_round(monkeypatch, tmp_path, health=health, calls=calls)
-
-    report = workspace / "epochs" / epoch_id / "health" / "round_1.json"
-    body = json.loads(report.read_text(encoding="utf-8"))
-    assert body["has_critical"] is True
-    assert body["healthy"] is False
-    assert len(body["findings"]) == 2
-    severities = {f["severity"] for f in body["findings"]}
-    assert severities == {"critical", "warning"}
 
 
 def test_a_detector_that_raises_costs_the_report_not_the_round(

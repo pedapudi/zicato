@@ -27,9 +27,8 @@ from zicato.evolve.persist import (
 )
 from zicato.evolve.round_context import (
     _build_calibration_summary,
+    _build_candidate_history,
     _build_candidate_screen_runner,
-    _build_genealogy_items,
-    _build_recombination_pair,
 )
 from zicato.mutation.inventory import write_mutation_inventory
 from zicato.runtime.control_consumer import (
@@ -571,37 +570,13 @@ async def _evolve_once(
         beater=beater,
     )
 
-    # --- 5a''. Optional recombination pair ---
-    # ONE selection per round, built only when the contract opts in
-    # (experimental.recombine AND best_of_n > 1) — otherwise ``None``
-    # and no pair even rides the propose path. Plain DATA (not a callable):
-    # the selection depends only on round-start state, so the proposer
-    # stack stays IO-free. Best-effort by contract — any failure inside
-    # degrades to ``None`` and the round is byte-identical.
-    recombine_pair = _build_recombination_pair(
+    recombine_pair, genealogy_items = _build_candidate_history(
         weights=weights,
         workspace_root=workspace_root,
         epoch_id=resolved_epoch_id,
         parent_id=parent_id,
         train_entry_ids=frozenset(e.id for e in train_board),
         mutations=mutations,
-    )
-
-    # --- 5a'''. Optional genealogy channel ---
-    # ONE sampling per round, built only when the contract opts in
-    # (experimental.genealogy > 0) — otherwise () and no items ride the
-    # propose path. Read-side only (the meter is untouched): the sampler reads
-    # the reign's durable records + the Elo fold and returns already-banded,
-    # already-capped candidate-lineage items (PARENTS = the champion's promoted
-    # spine; INSPIRATIONS = diverse rejected reign candidates). ALL best-of-N
-    # slots see the same items (in-context evolution — the LLM can merge ideas
-    # itself). Best-effort — any failure inside degrades to () and the round is
-    # byte-identical.
-    genealogy_items = _build_genealogy_items(
-        weights=weights,
-        workspace_root=workspace_root,
-        epoch_id=resolved_epoch_id,
-        parent_id=parent_id,
     )
 
     # --- 5a''''. Optional critic-calibration channel ---

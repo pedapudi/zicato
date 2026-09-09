@@ -61,7 +61,7 @@
 | `src/zicato/analyzer/process_exemplars.py` | The four-rule redaction machine (§5.8.3) for the opt-in process-exemplar channel | 678 lines |
 | `src/zicato/index/query.py` | `prior_experiments_for_epoch` (experiment memory), `mutation_point_track_record` (fertility map) | — |
 | `src/zicato/epoch/round_log.py` | The round-log event vocabulary the propose step emits into | 974 lines |
-| `src/zicato/evolve/` | The wiring, spread across the round pipeline: `propose_apply.py` (`_propose_child`, `_propose_and_apply_challenger`), `round_context.py` (`_build_candidate_screen_runner`, `_build_recombination_pair`, `_build_genealogy_items`), `decision_support.py` (`_render_failure_profile`, `_render_process_exemplars_block`, `_render_loss_summary`), `ingest.py` (`_load_prior_experiments`, `_load_mutation_track_records`). `src/zicato/orchestrator.py` is a 14-line re-export facade over `evolve_once` / `evolve_n_rounds` | — |
+| `src/zicato/evolve/` | The wiring, spread across the round pipeline: `propose_apply.py` (`_propose_child`, `_propose_and_apply_challenger`), `round_context.py` (`_build_candidate_screen_runner`, `_build_candidate_history`, `_build_recombination_pair`), `decision_support.py` (`_render_failure_profile`, `_render_process_exemplars_block`, `_render_loss_summary`), `ingest.py` (`_load_prior_experiments`, `_load_mutation_track_records`). `src/zicato/orchestrator.py` is a 14-line re-export facade over `evolve_once` / `evolve_n_rounds` | — |
 
 Orchestrator call topology, per round:
 
@@ -288,7 +288,7 @@ folded to counts), **REDACTED** (mechanically scrubbed content), **SANITIZED**
 | `round_event_emitter` | `Callable[[str, dict], None] \| None = None` | orchestrator: `_RoundLogEmitter.emit` | best-of-N wrapper via `_emit_round_event` (guarded — a raising emitter never fails a propose) | MACHINERY |
 | `screen_candidates` | `ScreenRunner \| None = None` | orchestrator: `_build_candidate_screen_runner` — ONE closure per round, only when `screen_entries > 0 AND best_of_n > 1` | best-of-N wrapper: `_screen_slate`, `_screen_replacement` | MACHINERY (its OUTPUT strings are AGGREGATED counts-only by the `CandidateScreenResult.reason` contract) |
 | `recombine_pair` | `RecombinationPair \| None = None` | orchestrator: `_build_recombination_pair` — ONE selection per round at the screen-builder site, only when `experimental.recombine AND best_of_n > 1`; `_recombine_pair_for_slot` threads it to the FIELD's slot-0 challenger only | best-of-N wrapper: the last slate slot mints its patch union (§5.6.11) instead of sampling the LLM | MACHINERY (carries counts + patches + hypothesis TEXT only — entry ids never leave the builder; the improved/regressed sets are intersected with the current TRAIN board inside `_build_recombination_pair` and discarded) |
-| `genealogy` | `tuple[GenealogyItem, ...] = ()` | orchestrator: `_build_genealogy_items` — ONE sampling per round at the screen-builder site, only when `experimental.genealogy > 0`; ALL best-of-N slots (and the critic) see the SAME items | `render_evidence` → `render_genealogy_block` → spliced as `## Candidate genealogy` directly above `## What's already been tried` (§5.6.13) | BANDED + REDACTED (whole-candidate outcomes through `_bucket_scalar_delta`; proposer-authored core ideas + capped diff excerpts; NO entry ids, NO per-entry results, NO exact deltas — candidate genealogy, never board data; empty at default) |
+| `genealogy` | `tuple[GenealogyItem, ...] = ()` | orchestrator: `_build_candidate_history` samples once from shared experiment and ranking reads, only when `experimental.genealogy > 0`; ALL best-of-N slots (and the critic) see the SAME items | `render_evidence` → `render_genealogy_block` → spliced as `## Candidate genealogy` directly above `## What's already been tried` (§5.6.13) | BANDED + REDACTED (whole-candidate outcomes through `_bucket_scalar_delta`; proposer-authored core ideas + capped diff excerpts; NO entry ids, NO per-entry results, NO exact deltas — candidate genealogy, never board data; empty at default) |
 
 > ✅ ALWAYS give a new `ProposerContext` field a default that renders
 > byte-identically when unset. That is not a style preference — it is the
@@ -1433,7 +1433,7 @@ changes.
 
 **The envelope.** `RecombinationPair` carries counts + patches + hypothesis
 TEXT only — the improved/regressed entry-id sets are computed INSIDE
-`_build_recombination_pair` (from `build_matchup_grid` per pool member) and
+`_build_recombination_pair` (from the accepted canonical loss records per pool member) and
 intersected with the current TRAIN board there, then discarded; entry ids never
 reach the proposer stack. The holdout is never eligible (the `train_entry_ids`
 filter), so this closes the holdout-leak and preserves context-is-the-envelope.
@@ -1529,9 +1529,9 @@ contract are in **[PROPOSER.md §2.7](../design/PROPOSER.md)**;
 
 **The two halves.** The sampler is a pure, deterministic function
 (`sample_genealogy(records, ratings, k, *, champion_id)` — NO RNG, NO IO) fed
-by an IO builder (`_build_genealogy_items` in
-`src/zicato/evolve/round_context.py`,
-run ONCE per round at the screen-builder site). The builder threads DATA — a
+by `_build_candidate_history` in `src/zicato/evolve/round_context.py`.
+That builder reads accepted experiments and rankings once per round for
+combination and ancestry, then projects those records into the sampler's inputs. The builder threads DATA — a
 `tuple[GenealogyItem, ...]` on `ProposerContext.genealogy` (§5.2) rather than
 a callable, so the proposer stack stays IO-free. Unlike the recombination
 pair, the SAME items ride EVERY best-of-N slot (and the critic) — genealogy is
@@ -1574,9 +1574,13 @@ carry an entry id (a structural pin in `tests/test_genealogy.py`). The
 redaction (band + excerpt cap) is enforced IN the sampler and tested there,
 not trusted to the caller.
 
-**Cost.** Render-side only — the meter is untouched (the process-exemplars
-precedent). `_build_genealogy_items` reads the durable records + one
-best-effort Elo fold; ANY exception → `()` → a round with no genealogy block.
+**Cost.** Candidate history shares one journal walk and one ranking query
+between enabled combination and ancestry channels. Combination reads the
+champion's accepted losses once and each candidate's accepted losses once.
+It does not assemble a browser response or enumerate score replicates.
+Ancestry uses no per-task outcomes. Missing rankings preserve the sampler's
+default ordering; an unreadable experiment is omitted with its recorded reason.
+When both channels are disabled, candidate history performs no reads.
 
 **Determinism = the leakage budget.** A byte-identical block round over round
 (while the reign's candidate set is unchanged) re-presents nothing new.
