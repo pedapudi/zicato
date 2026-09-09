@@ -510,7 +510,7 @@ const LIVE_SWISS_BLOCK = {
       { match_id: 'sw_r0_m1', competitors: ['v2', 'v3'], winner: 'v3', decision: 'win' },
     ] },
     { round_index: 1, label: 'Round 2', matches: [
-      { match_id: 'sw_r1_m0', competitors: ['v1', 'v3'], pending: true, queued: false, total: 4, done: 0 },
+      { match_id: 'sw_r1_m0', competitors: ['v1', 'v3'], pending: true, queued: false, total: 4, done: 2, live_progress: { v1: { done: 2, total: 4 }, v3: { done: 0, total: 4 } } },
       { match_id: 'sw_r1_m1', competitors: ['v0', 'v2'], pending: true, queued: false, total: 4, done: 0 },
     ] },
   ],
@@ -540,7 +540,7 @@ test('Task 1 — match blocks (swiss): one block per IN-FLIGHT match, two sides,
   assert(/v1 vs v3/.test(v1v3.label), 'the block header names the match — "… · v1 vs v3"');
   const e = v1v3.entries.find((x) => x.id === 'v1');
   assertEqual(e.total, 4, 'the side carries the board total (board_size)');
-  assert(svg.isNum(e.ratio) && e.ratio > 0, 'the side carries a live progress ratio from active-runs (2/4 boards done)');
+  assert(svg.isNum(e.ratio) && e.ratio > 0, 'the side displays the recorded completion ratio (2/4 boards done)');
 });
 
 test('Task 1 — match blocks (elim): blocks group by in-flight WB match, named WB-R0-0 · v0 vs v3', () => {
@@ -603,20 +603,19 @@ test('Task 1 — the match-grouped block RENDERS: one DOM block per match, a pro
   assert(opened != null, 'clicking a side opens the candidate');
 });
 
-test('Task 1 — the block is digest-gated on the live CONTENT: a no-op heartbeat is a no-op; a progress-bucket change re-stamps', () => {
-  const at = LIVE_SWISS_BLOCK;
-  const beat = (progress) => STRUCT.liveMatchBlocksDigest(STRUCT.liveMatchBlocks(STRUCT.buildLiveModel(
-    at,
-    { phase: 'tournament:round_1', epoch_id: HERO_EPOCH },
-    [{ generation_id: 'v1', entry_id: 'b0', progress }],
-    ['v0', 'v1', 'v2', 'v3'],
-  )));
-  // board_size 4: progress 0.5 → done 0 vs 0.55 → still bucket 0 (no rebuild),
-  // but a real bucket jump (progress that lands a board) re-stamps.
-  assertEqual(beat(0.0), beat(0.0), 'identical state → identical digest (a no-op heartbeat writes ZERO DOM)');
-  const d0 = beat(0.0);
-  const dBig = beat(3.5); // ~3-4 of 4 boards done → a real progress bucket
-  assert(d0 !== dBig, 'a real per-board progress change re-stamps the digest');
+test('live match progress changes only when the recorded completion count changes', () => {
+  const beat = (done, progress) => {
+    const at = structuredClone(LIVE_SWISS_BLOCK);
+    const match = at.rounds[1].matches[0];
+    match.done = done;
+    match.live_progress.v1.done = done;
+    return STRUCT.liveMatchBlocksDigest(STRUCT.liveMatchBlocks(STRUCT.buildLiveModel(
+      at, { phase: 'tournament:round_1', epoch_id: HERO_EPOCH },
+      [{ generation_id: 'v1', entry_id: 'b0', progress }], ['v0', 'v1', 'v2', 'v3'],
+    )));
+  };
+  assertEqual(beat(0, 0), beat(0, 1), 'task activity does not imply a completed board entry');
+  assert(beat(0, 0) !== beat(3, 0), 'recorded completion updates the display');
 });
 
 // ── Task 2 — the tree live-activity pulse ──

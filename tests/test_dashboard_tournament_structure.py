@@ -129,6 +129,33 @@ def _build_index(path: Path, *, structure: str) -> None:
     )
     conn.commit()
     conn.close()
+    from tests._workspace_support import write_tournament_structure
+
+    write_tournament_structure(
+        path.parent,
+        EPOCH,
+        structure=structure,
+        competitors=[
+            {"generation_id": "v0", "role": "champion"},
+            {"generation_id": "v1", "role": "challenger"},
+        ],
+        rounds=rounds,
+        standings=standings,
+        structure_params={"rounds": 4} if structure == "swiss" else {},
+    )
+    from tests._workspace_support import complete_round, experiment_record, write_json
+
+    (path.parent / "epochs" / EPOCH / "generations" / "v0").mkdir(parents=True, exist_ok=True)
+    write_json(
+        path.parent / "epochs" / EPOCH / "generations" / "v1" / "experiment.json",
+        experiment_record(
+            "v1",
+            epoch_id=EPOCH,
+            parent_generation_id="v0",
+            outcome={"tournament_decision": "promoted", "structure": structure},
+        ),
+    )
+    complete_round(path.parent, EPOCH, ["v1"], primary_id="v1")
 
 
 @pytest.fixture
@@ -216,9 +243,9 @@ def test_bracket_adds_structure_and_tournaments(swiss_workspace: Path) -> None:
     # the new per-tournament array carries the structure internals
     assert len(b["tournaments"]) == 1
     t = b["tournaments"][0]
-    assert t["tournament_id"] == SWISS_TOURN
+    assert t["tournament_id"] == f"{EPOCH}:field:v1"
     assert t["structure"] == "swiss"
-    assert t["competitors"] == ["v0", "v1"]
+    assert [row["generation_id"] for row in t["competitors"]] == ["v0", "v1"]
     assert t["rounds"][0]["matches"][0]["winner"] == "v1"
     assert t["standings"][0]["status"] == "champion"
 
@@ -234,8 +261,8 @@ def test_bracket_gauntlet_contains_champion_lineage_and_matchups(gauntlet_worksp
     # the tournaments[] array is present-but-degenerate (one gauntlet row)
     assert len(b["tournaments"]) == 1
     assert b["tournaments"][0]["structure"] == "gauntlet"
-    assert b["tournaments"][0]["rounds"] == []
-    assert b["tournaments"][0]["standings"] == []
+    assert b["tournaments"][0]["rounds"][0]["matches"][0]["winner"] == "v1"
+    assert b["tournaments"][0]["standings"][0]["generation_id"] == "v1"
 
 
 # ---------------------------------------------------------------------------
@@ -243,12 +270,12 @@ def test_bracket_gauntlet_contains_champion_lineage_and_matchups(gauntlet_worksp
 # ---------------------------------------------------------------------------
 
 
-def test_structure_reader_from_index(swiss_workspace: Path) -> None:
+def test_structure_reader_from_record(swiss_workspace: Path) -> None:
     st = build_tournament_structure(WorkspacePaths(swiss_workspace), EPOCH, SWISS_TOURN)
-    assert st["source"] == "index"
+    assert st["source"] == "record"
     assert st["structure"] == "swiss"
     assert st["structure_params"] == {"rounds": 4}
-    assert st["competitors"] == ["v0", "v1"]
+    assert [row["generation_id"] for row in st["competitors"]] == ["v0", "v1"]
     assert st["rounds"][0]["matches"][0]["decision"] == "promoted"
     assert st["standings"][0]["generation_id"] == "v1"
 
@@ -268,11 +295,11 @@ def test_structure_reader_with_no_field_status_reads_empty(swiss_workspace: Path
     pre-v5 shape); the reader degrades it to an empty list rather than
     failing the resolution."""
     st = build_tournament_structure(WorkspacePaths(swiss_workspace), EPOCH, SWISS_TOURN)
-    assert st["source"] == "index"
+    assert st["source"] == "record"
     assert st["field_status"] == []
 
 
-def test_structure_reader_enriches_field_status_from_active(swiss_workspace: Path) -> None:
+def test_completed_structure_does_not_borrow_status_from_active(swiss_workspace: Path) -> None:
     """When the index row carries the settled bracket but no proposing
     outcomes, a matching live ``active_tournament.events.jsonl`` (retained with
     phase=completed) lifts its ``field_status`` onto the resolved
@@ -301,11 +328,10 @@ def test_structure_reader_enriches_field_status_from_active(swiss_workspace: Pat
         )
     st = build_tournament_structure(WorkspacePaths(swiss_workspace), EPOCH, SWISS_TOURN)
     # The settled bracket still comes from the index…
-    assert st["source"] == "index"
+    assert st["source"] == "record"
     assert st["standings"][0]["generation_id"] == "v1"
     # …but field_status is lifted from the live envelope.
-    assert [f["generation_id"] for f in st["field_status"]] == ["v1"]
-    assert st["field_status"][0]["status"] == "applied"
+    assert st["field_status"] == []
 
 
 def test_active_tournament_route_surfaces_field_status(
@@ -404,7 +430,7 @@ def test_tournament_structure_route(swiss_workspace: Path, static_dir: Path) -> 
         assert r.status_code == 200
         body = r.json()
         assert body["structure"] == "swiss"
-        assert body["source"] == "index"
+        assert body["source"] == "record"
         assert body["standings"][0]["generation_id"] == "v1"
 
 
@@ -424,7 +450,7 @@ def test_tournaments_route_carries_structure(swiss_workspace: Path, static_dir: 
     with TestClient(app) as c:
         body = c.get("/api/tournaments").json()
         assert body["structure"] == "swiss"
-        assert body["tournaments"][0]["tournament_id"] == SWISS_TOURN
+        assert body["tournaments"][0]["tournament_id"] == f"{EPOCH}:field:v1"
 
 
 def test_epoch_route_carries_tournament_block(swiss_workspace: Path, static_dir: Path) -> None:
@@ -557,6 +583,16 @@ def _build_field_index_with_patches(
     )
     conn.commit()
     conn.close()
+    from tests._workspace_support import write_tournament_structure
+
+    write_tournament_structure(
+        path.parent,
+        EPOCH,
+        structure="swiss",
+        competitors=competitors,
+        field_status=field_status,
+        structure_params={"field_size": len(field_status)},
+    )
 
 
 def test_structure_reader_emits_diversity_block_for_a_field(tmp_path: Path) -> None:

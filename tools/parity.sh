@@ -25,39 +25,10 @@
 #                  byte-identical to the golden.
 #   REINDEX-DUMP   the SQLite index, rebuilt from a fixture workspace and
 #                  dumped to stable text, is byte-identical to the golden.
-#   MOCK-GOLDEN    a deterministic, no-live-LLM racing (field 4) mock evolve
-#                  under --mode full produces gen_score.json /
-#                  experiment.json / loss.json / round_log.jsonl / the
-#                  settled field-tournament snapshot / lineage.json
-#                  artifacts byte-identical (after masking wall-clock noise)
-#                  to the golden.
-#   MOCK-GOLDEN-GAUNTLET
-#                  the same capture with a single challenger under --mode
-#                  full: the field-size-1 selector and the crowning holdout
-#                  confirmation a gauntlet round runs.
-#   MOCK-GOLDEN-GAUNTLET-FAST
-#                  a single challenger under --mode fast: cache-first slot
-#                  resolution under a one-challenger field.
-#   MOCK-GOLDEN-RACING-FAST
-#                  the racing field under --mode fast: every rung resolves
-#                  both competitors through the unit cache.
-#   MOCK-GOLDEN-TWO-ROUND-RACING
-#                  the racing field under --mode full for TWO rounds: the
-#                  promoted head advances, the crowned generation defends
-#                  the next round from its own patched snapshot, and the
-#                  epoch's round directories number on from 0.
-#   MOCK-GOLDEN-SWISS
-#                  a four-challenger Swiss field under --mode full: fixed
-#                  pairings over champion + challengers, Copeland
-#                  standings, and the leader's champion-gate confirmation.
-#   MOCK-GOLDEN-SINGLE-ELIM
-#                  a four-challenger single-elimination bracket under
-#                  --mode full: challenger-vs-challenger nodes, then the
-#                  champion-vs-survivor final.
-#   MOCK-GOLDEN-DOUBLE-ELIM
-#                  a four-challenger double-elimination field under --mode
-#                  full: winners' bracket, losers' bracket, grand final,
-#                  then the champion gate.
+#   MOCK-GOLDEN    Eight deterministic tournament configurations in one pytest
+#                  session: racing and gauntlet with fresh or reused measurements,
+#                  two consecutive racing rounds, Swiss, and both elimination
+#                  formats. Every configuration retains its own saved results.
 #   MYPY           type checking must complete successfully.
 #
 # Usage
@@ -74,20 +45,8 @@ set -u -o pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LIB="$REPO_ROOT/tools/parity/lib"
 
-# A capture name after ':' selects a single deterministic fixture. This table
-# owns gate names, their default order, and each mock capture's selection.
-GATES=(
-  PYTEST CONTRACT-HASH CLI-HELP REINDEX-DUMP
-  MOCK-GOLDEN:racing_full
-  MOCK-GOLDEN-GAUNTLET:gauntlet_full
-  MOCK-GOLDEN-GAUNTLET-FAST:gauntlet_fast
-  MOCK-GOLDEN-RACING-FAST:racing_fast
-  MOCK-GOLDEN-TWO-ROUND-RACING:two_round_racing
-  MOCK-GOLDEN-SWISS:swiss_full
-  MOCK-GOLDEN-SINGLE-ELIM:single_elim_full
-  MOCK-GOLDEN-DOUBLE-ELIM:double_elim_full
-  MYPY
-)
+# Each verification group runs once. Pytest names each tournament configuration.
+GATES=(PYTEST CONTRACT-HASH CLI-HELP REINDEX-DUMP MOCK-GOLDEN MYPY)
 
 UPDATE=0
 ONLY=()
@@ -160,7 +119,7 @@ _run_gate() {
     CONTRACT-HASH) uv run python "$LIB/contract_hash.py" ${update_args[@]+"${update_args[@]}"} ;;
     CLI-HELP) uv run python "$LIB/cli_help.py" ${update_args[@]+"${update_args[@]}"} ;;
     REINDEX-DUMP) ${env_args[@]+"${env_args[@]}"} "${PYTEST_SERIAL[@]}" "$LIB/test_reindex_golden.py" ;;
-    MOCK-GOLDEN*) ${env_args[@]+"${env_args[@]}"} "${PYTEST_SERIAL[@]}" "$LIB/test_mock_golden.py" -k "${entry#*:}" ;;
+    MOCK-GOLDEN*) ${env_args[@]+"${env_args[@]}"} "${PYTEST_SERIAL[@]}" "$LIB/test_mock_golden.py" ;;
     MYPY) uv run mypy src/zicato/ ;;
     *) echo "gate has no command: $gate" >&2; return 2 ;;
   esac

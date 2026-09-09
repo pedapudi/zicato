@@ -1126,7 +1126,7 @@ def test_compute_epoch_delta_summary_champion_spine_vs_gross() -> None:
         _exp(gen="v3", parent="v1", decision="promoted", delta=-15.0),
         _exp(gen="v4", parent="v3", decision="rejected", delta=20.0),
     ]
-    summary = compute_epoch_delta_summary(experiments)
+    summary = compute_epoch_delta_summary(experiments, ["v0", "v1", "v3"])
     assert summary["champion_spine"] == pytest.approx(-25.0)
     assert summary["gross"] == pytest.approx(0.0)
 
@@ -1148,7 +1148,7 @@ def test_compute_epoch_delta_summary_t6_run8_shape() -> None:
         _exp(gen="v4", parent="v3", decision="rejected", delta=42.405),
         _exp(gen="v5", parent="v3", decision="rejected", delta=5.714),
     ]
-    summary = compute_epoch_delta_summary(experiments)
+    summary = compute_epoch_delta_summary(experiments, ["v0", "v1", "v3"])
     assert summary["champion_spine"] == pytest.approx(-38.760)
     assert summary["gross"] == pytest.approx(19.482)
 
@@ -1168,7 +1168,7 @@ def test_compute_epoch_delta_summary_empty_and_lone_promotion() -> None:
         _exp(gen="v1", parent="v0", decision="rejected", delta=1.0),
         _exp(gen="v2", parent="v0", decision="rejected", delta=2.0),
     ]
-    summary = compute_epoch_delta_summary(only_rejected)
+    summary = compute_epoch_delta_summary(only_rejected, ["v0"])
     assert summary["champion_spine"] is None
     assert summary["gross"] == pytest.approx(3.0)
 
@@ -1177,7 +1177,7 @@ def test_compute_epoch_delta_summary_empty_and_lone_promotion() -> None:
     one_promoted = [
         _exp(gen="v1", parent="v0", decision="promoted", delta=-7.5),
     ]
-    summary = compute_epoch_delta_summary(one_promoted)
+    summary = compute_epoch_delta_summary(one_promoted, ["v0", "v1"])
     assert summary["champion_spine"] is None
     assert summary["gross"] == pytest.approx(-7.5)
 
@@ -1186,7 +1186,7 @@ def test_compute_epoch_delta_summary_empty_and_lone_promotion() -> None:
         _exp(gen="v1", parent="v0", decision="promoted", delta=-7.5),
         _exp(gen="v2", parent="v1", decision="promoted", delta=-2.5),
     ]
-    summary = compute_epoch_delta_summary(two_promoted)
+    summary = compute_epoch_delta_summary(two_promoted, ["v0", "v1", "v2"])
     assert summary["champion_spine"] == pytest.approx(-10.0)
     assert summary["gross"] == pytest.approx(-10.0)
 
@@ -1204,7 +1204,7 @@ def test_compute_epoch_delta_summary_no_deltas_returns_none() -> None:
         {"generation_id": "v0", "parent_generation_id": None},
         {"generation_id": "v1", "parent_generation_id": "v0"},
     ]
-    summary = compute_epoch_delta_summary(experiments)
+    summary = compute_epoch_delta_summary(experiments, ["v0"])
     assert summary["champion_spine"] is None
     assert summary["gross"] is None
 
@@ -1228,7 +1228,7 @@ def test_compute_epoch_delta_summary_skips_malformed_entries() -> None:
         _exp(gen="v1", parent="v0", decision="promoted", delta=-2.0),
         _exp(gen="v2", parent="v1", decision="promoted", delta=-1.0),
     ]
-    summary = compute_epoch_delta_summary(experiments)
+    summary = compute_epoch_delta_summary(experiments, ["v0", "v1", "v2"])
     assert summary["champion_spine"] == pytest.approx(-3.0)
     assert summary["gross"] == pytest.approx(-3.0)
 
@@ -1258,6 +1258,19 @@ def test_build_epoch_view_carries_delta_scalar_summary(workspace: Path) -> None:
                     "scalar_score_delta": delta,
                 },
             ),
+        )
+
+    from tests._workspace_support import complete_round
+
+    for round_index, (generation_id, primary_id) in enumerate(
+        [("v1", "v1"), ("v2", None), ("v3", "v3")]
+    ):
+        complete_round(
+            workspace,
+            epoch_dir.name,
+            [generation_id],
+            primary_id=primary_id,
+            round_index=round_index,
         )
 
     view = build_epoch_view(WorkspacePaths(workspace))

@@ -1,36 +1,19 @@
-"""Which member of a promoted SET the served surfaces name as the head.
+"""Readers select the primary promotion named by a completed tournament.
 
-``lineage.json`` owns topology and the tri-state promotion flag, and on a
-round that promotes a set it flags EVERY member — only one headed the round
-and defended afterwards. Both readers used to re-derive that head by taking
-the first flagged member, which is an ordering accident:
-
-* ``build_round_timeline`` reported ``gate.gen`` = whichever promoted member
-  came first in bucket order, contradicting the champion its own next round
-  served from the record (issue #287);
-* ``build_epoch_view``'s ``current_champion`` walked the branch with a
-  lexicographic tiebreak, so ``v11`` beat ``v2`` for reasons of spelling
-  (issue #281).
-
-These tests pin the resolution: the head is the one the runner RECORDED
-(``zicato.query.promoted_head``), the reconstruction is the fallback, and a
-disagreement between the two is logged rather than served silently.
+A round may retain several promising candidates. These tests ensure the
+recorded primary supplies the reigning champion and the tournament timeline,
+regardless of generation ordering or other candidates' promotion status.
 """
 
 from __future__ import annotations
 
 import json
-import logging
-import shutil
 import sqlite3
 from pathlib import Path
-
-import pytest
 
 from tests._workspace_support import write_generation, write_lineage
 from zicato.index.schema import apply_schema
 from zicato.query import WorkspacePaths, build_epoch_view, build_round_timeline
-from zicato.tournament.records import decode_field_tournament_record, write_field_tournament_record
 from zicato.workspace import WorkspaceLayout
 
 EPOCH = "2026-06-01_e0"
@@ -86,12 +69,11 @@ def _field_record(
         "standings": [],
         "field_status": [],
     }
-    write_field_tournament_record(
-        ws,
-        epoch_id=EPOCH,
-        first_challenger_id=first_challenger,
-        record=decode_field_tournament_record(body),
-    )
+    if head == HEAD:
+        body["promoted_generation_ids"] = [OTHER_MEMBER, HEAD]
+    from tests._workspace_support import complete_round
+
+    complete_round(ws, EPOCH, challengers, primary_id=head or None, field_record=body)
 
 
 def _multi_promote_workspace(tmp_path: Path) -> Path:
@@ -122,7 +104,7 @@ def _multi_promote_workspace(tmp_path: Path) -> Path:
             {
                 "parent_generation_id": parent,
                 "round_index": 1 if gid == "v12" else 0,
-                "outcome": {"tournament_decision": decision},
+                "outcome": {"tournament_decision": decision, "structure": "swiss"},
             },
         )
     _write_json(
@@ -261,92 +243,6 @@ def test_waterfall_step_credits_the_recorded_head(tmp_path: Path) -> None:
     assert tl["waterfall"][0]["gen"] == HEAD
 
 
-def test_a_head_disagreement_is_logged_once(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
-    """A record that overrides the reconstruction says so in the log.
-
-    The disagreement is an operator signal, never a payload field: the served
-    answer is the record either way, and the round timeline's wire shape is
-    unchanged.
-    """
-    ws = _multi_promote_workspace(tmp_path)
-    with caplog.at_level(logging.INFO, logger="zicato.query"):
-        rounds = _rounds(ws)
-    lines = [r.getMessage() for r in caplog.records if "recorded head" in r.getMessage()]
-    assert len(lines) == 1
-    assert "round 0" in lines[0]
-    assert HEAD in lines[0] and OTHER_MEMBER in lines[0]
-    assert "field_record" in lines[0]
-    assert "note" not in rounds[0] and "disagreement" not in rounds[0]
-
-
-def test_an_agreeing_record_logs_nothing(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
-    """A single-promotion round agrees with its reconstruction and stays quiet."""
-    ws = _multi_promote_workspace(tmp_path)
-    lineage = json.loads((ws / "lineage.json").read_text(encoding="utf-8"))
-    for gen in lineage["epochs"][0]["generations"]:
-        if gen["id"] == OTHER_MEMBER:
-            gen["promoted"] = False
-    _write_json(ws / "lineage.json", lineage)
-    with caplog.at_level(logging.INFO, logger="zicato.query"):
-        rounds = _rounds(ws)
-    assert rounds[0]["gate"] == {"kind": "promoted", "gen": HEAD}
-    assert [r.getMessage() for r in caplog.records if "disagrees" in r.getMessage()] == []
-
-
-def test_head_falls_back_to_the_next_rounds_defending_champion(tmp_path: Path) -> None:
-    """Round N's snapshot is gone; round N+1 still names who defended it."""
-    ws = _multi_promote_workspace(tmp_path)
-    (ws / "epochs" / EPOCH / "tournaments" / "field-v1.json").unlink()
-    rounds = _rounds(ws)
-    assert rounds[0]["gate"] == {"kind": "promoted", "gen": HEAD}
-
-
-def test_head_falls_back_to_the_lineage_flags_without_any_record(tmp_path: Path) -> None:
-    """No record survives: the first flagged member is the honest guess.
-
-    Constructed by dropping round 1 as well — while a later round exists, its
-    record still names the defender, so the reconstruction is genuinely the
-    LAST resort. It is a deterministic tiebreak, not a correct answer; pinned
-    so the degrade is visible rather than accidental.
-    """
-    ws = _multi_promote_workspace(tmp_path)
-    for record in (ws / "epochs" / EPOCH / "tournaments").glob("field-*.json"):
-        record.unlink()
-    conn = sqlite3.connect(ws / "index.db")
-    conn.execute("DELETE FROM tournaments WHERE tournament_id LIKE ?", (f"{EPOCH}:%v12",))
-    conn.commit()
-    conn.close()
-    shutil.rmtree(ws / "epochs" / EPOCH / "generations" / "v12")
-    lineage = json.loads((ws / "lineage.json").read_text())
-    lineage["epochs"][0]["generations"] = [
-        row for row in lineage["epochs"][0]["generations"] if row["id"] != "v12"
-    ]
-    write_lineage(WorkspaceLayout.from_root(ws), lineage)
-    rounds = _rounds(ws)
-    assert [r["round_index"] for r in rounds] == [0]
-    assert rounds[0]["gate"] == {"kind": "promoted", "gen": OTHER_MEMBER}
-
-
-def test_a_record_outside_the_promoted_set_never_adds_a_promotion(tmp_path: Path) -> None:
-    """Lineage owns WHETHER; the record only disambiguates WITHIN the set.
-
-    A record naming a generation the lineage did not flag promoted is skipped
-    for the next source rather than crowning an unpromoted challenger.
-    """
-    ws = _multi_promote_workspace(tmp_path)
-    _field_record(ws, "v1", "v0", ["v1", "v2", "v11"], "v1")
-    rounds = _rounds(ws)
-    assert rounds[0]["gate"] == {"kind": "promoted", "gen": HEAD}  # from round 1's record
-    assert rounds[0]["challengers"][0] == {"id": "v1", "scalar": None, "promoted": False}
-
-
-# ---------------------------------------------------------------------------
-# The epoch view's reigning-champion pointer.
-# ---------------------------------------------------------------------------
-
-
 def test_current_champion_resolves_the_branch_by_the_recorded_head(tmp_path: Path) -> None:
     """The reigning champion is the recorded head of the branching round."""
     view = build_epoch_view(WorkspacePaths(_multi_promote_workspace(tmp_path)), epoch_id=EPOCH)
@@ -360,15 +256,10 @@ def test_current_champion_agrees_with_the_round_timeline(tmp_path: Path) -> None
     assert view["current_champion"] == _rounds(ws)[-1]["champion"]["id"]
 
 
-def test_current_champion_tiebreaks_naturally_without_a_record(tmp_path: Path) -> None:
-    """No record survives the branch: natural order decides, so v2 wins.
-
-    The lexicographic sort this walk used answered ``v11`` here — the right
-    id for the wrong reason. Natural order is the deterministic fallback and
-    it is honest about being a tiebreak, not a resolution.
-    """
+def test_current_champion_does_not_infer_a_winner_without_a_record(tmp_path: Path) -> None:
+    """Without a committed promotion, the baseline remains the champion."""
     ws = _multi_promote_workspace(tmp_path)
-    for record in (ws / "epochs" / EPOCH / "tournaments").glob("field-*.json"):
+    for record in (ws / "epochs" / EPOCH / "rounds").glob("*/field_settlement.json"):
         record.unlink()
     view = build_epoch_view(WorkspacePaths(ws), epoch_id=EPOCH)
-    assert view["current_champion"] == OTHER_MEMBER
+    assert view["current_champion"] == "v0"

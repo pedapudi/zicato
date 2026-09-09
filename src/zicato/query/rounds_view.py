@@ -140,22 +140,9 @@ def build_round_timeline(paths: WorkspacePaths, epoch_id: str | None = None) -> 
     recorded_heads = read_recorded_heads(paths, epoch_id)
 
     def _build_rounds(per_round: list[dict[str, Any]], source: str) -> list[dict[str, Any]]:
-        def _next_round_champion(index: int) -> str | None:
-            """The role-tagged champion on the NEXT round's field record.
-
-            Whoever defends round N+1 IS the head round N promoted — the
-            second place the runner records it (:mod:`zicato.query.
-            promoted_head`). Consulted only when round N's own snapshot is
-            absent or was written while the round was still in flight.
-            """
-            nxt = per_round[index + 1].get("tournament_ref") if index + 1 < len(per_round) else None
-            champ = nxt.get("champion") if isinstance(nxt, dict) else None
-            cid = champ.get("id") if isinstance(champ, dict) else None
-            return str(cid) if cid is not None and str(cid) else None
-
         carried = seed_id
         out: list[dict[str, Any]] = []
-        for i, r in enumerate(per_round):
+        for r in per_round:
             challengers = []
             for gid in r["challenger_ids"]:
                 gid = str(gid)
@@ -175,39 +162,7 @@ def build_round_timeline(paths: WorkspacePaths, epoch_id: str | None = None) -> 
                 if isinstance(ref, dict) and ref.get("tournament_id") is not None
                 else None
             )
-            # INVARIANT (09-dashboard-and-query.md, "lineage owns
-            # topology"): the lineage flags own WHETHER the round promoted; they
-            # cannot own WHICH member of a promoted set headed it, because every
-            # member carries the same flag. So the head is the RECORDED one,
-            # confined to the lineage-promoted set — the record disambiguates
-            # within that set and never adds a promotion. First-match over the
-            # flags is the reconstruction of last resort.
-            head: str | None = None
-            promoted_set = [c for c in challengers if c["promoted"]]
-            if promoted_set:
-                promoted_ids = {str(c["id"]) for c in promoted_set}
-                reconstructed = str(promoted_set[0]["id"])
-                claims = [
-                    (origin, gid)
-                    for origin, gid in (
-                        ("field_record", head_of_round(recorded_heads, tournament_id)),
-                        ("next_round_champion", _next_round_champion(i)),
-                    )
-                    if gid is not None
-                ]
-                usable = next(((o, gid) for o, gid in claims if gid in promoted_ids), None)
-                head = usable[1] if usable is not None else reconstructed
-                if claims and claims[0][1] != reconstructed:
-                    log.info(
-                        "round-timeline: epoch %s round %s — recorded head %s (%s) disagrees "
-                        "with the reconstructed spine %s; serving %s",
-                        epoch_id,
-                        round_index,
-                        claims[0][1],
-                        claims[0][0],
-                        reconstructed,
-                        head,
-                    )
+            head = head_of_round(recorded_heads, tournament_id)
             gate = (
                 {"kind": "promoted", "gen": head}
                 if head is not None

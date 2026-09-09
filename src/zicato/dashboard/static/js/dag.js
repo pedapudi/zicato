@@ -510,45 +510,34 @@ export function lifecycleDag(spec) {
     });
   }
 
-  // ---- Σ node: the aggregate of the per-board losses over the rung's slice,
-  // PLUS the champion's Σ on the same slice and the Δ between them (this is the
-  // score the gate compares). A sublabel + rich tooltip make the circles→Σ
-  // linkage legible ("these per-board losses sum to Σ; lower is better") and
-  // expose the Δ-vs-champion the gate acts on.
-  // On the SCORE channel the aggregate is the MEAN of the per-entry Δ scores
-  // over the entries both sides ran — which is exactly the movement in the
-  // board-level mean score, so the discs above it and the gate beside it are
-  // the same arithmetic rather than two unrelated numbers stacked in one
-  // diagram. On the drift channel it stays the sum of the per-board losses.
-  const scoredDeltas = board.map((e) => cmpOf(e.entry_id)).filter((c) => c && isNum(c.deltaScore)).map((c) => c.deltaScore);
-  const meanDeltaScore = scoredDeltas.length
-    ? scoredDeltas.reduce((a, v) => a + v, 0) / scoredDeltas.length : null;
+  // The framework summarizes the displayed tasks; promotion has its own recorded evidence.
+  const summary = o.comparisonSummary || {};
+  const meanDeltaScore = isNum(summary.mean_delta_score) ? summary.mean_delta_score : null;
+  const scoreCount = summary.compared_score_count;
   let aggLabel, aggSub, aggCls, aggTip, aggNodeData;
   if (channel === 'score') {
     aggLabel = 'Σ Δ score';
     aggSub = meanDeltaScore != null
-      ? signedDelta(meanDeltaScore, 3) + ' · ' + scoredDeltas.length + ' entr' + (scoredDeltas.length === 1 ? 'y' : 'ies')
+      ? signedDelta(meanDeltaScore, 3) + ' · ' + scoreCount + ' entr' + (scoreCount === 1 ? 'y' : 'ies')
       : '—';
     aggCls = scoreCmpClass(meanDeltaScore);
     aggTip = 'Σ Δ score — the mean of the per-entry Δ scores above, over the entries BOTH the candidate and the champion ran (higher is better).'
-      + (meanDeltaScore != null ? ` ${signedDelta(meanDeltaScore, 3)} across ${scoredDeltas.length} entr${scoredDeltas.length === 1 ? 'y' : 'ies'}.` : '')
-      + ' That mean IS the movement in the board-level mean score, so this node is the arithmetic of the discs feeding it — not a separate quantity.'
-      + ' An entry only one side ran carries no Δ and contributes nothing, the same restriction the gate applies.';
+      + (meanDeltaScore != null ? ` ${signedDelta(meanDeltaScore, 3)} across ${scoreCount} entr${scoreCount === 1 ? 'y' : 'ies'}.` : '')
+      + ' This is an unweighted summary of the displayed task comparisons. Promotion uses its recorded evaluation aggregates and rule results.';
     aggNodeData = { cand: null, champ: null, delta: meanDeltaScore };
   } else if (channel === 'pass') {
-    const passed = board.filter((e) => e.pass_fail === true).length;
+    const passed = summary.passed_count;
     aggLabel = 'Σ pass';
-    aggSub = passed + '/' + board.length;
+    aggSub = passed == null ? '—' : passed + '/' + summary.entry_count;
     aggCls = '';
-    aggTip = `Σ pass — ${passed} of ${board.length} board entries passed. `
+    aggTip = `Σ pass — ${passed} of ${summary.entry_count} board entries passed. `
       + 'This board carries no continuous score and the adapter emits no drift stream, so the pass predicate is the only outcome the entries record; '
       + 'there is no per-entry magnitude to sum.';
     aggNodeData = { cand: null, champ: null, delta: null };
   } else {
-    const candSigma = isNum(o.candidateSigma) ? o.candidateSigma : (entries.length ? total : null);
+    const candSigma = isNum(o.candidateSigma) ? o.candidateSigma : null;
     const champSigma = isNum(o.championSigma) ? o.championSigma : null;
-    const sigmaDelta = isNum(o.deltaSigma) ? o.deltaSigma
-      : (candSigma != null && champSigma != null ? candSigma - champSigma : null);
+    const sigmaDelta = isNum(o.deltaSigma) ? o.deltaSigma : null;
     aggLabel = 'Σ loss';
     aggSub = candSigma != null
       ? (champSigma != null ? fmt(candSigma, 0) + ' · Δ ' + signedDelta(sigmaDelta, 0) : fmt(candSigma, 0))
@@ -557,7 +546,7 @@ export function lifecycleDag(spec) {
     aggTip = 'Σ loss — the per-board drift losses summed over this rung’s board slice (lower is better).'
       + (candSigma != null ? ` Candidate Σ ${fmt(candSigma, 1)}` : '')
       + (champSigma != null ? ` vs champion ${champId} Σ ${fmt(champSigma, 1)} · Δ ${signedDelta(sigmaDelta, 1)} (${worseBetter(sigmaDelta)})` : '')
-      + '. The gate compares these scalars on the SAME boards — Δ = challenger − champion, positive = worse.';
+      + '. These are observed drift totals. The gate explanation reports the aggregates used for promotion.';
     aggNodeData = { cand: candSigma, champ: champSigma, delta: sigmaDelta };
   }
   const aggNode = rectNode(nodeLayer, X.agg, midY, 0.1 * w, 48, aggLabel, aggSub, 'ezn-neutral');
@@ -571,49 +560,24 @@ export function lifecycleDag(spec) {
   edgeLayer.appendChild(svgEl('path', { d: flow(X.agg + 0.05 * w, midY, X.gate - 0.06 * w, midY), class: 'ezn-edge ' + (verdictClass(dec) === 'ezn-promoted' ? 'ezn-edge-good' : 'ezn-edge-bad'), fill: 'none' }));
   const gateSub = baseline ? 'no gate (seed)' : (isNum(o.deltaScalar) ? (o.deltaScalar >= 0 ? '+' : '') + fmt(o.deltaScalar, 1) + ' Δ' : dec);
   const gateNode = rectNode(nodeLayer, X.gate, midY, 0.12 * w, 48, baseline ? 'BASELINE' : 'GATE', gateSub, verdictClass(dec));
-  // ---- GATE node: the 3-rule acceptance test, made self-explanatory. The
-  // promote gate is NOT "smallest Σ wins": a challenger is accepted only if it
-  // (1) beats the champion's scalar by the promote margin (Δ < margin), AND
-  // (2) regresses no previously-passing predicate (pass-rate monotonicity), AND
-  // (3) regresses no namespace (namespace monotonicity). Rules short-circuit in
-  // order, so a challenger with a BETTER scalar can still be rejected by rule 2
-  // or 3. `o.gateExplain` (assembled in the view from D.gate) names which rule
-  // was the PRIMARY DRIVER and carries the decisive numbers.
+  // The recorded decision and rule detail explain the historical comparison.
   if (!baseline) {
     const gx = o.gateExplain || null;
-    let gateTip;
-    if (gx && gx.decidingRule) {
-      const verb = (gx.decision === 'promoted') ? 'promoted' : 'rejected';
-      gateTip = `Promote gate — a 3-rule test (scalar margin · pass-rate monotonicity · namespace monotonicity), short-circuiting in order. `;
-      if (gx.decidingRule === 'scalar_margin') {
-        gateTip += `Decided by the SCALAR-MARGIN rule: Δ scalar ${signedDelta(gx.deltaScalar, 1)} vs champion ${champId}`
-          + (isNum(gx.margin) ? ` (needs ≤ ${fmt(gx.margin, 2)})` : '')
-          + ` → ${gx.deltaScalar > 0 ? 'worse than champion → fails the scalar-margin rule → ' : ''}${verb}.`;
-      } else if (gx.decidingRule === 'pass_rate_monotonicity') {
-        // Scope is operator-selected (per-entry vs aggregate); the backend
-        // detail/reason already says which way it regressed, so prefer that
-        // wording over hard-coding per-entry semantics here.
-        gateTip += `Scalar may be better, BUT it failed the pass-rate-monotonicity rule (rule 2)`
-          + (gx.detail ? ` — ${gx.detail}` : (gx.regressed ? ` — regressed \`${gx.regressed}\`` : ''))
-          + ` → ${verb}.`;
-      } else if (gx.decidingRule === 'namespace_monotonicity') {
-        gateTip += `Scalar may be better, BUT it regressed a namespace`
-          + (gx.regressed ? ` (\`${gx.regressed}\`)` : '') + ` — fails the namespace-monotonicity rule (rule 3) → ${verb}.`;
-      } else {
-        gateTip += `Primary driver: ${gx.decidingLabel || gx.decidingRule} → ${verb}.`;
-      }
-      if (gx.reason) gateTip += ` (${gx.reason})`;
+    let gateTip = 'No gate explanation was recorded.';
+    if (gx) {
+      gateTip = 'Promotion decision: ' + gx.decision + '.';
+      if (gx.decidingLabel || gx.decidingRule) gateTip += ' ' + (gx.decidingLabel || gx.decidingRule) + '.';
+      if (gx.detail) gateTip += ' ' + gx.detail;
+      if (gx.reason && gx.reason !== gx.detail) gateTip += ' ' + gx.reason;
       gateNode.setAttribute('data-deciding-rule', gx.decidingRule);
       if (gx.decidingLabel) gateNode.setAttribute('data-deciding-label', gx.decidingLabel);
       if (isNum(gx.deltaScalar)) gateNode.setAttribute('data-delta-scalar', signedDelta(gx.deltaScalar, 2));
       if (isNum(gx.margin)) gateNode.setAttribute('data-margin', fmt(gx.margin, 2));
       if (gx.regressed) gateNode.setAttribute('data-regressed', gx.regressed);
-    } else {
-      gateTip = 'Promote gate — a 3-rule acceptance test: (1) beat the champion’s scalar by the promote margin, (2) no pass-rate regression, (3) no namespace regression. Δ = challenger − champion on the same boards; positive = worse.';
     }
     gateNode.classList.add('ezn-gate-node');
     gateNode.setAttribute('data-cz', 'lc-gate');
-    // the full 3-rule GATE explanation now lives in the styled hovercard.
+    // the recorded promotion explanation appears in the styled hovercard.
     attachHovercard(gateNode, gateTip);
   }
 
@@ -636,7 +600,7 @@ export function lifecycleDag(spec) {
   // ---- the KEY beneath the DAG. DE-CROWDED: where the figure once carried two
   // long, largely-redundant always-on prose blocks (this legend line + a verbose
   // view caption), it now reads with ONE short key line plus a "?" affordance.
-  // The full how-to walkthrough (parent → patch → … → terminal, the 3-rule gate,
+  // The full how-to walkthrough (parent → patch → … → terminal, the recorded decision,
   // the click/hover affordances) moved into the "?" hovercard + the GATE/Σ
   // hovercards — detail on demand, a clean figure at a glance. Skipped for a
   // baseline (no gate). Theme-aware (CSS), no motion.
@@ -671,12 +635,12 @@ export function lifecycleDag(spec) {
       'How to read this lifecycle: parent → patch → board (one node per entry, colour = pass/fail/timeout) → Σ → gate → terminal. '
       + (channel === 'score'
         ? 'Each board circle = this candidate’s Δ score vs the champion on the SAME board (positive = better), with both sides and the replicate spread beneath it; '
-          + 'Σ is the mean of those Δs over the entries both sides ran — the movement in the board-level mean score; the GATE applies a 3-rule test '
+          + 'Σ shows the framework’s unweighted mean change across the displayed paired tasks. '
         : channel === 'pass'
-          ? 'Each board circle = whether this candidate passed that entry; the board carries no continuous score and no drift stream, so there is no magnitude to plot; the GATE applies a 3-rule test '
+          ? 'Each board circle shows whether this candidate passed that task. '
           : 'Each board circle = this candidate’s drift loss vs the champion’s on the SAME board (Δ, positive = worse); '
-            + 'Σ sums those losses on the slice; the GATE compares Σ-vs-champion under a 3-rule test ')
-      + '(scalar margin · pass-rate monotonicity · namespace monotonicity — hover the GATE to see which rule decided). '
+            + 'Σ shows the framework’s drift totals for the displayed comparison. ')
+      + 'Hover the GATE for the recorded promotion decision and explanation. '
       + 'Click the PATCH node → this candidate’s side-by-side diff; hover/click a re-raced board node → its per-run values (by rung).');
     svg.appendChild(infoG);
   }

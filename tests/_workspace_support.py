@@ -359,3 +359,124 @@ def seed_index(
     finally:
         conn.close()
     return db_path
+
+
+def complete_round(
+    root: Path,
+    epoch_id: str,
+    generation_ids: Sequence[str],
+    *,
+    primary_id: str | None,
+    round_index: int | None = None,
+    field_record: dict[str, Any] | None = None,
+    gate_results: Sequence[dict[str, Any]] = (),
+) -> None:
+    """Publish fixture outcomes through the completed round record."""
+    from dataclasses import replace
+
+    from zicato.epoch.journal import read_experiment
+    from zicato.epoch.settlement_receipt import (
+        IndexProjection,
+        SettlementCandidate,
+        decode_settlement_receipt,
+        new_settlement_receipt,
+        write_settlement_receipt,
+    )
+
+    layout = WorkspaceLayout.from_root(root)
+    experiments = [read_experiment(root, epoch_id, gid) for gid in generation_ids]
+    index = experiments[0].round_index if round_index is None else round_index
+    candidates = []
+    comparisons = {gate["challenger"]: gate for gate in gate_results}
+    for experiment in experiments:
+        assert experiment.outcome is not None
+        candidates.append(
+            SettlementCandidate.from_outcome(
+                experiment_id=experiment.id,
+                generation_id=experiment.generation_id,
+                created_at=experiment.proposed_at,
+                parent_scalar=comparisons.get(experiment.generation_id, {})
+                .get("parent_aggregate", {})
+                .get("scalar"),
+                child_scalar=comparisons.get(experiment.generation_id, {})
+                .get("child_aggregate", {})
+                .get("scalar"),
+                outcome=experiment.outcome,
+            )
+        )
+        path = layout.experiment(epoch_id, experiment.generation_id)
+        body = json.loads(path.read_text())
+        body["round_index"] = index
+        body["outcome"] = None
+        write_json(path, body)
+    receipt = new_settlement_receipt(
+        settlement_id=f"{index + 1:032x}",
+        epoch_id=epoch_id,
+        round_index=index,
+        primary_id=primary_id,
+        candidates=tuple(candidates),
+        field_record=field_record,
+    )
+    body = receipt.to_dict()
+    body["gate_results"] = list(gate_results)
+    write_settlement_receipt(
+        root,
+        replace(
+            decode_settlement_receipt(body),
+            state="committed",
+            index_projection=IndexProjection("succeeded", ""),
+        ),
+    )
+    if layout.lineage_path.exists():
+        body = json.loads(layout.lineage_path.read_text())
+        for epoch in body["epochs"]:
+            if epoch["id"] == epoch_id:
+                for generation in epoch["generations"]:
+                    if generation["id"] in generation_ids:
+                        generation["round_index"] = index
+                        generation["promoted"] = None
+        write_json(layout.lineage_path, body)
+
+
+def write_tournament_structure(
+    root: Path,
+    epoch_id: str,
+    *,
+    structure: str,
+    competitors: Sequence[dict[str, Any]],
+    rounds: Sequence[dict[str, Any]] = (),
+    standings: Sequence[dict[str, Any]] = (),
+    field_status: Sequence[dict[str, Any]] = (),
+    structure_params: Mapping[str, Any] | None = None,
+) -> None:
+    """Publish declared tournament facts for tests of record readers."""
+    from zicato.tournament.records import (
+        decode_field_tournament_record,
+        write_field_tournament_record,
+    )
+
+    challenger = next(row["generation_id"] for row in competitors if row["role"] == "challenger")
+    champion = next(row["generation_id"] for row in competitors if row["role"] == "champion")
+    write_field_tournament_record(
+        root,
+        epoch_id=epoch_id,
+        first_challenger_id=challenger,
+        record=decode_field_tournament_record(
+            {
+                "tournament_id": f"{epoch_id}:field:{challenger}",
+                "epoch_id": epoch_id,
+                "structure": structure,
+                "structure_params": dict(structure_params or {}),
+                "competitors": list(competitors),
+                "rounds": list(rounds),
+                "standings": list(standings),
+                "field_status": list(field_status),
+                "champion_generation_id": champion,
+                "promoted_generation_id": challenger,
+                "decision": "promoted",
+                "state": "settled",
+                "ran_at": DEFAULT_CREATED_AT,
+                "reason": "",
+            }
+        ),
+    )

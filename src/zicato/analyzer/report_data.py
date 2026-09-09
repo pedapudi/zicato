@@ -155,6 +155,7 @@ class EpochReportData:
     generations: tuple[GenerationView, ...]
     span_start: str
     span_end: str
+    champion_history: tuple[str, ...] = ()
     # The free-form operator-supplied goal for the epoch. Empty when
     # no goal was recorded; the analyzer renders that case as "no goal
     # recorded" in the header so the report shape stays uniform.
@@ -203,30 +204,12 @@ class EpochReportData:
 
     @property
     def final_scalar(self) -> float:
-        """Cumulative scalar of the generation currently IN FORCE.
-
-        CHAMPION-ANCHORED: the last promoted generation, or the baseline
-        (``0.0``) when nothing has promoted. This is the number the
-        harness actually stands behind.
-
-        It is not ``generations[-1]``. ``_cumulate_scalar``
-        fills a cumulative for every generation regardless of decision,
-        so the newest row is a *rejected* challenger whenever the last
-        round did not promote — and its cumulative is a counterfactual,
-        the score the lineage would have carried had the challenger been
-        accepted. Publishing that as the lineage's score credits the
-        promoted lineage with work that was measured and then discarded,
-        which in a zero-promotion epoch headlines a stalled campaign as
-        an improving one. See :attr:`latest_rejected_scalar` for the
-        counterfactual under its own name.
-        """
-        champion = 0.0
-        for g in self.generations:
-            if g.is_baseline:
-                champion = g.cumulative_scalar
-            elif g.decision == "promoted":
-                champion = g.cumulative_scalar
-        return champion
+        """Cumulative scalar of the recorded champion, or the zero baseline."""
+        champion = self.champion_history[-1] if self.champion_history else None
+        return next(
+            (g.cumulative_scalar for g in self.generations if g.generation_id == champion),
+            0.0,
+        )
 
     @property
     def latest_rejected_scalar(self) -> float | None:
@@ -541,7 +524,14 @@ def gather_epoch_report_data(
     proposer_quality = pq_raw if isinstance(pq_raw, dict) else {}
     round_records = read_round_records(layout, epoch_id)
 
+    from zicato.epoch.settlement_receipt import recorded_champions
+
+    try:
+        champions = tuple(recorded_champions(layout.root, epoch_id))
+    except (OSError, ValueError, RuntimeError):
+        champions = ()
     return EpochReportData(
+        champion_history=champions,
         epoch_id=epoch_id,
         epoch_name=str(cfg.get("name", "") or epoch_id),
         contract_hash=str(cfg.get("contract_hash", "") or ""),

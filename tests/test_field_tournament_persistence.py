@@ -390,6 +390,19 @@ def _completed_swiss_workspace(tmp_path: Path, structure: str = "swiss") -> Path
     )
     conn.commit()
     conn.close()
+    from zicato.tournament.records import (
+        decode_field_tournament_record,
+        write_field_tournament_record,
+    )
+
+    write_field_tournament_record(
+        ws,
+        epoch_id="e1",
+        first_challenger_id="v1",
+        record=decode_field_tournament_record(
+            _field_record(strategy, decision, competitors, epoch_id="e1", structure=structure)
+        ),
+    )
     return ws
 
 
@@ -418,7 +431,7 @@ def test_build_tournament_structure_resolves_field_record(tmp_path: Path) -> Non
     assert st["structure"] == "swiss"
     assert st["standings"], "completed swiss must return populated standings"
     assert st["rounds"], "completed swiss must return populated rounds"
-    assert st["source"] == "index"
+    assert st["source"] == "record"
     assert any(s.get("status") == "champion" for s in st["standings"])
 
 

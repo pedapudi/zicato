@@ -41,6 +41,7 @@ from zicato.query.paths import (
     layout_of,
     read_current_epoch,
 )
+from zicato.query.promoted_head import champion_history
 from zicato.query.run_log import (
     RUN_LOG_DEFAULT_LIMIT,
     build_run_log,
@@ -51,7 +52,6 @@ from zicato.query.runtime_view import (
     read_heartbeat_dict,
 )
 from zicato.query.tournament_view import (
-    _champion_lineage,
     _gen_score_view,
     _opt_metrics,
     _tournament_id_for,
@@ -154,7 +154,7 @@ def build_per_judge_trend(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any
     # walk; an unknown id still yields the empty feed it always did.
     lineage_view = build_lineage_view(paths, epoch_id, include_ratings=False)
     epoch_gens = lineage_view.get("generations", [])
-    spine = _champion_lineage(epoch_gens)
+    spine = champion_history(paths, epoch_id)
     if not spine:
         spine = [g["generation_id"] for g in epoch_gens]
 

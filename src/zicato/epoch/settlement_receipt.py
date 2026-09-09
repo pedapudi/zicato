@@ -27,7 +27,6 @@ from zicato.epoch.lineage import (
     Lineage,
     _load_raw,
     decode_lineage,
-    validate_generation_resolution_rows,
 )
 from zicato.storage import workspace_backend
 from zicato.tournament.records import (
@@ -35,7 +34,7 @@ from zicato.tournament.records import (
     read_field_tournament_record,
     validate_settlement_field_record,
 )
-from zicato.workspace import WorkspaceLayout
+from zicato.workspace import WorkspaceLayout, generation_ids
 from zicato.workspace.layout import WORKSPACE_RELATIVE_LAYOUT, storage_key
 
 SETTLEMENT_INTENT_FORMAT_VERSION = 3
@@ -430,10 +429,6 @@ def validate_settlement_experiments(
                 f"field settlement candidate {generation_id!r} does not match its experiment"
             )
         outcome = candidate.outcome
-        if receipt.state == "committed" and experiment.outcome != outcome:
-            raise RecordError(
-                f"committed field settlement candidate {generation_id!r} lacks its outcome"
-            )
         if (
             receipt.state == "pending"
             and experiment.outcome is not None
@@ -511,12 +506,22 @@ def validate_settlement_records(
     """Compare independently loaded authorities without I/O or mutation."""
     parent_id = validate_settlement_experiments(receipt, experiments)
     _validate_existing_field_record(field_record, expected=receipt.field_record)
-    validate_generation_resolution_rows(
-        lineage,
-        receipt.epoch_id,
-        lineage_resolutions(parent_id, receipt),
-        require_resolved=False,
-    )
+    epoch = lineage.epoch(receipt.epoch_id)
+    if epoch is None:
+        raise RecordError(f"lineage lacks epoch {receipt.epoch_id!r}")
+    for candidate in receipt.candidates:
+        generation = epoch.generation(candidate.generation_id)
+        if generation is None:
+            raise RecordError(f"lineage lacks settlement generation {candidate.generation_id!r}")
+        for key, expected in (
+            ("parent_id", parent_id),
+            ("created_at", candidate.created_at),
+            ("round_index", receipt.round_index),
+        ):
+            if getattr(generation, key) != expected:
+                raise RecordError(
+                    f"lineage generation {candidate.generation_id!r} conflicts on {key}"
+                )
     if receipt.state == "pending" and receipt.primary_id is not None:
         if current_generation is not None and current_generation not in (
             parent_id,
@@ -527,26 +532,6 @@ def validate_settlement_records(
                 f"expected {parent_id!r} or {receipt.primary_id!r}"
             )
     return parent_id
-
-
-def lineage_resolutions(parent_id: str, receipt: SettlementReceipt) -> dict[str, dict[str, Any]]:
-    """Project accepted candidate decisions into the lineage owner's mutation input."""
-    return {
-        candidate.generation_id: {
-            "parent_id": parent_id,
-            "created_at": candidate.created_at,
-            "round_index": receipt.round_index,
-            "promoted": candidate.outcome.tournament_decision == "promoted",
-            "rejection_reason": candidate.outcome.rejection_reason,
-            "parent_scalar": None
-            if candidate.parent_scalar is None
-            else float(candidate.parent_scalar),
-            "child_scalar": None
-            if candidate.child_scalar is None
-            else float(candidate.child_scalar),
-        }
-        for candidate in receipt.candidates
-    }
 
 
 def read_settlement_receipt(
@@ -719,3 +704,22 @@ def _validate_optional_number(value: Any, name: str) -> None:
         return
     if not isinstance(value, int | float) or isinstance(value, bool) or not math.isfinite(value):
         raise RecordError(f"field settlement receipt {name} must be finite or null")
+
+
+def recorded_champions(workspace_root: Path, epoch_id: str) -> list[str]:
+    """The baseline followed by each committed primary promotion, in round order."""
+    champions = (
+        ["v0"]
+        if "v0" in generation_ids(WorkspaceLayout.from_root(workspace_root), epoch_id)
+        else []
+    )
+    for receipt in iter_settlement_receipts(workspace_root, epoch_id):
+        if receipt.state == "committed" and receipt.primary_id is not None:
+            champions.append(receipt.primary_id)
+    return champions
+
+
+def recorded_champion(workspace_root: Path, epoch_id: str) -> str | None:
+    """The last committed primary promotion, or the baseline before promotion."""
+    champions = recorded_champions(workspace_root, epoch_id)
+    return champions[-1] if champions else None

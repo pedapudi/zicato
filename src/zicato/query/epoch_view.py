@@ -11,21 +11,18 @@ from zicato.mutation.inventory import read_mutation_inventory
 from zicato.proposer.brief import brief_goal, load_epoch_brief
 from zicato.query.board_scan import board_entry_id
 from zicato.query.decisions import (
-    experiment_decision,
-    promoted_tristate,
     stamp_experiment_decision,
 )
 from zicato.query.inputs import EpochInputs, capture_generations
 from zicato.query.paths import (
     WorkspacePaths,
     _is_finite,
-    _natural_key,
     _preview,
     _resolve_epoch_id,
     coerce_float,
     layout_of,
 )
-from zicato.query.promoted_head import read_recorded_heads, recorded_head_ids
+from zicato.query.promoted_head import champion_history, current_champion
 from zicato.workspace import WorkspaceLayout, iter_epochs
 from zicato.workspace.config_io import read_workspace_config
 
@@ -287,169 +284,31 @@ def _read_epoch_experiments(
     return experiments
 
 
-def _current_champion(
-    experiments: list[dict[str, Any]], recorded_heads: frozenset[str] = frozenset()
-) -> str | None:
-    """The epoch's REIGNING champion, from the stamped experiment records.
-
-    Walks the promoted champion spine (the same chain
-    :func:`compute_epoch_delta_summary` and the tournament view's
-    ``_champion_lineage`` build) and returns its LAST id — the reigning
-    generation. When nothing is promoted yet, the parentless seed (round
-    0's incoming champion) is the champion; ``None`` when the epoch has
-    no generations at all.
-
-    The spine BRANCHES wherever a round promoted a SET: every member carries
-    the lineage promoted flag, but only one headed the round and defended
-    afterwards, and which one is not a lineage fact
-    (:mod:`zicato.query.promoted_head` states where that authority lives).
-    ``recorded_heads`` is the set the runner recorded, and it resolves the
-    branch. Natural order is the deterministic TIEBREAK for a branch no
-    record survives to explain, which yields a stable answer rather than a
-    correct one.
-    """
-    by_gen: dict[str, dict[str, Any]] = {}
-    promoted: set[str] = set()
-    for exp in experiments:
-        gid = exp.get("generation_id")
-        if not isinstance(gid, str) or not gid:
-            continue
-        by_gen[gid] = exp
-        if exp.get("promoted") is True:
-            promoted.add(gid)
-
-    def _head(candidates: list[str]) -> str:
-        """The recorded head among ``candidates``, else the first of them."""
-        return next((gid for gid in candidates if gid in recorded_heads), candidates[0])
-
-    if promoted:
-        children: dict[str, list[str]] = {}
-        roots: list[str] = []
-        # Natural order throughout, so every candidate list this walk hands to
-        # ``_head`` is already in its tiebreak order (``v2`` before ``v11`` —
-        # the lexicographic sort this walk used put ``v11`` first).
-        for gid in sorted(promoted, key=_natural_key):
-            parent = by_gen[gid].get("parent_generation_id")
-            if isinstance(parent, str) and parent in promoted:
-                children.setdefault(parent, []).append(gid)
-            else:
-                roots.append(gid)
-        if roots:
-            cur = _head(roots)
-            seen = {cur}
-            while cur in children:
-                nxt = _head(children[cur])
-                if nxt in seen:
-                    break
-                cur = nxt
-                seen.add(cur)
-            return cur
-
-    # No promotion yet — the seed (parentless) generation is the champion.
-    for gid in sorted(by_gen, key=_natural_key):
-        parent = by_gen[gid].get("parent_generation_id")
-        if not isinstance(parent, str) or not parent:
-            return gid
-    return None
-
-
 def compute_epoch_delta_summary(
     experiments: list[dict[str, Any]],
+    champions: list[str],
 ) -> dict[str, float | None]:
-    """Aggregate per-experiment ``scalar_score_delta`` for the Epoch view.
+    """Sum recorded deltas for selected champions and for all measured candidates.
 
-    Two numbers fall out of one walk over the per-generation experiment
-    records:
-
-    * ``champion_spine`` — the sum of ``scalar_score_delta`` across the
-      promoted lineage only, i.e. the meta-loop's actual progress.
-      Computed by walking the parent → child chain through promoted
-      generations (the same shape :func:`_champion_lineage` and the
-      analyzer's ``_promoted_lineage`` build). ``None`` when the spine
-      has fewer than two promoted generations — a single promotion is
-      the default first-tournament outcome and does not yet read as
-      meta-loop progress, so the caller renders it as a "—" tile.
-    * ``gross`` — the sum across **every** experiment that carries a
-      finite delta, promoted or not. This is the historical "net" tile
-      and is kept as a secondary signal. ``None`` when no experiment
-      carries a finite delta.
-
-    Both fields are best-effort: a malformed entry (non-dict outcome,
-    non-numeric delta, missing ids) is silently skipped, never raised.
-    The meta-loop's progress is the spine sum; ``gross`` includes
-    rejected experiments and is therefore the wrong headline for
-    framing whether the epoch is moving the loss in the right direction.
+    The champion total requires two measured primary promotions. The gross
+    total includes rejected candidates and candidates retained for recombination.
+    Missing or non-finite measurements contribute to neither total.
     """
-    # Per-generation deltas + a parent → child map confined to promoted
-    # generations. We use the experiment record's `parent_generation_id`
-    # for the edge so the walk does not depend on the SQLite index being
-    # rebuilt (the analyzer's `_promoted_lineage` reads the same field).
-    by_gen: dict[str, dict[str, Any]] = {}
-    promoted_set: set[str] = set()
-    gross_total = 0.0
-    gross_have = False
-    for exp in experiments:
-        if not isinstance(exp, dict):
+    deltas: dict[str, float] = {}
+    for experiment in experiments:
+        if not isinstance(experiment, dict):
             continue
-        gid = exp.get("generation_id")
-        if not isinstance(gid, str) or not gid:
+        generation_id = experiment.get("generation_id")
+        outcome = experiment.get("outcome")
+        if not isinstance(generation_id, str) or not isinstance(outcome, dict):
             continue
-        by_gen[gid] = exp
-        outcome = exp.get("outcome")
-        if isinstance(outcome, dict):
-            ds = outcome.get("scalar_score_delta")
-            if isinstance(ds, int | float) and _is_finite(ds):
-                gross_total += float(ds)
-                gross_have = True
-            if promoted_tristate(experiment_decision(exp)) is True:
-                promoted_set.add(gid)
-
-    # Edges among promoted generations only. A promoted child whose
-    # parent is *not* promoted (or is missing) is a spine root.
-    child_of: dict[str, str] = {}
-    roots: list[str] = []
-    for gid in promoted_set:
-        exp = by_gen[gid]
-        parent = exp.get("parent_generation_id")
-        if isinstance(parent, str) and parent in promoted_set:
-            # First-wins so a duplicated edge does not push later
-            # promotions off the chain.
-            child_of.setdefault(parent, gid)
-        else:
-            roots.append(gid)
-
-    # Walk one spine. When the workspace records multiple promotion
-    # roots (e.g. a re-seeded epoch), the sorted-first id is the spine
-    # we report on — matching :func:`_champion_lineage`. The total is
-    # the sum of `scalar_score_delta` for every promoted hop the spine
-    # walks. The tile reads "—" when the spine has zero or one promoted
-    # generation: a single promotion is the default first-tournament
-    # outcome (parent → first child) and not yet meta-loop progress.
-    chain: list[str] = []
-    if roots:
-        chain = [sorted(roots)[0]]
-        seen = {chain[0]}
-        cur = chain[0]
-        while cur in child_of:
-            nxt = child_of[cur]
-            if nxt in seen:
-                break
-            chain.append(nxt)
-            seen.add(nxt)
-            cur = nxt
-    spine_total = 0.0
-    if len(chain) >= 2:
-        for gid in chain:
-            outcome = by_gen[gid].get("outcome")
-            if not isinstance(outcome, dict):
-                continue
-            ds = outcome.get("scalar_score_delta")
-            if isinstance(ds, int | float) and _is_finite(ds):
-                spine_total += float(ds)
-
+        delta = outcome.get("scalar_score_delta")
+        if isinstance(delta, int | float) and _is_finite(delta):
+            deltas[generation_id] = float(delta)
+    selected = [deltas[generation_id] for generation_id in champions if generation_id in deltas]
     return {
-        "champion_spine": spine_total if len(chain) >= 2 else None,
-        "gross": gross_total if gross_have else None,
+        "champion_spine": sum(selected) if len(selected) >= 2 else None,
+        "gross": sum(deltas.values()) if deltas else None,
     }
 
 
@@ -832,14 +691,8 @@ def build_epoch_view(
         layout_of(paths), epoch_id, lineage, inputs=inputs
     )
 
-    # The REIGNING champion — the end of the promoted spine (or the seed
-    # while nothing is promoted). The ONE champion pointer the frontend
-    # reads instead of re-scanning the generation list. The recorded heads
-    # resolve the spine wherever a multi-promote branched it; the runtime
-    # ``current_generation`` marker stays unread (see promoted_head).
-    view["current_champion"] = _current_champion(
-        view["experiments"], recorded_head_ids(read_recorded_heads(paths, epoch_id))
-    )
+    # Completed rounds name the primary champion; ancestry records parent relationships.
+    view["current_champion"] = current_champion(paths, epoch_id)
     champion = lineage.get(view["current_champion"])
     view["champion_record"] = dict(champion) if champion is not None else None
     if champion is not None:
@@ -859,7 +712,9 @@ def build_epoch_view(
     # the gross sum across *every* experiment is kept as a secondary
     # signal but is the wrong number to lead with (it includes rejected
     # challengers, which never enter the lineage).
-    view["delta_scalar_summary"] = compute_epoch_delta_summary(view["experiments"])
+    view["delta_scalar_summary"] = compute_epoch_delta_summary(
+        view["experiments"], champion_history(paths, epoch_id)
+    )
 
     # Journal: epoch-level markdown log of hypothesis+outcome rounds.
     from zicato.epoch.journal import render_journal_section

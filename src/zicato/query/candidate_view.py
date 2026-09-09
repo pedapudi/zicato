@@ -24,7 +24,6 @@ from zicato.epoch._storage import RecordError
 from zicato.epoch.lineage import Lineage, load_lineage
 from zicato.epoch.settlement_receipt import read_settlement_receipt
 from zicato.query.epoch_view import (
-    _current_champion,
     _read_epoch_experiments,
     _tournament_block_from_scoring,
 )
@@ -41,7 +40,7 @@ from zicato.query.judge_view import (
 )
 from zicato.query.lineage_view import build_lineage_view
 from zicato.query.paths import WorkspacePaths, coerce_float, layout_of
-from zicato.query.promoted_head import read_recorded_heads, recorded_head_ids
+from zicato.query.promoted_head import current_champion
 from zicato.query.racing_view import build_racing_field
 from zicato.query.runtime_view import read_active_tournament_dict
 from zicato.query.tournament_view import build_bracket, build_matchup_grid
@@ -85,7 +84,9 @@ def _comparison(grid: dict[str, Any] | None, per_entry: dict[str, Any]) -> dict[
     One row per entry of the matchup grid, projected to the fields the figure
     reads, plus the drift sums over the entries both sides ran (so the two
     sums cover the same boards) and whether the drift channel carries
-    information for this pair. A candidate with no grid (the seed, or the
+    information for this pair. The score mean is unweighted and covers only
+    paired task measurements; promotion uses its own recorded aggregates.
+    A candidate with no grid (the seed, or the
     reigning champion) sums its own drift losses and answers the drift
     question from its own per-entry read.
     """
@@ -93,6 +94,9 @@ def _comparison(grid: dict[str, Any] | None, per_entry: dict[str, Any]) -> dict[
     champion_sigma: float | None = None
     candidate_sigma: float | None = None
     drift_present: bool | None = None
+    score_deltas = []
+    displayed_entries = {entry["entry_id"]: entry for entry in per_entry.get("entries", [])}
+
     rows = grid.get("entry_grid") if isinstance(grid, dict) else None
     if isinstance(grid, dict):
         drift_present = grid.get("drift_present") is not False
@@ -111,11 +115,14 @@ def _comparison(grid: dict[str, Any] | None, per_entry: dict[str, Any]) -> dict[
             "champion_drift_loss": parent_drift,
             "decided_by": row.get("decided_by"),
         }
+        delta = coerce_float(row.get("delta_score"))
+        if delta is not None:
+            score_deltas.append(delta)
         if parent_drift is not None and child_drift is not None:
             champion_sigma = (champion_sigma or 0.0) + parent_drift
             candidate_sigma = (candidate_sigma or 0.0) + child_drift
     if candidate_sigma is None:
-        for entry in per_entry.get("entries", []):
+        for entry in displayed_entries.values():
             drift = coerce_float(entry.get("drift_loss")) if isinstance(entry, dict) else None
             if drift is not None:
                 candidate_sigma = (candidate_sigma or 0.0) + drift
@@ -132,6 +139,10 @@ def _comparison(grid: dict[str, Any] | None, per_entry: dict[str, Any]) -> dict[
         "candidate_sigma": candidate_sigma,
         "delta_sigma": delta_sigma,
         "drift_present": drift_present,
+        "mean_delta_score": sum(score_deltas) / len(score_deltas) if score_deltas else None,
+        "compared_score_count": len(score_deltas),
+        "passed_count": sum(entry.get("pass_fail") is True for entry in displayed_entries.values()),
+        "entry_count": len(displayed_entries),
     }
 
 
@@ -385,9 +396,7 @@ def build_candidate_dossier(
         if coordinate is not None
         else None
     )
-    champion = _current_champion(
-        experiments, recorded_head_ids(read_recorded_heads(paths, epoch_id))
-    )
+    champion = current_champion(paths, epoch_id)
     block = _tournament_block_from_scoring(inputs.scoring.copy())
     structure = str(block.get("structure") or "gauntlet") if isinstance(block, dict) else "gauntlet"
 

@@ -169,6 +169,10 @@ def _bootstrap_workspace_without_v0_marker(tmp_path: Path) -> tuple[Path, str]:
         ),
     )
 
+    from tests._workspace_support import complete_round
+
+    complete_round(ws, epoch, ["v1"], primary_id="v1")
+    complete_round(ws, epoch, ["v2"], primary_id=None)
     return ws, epoch
 
 

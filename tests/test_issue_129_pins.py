@@ -291,7 +291,7 @@ def _report_data(generations: list[GenerationView]) -> EpochReportData:
             kwargs[f.name] = False
         else:
             kwargs[f.name] = ""
-    return EpochReportData(**kwargs)  # type: ignore[arg-type]
+    return EpochReportData(**kwargs, champion_history=("v0",))  # type: ignore[arg-type]
 
 
 def _stalled_epoch(rounds: int = 20, delta: float = -0.043) -> EpochReportData:

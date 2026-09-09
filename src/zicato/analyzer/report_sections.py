@@ -554,9 +554,9 @@ def render_score_sparkline(data: EpochReportData, width: int = 28) -> str:
         lo -= spread
         hi += spread
     label_width = max(len(g.generation_id) for g in gens)
-    current_idx = _champion_index(gens)
+    champion = data.champion_history[-1] if data.champion_history else None
     body: list[str] = []
-    for i, g in enumerate(gens):
+    for g in gens:
         ratio = (g.cumulative_scalar - lo) / (hi - lo) if hi > lo else 0.5
         ratio = max(0.0, min(1.0, ratio))
         filled = int(round(ratio * width))
@@ -570,47 +570,16 @@ def render_score_sparkline(data: EpochReportData, width: int = 28) -> str:
             f"{g.generation_id:<{label_width}}: {bar}  "
             f"{_fmt_delta(g.cumulative_scalar)}  {tail}"
         )
-        if i == current_idx:
+        if g.generation_id == champion:
             line = line.rstrip() + "   <- current"
         body.append(line.rstrip())
     return "```\n" + "\n".join(body) + "\n```"
 
 
-def _champion_index(gens: list[GenerationView]) -> int:
-    """Index of the generation in force: last promoted, else the baseline.
-
-    Falls back to the last row only when the view carries neither a
-    promotion nor a baseline (nothing better is knowable).
-    """
-    champion = -1
-    for i, g in enumerate(gens):
-        if g.is_baseline or g.decision == "promoted":
-            champion = i
-    return champion if champion >= 0 else len(gens) - 1
-
-
 def _promoted_lineage(data: EpochReportData) -> list[GenerationView]:
-    """Return the baseline plus every promoted generation, in lineage order."""
-    by_parent: dict[str, GenerationView] = {}
-    baseline: GenerationView | None = None
-    for g in data.generations:
-        if g.is_baseline and baseline is None:
-            baseline = g
-        elif g.decision == "promoted":
-            by_parent[g.parent_generation_id] = g
-    if baseline is None:
-        return []
-    chain: list[GenerationView] = [baseline]
-    current = baseline.generation_id
-    seen = {current}
-    while current in by_parent:
-        nxt = by_parent[current]
-        if nxt.generation_id in seen:
-            break
-        chain.append(nxt)
-        seen.add(nxt.generation_id)
-        current = nxt.generation_id
-    return chain
+    """Return the recorded champions with available measurements, in round order."""
+    generations = {generation.generation_id: generation for generation in data.generations}
+    return [generations[gid] for gid in data.champion_history if gid in generations]
 
 
 def render_drift_movement_table(data: EpochReportData) -> str:

@@ -166,6 +166,20 @@ def _build_index(layout: WorkspaceLayout) -> None:
         },
     )
 
+    from tests._workspace_support import write_tournament_structure
+
+    write_tournament_structure(
+        layout.root,
+        EPOCH,
+        structure="swiss",
+        competitors=[
+            {"generation_id": "v0", "role": "champion"},
+            {"generation_id": "v1", "role": "challenger"},
+        ],
+        rounds=rounds,
+        standings=standings,
+    )
+
 
 # ---------------------------------------------------------------------------
 # rating_by_generation — the shared best-effort join
@@ -248,7 +262,7 @@ def test_standings_carry_the_rating_triple(tmp_path: Path) -> None:
     layout = _workspace(tmp_path)
     _build_index(layout)
     st = build_tournament_structure(WorkspacePaths(layout.root), EPOCH, TOURN)
-    assert st["source"] == "index"
+    assert st["source"] == "record"
     by_gid = {s["generation_id"]: s for s in st["standings"]}
     assert by_gid["v1"]["elo"] == 1534.0
     assert by_gid["v1"]["elo_se"] is None
