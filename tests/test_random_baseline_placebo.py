@@ -28,6 +28,7 @@ from tests._orchestrator_harness import (
     install_telemetry_stubs,
     run_evolve_once,
 )
+from tests._workspace_support import read_experiment_record
 from zicato.core.experiment import PLACEBO_HYPOTHESIS_MARKER
 from zicato.core.types import (
     ExperimentalConfig,
@@ -37,6 +38,8 @@ from zicato.core.types import (
 )
 from zicato.epoch.journal import write_seed_experiment
 from zicato.epoch.lifecycle import _scoring_from_dict, new_epoch
+from zicato.epoch.lineage import load_lineage
+from zicato.evolve.generation_phase import current_generation
 from zicato.evolve.placebo import (
     build_placebo_experiment,
     is_placebo_experiment,
@@ -302,17 +305,16 @@ def test_gauntlet_placebo_always_rejected_and_no_alarm(tmp_path: Path) -> None:
     # hypothesis and a rejected outcome (identical trees ⇒ no improvement).
     exp_path = workspace / "epochs" / epoch_id / "generations" / "v1-placebo" / "experiment.json"
     assert exp_path.exists()
-    exp = json.loads(exp_path.read_text())
+    exp = read_experiment_record(exp_path)
     assert exp["hypothesis"]["core_idea"].startswith(PLACEBO_HYPOTHESIS_MARKER)
     assert exp["outcome"]["tournament_decision"] == "rejected"
     assert exp["outcome"]["scalar_score_delta"] == 0.0
 
     # The champion pointer advanced to the REAL winner, never the placebo.
-    marker = workspace / "epochs" / epoch_id / "current_generation"
-    assert marker.read_text().strip() == "v1"
+    assert current_generation(workspace, epoch_id) == "v1"
 
     # Lineage records the placebo as a dead branch of the round's parent.
-    lineage = json.loads((workspace / "lineage.json").read_text())
+    lineage = load_lineage(workspace).to_dict()
     nodes = {
         n["id"]: n
         for ep in lineage.get("epochs", [])
@@ -360,10 +362,8 @@ def test_gauntlet_rigged_gate_fires_critical_alarm(
     workspace, epoch_id = _bootstrap_t0(tmp_path, every_n=1)
     _run_one_round(workspace, epoch_id)
 
-    exp = json.loads(
-        (
-            workspace / "epochs" / epoch_id / "generations" / "v1-placebo" / "experiment.json"
-        ).read_text()
+    exp = read_experiment_record(
+        workspace / "epochs" / epoch_id / "generations" / "v1-placebo" / "experiment.json"
     )
     assert exp["outcome"]["tournament_decision"] == "promoted"
 
@@ -374,8 +374,7 @@ def test_gauntlet_rigged_gate_fires_critical_alarm(
     assert report["has_critical"] is True
 
     # Even a promoted placebo never becomes the champion.
-    marker = workspace / "epochs" / epoch_id / "current_generation"
-    assert marker.read_text().strip() != "v1-placebo"
+    assert current_generation(workspace, epoch_id) != "v1-placebo"
 
 
 # ---------------------------------------------------------------------------
@@ -481,7 +480,7 @@ def test_multi_challenger_field_gets_extra_placebo_slot(
     assert outcome.proposed_generation_id == "v1"
 
     gens = workspace / "epochs" / epoch_id / "generations"
-    placebo = json.loads((gens / "v3" / "experiment.json").read_text())
+    placebo = read_experiment_record(gens / "v3" / "experiment.json")
     assert placebo["hypothesis"]["core_idea"].startswith(PLACEBO_HYPOTHESIS_MARKER)
     assert placebo["outcome"]["tournament_decision"] == "rejected"
 
@@ -498,6 +497,6 @@ def test_multi_challenger_field_gets_extra_placebo_slot(
     # writes no health report file, so assert at the detector level over the
     # persisted experiments — exactly what the report would have folded in.)
     experiments = [
-        json.loads((gens / gid / "experiment.json").read_text()) for gid in ("v1", "v2", "v3")
+        read_experiment_record(gens / gid / "experiment.json") for gid in ("v1", "v2", "v3")
     ]
     assert detect_placebo_promoted(experiments) == []

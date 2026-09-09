@@ -862,7 +862,13 @@ def build_epoch_view(
     view["delta_scalar_summary"] = compute_epoch_delta_summary(view["experiments"])
 
     # Journal: epoch-level markdown log of hypothesis+outcome rounds.
-    view["journal"] = _read_text_best_effort(epoch_dir / "journal.md")
+    from zicato.epoch.journal import render_journal_section
+
+    view["journal"] = "".join(
+        render_journal_section(body)
+        for generation_id, captured in inputs.generations.items()
+        if generation_id != "v0" and (body := captured.body.copy()) is not None
+    )
 
     # Frozen goal — Task #178's first-class field on EpochConfig and
     # the index ``epochs.goal`` column. The index is best-effort; on a

@@ -276,8 +276,8 @@ system under test's source. zicato is the only thing that does either.
    │                        │                                        │
    │                        ▼                                        │
    │              ┌────────────────────┐                             │
-   │              │  Journal + outcome │  experiment.json `outcome`  │
-   │              │                    │  block + journal.md row     │
+   │              │  Commit round      │  outcomes + tournament      │
+   │              │                    │  details + primary promotion│
    │              └─────────┬──────────┘                             │
    │                        │                                        │
    │                        ▼                                        │
@@ -380,22 +380,18 @@ async def on_promote(
 ) -> None: ...
 ```
 
-**Why it exists.** For most targets the evolved artifact IS the
-snapshot: the promoted tree plus the `current_generation` marker is the
-whole story, and there is nothing further to do. A target whose real
-state lives somewhere the mutable tree cannot reach — a database row, a
-served artifact, a cache, a remote config — has no such closure. Without
-the hook, such a target has to poll `lineage.json` from outside the loop
-and reconcile the promoted head itself.
+**Purpose.** The hook applies a committed promotion to external target state,
+such as a database row, served artifact, cache, or remote configuration.
+Candidate source is already retained by the generation store. The committed
+round record identifies which generation supplies the next round's parent.
 
-**When it fires.** At most once per settled promotion, after the canonical
-settlement completes. The shared settlement path calls
+**When it fires.** At most once per settled promotion, after the round record
+is committed. The settlement path calls
 `zicato.evolve.promote_hook.fire_on_promote`; a rejected round never calls it.
-Under a multi-challenger structure with an operator multi-promote, the hook
-receives only the primary head: the generation named by `current_generation`,
-rather than every generation that lineage marks `promoted`.
+When an operator promotes several candidates, the hook receives only the
+primary generation named in the round record.
 
-The retained field-settlement receipt tracks hook delivery. A round with no
+The retained round record tracks hook delivery. A round with no
 promotion or no callable hook records `not_applicable`; a callable hook starts
 as `pending`. Immediately before the external call, zicato records
 `delivery_unknown`, then resolves it to `succeeded` or `failed` only after the
@@ -405,14 +401,13 @@ delivery.
 
 **Failure semantics: best-effort.** A hook that raises, or that exceeds
 `ON_PROMOTE_TIMEOUT_SECONDS` (120s), NEVER un-promotes the generation
-and never fails the round. The promotion is already durable on every
-store by the time the hook runs, so reporting the failure is all that a
-failure can honestly do. It is reported twice: an `ERROR` log carrying
+and never fails the round. The committed round already makes the promotion
+durable. Failure is reported in an `ERROR` log carrying
 the traceback, and an `on_promote_hook_failed` WARNING in the round's
 loop-health report naming the adapter, the generation, and the exception
 type. Reconciling the external side effect is then the operator's job.
 An adapter that needs promotion to be all-or-nothing must make its own
-side effect idempotent and reconcile from `lineage.json`.
+side effect idempotent and reconcile from committed round records.
 
 **Optionality.** An adapter that declares no `on_promote` is still a
 `HarnessAdapter`: the member is listed in `OPTIONAL_ADAPTER_MEMBERS`, and
@@ -430,11 +425,12 @@ writes, and hands to a proposer. That is a different trust boundary,
 and it would need its own security review to justify. Non-Python
 targets use the polling fallback below rather than a command hook.
 
-**Fallback for targets that cannot host a Python hook.** Poll
-`lineage.json` for the promoted head — the last entry with
-`promoted: true` — and reconcile against your own record of the last
-head you applied. Polling stays supported and correct; the hook removes
-the polling latency and the second bookkeeping store. See
+**Fallback for targets that cannot host a Python hook.** Read committed
+`epochs/<epoch>/rounds/<round>/field_settlement.json` records in round order.
+The most recent non-null `primary_id` identifies the promoted head; before
+any promotion, the head is `v0`. Reconcile that head against the last
+generation applied to the external target. The hook avoids polling latency
+when the target supports a Python callback. See
 [DOGFOOD-TARGETS.md](DOGFOOD-TARGETS.md) §6.
 
 ### 4.2 Board
@@ -812,8 +808,9 @@ SQLite sidecar — `.zicato/index.db` — that projects the canonical
 artifacts into a relational schema.
 
 **Consumes.** Every `gen_score.json`, `experiment.json`,
-`patches/*.json`, `runs/*/loss.json`, and `lineage.json` in the
-workspace.
+`patches/*.json`, `runs/*/loss.json`, `lineage.json`, and committed
+`rounds/*/field_settlement.json` records in the workspace. Experiment and
+lineage readers incorporate the committed outcomes before index projection.
 
 **Produces.** Nine tables (`epochs`, `generations`,
 `experiments`, `patches`, `runs`, `loss_profiles`,
@@ -880,12 +877,10 @@ analyzable, without the operator hand-writing the prose.
 
 **Per-round:**
 
-- `experiment.json` is augmented with an `outcome` block immediately
-  after the tournament decision: actual drift movements, per-movement
-  match against the hypothesis, score delta, decision, rejection
-  reason if any.
-- `journal.md` appends a short paragraph: `core_idea`,
-  `drift_loss_delta`, `pass_rate_delta`, `tournament_decision`.
+- The committed round record contains candidate outcomes: actual metric
+  movements, agreement with the hypothesis, score delta, decision, and reason.
+- The journal renderer combines proposals with those outcomes and produces a
+  section for each generation. There is no separate journal write.
 
 **Per-epoch close:**
 
@@ -1097,7 +1092,7 @@ configured at runtime, so workspaces never cross-talk.
           gen_score.json
         v1/
           snapshot/
-          experiment.json          # hypothesis + patch_ids + outcome
+          experiment.json          # hypothesis + patch references
           patches/
             {patch_id}.json        # one file per patch
           runs/{entry_id}/seed-{seed}/
@@ -1105,12 +1100,13 @@ configured at runtime, so workspaces never cross-talk.
             loss.{purpose}.r{draw}.json
           gen_score.json
         ...
-      current_generation           # marker: id of the promoted head
+      rounds/
+        {round_index}/
+          field_settlement.json    # outcomes, tournament details, primary promotion
       patterns/
         round_{NNN}.json           # detector output, one per round
       loop_health/
         round_{NNN}.json           # loop-health report, one per round
-      journal.md                   # running narrative across generations
       analysis.md                  # generated at epoch close
   index.db                         # derived SQLite analytical index (rebuildable)
   lineage.json                     # cross-epoch generation DAG

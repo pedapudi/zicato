@@ -27,6 +27,8 @@ from zicato.core.types import (
     MetricCount,
 )
 from zicato.epoch.lifecycle import current_epoch_id, list_epochs
+from zicato.epoch.lineage import load_lineage
+from zicato.evolve.generation_phase import current_generation
 
 # ---------------------------------------------------------------------------
 # LLM stubs
@@ -365,7 +367,7 @@ def test_evolve_auto_creates_then_rolls_on_rubric_edit(
     assert "hello [v1]" in agent_files[0].read_text()
 
     # Cross-epoch lineage edge recorded.
-    lineage = json.loads((workspace / "lineage.json").read_text())
+    lineage = load_lineage(workspace).to_dict()
     second = next(e for e in lineage["epochs"] if e["id"] == epoch_after_second)
     assert second["v0_parent"] == f"{epoch_after_first}:v1"
 
@@ -434,8 +436,8 @@ def test_pending_settlement_finishes_before_contract_drift_rolls_epoch(
     )
     assert receipt["state"] == "committed"
     assert read_experiment(workspace, crashed_epoch, "v1").outcome is not None
-    assert (workspace / "epochs" / crashed_epoch / "current_generation").read_text().strip() == "v1"
-    lineage = json.loads((workspace / "lineage.json").read_text(encoding="utf-8"))
+    assert current_generation(workspace, crashed_epoch) == "v1"
+    lineage = load_lineage(workspace).to_dict()
     rolled = next(row for row in lineage["epochs"] if row["id"] == rolled_epoch)
     assert rolled["v0_parent"] == f"{crashed_epoch}:v1"
 
@@ -490,7 +492,7 @@ def test_contract_drift_discards_unsettled_candidate_before_closing_epoch(
     rolled_epoch = current_epoch_id(workspace)
     assert rolled_epoch is not None and rolled_epoch != crashed_epoch
     assert not (workspace / "epochs" / crashed_epoch / "generations" / "v1").exists()
-    lineage = json.loads((workspace / "lineage.json").read_text(encoding="utf-8"))
+    lineage = load_lineage(workspace).to_dict()
     crashed = next(row for row in lineage["epochs"] if row["id"] == crashed_epoch)
     assert all(row["id"] != "v1" for row in crashed["generations"])
     rolled = next(row for row in lineage["epochs"] if row["id"] == rolled_epoch)

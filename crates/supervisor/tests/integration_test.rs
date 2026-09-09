@@ -2328,3 +2328,44 @@ async fn divergence_audit_flags_a_promoted_mismatch_end_to_end() {
     let _ = shutdown_tx.send(());
     let _ = server_shutdown.send(());
 }
+
+#[test]
+fn lineage_reads_the_committed_round_outcome() {
+    let (_tmp, paths) = make_workspace();
+    let generation = paths.epochs.join("epoch/generations/v1");
+    std::fs::create_dir_all(&generation).unwrap();
+    std::fs::write(
+        generation.join("experiment.json"),
+        serde_json::json!({"id": "proposal", "round_index": 0}).to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        paths.lineage(),
+        serde_json::json!({"epochs": [{"id": "epoch", "generations": [
+            {"id": "v1", "parent_id": "v0", "promoted": null}
+        ]}]})
+        .to_string(),
+    )
+    .unwrap();
+    let round_dir = paths.epochs.join("epoch/rounds/0");
+    std::fs::create_dir_all(&round_dir).unwrap();
+    let mut receipt = serde_json::json!({
+        "epoch_id": "epoch", "round_index": 0, "state": "pending",
+        "candidates": [{"generation_id": "v1", "experiment_id": "proposal",
+            "outcome": {"tournament_decision": "promoted"}}]
+    });
+    let path = round_dir.join("field_settlement.json");
+    std::fs::write(&path, receipt.to_string()).unwrap();
+    assert_eq!(
+        reader::build_lineage_view(&paths).generations[0].promoted,
+        None
+    );
+    receipt["state"] = serde_json::json!("committed");
+    std::fs::write(&path, receipt.to_string()).unwrap();
+    let view = reader::build_lineage_view(&paths);
+    assert_eq!(view.generations[0].promoted, Some(true));
+    assert_eq!(
+        view.generations[0].parent_generation_id.as_deref(),
+        Some("v0")
+    );
+}

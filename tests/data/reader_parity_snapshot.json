@@ -299,9 +299,9 @@
           "champion": "v0",
           "champion_scalar": 0.5,
           "deciding_rule": null,
-          "decision": "promoted",
-          "delta_pass_rate": 0.0,
-          "delta_scalar": -0.010000000000000009,
+          "decision": "rejected",
+          "delta_pass_rate": null,
+          "delta_scalar": null,
           "epoch_id": "e1",
           "live": null,
           "margin": 0.01,
@@ -317,36 +317,7 @@
           "reason": "",
           "regressed_namespace": null,
           "regressed_predicate": null,
-          "rules": [
-            {
-              "detail": "disabled",
-              "fired": false,
-              "id": "regression_suite",
-              "label": "Regression suite",
-              "status": "skipped"
-            },
-            {
-              "detail": "0.50 → 0.49 (-0.01; needs ≤ -0.01)",
-              "fired": false,
-              "id": "scalar_margin",
-              "label": "Scalar margin",
-              "status": "pass"
-            },
-            {
-              "detail": "all preserved",
-              "fired": false,
-              "id": "pass_rate_monotonicity",
-              "label": "Pass-rate monotonicity",
-              "status": "pass"
-            },
-            {
-              "detail": "namespace aggregates not recorded",
-              "fired": false,
-              "id": "namespace_monotonicity",
-              "label": "Namespace monotonicity",
-              "status": "unknown"
-            }
-          ],
+          "rules": [],
           "scalar_components": {
             "challenger": null,
             "champion": null
@@ -1065,7 +1036,7 @@
       ]
     },
     "holdout": null,
-    "journal": "",
+    "journal": "## v1 — hyp e1 v1\n\n**proposed_at**: 2026-01-01T00:00:00Z\n**modulating**: (none)\n**outcome**: rejected (Δscalar=+0.020, Δdrift_loss=+0.000, Δpass_rate=+0.000)\n",
     "mutations": [],
     "scoring": {
       "pass_weight": 1.0,
@@ -1540,9 +1511,9 @@
     "champion": "v0",
     "champion_scalar": 0.5,
     "deciding_rule": null,
-    "decision": "promoted",
-    "delta_pass_rate": 0.0,
-    "delta_scalar": -0.010000000000000009,
+    "decision": "rejected",
+    "delta_pass_rate": null,
+    "delta_scalar": null,
     "epoch_id": "e1",
     "live": null,
     "margin": 0.01,
@@ -1558,36 +1529,7 @@
     "reason": "",
     "regressed_namespace": null,
     "regressed_predicate": null,
-    "rules": [
-      {
-        "detail": "disabled",
-        "fired": false,
-        "id": "regression_suite",
-        "label": "Regression suite",
-        "status": "skipped"
-      },
-      {
-        "detail": "0.50 → 0.49 (-0.01; needs ≤ -0.01)",
-        "fired": false,
-        "id": "scalar_margin",
-        "label": "Scalar margin",
-        "status": "pass"
-      },
-      {
-        "detail": "all preserved",
-        "fired": false,
-        "id": "pass_rate_monotonicity",
-        "label": "Pass-rate monotonicity",
-        "status": "pass"
-      },
-      {
-        "detail": "namespace aggregates not recorded",
-        "fired": false,
-        "id": "namespace_monotonicity",
-        "label": "Namespace monotonicity",
-        "status": "unknown"
-      }
-    ],
+    "rules": [],
     "scalar_components": {
       "challenger": null,
       "champion": null
@@ -2359,7 +2301,7 @@
     "epoch_id": "e0",
     "field_status": [],
     "rounds": [],
-    "source": "loss_files",
+    "source": "unavailable",
     "standings": [],
     "structure": "gauntlet",
     "structure_params": {},
@@ -2370,7 +2312,7 @@
     "epoch_id": "e1",
     "field_status": [],
     "rounds": [],
-    "source": "loss_files",
+    "source": "unavailable",
     "standings": [],
     "structure": "gauntlet",
     "structure_params": {},
@@ -2381,7 +2323,7 @@
     "epoch_id": "e2",
     "field_status": [],
     "rounds": [],
-    "source": "loss_files",
+    "source": "unavailable",
     "standings": [],
     "structure": "gauntlet",
     "structure_params": {},

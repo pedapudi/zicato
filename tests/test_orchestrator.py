@@ -33,8 +33,11 @@ from tests._orchestrator_harness import (
     run_evolve_once,
     target_call_llm,
 )
+from tests._workspace_support import read_experiment_record
 from zicato.core.types import TournamentStructure
+from zicato.epoch.journal import read_journal
 from zicato.epoch.lifecycle import new_epoch
+from zicato.evolve.generation_phase import current_generation
 
 # ---------------------------------------------------------------------------
 # LLM stub callables — two distinct objects so the two-callable check passes.
@@ -83,7 +86,7 @@ def test_evolve_once_promotes_on_improvement(
     # experiment.json + patches/{id}.json exist for v1.
     v1_dir = workspace / "epochs" / epoch_id / "generations" / "v1"
     assert (v1_dir / "experiment.json").exists()
-    body = json.loads((v1_dir / "experiment.json").read_text())
+    body = read_experiment_record(v1_dir / "experiment.json")
     assert body["outcome"]["tournament_decision"] == "promoted"
     assert len(body["patch_ids"]) == 1
     patch_file = v1_dir / "patches" / f"{body['patch_ids'][0]}.json"
@@ -93,13 +96,11 @@ def test_evolve_once_promotes_on_improvement(
     snap_text = (v1_dir / "snapshot" / "agent.py").read_text()
     assert "hello [v1]" in snap_text
 
-    # current_generation marker bumped.
-    marker = workspace / "epochs" / epoch_id / "current_generation"
-    assert marker.exists()
-    assert marker.read_text().strip() == "v1"
+    # The committed round advances the champion.
+    assert current_generation(workspace, epoch_id) == "v1"
 
     # Journal entry appended.
-    journal = (workspace / "epochs" / epoch_id / "journal.md").read_text()
+    journal = read_journal(workspace, epoch_id)
     assert "Tag the greeting literal for candidate v1." in journal
 
     # The real health assessment publishes the selected epoch.
@@ -110,7 +111,7 @@ def test_evolve_once_promotes_on_improvement(
 
     # Patches are stored separately from the experiment body.
     v1 = workspace / "epochs" / epoch_id / "generations" / "v1"
-    body = json.loads((v1 / "experiment.json").read_text())
+    body = read_experiment_record(v1 / "experiment.json")
     assert "patches" not in body
     assert isinstance(body["patch_ids"], list)
     assert len(body["patch_ids"]) == 1
@@ -285,7 +286,7 @@ def test_evolve_once_rejects_when_child_regresses(
 
     # Experiment.json still persisted with the rejected outcome.
     v1_dir = workspace / "epochs" / epoch_id / "generations" / "v1"
-    body = json.loads((v1_dir / "experiment.json").read_text())
+    body = read_experiment_record(v1_dir / "experiment.json")
     assert body["outcome"]["tournament_decision"] == "rejected"
 
 
@@ -360,7 +361,7 @@ def test_evolve_once_rejects_when_the_episode_cannot_repair_its_edit(
     assert outcome.rejection_reason
 
     # A clean, append-only journal entry was still written.
-    journal = (workspace / "epochs" / epoch_id / "journal.md").read_text()
+    journal = read_journal(workspace, epoch_id)
     assert journal.strip()  # non-empty — the round left a record
 
 

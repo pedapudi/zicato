@@ -43,7 +43,10 @@ from tests._orchestrator_harness import (
     run_evolve_once,
     target_call_llm,
 )
+from tests._workspace_support import read_experiment_record
 from zicato.core.types import LossProfile, MetricCount, TournamentStructure
+from zicato.epoch.journal import read_journal
+from zicato.evolve.generation_phase import current_generation
 from zicato.orchestrator import DEFERRED_INFRA_DECISION, EvolveRoundOutcome
 from zicato.runtime.resume import prepare_resume
 
@@ -143,15 +146,15 @@ def test_all_infra_aborted_round_defers_un_outcomed(
 
     # The experiment PERSISTS un-outcomed — the resume-compatible shape.
     v1_dir = workspace / "epochs" / epoch_id / "generations" / "v1"
-    body = json.loads((v1_dir / "experiment.json").read_text())
+    body = read_experiment_record(v1_dir / "experiment.json")
     assert body["outcome"] is None
 
     # Nothing was finalized: no journal line, no champion advance, and the
     # fast-mode score caches were NOT poisoned with the aborted aggregates.
     journal = workspace / "epochs" / epoch_id / "journal.md"
-    assert not journal.exists() or "v1" not in journal.read_text()
+    assert not journal.exists() or "v1" not in read_journal(workspace, epoch_id)
     marker = workspace / "epochs" / epoch_id / "current_generation"
-    assert not marker.exists() or marker.read_text().strip() == "v0"
+    assert not marker.exists() or current_generation(workspace, epoch_id) == "v0"
     assert not (v1_dir / "gen_score.json").exists()
 
     # The round health report carries the infra_outage WARNING.
@@ -190,10 +193,8 @@ def test_field_infrastructure_threshold_accumulates_across_matchups(
     # its crowning matchup do, so the entire round must defer.
     assert outcome.tournament_decision == DEFERRED_INFRA_DECISION
     for generation_id in ("v1", "v2"):
-        body = json.loads(
-            (
-                workspace / "epochs" / epoch_id / "generations" / generation_id / "experiment.json"
-            ).read_text()
+        body = read_experiment_record(
+            workspace / "epochs" / epoch_id / "generations" / generation_id / "experiment.json"
         )
         assert body["outcome"] is None
 
@@ -284,7 +285,7 @@ def test_threshold_off_settles_exactly_as_today(
 
     assert outcome.tournament_decision == "rejected"
     v1_dir = workspace / "epochs" / epoch_id / "generations" / "v1"
-    body = json.loads((v1_dir / "experiment.json").read_text())
+    body = read_experiment_record(v1_dir / "experiment.json")
     assert body["outcome"] is not None
     assert body["outcome"]["tournament_decision"] == "rejected"
     # No infra_outage finding without the circuit.

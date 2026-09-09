@@ -19,13 +19,11 @@ from zicato.core.types import (
 from zicato.core.workspace import (
     experiment_json_path,
     generation_dir,
-    journal_path,
     patch_json_path,
     patches_dir,
 )
 from zicato.epoch import (
     ExperimentRecordError,
-    append_journal_entry,
     read_experiment,
     read_journal,
     update_experiment_outcome,
@@ -164,13 +162,11 @@ def test_numeric_patch_preserves_integer_through_record_and_apply(
     )
 
 
-def test_append_journal_entry_creates_file(epoch_root: tuple[Path, str]) -> None:
+def test_generated_journal_creates_file(epoch_root: tuple[Path, str]) -> None:
     ws, eid = epoch_root
     exp = _experiment(outcome=_outcome())
-    append_journal_entry(ws, eid, exp)
-    path = journal_path(ws, eid)
-    assert path.exists()
-    text = path.read_text()
+    write_experiment(ws, eid, exp.generation_id, exp)
+    text = read_journal(ws, eid)
     assert "## v1 — Tighten researcher's prompt to require citations." in text
     assert "**proposed_at**: 2026-04-08T12:00:00+00:00" in text
     assert "**modulating**: researcher.instruction, researcher.description" in text
@@ -180,10 +176,10 @@ def test_append_journal_entry_creates_file(epoch_root: tuple[Path, str]) -> None
     assert "Δpass_rate=+0.050" in text
 
 
-def test_append_journal_entry_without_outcome(epoch_root: tuple[Path, str]) -> None:
+def test_generated_journal_without_outcome(epoch_root: tuple[Path, str]) -> None:
     ws, eid = epoch_root
     exp = _experiment(outcome=None)
-    append_journal_entry(ws, eid, exp)
+    write_experiment(ws, eid, exp.generation_id, exp)
     text = read_journal(ws, eid)
     assert "## v1 —" in text
     assert "**modulating**:" in text
@@ -191,7 +187,7 @@ def test_append_journal_entry_without_outcome(epoch_root: tuple[Path, str]) -> N
     assert "**rejection_reason**:" not in text
 
 
-def test_append_journal_entry_rejected_includes_reason(
+def test_generated_journal_rejected_includes_reason(
     epoch_root: tuple[Path, str],
 ) -> None:
     ws, eid = epoch_root
@@ -201,13 +197,13 @@ def test_append_journal_entry_rejected_includes_reason(
             rejection_reason="pass_rate_regression_on_summarise_short",
         )
     )
-    append_journal_entry(ws, eid, exp)
+    write_experiment(ws, eid, exp.generation_id, exp)
     text = read_journal(ws, eid)
     assert "**outcome**: rejected" in text
     assert "**rejection_reason**: pass_rate_regression_on_summarise_short" in text
 
 
-def test_append_journal_entry_appends_multiple_sections(
+def test_generated_journal_appends_multiple_sections(
     epoch_root: tuple[Path, str],
 ) -> None:
     ws, eid = epoch_root
@@ -217,8 +213,8 @@ def test_append_journal_entry_appends_multiple_sections(
         core_idea="Reduce coordinator re-routing.",
         outcome=_outcome(decision="rejected", rejection_reason="regression"),
     )
-    append_journal_entry(ws, eid, a)
-    append_journal_entry(ws, eid, b)
+    write_experiment(ws, eid, a.generation_id, a)
+    write_experiment(ws, eid, b.generation_id, b)
     text = read_journal(ws, eid)
     assert text.count("## v1 —") == 1
     assert text.count("## v2 —") == 1
@@ -226,7 +222,7 @@ def test_append_journal_entry_appends_multiple_sections(
     assert text.index("## v1 —") < text.index("## v2 —")
 
 
-def test_append_journal_entry_keeps_the_whole_why(
+def test_generated_journal_keeps_the_whole_why(
     epoch_root: tuple[Path, str],
 ) -> None:
     """DELIBERATELY INVERTED (issue #123).
@@ -243,15 +239,13 @@ def test_append_journal_entry_keeps_the_whole_why(
         why="First sentence. Second sentence with more detail.",
         outcome=None,
     )
-    append_journal_entry(ws, eid, exp)
+    write_experiment(ws, eid, exp.generation_id, exp)
     text = read_journal(ws, eid)
     assert "**why**: First sentence. Second sentence with more detail." in text
 
 
-def test_append_journal_entry_missing_epoch_dir(tmp_path: Path) -> None:
-    ws = tmp_path / ".zicato"
-    with pytest.raises(FileNotFoundError):
-        append_journal_entry(ws, "missing", _experiment())
+def test_generated_journal_missing_epoch_dir(tmp_path: Path) -> None:
+    assert read_journal(tmp_path / ".zicato", "missing") == ""
 
 
 def test_read_journal_returns_empty_when_missing(tmp_path: Path) -> None:
@@ -263,7 +257,7 @@ def test_append_journal_handles_empty_modulating(
 ) -> None:
     ws, eid = epoch_root
     exp = _experiment(modulating=(), outcome=None)
-    append_journal_entry(ws, eid, exp)
+    write_experiment(ws, eid, exp.generation_id, exp)
     text = read_journal(ws, eid)
     assert "**modulating**: (none)" in text
 

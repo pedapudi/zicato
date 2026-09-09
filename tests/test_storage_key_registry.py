@@ -92,12 +92,6 @@ _STORAGE_KEYS: tuple[KeyDeclaration, ...] = (
         f"epochs/{EPOCH}/scoring.json",
     ),
     KeyDeclaration(
-        "journal_key",
-        epoch_keys.journal_key(EPOCH),
-        lambda layout: layout.journal(EPOCH),
-        f"epochs/{EPOCH}/journal.md",
-    ),
-    KeyDeclaration(
         "lineage_key",
         epoch_keys.lineage_key(),
         lambda layout: layout.lineage_path,

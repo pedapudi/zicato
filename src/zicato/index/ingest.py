@@ -835,27 +835,10 @@ def _iter_run_entry_ids(workspace_root: Path, epoch_id: str, generation_id: str)
 
 
 def _load_field_tournaments(workspace_root: Path, epoch_id: str) -> list[dict[str, Any]]:
-    """Read an epoch's durable field-tournament snapshots from disk.
+    """Project recorded tournament structures; malformed source prevents a partial rebuild."""
+    from zicato.tournament.records import field_tournament_records
 
-    One ``field-*.json`` per round under the epoch's ``tournaments/``
-    directory (written by the orchestrator at settle time). Each holds the
-    settled field structure — round pairings, Copeland standings,
-    competitors, proposing field-status — for one non-gauntlet round.
-    Absence means the epoch has no field snapshots. A malformed present
-    snapshot prevents a partial index rebuild from appearing complete.
-    """
-    from zicato.core.workspace import field_tournaments_dir  # noqa: PLC0415
-    from zicato.tournament.records import read_field_tournament_record  # noqa: PLC0415
-
-    root = field_tournaments_dir(workspace_root, epoch_id)
-    if not root.exists():
-        return []
-    out: list[dict[str, Any]] = []
-    for child in sorted(root.iterdir()):
-        if not child.is_file() or child.suffix != ".json":
-            continue
-        out.append(read_field_tournament_record(child).to_dict())
-    return out
+    return [record.to_dict() for record in field_tournament_records(workspace_root, epoch_id)]
 
 
 # ---------------------------------------------------------------------------

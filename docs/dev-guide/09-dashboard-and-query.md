@@ -7,9 +7,10 @@
 > `static_assets.py`), and the browser bundle under
 > `dashboard/static/js/` (the SSE spine, the router/shell, the views, the
 > `svg.js` figure grammar, `livestatus.js`, the pipeline stepper, controls).
-> Two doctrines run through all of it: **server authority** (the client
-> renders, it never computes) and **digest-gated rendering** (a no-op
-> heartbeat rebuilds zero DOM).
+> Execution records decisions and tournament progress. Shared framework
+> readers assemble those records and compute requested analyses; the browser
+> handles layout, filtering, navigation, and animation. An unchanged heartbeat
+> leaves the rendered DOM intact.
 >
 > **Prerequisites.** 02-architecture.md (orchestrator vs dashboard as
 > separate OS processes), 07-runtime-and-durability.md §7.1 (files
@@ -25,7 +26,7 @@
 >
 > | ID | Name | Invariant |
 > |----|------|-----------|
-> | DQ1 | server-computes-client-renders | **The server computes; the client renders.** No join, classification, or decision the server owns is re-derived on the client. Bug #4 (the client champion-scan) is the canonical breach. |
+> | DQ1 | execution records decisions; the dashboard presents them | **Execution records decisions and their explanations.** Shared framework readers serve recorded results and reusable analysis. The dashboard presents those results without applying selection policy. |
 > | DQ2 | one spelling per wire field | **One spelling per field on the wire.** `entry_id`, `generation_id`, `ts` (int ms epoch), `pass_fail` (`true`/`false`/`null`), `promoted` (tri-state `true`/`false`/`null`). No aliases, no bare ints the client re-interprets, no default-`false` for an undecided promotion. |
 > | DQ3 | every reader is best-effort | **Every reader is best-effort.** A missing / never-built / transiently-torn input degrades to an empty-or-`None` shape (often with a `note`), never raises. No endpoint built on `zicato.query` returns a 500. |
 > | DQ4 | the query layer is library code | **The query layer is library code and never imports the dashboard.** The import-linter contract "the query layer stays dashboard-free" pins it; the dashboard is a driver on top. |
@@ -34,20 +35,27 @@
 > | DQ7 | verdicts are honest about the noise floor | **Verdicts are honest about the noise floor.** Movement inside the measured A/A floor reads `no_signal` ("no detectable signal"), never "plateaued" or "improving". |
 > | DQ8 | null-degrade under the Rust supervisor | **Every new GET null-degrades on the Rust supervisor.** A payload the Rust reader does not serve returns `null`/empty; the client paints the honest empty state, never a spinner or a crash. |
 > | DQ9 | controls gate on writability | **Controls gate on `read_only:false`; a destructive control takes a two-step confirm.** A successful control write requests immediate readback; content revision also makes the change visible to other clients. |
-> | DQ10 | the champion is the reigning spine end | **`current_champion` is the reigning spine end** — the LAST promoted generation — never the first-scored or the highest-scored; a decision surface names its `deciding_rule`. |
+> | DQ10 | completed rounds identify the champion | **`current_champion` is the most recent champion named by a committed round**, or the baseline before any promotion. A gate explanation includes its recorded `deciding_rule`. |
 > | DQ11 | a payload-shape change is a clean break | **A payload-shape change is a clean break.** Server and client change in the same commit, client-side coalescers are deleted, and the node suite's recorded responses and the goldens are re-recorded together. |
 > | DQ12 | validate an id before it touches the workspace | **An id path param is validated by `_is_safe_id` before it touches the workspace.** A malformed coordinate degrades to the empty shape at HTTP 200 — never a 500, never a traversal. |
 > | DQ13 | every JSON GET has a declared contract | **Every JSON GET has a declared query contract.** `query.contracts.ENDPOINT_PAYLOADS` is the exhaustive inventory. |
-> | DQ14 | lineage owns topology | **Lineage owns topology.** `lineage.json` alone supplies parent and tri-state promotion; experiment outcomes are journal detail. |
+> | DQ14 | ancestry and round results have separate owners | **`lineage.json` records parent relationships; committed rounds record tournament outcomes.** The lineage reader combines them to serve promotion status, including `null` for an undecided candidate. |
 > | DQ15 | composite readers share walks | **Composite readers share walks.** `build_round_timeline` performs one lineage walk and hands its scoped feed to the trajectory builder; `build_environment` walks the lineage once and serves the feed verbatim. |
 
 ---
 
 ## 9.0 Map of the subsystem
 
-Two packages plus a browser bundle. The **library** is `zicato.query`
-(pure read-model assembly); the **driver** is `zicato.dashboard` (the HTTP
-server + the JS). Nothing in the library knows the driver exists.
+The reusable reader library, `zicato.query`, assembles workspace records
+for reports, command-line tools, and the dashboard. The dashboard package,
+`zicato.dashboard`, provides HTTP routes and the browser interface. The reader
+library does not depend on that interface.
+
+Selection policy runs during execution. A completed round records the gate
+explanations and tournament structure that readers present. Analyses such as
+score trends and comparisons between judges may run on demand in shared
+framework functions; callers should reuse those functions. Browser code
+controls layout and interaction.
 
 | File | What lives there | Approx. size |
 |---|---|---|
@@ -613,21 +621,38 @@ a Python endpoint produced (§9.16 step 3, 11-testing.md §11.9.3).
 > identically; a client-side join is a fourth implementation nobody keeps in
 > sync.
 
-### 9.2.6 `deciding_rule` — a decision surface names its rule
+### 9.2.6 Execution records the explanation of each gate result
 
-When the server serves a gate verdict, it also serves the RULE that fired,
-so the client renders "why" without re-running the gate logic. The gate
-breakdown carries `deciding_rule` — `None` until a rule fires, then the
-name of the rule that decided:
+The numerical evaluator, `tournament.gate.evaluate_gate`, records each rule's
+result as it applies the rule. The runner adds the actual regression-suite
+result. The resulting `GateOutcome.explanation` includes the decision, reason,
+rule results, scalar margin, compared scalars, and differences between scores.
 
-```python
-    base["deciding_rule"] = fired_rule
-```
-— `src/zicato/query/gate_view.py`, `build_gate_breakdown` (tail)
+Round publication stores these explanations in `field_settlement.json` under
+`gate_results`, alongside the compared training aggregates and the identities
+of both candidates. The gate reader, `query.gate_view.build_gate_breakdown`,
+selects the recorded comparison for the requested pair. It does not call the
+evaluator. A candidate's final recorded outcome also supplies the effect of
+later confirmation, integrity checks, or an operator override.
 
-The empty/degraded gate shape carries `"deciding_rule": None` so the field
-is always present with one spelling, and the client shows "no rule
-fired yet" from the `null` rather than inferring it.
+The response's `deciding_rule` identifies the recorded rule that prevented
+promotion. A successful gate or an unavailable explanation has
+`deciding_rule: null`; the decision and record availability distinguish those
+cases. Missing records leave `rules` empty. Available scores may still support
+live progress displays, but cannot establish a gate result.
+
+### 9.2.7 Tournament diagrams use recorded matches and standings
+
+Every executed tournament records its competitors, matches, results, and
+standings, including a tournament with one champion and one challenger.
+Completed rounds supply the authoritative structure. Runtime records supply
+progress during execution, and SQLite stores a derived copy for queries.
+
+The structure reader, `query.tournament_view.build_tournament_structure`,
+serves a complete tournament or selects its recorded matches for a requested
+candidate pair. Missing structure remains unavailable; per-run loss files do
+not establish pairing, elimination, or promotion. The browser renders the
+served bracket, racing ladder, standings, and candidate details.
 
 ---
 

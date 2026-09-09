@@ -11,6 +11,7 @@ monotonicity rejection.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -18,12 +19,20 @@ import pytest
 from starlette.testclient import TestClient
 
 from tests._workspace_support import experiment_record
+from zicato.core import ScoringWeights
+from zicato.core.experiment import OutcomeRecord
 from zicato.core.measurement import TOURNAMENT_DRAW
 from zicato.dashboard.server import create_app
+from zicato.epoch.settlement_receipt import (
+    SettlementCandidate,
+    field_settlement_intent_path,
+    new_settlement_receipt,
+)
 from zicato.query import WorkspacePaths, build_gate_breakdown
 from zicato.runtime.lock import acquire_workspace_lock
 from zicato.telemetry.reducer import write_loss_profile
 from zicato.testing import make_loss_profile
+from zicato.tournament.runner import _gate_with_regression
 from zicato.tournament.scoring import write_gen_score
 
 EPOCH_ID = "2026-05-28_e0"
@@ -102,6 +111,55 @@ def _make_workspace(
     _write_json(epoch_dir / "scoring.json", scoring or {})
     write_gen_score(ws, EPOCH_ID, "v0", champion)
     write_gen_score(ws, EPOCH_ID, "v1", challenger)
+    gate = asyncio.run(
+        _gate_with_regression(
+            parent_agg=champion,
+            child_agg=challenger,
+            child_snapshot_root=tmp_path / "candidate",
+            weights=ScoringWeights.from_json(scoring or {}),
+        )
+    )
+    outcome = OutcomeRecord(
+        ran_at="2026-05-28T12:00:00+00:00",
+        pass_rate_delta=gate.delta_pass_rate,
+        drift_loss_delta=gate.delta_scalar,
+        scalar_score_delta=gate.delta_scalar,
+        tournament_decision=gate.decision,
+        rejection_reason=gate.reason,
+    )
+    experiment = experiment_record("v1", epoch_id=EPOCH_ID, parent_generation_id="v0")
+    _write_json(epoch_dir / "generations" / "v1" / "experiment.json", experiment)
+    receipt = new_settlement_receipt(
+        settlement_id="a" * 32,
+        epoch_id=EPOCH_ID,
+        round_index=0,
+        primary_id="v1" if gate.decision == "promoted" else None,
+        candidates=(
+            SettlementCandidate.from_outcome(
+                experiment_id=experiment["id"],
+                generation_id="v1",
+                created_at=experiment["proposed_at"],
+                parent_scalar=champion["scalar"],
+                child_scalar=challenger["scalar"],
+                outcome=outcome,
+            ),
+        ),
+        field_record=None,
+    ).to_dict()
+    receipt.update(
+        state="committed",
+        index_projection={"state": "succeeded", "error_type": ""},
+        gate_results=[
+            {
+                **gate.explanation,
+                "champion": "v0",
+                "challenger": "v1",
+                "parent_aggregate": champion,
+                "child_aggregate": challenger,
+            }
+        ],
+    )
+    _write_json(field_settlement_intent_path(ws, EPOCH_ID, 0), receipt)
     return ws
 
 
@@ -449,8 +507,8 @@ def test_gate_missing_aggregate_degrades_to_unknown(tmp_path: Path) -> None:
     )
     result = build_gate_breakdown(WorkspacePaths(ws), EPOCH_ID, "v0", "v1")
     assert result["decision"] == "deferred"
-    rules = {r["id"]: r for r in result["rules"]}
-    assert rules["scalar_margin"]["status"] == "unknown"
+    assert result["rules"] == []
+    assert result["deciding_rule"] is None
     assert all(r["fired"] is False for r in result["rules"])
     # The present side's absolute scalar still surfaces; the missing side is
     # None, and a settled round carries no live overlay.
@@ -788,13 +846,14 @@ def test_gate_breakdown_decomposition_backcompat_none(tmp_path: Path) -> None:
 
 def _write_experiment_outcome(ws: Path, generation_id: str, outcome: dict[str, object]) -> None:
     """Write a challenger's experiment.json with an ``outcome`` block."""
-    path = ws / "epochs" / EPOCH_ID / "generations" / generation_id / "experiment.json"
-    _write_json(
-        path,
-        experiment_record(
-            generation_id, epoch_id=EPOCH_ID, parent_generation_id="v0", outcome=outcome
-        ),
+    path = field_settlement_intent_path(ws, EPOCH_ID, 0)
+    receipt = json.loads(path.read_text())
+    candidate = next(row for row in receipt["candidates"] if row["generation_id"] == generation_id)
+    candidate["outcome"].update(outcome)
+    receipt["primary_promoted_generation_id"] = (
+        generation_id if outcome["tournament_decision"] == "promoted" else None
     )
+    _write_json(path, receipt)
 
 
 def test_gate_override_block_absent_without_override(tmp_path: Path) -> None:
@@ -862,3 +921,62 @@ def test_gate_override_block_reject(tmp_path: Path) -> None:
     assert result["override"]["present"] is True
     assert result["override"]["action"] == "reject"
     assert result["override"]["reason"] == "regression risk"
+
+
+def test_recorded_gate_survives_later_scores_without_evaluating_again(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from zicato.tournament import gate, runner
+
+    ws = _make_workspace(
+        tmp_path,
+        champion=_gen_score(scalar=2.0, pass_rate=1.0, per_entry={}),
+        challenger=_gen_score(scalar=1.0, pass_rate=1.0, per_entry={}),
+    )
+    paths = WorkspacePaths(ws)
+    before = build_gate_breakdown(paths, EPOCH_ID, "v0", "v1")
+
+    def refuse(*args, **kwargs):
+        raise AssertionError("a read must not execute the promotion rules")
+
+    monkeypatch.setattr(gate, "evaluate_gate", refuse)
+    monkeypatch.setattr(runner, "evaluate_gate", refuse)
+    write_gen_score(ws, EPOCH_ID, "v1", _gen_score(scalar=9.0, pass_rate=0.0, per_entry={}))
+    _write_json(ws / "epochs" / EPOCH_ID / "scoring.json", {"promote_margin": 100.0})
+    after = build_gate_breakdown(paths, EPOCH_ID, "v0", "v1")
+    assert after == before
+    assert after["decision"] == "promoted"
+    assert after["champion_scalar"] == 2.0
+    assert after["challenger_scalar"] == 1.0
+
+
+def test_gate_displays_the_recorded_regression_suite_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from zicato.tournament import runner
+    from zicato.tournament.regression import RegressionResult
+
+    async def regression(*args, **kwargs):
+        return RegressionResult(False, ("test_required_behavior",), "1 test failed", 0.1)
+
+    monkeypatch.setattr(runner, "run_regression_suite", regression)
+    ws = _make_workspace(
+        tmp_path,
+        champion=_gen_score(scalar=2.0, pass_rate=1.0, per_entry={}),
+        challenger=_gen_score(scalar=1.0, pass_rate=1.0, per_entry={}),
+        scoring={"regression_gate_enabled": True},
+    )
+    view = build_gate_breakdown(WorkspacePaths(ws), EPOCH_ID, "v0", "v1")
+    assert view["decision"] == "rejected"
+    assert view["deciding_rule"] == "regression_suite"
+    assert view["rules"] == [
+        {
+            "id": "regression_suite",
+            "label": "Regression suite",
+            "status": "fail",
+            "detail": "1 test failed",
+            "fired": True,
+        }
+    ]

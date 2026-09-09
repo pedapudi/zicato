@@ -189,6 +189,16 @@ def set_current_epoch(layout: WorkspaceLayout, epoch_id: str, *, newline: bool =
     return write_text(layout.current_epoch_marker, f"{epoch_id}\n" if newline else epoch_id)
 
 
+def read_experiment_record(path: Path) -> dict[str, Any]:
+    """Read a proposal together with the outcome stored in its committed round."""
+    from zicato.epoch.journal import read_experiment_body
+
+    body = read_experiment_body(path.parents[4], path.parents[2].name, path.parent.name)
+    if body is None:
+        raise FileNotFoundError(path)
+    return body
+
+
 def experiment_record(
     generation_id: str,
     *,

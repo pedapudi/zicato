@@ -13,6 +13,7 @@ from zicato.epoch.genstore import DirectoryGenerationStore, default_generation_s
 from zicato.epoch.git_genstore import GitGenerationStore
 from zicato.epoch.publication import BaselineSeed, EpochPublication, prepared_directory
 from zicato.evolve.epoching import ensure_epoch_for_contract
+from zicato.evolve.generation_phase import current_generation
 from zicato.evolve.round_baseline import _ensure_baseline_snapshot
 from zicato.runtime.lock import acquire_workspace_lock
 from zicato.workspace import WorkspaceLayout, generation_ids
@@ -159,7 +160,7 @@ def test_damaged_prepared_source_preserves_previous_epoch(workspace, damage) -> 
 
 
 @pytest.mark.parametrize("backend", ["directory", "git"])
-@pytest.mark.parametrize("boundary", ["source", "lineage", "marker", "experiment"])
+@pytest.mark.parametrize("boundary", ["source", "lineage", "experiment"])
 def test_baseline_recovery_preserves_source_and_surviving_runs(
     workspace, monkeypatch, backend, boundary
 ) -> None:
@@ -178,7 +179,6 @@ def test_baseline_recovery_preserves_source_and_surviving_runs(
     boundaries = {
         "source": (factory, "seed_generation"),
         "lineage": (baseline, "append_to_lineage"),
-        "marker": (baseline, "atomic_write_text"),
         "experiment": (baseline, "write_seed_experiment"),
     }
     with acquire_workspace_lock(root, "publication-test") as writer:
@@ -195,18 +195,13 @@ def test_baseline_recovery_preserves_source_and_surviving_runs(
         evaluation = record / "runs" / "entry" / "result.json"
         evaluation.parent.mkdir(parents=True, exist_ok=True)
         evaluation.write_text('{"measured":true}\n')
-        if boundary in {"marker", "experiment"}:
-            marker = root / "epochs" / epoch.id / "current_generation"
-            assert marker.read_text() == "v0\n"
-            marker.write_text("v1\n")
         _ensure_baseline_snapshot(root, epoch.id, config, writer=writer)
         _ensure_baseline_snapshot(root, epoch.id, config, writer=writer)
     rows = lineage.load_lineage(root).to_dict()["epochs"]
     generations = next(row["generations"] for row in rows if row["id"] == epoch.id)
     assert [row["id"] for row in generations] == ["v0"]
     assert generations[0]["created_at"] == seed.created_at
-    expected_marker = "v1\n" if boundary in {"marker", "experiment"} else "v0\n"
-    assert (root / "epochs" / epoch.id / "current_generation").read_text() == expected_marker
+    assert current_generation(root, epoch.id) == "v0"
     assert (record / "experiment.json").is_file()
     assert store.read_file(epoch.id, "v0", "source/value.py") == b"VALUE = 1\n"
     assert evaluation.read_bytes() == b'{"measured":true}\n'

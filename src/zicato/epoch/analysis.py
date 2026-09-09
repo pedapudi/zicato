@@ -31,7 +31,6 @@ from zicato.core.types import (
 from zicato.core.workspace import (
     analysis_path,
     epoch_dir,
-    journal_path,
 )
 from zicato.epoch.journal import experiment_body, read_epoch_experiments
 from zicato.epoch.lineage import load_lineage
@@ -951,13 +950,11 @@ async def generate_analysis(
     separation rule enforced by ``assert_distinct_callables``. Synchronous
     callers use ``asyncio.run``. Return the path to ``analysis.md``.
     """
-    journal_text = ""
-    jpath = journal_path(workspace_root, epoch_id)
-    if jpath.exists():
-        journal_text = jpath.read_text()
+    from zicato.epoch.journal import render_journal
 
     records, unreadable = read_epoch_experiments(workspace_root, epoch_id)
     experiments = [experiment for _generation_id, experiment in records]
+    journal_text = render_journal(experiments)
     patterns_text = _collect_patterns_snapshot(workspace_root, epoch_id)
 
     typed_gens = _generations_for(workspace_root, epoch_id, experiments)

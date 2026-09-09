@@ -1005,8 +1005,6 @@ def test_epoch_view_includes_experiments_journal_analysis(workspace: Path) -> No
             patch_ids=["p_abc"],
         ),
     )
-    # Write journal and analysis markdown.
-    _write(epoch_dir / "journal.md", "# Journal\n\n## v1\nRejected.\n")
     from zicato.analyzer.report import regenerate_epoch_report_deterministic
 
     regenerate_epoch_report_deterministic(
@@ -1272,21 +1270,28 @@ def test_epoch_journal_endpoint(client: TestClient, workspace: Path) -> None:
     """GET /api/epoch/{id}/journal returns { epoch_id, journal }."""
     epoch_id = "2026-05-16_e0"
     epoch_dir = workspace / "epochs" / epoch_id
-    _write(epoch_dir / "journal.md", "# Journal\n\n## v1\nRejected.\n")
+    _write_json(
+        epoch_dir / "generations" / "v1" / "experiment.json",
+        experiment_record(
+            "v1",
+            epoch_id=epoch_id,
+            hypothesis={"core_idea": "Keep the entire proposal"},
+        ),
+    )
 
     r = client.get(f"/api/epoch/{epoch_id}/journal")
     assert r.status_code == 200
     body = r.json()
     assert body["epoch_id"] == epoch_id
-    assert "v1" in body["journal"]
+    assert "## v1 — Keep the entire proposal" in body["journal"]
 
 
 def test_epoch_journal_endpoint_absent(client: TestClient) -> None:
     """Journal endpoint degrades gracefully when journal.md is absent."""
-    r = client.get("/api/epoch/2026-05-16_e0/journal")
+    r = client.get("/api/epoch/no-experiments/journal")
     assert r.status_code == 200
     body = r.json()
-    assert body["epoch_id"] == "2026-05-16_e0"
+    assert body["epoch_id"] == "no-experiments"
     assert body["journal"] == ""
 
 
@@ -1305,8 +1310,20 @@ def test_epoch_journal_md_endpoint(client: TestClient, workspace: Path) -> None:
     """
     epoch_id = "2026-05-16_e0"
     epoch_dir = workspace / "epochs" / epoch_id
-    body_text = "# Journal\n\n## v1\nRejected: loss rose.\n"
-    _write(epoch_dir / "journal.md", body_text)
+    from zicato.epoch.journal import read_journal
+
+    _write_json(
+        epoch_dir / "generations" / "v1" / "experiment.json",
+        experiment_record(
+            "v1",
+            epoch_id=epoch_id,
+            decision="rejected",
+            hypothesis={"core_idea": "Reduce redundant instructions"},
+            outcome={"rejection_reason": "loss rose"},
+        ),
+    )
+    body_text = read_journal(workspace, epoch_id)
+    assert "**rejection_reason**: loss rose" in body_text
 
     r = client.get(f"/api/epoch/{epoch_id}/journal.md")
     assert r.status_code == 200
@@ -1334,7 +1351,7 @@ def test_epoch_journal_md_endpoint_absent(client: TestClient) -> None:
     ``.md`` endpoint is opened in a fresh browser tab by the user, so a
     404 is the right signal — there is nothing to read.
     """
-    r = client.get("/api/epoch/2026-05-16_e0/journal.md")
+    r = client.get("/api/epoch/no-experiments/journal.md")
     assert r.status_code == 404
 
 

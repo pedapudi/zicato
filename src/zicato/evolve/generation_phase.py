@@ -70,22 +70,23 @@ class FieldRound:
     field_size: int
 
 
-def current_marker(workspace_root: Path, epoch_id: str) -> Path:
-    return WorkspaceLayout.from_root(workspace_root).current_generation_marker(epoch_id)
-
-
 def current_generation(workspace_root: Path, epoch_id: str) -> str:
-    marker = current_marker(workspace_root, epoch_id)
-    if marker.exists() and (value := marker.read_text(encoding="utf-8").strip()):
-        return value
+    from zicato.epoch.settlement_receipt import iter_settlement_receipts
+
+    primary = None
+    for receipt in iter_settlement_receipts(workspace_root, epoch_id):
+        if receipt.state == "committed" and receipt.primary_id is not None:
+            primary = receipt.primary_id
+    if primary is not None:
+        return primary
     layout = WorkspaceLayout.from_root(workspace_root)
     candidates = generation_ids(layout, epoch_id)
-    if not candidates:
+    if "v0" not in candidates:
         raise FileNotFoundError(
             f"no generations under {layout.generations_dir(epoch_id)}; "
             "the epoch has no baseline yet"
         )
-    return candidates[-1]
+    return "v0"
 
 
 def safe_parent(workspace_root: Path, epoch_id: str | None) -> str:
@@ -95,14 +96,6 @@ def safe_parent(workspace_root: Path, epoch_id: str | None) -> str:
         return current_generation(workspace_root, epoch_id)
     except (FileNotFoundError, OSError):
         return ""
-
-
-def set_current_generation(workspace_root: Path, epoch_id: str, generation_id: str) -> None:
-    """Atomically replace the epoch's promoted-generation marker."""
-    from zicato.storage import atomic_write_text  # noqa: PLC0415
-
-    marker = current_marker(workspace_root, epoch_id)
-    atomic_write_text(marker, f"{generation_id}\n")
 
 
 def snapshot_root(workspace_root: Path, epoch_id: str, generation_id: str) -> Path:
@@ -130,6 +123,5 @@ __all__ = [
     "mutable_trees",
     "next_generation_id",
     "safe_parent",
-    "set_current_generation",
     "snapshot_root",
 ]

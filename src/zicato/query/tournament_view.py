@@ -1289,68 +1289,41 @@ def _structure_from_active(
     )
 
 
-def _structure_from_loss_files(
+def _structure_from_records(
     paths: WorkspacePaths, epoch_id: str, tournament_id: str
 ) -> dict[str, Any] | None:
-    """Reconstruct a degenerate single-match view from per-run loss files.
+    """Read a recorded tournament or select its recorded matches for one pair."""
+    from zicato.tournament.records import field_tournament_records
 
-    The last link in the resolution chain (mirrors ``build_matchup_grid``'s
-    index-free read). A tournament id encodes its crowning pair as
-    ``{epoch}:{champion}->{challenger}`` (the ingester convention); when
-    that decodes, render one round / one match between the two sides with
-    their settled drift-loss scalars. When it does not decode, return a
-    bare envelope so the handler still answers HTTP 200.
-    """
-    if not epoch_id:
-        return None
     champion, challenger = _decode_crowning_pair(tournament_id)
-    if not challenger:
-        return None
+    pair = {champion, challenger} if champion and challenger else set()
     try:
-        parent_score = _gen_score_view(paths, epoch_id, champion) if champion else {}
-        child_score = _gen_score_view(paths, epoch_id, challenger)
+        records = field_tournament_records(paths.root, epoch_id)
     except RecordError as exc:
         return {"epoch_id": epoch_id, "tournament_id": tournament_id, "unreadable": str(exc)}
-    parent_scalar, child_scalar, delta = _scalar_pair(
-        parent_score.get("scalar"), child_score.get("scalar")
-    )
-    competitors: list[dict[str, Any]] = []
-    standings: list[dict[str, Any]] = []
-    if champion:
-        competitors.append({"generation_id": champion, "seed": 1, "role": "champion"})
-        standings.append(
-            {"generation_id": champion, "rank": 1, "scalar": parent_scalar, "role": "champion"}
-        )
-    competitors.append({"generation_id": challenger, "seed": 2, "role": "challenger"})
-    standings.append(
-        {"generation_id": challenger, "rank": 2, "scalar": child_scalar, "role": "challenger"}
-    )
-    # The challenger applied (it has a settled scalar), so the proposing
-    # step is reconstructed as a single applied entry — never an empty
-    # idle tracker for a tournament that actually ran.
-    field_status: list[dict[str, Any]] = [
-        {"generation_id": challenger, "status": "applied", "reason": "", "seed": 2}
-    ]
-    match: dict[str, Any] = {
-        "match_id": "r0_m0",
-        "competitors": [c for c in (champion, challenger) if c],
-        "winner": "",
-        "decision": "",
-        "delta_scalar": delta,
-        "bracket_slot": "",
-        "bye": False,
-    }
-    return {
-        "epoch_id": epoch_id,
-        "tournament_id": tournament_id,
-        "structure": "gauntlet",
-        "structure_params": {},
-        "competitors": competitors,
-        "rounds": [{"stage_index": 0, "label": "Gauntlet", "matches": [match]}],
-        "standings": standings,
-        "field_status": field_status,
-        "source": "loss_files",
-    }
+    for record in records:
+        if record.state != "settled":
+            continue
+        body = record.to_dict()
+        if record.tournament_id != tournament_id:
+            if not pair:
+                continue
+            rounds = [
+                {**stage, "matches": matches}
+                for stage in body["rounds"]
+                if (
+                    matches := [
+                        match for match in stage["matches"] if set(match["competitors"]) == pair
+                    ]
+                )
+            ]
+            if not rounds:
+                continue
+            body["rounds"] = rounds
+            for key in ("competitors", "standings", "field_status"):
+                body[key] = [row for row in body[key] if row["generation_id"] in pair]
+        return attach_elim_states({**body, "tournament_id": tournament_id, "source": "record"})
+    return None
 
 
 def _decode_crowning_pair(tournament_id: str) -> tuple[str, str]:
@@ -1369,69 +1342,39 @@ def _decode_crowning_pair(tournament_id: str) -> tuple[str, str]:
 def build_tournament_structure(
     paths: WorkspacePaths, epoch_id: str, tournament_id: str
 ) -> dict[str, Any]:
-    """``GET /api/tournament-structure/{epoch_id}/{tournament_id}``.
+    """Serve recorded bracket, standings, and progress for the visualizations.
 
-    The single read the UI uses to render a bracket / standings / racing
-    ladder for one tournament (TOURNAMENT-DATA-MODEL.md §3.2). Resolution
-    order mirrors ``build_matchup_grid``'s fallback chain:
-
-    1. the SQLite ``tournaments`` row's structure columns (``source:
-       "index"``);
-    2. the live ``active_tournament.events.jsonl`` when it matches the coordinate
-       (``source: "active"``);
-    3. a degenerate single-match reconstruction from the per-run
-       ``loss.json`` / ``gen_score.json`` files (``source: "loss_files"``).
-
-    A malformed / unresolvable id degrades to an empty gauntlet structure
-    at HTTP 200 (matching every other handler in ``endpoints.py``).
+    Completed round records contain the actual matches and results. The active
+    record supplies running progress. The index supplies a derived copy when
+    no canonical or active record is available. Missing structure stays empty.
     """
     if not epoch_id or not tournament_id:
-        return _empty_tournament_structure(epoch_id, tournament_id, "loss_files")
-    for resolver in (_structure_from_index, _structure_from_active, _structure_from_loss_files):
+        return _empty_tournament_structure(epoch_id, tournament_id, "unavailable")
+    for resolver in (_structure_from_records, _structure_from_index, _structure_from_active):
         result = resolver(paths, epoch_id, tournament_id)
         if result is not None:
             enriched = _enrich_field_status(paths, epoch_id, tournament_id, result)
             enriched = _enrich_override_status(paths, epoch_id, tournament_id, enriched)
             enriched = _enrich_diversity(paths, epoch_id, enriched)
             return _enrich_standings_ratings(paths, epoch_id, enriched)
-    return _empty_tournament_structure(epoch_id, tournament_id, "loss_files")
+    return _empty_tournament_structure(epoch_id, tournament_id, "unavailable")
 
 
 def _enrich_override_status(
     paths: WorkspacePaths, epoch_id: str, tournament_id: str, result: dict[str, Any]
 ) -> dict[str, Any]:
-    """Attach the operator-override readback from the durable field record.
-
-    A field round's operator promote/reject overrides are recorded on the
-    durable ``tournaments/field-*.json`` snapshot (the orchestrator stamps
-    ``override_status`` — a ``{generation_id: {action, ts, reason, state}}``
-    map — and ``promoted_generation_ids`` — the full advanced SET — at
-    settle). The index columns do not carry them, so lift them from the
-    durable record onto the structure result the dashboard reads.
-
-    The durable record is keyed on the field's first challenger
-    (``field-<gid>.json``), which differs from the queried ``tournament_id``;
-    match the record whose competitor field overlaps this result's
-    challengers. KEY-ABSENT when no override fired (the common case) or when
-    no durable record matches, so a gate-decided field round and every
-    pre-feature run are byte-identical to before this readback existed.
-    """
+    """Attach recorded operator actions and all promoted candidates to a view."""
     if result.get("override_status") or result.get("promoted_generation_ids"):
         return result  # already carried by the winning resolver — never clobber
-    from zicato.core.workspace import field_tournaments_dir  # noqa: PLC0415
+    from zicato.tournament.records import field_tournament_records
 
     challengers = set(_challenger_generation_ids(result))
-    tdir = field_tournaments_dir(paths.root, epoch_id)
-    if not tdir.is_dir():
-        return result
-    from zicato.epoch._storage import RecordError  # noqa: PLC0415
-    from zicato.tournament.records import read_field_tournament_record  # noqa: PLC0415
-
-    for record_path in sorted(tdir.glob("field-*.json")):
-        try:
-            record = read_field_tournament_record(record_path).to_dict()
-        except RecordError as exc:
-            return {**result, "unreadable": str(exc)}
+    try:
+        records = field_tournament_records(paths.root, epoch_id)
+    except (OSError, ValueError, RuntimeError) as exc:
+        return {**result, "unreadable": str(exc)}
+    for stored in records:
+        record = stored.to_dict()
         override_status = record.get("override_status")
         promoted_ids = record.get("promoted_generation_ids")
         if not (isinstance(override_status, dict) and override_status) and not (

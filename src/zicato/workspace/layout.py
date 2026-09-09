@@ -261,10 +261,6 @@ class WorkspaceLayout:
         """One epoch's operator proposer brief (``brief.md``)."""
         return self.epoch_dir(epoch_id) / "brief.md"
 
-    def journal(self, epoch_id: str) -> Path:
-        """One epoch's running narrative journal (``journal.md``)."""
-        return self.epoch_dir(epoch_id) / "journal.md"
-
     def analysis_md(self, epoch_id: str) -> Path:
         """One epoch's at-close analysis markdown (``analysis.md``)."""
         return self.epoch_dir(epoch_id) / "analysis.md"
@@ -296,10 +292,6 @@ class WorkspaceLayout:
     def ladder_state(self, epoch_id: str) -> Path:
         """One epoch's persisted Ladder governor state (``ladder_state.json``)."""
         return self.epoch_dir(epoch_id) / "ladder_state.json"
-
-    def current_generation_marker(self, epoch_id: str) -> Path:
-        """One epoch's promoted-lineage-head marker (``current_generation``)."""
-        return self.epoch_dir(epoch_id) / "current_generation"
 
     def roll_seed_marker(self, epoch_id: str) -> Path:
         """One epoch's cross-epoch v0-seed marker (``v0_seed_from``).

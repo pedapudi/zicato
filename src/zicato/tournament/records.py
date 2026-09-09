@@ -141,13 +141,54 @@ def decode_field_tournament_record(value: Any) -> FieldTournamentRecord:
 
 
 def read_field_tournament_record(path: Path) -> FieldTournamentRecord:
-    """Read one strict canonical snapshot; absence remains FileNotFoundError."""
+    """Read a tournament, using its committed round as the result authority."""
+    from zicato.epoch._storage import experiment_key
+    from zicato.epoch.settlement_receipt import read_settlement_receipt
+    from zicato.storage import workspace_backend
+
     try:
-        return decode_field_tournament_record(json.loads(path.read_text(encoding="utf-8")))
+        record = decode_field_tournament_record(json.loads(path.read_text(encoding="utf-8")))
+        root = path.parents[3]
+        first_id = path.stem.removeprefix("field-")
+        experiment = workspace_backend(root, start=False).read_json(
+            experiment_key(record.epoch_id, first_id)
+        )
+        if experiment is not None:
+            receipt = read_settlement_receipt(root, record.epoch_id, experiment["round_index"])
+            if (
+                receipt is not None
+                and receipt.state == "committed"
+                and receipt.field_record is not None
+            ):
+                settled = decode_field_tournament_record(receipt.field_record)
+                if settled.tournament_id != record.tournament_id:
+                    raise RecordError("round result names a different tournament")
+                return settled
+        return record
     except FileNotFoundError:
         raise
     except (OSError, ValueError, RuntimeError) as exc:
         raise RecordError(f"field tournament record {path}: {exc}") from exc
+
+
+def field_tournament_records(
+    workspace_root: Path, epoch_id: str
+) -> tuple[FieldTournamentRecord, ...]:
+    """Read completed structures from rounds and include tournaments still in progress."""
+    from zicato.core.workspace import field_tournaments_dir
+    from zicato.epoch.settlement_receipt import iter_settlement_receipts
+
+    records = {}
+    for receipt in iter_settlement_receipts(workspace_root, epoch_id):
+        if receipt.state == "committed" and receipt.field_record is not None:
+            record = decode_field_tournament_record(receipt.field_record)
+            records[record.tournament_id] = record
+    for path in sorted(field_tournaments_dir(workspace_root, epoch_id).glob("field-*.json")):
+        tournament_id = f"{epoch_id}:field:{path.stem.removeprefix('field-')}"
+        if tournament_id not in records:
+            record = read_field_tournament_record(path)
+            records[record.tournament_id] = record
+    return tuple(records.values())
 
 
 def field_tournament_record(
@@ -166,13 +207,7 @@ def field_tournament_record(
     override_status: dict[str, dict[str, Any]] | None = None,
     promoted_generation_ids: list[str] | None = None,
 ) -> FieldTournamentRecord | None:
-    """Build one field-tournament snapshot without writing it.
-
-    A two-competitor gauntlet has a canonical duel record already, so it
-    does not create a separate field snapshot.
-    """
-    if len(competitors) < 3:
-        return None
+    """Record the executed structure, including a two-candidate tournament."""
     crowning_delta: float | None = None
     for r in reversed(rounds):
         matches = r.get("matches") or []
@@ -195,6 +230,7 @@ def field_tournament_record(
         "competitors": [dict(c) for c in competitors],
         "rounds": rounds,
         "standings": standings,
+        "crowning_matchup_id": getattr(decision, "crowning_matchup_id", None),
         "field_status": [dict(f) for f in field_status],
         "promoted_generation_id": getattr(decision, "promoted_generation_id", "") or "",
         "champion_generation_id": champion_id or "",

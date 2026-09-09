@@ -406,14 +406,12 @@ def test_mutation_checks_use_the_reigning_generation_snapshot(tmp_path: Path) ->
         trees={"harness": _MUTABLE.format(point_id="source_only")},
     )
     from zicato.epoch.genstore import default_generation_store
-    from zicato.evolve.generation_phase import set_current_generation
 
     snapshot = default_generation_store(root).snapshot_path(_EPOCH, "v0")
     snap_tree = snapshot / "harness"
     snap_tree.mkdir(parents=True)
     (snap_tree / "a.py").write_text(_MUTABLE.format(point_id="dup"), encoding="utf-8")
     (snap_tree / "b.py").write_text(_MUTABLE.format(point_id="dup"), encoding="utf-8")
-    set_current_generation(root, _EPOCH, "v0")
 
     ctx = CheckContext(root)
     assert ctx.generation_snapshot == snapshot

@@ -589,8 +589,8 @@ record disappearing during finalization.
 > `prepare_resume` (`src/zicato/runtime/resume.py`) runs once at
 > `evolve` start, after the workspace lock is taken and before the round
 > loop, and is called from `src/zicato/evolve/loop.py`. It reads the
-> durable resume markers this section describes — atomic writes, the
-> `outcome` block, `current_generation`.
+> candidate proposals, ancestry, committed round records, source snapshots,
+> and surviving measurements described below.
 
 `zicato evolve` is restartable. The operator can
 SIGTERM it, restart the machine, and re-run `zicato evolve` and the
@@ -600,10 +600,11 @@ loop continues from wherever it was when interrupted.
 
 | Artifact | Source of truth | Survives restart? |
 |---|---|---|
-| Promoted generations | per-generation directories under `epochs/{epoch}/generations/` | **yes** — these are the durable record |
+| Candidate source | Git commits or directory snapshots, through the configured generation store | yes |
 | Pattern detector output | `epochs/{epoch}/patterns/round_NNN.json` | **yes** — written once per round |
-| Journal | `epochs/{epoch}/journal.md` | **yes** — append-only |
-| `experiment.json` (hypothesis + outcome) | per-generation file | **yes** — atomic update; the outcome block is either present or absent |
+| Round decisions and tournament details | `epochs/{epoch}/rounds/{round}/field_settlement.json` | yes — committing one record publishes every candidate outcome and the primary promotion |
+| Journal | rendered from accepted experiments | regenerated from durable records when requested |
+| Proposal and patches | per-generation `experiment.json` and `patches/` | yes — tournament outcomes come from the committed round record; rejection before tournament execution is recorded in the proposal file |
 | Per-run `events.jsonl` | per-entry files under `runs/{entry_id}/` | **yes** — but may be partial if the run was mid-flight |
 | Per-run `loss.json` | per-entry files under `runs/{entry_id}/` | **yes** if reducer ran |
 | `active_tournament.events.jsonl` | runtime state | discarded on restart |
@@ -617,48 +618,31 @@ from scratch.
 
 ### 4.2 The resume protocol
 
-When `zicato evolve` starts, before launching any new work:
+Startup calls `prepare_resume` under the workspace writer lock before
+launching tournament work. It first validates retained round records. Pending
+records are committed, and interrupted index refreshes are completed. This
+recovery performs no matchup or gate evaluation.
 
-```python
-def resume_or_start_fresh(workspace):
-    epoch = workspace.current_epoch()
+Candidate source that has no corresponding proposal or ancestry record is
+discarded through the configured generation store. A configured field with
+several candidate slots and no recorded decision is discarded as a group.
+The same applies when only one candidate applied in that field. Runtime
+progress is then cleared.
 
-    # Step 1: clean up stale runtime state.
-    stale_lock = read_lock_if_stale(workspace)
-    if stale_lock:
-        log.warning("stealing stale lock from PID %d", stale_lock.pid)
-        finalize_stale_runs(workspace, stale_lock)
-        clear_runtime_directory(workspace)
-    acquire_lock(workspace)
+For a remaining single challenger, the accepted experiment reader combines
+the proposal with any committed outcome before classification:
 
-    # Step 2: figure out where the previous evolve left off.
-    last_round = read_last_committed_round(epoch)
-    last_outcome = read_outcome(last_round)
+| Accepted state | Resume action |
+|---|---|
+| Outcome already recorded | Start the next round |
+| Unresolved proposal, matching pending ancestry, source present, and at least one measurement file | Reuse the recorded proposal and patches; resume evaluation |
+| Unresolved proposal with no source or no measurement files | Discard the candidate and propose again |
+| Missing or malformed proposal, dangling patch references, or contradictory ancestry | Discard the incomplete candidate records and propose again |
 
-    if last_outcome is None:
-        # Mid-round at the time of the interruption.
-        # Determine which step the interrupted round had reached.
-        step = infer_step_from_artifacts(last_round)
-        return resume_at(epoch, last_round, step)
-
-    # Step 3: previous round was fully committed. Start a fresh round.
-    return start_round(epoch, last_round.number + 1)
-```
-
-**`infer_step_from_artifacts`** is the load-bearing helper:
-
-| Artifacts present | Inferred step | Resume action |
-|---|---|---|
-| `experiment.json` (no outcome) + `patches/` + `snapshot/` + partial `runs/` | tournament-running | re-run only the entries that have no `loss.json` |
-| `experiment.json` (no outcome) + `patches/` + `snapshot/` + complete `runs/` (both sides) | tournament-complete-but-not-journaled | run gate, append outcome, append journal |
-| `experiment.json` (no outcome) + `patches/` + `snapshot/` + no `runs/` | applied-but-not-running | start tournament from scratch |
-| `experiment.json` (no outcome) + `patches/` + no `snapshot/` | proposed-but-not-applied | re-apply patches, then continue |
-| `experiment.json` (no outcome) + no `patches/` | partial proposal | discard the experiment file (proposer is non-deterministic — re-propose fresh) |
-
-The protocol is conservative: when it cannot determine the state with
-certainty, it discards the partial work and re-runs from the last clean
-checkpoint. A wasted re-run costs one round; a wrong inference corrupts
-the journal.
+A surviving measurement file preserves the opportunity to reuse completed
+work. The unit cache separately validates each requested measurement before
+reuse; files that fail that validation are evaluated again. Reusing a
+proposal preserves the patches that produced the cached measurements.
 
 ### 4.3 Finalising stale runs
 

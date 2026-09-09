@@ -361,7 +361,7 @@ evolve_field_round  (a facade; each line below is one named phase function)
              └─ settle_field_round         record, commit, close, and summarise
                   ├─ _record_field_tournament   frontier row, envelope, durable record
                   ├─ _build_field_settlement    one OutcomeRecord per challenger
-                  ├─ _commit_field_settlement   outcomes, lineage, marker, journal
+                  ├─ _commit_field_settlement   commit round, refresh derived index
                   └─ _close_field_round         placebo control, epilogue, summary
 ```
 
@@ -464,8 +464,9 @@ construction to Goldfive's `RuntimeConfigDocument` API.
 trees if the epoch has no generations yet (byte-for-byte copy of the
 operator's source; on a contract roll it seeds from the previous epoch's
 promoted head via the roll-seed marker — see 03-contract-and-epochs.md).
-`_resolve_current_generation` reads the per-epoch `current_generation`
-marker; the parent `Generation` is constructed with `promoted=True`.
+`current_generation` reads committed round records and returns the primary
+generation from the most recent promotion, or `v0` before any promotion.
+The parent `Generation` is constructed with `promoted=True`.
 
 Then two idempotent, opt-in epoch-open measurements, each persisted onto
 `EpochConfig` (never hashed): `_maybe_calibrate_noise_floor`
@@ -835,17 +836,18 @@ forced reject carries `"operator override: …"` in `rejection_reason`.
 The `OutcomeRecord` is assembled with every runtime-evidence field: deltas,
 structure, the runner's `champion_eval_mode`, holdout evidence, train and
 holdout loss, the generalization gap, and the statistical-evidence block. A
-resolved tournament records every candidate outcome in one field-settlement
-intent. The recovery owner then writes all outcomes before settled lineage,
-the champion marker, journal sections, the final bracket, and one grouped
-derived-index refresh. A validation or proposal failure that never enters a tournament uses
-`_finalize_generation` because no multi-record tournament decision exists to
-recover.
+resolved tournament records every candidate outcome and the complete tournament
+in one round record. Committing that record publishes all outcomes and the
+primary promoted generation together. Readers derive experiment outcomes,
+lineage status, the champion, and the journal from the committed record.
+Index refresh follows publication. A validation or proposal failure before
+tournament execution uses `_finalize_generation` to record the rejection
+directly in the proposal file and refresh its index row.
 
-A rejected generation IS recorded in lineage (a dead branch, visible in
-`zicato epoch list`); the `current_generation` marker advances only on
-promotion. `decision_recorded` lands on the RoundLog with full
-provenance (structure, reason, override flags, parent + promoted ids).
+A rejected generation remains visible in lineage and `zicato epoch list`.
+The champion changes only when a committed round names a primary promotion.
+The RoundLog event `decision_recorded` carries the structure, reason, override
+flags, parent id, and promoted ids.
 
 **The holdout block and the generalization fields.** When the runner
 consulted a holdout, `TournamentResult.holdout` carries the
@@ -915,10 +917,10 @@ round log once on the prepared value. Four phase functions run in order:
 
 `settle_field_round` builds one `OutcomeRecord` per applied challenger,
 commits a replayable settlement, publishes the observational frontier and
-live tournament views, then closes the round. The commit writes a complete
-receipt before the first outcome update and retains it after completion.
-Startup can therefore finish any interrupted prefix without evaluating the
-tournament again.
+live tournament views, then closes the round. Publication changes the
+complete round record from pending to committed before refreshing the index.
+Startup can finish interrupted publication or index refresh without
+evaluating the tournament again.
 
 The phase names follow the lifecycle steps the execution plan serves
 (`zicato.query.execution_plan.ROUND_STEPS`: propose, apply, run, gate,
@@ -1134,27 +1136,16 @@ treats LEFT as parent, so a right-seeded champion flips the sign).
 non-winner, the leader, or SEVERAL candidates. The re-resolution is PURE
 (`_apply_field_overrides`):
 
-```python
-    * ``promoted_ids`` — the (possibly multi-element) promoted SET. With no
-      override it is exactly ``{promoted_id}`` (or empty), so the
-      single-promotion path is byte-identical.
-    * ``promoted_id`` — the PRIMARY head that advances
-      ``current_generation``. The originally-crowned leader if it survived;
-      otherwise the lowest-scalar operator-promoted candidate (mirroring the
-      gate's lower-scalar-wins convention); ``None`` when every leader was
-      force-rejected (the champion stands).
-    * ``override_provenance`` — the per-generation override-status readback
-      for the durable field record (never a silent flip).
-    * ``effective_decision`` — the EFFECTIVE crowning verdict the workspace
-      will actually commit: the post-confirmation/post-override truth every
-      durable store must describe (issue #20).
-```
-*(src/zicato/evolve/gate.py, `_apply_field_overrides` docstring — excerpt)*
-
-Everything durable — the settled live envelope, the durable tournament
-record where applicable, and the RoundLog `decision_recorded` event — is
-written with the holdout-resolved, post-override `effective_decision`, so no
-store shows a crown that contradicts the champion pointer.
+- `promoted_ids` contains every promoted candidate. Without overrides, it
+  contains the selected winner or is empty.
+- `promoted_id` identifies the primary generation used as the next parent.
+  It is the selected leader if that candidate remains promoted; otherwise,
+  it is the promoted candidate with the lowest scalar. It is `None` when
+  no candidate is promoted.
+- `override_provenance` records each candidate's operator override.
+- `effective_decision` is the decision after holdout confirmation and
+  operator overrides. The round record, live tournament view, and
+  `decision_recorded` event report that decision.
 
 **Write order + the crowning invariant.** Settlement validates the complete
 decision before any canonical write, including the bracket-to-champion
@@ -1174,31 +1165,24 @@ agreement:
 ```
 *(src/zicato/evolve/settlement.py, `_assert_crowning_agrees` — excerpt)*
 
-The promoted id must also name an applied challenger. The complete decision
-then persists as the pending receipt
-`rounds/{round}/field_settlement.json`. Replay applies one fixed sequence:
+The promoted id must name an applied challenger. The complete decision is
+written to `rounds/{round}/field_settlement.json` in pending state. Recovery
+validates candidate identities, the common parent, outcomes, and agreement
+between the tournament decision and primary promoted generation.
 
-1. write every experiment outcome;
-2. upsert every lineage node;
-3. atomically replace and verify `current_generation` when a candidate won;
-4. append each journal section under its stable settlement identity;
-5. atomically publish the settled field bracket;
-6. refresh all affected derived-index rows as one reported operation;
-7. retain the full record with `state="committed"`.
+1. Atomically change the record to `state="committed"`, publishing all
+   candidate outcomes and the primary promoted generation together.
+2. Refresh the affected derived-index rows and record `succeeded` or
+   `repair_required`. An index failure preserves the committed decision.
 
-The receipt stores candidate outcomes and the settled bracket. Replay derives
-the common parent from candidate experiments, lineage resolutions from those
-experiments and outcomes, and structure, decision, and reason from the bracket.
-The receipt separately stores the primary promoted generation and requires
-exact agreement with the bracket, because a multi-promotion settlement has
-several promoted outcomes but only one champion-marker target.
+Experiment and lineage readers combine proposals and ancestry with committed
+outcomes. Champion selection reads the primary promotion; journal rendering
+uses the accepted experiments. These views require no separate decision writes.
 
-Every canonical step is idempotent. The receipt records the index operation as
-`succeeded` or `repair_required`; an index failure never changes the canonical
-decision. The retained receipt also records promotion-hook delivery as
-`not_applicable`, `pending`, `succeeded`, `failed`, or `delivery_unknown`.
-`delivery_unknown` is persisted before invoking the external hook, and startup
-never retries it.
+The retained record tracks promotion-hook delivery as `not_applicable`,
+`pending`, `succeeded`, `failed`, or `delivery_unknown`. The last state is
+persisted before invoking the external hook; startup never retries a call
+whose delivery is unknown.
 
 **The round summary comes from the crowning matchup.** The returned
 `EvolveRoundOutcome`'s scalars are resolved from the crowning duel
@@ -1373,7 +1357,7 @@ what it leaves on disk, and the invariant that makes the outcome safe.
 | Failure | Detection point | What the round does | Durable footprint | Invariant |
 |---|---|---|---|---|
 | Proposer's working copy does not read back as a valid patch set | the episode's `validate_patches` completion rule | the findings go back to the model, up to `max_proposer_retries` turns | `proposal_episode_settled{kind, code}` | the repair is inside the episode; a spent budget ends it blocked |
-| Patch set fails post-apply validation on every retry | `build_post_apply_validator` → `ProposerError` | gauntlet: `_persist_rejected_round` (reason `proposer_retries_exhausted: …`); field: the slot narrows the field | rejected `experiment.json` + `validation_failed` + `decision_recorded` (gauntlet); rejected field-status (field) | a destructive proposer never crashes the loop; the journal stays append-only |
+| Patch set fails post-apply validation on every retry | `build_post_apply_validator` → `ProposerError` | gauntlet: `_persist_rejected_round` (reason `proposer_retries_exhausted: …`); field: the slot narrows the field | rejected `experiment.json` + `validation_failed` + `decision_recorded` (gauntlet); rejected field-status (field) | invalid proposals remain visible with their rejection reason |
 | Patch targets a forbidden / stale mutation id | `check_patch_manifest_and_forbidden` | `ValueError` propagates — a hard programming or contract error rather than a retryable one; the type is `ValueError` so that a bad patch set raises ONE exception class across the whole apply path (issue #83) | none beyond the raise | the hypothesis's `modulating` set is the ONLY thing patches may touch |
 | One board run exceeds its wall-clock budget | worker cooperative budget → parent `wait_for` → supervisor deadline (three layers) | SIGTERM→grace→SIGKILL; synthesised aborted `LossProfile` (`BUDGET_ABORT_CAUSE`); scored worst-case for that entry | the aborted profile (tagged, never cache-persisted for infra causes) | the tournament continues; one entry cannot wedge a duel |
 | Worker crashes / result file missing or corrupt | `_run_single` step 6 | ALSO an aborted run — not a crash; continue | aborted profile with an infra `abort_cause` | `is_infra_abort_cause` distinguishes infra from genuine budget exhaustion |
@@ -1452,7 +1436,7 @@ payload removes `omit-summary`.
 1. **Baseline.** `_ensure_baseline_snapshot` seeds `v0` from the
    registered `agent/` tree through the git genstore —
    `.zicato/repo/.git` now exists with `v0` tagged.
-   `current_generation` reads `v0`.
+   The `current_generation` reader returns `v0`.
 2. **Propose.** `_next_generation_id` mints `v1`. The scripted
    `aux_llm` returns experiment `exp_{epoch}_v1`: hypothesis
    `modulating=("style_rules",)`, one `Patch` re-emitting the policy
@@ -1474,8 +1458,9 @@ payload removes `omit-summary`.
 5. **Persist.** `gen_score.json` is cached for v0 and v1. A field-settlement
    intent records the resolved `OutcomeRecord` with decision `promoted`,
    `scalar_score_delta=-1.2`, `champion_eval_mode="full"`, and no holdout
-   block. Replay writes the experiment outcome, lineage, champion marker,
-   journal section, settled bracket, and grouped derived-index refresh in order.
+   block. Committing the round publishes its outcome and primary promotion.
+   Lineage and journal readers derive their views from the committed record,
+   and the index is refreshed afterward.
    `decision_recorded` and
    `round_closed` complete the log — 17 events, `seq` 1..17.
 6. **Epilogue.** `health/round_1.json` written (no CRITICAL findings —
@@ -1486,7 +1471,7 @@ payload removes `omit-summary`.
 Round 2 is the negative control: the scripted proposer ADDS a token,
 the gate measures `delta_scalar = +1.2`, rejects with a
 "challenger regressed" reason, lineage records `v2` as a dead branch —
-and `current_generation` still reads `v1`. Every number above is
+and the `current_generation` reader still returns `v1`. Every number above is
 asserted, to the float, in `test_gauntlet_converges_to_known_floor`.
 
 ---
@@ -1499,10 +1484,10 @@ types frozen (`frozen=True, slots=True`); state transitions go through
 
 | Type (owner file) | Fields that matter | Constructed by | Consumed by | Persisted at |
 |---|---|---|---|---|
-| `Experiment` (`core/experiment.py`) | `id` (`exp_{epoch}_{gen}`), lineage coordinates, `proposed_at`, `hypothesis`, `patches`, `outcome` (None until settled), `round_index` (birth round) | the proposer (`FoeProposerAgent.propose` → `_propose_child` stamps `round_index`) | applier/validator, tournament tails, journal, index, dashboard | `epochs/{e}/generations/{g}/experiment.json` (+ `patches/{id}.json`) via `write_experiment` / `update_experiment_outcome` |
+| `Experiment` (`core/experiment.py`) | experiment id, ancestry coordinates, proposal time, hypothesis, patches, outcome, birth round | proposer; the accepted reader supplies committed outcomes | validation, tournament execution, journal, index, dashboard | Proposal and patch files retain authored inputs. Tournament outcomes come from the committed round record; rejection before tournament execution updates the proposal file. |
 | `HypothesisSpec` (`core/experiment.py`) | `core_idea`, `modulating` (the ONLY ids the patches may touch), `why`, expected drift/metric movements, `expected_pass_rate_delta`, `risks` | the proposer LLM, schema-validated with bounded retries | manifest check, diversity signatures, experiment memory, journal one-liners, hypothesis ledger | inside `experiment.json` |
 | `Patch` (`core/mutation.py`) | `mutation_id`, op kind, payload | the proposer | applier (`derive_generation` through the genstore), validator, diff-complexity | `patches/{id}.json` |
-| `Generation` (`core/epoch.py`) | `id`, `parent_id`, `snapshot_root`, `promoted`, `round_index` (birth round — never re-stamped) | orchestrator (parent from the marker; child at mint) | runner (mounts `snapshot_root`), lineage, genstore | `lineage.json` nodes + the genstore (git tag/commit per generation) |
+| `Generation` (`core/epoch.py`) | `id`, `parent_id`, `snapshot_root`, `promoted`, `round_index` | orchestrator; the parent comes from committed promotions or baseline `v0` | runner, lineage, generation store | Ancestry in `lineage.json`; promotion status from committed outcomes; candidate source in the configured Git or directory generation store. |
 | `LossProfile` (`core/loss.py`) | `drift_counts`, `pass_fail`, continuous `score`, `metric_counts` (namespaced), `runtime_ms`, `abort_cause`, `tokens_spent` | the reducer (`telemetry/reducer.py`) inside the worker path, per run | scoring aggregation, gate, detectors, screen, health, failure profile | `runs/{entry}/seed-{seed}/loss.{purpose}.r{draw}.json` (the per-unit cache reads it) + index `runs` table |
 | `GateOutcome` (`tournament/gate.py`) | `decision`, `reason` (names the rule that fired), `delta_scalar`, `delta_pass_rate` | `evaluate_gate` at the end of every duel | strategies (read, never re-decide), evidence gate, RoundLog `gate_evaluated`, OutcomeRecord deltas | inside `TournamentResult` / `MatchupResult`; not standalone |
 | `TournamentResult` (`tournament/runner.py`) | both aggregates, `outcome`, `per_entry_losses`, `champion_eval_mode`, `unit_provenance`, `holdout`, `holdout_child_scalar` | `run_matchup`; standalone debug APIs also return it | canonical matchup closure, infra counter, aggregate caching | aggregates cached as `gen_score.json`; the rest is projected into `MatchupResult` and `OutcomeRecord` |
@@ -1511,7 +1496,7 @@ types frozen (`frozen=True, slots=True`); state transitions go through
 | `TournamentEvaluation` (`selection/driver.py`) | strategy decision plus optional `EvidenceResolution` | `evaluate_tournament` | holdout confirmation and settlement construction | not persisted directly; its parts enter the tournament and outcome records |
 | `CandidateBatch` (`evolve/candidate_batch.py`) | incumbent, requested width, applied challengers, rejected slots, field status, resume provenance | `produce_candidate_batch` | strategy seeding and round evaluation | experiments and soft rejections persist independently; the typed batch does not |
 | `RoundSettlement` (`evolve/settlement.py`) | effective decision, primary and additional promotions, candidate outcomes, champion scalar, evidence, tournament metadata | `evolve_field_round` after confirmation and overrides | construction of the replayable settlement receipt | its constituent facts remain in `rounds/{round}/field_settlement.json` after commit; the typed value does not persist |
-| `OutcomeRecord` (`core/experiment.py`) | decision + reason, deltas, `structure`/`final_rank`/`match_record`, `champion_eval_mode`, `holdout` block, `train_loss`/`holdout_loss`/`generalization_gap`, `operator_override(+reason)`, `evidence` | settlement construction plus rejected/soft-reject tails | journal, index, dashboard decision surface, gap detector | resolved tournaments persist through field-settlement replay; pre-tournament terminal tails use `_finalize_generation` |
+| `OutcomeRecord` (`core/experiment.py`) | decision + reason, deltas, `structure`/`final_rank`/`match_record`, `champion_eval_mode`, `holdout` block, `train_loss`/`holdout_loss`/`generalization_gap`, `operator_override(+reason)`, `evidence` | settlement construction plus rejected/soft-reject tails | journal, index, dashboard decision surface, gap detector | completed tournaments persist in committed round records; rejection before tournament execution uses `_finalize_generation` |
 | `PriorExperiment` (`core/experiment.py`) | `core_idea`, `modulating`, `decision` (incl. `"in_flight"`), banded delta, `same_contract`, `prediction_accuracy` | `_load_prior_experiments` (index) + the field loop (siblings) | the proposer's memory section | never persisted — a render-time projection |
 | `EvolveRoundOutcome` (`evolve/round_api.py`) | parent/child ids, decision (incl. `deferred_infra`), reason, scalars + delta, health summary/critical | every `evolve_once` return path | `evolve_n_rounds` stop policies, the CLI summary | not persisted (the journal/experiment carry the durable truth) |
 | `ResumePlan` (`runtime/resume.py`) | `classification`, `resumes_in_place`, `resume_generation_id`, `resume_experiment` | `prepare_resume` at loop start / after a deferral | `evolve_once` steps 6/6r, cache-read decisions | derived from the workspace; not persisted |
@@ -1521,15 +1506,12 @@ types frozen (`frozen=True, slots=True`); state transitions go through
 | `_FieldMintDecision` (`evolve/propose_apply.py`, private) | `action` ∈ accept / reject_duplicate / reject_overlap, overlap + peer index | `_mint_challenger_field` (pure) | the field loop's soft-reject branches | not persisted (soft-reject reasons land on experiment.json) |
 | `GateOverride` (`runtime/control_consumer.py`) | forced `decision`, operator `reason` | the operator via control files; claimed at safe points | override application + provenance stamping | archived to `control_log/`; provenance on records |
 
-Reading the table column-wise gives you the three persistence planes:
-the **canonical record plane** (`experiment.json`, `lineage.json`,
-`journal.md`, RoundLog — under `epochs/`), the **cache plane**
-(`gen_score.json`, per-measurement loss files — reconstructible), and
-the **ephemeral plane** (`runtime/` envelopes — cleared on crash). A new
-field must pick its plane explicitly: a decision that lives only on the
-ephemeral plane does not exist for any later reader, which is why a
-completed Swiss epoch with no durable field record renders blank from the
-index alone (issue #16).
+Proposal files, ancestry, committed round records, and measurements provide
+the durable inputs for readers. The index and rendered journal derive their
+content from those records. Runtime envelopes describe live progress and are
+cleared on restart. A completed tournament therefore needs a retained round
+record containing its decisions and structure so its visualizations remain
+available after the process exits.
 
 ---
 
@@ -1556,7 +1538,7 @@ The seams, and what each owns:
 | `evaluate_tournament`, `confirm_promotion_with_evidence` | `selection/driver.py` | strategy progression and Bradley–Terry confirmation | every strategy |
 | `run_matchup` | `tournament/runner.py` | board selection, paired replication, cache policy, aggregation, promotion gate | every scheduled matchup |
 | `RoundSettlement`, `CandidateSettlement` | `evolve/settlement.py` | typed boundary between resolved evaluation and settlement-intent construction | every settled round |
-| field-settlement receipt and replay | `evolve/settlement_recovery.py` | validated, idempotent commit across outcomes, lineage, marker, journals, settled bracket, derived-index status, and hook-delivery status | every settled round and startup recovery |
+| Round publication and recovery | `evolve/settlement_recovery.py` | validate and commit the complete round record, refresh the derived index, and retain external hook delivery status | every settled round and startup recovery |
 | `_finalize_generation` | `evolve/persist.py` | direct outcome and index write when no tournament settlement receipt exists | rejected tails before tournament execution |
 | `_round_epilogue` | `evolve/persist.py` | health + analyzer + report regeneration | every completed round plus rejected tail |
 | `_persist_rejected_round` | `evolve/persist.py` | one-candidate proposer-exhaustion tail | gauntlet candidate failure |
@@ -1692,17 +1674,17 @@ old path — chapter 01 §6's late-binding trap):
    named points (between rounds; step 0; step 10c; the field's
    post-holdout claim). Do not add a control effect anywhere else — a
    mid-tournament flag claim races the writes.
-3. **The persistence order is part of the semantics.** A resolved tournament
-   writes its settlement receipt before outcome → lineage → marker → journal →
-   bracket → grouped derived-index refresh → committed receipt. Pre-tournament
-   terminal tails use `_finalize_generation` because they have no bracket or
-   champion transition to recover.
+3. **Commit the decision before updating derived views.** A completed
+   tournament commits one round record containing all outcomes, tournament
+   details, and the primary promoted generation. Index refresh follows that
+   publication. Proposal rejection before tournament execution uses
+   `_finalize_generation` to record the outcome directly in the proposal file.
 4. **Best-effort is a two-sided contract** (chapter 01 §6). Round-fatal
    steps raise; observational steps are wrapped; each new step declares
    which it is.
 5. **The oracle pins all of this.** After any change in this chapter's
    territory, `uv run pytest tests/test_convergence_known_answer.py -q`
    — the decision script, the exact scalars, the artifacts, the round-log
-   grammar, the index rows, and the marker semantics are all asserted
+   grammar, the index rows, and champion selection are all asserted
    there. Green is necessary but not sufficient on its own; a red result
    is always caused by your change.

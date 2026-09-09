@@ -247,6 +247,7 @@ class GateOutcome:
     delta_scalar: float
     delta_pass_rate: float
     attributable_regressions: tuple[str, ...] = ()
+    explanation: dict[str, Any] | None = None
 
 
 def regressed_namespaces(
@@ -797,6 +798,83 @@ def evaluate_gate(
     deltas are always the train-side deltas so the journal's evidence shape
     is unchanged.
     """
+
+    def rule(name: str, label: str, enabled: bool = True) -> dict[str, Any]:
+        return {
+            "id": name,
+            "label": label,
+            "status": "not_reached" if enabled else "disabled",
+            "detail": "" if enabled else "disabled",
+            "fired": False,
+        }
+
+    scalar_rule = rule("scalar_margin", "Scalar margin")
+    pass_rule = rule(
+        "pass_rate_monotonicity", "Pass-rate monotonicity", weights.pass_rate_monotonicity
+    )
+    namespace_rule = rule(
+        "namespace_monotonicity",
+        "Namespace monotonicity",
+        any(
+            enabled and weights.namespace_weights.get(namespace, 0.0) != 0.0
+            for namespace, enabled in weights.namespace_monotonicity.items()
+        ),
+    )
+    regression_rule = rule("regression_suite", "Regression suite", weights.regression_gate_enabled)
+    if not weights.regression_gate_enabled:
+        regression_rule["status"] = "skipped"
+    else:
+        regression_rule.update(status="unknown", detail="regression suite has not been run")
+    rules = [regression_rule, scalar_rule, pass_rule, namespace_rule]
+    active_rule = rule("complete_execution", "Complete execution")
+
+    def finish(
+        *,
+        decision: TournamentDecision,
+        reason: str,
+        delta_scalar: float,
+        delta_pass_rate: float,
+        attributable_regressions: tuple[str, ...] = (),
+    ) -> GateOutcome:
+        if decision != TournamentDecision.PROMOTED:
+            active_rule.update(status="fail", detail=active_rule["detail"] or reason, fired=True)
+            if active_rule not in rules:
+                rules.insert(0, active_rule)
+        for item in rules:
+            if item["status"] == "not_reached":
+                item["detail"] = "not reached (an earlier rule fired)"
+        deciding_rule = active_rule["id"] if decision != TournamentDecision.PROMOTED else None
+        regressed_entries = (
+            _regressed_entries(parent_agg, child_agg)
+            if deciding_rule == "pass_rate_monotonicity"
+            else []
+        )
+        regressed_ns = (
+            regressed_namespaces(parent_agg, child_agg, weights)
+            if deciding_rule == "namespace_monotonicity"
+            else []
+        )
+        return GateOutcome(
+            decision=decision,
+            reason=reason,
+            delta_scalar=delta_scalar,
+            delta_pass_rate=delta_pass_rate,
+            attributable_regressions=attributable_regressions,
+            explanation={
+                "decision": decision,
+                "reason": reason,
+                "deciding_rule": deciding_rule,
+                "rules": rules,
+                "margin": weights.promote_margin,
+                "champion_scalar": parent_scalar,
+                "challenger_scalar": child_scalar,
+                "delta_scalar": delta_scalar,
+                "delta_pass_rate": delta_pass_rate,
+                "regressed_predicate": regressed_entries[0] if regressed_entries else None,
+                "regressed_namespace": regressed_ns[0] if regressed_ns else None,
+            },
+        )
+
     parent_scalar = float(parent_agg["scalar"])
     child_scalar = float(child_agg["scalar"])
     parent_pass = float(parent_agg.get("pass_rate", 1.0))
@@ -812,7 +890,7 @@ def evaluate_gate(
         ("holdout challenger", holdout_child_agg),
     ):
         if aggregate and aggregate.get("incomplete_entries"):
-            return GateOutcome(
+            return finish(
                 decision=TournamentDecision.DEFERRED,
                 reason=f"incomplete execution: {label} has unstarted board units",
                 delta_scalar=delta_scalar,
@@ -826,6 +904,7 @@ def evaluate_gate(
     attributable = attributable_entry_regressions(parent_agg, child_agg)
 
     # Precondition: finite evidence, before any rule reads these numbers.
+    active_rule = rule("finite_evidence", "Finite scores")
     invalid = _nonfinite_evidence(
         ("champion scalar", parent_scalar),
         ("challenger scalar", child_scalar),
@@ -833,7 +912,7 @@ def evaluate_gate(
         ("challenger mean_score", _mean_score(child_agg)),
     )
     if invalid:
-        return GateOutcome(
+        return finish(
             decision=TournamentDecision.REJECTED,
             reason=invalid,
             delta_scalar=delta_scalar,
@@ -852,11 +931,13 @@ def evaluate_gate(
     # to a contract without the field.
     ceiling = float(weights.experimental.diff_complexity_ceiling)
     if ceiling > 0.0:
+        active_rule = rule("diff_complexity_ceiling", "Edit complexity limit")
+        rules.insert(0, active_rule)
         diff_size = child_agg.get("diff_size")
         if isinstance(diff_size, dict):
             complexity = diff_complexity(diff_size)
             if complexity > ceiling:
-                return GateOutcome(
+                return finish(
                     decision=TournamentDecision.REJECTED,
                     reason=(
                         f"diff_complexity_ceiling: diff complexity {complexity:g} "
@@ -867,6 +948,10 @@ def evaluate_gate(
                     attributable_regressions=attributable,
                 )
 
+        active_rule.update(status="pass", detail="within limit")
+        if not isinstance(diff_size, dict):
+            active_rule.update(status="unknown", detail="edit complexity not recorded")
+
     # Rule 1: scalar margin. The scalar is a LOSS — lower is better — so
     # a promotion needs the child's loss to drop by at least
     # ``promote_margin``: ``child_scalar <= parent_scalar - promote_margin``.
@@ -875,6 +960,14 @@ def evaluate_gate(
     # not as the observed gap, and (c) distinguish a child that improved
     # but not enough ("near-miss") from a child that is outright worse
     # ("regressed").
+    active_rule = scalar_rule
+    scalar_rule.update(
+        status="pass",
+        detail=(
+            f"{parent_scalar:.2f} → {child_scalar:.2f} "
+            f"({delta_scalar:+.2f}; needs ≤ {-weights.promote_margin:.2f})"
+        ),
+    )
     if child_scalar > parent_scalar - weights.promote_margin:
         # delta_scalar = child - parent. Positive => child's loss rose
         # (worse); zero/negative => child improved or tied but by less
@@ -899,7 +992,7 @@ def evaluate_gate(
         # (issue #120(b)). Inert — and the reason byte-identical — whenever the
         # diff-complexity term is off, which is the default.
         verdict += _parsimony_decomposition(parent_agg, child_agg, weights, delta_scalar)
-        return GateOutcome(
+        return finish(
             decision=TournamentDecision.REJECTED,
             reason=verdict,
             delta_scalar=delta_scalar,
@@ -911,10 +1004,17 @@ def evaluate_gate(
     # means — per_entry (every parent-passed entry must still pass) or
     # aggregate (the overall pass-rate may not drop). Both branches share
     # the same reason-builder so the gate and the holdout stay symmetric.
+    active_rule = pass_rule
     if weights.pass_rate_monotonicity:
+        if weights.pass_rate_monotonicity_scope == "aggregate":
+            parent_score, child_score = _mean_score(parent_agg), _mean_score(child_agg)
+            pass_rule["detail"] = (
+                f"overall {parent_score:.2f} → {child_score:.2f} "
+                f"({child_score - parent_score:+.2f}; aggregate scope)"
+            )
         pass_reason = _pass_rate_regression_reason(parent_agg, child_agg, weights)
         if pass_reason:
-            return GateOutcome(
+            return finish(
                 decision=TournamentDecision.REJECTED,
                 reason=pass_reason,
                 delta_scalar=delta_scalar,
@@ -922,14 +1022,17 @@ def evaluate_gate(
                 attributable_regressions=attributable,
             )
 
+        pass_rule.update(status="pass", detail=pass_rule["detail"] or "all preserved")
+
     # Rule 3: per-namespace monotonicity. Applied last so the scalar
     # margin and the entry-pass-rate guard fire first when they apply;
     # we still cite EVERY regressing namespace in the reason so the
     # journal records the full picture (not just the first one).
+    active_rule = namespace_rule
     regressed_ns = regressed_namespaces(parent_agg, child_agg, weights)
     if regressed_ns:
         reason = _namespace_regression_reason(parent_agg, child_agg, regressed_ns)
-        return GateOutcome(
+        return finish(
             decision=TournamentDecision.REJECTED,
             reason=reason,
             delta_scalar=delta_scalar,
@@ -937,14 +1040,21 @@ def evaluate_gate(
             attributable_regressions=attributable,
         )
 
+    if namespace_rule["status"] != "disabled":
+        namespace_rule.update(status="pass", detail="all within bounds")
+        if not isinstance(child_agg.get("namespace_aggregates"), dict):
+            namespace_rule.update(status="unknown", detail="namespace aggregates not recorded")
+
     # Holdout confirmation (OVERFITTING.md §12 #1). The three train rules
     # cleared; if the caller split out a holdout, the win must also confirm
     # there. An empty / absent holdout skips this step entirely so behavior
     # is byte-identical to the pre-split gate. Deltas stay train-side.
     if holdout_parent_agg is not None and holdout_child_agg is not None:
+        active_rule = rule("holdout_confirmation", "Holdout confirmation")
+        rules.append(active_rule)
         holdout_reason = _holdout_confirms(holdout_parent_agg, holdout_child_agg, weights)
         if holdout_reason:
-            return GateOutcome(
+            return finish(
                 decision=TournamentDecision.REJECTED,
                 reason=holdout_reason,
                 delta_scalar=delta_scalar,
@@ -952,7 +1062,9 @@ def evaluate_gate(
                 attributable_regressions=attributable,
             )
 
-    return GateOutcome(
+        active_rule.update(status="pass", detail="confirmed")
+
+    return finish(
         decision=TournamentDecision.PROMOTED,
         reason="",
         delta_scalar=delta_scalar,

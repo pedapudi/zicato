@@ -133,29 +133,23 @@ the forward-compatibility posture `BoardEntry.context` and
 
 ## 2. The generalized persisted tournament record
 
-### 2.1 Two persistence surfaces, generalized in lockstep
+### 2.1 Execution records progress and completed results
 
-A tournament is persisted in two places, and the generalization covers
-both:
+The live runtime record, `ActiveTournament`, publishes competitors, matches,
+standings, and board progress through `runtime/active_tournament.events.jsonl`.
+The runner supplies measurements and the tournament strategy supplies pairing
+and elimination state.
 
-1. **The live runtime record** — `ActiveTournament` in
-   `src/zicato/runtime/state.py`, folded from
-   `runtime/active_tournament.events.jsonl`, which the dashboard reads while a
-   tournament is in flight. Its per-matchup core is two top-level
-   generation ids (`parent_generation_id` / `child_generation_id`) and a
-   flat `entries` list of `(entry_id, side)` rows where `side ∈
-   {"parent", "child"}`.
-2. **The settled record** — the `tournaments` table in the SQLite
-   analytical index (`src/zicato/index/schema.py:137`) plus the
-   per-generation `experiment.json` `outcome` block
-   (`OutcomeRecord` in `core/types.py:1334`). Its per-matchup core is
-   one `tournaments` row per champion-vs-challenger matchup with a
-   single `decision` / `delta_scalar`.
+A completed round publishes its results in
+`epochs/<epoch>/rounds/<round>/field_settlement.json`. The round record contains
+candidate outcomes, the selected champion, the complete tournament structure
+under `field_record`, and explanations of gate results under `gate_results`.
+A two-candidate tournament records its actual match and standings through the
+same path as a larger field.
 
-The generalization adds a **structure-aware envelope** around the
-per-matchup shape. The per-matchup fields are PRESERVED so a gauntlet
-reads and writes unchanged; the envelope fields are ADDITIVE and default
-to the gauntlet interpretation.
+The SQLite `tournaments` table is a derived projection. Experiment readers
+combine the proposal with its committed round outcome. Dashboard readers use
+those shared readers to present decisions, comparisons, and visualizations.
 
 ### 2.2 The live `ActiveTournament` — generalized
 
@@ -320,9 +314,9 @@ derivable, always present once any run settles:
   { "generation_id": "v4", "rank": 3, "scalar": 0.52, "wins": 0, "losses": 2, "status": "eliminated", "role": "challenger" }
 ]
 ```
-- `status ∈ {"alive", "eliminated", "champion"}`. For a gauntlet,
-  `standings` MAY be empty (the two-row view is enough); for a Swiss /
-  racing run it is the primary UI surface.
+- `status ∈ {"alive", "eliminated", "champion"}`. The strategy records
+  standings for every tournament, including the two gauntlet competitors.
+  Swiss and racing views use the standings alongside recorded matches.
 - `wins` / `losses` are meaningful for bracket / Swiss; for racing they
   may be `0` and the UI reads survival from `rounds[].cut`.
 
@@ -348,9 +342,9 @@ competitor, with the boards-so-far / boards-total progress folded in.
 Default `{}` (no projection before the first board settles; old files
 have no key and load empty).
 
-**Per-structure ranking rule** (the dashboard + the orchestrator overlay
-substitute the projected scalar into the EXISTING sort key for the
-in-flight competitor ONLY; a settled competitor keeps its real value):
+**Ranking during execution.** The orchestrator combines partial scores with
+the strategy's standings. It substitutes a partial scalar only for a competitor
+whose evaluation is running. The dashboard displays the published order:
 
 - `single_elim` / `double_elim` / `racing` — **scalar rank.** The
   projected scalar replaces the in-flight row's (still-zero) scalar in the
@@ -363,9 +357,10 @@ in-flight competitor ONLY; a settled competitor keeps its real value):
 - `gauntlet` — the projected delta (challenger − champion) reads on the
   two-row view; no multi-competitor standings to re-rank.
 
-### 2.6 The settled record — `tournaments` table + `OutcomeRecord`
+### 2.6 Completed results in the index and experiment readers
 
-Two settled surfaces, generalized:
+The index and experiment readers project committed round results into the
+following forms:
 
 **(a) The SQLite `tournaments` table** (`index/schema.py:137`) gains
 ADDITIVE columns (a v3 migration, mirroring the v2 column-add pattern at
@@ -495,12 +490,12 @@ state.
   not assume `side ∈ {"parent","child"}` (§2.3) — it should pass through
   an unrecognised `side` (a generation id) untouched.
 
-### 3.2 New endpoint — the structure state
+### 3.2 The endpoint for tournament structure
 
-`GET /api/tournament-structure/{epoch_id}/{tournament_id}` →
-`build_tournament_structure(paths, epoch_id, tournament_id)` in
-`state_reader.py`. The single read the UI uses to render a bracket /
-standings / racing ladder for a settled tournament:
+`GET /api/tournament-structure/{epoch_id}/{tournament_id}` calls
+`build_tournament_structure` in `query/tournament_view.py`. The response
+supplies the matches and standings used to render tournament brackets,
+standings, and racing ladders:
 
 ```jsonc
 {
@@ -520,30 +515,32 @@ standings / racing ladder for a settled tournament:
       ] }
   ],
   "standings": [ { "generation_id": "v3", "rank": 1, "scalar": 0.41, "status": "champion" } ],
-  "source": "index" | "active" | "loss_files"
+  "source": "record" | "active" | "index" | "unavailable"
 }
 ```
 
-Resolution order (mirrors the existing `build_matchup_grid` fallback
-chain at `state_reader.py:1731`): prefer the SQLite `tournaments` row's
-`rounds_json` / `standings_json`; if the index is absent, read the live
-`active_tournament.events.jsonl`; if neither, reconstruct a degenerate
-single-match view from the per-run `loss.json` files. A malformed id
-degrades to an empty structure (HTTP 200), matching every other handler
-in `endpoints.py`.
+The reader consults recorded tournament structures, active progress, and the
+derived SQLite projection. A completed round is authoritative for its actual
+matches and standings. A request for a candidate pair selects that pair's
+recorded matches from the tournament. Missing structure returns an empty
+response; loss files alone cannot establish a bracket or a winner.
 
-The endpoint is wired in `make_endpoints` (`endpoints.py:78`) under a new
-`api_tournament_structure` handler and a `server.py` route
-`/api/tournament-structure/{epoch_id}/{tournament_id}` with the same
-`_is_safe_id` guards every coordinate handler uses.
+The handler validates epoch and tournament identifiers before reading the
+workspace. Invalid coordinates return the empty response at HTTP 200.
 
 ### 3.3 The `/api/round/.../gate` endpoint
 
-`build_gate_breakdown` (`endpoints.py:353`) is **per-match** and stays
-unchanged — it already takes `(epoch_id, champion, challenger)`.
-Under a bracket or Swiss structure the interface calls it once per match,
-with that match's two `competitors`, the way the gauntlet interface calls
-it once per round.
+The gate reader, `query.gate_view.build_gate_breakdown`, takes an epoch and
+two candidate identities. It reads the corresponding `gate_results` entry
+from the committed round. That entry records the rule results, explanation,
+scalar margin, and training aggregates compared during execution. The runner
+records the actual regression-suite result as part of that explanation.
+
+The reader displays recorded decisions without calling `evaluate_gate`.
+When no explanation is recorded, `rules` is empty and `deciding_rule` is null.
+Candidate outcomes can still explain rejection before evaluation or a later
+confirmation or operator decision. Bracket and Swiss views request the same
+endpoint for each recorded pair.
 
 ---
 

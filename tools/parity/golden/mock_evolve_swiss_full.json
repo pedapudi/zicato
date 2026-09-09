@@ -316,6 +316,7 @@
           "seed": 5
         }
       ],
+      "crowning_matchup_id": "swiss-final",
       "decision": "promoted",
       "delta_scalar": -1.6,
       "epoch_id": "<DATE>_t1_swiss",

@@ -48,9 +48,12 @@ from tests._orchestrator_harness import (
     run_evolve_once,
     target_call_llm,
 )
+from tests._workspace_support import read_experiment_record
 from zicato.core.types import ExperimentalConfig, ScoringWeights, TournamentStructure
 from zicato.epoch.journal import write_seed_experiment
 from zicato.epoch.lifecycle import new_epoch
+from zicato.epoch.lineage import load_lineage
+from zicato.tournament.records import read_field_tournament_record
 
 
 def _distinct_proposer_response(core_idea: str, new_word: str) -> str:
@@ -184,7 +187,7 @@ def _bootstrap_single_elim_workspace(tmp_path: Path, *, field_size: int) -> tupl
 
 def _lineage_gens(workspace: Path, epoch_id: str) -> dict[str, dict[str, Any]]:
     """Return ``lineage.json``'s generation nodes for ``epoch_id`` keyed by id."""
-    lineage = json.loads((workspace / "lineage.json").read_text())
+    lineage = load_lineage(workspace).to_dict()
     for ep in lineage.get("epochs", []):
         if ep.get("id") == epoch_id:
             return {g["id"]: g for g in ep.get("generations", [])}
@@ -194,7 +197,7 @@ def _lineage_gens(workspace: Path, epoch_id: str) -> dict[str, dict[str, Any]]:
 def _experiment_round_index(workspace: Path, epoch_id: str, gid: str) -> Any:
     """Read ``round_index`` off a generation's persisted ``experiment.json``."""
     path = workspace / "epochs" / epoch_id / "generations" / gid / "experiment.json"
-    return json.loads(path.read_text()).get("round_index")
+    return read_experiment_record(path).get("round_index")
 
 
 def test_birth_round_index_stamped_per_round_end_to_end(
@@ -326,11 +329,9 @@ def test_inflight_round_visible_in_every_store_before_settle(
                     if (gens_root / gid).is_dir()
                 },
                 "field_v5": (
-                    json.loads(
-                        (
-                            workspace / "epochs" / epoch_id / "tournaments" / "field-v5.json"
-                        ).read_text()
-                    )
+                    read_field_tournament_record(
+                        workspace / "epochs" / epoch_id / "tournaments" / "field-v5.json"
+                    ).to_dict()
                     if (workspace / "epochs" / epoch_id / "tournaments" / "field-v5.json").is_file()
                     else None
                 ),
@@ -412,7 +413,7 @@ def test_field_record_finalises_to_settled_after_round(
     # challenger (v1) — finalised to settled (no leftover in_progress, no
     # duplicate).
     assert [p.name for p in records] == ["field-v1.json"], records
-    field = json.loads(records[0].read_text())
+    field = read_field_tournament_record(records[0]).to_dict()
     assert field.get("state") == "settled", field.get("state")
     assert field.get("rounds"), "settled record should carry the resolved bracket"
     assert field.get("standings"), "settled record should carry standings"

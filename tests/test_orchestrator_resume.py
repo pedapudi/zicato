@@ -24,7 +24,6 @@ cache.
 from __future__ import annotations
 
 import asyncio
-import json
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +43,7 @@ from tests._orchestrator_harness import (
     run_evolve_once,
     target_call_llm,
 )
+from tests._workspace_support import read_experiment_record
 from zicato.core.types import TournamentStructure
 from zicato.telemetry.reducer import read_loss_profile as _REAL_READ_LOSS
 from zicato.telemetry.reducer import write_loss_profile as _REAL_WRITE_LOSS
@@ -155,7 +155,7 @@ def test_resume_reuses_completed_units_without_rerun(
     assert counts.get("v0/entry_a", 0) == 0, counts
 
     # v1 now carries a committed outcome again (the resumed round journaled).
-    body = json.loads((v1_dir / "experiment.json").read_text())
+    body = read_experiment_record(v1_dir / "experiment.json")
     assert body["outcome"] is not None
 
     # Lineage is not corrupted: v1 appears exactly once. append_to_lineage

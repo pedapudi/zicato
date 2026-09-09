@@ -96,10 +96,8 @@ def test_receipt_edits_compose_candidates_and_progress_then_revalidate(tmp_path:
     write_settlement_receipt(tmp_path, edited)
     path = field_settlement_intent_path(tmp_path, "epoch", 0)
     assert path.read_bytes() == json.dumps(expected, indent=2, sort_keys=True).encode()
-    written = path.read_bytes()
-    with pytest.raises(RecordError, match="pending index"):
-        write_settlement_receipt(tmp_path, replace(receipt, state="committed"))
-    assert path.read_bytes() == written
+    write_settlement_receipt(tmp_path, replace(receipt, state="committed"))
+    assert json.loads(path.read_text())["index_projection"]["state"] == "pending"
     assert receipt.to_dict() == body
 
 

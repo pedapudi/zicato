@@ -19,7 +19,6 @@ existing promotion test runs with both knobs at their False default).
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +32,7 @@ from tests._orchestrator_harness import (
     install_telemetry_stubs,
     run_evolve_once,
 )
+from tests._workspace_support import read_experiment_record
 from zicato.core.types import TournamentStructure
 from zicato.evolve.containment import (
     check_containment,
@@ -40,6 +40,7 @@ from zicato.evolve.containment import (
     mutable_basenames,
 )
 from zicato.evolve.gate import _integrity_block_reason
+from zicato.evolve.generation_phase import current_generation
 
 # ---------------------------------------------------------------------------
 # check_containment — the supervisor's rule surface, mirrored
@@ -230,8 +231,8 @@ def test_containment_block_rejects_out_of_bounds_child(
     # only on a crowning); v1 is a dead branch.
     marker = workspace / "epochs" / epoch_id / "current_generation"
     assert not marker.exists()
-    body = json.loads(
-        (workspace / "epochs" / epoch_id / "generations" / "v1" / "experiment.json").read_text()
+    body = read_experiment_record(
+        workspace / "epochs" / epoch_id / "generations" / "v1" / "experiment.json"
     )
     assert body["outcome"]["tournament_decision"] == "rejected"
     assert body["outcome"]["rejection_reason"].startswith("containment_violation:")
@@ -361,5 +362,4 @@ def test_supported_promote_passes_with_both_knobs_on(
 
     outcome = run_evolve_once(workspace, epoch_id, evaluation_call_llm)
     assert outcome.tournament_decision == "promoted"
-    marker = workspace / "epochs" / epoch_id / "current_generation"
-    assert marker.read_text().strip() == "v1"
+    assert current_generation(workspace, epoch_id) == "v1"

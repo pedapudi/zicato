@@ -26,10 +26,11 @@ from tests.test_orchestrator_multi_challenger import (
     _bootstrap_swiss_workspace,
 )
 from zicato.core.workspace import experiment_json_path, field_tournament_path, lineage_path
-from zicato.epoch.journal import outcome_from_dict, read_experiment
+from zicato.epoch.journal import outcome_from_dict, read_experiment, read_journal
 from zicato.epoch.lineage import load_lineage
 from zicato.epoch.settlement_receipt import field_settlement_intent_path
 from zicato.evolve import settlement as settlement_module
+from zicato.evolve.generation_phase import current_generation
 from zicato.evolve.ingest import index_preflight
 from zicato.evolve.settlement_recovery import (
     acknowledge_repaired_settlement_indexes,
@@ -43,24 +44,14 @@ from zicato.query.gate_view import build_health_report
 from zicato.query.paths import WorkspacePaths
 from zicato.runtime.paths import active_tournament_log_path
 from zicato.runtime.resume import prepare_resume
+from zicato.tournament.records import read_field_tournament_record
 
 
 class _InjectedCrash(RuntimeError):
     """A process stop immediately after one named persistence boundary."""
 
 
-_COMMIT_BOUNDARIES = (
-    "receipt_persisted",
-    "outcome:v1",
-    "outcome:v2",
-    "lineage",
-    "champion_marker",
-    "journal:v1",
-    "journal:v2",
-    "settled_bracket",
-    "index_projection",
-    "receipt_committed",
-)
+_COMMIT_BOUNDARIES = ("receipt_persisted", "receipt_committed", "index_projection")
 
 
 def _stop_after_receipt_persistence(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -132,11 +123,11 @@ def pending_settlement(
 
 def _assert_field_is_unmutated(workspace: Path, epoch_id: str) -> None:
     """Assert that validation failed before any settlement write."""
-    assert read_experiment(workspace, epoch_id, "v1").outcome is None
-    assert read_experiment(workspace, epoch_id, "v2").outcome is None
-    epoch = next(
-        row for row in load_lineage(workspace).to_dict()["epochs"] if row["id"] == epoch_id
-    )
+    for generation_id in ("v1", "v2"):
+        proposal = json.loads(experiment_json_path(workspace, epoch_id, generation_id).read_text())
+        assert proposal["outcome"] is None
+    ancestry = json.loads(lineage_path(workspace).read_text())
+    epoch = next(row for row in ancestry["epochs"] if row["id"] == epoch_id)
     by_generation = {row["id"]: row for row in epoch["generations"]}
     assert by_generation["v1"]["promoted"] is None
     assert by_generation["v2"]["promoted"] is None
@@ -220,22 +211,15 @@ def test_resume_completes_each_interrupted_field_settlement_boundary(
         assert node["parent_id"] == "v0"
         assert node["promoted"] is (candidate["outcome"]["tournament_decision"] == "promoted")
 
-    marker = workspace / "epochs" / epoch_id / "current_generation"
-    assert marker.read_text(encoding="utf-8").strip() == primary
+    assert current_generation(workspace, epoch_id) == primary
 
-    journal = (workspace / "epochs" / epoch_id / "journal.md").read_text(encoding="utf-8")
+    journal = read_journal(workspace, epoch_id)
     for candidate in candidates:
-        identity = f'{intent["settlement_id"]}:{candidate["generation_id"]}'
-        marker_text = f'<!-- zicato:field-settlement identity="{identity}" -->'
-        assert journal.count(marker_text) == 1
+        assert journal.count(f'## {candidate["generation_id"]} — ') == 1
 
-    field_record = json.loads(
-        field_tournament_path(
-            workspace,
-            epoch_id,
-            intent["candidates"][0]["generation_id"],
-        ).read_text(encoding="utf-8")
-    )
+    field_record = read_field_tournament_record(
+        field_tournament_path(workspace, epoch_id, intent["candidates"][0]["generation_id"])
+    ).to_dict()
     assert field_record == intent["field_tournament_record"]
 
     # The SQLite file has no independent authority. Dropping and rebuilding
@@ -258,10 +242,10 @@ def test_lineage_resolution_is_atomic_across_the_candidate_field(
     workspace, epoch_id, receipt = pending_settlement
 
     def stop_after_atomic_resolution(boundary: str) -> None:
-        if boundary == "lineage":
+        if boundary == "receipt_committed":
             raise _InjectedCrash(boundary)
 
-    with pytest.raises(_InjectedCrash, match="lineage"):
+    with pytest.raises(_InjectedCrash, match="receipt_committed"):
         replay_field_settlement(
             workspace,
             receipt,
@@ -326,11 +310,11 @@ def test_recovery_preserves_a_rejected_field_receipt(
     assert (workspace / "epochs" / epoch_id / "current_generation").read_text().strip() == "v0"
 
 
-def test_recovery_preserves_a_single_challenger_receipt_without_a_field_bracket(
+def test_recovery_preserves_the_recorded_two_candidate_structure(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """The shared settlement boundary does not invent a gauntlet field record."""
+    """A two-candidate round retains its executed matches across recovery."""
     workspace, epoch_id = _bootstrap_swiss_workspace(tmp_path, field_size=1)
     install_stub_adapter_factory(monkeypatch)
     install_telemetry_stubs(
@@ -349,15 +333,22 @@ def test_recovery_preserves_a_single_challenger_receipt_without_a_field_bracket(
     pending = json.loads(
         field_settlement_intent_path(workspace, epoch_id, 0).read_text(encoding="utf-8")
     )
-    assert pending["field_tournament_record"] is None
+    assert len(pending["field_tournament_record"]["competitors"]) == 2
     assert len(pending["candidates"]) == 1
     prepare_resume(workspace, epoch_id)
     retained = json.loads(
         field_settlement_intent_path(workspace, epoch_id, 0).read_text(encoding="utf-8")
     )
     assert retained["state"] == "committed"
-    assert retained["field_tournament_record"] is None
-    assert not field_tournament_path(workspace, epoch_id, "v1").exists()
+    assert retained["field_tournament_record"] == pending["field_tournament_record"]
+    from zicato.query import WorkspacePaths, build_tournament_structure
+
+    view = build_tournament_structure(WorkspacePaths(workspace), epoch_id, f"{epoch_id}:v0->v1")
+    assert view["rounds"] == retained["field_tournament_record"]["rounds"]
+    for actual, expected in zip(
+        view["standings"], retained["field_tournament_record"]["standings"], strict=True
+    ):
+        assert {key: actual[key] for key in expected} == expected
 
 
 def test_recovery_preserves_an_operator_multi_promotion_receipt(
@@ -487,9 +478,9 @@ def test_index_refresh_failure_retains_a_repairable_canonical_settlement(
         assert read_experiment(workspace, epoch_id, generation_id).outcome == outcome_from_dict(
             candidate["outcome"]
         )
-    settled = json.loads(
-        field_tournament_path(workspace, epoch_id, "v1").read_text(encoding="utf-8")
-    )
+    settled = read_field_tournament_record(
+        field_tournament_path(workspace, epoch_id, "v1")
+    ).to_dict()
     assert settled == receipt["field_tournament_record"]
 
     attention = epoch_settlement_receipt_attention(workspace, epoch_id)
@@ -1022,3 +1013,23 @@ def test_receipt_corruption_is_unhealthy_and_prevents_partial_repair_acknowledge
     assert report["healthy"] is False
     codes = {finding["code"] for finding in report["findings"]}
     assert {"settlement_receipt_corrupt", "settlement_index_repair_required"} <= codes
+
+
+def test_committed_round_supplies_visualization_without_the_initial_snapshot(
+    pending_settlement: tuple[Path, str, dict[str, Any]],
+) -> None:
+    from zicato.query import WorkspacePaths, build_tournament_structure
+
+    workspace, epoch_id, receipt = pending_settlement
+    replay_field_settlement(workspace, receipt)
+    path = field_tournament_path(workspace, epoch_id, "v1")
+    path.rename(path.with_suffix(".saved"))
+    expected = receipt["field_tournament_record"]
+    view = build_tournament_structure(
+        WorkspacePaths(workspace), epoch_id, expected["tournament_id"]
+    )
+    assert view["source"] == "record"
+    for key in ("structure", "rounds", "competitors", "decision", "reason"):
+        assert view[key] == expected[key]
+    for actual, standing in zip(view["standings"], expected["standings"], strict=True):
+        assert {key: actual[key] for key in standing} == standing

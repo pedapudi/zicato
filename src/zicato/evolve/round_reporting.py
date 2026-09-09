@@ -137,12 +137,10 @@ def _duel_scope(
 class _RoundLogEmitter:
     """Best-effort appender onto one round's durable RoundLog.
 
-    A STORAGE failure must never fail a round — the live index dual-write
-    (:func:`_ingest_experiment_into_index`) is the precedent: the canonical
-    stores (``experiment.json``, lineage, journal) stay authoritative and
-    the event log is a derived, replayable trace. A bind failure degrades
-    to a permanent no-op emitter; an append that cannot reach the disk is
-    logged at ``debug`` and swallowed.
+    Event-log storage failure cannot invalidate a proposal or committed round.
+    Canonical proposals, ancestry, and round records remain authoritative.
+    A bind failure disables the emitter; an append failure is logged at
+    ``debug`` and suppressed.
 
     A SCHEMA mistake is not swallowed. Building the typed event happens
     outside that guard, so a payload field no event declares raises from the

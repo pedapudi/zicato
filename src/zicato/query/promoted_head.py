@@ -1,37 +1,15 @@
-"""promoted_head — WHICH member of a promoted set actually took the title.
+"""Read the champion named by each tournament, including multiple promotions.
 
-``lineage.json`` is the single authority for topology and for the tri-state
-promotion flag, and by design it says nothing beyond that. On a round that
-promotes a SET rather than a single challenger — an operator multi-promote, a
-tie — ``_apply_field_overrides`` marks EVERY member promoted in lineage while
-only ONE, the primary head, moves the champion pointer and defends the next
-round (``zicato.evolve.field``). "Which member headed the round" is therefore
-not derivable from the lineage flags at all: a reader that takes the first
-flagged member names a generation that never defended.
-
-The runner records the head itself, on the round's durable field-tournament
-snapshot (``zicato.evolve.dashboard_projection``), in two forms:
-
-* ``promoted_generation_id`` — the head this round crowned, written at settle;
-* ``champion_generation_id`` — the generation that DEFENDED this round, which
-  is the head the previous round crowned (or the epoch's seed).
-
-The SQLite index is not a source: its field-tournament row leaves the
-per-matchup ``parent_generation_id`` / ``child_generation_id`` columns empty by
-design (a field is a round rather than a duel), so the head does not survive
-ingest.
-
-The runtime ``current_generation`` marker stays UNREAD here, by doctrine and by
-shape. Doctrine: the query layer serves recorded history, and the marker is the
-loop's live pointer. Shape: it holds ONE id for the whole epoch, so it can
-never answer which generation headed round 3 — only the per-round records can.
+Ancestry records parent relationships. Completed rounds record promotion status
+and identify the primary promoted candidate. Historical views use those recorded
+identities to distinguish the defending champion from other promoted candidates.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from zicato.query.paths import WorkspacePaths, _read_json_value
+from zicato.query.paths import WorkspacePaths
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,34 +28,19 @@ class RecordedHead:
 
 
 def read_recorded_heads(paths: WorkspacePaths, epoch_id: str) -> list[RecordedHead]:
-    """One entry per readable field-tournament snapshot, in file-name order.
+    """Read the named champion and defender of each recorded tournament."""
+    from zicato.tournament.records import field_tournament_records
 
-    Best-effort throughout: a missing directory, an unreadable file or a
-    malformed record yields fewer entries, never an error.
-    """
-    from zicato.core.workspace import field_tournaments_dir  # noqa: PLC0415
-
-    heads: list[RecordedHead] = []
-    tdir = field_tournaments_dir(paths.root, epoch_id)
-    if not tdir.is_dir():
-        return heads
-    for record_path in sorted(tdir.glob("field-*.json")):
-        record = _read_json_value(record_path)
-        if not isinstance(record, dict):
-            continue
-        tournament_id = record.get("tournament_id")
-        if not isinstance(tournament_id, str) or not tournament_id:
-            continue
-        head = record.get("promoted_generation_id")
-        champion = record.get("champion_generation_id")
-        heads.append(
-            RecordedHead(
-                tournament_id=tournament_id,
-                generation_id=head if isinstance(head, str) else "",
-                champion_generation_id=champion if isinstance(champion, str) else "",
-            )
+    try:
+        records = field_tournament_records(paths.root, epoch_id)
+    except (OSError, ValueError, RuntimeError):
+        return []
+    return [
+        RecordedHead(
+            record.tournament_id, record.promoted_generation_id, record.champion_generation_id
         )
-    return heads
+        for record in records
+    ]
 
 
 def head_of_round(heads: list[RecordedHead], tournament_id: str | None) -> str | None:

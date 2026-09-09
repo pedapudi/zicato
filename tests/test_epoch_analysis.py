@@ -12,7 +12,6 @@ from zicato.core.types import ScoringWeights
 from zicato.core.workspace import (
     analysis_path,
     experiment_json_path,
-    journal_path,
 )
 from zicato.epoch import generate_analysis, new_epoch
 from zicato.epoch.analysis import REQUIRED_SECTIONS
@@ -41,8 +40,17 @@ async def test_generate_analysis_writes_file(
     workspace: Path, board_file: Path, rubric_file: Path
 ) -> None:
     cfg = new_epoch(workspace, "alpha", board_file, rubric_file, ScoringWeights())
-    # Seed a journal so the prompt has something to chew on.
-    journal_path(workspace, cfg.id).write_text("## v1 — Improve routing.\n**outcome**: promoted\n")
+    from tests._workspace_support import write_json
+
+    write_json(
+        experiment_json_path(workspace, cfg.id, "v1"),
+        experiment_record(
+            "v1",
+            epoch_id=cfg.id,
+            decision="promoted",
+            hypothesis={"core_idea": "Improve routing."},
+        ),
+    )
 
     captured: dict[str, str] = {}
 

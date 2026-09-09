@@ -40,10 +40,13 @@ from tests._orchestrator_harness import (
     install_telemetry_stubs,
     run_evolve_once,
 )
+from tests._workspace_support import read_experiment_record
 from zicato.core import BoardEntry, ExpectationResult, LossProfile, MetricCount
 from zicato.core.types import OverfittingConfig, ScoringWeights, TournamentStructure
 from zicato.epoch.journal import write_seed_experiment
 from zicato.epoch.lifecycle import new_epoch
+from zicato.evolve.generation_phase import current_generation
+from zicato.tournament.records import read_field_tournament_record
 
 # Structures under test + their minimal params (small fields keep the bracket
 # shallow so the synthetic field resolves in one pass).
@@ -221,7 +224,7 @@ def _bootstrap(
 
 def _crowned_outcome(workspace: Path, epoch_id: str, gid: str) -> dict[str, object]:
     gens = workspace / "epochs" / epoch_id / "generations"
-    return json.loads((gens / gid / "experiment.json").read_text())["outcome"]
+    return read_experiment_record(gens / gid / "experiment.json")["outcome"]
 
 
 def _field_bracket(workspace: Path, epoch_id: str, first_challenger_id: str) -> dict[str, object]:
@@ -229,7 +232,7 @@ def _field_bracket(workspace: Path, epoch_id: str, first_challenger_id: str) -> 
     from zicato.core.workspace import field_tournament_path
 
     path = field_tournament_path(workspace, epoch_id, first_challenger_id)
-    return json.loads(path.read_text())
+    return read_field_tournament_record(path).to_dict()
 
 
 def _lineage_promoted(workspace: Path, epoch_id: str, gid: str) -> bool | None:
@@ -286,8 +289,7 @@ def test_holdout_confirms_a_true_win_and_persists_records(
     assert rec["holdout_loss"] == pytest.approx(rec["train_loss"])
     assert rec["generalization_gap"] == pytest.approx(0.0)
     # current_generation advanced to the crowned challenger.
-    marker = workspace / "epochs" / epoch_id / "current_generation"
-    assert marker.read_text().strip() == crowned
+    assert current_generation(workspace, epoch_id) == crowned
 
 
 @pytest.mark.parametrize("structure", _STRUCTURES)
@@ -504,14 +506,10 @@ def test_holdout_flip_persists_a_rejected_bracket_not_a_phantom_promotion(
     assert "holdout_not_confirmed" in str(bracket["reason"])
 
 
-def test_crowning_invariant_raises_when_champion_pointer_cannot_advance(
+def test_failed_round_publication_preserves_the_champion(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """If crowning settles ``promoted`` but the champion pointer cannot be
-    updated to the promoted generation, settlement RAISES rather than persist a
-    contradictory bracket (issue #20, acceptance #3). We force the divergence
-    by stubbing the marker writer to a no-op so the re-read after the crowning
-    write still names the old champion."""
+    """A failed atomic decision write leaves every candidate unresolved."""
     workspace, epoch_id = _bootstrap(tmp_path, structure="single_elim", field_size=2)
     install_stub_adapter_factory(monkeypatch)
     loss: dict[tuple[str, str], float] = {}
@@ -525,12 +523,18 @@ def test_crowning_invariant_raises_when_champion_pointer_cannot_advance(
         pass_by_gen={"v0": True, "v1": True, "v2": True},
     )
 
-    # The crowning write becomes a no-op, so current_generation stays v0 even
-    # though the bracket settled a promotion — exactly the silent divergence
-    # the fail-loud guard must catch.
-    monkeypatch.setattr(
-        "zicato.evolve.generation_phase.set_current_generation", lambda *a, **k: None
-    )
+    from zicato.evolve import settlement_recovery
 
-    with pytest.raises(RuntimeError, match="crowning invariant violated"):
+    publish = settlement_recovery.write_settlement_receipt
+
+    def fail_commit(root, receipt):
+        if receipt.state == "committed":
+            raise OSError("decision publication failed")
+        publish(root, receipt)
+
+    monkeypatch.setattr(settlement_recovery, "write_settlement_receipt", fail_commit)
+    with pytest.raises(OSError, match="decision publication failed"):
         run_evolve_once(workspace, epoch_id, evaluation_call_llm)
+    assert current_generation(workspace, epoch_id) == "v0"
+    assert _crowned_outcome(workspace, epoch_id, "v1") is None
+    assert _lineage_promoted(workspace, epoch_id, "v1") is None

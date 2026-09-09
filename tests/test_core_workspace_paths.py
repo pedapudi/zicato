@@ -38,7 +38,6 @@ from zicato.core.workspace import (
     field_tournament_path,
     field_tournaments_dir,
     generation_dir,
-    journal_path,
     ladder_state_path,
     lineage_path,
     loss_profile_path,
@@ -103,7 +102,6 @@ def test_all_epoch_helpers_descend_uniformly(tmp_path: Path) -> None:
     assert generation_dir(tmp_path, "e0", "v0") == edir / "generations" / "v0"
     assert board_path(tmp_path, "e0") == edir / "board.jsonl"
     assert scoring_path(tmp_path, "e0") == edir / "scoring.json"
-    assert journal_path(tmp_path, "e0") == edir / "journal.md"
     assert analysis_path(tmp_path, "e0") == edir / "analysis.md"
     assert mutations_json_path(tmp_path, "e0") == edir / "mutations.json"
     assert brief_path(tmp_path, "e0") == edir / "brief.md"
@@ -141,7 +139,6 @@ def test_core_helpers_agree_with_workspace_layout(tmp_path: Path) -> None:
     assert patch_json_path(inner, "e0", "v1", "p3") == layout.patch_json("e0", "v1", "p3")
     assert mutations_json_path(inner, "e0") == layout.mutations("e0")
     assert ladder_state_path(inner, "e0") == layout.ladder_state("e0")
-    assert journal_path(inner, "e0") == layout.journal("e0")
     assert analysis_path(inner, "e0") == layout.analysis_md("e0")
     assert lineage_path(inner) == layout.lineage_path
     assert brief_path(inner, "e0") == layout.brief("e0")
@@ -163,7 +160,6 @@ def test_workspace_layout_write_markers(tmp_path: Path) -> None:
     root = tmp_path / ".zicato"
     layout = WorkspaceLayout.from_root(root)
     edir = root / "epochs" / "e0"
-    assert layout.current_generation_marker("e0") == edir / "current_generation"
     assert layout.roll_seed_marker("e0") == edir / "v0_seed_from"
     assert layout.ladder_state("e0") == edir / "ladder_state.json"
     assert layout.patch_json("e0", "v1", "p3") == (

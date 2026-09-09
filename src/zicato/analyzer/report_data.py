@@ -266,15 +266,6 @@ def _read_json(path: Path) -> Any:
         return None
 
 
-def _read_text(path: Path, limit: int) -> str:
-    """Read a text file (size-capped), returning ``""`` on any failure."""
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError:
-        return ""
-    return _report_text(text, limit)
-
-
 def _report_text(text: str, limit: int) -> str:
     """Cap embedded guidance and journal text with an explicit truncation note."""
     if len(text) > limit:
@@ -517,12 +508,15 @@ def gather_epoch_report_data(
         )
     except FileNotFoundError:
         brief_text = ""
-    journal_text = _read_text(layout.journal(epoch_id), _MAX_JOURNAL_CHARS)
-
     experiments, read_errors = (
         read_epoch_experiments(layout.root, epoch_id)
         if recorded_experiments is None
         else recorded_experiments
+    )
+    from zicato.epoch.journal import render_journal
+
+    journal_text = _report_text(
+        render_journal(experiment for _, experiment in experiments), _MAX_JOURNAL_CHARS
     )
     unreadable_generations = list(read_errors)
     raw_generations = []

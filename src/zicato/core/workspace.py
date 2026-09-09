@@ -324,11 +324,6 @@ def ladder_state_path(workspace_root: Path, epoch_id: str) -> Path:
     return _layout(workspace_root).ladder_state(epoch_id)
 
 
-def journal_path(workspace_root: Path, epoch_id: str) -> Path:
-    """Path to an epoch's running narrative journal."""
-    return _layout(workspace_root).journal(epoch_id)
-
-
 def analysis_path(workspace_root: Path, epoch_id: str) -> Path:
     """Path to an epoch's at-close analysis writeup."""
     return _layout(workspace_root).analysis_md(epoch_id)
@@ -454,7 +449,6 @@ __all__ = [
     "mutations_json_path",
     "proposer_inputs_path",
     "ladder_state_path",
-    "journal_path",
     "analysis_path",
     "lineage_path",
     "brief_path",

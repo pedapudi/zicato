@@ -276,12 +276,15 @@ def test_standings_null_triple_on_a_cold_rating_fold(tmp_path: Path) -> None:
 
 
 def test_standings_null_triple_without_an_index(tmp_path: Path) -> None:
-    # DQ3 end-to-end: no index at all — the structure degrades down the
-    # resolution chain (loss_files) and its standings still carry the
-    # present null triple; nothing raises.
-    layout = _workspace(tmp_path)
-    st = build_tournament_structure(WorkspacePaths(layout.root), EPOCH, TOURN)
-    assert st["standings"], "loss-files reconstruction should produce standings"
+    from tests._console_scenarios import CONSOLE_EPOCH, build_racing_round_settled_workspace
+
+    root = build_racing_round_settled_workspace(tmp_path)
+    WorkspaceLayout.from_root(root).index_db_path.unlink()
+    st = build_tournament_structure(
+        WorkspacePaths(root), CONSOLE_EPOCH, f"{CONSOLE_EPOCH}:field:v1"
+    )
+    assert st["source"] == "record"
+    assert st["standings"]
     for s in st["standings"]:
         for field in RATING_FIELDS:
             assert field in s

@@ -1081,11 +1081,17 @@ failing unit is re-raised to the caller as a hard tournament error instead).
 
 ## 6.6 The gate — THE per-duel decider
 
-`evaluate_gate` (`gate.py`) is the single accept/reject test for one duel —
-**the gate-is-the-per-duel-decider rule**. Everything above it (every structure,
-the Bradley–Terry pre-gate, the resolvers) reads its `GateOutcome` and
-interprets it; nothing re-implements it. It applies three rungs in order, then
-an optional holdout confirmation.
+The numerical gate, `evaluate_gate` in `tournament/gate.py`, evaluates a
+pair of candidate aggregates. It checks execution completeness and finite
+scores, applies any configured edit complexity limit, then checks the scalar
+margin, task scores, and namespace constraints. Supplied holdout aggregates
+add a confirmation check.
+
+The returned `GateOutcome` carries the decision, reason, training differences,
+and an explanation of the applied rules. Tournament strategies consume that
+result when selecting finalists. Additional evidence or holdout requirements
+may prevent a proposed promotion; dashboard readers display the recorded
+results without evaluating the gate again.
 
 ### 6.6.1 The scalar-margin rung
 
@@ -1177,12 +1183,11 @@ and the Ladder budget that governs *when* the confirmation counts.
 
 ### 6.6.5 The regression-suite pre-gate
 
-`_gate_with_regression` (`runner.py`) prefixes `evaluate_gate` with a HARD
-regression-suite check when `regression_gate_enabled`: the child snapshot's own
-test suite runs as a subprocess BEFORE scoring, and any failure forces
-`"rejected"` regardless of how strongly the child improved on drift/pass-rate —
-"a patch that breaks the snapshot's own tests cannot promote even when its
-scoring signal looks perfect."
+When `regression_gate_enabled` is true, `_gate_with_regression` in
+`tournament/runner.py` runs the child snapshot's regression suite before
+applying the numerical gate. Failure rejects the candidate regardless of its
+scores. The runner records the suite's actual result and summary in the gate
+explanation; a disabled suite is recorded as skipped.
 
 ---
 
@@ -1203,7 +1208,7 @@ value the orchestrator journals. Its fields, and which are RUNTIME provenance
 |---|---|---|
 | `parent_generation_id` / `child_generation_id` | the two generations (`left`/`right` for `run_matchup`) | identity |
 | `parent_agg` / `child_agg` | the two `aggregate_generation_score` dicts (TRAIN-slice) | evidence |
-| `outcome` | the `GateOutcome` — decision + reason + train-side deltas | evidence |
+| `outcome` | `GateOutcome`: decision, reason, training differences, and recorded rule explanations | evidence |
 | `per_entry_losses` | `entry_id -> (parent_loss, child_loss)` for journaling | evidence |
 | `champion_eval_mode` | `"full"` / `"fast"` / `"fast-degraded"` — how the champion side was evaluated | provenance |
 | `unit_provenance` | per-generation `(cached, fresh)` tally for THIS duel | provenance |
@@ -1288,8 +1293,9 @@ evolve_once
     settle_field_round
       _build_field_settlement → RoundSettlement(...)
       _commit_field_settlement
-        receipt → outcomes → lineage → champion marker → journal
-        → settled bracket → grouped derived-index refresh → committed receipt
+        publish committed round: candidate outcomes, champion,
+          complete tournament structure, and gate explanations
+        refresh the derived index and record its completion
       _publish_field_observations: frontier row and live envelope
       _close_field_round
         optional placebo duel; never advances champion

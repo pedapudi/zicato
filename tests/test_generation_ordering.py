@@ -135,15 +135,15 @@ def test_epoch_health_inputs_read_generations_in_round_number_order(tmp_path: Pa
     assert list(losses_by_generation) == ELEVEN
 
 
-def test_current_and_latest_generation_are_the_highest_round(tmp_path: Path) -> None:
-    """Both resolvers of "where is this epoch now" answer v10, not v9."""
+def test_unpromoted_candidates_do_not_change_the_current_generation(tmp_path: Path) -> None:
+    """The champion stays at the baseline while candidate numbering advances."""
     from zicato.evolve import generation_phase
     from zicato.runtime.resume import _latest_generation_id
 
     workspace = tmp_path / ".zicato"
     _make_generations(workspace, "e0")
 
-    assert generation_phase.current_generation(workspace, "e0") == "v10"
+    assert generation_phase.current_generation(workspace, "e0") == "v0"
     assert _latest_generation_id(workspace, "e0") == "v10"
     assert generation_phase.next_generation_id(workspace, "e0") == "v11"
 

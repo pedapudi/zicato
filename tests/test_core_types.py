@@ -32,7 +32,6 @@ from zicato.core import (
     events_jsonl_path,
     experiment_json_path,
     generation_dir,
-    journal_path,
     lineage_path,
     loss_profile_path,
     run_dir,
@@ -508,7 +507,6 @@ def test_path_helpers_layout(tmp_path: Path) -> None:
     assert experiment_json_path(ws, epoch_id, gen_id) == (
         ws / "epochs" / epoch_id / "generations" / gen_id / "experiment.json"
     )
-    assert journal_path(ws, epoch_id) == ws / "epochs" / epoch_id / "journal.md"
     assert analysis_path(ws, epoch_id) == ws / "epochs" / epoch_id / "analysis.md"
     assert lineage_path(ws) == ws / "lineage.json"
     assert board_path(ws, epoch_id) == ws / "epochs" / epoch_id / "board.jsonl"

@@ -23,10 +23,10 @@ from zicato.core.measurement import (
 )
 from zicato.core.runtime import RoundTokenLedger
 from zicato.core.runtime_context import WorkerRuntimeContext
-from zicato.core.workspace import field_tournament_path, journal_path
+from zicato.core.workspace import field_tournament_path
 from zicato.epoch.genstore import default_generation_store
 from zicato.epoch.git_genstore import GitGenerationStore
-from zicato.epoch.journal import read_experiment
+from zicato.epoch.journal import read_experiment, read_journal
 from zicato.epoch.lifecycle import load_epoch
 from zicato.epoch.lineage import load_lineage
 from zicato.epoch.round_log import RoundLog
@@ -35,6 +35,7 @@ from zicato.evolve.generation_phase import current_generation
 from zicato.runtime.paths import active_runs_dir
 from zicato.telemetry.reducer import read_loss_profile
 from zicato.tournament.artifacts import artifact_paths
+from zicato.tournament.records import read_field_tournament_record
 from zicato.tournament.unit_cache import persisted_loss_slots
 
 pytestmark = pytest.mark.integration
@@ -255,7 +256,9 @@ async def test_partial_application_preserves_confirmation_requirements(
     report["outcomes"] = [str(outcome) for outcome in outcomes]
     assert failed_applications
     assert report["planned_candidates"] == 4
-    tournament = json.loads(field_tournament_path(workspace, epoch_id, "v1").read_text())
+    tournament = read_field_tournament_record(
+        field_tournament_path(workspace, epoch_id, "v1")
+    ).to_dict()
     assert {row["generation_id"]: row["status"] for row in tournament["field_status"]} == {
         "v1": "applied",
         "v2": "applied",
@@ -352,10 +355,9 @@ async def test_interrupted_recommended_field_recovers(
         assert len(receipts) == 1
         receipt = json.loads(receipts[0].read_text())
         assert receipt["state"] == "committed"
-        journal = journal_path(workspace, epoch_id).read_text()
+        journal = read_journal(workspace, epoch_id)
         for generation in CHOSEN_POLICIES:
-            identity = f'{receipt["settlement_id"]}:{generation}'
-            assert journal.count(f'<!-- zicato:field-settlement identity="{identity}" -->') == 1
+            assert journal.count(f"## {generation} — ") == 1
         lineage_epoch = next(
             row for row in load_lineage(workspace).to_dict()["epochs"] if row["id"] == epoch_id
         )

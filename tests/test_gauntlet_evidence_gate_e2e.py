@@ -22,8 +22,11 @@ import pytest
 import zicato_examples.target_0_convergence as _t0_pkg
 from tests._contract_pins import resolved_contract_with_proposer
 from tests._foe_support import stand_in_proposer_block
+from tests._workspace_support import read_experiment_record
 from zicato.core.measurement import MeasurementDraw, MeasurementPurpose
 from zicato.epoch.lifecycle import _scoring_from_dict, new_epoch
+from zicato.epoch.lineage import load_lineage
+from zicato.evolve.generation_phase import current_generation
 from zicato_examples.target_0_convergence import mocks as t0_mocks
 
 EXAMPLE_DIR = Path(_t0_pkg.__file__).resolve().parent
@@ -182,15 +185,14 @@ def test_gauntlet_promote_confirmed_by_evidence_gate(tmp_path: Path) -> None:
     assert outcome.child_scalar == EXPECTED_V1
 
     # The promoted head advanced.
-    marker = workspace / "epochs" / epoch_id / "current_generation"
-    assert marker.read_text().strip() == "v1"
+    assert current_generation(workspace, epoch_id) == "v1"
 
     # The journaled outcome carries the evidence-gate resolution and proves
     # the replication path executed: the fit reached the credibility floor
     # (>= 3 crowning-pair duels), spent replicates chasing separation, and
     # terminally cleared with separated CIs.
-    record = json.loads(
-        (workspace / "epochs" / epoch_id / "generations" / "v1" / "experiment.json").read_text()
+    record = read_experiment_record(
+        workspace / "epochs" / epoch_id / "generations" / "v1" / "experiment.json"
     )["outcome"]
     assert record["tournament_decision"] == "promoted"
     evidence = record["evidence"]
@@ -230,13 +232,12 @@ def test_gauntlet_inconclusive_champion_stands(tmp_path: Path) -> None:
     assert outcome.proposed_generation_id == "v1"
 
     # The champion pointer never moved.
-    marker = workspace / "epochs" / epoch_id / "current_generation"
-    assert marker.read_text().strip() == "v0"
+    assert current_generation(workspace, epoch_id) == "v0"
 
     # The journaled decision is the closed enum's DEFERRED token with the
     # inconclusive reason + the terminal evidence block.
-    record = json.loads(
-        (workspace / "epochs" / epoch_id / "generations" / "v1" / "experiment.json").read_text()
+    record = read_experiment_record(
+        workspace / "epochs" / epoch_id / "generations" / "v1" / "experiment.json"
     )["outcome"]
     assert record["tournament_decision"] == "deferred"
     assert "confirmation incomplete" in record["rejection_reason"]
@@ -259,7 +260,7 @@ def test_gauntlet_inconclusive_champion_stands(tmp_path: Path) -> None:
     _assert_replicates_ran_at_reserved_slots(workspace, epoch_id, replicates_run=2)
 
     # Lineage records the held generation as a dead branch.
-    lineage = json.loads((workspace / "lineage.json").read_text())
+    lineage = load_lineage(workspace).to_dict()
     nodes: dict[str, dict[str, object]] = {}
     for ep in lineage.get("epochs", []):
         if ep.get("id") == epoch_id:

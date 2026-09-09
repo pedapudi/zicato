@@ -57,8 +57,11 @@ from tests._orchestrator_harness import (
     install_telemetry_stubs,
     run_evolve_once,
 )
+from tests._workspace_support import read_experiment_record
 from zicato.core.measurement import MeasurementDraw, MeasurementPurpose
 from zicato.epoch.lifecycle import _scoring_from_dict, new_epoch
+from zicato.epoch.lineage import load_lineage
+from zicato.evolve.generation_phase import current_generation
 from zicato_examples.target_1_presentation import mocks as _t1_mocks
 
 
@@ -367,7 +370,7 @@ def test_presentation_racing_field_runs_end_to_end_and_promotes(
     # structure with a non-empty match_record; the dead branches carry
     # rejected outcomes. Every challenger's outcome is stamped "racing".
     for gid in _CHALLENGER_IDS:
-        oc = json.loads((gens / gid / "experiment.json").read_text())["outcome"]
+        oc = read_experiment_record(gens / gid / "experiment.json")["outcome"]
         assert oc["structure"] == "racing", gid
         if gid == crowned:
             assert oc["tournament_decision"] == "promoted"
@@ -376,11 +379,10 @@ def test_presentation_racing_field_runs_end_to_end_and_promotes(
             assert oc["tournament_decision"] == "rejected", gid
 
     # --- current_generation advanced to the crowned challenger only.
-    marker = workspace / "epochs" / epoch_id / "current_generation"
-    assert marker.read_text().strip() == crowned
+    assert current_generation(workspace, epoch_id) == crowned
 
     # --- Lineage records every challenger as a child of v0; crowned promoted.
-    lineage = json.loads((workspace / "lineage.json").read_text())
+    lineage = load_lineage(workspace).to_dict()
     gens_nodes: list[dict[str, object]] = []
     for ep in lineage.get("epochs", []):
         if ep.get("id") == epoch_id:
@@ -418,7 +420,7 @@ def test_presentation_racing_field_runs_end_to_end_and_promotes(
     assert "v4" in all_cuts, "the worst arm should be cut in an early rung"
 
     # --- The crowning duel is the full-board champion-gate against v0.
-    crowned_oc = json.loads((gens / crowned / "experiment.json").read_text())["outcome"]
+    crowned_oc = read_experiment_record(gens / crowned / "experiment.json")["outcome"]
     opponents = {m["opponent"] for m in crowned_oc["match_record"]}
     assert "v0" in opponents, "the crowned arm's audit must include the champion-gate duel"
 
@@ -450,7 +452,7 @@ def test_presentation_racing_field_rejects_when_no_arm_beats_champion(
 
     gens = workspace / "epochs" / epoch_id / "generations"
     for gid in _CHALLENGER_IDS:
-        oc = json.loads((gens / gid / "experiment.json").read_text())["outcome"]
+        oc = read_experiment_record(gens / gid / "experiment.json")["outcome"]
         assert oc["tournament_decision"] == "rejected", gid
         assert oc["structure"] == "racing", gid
 
@@ -503,7 +505,7 @@ def test_fast_racing_reuses_cached_champion_and_records_provenance(
     # journal (every challenger's OutcomeRecord carries it). Cache hit on
     # every rung → "fast".
     gens = workspace / "epochs" / epoch_id / "generations"
-    crowned_oc = json.loads((gens / crowned / "experiment.json").read_text())["outcome"]
+    crowned_oc = read_experiment_record(gens / crowned / "experiment.json")["outcome"]
     assert crowned_oc["champion_eval_mode"] == "fast"
     assert "index repair required" not in caplog.text
     assert "index self-heal preflight failed" not in caplog.text
@@ -531,9 +533,9 @@ def test_fast_racing_degrades_to_full_without_cache(
     assert "v0" in champion_runs, "the seed champion with no cache must run once"
     assert outcome.tournament_decision == "promoted"
     gens = workspace / "epochs" / epoch_id / "generations"
-    crowned_oc = json.loads(
-        (gens / outcome.proposed_generation_id / "experiment.json").read_text()
-    )["outcome"]
+    crowned_oc = read_experiment_record(gens / outcome.proposed_generation_id / "experiment.json")[
+        "outcome"
+    ]
     assert crowned_oc["champion_eval_mode"] == "fast-degraded"
 
 

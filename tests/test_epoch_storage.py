@@ -25,7 +25,6 @@ from pathlib import Path
 
 from zicato.core.workspace import (
     experiment_json_path,
-    journal_path,
     lineage_path,
     scoring_path,
 )
@@ -50,7 +49,6 @@ def test_keys_mirror_the_workspace_path_layout(tmp_path: Path) -> None:
         return ws / key
 
     assert _resolved(_storage.experiment_key(epoch, gen)) == experiment_json_path(ws, epoch, gen)
-    assert _resolved(_storage.journal_key(epoch)) == journal_path(ws, epoch)
     assert _resolved(_storage.scoring_key(epoch)) == scoring_path(ws, epoch)
     assert _resolved(_storage.lineage_key()) == lineage_path(ws)
     assert _resolved(_storage.epoch_config_key(epoch)) == ws / "epochs" / epoch / "config.json"
