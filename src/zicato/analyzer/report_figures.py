@@ -43,7 +43,7 @@ paper-card view alike.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 
 from zicato.analyzer.report_data import EpochReportData
 
@@ -84,34 +84,21 @@ from zicato.analyzer.svg.trajectory import render_svg_score_trajectory
 #: figures at their anchor points. The marker text is the deterministic
 #: section's HTML comment (``<!-- FIGURE:NAME -->``) — see
 #: :mod:`zicato.analyzer.report_sections`.
-FIGURE_RENDERERS: dict[str, str] = {
-    "score-trajectory": "render_svg_score_trajectory",
-    "drift-movements": "render_svg_drift_movements",
-    "per-board-heatmap": "render_svg_per_board_heatmap",
-    "lineage": "render_svg_lineage_compact",
-    "mutation-surface": "render_svg_mutation_surface",
-    "hypothesis-vs-outcome": "render_svg_hypothesis_vs_outcome",
-    "mutation-impact-matrix": "render_svg_mutation_impact_matrix",
+FIGURE_RENDERERS: dict[str, Callable[[EpochReportData], str]] = {
+    "score-trajectory": render_svg_score_trajectory,
+    "drift-movements": render_svg_drift_movements,
+    "per-board-heatmap": render_svg_per_board_heatmap,
+    "lineage": render_svg_lineage_compact,
+    "mutation-surface": render_svg_mutation_surface,
+    "hypothesis-vs-outcome": render_svg_hypothesis_vs_outcome,
+    "mutation-impact-matrix": render_svg_mutation_impact_matrix,
 }
 
 
 def render_figure(name: str, data: EpochReportData) -> str:
     """Render one figure by its marker name. Returns ``""`` on unknown name."""
-    if name == "score-trajectory":
-        return render_svg_score_trajectory(data)
-    if name == "drift-movements":
-        return render_svg_drift_movements(data)
-    if name == "per-board-heatmap":
-        return render_svg_per_board_heatmap(data)
-    if name == "lineage":
-        return render_svg_lineage_compact(data)
-    if name == "mutation-surface":
-        return render_svg_mutation_surface(data)
-    if name == "hypothesis-vs-outcome":
-        return render_svg_hypothesis_vs_outcome(data)
-    if name == "mutation-impact-matrix":
-        return render_svg_mutation_impact_matrix(data)
-    return ""
+    renderer = FIGURE_RENDERERS.get(name)
+    return renderer(data) if renderer is not None else ""
 
 
 def iter_figure_names() -> Iterable[str]:

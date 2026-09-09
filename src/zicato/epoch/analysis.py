@@ -35,6 +35,7 @@ import logging
 from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 
+from zicato.analyzer.report import write_html_companion
 from zicato.aux_timeout import aux_call_timeout_s
 from zicato.core.settings import AuxConfig
 from zicato.core.types import (
@@ -1116,38 +1117,6 @@ async def generate_analysis(
 
     write_html_companion(workspace_root, epoch_id, out_path)
     return out_path
-
-
-def write_html_companion(workspace_root: Path, epoch_id: str, md_path: Path) -> Path | None:
-    """Render the sibling ``analysis.html`` from the markdown at *md_path*.
-
-    ``analysis.html`` is always :func:`zicato.analyzer.report.render_report_html`
-    applied to the ``analysis.md`` beside it, whichever pass wrote that
-    markdown — so the served document can never disagree with the report it
-    accompanies, and every epoch lifecycle phase serves one renderer's
-    output. The structured epoch view (:func:`gather_epoch_report_data`)
-    supplies the inline figure SVGs the document's figure markers request.
-
-    Returns the written path, or ``None`` when there is no markdown to
-    render or the render failed. Best-effort by contract: the markdown is
-    the canonical artifact, so a failure here logs at debug level and
-    leaves any existing HTML in place.
-    """
-    from zicato.analyzer.report import render_report_html
-    from zicato.analyzer.report_data import gather_epoch_report_data
-
-    try:
-        report_md = md_path.read_text(encoding="utf-8")
-    except OSError:
-        return None
-    html_path = md_path.with_suffix(".html")
-    try:
-        data = gather_epoch_report_data(workspace_root, epoch_id)
-        atomic_write_text(html_path, render_report_html(epoch_id, report_md, data=data), mode=None)
-    except Exception as exc:  # noqa: BLE001 — HTML is non-critical
-        logging.getLogger(__name__).debug("skipping analysis.html (render raised): %s", exc)
-        return None
-    return html_path
 
 
 def regenerate_in_progress_html(workspace_root: Path, epoch_id: str) -> Path | None:

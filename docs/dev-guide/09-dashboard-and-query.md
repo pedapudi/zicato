@@ -195,8 +195,9 @@ The epoch overview and candidate dossier capture the selected epoch's
 config, scoring, and generation records in `query.inputs.EpochInputs`.
 The journal owner returns each accepted stored experiment body together
 with the patches that body declares. Component builders receive explicit
-inputs and independent copies of mutable JSON values. Captures retain
-absence and read errors for the response lifetime. They are neither a
+inputs and independent copies of mutable JSON values. Each captured value is
+encoded once as immutable JSON and decoded separately for each consumer.
+Captures retain absence and read errors for the response lifetime. They are neither a
 cross-file transaction nor a process cache; the next request reads again.
 
 The polled epoch response carries analysis markdown and the availability

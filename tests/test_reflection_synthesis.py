@@ -194,7 +194,7 @@ def test_holdout_landing_degrades_when_it_cannot_land(tmp_path: Path) -> None:
     (epoch_dir / "scoring.json").write_text(
         json.dumps({"overfitting": {"enabled": False}}), encoding="utf-8"
     )
-    sug = s.Suggestion(
+    sug = s._make_suggestion(
         suggestion_id="sug-x",
         suggestion_type=s.SUGGESTION_HARDER_VARIANT,
         synthesizer=s.SYNTH_MECHANICAL,
@@ -244,7 +244,7 @@ def test_two_failure_classes_yield_distinct_regression_ids(tmp_path: Path) -> No
 def test_regression_provenance_block_stamped() -> None:
     board = [_single("login")]
     (sug,) = s.synthesize_mechanical([_failure_episode("login")], board_entries=board)
-    prov = sug.provenance
+    prov = dict(sug.provenance)
     assert prov["synth_version"] == s.SYNTH_VERSION
     assert prov["miner_version"] == m.MINER_VERSION
     assert prov["suggestion_type"] == s.SUGGESTION_REGRESSION_ENTRY
@@ -253,6 +253,7 @@ def test_regression_provenance_block_stamped() -> None:
     assert prov["source_lineage_ids"] == ["v3"]
     # and it rides in the drafted entry's opaque context as a JSON string
     stamped = json.loads(sug.entry.context["synthesis_provenance"])
+    assert prov.pop("synthesizer") == s.SYNTH_MECHANICAL
     assert stamped == prov
 
 
@@ -636,8 +637,8 @@ def test_to_json_shape() -> None:
     (sug,) = s.synthesize_mechanical([_fp_episode("tone")], board_entries=board)
     blob = sug.to_json()
     assert blob["suggestion_type"] == s.SUGGESTION_RUBRIC_REVISION
-    assert blob["judge"]["name"] == "tone"
-    assert blob["entry"] is None
+    assert blob["draft_artifact"]["name"] == "tone"
+    assert blob["artifact_kind"] == "rubric_revision"
     assert blob["provenance"]["synth_version"] == s.SYNTH_VERSION
 
 

@@ -26,7 +26,6 @@ from click.testing import CliRunner
 from tests._cli_support import registered_workspace
 from zicato.cli.discovery import build_cli_root
 from zicato.core.workspace import reflection_suggestions_path
-from zicato.reflection import suggestions as sug_mod
 from zicato.reflection.suggestions import Suggestion
 
 _FIXTURES = Path(__file__).parent / "fixtures"
@@ -128,8 +127,8 @@ def test_missing_trajectory_dir_is_an_honest_exit0(
 ) -> None:
     ws, epoch_id = workspace
     spy = _SynthSpy([_foreign_suggestion()])
-    monkeypatch.setattr(sug_mod, "resolve_synthesize", lambda: spy)
-    monkeypatch.setattr(sug_mod, "resolve_admit", lambda: None)
+    monkeypatch.setattr("zicato.reflection.synthesis.synthesize", spy)
+    monkeypatch.setattr("zicato.reflection.admission.admit", None)
 
     result = _run(
         [
@@ -156,8 +155,8 @@ def test_empty_trajectory_dir_is_an_honest_exit0(
 ) -> None:
     ws, epoch_id = workspace
     spy = _SynthSpy([_foreign_suggestion()])
-    monkeypatch.setattr(sug_mod, "resolve_synthesize", lambda: spy)
-    monkeypatch.setattr(sug_mod, "resolve_admit", lambda: None)
+    monkeypatch.setattr("zicato.reflection.synthesis.synthesize", spy)
+    monkeypatch.setattr("zicato.reflection.admission.admit", None)
 
     result = _run(
         [
@@ -185,8 +184,8 @@ def test_invalid_bytes_dir_survives_exit0(
     # tolerates it (malformed line counted, valid lines kept) and the run exits 0.
     ws, _epoch_id = workspace
     spy = _SynthSpy([_foreign_suggestion()])
-    monkeypatch.setattr(sug_mod, "resolve_synthesize", lambda: spy)
-    monkeypatch.setattr(sug_mod, "resolve_admit", lambda: None)
+    monkeypatch.setattr("zicato.reflection.synthesis.synthesize", spy)
+    monkeypatch.setattr("zicato.reflection.admission.admit", None)
 
     result = _run(
         [
@@ -211,8 +210,8 @@ def test_mixed_format_dir_imports_persists_and_mines(
 ) -> None:
     ws, epoch_id = workspace
     spy = _SynthSpy([_foreign_suggestion()])
-    monkeypatch.setattr(sug_mod, "resolve_synthesize", lambda: spy)
-    monkeypatch.setattr(sug_mod, "resolve_admit", lambda: None)
+    monkeypatch.setattr("zicato.reflection.synthesis.synthesize", spy)
+    monkeypatch.setattr("zicato.reflection.admission.admit", None)
 
     result = _run(
         [
@@ -294,8 +293,8 @@ def test_plan_mode_spends_nothing_with_the_new_flag(
     ws, _epoch_id = workspace
     spy = _SynthSpy([_foreign_suggestion()])
     admit = _AdmitSpy()
-    monkeypatch.setattr(sug_mod, "resolve_synthesize", lambda: spy)
-    monkeypatch.setattr(sug_mod, "resolve_admit", lambda: admit)
+    monkeypatch.setattr("zicato.reflection.synthesis.synthesize", spy)
+    monkeypatch.setattr("zicato.reflection.admission.admit", admit)
 
     result = _run(
         [
@@ -322,8 +321,8 @@ def test_report_renders_foreign_source_provenance(
 ) -> None:
     ws, _epoch_id = workspace
     spy = _SynthSpy([_foreign_suggestion()])
-    monkeypatch.setattr(sug_mod, "resolve_synthesize", lambda: spy)
-    monkeypatch.setattr(sug_mod, "resolve_admit", lambda: None)
+    monkeypatch.setattr("zicato.reflection.synthesis.synthesize", spy)
+    monkeypatch.setattr("zicato.reflection.admission.admit", None)
     _run(
         [
             "inspect",

@@ -390,11 +390,10 @@ of train.
 
 ## 6. The `reflect suggest --from-trajectories` wiring
 
-> Two details of the seam: the CLI passes `imported_traces=` to the
-> `synthesize` seam only when the flag is set, so a non-bootstrap caller hits
-> the base signature; and `suggestions.SynthesizeSeam`, the Protocol the CLI
-> type-checks against, carries the `imported_traces` keyword with an empty
-> default as the typed mirror of §7's extended `synthesize`.
+The CLI calls the shipped synthesis function directly. Imported traces are
+passed through its `imported_traces` argument; ordinary workspace analysis
+uses the empty default. Optional validation calls the shipped measurement
+function only when `--probe` is requested.
 
 - **`reflect suggest --from-trajectories <dir>`** — a new flag on the existing
   `reflect suggest` mode (`cli/commands/reflect.py`), composing with the

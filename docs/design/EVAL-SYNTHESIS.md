@@ -194,6 +194,14 @@ sort key = (−severity_rank, −recency_key, −coverage_key, episode_id)
 
 ## 3. The suggestion types
 
+Drafting, measurement, persistence, and review use
+`reflection.suggestions.Suggestion`. Its task or judge is stored once in
+`draft_artifact`; typed access decodes that artifact. Source evidence, ranking,
+placement, and validation results retain their existing meaning. Drafting
+also retains its intermediate diagnostics and attachment identity in memory.
+The stored JSON format remains unchanged.
+
+
 A **suggestion** is a proposed evaluation artifact with its admission results.
 The operator reviews it before authoring a contract change. Synthesis turns ranked episodes into these; each
 carries a **draft artifact** (a valid BOARD-FORMAT entry or `Judge` spec) and

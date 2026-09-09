@@ -24,7 +24,6 @@ from click.testing import CliRunner
 from tests._cli_support import registered_workspace
 from zicato.cli.discovery import build_cli_root
 from zicato.core.workspace import reflection_suggestions_path
-from zicato.reflection import suggestions as sug_mod
 from zicato.reflection.suggestions import Suggestion
 
 _REFLECTION_ID = "refl-suggest-test"
@@ -151,10 +150,12 @@ def _seed_synth(monkeypatch: pytest.MonkeyPatch) -> None:
         allow_llm: bool = False,
         workspace_root: Path | None = None,
         epoch_id: str | None = None,
+        imported_traces: object = (),
     ) -> list[Suggestion]:
+        assert not imported_traces
         return _fake_suggestions()
 
-    monkeypatch.setattr(sug_mod, "resolve_synthesize", lambda: _synth)
+    monkeypatch.setattr("zicato.reflection.synthesis.synthesize", _synth)
 
 
 def test_suggest_default_spends_nothing_and_persists(
@@ -163,7 +164,7 @@ def test_suggest_default_spends_nothing_and_persists(
     ws, epoch_id = workspace
     _seed_synth(monkeypatch)
     spy = _AdmitSpy()
-    monkeypatch.setattr(sug_mod, "resolve_admit", lambda: spy)
+    monkeypatch.setattr("zicato.reflection.admission.admit", spy)
 
     result = _run(
         ["inspect", "reflection", "suggest", "--workspace", str(ws), "--reflection", _REFLECTION_ID]
@@ -187,7 +188,7 @@ def test_suggest_probe_consults_admission_seam(
     ws, epoch_id = workspace
     _seed_synth(monkeypatch)
     spy = _AdmitSpy()
-    monkeypatch.setattr(sug_mod, "resolve_admit", lambda: spy)
+    monkeypatch.setattr("zicato.reflection.admission.admit", spy)
 
     result = _run(
         [
@@ -216,7 +217,7 @@ def test_report_renders_persisted_suggestions(
 ) -> None:
     ws, epoch_id = workspace
     _seed_synth(monkeypatch)
-    monkeypatch.setattr(sug_mod, "resolve_admit", lambda: None)
+    monkeypatch.setattr("zicato.reflection.admission.admit", None)
     _run(
         ["inspect", "reflection", "suggest", "--workspace", str(ws), "--reflection", _REFLECTION_ID]
     )
