@@ -302,6 +302,7 @@ fn committed_outcome(
     experiment: &serde_json::Value,
 ) -> Option<serde_json::Value> {
     let round = experiment.get("round_index")?.as_u64()?;
+    let experiment_id = experiment.get("id")?.as_str()?;
     let path = paths
         .workspace
         .join("epochs")
@@ -322,7 +323,7 @@ fn committed_outcome(
         .iter()
         .find(|candidate| {
             candidate.get("generation_id").and_then(|v| v.as_str()) == Some(generation_id)
-                && candidate.get("experiment_id") == experiment.get("id")
+                && candidate.get("experiment_id").and_then(|v| v.as_str()) == Some(experiment_id)
         })?
         .get("outcome")
         .cloned()

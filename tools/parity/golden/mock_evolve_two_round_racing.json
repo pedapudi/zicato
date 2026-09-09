@@ -545,6 +545,7 @@
           "seed": 5
         }
       ],
+      "crowning_matchup_id": "racing-final",
       "decision": "promoted",
       "delta_scalar": -1.5999999999999999,
       "epoch_id": "<DATE>_t1_racing_two_round",
@@ -735,6 +736,7 @@
           "seed": 5
         }
       ],
+      "crowning_matchup_id": "racing-final",
       "decision": "promoted",
       "delta_scalar": -0.30000000000000004,
       "epoch_id": "<DATE>_t1_racing_two_round",

@@ -1,94 +1,25 @@
-"""Deterministic mock-evolve capture for the parity oracle (MOCK-GOLDEN gates).
+"""Capture deterministic tournament execution for comparison with saved results.
 
-This runs a deterministic, no-live-LLM evolve of the real
-``target_1_presentation`` example contract (board + a scoring contract +
-annotated ``agent/`` tree + the example's ``mocks.aux_llm`` proposer), with
-the system under test + loss reducer mocked exactly as the orchestrator test
-suite mocks them. It is the same drive
-``tests/test_example_target_1_racing.py`` performs, generalised over the
-three axes that select which production branches execute: the tournament
-structure the frozen contract declares, the runtime mode, and how many
-rounds the invocation runs.
+The presentation example supplies the board, scoring contract, annotated source,
+and deterministic proposer. Test adapters supply measured results without paid
+model calls. Each configuration executes the real propose, apply, tournament,
+holdout confirmation, and promotion sequence.
 
-Lanes
------
-:data:`LANES` names one capture per (structure, mode, round count) triple,
-each with its own golden. The lanes are not interchangeable — they run
-different code:
+The configurations cover racing, gauntlet, Swiss, single elimination, and
+double elimination. Racing and gauntlet also exercise measurement reuse.
+A two-round racing configuration verifies that the promoted candidate supplies
+the next round's incumbent and source. Every configuration has a nonempty
+holdout so confirmation remains exercised.
 
-* ``racing_full`` — a four-challenger racing field under ``--mode full``.
-  The multi-challenger rungs, cuts, and crowning duel.
-* ``gauntlet_full`` — one challenger under ``--mode full``. The
-  ``field_n == 1`` branches: a single crowning duel with no rungs or cuts,
-  and the crowning holdout confirmation on it.
-* ``gauntlet_fast`` — one challenger under ``--mode fast``. The cache-first
-  slot resolution under a one-challenger field.
-* ``racing_fast`` — a four-challenger field under ``--mode fast``, where
-  every rung resolves both competitors through the unit cache.
-* ``two_round_racing`` — the racing field under ``--mode full`` for TWO
-  rounds. The only lane where a round runs against a parent that a
-  previous round crowned, so it is the only one that pins the between-round
-  carry-over: the promoted-head pointer advancing off the seeded ``v0``,
-  the crowned generation defending as champion in the next round, that
-  generation's patched snapshot supplying the next round's mutable
-  surface, the epoch's round directories numbering on from ``0``, and the
-  second round's settled snapshot recording the first round's winner as
-  its champion.
-* ``swiss_full`` — a four-challenger Swiss field under ``--mode full``:
-  fixed-round pairings over champion + challengers, Copeland standings,
-  and a final champion-gate confirmation of the leader.
-* ``single_elim_full`` — a four-challenger single-elimination bracket under
-  ``--mode full``: challenger-vs-challenger nodes with no incumbent, then
-  the champion-vs-survivor final.
-* ``double_elim_full`` — a four-challenger double-elimination field under
-  ``--mode full``: winners' bracket, losers' bracket, grand final, then the
-  champion gate.
+Capture includes all generation scores and measurements, hypotheses and resolved
+outcomes, round events, completed tournament structures, resolved lineage, and
+the current champion. Completed round records supply outcomes and structures;
+the capture uses the same canonical readers as other framework consumers.
 
-The last three structures reach the unified round pipeline through
-registries that no other lane exercises end to end.
-
-Every lane holds part of its board back. The holdout is hash-derived and
-salted by the epoch id, so the lane's ``epoch_name`` decides which entries
-land there — and a name under which no entry lands leaves the lane
-exercising no holdout rule at all while still capturing and still passing.
-``test_mock_golden.py`` asserts the property per lane rather than leaving it
-to the salt.
-
-It then collects the produced ``.zicato`` artifacts:
-
-* every generation's ``gen_score.json`` — scalar, components, and the
-  per-board-entry drift_loss / score / pass_fail;
-* every ``experiment.json`` — the hypothesis, the tournament ``outcome``,
-  and the per-match audit;
-* any per-run ``loss.json``, and each round's ``round_log.jsonl``;
-* each settled field-tournament snapshot, carrying the round's recorded
-  ``promoted_generation_id`` / ``champion_generation_id``, the head the
-  dashboard serves;
-* the workspace ``lineage.json``.
-
-It normalizes the wall-clock / tmp-path / date / uuid fields (see
-``normalize.py``) and emits ONE canonical JSON document. With
-``ZICATO_PARITY_UPDATE=1`` it writes that document to the golden; otherwise
-it asserts byte-identity against the committed golden.
-
-Why this is the strongest single end-to-end gate
--------------------------------------------------
-Unlike the unit suite, this exercises the full orchestrated path —
-propose N challengers off v0, apply the real proposer patches against the
-real mutation markers, run the racing rungs + cuts on board slices, crown
-a survivor through the champion gate, and persist the whole audit — and
-freezes the EXACT serialized bytes of every decision artifact. A refactor
-that changes any loss, any scalar, any decision, any id, any structural
-field, or any serialization detail moves these bytes and fails the gate.
-
-Note on artifact names: the task brief names ``loss.json`` and
-``gen_score.json``. Under this racing/directory-backend mock the
-per-generation score is persisted as ``gen_score.json`` (the canonical
-home of the score: scalar, scalar_components, per_entry drift_loss /
-pass_fail / score, namespace_aggregates, pass_rate). No per-run
-``loss.json`` is written on this path, so the ``losses`` map is captured
-but empty here; the collector still globs for any ``loss.json`` so the
-gate covers it if a future change starts writing them.
+Only timestamps, temporary paths, dates, and generated identifiers are normalized.
+Scores, predicates, decisions, and match results must match the saved JSON.
+ZICATO_PARITY_UPDATE=1 replaces saved results; reviewers must inspect those
+changes independently of the passing capture.
 """
 
 from __future__ import annotations
@@ -312,39 +243,12 @@ def _read_json_norm(path: Path, tmp_root: str) -> object | None:
 
 
 def _collect_artifacts(workspace: Path, epoch_id: str) -> dict[str, object]:
-    """Read every decision artifact the mock evolve persisted, normalized.
+    """Read measurements and resolved decisions, normalizing incidental identities."""
+    from zicato.epoch.journal import read_experiment_body
+    from zicato.epoch.lineage import load_lineage
+    from zicato.evolve.generation_phase import current_generation
+    from zicato.tournament.records import field_tournament_records
 
-    Returns a single canonical dict keyed by generation id so the golden is
-    a flat, diffable map. The tmp workspace root is passed to the normalizer
-    so embedded absolute paths collapse to ``<TMP>`` and the date-prefixed
-    epoch id collapses to ``<DATE>_...``.
-
-    Artifacts captured per generation:
-
-    * ``gen_score.json`` — the canonical per-generation SCORE: the scalar,
-      its per-namespace components, the per-board-entry drift_loss / score /
-      pass_fail, the pass rate, and the drift-loss mean. This is the single
-      richest behavioral surface in the run; a refactor that moves any loss,
-      weight, aggregate, or pass predicate moves these bytes.
-    * ``experiment.json`` — the hypothesis + the tournament ``outcome`` /
-      per-match audit (train_loss, scalar_score_delta, match_record, final
-      rank, decision).
-    * ``loss.json`` (if the run wrote any per-run ones) — the raw reducer
-      LossProfile.
-
-    And two per-round artifacts, which are not generation-scoped:
-
-    * ``rounds/{n}/round_log.jsonl`` — the round's ordered event log
-      (proposal attempts, patches applied, gate evaluated, holdout
-      released, decision recorded). It is the record the execution-plan and
-      proposer-scorecard readers fold, so a refactor that stops emitting an
-      event, or reorders them, moves these lines.
-    * ``tournaments/field-*.json`` — the settled field-tournament snapshot,
-      which carries the round's recorded ``promoted_generation_id`` and
-      ``champion_generation_id``: the head the dashboard serves and the
-      index re-derives. Nothing else on disk states the promoted head as a
-      decided fact rather than a derivation.
-    """
     tmp_root = str(workspace.resolve())
     gens_dir = workspace / "epochs" / epoch_id / "generations"
 
@@ -359,7 +263,8 @@ def _collect_artifacts(workspace: Path, epoch_id: str) -> dict[str, object]:
         if score is not None:
             gen_scores[gid] = score
 
-        exp = _read_json_norm(gen_dir / "experiment.json", tmp_root)
+        body = read_experiment_body(workspace, epoch_id, gid)
+        exp = normalize_obj(body, tmp_root=tmp_root) if body is not None else None
         if exp is not None:
             experiments[gid] = exp
 
@@ -379,18 +284,14 @@ def _collect_artifacts(workspace: Path, epoch_id: str) -> dict[str, object]:
             if line.strip()
         ]
 
-    field_tournaments: dict[str, object] = {}
-    tournaments_dir = epoch_dir / "tournaments"
-    if tournaments_dir.is_dir():
-        for snapshot_path in sorted(tournaments_dir.glob("field-*.json")):
-            field_tournaments[snapshot_path.name] = _read_json_norm(snapshot_path, tmp_root)
-
-    lineage = _read_json_norm(workspace / "lineage.json", tmp_root)
-
-    current_gen_path = epoch_dir / "current_generation"
-    current_gen = (
-        current_gen_path.read_text(encoding="utf-8").strip() if current_gen_path.exists() else None
-    )
+    field_tournaments = {
+        f"field-{record.tournament_id.rsplit(':', 1)[-1]}.json": normalize_obj(
+            record.to_dict(), tmp_root=tmp_root
+        )
+        for record in field_tournament_records(workspace, epoch_id)
+    }
+    lineage = normalize_obj(load_lineage(workspace).to_dict(), tmp_root=tmp_root)
+    current_gen = current_generation(workspace, epoch_id)
 
     return {
         "current_generation": current_gen,
@@ -571,24 +472,7 @@ def drive_mock_evolve(
 
 
 def _assert_round_carryover(artifacts: dict[str, object], lane: Lane) -> None:
-    """Assert the persisted per-round record matches the lane's round count.
-
-    The in-memory outcomes are already checked in :func:`drive_mock_evolve`;
-    this checks the same carry-over as it was WRITTEN DOWN, which is what
-    the golden freezes and what every downstream reader (dashboard, index,
-    execution plan) actually consumes:
-
-    * the epoch holds one ``round_log.jsonl`` per round, numbered from 0
-      with no gaps — the round-numbering continuity only a second round
-      can break;
-    * the promoted head named by the last round's settled field snapshot is
-      the workspace's current generation;
-    * each round's settled field snapshot records the PREVIOUS round's
-      crowned generation as its champion.
-
-    A gauntlet lane writes no ``field-*.json`` snapshot (that path settles
-    elsewhere), so the snapshot checks apply only where snapshots exist.
-    """
+    """Check contiguous rounds, recorded promotions, and incumbent carryover."""
     round_logs = artifacts["round_logs"]
     assert isinstance(round_logs, dict)
     assert sorted(round_logs) == [f"{n}/round_log.jsonl" for n in range(lane.rounds)]
@@ -596,8 +480,7 @@ def _assert_round_carryover(artifacts: dict[str, object], lane: Lane) -> None:
 
     snapshots = artifacts["field_tournaments"]
     assert isinstance(snapshots, dict)
-    if not snapshots:
-        return
+    assert len(snapshots) == lane.rounds
 
     expected_champions = ("v0", *lane.crowned_generation_ids[:-1])
     for crowned, champion in zip(lane.crowned_generation_ids, expected_champions, strict=True):

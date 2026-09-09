@@ -251,6 +251,8 @@ def test_score_corruption_is_visible_and_cannot_supply_a_gate(tmp_path: Path) ->
     for view in (
         build_matchup_grid(paths, "epoch", "v0", "v1"),
         build_gate_breakdown(paths, "epoch", "v0", "v1"),
-        build_tournament_structure(paths, "epoch", "epoch:v0->v1"),
     ):
         assert "scalar must be finite" in view["unreadable"]
+    structure = build_tournament_structure(paths, "epoch", "epoch:v0->v1")
+    assert structure["source"] == "unavailable"
+    assert structure["standings"] == []

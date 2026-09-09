@@ -94,7 +94,90 @@
       "round_index": 0
     }
   },
-  "field_tournaments": {},
+  "field_tournaments": {
+    "field-v1.json": {
+      "champion_generation_id": "v0",
+      "competitors": [
+        {
+          "generation_id": "v0",
+          "role": "champion",
+          "seed": 1
+        },
+        {
+          "generation_id": "v1",
+          "role": "challenger",
+          "seed": 2
+        }
+      ],
+      "crowning_matchup_id": "gauntlet",
+      "decision": "promoted",
+      "delta_scalar": -1.6,
+      "epoch_id": "<DATE>_t1_gauntlet",
+      "field_status": [
+        {
+          "attempt_reasons": [],
+          "attempts": 1,
+          "generation_id": "v1",
+          "hypothesis": "Tag the topic_slugify_logic literal for candidate v1.",
+          "reason": "",
+          "seed": 2,
+          "status": "applied"
+        }
+      ],
+      "promoted_generation_id": "v1",
+      "ran_at": "<TS>",
+      "reason": "",
+      "rounds": [
+        {
+          "label": "Gauntlet",
+          "matches": [
+            {
+              "board_fraction": null,
+              "bracket_slot": "",
+              "bye": false,
+              "competitors": [
+                "v0",
+                "v1"
+              ],
+              "cut": [],
+              "decision": "promoted",
+              "delta_scalar": -1.6,
+              "live_progress": {},
+              "match_id": "gauntlet",
+              "pending": false,
+              "survivors": [],
+              "winner": "v1"
+            }
+          ],
+          "stage_index": 0
+        }
+      ],
+      "standings": [
+        {
+          "generation_id": "v1",
+          "losses": 0,
+          "rank": 1,
+          "role": "challenger",
+          "scalar": 0.4,
+          "status": "champion",
+          "wins": 1
+        },
+        {
+          "generation_id": "v0",
+          "losses": 1,
+          "rank": 2,
+          "role": "champion",
+          "scalar": 2.0,
+          "status": "eliminated",
+          "wins": 0
+        }
+      ],
+      "state": "settled",
+      "structure": "gauntlet",
+      "structure_params": {},
+      "tournament_id": "<DATE>_t1_gauntlet:field:v1"
+    }
+  },
   "gen_scores": {
     "v0": {
       "base_seed": null,

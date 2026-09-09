@@ -50,9 +50,9 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 473,212 | +64,551 |
-| Production | 197,702 | 190,820 | -6,882 |
-| Production logic | 110,276 | 111,169 | +893 |
+| Total | 408,661 | 473,391 | +64,730 |
+| Production | 197,702 | 190,821 | -6,881 |
+| Production logic | 110,276 | 111,170 | +894 |
 
 The baseline row is the reference `f9052dd` measured by the classification the
 checker holds, which counts the console's hand-written entry point
@@ -90,7 +90,7 @@ production-logic series per subsystem along a branch's first-parent commits.
 | src/zicato/evolve | 11,269 | 11,269 | 7,192 | 36.2% |
 | src/zicato/tournament | 11,254 | 11,254 | 6,604 | 41.3% |
 | src/zicato/reflection | 9,855 | 9,855 | 6,590 | 33.1% |
-| crates/supervisor | 16,400 | 13,944 | 6,535 | 53.1% |
+| crates/supervisor | 16,401 | 13,945 | 6,536 | 53.1% |
 | src/zicato/proposer | 9,521 | 9,521 | 4,772 | 49.9% |
 | src/zicato/cli | 7,088 | 7,088 | 4,697 | 33.7% |
 | src/zicato/analyzer | 7,206 | 7,206 | 4,610 | 36.0% |
@@ -450,6 +450,6 @@ dropped rows named.
 | Measurement records, tournament progress and reports (total) | 473,772 | -349 | 473,423 | Issue #522: explicit measurements replace integer ranges; tournaments publish complete display values; one report assembly publishes recorded prose and measured results. Existing visualizations and evaluation rules remain. |
 | Measurement records, tournament progress and reports (production) | 192,956 | -1,769 | 191,187 | Issue #522: explicit measurements replace integer ranges; tournaments publish complete display values; one report assembly publishes recorded prose and measured results. Existing visualizations and evaluation rules remain. |
 | Measurement records, tournament progress and reports (production logic) | 111,996 | -768 | 111,228 | Issue #522: explicit measurements replace integer ranges; tournaments publish complete display values; one report assembly publishes recorded prose and measured results. Existing visualizations and evaluation rules remain. |
-| Recorded round outcomes and decision explanations (total) | 473,423 | -211 | 473,212 | Issue #524: committed rounds own outcomes; readers derive journals, promotion status, and recorded gate explanations. All tournament formats and both candidate storage implementations remain. |
-| Recorded round outcomes and decision explanations (production) | 191,187 | -367 | 190,820 | Issue #524: committed rounds own outcomes; readers derive journals, promotion status, and recorded gate explanations. All tournament formats and both candidate storage implementations remain. |
-| Recorded round outcomes and decision explanations (production logic) | 111,228 | -59 | 111,169 | Issue #524: committed rounds own outcomes; readers derive journals, promotion status, and recorded gate explanations. All tournament formats and both candidate storage implementations remain. |
+| Recorded round outcomes and decision explanations (total) | 473,423 | -32 | 473,391 | Issue #524: committed rounds own outcomes; readers derive journals, promotion status, and recorded gate explanations. All tournament formats and both candidate storage implementations remain. |
+| Recorded round outcomes and decision explanations (production) | 191,187 | -366 | 190,821 | Issue #524: committed rounds own outcomes; readers derive journals, promotion status, and recorded gate explanations. All tournament formats and both candidate storage implementations remain. |
+| Recorded round outcomes and decision explanations (production logic) | 111,228 | -58 | 111,170 | Issue #524: committed rounds own outcomes; readers derive journals, promotion status, and recorded gate explanations. All tournament formats and both candidate storage implementations remain. |

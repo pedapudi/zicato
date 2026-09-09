@@ -334,6 +334,7 @@
           "seed": 5
         }
       ],
+      "crowning_matchup_id": "GF",
       "decision": "promoted",
       "delta_scalar": -1.6,
       "epoch_id": "<DATE>_t1_double_elim",

@@ -3840,6 +3840,9 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 0,
+          "parent_scalar": 70.94,
+          "child_scalar": 146.65,
+          "delta_scalar": 75.71000000000001,
           "elo": 1449.0594437975165,
           "elo_se": null,
           "elo_games": 1
@@ -3853,6 +3856,9 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 1,
+          "parent_scalar": 70.94,
+          "child_scalar": 72.45,
+          "delta_scalar": 1.5100000000000051,
           "elo": 1449.0594437975165,
           "elo_se": null,
           "elo_games": 1
@@ -4047,8 +4053,33 @@
     "status": 200,
     "body": {
       "epoch_id": "2026-05-30_e0",
-      "findings": [],
-      "healthy": true
+      "findings": [
+        {
+          "code": "settlement_receipt_corrupt",
+          "severity": "warning",
+          "summary": "A retained field-settlement receipt is unreadable or invalid",
+          "detail": {
+            "epoch_id": "2026-05-30_e0",
+            "storage_key": "epochs/2026-05-30_e0/rounds/0/field_settlement.json",
+            "exception_type": "RuntimeError",
+            "message": "lineage generation 'v1' conflicts on created_at",
+            "recommendation": "inspect the retained receipt before running another settlement; zicato cannot safely infer its commit state"
+          }
+        },
+        {
+          "code": "settlement_receipt_corrupt",
+          "severity": "warning",
+          "summary": "A retained field-settlement receipt is unreadable or invalid",
+          "detail": {
+            "epoch_id": "2026-05-30_e0",
+            "storage_key": "epochs/2026-05-30_e0/rounds/1/field_settlement.json",
+            "exception_type": "RuntimeError",
+            "message": "lineage generation 'v2' conflicts on created_at",
+            "recommendation": "inspect the retained receipt before running another settlement; zicato cannot safely infer its commit state"
+          }
+        }
+      ],
+      "healthy": false
     }
   },
   "console/round_timeline": {
@@ -4361,16 +4392,45 @@
       "challenger": "v1",
       "decision": "rejected",
       "reason": "",
-      "deciding_rule": null,
+      "deciding_rule": "scalar_margin",
       "margin": 0.01,
       "regressed_predicate": null,
       "regressed_namespace": null,
-      "delta_scalar": null,
-      "delta_pass_rate": null,
+      "delta_scalar": 75.71000000000001,
+      "delta_pass_rate": 0.0,
       "champion_scalar": 70.94,
       "challenger_scalar": 146.65,
       "live": null,
-      "rules": [],
+      "rules": [
+        {
+          "detail": "disabled",
+          "fired": false,
+          "id": "regression_suite",
+          "label": "Regression suite",
+          "status": "skipped"
+        },
+        {
+          "detail": "70.94 → 146.65 (+75.71; needs ≤ -0.01)",
+          "fired": true,
+          "id": "scalar_margin",
+          "label": "Scalar margin",
+          "status": "fail"
+        },
+        {
+          "detail": "not reached (an earlier rule fired)",
+          "fired": false,
+          "id": "pass_rate_monotonicity",
+          "label": "Pass-rate monotonicity",
+          "status": "not_reached"
+        },
+        {
+          "detail": "not reached (an earlier rule fired)",
+          "fired": false,
+          "id": "namespace_monotonicity",
+          "label": "Namespace monotonicity",
+          "status": "not_reached"
+        }
+      ],
       "scalar_components": {
         "champion": {
           "drift": 68.5,
@@ -4577,16 +4637,45 @@
       "challenger": "v2",
       "decision": "rejected",
       "reason": "",
-      "deciding_rule": null,
+      "deciding_rule": "scalar_margin",
       "margin": 0.01,
       "regressed_predicate": null,
       "regressed_namespace": null,
-      "delta_scalar": null,
-      "delta_pass_rate": null,
+      "delta_scalar": 1.5100000000000051,
+      "delta_pass_rate": 0.0,
       "champion_scalar": 70.94,
       "challenger_scalar": 72.45,
       "live": null,
-      "rules": [],
+      "rules": [
+        {
+          "detail": "disabled",
+          "fired": false,
+          "id": "regression_suite",
+          "label": "Regression suite",
+          "status": "skipped"
+        },
+        {
+          "detail": "70.94 → 72.45 (+1.51; needs ≤ -0.01)",
+          "fired": true,
+          "id": "scalar_margin",
+          "label": "Scalar margin",
+          "status": "fail"
+        },
+        {
+          "detail": "not reached (an earlier rule fired)",
+          "fired": false,
+          "id": "pass_rate_monotonicity",
+          "label": "Pass-rate monotonicity",
+          "status": "not_reached"
+        },
+        {
+          "detail": "not reached (an earlier rule fired)",
+          "fired": false,
+          "id": "namespace_monotonicity",
+          "label": "Namespace monotonicity",
+          "status": "not_reached"
+        }
+      ],
       "scalar_components": {
         "champion": {
           "drift": 68.5,
@@ -4931,6 +5020,9 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 0,
+          "parent_scalar": 70.94,
+          "child_scalar": 146.65,
+          "delta_scalar": 75.71000000000001,
           "elo": 1449.0594437975165,
           "elo_se": null,
           "elo_games": 1,
@@ -4945,6 +5037,9 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 1,
+          "parent_scalar": 70.94,
+          "child_scalar": 72.45,
+          "delta_scalar": 1.5100000000000051,
           "elo": 1449.0594437975165,
           "elo_se": null,
           "elo_games": 1,
@@ -5045,16 +5140,45 @@
             "challenger": "v1",
             "decision": "rejected",
             "reason": "",
-            "deciding_rule": null,
+            "deciding_rule": "scalar_margin",
             "margin": 0.01,
             "regressed_predicate": null,
             "regressed_namespace": null,
-            "delta_scalar": null,
-            "delta_pass_rate": null,
+            "delta_scalar": 75.71000000000001,
+            "delta_pass_rate": 0.0,
             "champion_scalar": 70.94,
             "challenger_scalar": 146.65,
             "live": null,
-            "rules": [],
+            "rules": [
+              {
+                "detail": "disabled",
+                "fired": false,
+                "id": "regression_suite",
+                "label": "Regression suite",
+                "status": "skipped"
+              },
+              {
+                "detail": "70.94 → 146.65 (+75.71; needs ≤ -0.01)",
+                "fired": true,
+                "id": "scalar_margin",
+                "label": "Scalar margin",
+                "status": "fail"
+              },
+              {
+                "detail": "not reached (an earlier rule fired)",
+                "fired": false,
+                "id": "pass_rate_monotonicity",
+                "label": "Pass-rate monotonicity",
+                "status": "not_reached"
+              },
+              {
+                "detail": "not reached (an earlier rule fired)",
+                "fired": false,
+                "id": "namespace_monotonicity",
+                "label": "Namespace monotonicity",
+                "status": "not_reached"
+              }
+            ],
             "scalar_components": {
               "champion": {
                 "drift": 68.5,
@@ -5153,16 +5277,45 @@
             "challenger": "v2",
             "decision": "rejected",
             "reason": "",
-            "deciding_rule": null,
+            "deciding_rule": "scalar_margin",
             "margin": 0.01,
             "regressed_predicate": null,
             "regressed_namespace": null,
-            "delta_scalar": null,
-            "delta_pass_rate": null,
+            "delta_scalar": 1.5100000000000051,
+            "delta_pass_rate": 0.0,
             "champion_scalar": 70.94,
             "challenger_scalar": 72.45,
             "live": null,
-            "rules": [],
+            "rules": [
+              {
+                "detail": "disabled",
+                "fired": false,
+                "id": "regression_suite",
+                "label": "Regression suite",
+                "status": "skipped"
+              },
+              {
+                "detail": "70.94 → 72.45 (+1.51; needs ≤ -0.01)",
+                "fired": true,
+                "id": "scalar_margin",
+                "label": "Scalar margin",
+                "status": "fail"
+              },
+              {
+                "detail": "not reached (an earlier rule fired)",
+                "fired": false,
+                "id": "pass_rate_monotonicity",
+                "label": "Pass-rate monotonicity",
+                "status": "not_reached"
+              },
+              {
+                "detail": "not reached (an earlier rule fired)",
+                "fired": false,
+                "id": "namespace_monotonicity",
+                "label": "Namespace monotonicity",
+                "status": "not_reached"
+              }
+            ],
             "scalar_components": {
               "champion": {
                 "drift": 68.5,
@@ -5271,6 +5424,9 @@
         "decision": "rejected",
         "decision_label": "rejected",
         "round_index": 0,
+        "parent_scalar": 70.94,
+        "child_scalar": 146.65,
+        "delta_scalar": 75.71000000000001,
         "elo": 1449.0594437975165,
         "elo_se": null,
         "elo_games": 1
@@ -5581,16 +5737,45 @@
             "challenger": "v1",
             "decision": "rejected",
             "reason": "",
-            "deciding_rule": null,
+            "deciding_rule": "scalar_margin",
             "margin": 0.01,
             "regressed_predicate": null,
             "regressed_namespace": null,
-            "delta_scalar": null,
-            "delta_pass_rate": null,
+            "delta_scalar": 75.71000000000001,
+            "delta_pass_rate": 0.0,
             "champion_scalar": 70.94,
             "challenger_scalar": 146.65,
             "live": null,
-            "rules": [],
+            "rules": [
+              {
+                "detail": "disabled",
+                "fired": false,
+                "id": "regression_suite",
+                "label": "Regression suite",
+                "status": "skipped"
+              },
+              {
+                "detail": "70.94 → 146.65 (+75.71; needs ≤ -0.01)",
+                "fired": true,
+                "id": "scalar_margin",
+                "label": "Scalar margin",
+                "status": "fail"
+              },
+              {
+                "detail": "not reached (an earlier rule fired)",
+                "fired": false,
+                "id": "pass_rate_monotonicity",
+                "label": "Pass-rate monotonicity",
+                "status": "not_reached"
+              },
+              {
+                "detail": "not reached (an earlier rule fired)",
+                "fired": false,
+                "id": "namespace_monotonicity",
+                "label": "Namespace monotonicity",
+                "status": "not_reached"
+              }
+            ],
             "scalar_components": {
               "champion": {
                 "drift": 68.5,
@@ -5699,6 +5884,9 @@
         "decision": "rejected",
         "decision_label": "rejected",
         "round_index": 1,
+        "parent_scalar": 70.94,
+        "child_scalar": 72.45,
+        "delta_scalar": 1.5100000000000051,
         "elo": 1449.0594437975165,
         "elo_se": null,
         "elo_games": 1
@@ -5981,16 +6169,45 @@
             "challenger": "v2",
             "decision": "rejected",
             "reason": "",
-            "deciding_rule": null,
+            "deciding_rule": "scalar_margin",
             "margin": 0.01,
             "regressed_predicate": null,
             "regressed_namespace": null,
-            "delta_scalar": null,
-            "delta_pass_rate": null,
+            "delta_scalar": 1.5100000000000051,
+            "delta_pass_rate": 0.0,
             "champion_scalar": 70.94,
             "challenger_scalar": 72.45,
             "live": null,
-            "rules": [],
+            "rules": [
+              {
+                "detail": "disabled",
+                "fired": false,
+                "id": "regression_suite",
+                "label": "Regression suite",
+                "status": "skipped"
+              },
+              {
+                "detail": "70.94 → 72.45 (+1.51; needs ≤ -0.01)",
+                "fired": true,
+                "id": "scalar_margin",
+                "label": "Scalar margin",
+                "status": "fail"
+              },
+              {
+                "detail": "not reached (an earlier rule fired)",
+                "fired": false,
+                "id": "pass_rate_monotonicity",
+                "label": "Pass-rate monotonicity",
+                "status": "not_reached"
+              },
+              {
+                "detail": "not reached (an earlier rule fired)",
+                "fired": false,
+                "id": "namespace_monotonicity",
+                "label": "Namespace monotonicity",
+                "status": "not_reached"
+              }
+            ],
             "scalar_components": {
               "champion": {
                 "drift": 68.5,
@@ -6099,6 +6316,9 @@
         "decision": "rejected",
         "decision_label": "rejected",
         "round_index": 0,
+        "parent_scalar": 70.94,
+        "child_scalar": 146.65,
+        "delta_scalar": 75.71000000000001,
         "elo": 1449.0594437975165,
         "elo_se": null,
         "elo_games": 1
@@ -6409,16 +6629,45 @@
             "challenger": "v1",
             "decision": "rejected",
             "reason": "",
-            "deciding_rule": null,
+            "deciding_rule": "scalar_margin",
             "margin": 0.01,
             "regressed_predicate": null,
             "regressed_namespace": null,
-            "delta_scalar": null,
-            "delta_pass_rate": null,
+            "delta_scalar": 75.71000000000001,
+            "delta_pass_rate": 0.0,
             "champion_scalar": 70.94,
             "challenger_scalar": 146.65,
             "live": null,
-            "rules": [],
+            "rules": [
+              {
+                "detail": "disabled",
+                "fired": false,
+                "id": "regression_suite",
+                "label": "Regression suite",
+                "status": "skipped"
+              },
+              {
+                "detail": "70.94 → 146.65 (+75.71; needs ≤ -0.01)",
+                "fired": true,
+                "id": "scalar_margin",
+                "label": "Scalar margin",
+                "status": "fail"
+              },
+              {
+                "detail": "not reached (an earlier rule fired)",
+                "fired": false,
+                "id": "pass_rate_monotonicity",
+                "label": "Pass-rate monotonicity",
+                "status": "not_reached"
+              },
+              {
+                "detail": "not reached (an earlier rule fired)",
+                "fired": false,
+                "id": "namespace_monotonicity",
+                "label": "Namespace monotonicity",
+                "status": "not_reached"
+              }
+            ],
             "scalar_components": {
               "champion": {
                 "drift": 68.5,
@@ -6604,6 +6853,9 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 0,
+          "parent_scalar": 70.94,
+          "child_scalar": 146.65,
+          "delta_scalar": 75.71000000000001,
           "elo": 1449.0594437975165,
           "elo_se": null,
           "elo_games": 1,
@@ -6618,6 +6870,9 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 1,
+          "parent_scalar": 70.94,
+          "child_scalar": 72.45,
+          "delta_scalar": 1.5100000000000051,
           "elo": 1449.0594437975165,
           "elo_se": null,
           "elo_games": 1,
@@ -6718,16 +6973,45 @@
             "challenger": "v1",
             "decision": "rejected",
             "reason": "",
-            "deciding_rule": null,
+            "deciding_rule": "scalar_margin",
             "margin": 0.01,
             "regressed_predicate": null,
             "regressed_namespace": null,
-            "delta_scalar": null,
-            "delta_pass_rate": null,
+            "delta_scalar": 75.71000000000001,
+            "delta_pass_rate": 0.0,
             "champion_scalar": 70.94,
             "challenger_scalar": 146.65,
             "live": null,
-            "rules": [],
+            "rules": [
+              {
+                "detail": "disabled",
+                "fired": false,
+                "id": "regression_suite",
+                "label": "Regression suite",
+                "status": "skipped"
+              },
+              {
+                "detail": "70.94 → 146.65 (+75.71; needs ≤ -0.01)",
+                "fired": true,
+                "id": "scalar_margin",
+                "label": "Scalar margin",
+                "status": "fail"
+              },
+              {
+                "detail": "not reached (an earlier rule fired)",
+                "fired": false,
+                "id": "pass_rate_monotonicity",
+                "label": "Pass-rate monotonicity",
+                "status": "not_reached"
+              },
+              {
+                "detail": "not reached (an earlier rule fired)",
+                "fired": false,
+                "id": "namespace_monotonicity",
+                "label": "Namespace monotonicity",
+                "status": "not_reached"
+              }
+            ],
             "scalar_components": {
               "champion": {
                 "drift": 68.5,
@@ -6826,16 +7110,45 @@
             "challenger": "v2",
             "decision": "rejected",
             "reason": "",
-            "deciding_rule": null,
+            "deciding_rule": "scalar_margin",
             "margin": 0.01,
             "regressed_predicate": null,
             "regressed_namespace": null,
-            "delta_scalar": null,
-            "delta_pass_rate": null,
+            "delta_scalar": 1.5100000000000051,
+            "delta_pass_rate": 0.0,
             "champion_scalar": 70.94,
             "challenger_scalar": 72.45,
             "live": null,
-            "rules": [],
+            "rules": [
+              {
+                "detail": "disabled",
+                "fired": false,
+                "id": "regression_suite",
+                "label": "Regression suite",
+                "status": "skipped"
+              },
+              {
+                "detail": "70.94 → 72.45 (+1.51; needs ≤ -0.01)",
+                "fired": true,
+                "id": "scalar_margin",
+                "label": "Scalar margin",
+                "status": "fail"
+              },
+              {
+                "detail": "not reached (an earlier rule fired)",
+                "fired": false,
+                "id": "pass_rate_monotonicity",
+                "label": "Pass-rate monotonicity",
+                "status": "not_reached"
+              },
+              {
+                "detail": "not reached (an earlier rule fired)",
+                "fired": false,
+                "id": "namespace_monotonicity",
+                "label": "Namespace monotonicity",
+                "status": "not_reached"
+              }
+            ],
             "scalar_components": {
               "champion": {
                 "drift": 68.5,
@@ -6944,6 +7257,9 @@
         "decision": "rejected",
         "decision_label": "rejected",
         "round_index": 0,
+        "parent_scalar": 70.94,
+        "child_scalar": 146.65,
+        "delta_scalar": 75.71000000000001,
         "elo": 1449.0594437975165,
         "elo_se": null,
         "elo_games": 1
@@ -7254,16 +7570,45 @@
             "challenger": "v1",
             "decision": "rejected",
             "reason": "",
-            "deciding_rule": null,
+            "deciding_rule": "scalar_margin",
             "margin": 0.01,
             "regressed_predicate": null,
             "regressed_namespace": null,
-            "delta_scalar": null,
-            "delta_pass_rate": null,
+            "delta_scalar": 75.71000000000001,
+            "delta_pass_rate": 0.0,
             "champion_scalar": 70.94,
             "challenger_scalar": 146.65,
             "live": null,
-            "rules": [],
+            "rules": [
+              {
+                "detail": "disabled",
+                "fired": false,
+                "id": "regression_suite",
+                "label": "Regression suite",
+                "status": "skipped"
+              },
+              {
+                "detail": "70.94 → 146.65 (+75.71; needs ≤ -0.01)",
+                "fired": true,
+                "id": "scalar_margin",
+                "label": "Scalar margin",
+                "status": "fail"
+              },
+              {
+                "detail": "not reached (an earlier rule fired)",
+                "fired": false,
+                "id": "pass_rate_monotonicity",
+                "label": "Pass-rate monotonicity",
+                "status": "not_reached"
+              },
+              {
+                "detail": "not reached (an earlier rule fired)",
+                "fired": false,
+                "id": "namespace_monotonicity",
+                "label": "Namespace monotonicity",
+                "status": "not_reached"
+              }
+            ],
             "scalar_components": {
               "champion": {
                 "drift": 68.5,
@@ -7372,6 +7717,9 @@
         "decision": "rejected",
         "decision_label": "rejected",
         "round_index": 1,
+        "parent_scalar": 70.94,
+        "child_scalar": 72.45,
+        "delta_scalar": 1.5100000000000051,
         "elo": 1449.0594437975165,
         "elo_se": null,
         "elo_games": 1
@@ -7654,16 +8002,45 @@
             "challenger": "v2",
             "decision": "rejected",
             "reason": "",
-            "deciding_rule": null,
+            "deciding_rule": "scalar_margin",
             "margin": 0.01,
             "regressed_predicate": null,
             "regressed_namespace": null,
-            "delta_scalar": null,
-            "delta_pass_rate": null,
+            "delta_scalar": 1.5100000000000051,
+            "delta_pass_rate": 0.0,
             "champion_scalar": 70.94,
             "challenger_scalar": 72.45,
             "live": null,
-            "rules": [],
+            "rules": [
+              {
+                "detail": "disabled",
+                "fired": false,
+                "id": "regression_suite",
+                "label": "Regression suite",
+                "status": "skipped"
+              },
+              {
+                "detail": "70.94 → 72.45 (+1.51; needs ≤ -0.01)",
+                "fired": true,
+                "id": "scalar_margin",
+                "label": "Scalar margin",
+                "status": "fail"
+              },
+              {
+                "detail": "not reached (an earlier rule fired)",
+                "fired": false,
+                "id": "pass_rate_monotonicity",
+                "label": "Pass-rate monotonicity",
+                "status": "not_reached"
+              },
+              {
+                "detail": "not reached (an earlier rule fired)",
+                "fired": false,
+                "id": "namespace_monotonicity",
+                "label": "Namespace monotonicity",
+                "status": "not_reached"
+              }
+            ],
             "scalar_components": {
               "champion": {
                 "drift": 68.5,
@@ -8011,6 +8388,10 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 0,
+          "rejection_reason": "pass_rate_regressed",
+          "parent_scalar": 0.72,
+          "child_scalar": 0.69,
+          "delta_scalar": -0.030000000000000027,
           "elo": 1441.3848707354466,
           "elo_se": null,
           "elo_games": 1
@@ -8166,6 +8547,10 @@
         "decision": "rejected",
         "decision_label": "rejected",
         "round_index": 0,
+        "rejection_reason": "pass_rate_regressed",
+        "parent_scalar": 0.72,
+        "child_scalar": 0.69,
+        "delta_scalar": -0.030000000000000027,
         "elo": 1441.3848707354466,
         "elo_se": null,
         "elo_games": 1
@@ -8547,16 +8932,45 @@
             "challenger": "v2",
             "decision": "rejected",
             "reason": "pass_rate_regressed",
-            "deciding_rule": null,
+            "deciding_rule": "pass_rate_monotonicity",
             "margin": 0.02,
-            "regressed_predicate": null,
+            "regressed_predicate": "q3_metrics_outline",
             "regressed_namespace": null,
-            "delta_scalar": null,
-            "delta_pass_rate": null,
+            "delta_scalar": -0.030000000000000027,
+            "delta_pass_rate": -0.25,
             "champion_scalar": 0.72,
             "challenger_scalar": 0.69,
             "live": null,
-            "rules": [],
+            "rules": [
+              {
+                "detail": "disabled",
+                "fired": false,
+                "id": "regression_suite",
+                "label": "Regression suite",
+                "status": "skipped"
+              },
+              {
+                "detail": "0.72 → 0.69 (-0.03; needs ≤ -0.02)",
+                "fired": false,
+                "id": "scalar_margin",
+                "label": "Scalar margin",
+                "status": "pass"
+              },
+              {
+                "detail": "pass-rate regression on entries: q3_metrics_outline",
+                "fired": true,
+                "id": "pass_rate_monotonicity",
+                "label": "Pass-rate monotonicity",
+                "status": "fail"
+              },
+              {
+                "detail": "not reached (an earlier rule fired)",
+                "fired": false,
+                "id": "namespace_monotonicity",
+                "label": "Namespace monotonicity",
+                "status": "not_reached"
+              }
+            ],
             "scalar_components": {
               "champion": {
                 "drift": 0.7,
@@ -9002,6 +9416,7 @@
         "decision": "promoted",
         "decision_label": "promoted",
         "round_index": 0,
+        "child_scalar": 63.5,
         "elo": 1668.297188382394,
         "elo_se": null,
         "elo_games": 6
@@ -9069,6 +9484,7 @@
           "decision": "promoted",
           "decision_label": "promoted",
           "round_index": 0,
+          "child_scalar": 63.5,
           "elo": 1668.297188382394,
           "elo_se": null,
           "elo_games": 6
@@ -9765,6 +10181,7 @@
         "decision": "promoted",
         "decision_label": "promoted",
         "round_index": 0,
+        "child_scalar": 63.5,
         "elo": 1668.297188382394,
         "elo_se": null,
         "elo_games": 6
@@ -10484,6 +10901,9 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 0,
+          "parent_scalar": 100.0,
+          "child_scalar": 101.0,
+          "delta_scalar": 1.0,
           "elo": 1474.5128056351275,
           "elo_se": null,
           "elo_games": 1
@@ -10497,6 +10917,9 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 1,
+          "parent_scalar": 100.0,
+          "child_scalar": 102.0,
+          "delta_scalar": 2.0,
           "elo": 1474.5128056351275,
           "elo_se": null,
           "elo_games": 1
@@ -10510,6 +10933,9 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 2,
+          "parent_scalar": 100.0,
+          "child_scalar": 103.0,
+          "delta_scalar": 3.0,
           "elo": 1474.5128056351275,
           "elo_se": null,
           "elo_games": 1
@@ -10523,6 +10949,9 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 3,
+          "parent_scalar": 100.0,
+          "child_scalar": 104.0,
+          "delta_scalar": 4.0,
           "elo": 1474.5128056351275,
           "elo_se": null,
           "elo_games": 1
@@ -10536,6 +10965,9 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 4,
+          "parent_scalar": 100.0,
+          "child_scalar": 105.0,
+          "delta_scalar": 5.0,
           "elo": 1474.5128056351275,
           "elo_se": null,
           "elo_games": 1
@@ -10549,6 +10981,9 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 5,
+          "parent_scalar": 100.0,
+          "child_scalar": 106.0,
+          "delta_scalar": 6.0,
           "elo": 1474.5128056351275,
           "elo_se": null,
           "elo_games": 1
@@ -10562,6 +10997,9 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 6,
+          "parent_scalar": 100.0,
+          "child_scalar": 107.0,
+          "delta_scalar": 7.0,
           "elo": 1474.5128056351275,
           "elo_se": null,
           "elo_games": 1
@@ -10575,6 +11013,9 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 7,
+          "parent_scalar": 100.0,
+          "child_scalar": 108.0,
+          "delta_scalar": 8.0,
           "elo": 1474.5128056351275,
           "elo_se": null,
           "elo_games": 1
@@ -10588,6 +11029,9 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 8,
+          "parent_scalar": 100.0,
+          "child_scalar": 109.0,
+          "delta_scalar": 9.0,
           "elo": 1474.5128056351275,
           "elo_se": null,
           "elo_games": 1
@@ -10601,6 +11045,9 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 9,
+          "parent_scalar": 100.0,
+          "child_scalar": 110.0,
+          "delta_scalar": 10.0,
           "elo": 1474.5128056351275,
           "elo_se": null,
           "elo_games": 1
@@ -10614,6 +11061,9 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 10,
+          "parent_scalar": 100.0,
+          "child_scalar": 111.0,
+          "delta_scalar": 11.0,
           "elo": 1474.5128056351275,
           "elo_se": null,
           "elo_games": 1
@@ -11786,6 +12236,9 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 0,
+          "parent_scalar": 50.0,
+          "child_scalar": 50.0,
+          "delta_scalar": 0.0,
           "elo": null,
           "elo_se": null,
           "elo_games": null
@@ -11799,6 +12252,9 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 0,
+          "parent_scalar": 50.0,
+          "child_scalar": 50.0,
+          "delta_scalar": 0.0,
           "elo": null,
           "elo_se": null,
           "elo_games": null
@@ -11812,6 +12268,9 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 0,
+          "parent_scalar": 50.0,
+          "child_scalar": 50.0,
+          "delta_scalar": 0.0,
           "elo": 1419.7427611880833,
           "elo_se": null,
           "elo_games": 2
@@ -11825,6 +12284,9 @@
           "decision": "promoted",
           "decision_label": "promoted",
           "round_index": 0,
+          "parent_scalar": 50.0,
+          "child_scalar": 50.0,
+          "delta_scalar": 0.0,
           "elo": 1705.678469566626,
           "elo_se": null,
           "elo_games": 4
@@ -12213,6 +12675,9 @@
         "decision": "promoted",
         "decision_label": "promoted",
         "round_index": 0,
+        "parent_scalar": 50.0,
+        "child_scalar": 50.0,
+        "delta_scalar": 0.0,
         "elo": 1705.678469566626,
         "elo_se": null,
         "elo_games": 4
@@ -12254,6 +12719,9 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 0,
+          "parent_scalar": 50.0,
+          "child_scalar": 50.0,
+          "delta_scalar": 0.0,
           "elo": null,
           "elo_se": null,
           "elo_games": null
@@ -12267,6 +12735,9 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 0,
+          "parent_scalar": 50.0,
+          "child_scalar": 50.0,
+          "delta_scalar": 0.0,
           "elo": null,
           "elo_se": null,
           "elo_games": null
@@ -12280,6 +12751,9 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 0,
+          "parent_scalar": 50.0,
+          "child_scalar": 50.0,
+          "delta_scalar": 0.0,
           "elo": 1419.7427611880833,
           "elo_se": null,
           "elo_games": 2
@@ -12293,6 +12767,9 @@
           "decision": "promoted",
           "decision_label": "promoted",
           "round_index": 0,
+          "parent_scalar": 50.0,
+          "child_scalar": 50.0,
+          "delta_scalar": 0.0,
           "elo": 1705.678469566626,
           "elo_se": null,
           "elo_games": 4
@@ -13339,6 +13816,9 @@
         "decision": "promoted",
         "decision_label": "promoted",
         "round_index": 0,
+        "parent_scalar": 54.0,
+        "child_scalar": 40.0,
+        "delta_scalar": -14.0,
         "elo": 1630.260967401915,
         "elo_se": null,
         "elo_games": 3
@@ -13380,6 +13860,9 @@
           "decision": "promoted",
           "decision_label": "promoted",
           "round_index": 0,
+          "parent_scalar": 54.0,
+          "child_scalar": 40.0,
+          "delta_scalar": -14.0,
           "elo": 1630.260967401915,
           "elo_se": null,
           "elo_games": 3
@@ -13393,6 +13876,7 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 0,
+          "parent_scalar": 54.0,
           "elo": 1452.2531897272277,
           "elo_se": null,
           "elo_games": 3
@@ -13406,6 +13890,7 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 0,
+          "parent_scalar": 54.0,
           "elo": 1372.3767830819158,
           "elo_se": null,
           "elo_games": 2
@@ -14064,12 +14549,41 @@
       "margin": 0.01,
       "regressed_predicate": null,
       "regressed_namespace": null,
-      "delta_scalar": null,
-      "delta_pass_rate": null,
+      "delta_scalar": -14.0,
+      "delta_pass_rate": 0.0,
       "champion_scalar": 54.0,
       "challenger_scalar": 40.0,
       "live": null,
-      "rules": [],
+      "rules": [
+        {
+          "detail": "disabled",
+          "fired": false,
+          "id": "regression_suite",
+          "label": "Regression suite",
+          "status": "skipped"
+        },
+        {
+          "detail": "54.00 → 40.00 (-14.00; needs ≤ -0.01)",
+          "fired": false,
+          "id": "scalar_margin",
+          "label": "Scalar margin",
+          "status": "pass"
+        },
+        {
+          "detail": "all preserved",
+          "fired": false,
+          "id": "pass_rate_monotonicity",
+          "label": "Pass-rate monotonicity",
+          "status": "pass"
+        },
+        {
+          "detail": "namespace aggregates not recorded",
+          "fired": false,
+          "id": "namespace_monotonicity",
+          "label": "Namespace monotonicity",
+          "status": "unknown"
+        }
+      ],
       "scalar_components": {
         "champion": {
           "drift": 54.0
@@ -14191,6 +14705,9 @@
         "decision": "promoted",
         "decision_label": "promoted",
         "round_index": 0,
+        "parent_scalar": 54.0,
+        "child_scalar": 40.0,
+        "delta_scalar": -14.0,
         "elo": 1630.260967401915,
         "elo_se": null,
         "elo_games": 3
@@ -14355,12 +14872,41 @@
             "margin": 0.01,
             "regressed_predicate": null,
             "regressed_namespace": null,
-            "delta_scalar": null,
-            "delta_pass_rate": null,
+            "delta_scalar": -14.0,
+            "delta_pass_rate": 0.0,
             "champion_scalar": 54.0,
             "challenger_scalar": 40.0,
             "live": null,
-            "rules": [],
+            "rules": [
+              {
+                "detail": "disabled",
+                "fired": false,
+                "id": "regression_suite",
+                "label": "Regression suite",
+                "status": "skipped"
+              },
+              {
+                "detail": "54.00 → 40.00 (-14.00; needs ≤ -0.01)",
+                "fired": false,
+                "id": "scalar_margin",
+                "label": "Scalar margin",
+                "status": "pass"
+              },
+              {
+                "detail": "all preserved",
+                "fired": false,
+                "id": "pass_rate_monotonicity",
+                "label": "Pass-rate monotonicity",
+                "status": "pass"
+              },
+              {
+                "detail": "namespace aggregates not recorded",
+                "fired": false,
+                "id": "namespace_monotonicity",
+                "label": "Namespace monotonicity",
+                "status": "unknown"
+              }
+            ],
             "scalar_components": {
               "champion": {
                 "drift": 54.0
@@ -15447,6 +15993,9 @@
         "decision": "promoted",
         "decision_label": "promoted",
         "round_index": 0,
+        "parent_scalar": 70.0,
+        "child_scalar": 71.0,
+        "delta_scalar": 1.0,
         "elo": 1653.6333484331997,
         "elo_se": null,
         "elo_games": 3
@@ -15488,6 +16037,9 @@
           "decision": "promoted",
           "decision_label": "promoted",
           "round_index": 0,
+          "parent_scalar": 70.0,
+          "child_scalar": 71.0,
+          "delta_scalar": 1.0,
           "elo": 1653.6333484331997,
           "elo_se": null,
           "elo_games": 3
@@ -15501,6 +16053,9 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 0,
+          "parent_scalar": 70.0,
+          "child_scalar": 72.0,
+          "delta_scalar": 2.0,
           "elo": 1410.1011510459896,
           "elo_se": null,
           "elo_games": 2
@@ -15514,6 +16069,9 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 0,
+          "parent_scalar": 70.0,
+          "child_scalar": 73.0,
+          "delta_scalar": 3.0,
           "elo": 1395.2064512358952,
           "elo_se": null,
           "elo_games": 2
@@ -16315,16 +16873,45 @@
       "challenger": "v1",
       "decision": "promoted",
       "reason": "",
-      "deciding_rule": null,
+      "deciding_rule": "scalar_margin",
       "margin": 0.01,
       "regressed_predicate": null,
       "regressed_namespace": null,
-      "delta_scalar": null,
-      "delta_pass_rate": null,
+      "delta_scalar": 1.0,
+      "delta_pass_rate": 0.0,
       "champion_scalar": 70.0,
       "challenger_scalar": 71.0,
       "live": null,
-      "rules": [],
+      "rules": [
+        {
+          "detail": "disabled",
+          "fired": false,
+          "id": "regression_suite",
+          "label": "Regression suite",
+          "status": "skipped"
+        },
+        {
+          "detail": "70.00 → 71.00 (+1.00; needs ≤ -0.01)",
+          "fired": true,
+          "id": "scalar_margin",
+          "label": "Scalar margin",
+          "status": "fail"
+        },
+        {
+          "detail": "not reached (an earlier rule fired)",
+          "fired": false,
+          "id": "pass_rate_monotonicity",
+          "label": "Pass-rate monotonicity",
+          "status": "not_reached"
+        },
+        {
+          "detail": "not reached (an earlier rule fired)",
+          "fired": false,
+          "id": "namespace_monotonicity",
+          "label": "Namespace monotonicity",
+          "status": "not_reached"
+        }
+      ],
       "scalar_components": {
         "champion": {
           "drift": 70.0
@@ -16446,6 +17033,9 @@
         "decision": "promoted",
         "decision_label": "promoted",
         "round_index": 0,
+        "parent_scalar": 70.0,
+        "child_scalar": 71.0,
+        "delta_scalar": 1.0,
         "elo": 1653.6333484331997,
         "elo_se": null,
         "elo_games": 3
@@ -16606,16 +17196,45 @@
             "challenger": "v1",
             "decision": "promoted",
             "reason": "",
-            "deciding_rule": null,
+            "deciding_rule": "scalar_margin",
             "margin": 0.01,
             "regressed_predicate": null,
             "regressed_namespace": null,
-            "delta_scalar": null,
-            "delta_pass_rate": null,
+            "delta_scalar": 1.0,
+            "delta_pass_rate": 0.0,
             "champion_scalar": 70.0,
             "challenger_scalar": 71.0,
             "live": null,
-            "rules": [],
+            "rules": [
+              {
+                "detail": "disabled",
+                "fired": false,
+                "id": "regression_suite",
+                "label": "Regression suite",
+                "status": "skipped"
+              },
+              {
+                "detail": "70.00 → 71.00 (+1.00; needs ≤ -0.01)",
+                "fired": true,
+                "id": "scalar_margin",
+                "label": "Scalar margin",
+                "status": "fail"
+              },
+              {
+                "detail": "not reached (an earlier rule fired)",
+                "fired": false,
+                "id": "pass_rate_monotonicity",
+                "label": "Pass-rate monotonicity",
+                "status": "not_reached"
+              },
+              {
+                "detail": "not reached (an earlier rule fired)",
+                "fired": false,
+                "id": "namespace_monotonicity",
+                "label": "Namespace monotonicity",
+                "status": "not_reached"
+              }
+            ],
             "scalar_components": {
               "champion": {
                 "drift": 70.0
@@ -16900,6 +17519,9 @@
         "decision": "promoted",
         "decision_label": "promoted",
         "round_index": 0,
+        "parent_scalar": 70.0,
+        "child_scalar": 71.0,
+        "delta_scalar": 1.0,
         "elo": 1633.2252800564895,
         "elo_se": null,
         "elo_games": 3
@@ -16941,6 +17563,9 @@
           "decision": "promoted",
           "decision_label": "promoted",
           "round_index": 0,
+          "parent_scalar": 70.0,
+          "child_scalar": 71.0,
+          "delta_scalar": 1.0,
           "elo": 1633.2252800564895,
           "elo_se": null,
           "elo_games": 3
@@ -16954,6 +17579,9 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 0,
+          "parent_scalar": 70.0,
+          "child_scalar": 72.0,
+          "delta_scalar": 2.0,
           "elo": 1396.1393435500834,
           "elo_se": null,
           "elo_games": 2
@@ -17424,16 +18052,45 @@
       "challenger": "v1",
       "decision": "promoted",
       "reason": "",
-      "deciding_rule": null,
+      "deciding_rule": "scalar_margin",
       "margin": 0.01,
       "regressed_predicate": null,
       "regressed_namespace": null,
-      "delta_scalar": null,
-      "delta_pass_rate": null,
+      "delta_scalar": 1.0,
+      "delta_pass_rate": 0.0,
       "champion_scalar": 70.0,
       "challenger_scalar": 71.0,
       "live": null,
-      "rules": [],
+      "rules": [
+        {
+          "detail": "disabled",
+          "fired": false,
+          "id": "regression_suite",
+          "label": "Regression suite",
+          "status": "skipped"
+        },
+        {
+          "detail": "70.00 → 71.00 (+1.00; needs ≤ -0.01)",
+          "fired": true,
+          "id": "scalar_margin",
+          "label": "Scalar margin",
+          "status": "fail"
+        },
+        {
+          "detail": "not reached (an earlier rule fired)",
+          "fired": false,
+          "id": "pass_rate_monotonicity",
+          "label": "Pass-rate monotonicity",
+          "status": "not_reached"
+        },
+        {
+          "detail": "not reached (an earlier rule fired)",
+          "fired": false,
+          "id": "namespace_monotonicity",
+          "label": "Namespace monotonicity",
+          "status": "not_reached"
+        }
+      ],
       "scalar_components": {
         "champion": {
           "drift": 70.0
@@ -17555,6 +18212,9 @@
         "decision": "promoted",
         "decision_label": "promoted",
         "round_index": 0,
+        "parent_scalar": 70.0,
+        "child_scalar": 71.0,
+        "delta_scalar": 1.0,
         "elo": 1633.2252800564895,
         "elo_se": null,
         "elo_games": 3
@@ -17715,16 +18375,45 @@
             "challenger": "v1",
             "decision": "promoted",
             "reason": "",
-            "deciding_rule": null,
+            "deciding_rule": "scalar_margin",
             "margin": 0.01,
             "regressed_predicate": null,
             "regressed_namespace": null,
-            "delta_scalar": null,
-            "delta_pass_rate": null,
+            "delta_scalar": 1.0,
+            "delta_pass_rate": 0.0,
             "champion_scalar": 70.0,
             "challenger_scalar": 71.0,
             "live": null,
-            "rules": [],
+            "rules": [
+              {
+                "detail": "disabled",
+                "fired": false,
+                "id": "regression_suite",
+                "label": "Regression suite",
+                "status": "skipped"
+              },
+              {
+                "detail": "70.00 → 71.00 (+1.00; needs ≤ -0.01)",
+                "fired": true,
+                "id": "scalar_margin",
+                "label": "Scalar margin",
+                "status": "fail"
+              },
+              {
+                "detail": "not reached (an earlier rule fired)",
+                "fired": false,
+                "id": "pass_rate_monotonicity",
+                "label": "Pass-rate monotonicity",
+                "status": "not_reached"
+              },
+              {
+                "detail": "not reached (an earlier rule fired)",
+                "fired": false,
+                "id": "namespace_monotonicity",
+                "label": "Namespace monotonicity",
+                "status": "not_reached"
+              }
+            ],
             "scalar_components": {
               "champion": {
                 "drift": 70.0
@@ -18066,6 +18755,9 @@
         "decision": "promoted",
         "decision_label": "promoted",
         "round_index": 0,
+        "parent_scalar": 70.0,
+        "child_scalar": 71.0,
+        "delta_scalar": 1.0,
         "elo": 1656.7510384649354,
         "elo_se": null,
         "elo_games": 3
@@ -18107,6 +18799,9 @@
           "decision": "promoted",
           "decision_label": "promoted",
           "round_index": 0,
+          "parent_scalar": 70.0,
+          "child_scalar": 71.0,
+          "delta_scalar": 1.0,
           "elo": 1656.7510384649354,
           "elo_se": null,
           "elo_games": 3
@@ -18120,6 +18815,9 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 0,
+          "parent_scalar": 70.0,
+          "child_scalar": 72.0,
+          "delta_scalar": 2.0,
           "elo": 1380.2221506106068,
           "elo_se": null,
           "elo_games": 3
@@ -18133,6 +18831,9 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 0,
+          "parent_scalar": 70.0,
+          "child_scalar": 73.0,
+          "delta_scalar": 3.0,
           "elo": 1401.2682615874594,
           "elo_se": null,
           "elo_games": 2
@@ -19012,16 +19713,45 @@
       "challenger": "v1",
       "decision": "promoted",
       "reason": "",
-      "deciding_rule": null,
+      "deciding_rule": "scalar_margin",
       "margin": 0.01,
       "regressed_predicate": null,
       "regressed_namespace": null,
-      "delta_scalar": null,
-      "delta_pass_rate": null,
+      "delta_scalar": 1.0,
+      "delta_pass_rate": 0.0,
       "champion_scalar": 70.0,
       "challenger_scalar": 71.0,
       "live": null,
-      "rules": [],
+      "rules": [
+        {
+          "detail": "disabled",
+          "fired": false,
+          "id": "regression_suite",
+          "label": "Regression suite",
+          "status": "skipped"
+        },
+        {
+          "detail": "70.00 → 71.00 (+1.00; needs ≤ -0.01)",
+          "fired": true,
+          "id": "scalar_margin",
+          "label": "Scalar margin",
+          "status": "fail"
+        },
+        {
+          "detail": "not reached (an earlier rule fired)",
+          "fired": false,
+          "id": "pass_rate_monotonicity",
+          "label": "Pass-rate monotonicity",
+          "status": "not_reached"
+        },
+        {
+          "detail": "not reached (an earlier rule fired)",
+          "fired": false,
+          "id": "namespace_monotonicity",
+          "label": "Namespace monotonicity",
+          "status": "not_reached"
+        }
+      ],
       "scalar_components": {
         "champion": {
           "drift": 70.0
@@ -19143,6 +19873,9 @@
         "decision": "promoted",
         "decision_label": "promoted",
         "round_index": 0,
+        "parent_scalar": 70.0,
+        "child_scalar": 71.0,
+        "delta_scalar": 1.0,
         "elo": 1656.7510384649354,
         "elo_se": null,
         "elo_games": 3
@@ -19303,16 +20036,45 @@
             "challenger": "v1",
             "decision": "promoted",
             "reason": "",
-            "deciding_rule": null,
+            "deciding_rule": "scalar_margin",
             "margin": 0.01,
             "regressed_predicate": null,
             "regressed_namespace": null,
-            "delta_scalar": null,
-            "delta_pass_rate": null,
+            "delta_scalar": 1.0,
+            "delta_pass_rate": 0.0,
             "champion_scalar": 70.0,
             "challenger_scalar": 71.0,
             "live": null,
-            "rules": [],
+            "rules": [
+              {
+                "detail": "disabled",
+                "fired": false,
+                "id": "regression_suite",
+                "label": "Regression suite",
+                "status": "skipped"
+              },
+              {
+                "detail": "70.00 → 71.00 (+1.00; needs ≤ -0.01)",
+                "fired": true,
+                "id": "scalar_margin",
+                "label": "Scalar margin",
+                "status": "fail"
+              },
+              {
+                "detail": "not reached (an earlier rule fired)",
+                "fired": false,
+                "id": "pass_rate_monotonicity",
+                "label": "Pass-rate monotonicity",
+                "status": "not_reached"
+              },
+              {
+                "detail": "not reached (an earlier rule fired)",
+                "fired": false,
+                "id": "namespace_monotonicity",
+                "label": "Namespace monotonicity",
+                "status": "not_reached"
+              }
+            ],
             "scalar_components": {
               "champion": {
                 "drift": 70.0
@@ -19597,6 +20359,9 @@
         "decision": "promoted",
         "decision_label": "promoted",
         "round_index": 0,
+        "parent_scalar": 70.0,
+        "child_scalar": 71.0,
+        "delta_scalar": 1.0,
         "elo": 1641.4940497354632,
         "elo_se": null,
         "elo_games": 3
@@ -19638,6 +20403,9 @@
           "decision": "promoted",
           "decision_label": "promoted",
           "round_index": 0,
+          "parent_scalar": 70.0,
+          "child_scalar": 71.0,
+          "delta_scalar": 1.0,
           "elo": 1641.4940497354632,
           "elo_se": null,
           "elo_games": 3
@@ -19663,6 +20431,9 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 0,
+          "parent_scalar": 70.0,
+          "child_scalar": 73.0,
+          "delta_scalar": 3.0,
           "elo": 1425.8456411750783,
           "elo_se": null,
           "elo_games": 1
@@ -20727,6 +21498,9 @@
         "decision": "promoted",
         "decision_label": "promoted",
         "round_index": 0,
+        "parent_scalar": 70.0,
+        "child_scalar": 71.0,
+        "delta_scalar": 1.0,
         "elo": 1633.2252800564895,
         "elo_se": null,
         "elo_games": 3
@@ -20768,6 +21542,9 @@
           "decision": "promoted",
           "decision_label": "promoted",
           "round_index": 0,
+          "parent_scalar": 70.0,
+          "child_scalar": 71.0,
+          "delta_scalar": 1.0,
           "elo": 1633.2252800564895,
           "elo_se": null,
           "elo_games": 3
@@ -20781,6 +21558,9 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 0,
+          "parent_scalar": 70.0,
+          "child_scalar": 72.0,
+          "delta_scalar": 2.0,
           "elo": 1396.1393435500834,
           "elo_se": null,
           "elo_games": 2
@@ -22613,6 +23393,9 @@
         "decision": "promoted",
         "decision_label": "promoted",
         "round_index": 0,
+        "parent_scalar": 70.0,
+        "child_scalar": 71.0,
+        "delta_scalar": 1.0,
         "elo": 1658.367581537957,
         "elo_se": null,
         "elo_games": 3
@@ -22654,6 +23437,9 @@
           "decision": "promoted",
           "decision_label": "promoted",
           "round_index": 0,
+          "parent_scalar": 70.0,
+          "child_scalar": 71.0,
+          "delta_scalar": 1.0,
           "elo": 1658.367581537957,
           "elo_se": null,
           "elo_games": 3
@@ -22667,6 +23453,9 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 0,
+          "parent_scalar": 70.0,
+          "child_scalar": 72.0,
+          "delta_scalar": 2.0,
           "elo": 1395.8276258888789,
           "elo_se": null,
           "elo_games": 2
@@ -22680,6 +23469,9 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 0,
+          "parent_scalar": 70.0,
+          "child_scalar": 73.0,
+          "delta_scalar": 3.0,
           "elo": 1395.8276258888789,
           "elo_se": null,
           "elo_games": 2
@@ -23342,16 +24134,45 @@
       "challenger": "v1",
       "decision": "promoted",
       "reason": "",
-      "deciding_rule": null,
+      "deciding_rule": "scalar_margin",
       "margin": 0.01,
       "regressed_predicate": null,
       "regressed_namespace": null,
-      "delta_scalar": null,
-      "delta_pass_rate": null,
+      "delta_scalar": 1.0,
+      "delta_pass_rate": 0.0,
       "champion_scalar": 70.0,
       "challenger_scalar": 71.0,
       "live": null,
-      "rules": [],
+      "rules": [
+        {
+          "detail": "disabled",
+          "fired": false,
+          "id": "regression_suite",
+          "label": "Regression suite",
+          "status": "skipped"
+        },
+        {
+          "detail": "70.00 → 71.00 (+1.00; needs ≤ -0.01)",
+          "fired": true,
+          "id": "scalar_margin",
+          "label": "Scalar margin",
+          "status": "fail"
+        },
+        {
+          "detail": "not reached (an earlier rule fired)",
+          "fired": false,
+          "id": "pass_rate_monotonicity",
+          "label": "Pass-rate monotonicity",
+          "status": "not_reached"
+        },
+        {
+          "detail": "not reached (an earlier rule fired)",
+          "fired": false,
+          "id": "namespace_monotonicity",
+          "label": "Namespace monotonicity",
+          "status": "not_reached"
+        }
+      ],
       "scalar_components": {
         "champion": {
           "drift": 70.0
@@ -23473,6 +24294,9 @@
         "decision": "promoted",
         "decision_label": "promoted",
         "round_index": 0,
+        "parent_scalar": 70.0,
+        "child_scalar": 71.0,
+        "delta_scalar": 1.0,
         "elo": 1658.367581537957,
         "elo_se": null,
         "elo_games": 3
@@ -23633,16 +24457,45 @@
             "challenger": "v1",
             "decision": "promoted",
             "reason": "",
-            "deciding_rule": null,
+            "deciding_rule": "scalar_margin",
             "margin": 0.01,
             "regressed_predicate": null,
             "regressed_namespace": null,
-            "delta_scalar": null,
-            "delta_pass_rate": null,
+            "delta_scalar": 1.0,
+            "delta_pass_rate": 0.0,
             "champion_scalar": 70.0,
             "challenger_scalar": 71.0,
             "live": null,
-            "rules": [],
+            "rules": [
+              {
+                "detail": "disabled",
+                "fired": false,
+                "id": "regression_suite",
+                "label": "Regression suite",
+                "status": "skipped"
+              },
+              {
+                "detail": "70.00 → 71.00 (+1.00; needs ≤ -0.01)",
+                "fired": true,
+                "id": "scalar_margin",
+                "label": "Scalar margin",
+                "status": "fail"
+              },
+              {
+                "detail": "not reached (an earlier rule fired)",
+                "fired": false,
+                "id": "pass_rate_monotonicity",
+                "label": "Pass-rate monotonicity",
+                "status": "not_reached"
+              },
+              {
+                "detail": "not reached (an earlier rule fired)",
+                "fired": false,
+                "id": "namespace_monotonicity",
+                "label": "Namespace monotonicity",
+                "status": "not_reached"
+              }
+            ],
             "scalar_components": {
               "champion": {
                 "drift": 70.0
@@ -23857,6 +24710,9 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 0,
+          "parent_scalar": 50.0,
+          "child_scalar": 60.0,
+          "delta_scalar": 10.0,
           "elo": 1449.0594437975165,
           "elo_se": null,
           "elo_games": 1
@@ -23870,6 +24726,9 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 1,
+          "parent_scalar": 50.0,
+          "child_scalar": 55.0,
+          "delta_scalar": 5.0,
           "elo": 1449.0594437975165,
           "elo_se": null,
           "elo_games": 1
@@ -24132,6 +24991,9 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 0,
+          "parent_scalar": 60.5,
+          "child_scalar": 60.5,
+          "delta_scalar": 0.0,
           "elo": 1441.3848707354466,
           "elo_se": null,
           "elo_games": 1
@@ -24768,6 +25630,9 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 0,
+          "parent_scalar": 100.0,
+          "child_scalar": 110.0,
+          "delta_scalar": 10.0,
           "elo": 1432.6284178467063,
           "elo_se": null,
           "elo_games": 1
@@ -24781,6 +25646,9 @@
           "decision": "promoted",
           "decision_label": "promoted",
           "round_index": 0,
+          "parent_scalar": 100.0,
+          "child_scalar": 80.0,
+          "delta_scalar": -20.0,
           "elo": 1643.5352589649522,
           "elo_se": null,
           "elo_games": 3
@@ -24794,6 +25662,9 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 1,
+          "parent_scalar": 80.0,
+          "child_scalar": 90.0,
+          "delta_scalar": 10.0,
           "elo": 1455.9548980639272,
           "elo_se": null,
           "elo_games": 1
@@ -24807,6 +25678,9 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 1,
+          "parent_scalar": 80.0,
+          "child_scalar": 95.0,
+          "delta_scalar": 15.0,
           "elo": 1455.9548980639272,
           "elo_se": null,
           "elo_games": 1
@@ -25146,6 +26020,9 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 0,
+          "parent_scalar": 70.0,
+          "child_scalar": 146.0,
+          "delta_scalar": 76.0,
           "elo": 1449.0594437975165,
           "elo_se": null,
           "elo_games": 1
@@ -25159,6 +26036,9 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 1,
+          "parent_scalar": 70.0,
+          "child_scalar": 72.0,
+          "delta_scalar": 2.0,
           "elo": 1449.0594437975165,
           "elo_se": null,
           "elo_games": 1
@@ -25613,6 +26493,9 @@
           "decision": "promoted",
           "decision_label": "promoted",
           "round_index": 0,
+          "parent_scalar": 100.0,
+          "child_scalar": 80.0,
+          "delta_scalar": -20.0,
           "elo": 1558.6151292645534,
           "elo_se": null,
           "elo_games": 1
@@ -25773,6 +26656,9 @@
           "decision": "promoted",
           "decision_label": "promoted",
           "round_index": 0,
+          "parent_scalar": 100.0,
+          "child_scalar": 80.0,
+          "delta_scalar": -20.0,
           "elo": 1601.881112404967,
           "elo_se": null,
           "elo_games": 2
@@ -25786,6 +26672,9 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 1,
+          "parent_scalar": 80.0,
+          "child_scalar": 85.0,
+          "delta_scalar": 5.0,
           "elo": 1449.0594437975165,
           "elo_se": null,
           "elo_games": 1
@@ -26086,6 +26975,9 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 0,
+          "parent_scalar": 5.0,
+          "child_scalar": 6.0,
+          "delta_scalar": 1.0,
           "elo": 1449.0594437975165,
           "elo_se": null,
           "elo_games": 1
@@ -26099,6 +26991,9 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 1,
+          "parent_scalar": 5.0,
+          "child_scalar": 7.0,
+          "delta_scalar": 2.0,
           "elo": 1449.0594437975165,
           "elo_se": null,
           "elo_games": 1
@@ -26339,6 +27234,9 @@
           "decision": "promoted",
           "decision_label": "promoted",
           "round_index": 0,
+          "parent_scalar": 20.0,
+          "child_scalar": 14.0,
+          "delta_scalar": -6.0,
           "elo": 1601.881112404967,
           "elo_se": null,
           "elo_games": 2
@@ -26352,6 +27250,9 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "round_index": 1,
+          "parent_scalar": 14.0,
+          "child_scalar": 16.0,
+          "delta_scalar": 2.0,
           "elo": 1449.0594437975165,
           "elo_se": null,
           "elo_games": 1
