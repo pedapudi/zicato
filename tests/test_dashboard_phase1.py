@@ -167,6 +167,11 @@ def phase1_workspace(tmp_path: Path) -> Path:
     # Build the analytical index with judge_losses + tournament_id FK
     # + epochs.goal + epochs.parent_epoch_id.
     _build_index(ws / "index.db", e0, e1, source_root)
+    from tests._workspace_support import complete_round
+
+    complete_round(ws, e0, ["v1"], primary_id="v1", round_index=0)
+    complete_round(ws, e0, ["v1a"], primary_id=None, round_index=1)
+    complete_round(ws, e0, ["v2"], primary_id="v2", round_index=2)
     return ws
 
 

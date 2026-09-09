@@ -42,7 +42,12 @@ def test_home_champion_uses_selected_epoch_and_served_evidence(tmp_path: Path) -
             layout,
             epoch_id,
             "v1",
-            experiment=experiment_record("v1", epoch_id=epoch_id, parent_generation_id="v0"),
+            experiment=experiment_record(
+                "v1",
+                epoch_id=epoch_id,
+                parent_generation_id="v0",
+                outcome={"tournament_decision": "promoted" if promoted else "rejected"},
+            ),
         )
         lineage.append(
             {
@@ -63,6 +68,10 @@ def test_home_champion_uses_selected_epoch_and_served_evidence(tmp_path: Path) -
             }
         )
     write_lineage(layout, {"epochs": lineage})
+    from tests._workspace_support import complete_round
+
+    complete_round(layout.root, "earlier", ["v1"], primary_id=None)
+    complete_round(layout.root, "selected", ["v1"], primary_id="v1")
     seed_index(layout, {"generations": ratings})
     paths = WorkspacePaths(layout.root)
     epoch = build_epoch_view(paths, "selected")
