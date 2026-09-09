@@ -34,6 +34,8 @@ from tests._orchestrator_harness import (
     run_evolve_once,
     target_call_llm,
 )
+from zicato.core.measurement import TOURNAMENT_DRAW
+from zicato.core.workspace import run_id_for_unit
 from zicato.evolve.round_prepare import _assess_and_persist_loop_health
 from zicato.health.diagnostics import HealthFinding, LoopHealth
 from zicato.workspace_loader import load_current_board
@@ -370,7 +372,8 @@ def test_collect_epoch_health_inputs_reads_persisted_losses(tmp_path: Path) -> N
 
     def _write_loss(gen_id: str, entry_id: str, drift: float) -> None:
         loss = LossProfile(
-            run_id=f"r-{gen_id}-{entry_id}",
+            measurement=TOURNAMENT_DRAW,
+            run_id=run_id_for_unit(gen_id, entry_id, epoch_id=epoch_id),
             entry_id=entry_id,
             generation_id=gen_id,
             epoch_id=epoch_id,

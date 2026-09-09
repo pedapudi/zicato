@@ -33,6 +33,7 @@ from tests._workspace_support import (
     write_tournament,
 )
 from zicato.core import run_id_for_unit
+from zicato.core.measurement import MeasurementDraw, MeasurementPurpose
 from zicato.query import (
     WorkspacePaths,
     build_epoch_analysis,
@@ -211,14 +212,16 @@ def test_build_epoch_analysis_shape_with_report(tmp_path: Path) -> None:
 
 
 def test_read_run_result_none_when_absent(tmp_path: Path) -> None:
-    assert read_run_result(tmp_path) is None
-    (tmp_path / "loss.json").write_text("not json", encoding="utf-8")
-    assert read_run_result(tmp_path) is None  # malformed reads as absent
+    assert read_run_result(tmp_path / "events.tournament.r0.jsonl") is None
+    (tmp_path / "loss.tournament.r0.json").write_text("not json", encoding="utf-8")
+    assert (
+        read_run_result(tmp_path / "events.tournament.r0.jsonl") is None
+    )  # malformed reads as absent
 
 
 def test_read_run_result_projects_the_dashboard_subset(tmp_path: Path) -> None:
     write_json(
-        tmp_path / "loss.json",
+        tmp_path / "loss.tournament.r0.json",
         {
             "run_id": "r1",
             "drift_loss": 0.5,
@@ -230,7 +233,7 @@ def test_read_run_result_projects_the_dashboard_subset(tmp_path: Path) -> None:
             "schema_version": 9,  # internal field — must NOT leak
         },
     )
-    out = read_run_result(tmp_path)
+    out = read_run_result(tmp_path / "events.tournament.r0.jsonl")
     assert out == {
         "wall_clock_budget_exceeded": False,
         "runtime_ms": 1200,
@@ -261,10 +264,10 @@ def test_resolve_run_id_for_entry_falls_back_to_entry_id(tmp_path: Path) -> None
 def test_per_judge_entry_reader_selects_replicate_loss(tmp_path: Path) -> None:
     layout = _base_workspace(tmp_path)
     paths = WorkspacePaths(layout.root)
-    run_dir = layout.run_dir(EPOCH, GEN, ENTRY)
-    write_json(run_dir / "loss.json", {"run_id": "goldfive-r0"})
+    run_dir = layout.events(EPOCH, GEN, ENTRY).parent
+    write_json(run_dir / "loss.tournament.r0.json", {"run_id": "goldfive-r0"})
     write_json(
-        run_dir / "loss.r1.json",
+        run_dir / "loss.tournament.r1.json",
         {
             "run_id": "goldfive-r1",
             "per_judge_loss": [
@@ -277,7 +280,9 @@ def test_per_judge_entry_reader_selects_replicate_loss(tmp_path: Path) -> None:
             ],
         },
     )
-    runtime_run_id = run_id_for_unit(GEN, ENTRY, 1)
+    runtime_run_id = run_id_for_unit(
+        GEN, ENTRY, MeasurementDraw(MeasurementPurpose.TOURNAMENT, 1), epoch_id=EPOCH
+    )
     assert (
         resolve_run_id_for_entry(paths, EPOCH, GEN, ENTRY, run_id=runtime_run_id) == "goldfive-r1"
     )
@@ -330,13 +335,13 @@ def test_build_run_transcript_stamps_coordinates(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     layout = _base_workspace(tmp_path)
-    run_dir = write_run(layout, EPOCH, GEN, ENTRY, events=[{"runId": "r1"}])
+    write_run(layout, EPOCH, GEN, ENTRY, events=[{"runId": "r1"}])
     from zicato.tournament.artifacts import capture_run_artifacts
 
     scratch = tmp_path / "artifact-scratch"
     scratch.mkdir()
     (scratch / "report.html").write_bytes(b"x" * 42)
-    capture_run_artifacts(scratch, run_dir / "loss.json")
+    capture_run_artifacts(scratch, layout.loss(EPOCH, GEN, ENTRY))
     payload = {"run_id": "", "turns": [{"role": "user"}], "annotations": [], "event_count": 1}
     _install_fake_reconstruct(monkeypatch, payload)
     out = build_run_transcript(WorkspacePaths(layout.root), EPOCH, GEN, ENTRY)
@@ -360,7 +365,9 @@ def test_full_and_delta_transcripts_select_exact_replicate(
     """Both transcript readers must resolve the requested sibling, never r0."""
     layout = _base_workspace(tmp_path)
     write_run(layout, EPOCH, GEN, ENTRY, events=[{"runId": "goldfive-r0"}])
-    replicate_events = layout.events(EPOCH, GEN, ENTRY, 1)
+    replicate_events = layout.events(
+        EPOCH, GEN, ENTRY, MeasurementDraw(MeasurementPurpose.TOURNAMENT, 1)
+    )
     write_jsonl(replicate_events, [{"runId": "goldfive-r1"}])
 
     seen: list[Path] = []
@@ -378,7 +385,9 @@ def test_full_and_delta_transcripts_select_exact_replicate(
         )
 
     _install_reconstruct(monkeypatch, reconstruct)
-    runtime_run_id = run_id_for_unit(GEN, ENTRY, 1)
+    runtime_run_id = run_id_for_unit(
+        GEN, ENTRY, MeasurementDraw(MeasurementPurpose.TOURNAMENT, 1), epoch_id=EPOCH
+    )
     paths = WorkspacePaths(layout.root)
     full = build_run_transcript(paths, EPOCH, GEN, ENTRY, run_id=runtime_run_id)
     delta = build_run_transcript_delta(paths, EPOCH, GEN, ENTRY, run_id=runtime_run_id)
@@ -407,7 +416,7 @@ def test_build_run_transcript_failure_degrades_same_shape(
 
 # ---------------------------------------------------------------------------
 # transcript_view — the PARTIAL (in-flight) reconstruction path, through the
-# REAL reconstructor. Pins: a growing events.jsonl surfaces more turns across
+# REAL reconstructor. Pins: a growing events.tournament.r0.jsonl surfaces more turns across
 # reads; a torn tail is tolerated; a settled run's served body matches a direct
 # reconstruction (partial_ok does not perturb a completed run).
 # ---------------------------------------------------------------------------

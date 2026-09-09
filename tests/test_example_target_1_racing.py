@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import json
 import shutil
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -56,6 +57,7 @@ from tests._orchestrator_harness import (
     install_telemetry_stubs,
     run_evolve_once,
 )
+from zicato.core.measurement import MeasurementDraw, MeasurementPurpose
 from zicato.epoch.lifecycle import _scoring_from_dict, new_epoch
 from zicato_examples.target_1_presentation import mocks as _t1_mocks
 
@@ -84,18 +86,20 @@ def _preseed_champion_cache(
     in ``sys.modules`` — it imports the REAL reducer's writer.
     """
     from zicato.board.jsonl import load_board as _load_board_file
-    from zicato.core.measurement import MeasurementDraw
     from zicato.core.types import LossProfile
     from zicato.core.workspace import board_path, run_id_for_unit
     from zicato.telemetry.reducer import write_loss_profile
     from zicato.tournament.runner import _unit_loss_path
 
     for entry in _load_board_file(board_path(workspace, epoch_id)):
-        for replicate_index in range(max(1, replicates)):
+        for draw in range(max(1, replicates)):
+            measurement = MeasurementDraw(MeasurementPurpose.TOURNAMENT, draw)
             write_loss_profile(
                 LossProfile(
-                    run_id=run_id_for_unit(champion_id, entry.id, replicate_index, base_seed=None),
-                    measurement=MeasurementDraw.from_index(replicate_index, base_seed=None),
+                    run_id=run_id_for_unit(
+                        champion_id, entry.id, measurement, base_seed=None, epoch_id=epoch_id
+                    ),
+                    measurement=replace(measurement, base_seed=None),
                     entry_id=entry.id,
                     generation_id=champion_id,
                     epoch_id=epoch_id,
@@ -109,7 +113,7 @@ def _preseed_champion_cache(
                     pass_fail=pass_fail,
                 ),
                 _unit_loss_path(
-                    workspace, epoch_id, champion_id, entry.id, replicate_index, base_seed=None
+                    workspace, epoch_id, champion_id, entry.id, measurement, base_seed=None
                 ),
             )
 
@@ -136,7 +140,6 @@ def _install_caching_telemetry_stubs(
     import sys
 
     import zicato.tournament.runner as _runner_mod
-    from zicato.core.measurement import MeasurementDraw
     from zicato.core.types import ExpectationResult, LossProfile, MetricCount
     from zicato.core.workspace import run_id_for_unit
     from zicato.telemetry.reducer import read_loss_profile, write_loss_profile
@@ -170,10 +173,16 @@ def _install_caching_telemetry_stubs(
             if entry.expectation is not None
             else None
         )
-        replicate = int(entry.context.get("replicate_index", "0"))
+        replicate = MeasurementDraw.from_context(entry.context)
         profile = LossProfile(
-            run_id=run_id_for_unit(generation.id, entry.id, replicate, base_seed=config.seed),
-            measurement=MeasurementDraw.from_index(replicate, base_seed=config.seed),
+            run_id=run_id_for_unit(
+                generation.id,
+                entry.id,
+                replicate,
+                base_seed=config.seed,
+                epoch_id=generation.epoch_id,
+            ),
+            measurement=replace(replicate, base_seed=config.seed),
             entry_id=entry.id,
             generation_id=generation.id,
             epoch_id=epoch_id,

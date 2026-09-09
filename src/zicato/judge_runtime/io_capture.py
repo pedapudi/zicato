@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 from zicato.core.loss import LossProfile, capture_matches_loss
-from zicato.core.measurement import MeasurementDraw, artifact_replicate_index, unit_artifact_name
+from zicato.core.measurement import MeasurementDraw, artifact_measurement, unit_artifact_name
 from zicato.epoch._storage import RecordError, check_record_format
 
 log = logging.getLogger("zicato.judge_runtime.io_capture")
@@ -56,7 +56,7 @@ def judge_io_path_for_loss(loss_path: Path) -> Path:
     as the loss it accompanies.
     """
     name = loss_path.name
-    index = artifact_replicate_index(name)
+    index = artifact_measurement(name)
     if index is not None:
         return loss_path.with_name(unit_artifact_name("judge_io", index))
     if name.startswith("loss.") and name.endswith(".json"):

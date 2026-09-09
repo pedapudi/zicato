@@ -45,6 +45,7 @@ from typing import Any
 
 from zicato.core.loss import has_execution_evidence, validate_loss_identity
 from zicato.core.measurement import (
+    TOURNAMENT_DRAW,
     UNKNOWN_SEED,
     BaseSeed,
     MeasurementDraw,
@@ -158,7 +159,7 @@ def read_events_history(
     epoch_id: str,
     generation_id: str,
     entry_id: str,
-    replicate_index: int = 0,
+    measurement: MeasurementDraw = TOURNAMENT_DRAW,
     *,
     base_seed: BaseSeed = UNKNOWN_SEED,
 ) -> list[list[dict[str, Any]]]:
@@ -172,15 +173,15 @@ def read_events_history(
     Best-effort: unreadable files and malformed lines are skipped.
     """
     out: list[list[dict[str, Any]]] = []
-    loss_path = layout.loss(epoch_id, generation_id, entry_id, replicate_index, base_seed=base_seed)
+    loss_path = layout.loss(epoch_id, generation_id, entry_id, measurement, base_seed=base_seed)
     archived_events = [
         path.with_name(path.name.replace("loss", "events", 1)).with_suffix(".jsonl")
         for path in iter_measurement_attempts(loss_path)
     ]
     for path in (
         *archived_events,
-        layout.events_prev(epoch_id, generation_id, entry_id, replicate_index, base_seed=base_seed),
-        layout.events(epoch_id, generation_id, entry_id, replicate_index, base_seed=base_seed),
+        layout.events_prev(epoch_id, generation_id, entry_id, measurement, base_seed=base_seed),
+        layout.events(epoch_id, generation_id, entry_id, measurement, base_seed=base_seed),
     ):
         try:
             text = path.read_text(encoding="utf-8")
@@ -224,14 +225,14 @@ def read_loss(
     entry_id: str,
     *,
     base_seed: BaseSeed = UNKNOWN_SEED,
-    replicate_index: int = 0,
+    measurement: MeasurementDraw = TOURNAMENT_DRAW,
 ) -> dict[str, Any] | None:
     """One run's ``loss.json`` as a dict, or ``None``.
 
     Missing, malformed, unstarted, or conflicting measurements yield ``None``.
     Raw files remain available to the execution audit.
     """
-    path = layout.loss(epoch_id, generation_id, entry_id, replicate_index, base_seed=base_seed)
+    path = layout.loss(epoch_id, generation_id, entry_id, measurement, base_seed=base_seed)
     loss = _read_json_value(path)
     if not isinstance(loss, dict):
         return None
@@ -244,7 +245,6 @@ def read_loss(
             measurement=MeasurementDraw.from_json(loss["measurement"])
             if "measurement" in loss
             else None,
-            match_id=str(loss.get("match_id") or ""),
         )
         validate_loss_identity(
             loss,

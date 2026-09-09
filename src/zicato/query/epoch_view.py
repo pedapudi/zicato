@@ -915,44 +915,18 @@ def read_epoch_analysis_html(paths: WorkspacePaths, epoch_id: str) -> str | None
 
 
 def build_epoch_analysis(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any]:
-    """``GET /api/epoch/{id}/analysis`` — the analysis report payload.
+    """Serve the published report without re-reading measurements or rendering figures."""
+    directory = paths.epochs / epoch_id
 
-    Returns ``{epoch_id, analysis_md, analysis_html_inline,
-    analysis_html_available}``. ``analysis_html_inline`` is the
-    paper-styled HTML fragment (self-contained inline CSS, inline SVG
-    figures) the dashboard drops directly into the Epoch view's
-    Analysis section — same renderer as the standalone ``analysis.html``
-    so both surfaces look like a paper. The raw markdown ``analysis_md``
-    is the FALLBACK, rendered client-side when the inline HTML is empty.
-
-    Preferring the inline HTML is what makes the server render worth doing:
-    a client that reads only ``analysis_md`` and re-renders the markdown
-    itself leaves that render built and discarded on every request.
-
-    Best-effort: a missing ``analysis.md`` reads as the empty
-    string; a failed fragment render degrades to ``""``; never raises.
-    """
-    analysis_md_path = paths.epochs / epoch_id / "analysis.md"
-    analysis_html_path = paths.epochs / epoch_id / "analysis.html"
-    try:
-        analysis_md = analysis_md_path.read_text(encoding="utf-8")
-    except (FileNotFoundError, OSError):
-        analysis_md = ""
-
-    analysis_html_inline = ""
-    if analysis_md.strip():
+    def text(name: str) -> str:
         try:
-            from zicato.analyzer.report import render_report_html_fragment  # noqa: PLC0415
-            from zicato.analyzer.report_data import gather_epoch_report_data  # noqa: PLC0415
-
-            data = gather_epoch_report_data(paths.root, epoch_id)
-            analysis_html_inline = render_report_html_fragment(epoch_id, analysis_md, data=data)
-        except Exception:  # noqa: BLE001 — fragment is best-effort
-            analysis_html_inline = ""
+            return (directory / name).read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return ""
 
     return {
         "epoch_id": epoch_id,
-        "analysis_md": analysis_md,
-        "analysis_html_inline": analysis_html_inline,
-        "analysis_html_available": analysis_html_path.is_file(),
+        "analysis_md": text("analysis.md"),
+        "analysis_html_inline": text("analysis.fragment.html"),
+        "analysis_html_available": (directory / "analysis.html").is_file(),
     }

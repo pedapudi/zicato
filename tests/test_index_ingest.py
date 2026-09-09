@@ -8,12 +8,13 @@ from typing import Any
 import pytest
 
 from tests._runtime_builders import seed_promoted_lineage
+from zicato.core.measurement import TOURNAMENT_DRAW
 from zicato.core.types import (
     Generation,
     MetricCount,
     ScoringWeights,
 )
-from zicato.core.workspace import events_jsonl_path, loss_profile_path
+from zicato.core.workspace import events_jsonl_path, loss_profile_path, run_id_for_unit
 from zicato.epoch.journal import write_experiment
 from zicato.epoch.lifecycle import new_epoch
 from zicato.epoch.lineage import append_to_lineage
@@ -43,6 +44,7 @@ from zicato.testing.fixtures import (
     make_patch,
     make_synthetic_events_jsonl,
 )
+from zicato.tournament.scoring import write_gen_score
 
 # ---------------------------------------------------------------------------
 # Synthetic-workspace builder
@@ -83,9 +85,11 @@ def _build_workspace(tmp_path: Path) -> tuple[Path, str]:
     write_experiment(ws, eid_a, "v1", exp)
     # Two runs per generation, with loss.json + events.jsonl.
     for gid in ("v0", "v1"):
+        write_gen_score(ws, eid_a, gid, {"generation_id": gid, "base_seed": None, "scalar": 0.0})
         for entry_id in ("e1", "e2"):
             profile = make_loss_profile(
-                run_id=f"run_{eid_a}_{gid}_{entry_id}",
+                measurement=TOURNAMENT_DRAW,
+                run_id=run_id_for_unit(gid, entry_id, epoch_id=eid_a),
                 entry_id=entry_id,
                 generation_id=gid,
                 epoch_id=eid_a,
@@ -258,7 +262,8 @@ def test_rebuild_index_metric_counts_are_pure_projection_of_loss_json(
 
     # loss.json carries a drift surface of off_topic/warning x2.
     profile = make_loss_profile(
-        run_id="run_drift",
+        measurement=TOURNAMENT_DRAW,
+        run_id=run_id_for_unit("v0", "e1", epoch_id=eid),
         entry_id="e1",
         generation_id="v0",
         epoch_id=eid,
@@ -272,7 +277,7 @@ def test_rebuild_index_metric_counts_are_pure_projection_of_loss_json(
     )
 
     db = rebuild_index(ws)
-    rows = metric_counts_for_run(db, "run_drift")
+    rows = metric_counts_for_run(db, run_id_for_unit("v0", "e1", epoch_id=eid))
 
     # The indexed metric_counts equal exactly the loss.json drift surface.
     expected = {
@@ -299,7 +304,7 @@ def test_rebuild_index_no_metric_surface_yields_no_metric_counts(
     # events.
     ws, eid = _build_workspace(tmp_path)
     db = rebuild_index(ws)
-    run_id = f"run_{eid}_v0_e1"
+    run_id = run_id_for_unit("v0", "e1", epoch_id=eid)
     assert sorted(row["name"] for row in metric_counts_for_run(db, run_id)) == [
         "failure:not_completed",
         "failure:tasks",
@@ -338,7 +343,8 @@ def test_rebuild_index_metric_counts_from_loss_profile_surface(
     eid = cfg.id
     seed_promoted_lineage(ws, eid)
     profile = make_loss_profile(
-        run_id="run_with_metrics",
+        measurement=TOURNAMENT_DRAW,
+        run_id=run_id_for_unit("v0", "e1", epoch_id=eid),
         entry_id="e1",
         generation_id="v0",
         epoch_id=eid,
@@ -350,7 +356,9 @@ def test_rebuild_index_metric_counts_from_loss_profile_surface(
     )
     write_loss_profile(profile, loss_profile_path(ws, eid, "v0", "e1"))
     db = rebuild_index(ws)
-    metrics = {m["name"]: m for m in metric_counts_for_run(db, "run_with_metrics")}
+    metrics = {
+        m["name"]: m for m in metric_counts_for_run(db, run_id_for_unit("v0", "e1", epoch_id=eid))
+    }
     assert metrics["drift:tool_error"]["count"] == pytest.approx(1.0)
     assert metrics["drift:tool_error"]["namespace"] == "drift"
     assert metrics["cost:llm_calls"]["count"] == pytest.approx(7.0)

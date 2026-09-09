@@ -70,7 +70,7 @@ def _collect_events_jsonl_paths(workspace_root: Path, epoch_id: str) -> list[Pat
     if not root.exists():
         return []
     out: list[Path] = []
-    for path in sorted(root.glob("*/runs/*/events*.jsonl")):
+    for path in sorted(root.glob("*/runs/*/seed-*/events.*.r*.jsonl")):
         if path.is_file() and is_events_file(path):
             out.append(path)
     return out

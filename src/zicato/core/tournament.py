@@ -12,12 +12,7 @@ from enum import StrEnum
 from typing import Any, Literal
 
 from zicato.core.constraints import KnobConstraint
-from zicato.core.measurement import (
-    EVIDENCE_REPLICATE_BASE,
-    MeasurementPurpose,
-    measurement_range,
-    validate_measurement_interval,
-)
+from zicato.core.measurement import validate_measurement_count
 
 # ---------------------------------------------------------------------------
 # Tournament decision / structure
@@ -165,12 +160,10 @@ TOURNAMENT_PARAM_CONSTRAINTS: Mapping[str, KnobConstraint] = {
     ),
     "replicates": KnobConstraint(
         minimum=1,
-        maximum=measurement_range(MeasurementPurpose.TOURNAMENT).span,
         label='tournament params["replicates"]',
     ),
     "promote_confidence_replicates": KnobConstraint(
         minimum=0,
-        maximum=measurement_range(MeasurementPurpose.CONFIRMATION).span,
         allow_none=True,
         label='tournament params["promote_confidence_replicates"]',
     ),
@@ -197,7 +190,7 @@ def read_replicate_budget(params: Mapping[str, Any]) -> int:
         return DEFAULT_CONFIRMATION_BUDGET
     if type(raw) is not int or raw < 0:
         raise ValueError("promote_confidence_replicates must be a nonnegative integer")
-    validate_measurement_interval(EVIDENCE_REPLICATE_BASE, raw, allow_empty=True)
+    validate_measurement_count(raw, allow_empty=True)
     return raw
 
 

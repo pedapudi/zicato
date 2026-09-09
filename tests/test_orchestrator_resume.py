@@ -128,8 +128,8 @@ def test_resume_reuses_completed_units_without_rerun(
 
     gens = workspace / "epochs" / epoch_id / "generations"
     v1_dir = gens / "v1"
-    assert (v1_dir / "runs" / "entry_a" / "seed-none" / "loss.json").is_file()
-    assert (gens / "v0" / "runs" / "entry_a" / "seed-none" / "loss.json").is_file()
+    assert (v1_dir / "runs" / "entry_a" / "seed-none" / "loss.tournament.r0.json").is_file()
+    assert (gens / "v0" / "runs" / "entry_a" / "seed-none" / "loss.tournament.r0.json").is_file()
 
     # --- Resume: re-enter the loop with the completed units on disk. ---
     counts = _run_single_counter(monkeypatch)

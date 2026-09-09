@@ -17,7 +17,7 @@ import pytest
 
 from tests._runtime_builders import make_generation, runtime_config
 from zicato.core import BoardEntry, ScoringWeights
-from zicato.core.measurement import MeasurementDraw
+from zicato.core.measurement import MeasurementDraw, MeasurementPurpose
 from zicato.core.types import LossProfile
 from zicato.core.workspace import run_id_for_unit
 from zicato.runtime.lock import acquire_workspace_lock
@@ -140,7 +140,14 @@ def test_executed_measurements_preserve_ordered_loss_history(
     """Only the execution boundary reads history, including identical reruns."""
     generation = replace(make_generation(workspace, CHAMPION), epoch_id=EPOCH)
     entry = BoardEntry(id="e1", kind="single_turn", input="input", wall_clock_budget_seconds=1)
-    path = unit_cache._unit_loss_path(workspace, EPOCH, CHAMPION, entry.id, 0, base_seed=None)
+    path = unit_cache._unit_loss_path(
+        workspace,
+        EPOCH,
+        CHAMPION,
+        entry.id,
+        MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0),
+        base_seed=None,
+    )
     history_reads: list[Path] = []
     archive = unit_cache.archive_outgoing_unit_loss
 
@@ -153,8 +160,8 @@ def test_executed_measurements_preserve_ordered_loss_history(
     for drift_loss, pass_fail in samples:
         loss = replace(
             _loss(entry.id, drift_loss=drift_loss, pass_fail=pass_fail),
-            run_id=run_id_for_unit(CHAMPION, entry.id, base_seed=None),
-            measurement=MeasurementDraw.from_index(0, base_seed=None),
+            run_id=run_id_for_unit(CHAMPION, entry.id, base_seed=None, epoch_id=EPOCH),
+            measurement=replace(MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0), base_seed=None),
             execution_started=True,
         )
 

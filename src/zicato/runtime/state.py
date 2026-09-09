@@ -855,15 +855,36 @@ def read_active_tournament(workspace_root: Path) -> ActiveTournament | None:
 
 
 def write_active_tournament(writer: WorkspaceLock, t: ActiveTournament) -> None:
-    """Publish a full-envelope ``Snapshot`` to the active-tournament log.
+    """Publish the strategy's complete display state through its owned writer."""
+    t = _complete_tournament_progress(t)
+    writer._owned_lease().tournament_state = None
+    writer.tournament_log.append("Snapshot", t.to_dict())
+    writer._owned_lease().tournament_state = t
 
-    An authoritative whole-envelope publish is one atomic append of a
-    ``Snapshot`` event. The fold restarts from the latest ``Snapshot``, so a
-    republish supersedes every earlier event.
+
+def _update_active_tournament(writer: WorkspaceLock, **updates: Any) -> None:
+    """Publish replaced fields synchronously, retaining state on the writer lease.
+
+    Matchups share this writer on one event loop. No await separates reading,
+    appending, and retaining state, so concurrent matchups cannot lose updates.
+    Readers apply field replacements without calculating tournament progress.
     """
-    from zicato.runtime import tournament_log  # noqa: PLC0415
-
-    writer.tournament_log.append(tournament_log.SNAPSHOT, t.to_dict())
+    lease = writer._owned_lease()
+    current = lease.tournament_state or read_active_tournament(writer.workspace_root)
+    if current is None:
+        return
+    updated = _complete_tournament_progress(replace(current, **updates))
+    before, after = current.to_dict(), updated.to_dict()
+    entries = {
+        str(index): entry
+        for index, entry in enumerate(after.pop("entries"))
+        if entry != before["entries"][index]
+    }
+    fields = {key: value for key, value in after.items() if value != before[key]}
+    if fields or entries:
+        lease.tournament_state = None
+        writer.tournament_log.append("Update", {"fields": fields, "entries": entries})
+    lease.tournament_state = updated
 
 
 def _apply_entry_update(
@@ -892,28 +913,16 @@ def _apply_entry_update(
 def update_tournament_entry(
     writer: WorkspaceLock, entry_id: str, side: str, **updates: Any
 ) -> None:
-    """Append an ``EntryUpdate`` for one ``(entry_id, side)`` row.
-
-    One atomic append rather than a read-modify-write of a shared mutable
-    file, so this writer and the runner's concurrent aggregate and
-    projection writers cannot lose each other's updates. The fold applies
-    the override to the first row matching the ``(entry_id, side)`` pair
-    (see :func:`_apply_entry_update`); a typo in an override name would
-    otherwise surface only there, when the log is folded.
-
-    So the override names are validated eagerly against the row dataclass,
-    and an unknown keyword raises at the CALL site.
-    """
-    valid = set(ActiveTournamentEntry.__dataclass_fields__)
-    unknown = set(updates) - valid
+    """Publish one board entry's status through the retained tournament writer."""
+    unknown = set(updates) - set(ActiveTournamentEntry.__dataclass_fields__)
     if unknown:
         raise TypeError(f"update_tournament_entry got unexpected field(s): {sorted(unknown)}")
-    from zicato.runtime import tournament_log  # noqa: PLC0415
-
-    writer.tournament_log.append(
-        tournament_log.ENTRY_UPDATE,
-        {"entry_id": entry_id, "side": side, "updates": dict(updates)},
+    current = writer._owned_lease().tournament_state or read_active_tournament(
+        writer.workspace_root
     )
+    if current is not None:
+        entries = _apply_entry_update(current, entry_id, side, updates).entries
+        _update_active_tournament(writer, entries=entries)
 
 
 def update_tournament_partial_aggregate(
@@ -922,49 +931,25 @@ def update_tournament_partial_aggregate(
     champion_agg: dict[str, Any] | None = None,
     challenger_agg: dict[str, Any] | None = None,
 ) -> None:
-    """Append a ``PartialAggregate`` delta for the running aggregate(s).
-
-    Called by the runner the instant a board unit settles, so a reader
-    (the dashboard) sees a real server-side ``scalar`` accumulate as the
-    tournament runs — rather than 0.00 until the whole round ends.
-
-    One atomic append carrying only the side(s)
-    supplied; the fold replaces the matching
-    :attr:`ActiveTournament.partial_champion_agg` /
-    :attr:`ActiveTournament.partial_challenger_agg` field(s). No
-    read-modify-write, so this and :func:`update_tournament_entry` cannot
-    race to lose an update.
-    """
-    from zicato.runtime import tournament_log  # noqa: PLC0415
-
-    payload: dict[str, Any] = {}
+    """Publish running aggregates as board entries complete."""
+    updates = {}
     if champion_agg is not None:
-        payload["champion_agg"] = dict(champion_agg)
+        updates["partial_champion_agg"] = dict(champion_agg)
     if challenger_agg is not None:
-        payload["challenger_agg"] = dict(challenger_agg)
-    if payload:
-        writer.tournament_log.append(tournament_log.PARTIAL_AGGREGATE, payload)
+        updates["partial_challenger_agg"] = dict(challenger_agg)
+    if updates:
+        _update_active_tournament(writer, **updates)
 
 
 def update_tournament_projected(
-    writer: WorkspaceLock,
-    projected: dict[str, dict[str, Any]],
+    writer: WorkspaceLock, projected: dict[str, dict[str, Any]]
 ) -> None:
-    """Append live standing updates through the shared tournament writer.
-
-    The reader merges the per-generation rows and folds their progress into
-    the live rounds. Challenger lanes use their own aggregate. Champion lanes
-    retain the strategy's benchmark scalar and the largest observed completed
-    board count, so concurrent matchups cannot regress that shared progress.
-    """
-    if not projected:
-        return
-    from zicato.runtime import tournament_log  # noqa: PLC0415
-
-    writer.tournament_log.append(
-        tournament_log.PROJECTED_UPDATE,
-        {"projected": {str(k): dict(v) for k, v in projected.items() if isinstance(v, dict)}},
+    """Publish standings and round progress from the completed board results."""
+    current = writer._owned_lease().tournament_state or read_active_tournament(
+        writer.workspace_root
     )
+    if current is not None and projected:
+        _update_active_tournament(writer, projected={**current.projected, **projected})
 
 
 def _champion_ids(competitors: list[dict[str, Any]]) -> set[str]:
@@ -974,60 +959,6 @@ def _champion_ids(competitors: list[dict[str, Any]]) -> set[str]:
         for c in competitors
         if str(c.get("role", "")) == "champion" and c.get("generation_id")
     }
-
-
-def _fold_projected_into_live_progress(
-    rounds: list[dict[str, Any]],
-    projected: dict[str, dict[str, Any]],
-    *,
-    champion_ids: set[str],
-) -> tuple[list[dict[str, Any]], bool]:
-    """Fold per-board ``projected`` rows onto the live rung ``live_progress``.
-
-    Returns ``(rounds, changed)`` — ``rounds`` is a deep-ish copy with the
-    fold applied in place, ``changed`` is ``True`` iff any lane's rounded
-    value actually moved (the anti-flash gate). Mirrors the orchestrator's
-    :func:`zicato.evolve.dashboard_projection._overlay_projected_live_progress` merge so
-    the live-arrived render converges to a fresh republish + overlay:
-
-    * ``boards_done`` ← the projected row's ``boards_done`` (champion lane:
-      max across duels, never regress);
-    * ``boards_total`` ← only when the strategy left the lane's total unset;
-    * ``projected_scalar`` / ``projected`` ← the projected row's ``scalar``
-      (challenger lanes only — the champion lane keeps its strategy-seeded
-      benchmark to avoid per-duel thrash).
-
-    A lane with no matching projected row is untouched (graceful fallback);
-    a round whose matches carry no ``live_progress`` (every non-racing
-    structure, and a racing rung before it is scheduled) is a no-op.
-    """
-    changed = False
-    new_rounds: list[dict[str, Any]] = []
-    for r in rounds:
-        new_r = dict(r)
-        matches = r.get("matches") or []
-        new_matches: list[dict[str, Any]] = []
-        for m in matches:
-            lanes = m.get("live_progress")
-            if not lanes:
-                new_matches.append(m)
-                continue
-            new_m = dict(m)
-            new_lanes: dict[str, Any] = {}
-            for gid, lane in lanes.items():
-                proj = projected.get(str(gid))
-                if not isinstance(proj, dict):
-                    new_lanes[gid] = lane
-                    continue
-                folded = dict(lane)
-                lane_changed = _fold_one_lane(folded, proj, is_champion=str(gid) in champion_ids)
-                changed = changed or lane_changed
-                new_lanes[gid] = folded
-            new_m["live_progress"] = new_lanes
-            new_matches.append(new_m)
-        new_r["matches"] = new_matches
-        new_rounds.append(new_r)
-    return new_rounds, changed
 
 
 def _fold_one_lane(lane: dict[str, Any], proj: dict[str, Any], *, is_champion: bool) -> bool:
@@ -1064,9 +995,105 @@ def _fold_one_lane(lane: dict[str, Any], proj: dict[str, Any], *, is_champion: b
     return changed
 
 
+def _complete_tournament_progress(current: ActiveTournament) -> ActiveTournament:
+    """Calculate display progress once at publication, without deciding outcomes.
+
+    Strategies supply every competitor and scheduled match. Completed matches
+    retain their results. Running standings use measured scalars; Swiss points
+    change only when its strategy records a completed match.
+    """
+    from copy import deepcopy
+
+    current = deepcopy(current)
+    champions = _champion_ids(current.competitors)
+    rounds = current.rounds
+    board_size = current.structure_params.get("board_size")
+    active_seen = False
+    in_flight = set()
+    champion_agg = dict(current.partial_champion_agg)
+    for round_ in rounds:
+        matches = round_.get("matches", [])
+        pending = any(match.get("pending") for match in matches)
+        queued = pending and active_seen
+        round_["queued"] = queued
+        if pending:
+            active_seen = True
+        for match in matches:
+            if not match.get("pending"):
+                continue
+            match["queued"] = queued
+            total = board_size
+            if isinstance(total, int) and current.structure == "racing":
+                total = max(1, round(total * match.get("board_fraction", 1.0)))
+            match["total"] = total
+            lanes = match.setdefault("live_progress", {})
+            for gid in match.get("competitors", []):
+                lanes.setdefault(gid, {})
+            projections = {}
+            for gid, lane in lanes.items():
+                if not queued:
+                    in_flight.add(gid)
+                projection = current.projected.get(gid, {}) if not queued else {}
+                if projection:
+                    _fold_one_lane(lane, projection, is_champion=gid in champions)
+                if total is not None:
+                    lane.setdefault("boards_total", total)
+                lane["total"] = lane.get("boards_total")
+                lane["done"] = lane.get("boards_done", 0)
+                if gid in champions and "scalar" not in champion_agg:
+                    scalar = lane.get("projected_scalar")
+                    if isinstance(scalar, int | float):
+                        champion_agg["scalar"] = scalar
+                scalar = lane.get("projected_scalar")
+                if isinstance(scalar, int | float) and not queued:
+                    benchmark = champion_agg.get("scalar")
+                    if isinstance(benchmark, int | float):
+                        lane["partialDelta"] = scalar - benchmark
+                    projections[gid] = {
+                        "scalar": scalar,
+                        "boards_done": lane.get("boards_done", 0),
+                        "boards_total": lane.get("boards_total"),
+                    }
+            match["projected"] = projections or None
+            match["done"] = sum(lane.get("done", 0) for lane in lanes.values())
+    standings = []
+    for standing in current.standings:
+        row = dict(standing)
+        gid = row["generation_id"]
+        projection = current.projected.get(gid, {})
+        if gid in in_flight and projection and "scalar" in projection:
+            row.update(
+                in_flight=True,
+                projected_scalar=projection["scalar"],
+                boards_done=projection.get("boards_done"),
+                boards_total=projection.get("boards_total"),
+            )
+        else:
+            for key in ("in_flight", "projected_scalar", "boards_done", "boards_total"):
+                row.pop(key, None)
+        standings.append(row)
+
+    def scalar_key(row: dict[str, Any]) -> float:
+        value = row.get("projected_scalar") if row.get("in_flight") else row.get("scalar")
+        return float(value) if isinstance(value, int | float) else float("inf")
+
+    if in_flight and current.projected:
+        if current.structure == "swiss":
+            standings.sort(key=lambda row: (-row.get("wins", 0), scalar_key(row)))
+        elif current.structure in {"racing", "single_elim", "double_elim"}:
+            standings.sort(key=scalar_key)
+        for rank, row in enumerate(standings, 1):
+            row["rank"] = rank
+    return replace(current, rounds=rounds, standings=standings, partial_champion_agg=champion_agg)
+
+
 def clear_active_tournament(writer: WorkspaceLock) -> None:
     """Clear the active tournament event log. Idempotent."""
-    writer.tournament_log.clear()
+    lease = writer._owned_lease()
+    try:
+        writer.tournament_log.clear()
+    finally:
+        lease.tournament_state = None
 
 
 __all__ = [

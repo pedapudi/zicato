@@ -266,11 +266,10 @@ class ValidationFailed:
 
 @dataclass(frozen=True, slots=True)
 class UnitCompleted:
-    """One board unit ``(entry, replicate, side)`` settled."""
+    """One board entry's aggregate result settled for a tournament side."""
 
     TYPE: ClassVar[str] = "unit_completed"
     entry_id: str = ""
-    replicate: int = 0
     side: str = ""
 
 

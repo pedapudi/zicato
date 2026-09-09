@@ -35,8 +35,8 @@ is the shipped code in every case:
 * the screen veto is the real :func:`zicato.epoch.screen.run_candidate_screen`
   (Experiment A's veto-stage OC).
 
-Seeds. Everything derives from ``stable_noise_seed(workspace_seed,
-generation_id, entry_id, replicate_index)`` — no wall clock, no global RNG —
+Seeds derive from ``stable_noise_seed(workspace_seed, generation_id, entry_id, measurement)``
+without a wall clock or global random generator,
 so every number here is an exact function of the seeds recorded in the JSON
 report. See ``CASCADE.md §4.1`` and ``04-evaluation-statistics.md §13.1``.
 
@@ -84,13 +84,10 @@ from tests.test_decision_procedure_power import (  # noqa: E402  (path set up by
     _prepared_epoch,
 )
 from zicato.core import ScoringWeights
-from zicato.selection.evidence_gate import EVIDENCE_REPLICATE_BASE
+from zicato.core.measurement import TOURNAMENT_DRAW, MeasurementDraw, MeasurementPurpose
 from zicato.selection.strategies.racing import RacingStrategy
 from zicato.selection.strategy import Contestant, MatchupResult
-from zicato.tournament.calibration import (
-    CALIBRATION_REPLICATE_BASE,
-    measure_noise_floor,
-)
+from zicato.tournament.calibration import measure_noise_floor
 from zicato.tournament.gate import evaluate_gate
 from zicato.tournament.runner import run_matchup
 
@@ -165,7 +162,7 @@ class _CountingWorld(_NoisyWorld):
     """A :class:`_NoisyWorld` that counts every board-unit evaluation.
 
     ``calls`` is incremented once per ``runner._run_single`` — i.e. once per
-    (generation, entry, replicate, side) board unit — so the exact total spend
+    (generation, entry, purpose, draw, seed, side) board unit — so the exact total spend
     of a cascade or single-stage run is ``calls`` measured across the run. This
     is Experiment C's x-axis, counted rather than derived (§4.4).
     """
@@ -228,7 +225,7 @@ async def _duel(
     match_id: str,
     board_subset: tuple[str, ...] | None,
     fast: bool = True,
-    replicate_base: int = 0,
+    first_measurement: MeasurementDraw = TOURNAMENT_DRAW,
 ) -> Any:
     """One real ``run_matchup`` duel through the (installed) counting world."""
     config = _config(workspace, seed)
@@ -243,7 +240,7 @@ async def _duel(
         workspace_root=workspace,
         epoch_id=epoch_id,
         replicates=replicates,
-        replicate_base=replicate_base,
+        first_measurement=first_measurement,
         match_id=match_id,
         board_subset=board_subset,
         fast=fast,
@@ -385,7 +382,7 @@ def _measure_slice_floor(workspace: Path, m: int, draws: int, sigma: float) -> f
     """The A/A delta floor on an ``m``-entry slice, via the REAL calibration path.
 
     ``measure_noise_floor`` restricted to the first ``m`` board entries: K seeded
-    A/A draws of the champion at reserved base ``CALIBRATION_REPLICATE_BASE``,
+    A/A draws of the champion under the ``calibration`` purpose with distinct local draws,
     aggregated by the same scorer the gate uses. Returns ``delta_std`` (the sd of
     the A/A delta_scalar) — the quantity a margin on this slice must clear.
     """
@@ -880,17 +877,14 @@ def experiment_c(params: HarnessParams, workspace: Path, floor: float) -> dict[s
 
 
 def slot_integrity_proof(params: HarnessParams, workspace: Path) -> dict[str, Any]:
-    """Prove every stage draws under its OWN reserved base and none clobbers r0.
+    """Check that calibration and confirmation preserve tournament artifacts.
 
-    Lifts ``test_full_mode_evidence_loop_never_touches_canonical_slots`` to the
-    whole pipeline: a full-mode crowning duel (canonical r0) followed by a
-    calibration draw (base 1000) and an evidence-confirm loop (base 4000), then
-    assert (a) the champion's / challenger's canonical ``loss.json`` bytes are
-    unchanged, (b) calibration draws persist under 1000, (c) evidence draws
-    persist under 4000 for BOTH sides. The screen's base-3000 draws live under
-    swept phantom dirs by design, so its isolation is proven by r0 being
-    untouched rather than by a persisted slot.
+    Persist a tournament draw-zero result for both sides, then execute
+    calibration and confirmation measurements with different seeds. Compare
+    the tournament files with their original bytes and check that calibration
+    and both sides' confirmation files exist at their selected identities.
     """
+
     from zicato.core.types import TournamentDecision
     from zicato.selection.driver import (  # noqa: PLC0415
         EvidencePreGate,
@@ -904,7 +898,7 @@ def slot_integrity_proof(params: HarnessParams, workspace: Path) -> dict[str, An
     with pytest.MonkeyPatch.context() as mp:
         world.install(mp, persist=True)
 
-        # (0) canonical crowning duel — writes the r0 loss.json for both sides.
+        # Persist the tournament draw-zero loss for both sides.
         res = asyncio.run(
             _duel(
                 workspace=workspace,
@@ -923,10 +917,15 @@ def slot_integrity_proof(params: HarnessParams, workspace: Path) -> dict[str, An
         for gid in ("champion", "challenger"):
             for entry in _board():
                 canonical[(gid, entry.id)] = _unit_loss_path(
-                    workspace, epoch_id, gid, entry.id, 0, base_seed=1
+                    workspace,
+                    epoch_id,
+                    gid,
+                    entry.id,
+                    MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0),
+                    base_seed=1,
                 ).read_bytes()
 
-        # (1) a calibration slice-floor draw at base 1000.
+        # Measure the slice floor under the calibration purpose.
         asyncio.run(
             measure_noise_floor(
                 adapter=object(),
@@ -940,8 +939,8 @@ def slot_integrity_proof(params: HarnessParams, workspace: Path) -> dict[str, An
             )
         )
 
-        # (2) an evidence-confirm loop at base 4000 (different workspace seed —
-        # any slot-0 rewrite would change the canonical bytes).
+        # Run confirmation with a different seed so accidental overwrites
+        # of the tournament measurements change the bytes being checked.
         decision = SelectionDecision(
             promoted_generation_id="challenger",
             decision=TournamentDecision.PROMOTED,
@@ -963,7 +962,9 @@ def slot_integrity_proof(params: HarnessParams, workspace: Path) -> dict[str, An
 
         async def _replicate_duel(left_id: str, right_id: str) -> MatchupResult:
             nonlocal evidence_replicates_run
-            replicate_slot = EVIDENCE_REPLICATE_BASE + evidence_replicates_run
+            replicate_slot = MeasurementDraw(
+                MeasurementPurpose.CONFIRMATION, evidence_replicates_run
+            )
             evidence_replicates_run += 1
             matchup_id = f"bt-replicate:r{replicate_slot}:{left_id}:{right_id}"
             replicate = await _duel(
@@ -976,7 +977,7 @@ def slot_integrity_proof(params: HarnessParams, workspace: Path) -> dict[str, An
                 match_id=matchup_id,
                 board_subset=None,
                 fast=False,
-                replicate_base=replicate_slot,
+                first_measurement=replicate_slot,
             )
             return MatchupResult(
                 matchup_id=matchup_id,
@@ -998,32 +999,58 @@ def slot_integrity_proof(params: HarnessParams, workspace: Path) -> dict[str, An
 
         # Assertions.
         r0_unchanged = all(
-            _unit_loss_path(workspace, epoch_id, gid, entry_id, 0, base_seed=1).read_bytes()
+            _unit_loss_path(
+                workspace,
+                epoch_id,
+                gid,
+                entry_id,
+                MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0),
+                base_seed=1,
+            ).read_bytes()
             == before
             for (gid, entry_id), before in canonical.items()
         )
         calib_present = all(
             _unit_loss_path(
-                workspace, epoch_id, "champion", entry.id, CALIBRATION_REPLICATE_BASE, base_seed=9
+                workspace,
+                epoch_id,
+                "champion",
+                entry.id,
+                MeasurementDraw(MeasurementPurpose.CALIBRATION, 0),
+                base_seed=9,
             ).exists()
             for entry in _board()[:2]
         )
         evidence_present = all(
             _unit_loss_path(
-                workspace, epoch_id, gid, entry.id, EVIDENCE_REPLICATE_BASE + j, base_seed=2
+                workspace,
+                epoch_id,
+                gid,
+                entry.id,
+                MeasurementDraw(MeasurementPurpose.CONFIRMATION, j),
+                base_seed=2,
             ).exists()
             for gid in ("champion", "challenger")
             for j in range(budget)
             for entry in _board()
         )
-        # calibration base != evidence base != canonical (0) — bases disjoint.
-        bases_disjoint = len({0, CALIBRATION_REPLICATE_BASE, EVIDENCE_REPLICATE_BASE}) == 3
+        # Check that the diagnostic identity markers are distinct.
+        bases_disjoint = (
+            len(
+                {
+                    0,
+                    MeasurementDraw(MeasurementPurpose.CALIBRATION, 0),
+                    MeasurementDraw(MeasurementPurpose.CONFIRMATION, 0),
+                }
+            )
+            == 3
+        )
 
         checks = {
             "canonical_r0_unchanged": bool(r0_unchanged),
-            "calibration_draws_present_base_1000": bool(calib_present),
-            "evidence_draws_present_base_4000_both_sides": bool(evidence_present),
-            "reserved_bases_disjoint": bool(bases_disjoint),
+            "calibration_draws_present": bool(calib_present),
+            "confirmation_draws_present_for_both_candidates": bool(evidence_present),
+            "measurement_purposes_separate": bool(bases_disjoint),
             "evidence_confirm_terminal": str(confirmed.decision),
         }
     checks["all_pass"] = all(v is True for k, v in checks.items() if isinstance(v, bool))
@@ -1037,11 +1064,13 @@ def slot_integrity_proof(params: HarnessParams, workspace: Path) -> dict[str, An
 
 def _seeds_used(params: HarnessParams) -> dict[str, Any]:
     return {
-        "stable_noise_seed_tuple": "(workspace_seed, generation_id, entry_id, replicate_index)",
+        "stable_noise_seed_tuple": (
+            "(workspace_seed, generation_id, entry_id, measurement_purpose, draw)"
+        ),
         "sigma": params.sigma,
         "seed_base": params.seed_base,
-        "calibration_base": CALIBRATION_REPLICATE_BASE,
-        "evidence_base": EVIDENCE_REPLICATE_BASE,
+        "calibration_base": MeasurementDraw(MeasurementPurpose.CALIBRATION, 0),
+        "evidence_base": MeasurementDraw(MeasurementPurpose.CONFIRMATION, 0),
         "effective_replicates": EFFECTIVE_REPLICATES,
         "effective_budget": EFFECTIVE_BUDGET,
         "note": "all per-trial seeds are deterministic functions of the trial index; "

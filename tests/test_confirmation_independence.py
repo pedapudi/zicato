@@ -4,7 +4,7 @@ from dataclasses import replace
 
 import pytest
 
-from zicato.core.measurement import UNKNOWN_SEED, MeasurementDraw, MeasurementPurpose
+from zicato.core.measurement import MeasurementDraw, MeasurementPurpose
 from zicato.selection.driver import EvidencePreGate, confirm_promotion_with_evidence
 from zicato.selection.strategy import Contestant, MatchupResult, SelectionDecision
 from zicato.testing.fixtures import make_loss_profile
@@ -45,7 +45,7 @@ async def test_selection_results_never_supply_confirmation_sample_size() -> None
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "provenance",
-    ["absent", "unknown_seed", "repeated", "ordinary", "independent", "independent_seeds"],
+    ["absent", "repeated", "ordinary", "independent", "independent_seeds"],
 )
 async def test_confirmation_identity_survives_renamed_matchups(provenance: str) -> None:
     calls = 0
@@ -65,13 +65,7 @@ async def test_confirmation_identity_survives_renamed_matchups(provenance: str) 
             else MeasurementDraw(
                 purpose,
                 0 if provenance in {"repeated", "independent_seeds"} else index,
-                base_seed=(
-                    UNKNOWN_SEED
-                    if provenance == "unknown_seed"
-                    else index
-                    if provenance == "independent_seeds"
-                    else None
-                ),
+                base_seed=index if provenance == "independent_seeds" else None,
             )
         )
         return observation(index + 1, measurement)
@@ -95,17 +89,6 @@ async def test_confirmation_identity_survives_renamed_matchups(provenance: str) 
         assert final.decision == "deferred"
         assert calls == 32
         assert evidence.verdict.n_duels == (1 if provenance == "repeated" else 0)
-        if provenance == "unknown_seed":
-            import json
-
-            from zicato.selection.evidence_gate import rating_block
-
-            recorded = json.loads(json.dumps(rating_block(evidence.verdict)))
-            assert all(
-                attempt["eligibility"] == "missing_provenance"
-                and "base_seed" not in attempt["measurement_draw"]
-                for attempt in recorded["attempts"][1:]
-            )
 
 
 def test_aggregate_draw_identity_requires_every_actual_contribution() -> None:

@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 from zicato.core.loss import has_execution_evidence, validate_loss_identity
 from zicato.core.measurement import (
-    artifact_replicate_index,
+    artifact_measurement,
     iter_measurement_artifacts,
     measurement_artifact_path,
     recorded_artifact_measurement,
@@ -216,12 +216,12 @@ def _materialize_carried_champion(
             if is_unit_attempt_slot(src_loss):
                 continue
             try:
-                replicate = artifact_replicate_index(src_loss.name)
+                replicate = artifact_measurement(src_loss.name)
                 if replicate is None:
                     continue
                 profile = read_loss_profile(src_loss)
                 measurement = recorded_artifact_measurement(
-                    entry_dir, src_loss, profile.measurement, profile.match_id
+                    entry_dir, src_loss, profile.measurement
                 )
                 validate_loss_identity(
                     profile,
@@ -243,7 +243,11 @@ def _materialize_carried_champion(
                 generation_id=generation_id,
                 epoch_id=epoch_id,
                 run_id=run_id_for_unit(
-                    generation_id, entry_id, replicate, base_seed=measurement.base_seed
+                    generation_id,
+                    entry_id,
+                    replicate,
+                    base_seed=measurement.base_seed,
+                    epoch_id=epoch_id,
                 ),
                 cached=True,
                 source_epoch=source_epoch,

@@ -171,7 +171,7 @@ test('Match-ups (LIVE swiss): active-round pairings show in-flight board progres
     rounds: [
       { round_index: 0, label: 'Round 1', matches: [
         { match_id: 'sw_r0_m0', competitors: ['v0', 'v1'], winner: 'v1', decision: 'win' },
-        { match_id: 'sw_r0_m1', competitors: ['v2', 'v3'] },  // in flight
+        { match_id: 'sw_r0_m1', competitors: ['v2', 'v3'], pending: true, total: 4, done: 0, queued: false },  // in flight
       ] },
     ],
     standings: [], champion_lineage: ['v0'],
@@ -227,7 +227,7 @@ test('live hero (BLOOM): a RUNNING swiss with the applied field as competitors (
       { generation_id: 'v0', role: 'champion' }, { generation_id: 'v1', role: 'challenger' },
       { generation_id: 'v2', role: 'challenger' }, { generation_id: 'v3', role: 'challenger' },
     ],
-    rounds: [], standings: [], champion_lineage: ['v0'],
+    rounds: [], standings: ['v0','v1','v2','v3'].map((generation_id, i) => ({generation_id, rank: i+1, wins: 0, losses: 0, scalar: null})), champion_lineage: ['v0'],
     field_status: [
       { generation_id: 'v1', status: 'applied', seed: 2 },
       { generation_id: 'v2', status: 'applied', seed: 3 },
@@ -510,8 +510,8 @@ const LIVE_SWISS_BLOCK = {
       { match_id: 'sw_r0_m1', competitors: ['v2', 'v3'], winner: 'v3', decision: 'win' },
     ] },
     { round_index: 1, label: 'Round 2', matches: [
-      { match_id: 'sw_r1_m0', competitors: ['v1', 'v3'] },
-      { match_id: 'sw_r1_m1', competitors: ['v0', 'v2'] },
+      { match_id: 'sw_r1_m0', competitors: ['v1', 'v3'], pending: true, queued: false, total: 4, done: 0 },
+      { match_id: 'sw_r1_m1', competitors: ['v0', 'v2'], pending: true, queued: false, total: 4, done: 0 },
     ] },
   ],
   standings: [], champion_lineage: ['v0'],

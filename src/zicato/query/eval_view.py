@@ -30,6 +30,7 @@ import statistics
 from typing import Any
 
 from zicato.board.jsonl import BoardDocument
+from zicato.core.measurement import MeasurementDraw, MeasurementPurpose
 from zicato.core.types import TournamentStructure
 from zicato.epoch._storage import RecordError
 from zicato.query.inputs import EpochInputs
@@ -309,6 +310,7 @@ def _calibration(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any]:
         "generation_id": gen if isinstance(gen, str) and gen else None,
         "runs": int(runs) if isinstance(runs, int) and not isinstance(runs, bool) else 0,
         "max_abs_delta": coerce_float(floor.get("max_abs_delta")),
+        "base_seed": floor["base_seed"],
     }
 
 
@@ -331,8 +333,9 @@ def _per_entry_flip_rates(
     :func:`flip_rate`. Returns ``{entry_id: flip_rate | None}`` — empty when
     calibration was never measured.
     """
-    from zicato.core.measurement import UNKNOWN_SEED, validate_measurement_interval  # noqa: PLC0415
-    from zicato.tournament.calibration import CALIBRATION_REPLICATE_BASE  # noqa: PLC0415
+    from zicato.core.measurement import UNKNOWN_SEED, validate_measurement_count  # noqa: PLC0415
+
+    # noqa: PLC0415
     from zicato.tournament.unit_cache import _resolve_cached_unit  # noqa: PLC0415
 
     gen = calibration.get("generation_id")
@@ -341,7 +344,7 @@ def _per_entry_flip_rates(
         return {}
 
     try:
-        validate_measurement_interval(CALIBRATION_REPLICATE_BASE, runs)
+        validate_measurement_count(runs)
     except ValueError:
         return {}
 
@@ -351,13 +354,13 @@ def _per_entry_flip_rates(
     for entry_id in run_entry_ids(layout_of(paths), epoch_id, gen):
         draws: list[bool | None] = []
         for i in range(runs):
-            replicate = CALIBRATION_REPLICATE_BASE + i
+            replicate = MeasurementDraw(MeasurementPurpose.CALIBRATION, i)
             profile = _resolve_cached_unit(
                 workspace_root=paths.root,
                 epoch_id=epoch_id,
                 generation_id=gen,
                 entry_id=entry_id,
-                replicate_index=replicate,
+                measurement=replicate,
                 base_seed=calibration.get("base_seed", UNKNOWN_SEED),
             )
             if profile is None:

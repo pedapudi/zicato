@@ -30,6 +30,7 @@ import json
 import os
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -39,7 +40,8 @@ from zicato.config import resolve_configuration
 from zicato.core.adapter_config import DriverImportContext
 from zicato.core.measurement import (
     MeasurementDraw,
-    artifact_replicate_index,
+    MeasurementPurpose,
+    artifact_measurement,
     measurement_artifact_path,
 )
 from zicato.core.run_context import RunContext
@@ -334,17 +336,17 @@ async def test_target_model_resolved_after_active_run_and_heartbeat(
         },
         "sink_events_path": str(
             measurement_artifact_path(
-                events_jsonl_path(workspace, "e0", "v0", "entry_a").parent,
+                events_jsonl_path(workspace, "e0", "v0", "entry_a").parent.parent,
                 "events",
-                0,
+                MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0),
                 base_seed=None,
             )
         ),
         "loss_path": str(
             measurement_artifact_path(
-                loss_profile_path(workspace, "e0", "v0", "entry_a").parent,
+                loss_profile_path(workspace, "e0", "v0", "entry_a").parent.parent,
                 "loss",
-                0,
+                MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0),
                 base_seed=None,
             )
         ),
@@ -355,7 +357,7 @@ async def test_target_model_resolved_after_active_run_and_heartbeat(
                 Path(str(workspace)),
                 "e0",
                 "v0",
-                run_id_for_unit("v0", "entry_a"),
+                run_id_for_unit("v0", "entry_a", epoch_id="ep"),
                 Path(str(workspace / "snap")),
                 None,
             )
@@ -364,14 +366,14 @@ async def test_target_model_resolved_after_active_run_and_heartbeat(
             {"runtime": {"instance_id": "test", "seed": None}}
         ).to_json(),
         "driver_imports": DriverImportContext().document(),
-        "measurement": MeasurementDraw.from_index(
-            artifact_replicate_index(
+        "measurement": replace(
+            artifact_measurement(
                 Path(
                     str(
                         measurement_artifact_path(
-                            loss_profile_path(workspace, "e0", "v0", "entry_a").parent,
+                            loss_profile_path(workspace, "e0", "v0", "entry_a").parent.parent,
                             "loss",
-                            0,
+                            MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0),
                             base_seed=None,
                         )
                     )
@@ -446,10 +448,16 @@ def _write_target_model_gate_args(
     from zicato.core.workspace import events_jsonl_path, loss_profile_path, run_id_for_unit
 
     sink_path = measurement_artifact_path(
-        events_jsonl_path(workspace, "e0", "v0", "entry_a").parent, "events", 0, base_seed=None
+        events_jsonl_path(workspace, "e0", "v0", "entry_a").parent.parent,
+        "events",
+        MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0),
+        base_seed=None,
     )
     loss_path = measurement_artifact_path(
-        loss_profile_path(workspace, "e0", "v0", "entry_a").parent, "loss", 0, base_seed=None
+        loss_profile_path(workspace, "e0", "v0", "entry_a").parent.parent,
+        "loss",
+        MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0),
+        base_seed=None,
     )
     payload = {
         "entry": {
@@ -481,7 +489,7 @@ def _write_target_model_gate_args(
                 Path(str(workspace)),
                 "e0",
                 "v0",
-                run_id_for_unit("v0", "entry_a"),
+                run_id_for_unit("v0", "entry_a", epoch_id="ep"),
                 Path(str(generation_snapshot)),
                 None,
             )
@@ -490,8 +498,8 @@ def _write_target_model_gate_args(
             {"runtime": {"instance_id": "test", "seed": None}}
         ).to_json(),
         "driver_imports": DriverImportContext().document(),
-        "measurement": MeasurementDraw.from_index(
-            artifact_replicate_index(Path(str(loss_path)).name), base_seed=None
+        "measurement": replace(
+            artifact_measurement(Path(str(loss_path)).name), base_seed=None
         ).to_json(),
     }
     args_path.write_text(json.dumps(payload), encoding="utf-8")

@@ -1,35 +1,28 @@
 """The observation corpus — the frozen record board reflection analyzes.
 
-Two producers, one record type. Both emit :class:`ObservationRun` — one per
-``(candidate, entry, replicate)`` unit — and both stay honest about *fidelity*:
-every record is stamped ``verbatim`` / ``result`` / ``preview`` per the
-capture ladder (BOARD-REFLECTION.md), and the downstream analyzers aggregate
-tiers separately (a verbatim finding outranks a preview one).
+Two producers emit :class:`ObservationRun` records identified by candidate,
+entry, measurement purpose, local draw number, and seed. Each record reports
+capture fidelity as ``verbatim``, ``result``, or ``preview``; analyzers keep
+those levels separate.
 
 Passive (:func:`ingest_lineage`)
 --------------------------------
-Zero LLM budget. Walks the epoch's generations and REFERENCES the run
-artifacts the loop already persisted — reads ``loss.json`` (+ every
-``loss.r{n}`` replicate, so the A/A calibration slots at base ``1000`` and any
-prior reflection draws at base ``5000`` come along as **free pillar-1
-replicates**), and the capture sidecars ``result.json`` and ``judge_io.jsonl``
-via their shared record readers. It stores PATHS and never copies bytes, so the
-corpus is a lens over the lineage rather than a duplicate of it.
+References persisted measurements of each generation's own source, including
+tournament, calibration, confirmation, reflection, and admission draws.
+Preflight and screening evaluate modified source and are excluded. The reader
+validates measurement identity against the loss path and reads matching result
+and judge-capture files. Observations retain paths to these artifacts.
 
 Active (:func:`run_corpus`)
 ---------------------------
-Mirrors :func:`zicato.epoch.preflight.run_contract_preflight` EXACTLY in shape:
-``_stamp_judge_only(_stamp_disable_drift(board, ...))`` then
-``_stamp_replicate_index(board, 5000 + j)`` and ``_run_board_units_fast(...,
-match_id="reflection:{id}:r{j}", replicate_index=5000 + j)`` — reflection's
-reserved row in the replicate-base ledger (0 duels, 1000 calibration, 2000
-preflight, 3000/3001 screening, 4000 evidence, **5000 reflection**). The
-schedulers' universal per-unit cache makes it idempotent: a re-run of the same
-frozen plan is all cache HITs at the same slots (no ``_run_single`` call). An
-infra abort on any unit VOIDS that draw with
-:class:`ReflectionDrawInconclusive` — infra aborts are never cached
-(:func:`zicato.core.loss.is_infra_abort_cause`), so a re-run re-attempts
-cleanly, mirroring the preflight's ``NoiseFloorInconclusive`` discipline.
+Passes ``MeasurementDraw(MeasurementPurpose.REFLECTION, j)`` through the board
+context and ``_run_board_units_fast`` arguments. The cache records the runtime
+seed. Resuming the same frozen plan reuses complete matching measurements.
+An infrastructure-aborted unit raises :class:`ReflectionDrawInconclusive`;
+the active run does not publish an outage-derived corpus, and resume retries
+the incomplete measurement.
+
+
 
 The active run persists ``corpus.jsonl`` (one record per line) and re-writes
 the plan with its ``executed`` flag set, which closes the pre-registration
@@ -45,12 +38,12 @@ from pathlib import Path
 from typing import Any
 
 from zicato.core import BoardEntry, Generation, RuntimeConfig, ScoringWeights
-from zicato.core.measurement import REFLECTION_REPLICATE_BASE as REFLECTION_REPLICATE_BASE
 from zicato.core.measurement import (
     UNKNOWN_SEED,
     BaseSeed,
     MeasurementDraw,
-    validate_measurement_interval,
+    MeasurementPurpose,
+    validate_measurement_count,
 )
 from zicato.runtime.lock import WorkspaceLock
 from zicato.runtime.writer import workspace_writer
@@ -137,7 +130,7 @@ class ObservationRun:
     measurement: MeasurementDraw | None = None
 
     def __post_init__(self) -> None:
-        if self.measurement is not None and self.measurement.replicate_index != self.replicate:
+        if self.measurement is not None and self.measurement.draw != self.replicate:
             raise ValueError("observation measurement conflicts with replicate index")
 
     def to_json(self) -> dict[str, Any]:
@@ -452,12 +445,10 @@ def ingest_lineage(
 ) -> list[ObservationRun]:
     """Build the corpus from already-persisted lineage artifacts. Zero LLM.
 
-    For every ``(candidate, entry)`` pair, every persisted replicate slot
-    (``loss.json`` + every ``loss.r{n}`` — the calibration and prior-reflection
-    draws are free pillar-1 replicates) becomes one :class:`ObservationRun`
-    that REFERENCES its ``loss.json`` / ``result.json`` / ``events.jsonl`` by
-    path. The capture sidecars decide fidelity: a ``judge_io.jsonl`` sidecar ⇒
-    ``verbatim``, else a ``result.json`` ⇒ ``result``, else ``preview``.
+    For each candidate and entry, select validated measurements of that
+    generation’s own source. Each :class:`ObservationRun` retains its purpose,
+    local draw, seed, and artifact paths. Judge capture supplies ``verbatim``
+    fidelity; result capture supplies ``result``; otherwise use ``preview``.
     Missing captures reduce fidelity; corrupt present captures refuse construction.
     """
     from zicato.core.workspace import run_dir as _run_dir  # noqa: PLC0415
@@ -467,10 +458,8 @@ def ingest_lineage(
     for candidate_id in candidates:
         for entry_id in entries:
             run_directory = _run_dir(workspace_root, epoch_id, candidate_id, entry_id)
-            # Passive ingest takes only the slots the reserved-base ledger
-            # vouches for as a clean draw of the candidate's REAL code over the
-            # real board, and never the pre-flight's degraded probes, which cache
-            # in this same directory under the champion's own generation id.
+            # Include only measurements of the recorded generation's own
+            # source. Preflight and screening evaluate modified source.
             for replicate, loss_path in own_code_board_draws(run_directory):
                 loss = _read_loss(loss_path)
                 if loss is None:
@@ -481,7 +470,7 @@ def ingest_lineage(
                         reflection_id=reflection_id,
                         candidate_id=candidate_id,
                         entry_id=entry_id,
-                        replicate=replicate,
+                        replicate=replicate.draw,
                         loss=loss,
                         weights=weights,
                         loss_path=loss_path,
@@ -494,7 +483,7 @@ def ingest_lineage(
 
 
 # ---------------------------------------------------------------------------
-# Active scheduler — mirrors run_contract_preflight's shape, base 5000 + j
+# Active scheduler — board_reflection purpose with one local draw per sample
 # ---------------------------------------------------------------------------
 
 
@@ -512,23 +501,20 @@ async def run_corpus(
     persist: bool = True,
     writer: WorkspaceLock | None = None,
 ) -> list[ObservationRun]:
-    """Produce fresh corpus draws at the reserved base; persist + mark executed.
+    """Collect board-reflection measurements and optionally publish the corpus.
 
-    For every candidate generation and every replicate ``j`` in
-    ``range(plan.replicates)``, runs the plan's board entries through
-    :func:`zicato.tournament.scheduling._run_board_units_fast` at
-    ``REFLECTION_REPLICATE_BASE + j`` — stamped and keyed EXACTLY as the
-    preflight stamps its degraded draw. The schedulers' per-unit cache makes a
-    re-run of the same frozen plan all HITs (no ``_run_single``); a draw whose
-    any unit hit an infra abort raises :class:`ReflectionDrawInconclusive`
-    (the whole active run voids rather than persist an outage-derived corpus).
+    Each candidate evaluates the selected entries at local draws from zero to
+    ``plan.replicates - 1`` under the ``board_reflection`` purpose. The runner
+    carries measurement identity through task context, cache keys, and seeded
+    artifact paths. Resume reuses complete matching draws. An infrastructure
+    abort raises :class:`ReflectionDrawInconclusive` and prevents publication
+    of an outage-derived corpus.
 
-    With ``persist`` (the default) the corpus is written to ``corpus.jsonl``
-    and the plan is re-written with its ``executed`` flag set — the
-    pre-registration resume seam. Returns the in-memory
-    :class:`ObservationRun` list either way.
+    With ``persist=True``, write ``corpus.jsonl`` and mark the plan executed.
+    Return the :class:`ObservationRun` list in either mode.
     """
-    validate_measurement_interval(REFLECTION_REPLICATE_BASE, plan.replicates)
+
+    validate_measurement_count(plan.replicates)
     from zicato.tournament.runner import drain_worker_cleanup  # noqa: PLC0415
 
     async with workspace_writer(
@@ -542,7 +528,7 @@ async def run_corpus(
         from zicato.tournament.worker_transport import (  # noqa: PLC0415
             _stamp_disable_drift,
             _stamp_judge_only,
-            _stamp_replicate_index,
+            _stamp_measurement,
         )
 
         entry_ids = set(plan.entries)
@@ -556,18 +542,18 @@ async def run_corpus(
         runs: list[ObservationRun] = []
         for generation in generations:
             for draw in range(int(plan.replicates)):
-                replicate_index = REFLECTION_REPLICATE_BASE + draw
+                measurement = MeasurementDraw(MeasurementPurpose.REFLECTION, draw)
                 losses = await _run_board_units_fast(
                     writer=writer,
                     adapter=adapter,
                     child_gen=generation,
-                    board=_stamp_replicate_index(stamped_board, replicate_index),
+                    board=_stamp_measurement(stamped_board, measurement),
                     weights=weights,
                     config=config,
                     workspace_root=workspace_root,
                     epoch_id=plan.epoch_id,
                     match_id=f"reflection:{plan.reflection_id}:r{draw}",
-                    replicate_index=replicate_index,
+                    measurement=measurement,
                 )
                 # Same discipline as the preflight's degraded draw: an infra abort
                 # makes the draw un-measurable rather than worst-case — void it
@@ -590,7 +576,7 @@ async def run_corpus(
                         plan.epoch_id,
                         generation.id,
                         entry.id,
-                        replicate_index,
+                        measurement,
                         base_seed=config.seed,
                     )
                     result_present, judge_io_records = _read_sidecars(loss_path, loss)
@@ -599,7 +585,7 @@ async def run_corpus(
                             reflection_id=plan.reflection_id,
                             candidate_id=generation.id,
                             entry_id=entry.id,
-                            replicate=replicate_index,
+                            replicate=measurement.draw,
                             loss=loss,
                             weights=weights,
                             loss_path=loss_path,
@@ -622,14 +608,14 @@ def _active_loss_path(
     epoch_id: str,
     generation_id: str,
     entry_id: str,
-    replicate_index: int,
+    measurement: MeasurementDraw,
     *,
     base_seed: BaseSeed = UNKNOWN_SEED,
 ) -> Path:
     from zicato.tournament.unit_cache import _unit_loss_path  # noqa: PLC0415
 
     return _unit_loss_path(
-        workspace_root, epoch_id, generation_id, entry_id, replicate_index, base_seed=base_seed
+        workspace_root, epoch_id, generation_id, entry_id, measurement, base_seed=base_seed
     )
 
 
@@ -693,7 +679,6 @@ __all__ = [
     "FIDELITY_PREVIEW",
     "FIDELITY_RESULT",
     "FIDELITY_VERBATIM",
-    "REFLECTION_REPLICATE_BASE",
     "ObservationRun",
     "ReflectionDrawInconclusive",
     "ingest_lineage",

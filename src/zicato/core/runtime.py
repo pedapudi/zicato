@@ -30,9 +30,6 @@ from zicato.core.settings import (
     PREFLIGHT_PROBE_POINTS_DEFAULT as PREFLIGHT_PROBE_POINTS_DEFAULT,
 )
 from zicato.core.settings import (
-    PREFLIGHT_PROBE_POINTS_MAX as PREFLIGHT_PROBE_POINTS_MAX,
-)
-from zicato.core.settings import (
     ResolvedConfiguration,
     RuntimeSettings,
     resolve_configuration,

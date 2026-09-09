@@ -2552,7 +2552,7 @@
           "outcomes": []
         },
         "judges": {
-          "run_id": "e1-v1-t1",
+          "run_id": "seed-none.tournament.r0.e5f25228adcf931bd7409b8e77719187f99c435009da8ec9883673e9195a6aca",
           "judges": []
         },
         "header": {
@@ -2567,7 +2567,7 @@
           "turns_completed": null,
           "plan_revisions": 0,
           "wall_clock_budget_exceeded": false,
-          "run_id": "e1-v1-t1",
+          "run_id": "seed-none.tournament.r0.e5f25228adcf931bd7409b8e77719187f99c435009da8ec9883673e9195a6aca",
           "adk_session_id": ""
         }
       },
@@ -2861,7 +2861,7 @@
   "per_judge_for_entry": {
     "status": 200,
     "body": {
-      "run_id": "e1-v0-t1",
+      "run_id": "seed-none.tournament.r0.553950ec481fa44971f375209c8296605c9d9182bbcb3bf14254d47439e6a7fc",
       "judges": []
     }
   },
@@ -2904,7 +2904,7 @@
       "turns_completed": null,
       "plan_revisions": 0,
       "wall_clock_budget_exceeded": false,
-      "run_id": "e1-v0-t1",
+      "run_id": "seed-none.tournament.r0.553950ec481fa44971f375209c8296605c9d9182bbcb3bf14254d47439e6a7fc",
       "adk_session_id": ""
     }
   },
@@ -4293,7 +4293,7 @@
       "entries": [
         {
           "entry_id": "picky_stakeholder_emulated",
-          "run_id": "run_v0_picky",
+          "run_id": "seed-none.tournament.r0.875f5e3e861b238b6d22abbef9abb7035118a8cc016875634a9b2f92b10fbbfc",
           "generation_id": "v0",
           "drift_loss": 105.5,
           "pass_fail": false,
@@ -4310,7 +4310,7 @@
         },
         {
           "entry_id": "waffles_single",
-          "run_id": "run_v0_waffles",
+          "run_id": "seed-none.tournament.r0.853bbd40aaa7f512eec1e11024af1d04daf30486f4b08554ef2d8f07d5662341",
           "generation_id": "v0",
           "drift_loss": 60.5,
           "pass_fail": false,
@@ -4343,7 +4343,7 @@
       "entries": [
         {
           "entry_id": "picky_stakeholder_emulated",
-          "run_id": "run_v1_picky",
+          "run_id": "seed-none.tournament.r0.9dbae0d7a14c7cb007e3ae3e64d2fe8c65818a66ef25394a28dd6b714ee3734d",
           "generation_id": "v1",
           "drift_loss": 642.5,
           "pass_fail": false,
@@ -4360,7 +4360,7 @@
         },
         {
           "entry_id": "waffles_single",
-          "run_id": "run_v1_waffles",
+          "run_id": "seed-none.tournament.r0.a354a4f74efd7144bd9d86d3389fc1bb7e90a1019ace03d36e0c851aa094fb95",
           "generation_id": "v1",
           "drift_loss": 60.5,
           "pass_fail": false,
@@ -4393,7 +4393,7 @@
       "entries": [
         {
           "entry_id": "waffles_single",
-          "run_id": "run_v2_waffles",
+          "run_id": "seed-none.tournament.r0.c292befee8cf7476fea9122b772b8b3b0dabd1a0e06076f5c8d3a804424a11a9",
           "generation_id": "v2",
           "drift_loss": 61.0,
           "pass_fail": false,
@@ -4915,7 +4915,7 @@
       "turns_completed": null,
       "plan_revisions": 0,
       "wall_clock_budget_exceeded": true,
-      "run_id": "run_v1_waffles",
+      "run_id": "seed-none.tournament.r0.a354a4f74efd7144bd9d86d3389fc1bb7e90a1019ace03d36e0c851aa094fb95",
       "adk_session_id": "sess-v1-waffles"
     }
   },
@@ -4931,7 +4931,7 @@
   "console/per_judge_for_entry/v1/waffles_single": {
     "status": 200,
     "body": {
-      "run_id": "run_v1_waffles",
+      "run_id": "seed-none.tournament.r0.a354a4f74efd7144bd9d86d3389fc1bb7e90a1019ace03d36e0c851aa094fb95",
       "judges": [
         {
           "judge_name": "incorporates_feedback",
@@ -4962,7 +4962,7 @@
       "turns_completed": null,
       "plan_revisions": 0,
       "wall_clock_budget_exceeded": false,
-      "run_id": "run_v0_waffles",
+      "run_id": "seed-none.tournament.r0.853bbd40aaa7f512eec1e11024af1d04daf30486f4b08554ef2d8f07d5662341",
       "adk_session_id": "sess-v0-waffles"
     }
   },
@@ -4978,7 +4978,7 @@
   "console/per_judge_for_entry/v0/waffles_single": {
     "status": 200,
     "body": {
-      "run_id": "run_v0_waffles",
+      "run_id": "seed-none.tournament.r0.853bbd40aaa7f512eec1e11024af1d04daf30486f4b08554ef2d8f07d5662341",
       "judges": [
         {
           "judge_name": "incorporates_feedback",
@@ -5106,7 +5106,7 @@
         "entries": [
           {
             "entry_id": "picky_stakeholder_emulated",
-            "run_id": "run_v0_picky",
+            "run_id": "seed-none.tournament.r0.875f5e3e861b238b6d22abbef9abb7035118a8cc016875634a9b2f92b10fbbfc",
             "generation_id": "v0",
             "drift_loss": 105.5,
             "pass_fail": false,
@@ -5123,7 +5123,7 @@
           },
           {
             "entry_id": "waffles_single",
-            "run_id": "run_v0_waffles",
+            "run_id": "seed-none.tournament.r0.853bbd40aaa7f512eec1e11024af1d04daf30486f4b08554ef2d8f07d5662341",
             "generation_id": "v0",
             "drift_loss": 60.5,
             "pass_fail": false,
@@ -5586,7 +5586,7 @@
         "entries": [
           {
             "entry_id": "picky_stakeholder_emulated",
-            "run_id": "run_v1_picky",
+            "run_id": "seed-none.tournament.r0.9dbae0d7a14c7cb007e3ae3e64d2fe8c65818a66ef25394a28dd6b714ee3734d",
             "generation_id": "v1",
             "drift_loss": 642.5,
             "pass_fail": false,
@@ -5603,7 +5603,7 @@
           },
           {
             "entry_id": "waffles_single",
-            "run_id": "run_v1_waffles",
+            "run_id": "seed-none.tournament.r0.a354a4f74efd7144bd9d86d3389fc1bb7e90a1019ace03d36e0c851aa094fb95",
             "generation_id": "v1",
             "drift_loss": 60.5,
             "pass_fail": false,
@@ -6032,7 +6032,7 @@
         "entries": [
           {
             "entry_id": "waffles_single",
-            "run_id": "run_v2_waffles",
+            "run_id": "seed-none.tournament.r0.c292befee8cf7476fea9122b772b8b3b0dabd1a0e06076f5c8d3a804424a11a9",
             "generation_id": "v2",
             "drift_loss": 61.0,
             "pass_fail": false,
@@ -6472,7 +6472,7 @@
         "entries": [
           {
             "entry_id": "picky_stakeholder_emulated",
-            "run_id": "run_v1_picky",
+            "run_id": "seed-none.tournament.r0.9dbae0d7a14c7cb007e3ae3e64d2fe8c65818a66ef25394a28dd6b714ee3734d",
             "generation_id": "v1",
             "drift_loss": 642.5,
             "pass_fail": false,
@@ -6489,7 +6489,7 @@
           },
           {
             "entry_id": "waffles_single",
-            "run_id": "run_v1_waffles",
+            "run_id": "seed-none.tournament.r0.a354a4f74efd7144bd9d86d3389fc1bb7e90a1019ace03d36e0c851aa094fb95",
             "generation_id": "v1",
             "drift_loss": 60.5,
             "pass_fail": false,
@@ -6778,7 +6778,7 @@
           "outcomes": []
         },
         "judges": {
-          "run_id": "run_v1_waffles",
+          "run_id": "seed-none.tournament.r0.a354a4f74efd7144bd9d86d3389fc1bb7e90a1019ace03d36e0c851aa094fb95",
           "judges": [
             {
               "judge_name": "incorporates_feedback",
@@ -6806,7 +6806,7 @@
           "turns_completed": null,
           "plan_revisions": 0,
           "wall_clock_budget_exceeded": true,
-          "run_id": "run_v1_waffles",
+          "run_id": "seed-none.tournament.r0.a354a4f74efd7144bd9d86d3389fc1bb7e90a1019ace03d36e0c851aa094fb95",
           "adk_session_id": "sess-v1-waffles"
         }
       },
@@ -6924,7 +6924,7 @@
         "entries": [
           {
             "entry_id": "picky_stakeholder_emulated",
-            "run_id": "run_v0_picky",
+            "run_id": "seed-none.tournament.r0.875f5e3e861b238b6d22abbef9abb7035118a8cc016875634a9b2f92b10fbbfc",
             "generation_id": "v0",
             "drift_loss": 105.5,
             "pass_fail": false,
@@ -6941,7 +6941,7 @@
           },
           {
             "entry_id": "waffles_single",
-            "run_id": "run_v0_waffles",
+            "run_id": "seed-none.tournament.r0.853bbd40aaa7f512eec1e11024af1d04daf30486f4b08554ef2d8f07d5662341",
             "generation_id": "v0",
             "drift_loss": 60.5,
             "pass_fail": false,
@@ -7404,7 +7404,7 @@
         "entries": [
           {
             "entry_id": "picky_stakeholder_emulated",
-            "run_id": "run_v1_picky",
+            "run_id": "seed-none.tournament.r0.9dbae0d7a14c7cb007e3ae3e64d2fe8c65818a66ef25394a28dd6b714ee3734d",
             "generation_id": "v1",
             "drift_loss": 642.5,
             "pass_fail": false,
@@ -7421,7 +7421,7 @@
           },
           {
             "entry_id": "waffles_single",
-            "run_id": "run_v1_waffles",
+            "run_id": "seed-none.tournament.r0.a354a4f74efd7144bd9d86d3389fc1bb7e90a1019ace03d36e0c851aa094fb95",
             "generation_id": "v1",
             "drift_loss": 60.5,
             "pass_fail": false,
@@ -7850,7 +7850,7 @@
         "entries": [
           {
             "entry_id": "waffles_single",
-            "run_id": "run_v2_waffles",
+            "run_id": "seed-none.tournament.r0.c292befee8cf7476fea9122b772b8b3b0dabd1a0e06076f5c8d3a804424a11a9",
             "generation_id": "v2",
             "drift_loss": 61.0,
             "pass_fail": false,
@@ -8669,7 +8669,7 @@
         "entries": [
           {
             "entry_id": "b1",
-            "run_id": "run_v2_b1",
+            "run_id": "seed-none.tournament.r0.cc1f91d777bea97ec46b453474a3588b2d7fa2ecd00773b523da80f86f88818a",
             "generation_id": "v2",
             "drift_loss": 0.5,
             "pass_fail": true,
@@ -8686,7 +8686,7 @@
           },
           {
             "entry_id": "b2",
-            "run_id": "run_v2_b2",
+            "run_id": "seed-none.tournament.r0.7272852b8a130f7e0e814582a1a28370c3ee75a9f0c8cd4e92765febd8e9be28",
             "generation_id": "v2",
             "drift_loss": 0.6,
             "pass_fail": true,
@@ -8703,7 +8703,7 @@
           },
           {
             "entry_id": "b3",
-            "run_id": "run_v2_b3",
+            "run_id": "seed-none.tournament.r0.854873505c49879013470e71c6415b3dd837b4e8e39d35396599fd59777788fe",
             "generation_id": "v2",
             "drift_loss": 0.7,
             "pass_fail": true,
@@ -8720,7 +8720,7 @@
           },
           {
             "entry_id": "q3_metrics_outline",
-            "run_id": "run_v2_q3_metrics_outline",
+            "run_id": "seed-none.tournament.r0.1f9577bc145e63fd6c97295b5fdfe38fd3f5bcec9cc3c64cf0bc19781175ff62",
             "generation_id": "v2",
             "drift_loss": 0.8,
             "pass_fail": false,
@@ -10026,7 +10026,7 @@
       "epoch_id": "2026-06-01_e0",
       "generation_id": "v3",
       "tournament_id": "2026-06-01_e0:v0->v3",
-      "mean_score": null,
+      "mean_score": 0.0,
       "drift_present": true,
       "facet_scores": {
         "facets": {},
@@ -10035,7 +10035,7 @@
       "entries": [
         {
           "entry_id": "q3_metrics_outline",
-          "run_id": "run_2026-06-01_e0_v3_q3_metrics_outline",
+          "run_id": "seed-none.tournament.r0.63e6cd28cc276aa374388487306e0a964a7b66a061f5f4c4d293fa7752aa8536",
           "generation_id": "v3",
           "drift_loss": 63.5,
           "pass_fail": false,
@@ -10068,7 +10068,7 @@
       "delta_scalar": null,
       "delta_pass_rate": null,
       "champion_scalar": null,
-      "challenger_scalar": null,
+      "challenger_scalar": 63.5,
       "live": null,
       "rules": [
         {
@@ -10102,13 +10102,34 @@
       ],
       "scalar_components": {
         "champion": null,
-        "challenger": null
+        "challenger": {
+          "drift": 63.5
+        }
       },
       "scalar_decomposition": {
         "present": false,
         "fail_open": false,
         "champion": null,
-        "challenger": null
+        "challenger": {
+          "scalar": {
+            "present": false,
+            "kind": "builtin",
+            "source": "built-in formula",
+            "transforms": [],
+            "fail_open": false,
+            "fallback_reason": null,
+            "raw": null
+          },
+          "drift": {
+            "present": false,
+            "kind": "builtin",
+            "source": "built-in formula",
+            "transforms": [],
+            "fail_open": false,
+            "fallback_reason": null,
+            "raw": null
+          }
+        }
       },
       "primary_driver": null,
       "rating": {
@@ -10147,7 +10168,19 @@
           "decided_by": null
         }
       ],
-      "scalar": null,
+      "scalar": {
+        "parent": null,
+        "child": 63.5,
+        "delta": null,
+        "mean_score": {
+          "parent": null,
+          "child": 0.0,
+          "delta": null
+        },
+        "components": {
+          "drift": 63.5
+        }
+      },
       "drift_present": true,
       "source": "loss_files"
     }
@@ -10278,7 +10311,7 @@
         "epoch_id": "2026-06-01_e0",
         "generation_id": "v3",
         "tournament_id": "2026-06-01_e0:v0->v3",
-        "mean_score": null,
+        "mean_score": 0.0,
         "drift_present": true,
         "facet_scores": {
           "facets": {},
@@ -10287,7 +10320,7 @@
         "entries": [
           {
             "entry_id": "q3_metrics_outline",
-            "run_id": "run_2026-06-01_e0_v3_q3_metrics_outline",
+            "run_id": "seed-none.tournament.r0.63e6cd28cc276aa374388487306e0a964a7b66a061f5f4c4d293fa7752aa8536",
             "generation_id": "v3",
             "drift_loss": 63.5,
             "pass_fail": false,
@@ -10353,7 +10386,7 @@
             "delta_scalar": null,
             "delta_pass_rate": null,
             "champion_scalar": null,
-            "challenger_scalar": null,
+            "challenger_scalar": 63.5,
             "live": null,
             "rules": [
               {
@@ -10387,13 +10420,34 @@
             ],
             "scalar_components": {
               "champion": null,
-              "challenger": null
+              "challenger": {
+                "drift": 63.5
+              }
             },
             "scalar_decomposition": {
               "present": false,
               "fail_open": false,
               "champion": null,
-              "challenger": null
+              "challenger": {
+                "scalar": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                },
+                "drift": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                }
+              }
             },
             "primary_driver": null,
             "rating": {
@@ -14404,7 +14458,7 @@
       "entries": [
         {
           "entry_id": "b0",
-          "run_id": "run_2026-05-30_e0_v0_b0",
+          "run_id": "seed-none.tournament.r0.2eee69e99cdcb9320f31c07dc023981931dfad30b459c71abf32c5a8e4106560",
           "generation_id": "v0",
           "drift_loss": 54.0,
           "pass_fail": true,
@@ -14437,7 +14491,7 @@
       "entries": [
         {
           "entry_id": "b0",
-          "run_id": "run_2026-05-30_e0_v1_b0",
+          "run_id": "seed-none.tournament.r0.152d56ec051a66768761a266b3fbe21be1861202adc98fb17ebc0a747d096ce2",
           "generation_id": "v1",
           "drift_loss": 40.0,
           "pass_fail": true,
@@ -14724,7 +14778,7 @@
         "entries": [
           {
             "entry_id": "b0",
-            "run_id": "run_2026-05-30_e0_v1_b0",
+            "run_id": "seed-none.tournament.r0.152d56ec051a66768761a266b3fbe21be1861202adc98fb17ebc0a747d096ce2",
             "generation_id": "v1",
             "drift_loss": 40.0,
             "pass_fail": true,
@@ -15602,7 +15656,8 @@
               ],
               "board_fraction": 0.5
             }
-          ]
+          ],
+          "queued": false
         },
         {
           "stage_index": 1,
@@ -15618,7 +15673,8 @@
               "cut": [],
               "board_fraction": 1.0
             }
-          ]
+          ],
+          "queued": false
         }
       ],
       "standings": [
@@ -16708,7 +16764,7 @@
       "entries": [
         {
           "entry_id": "b1",
-          "run_id": "run_2026-05-30_e0_v0_b1",
+          "run_id": "seed-none.tournament.r0.f274625539515392b92e8d0338bb346369f694423aba3fc80b8709f0bd71adfc",
           "generation_id": "v0",
           "drift_loss": 70.0,
           "pass_fail": true,
@@ -16741,7 +16797,7 @@
       "entries": [
         {
           "entry_id": "b1",
-          "run_id": "run_2026-05-30_e0_v1_b1",
+          "run_id": "seed-none.tournament.r0.6fee92773d87d4f3b5bac8353aebafe080b365d62e58855ce4c716488f120fe2",
           "generation_id": "v1",
           "drift_loss": 71.0,
           "pass_fail": true,
@@ -17028,7 +17084,7 @@
         "entries": [
           {
             "entry_id": "b1",
-            "run_id": "run_2026-05-30_e0_v1_b1",
+            "run_id": "seed-none.tournament.r0.6fee92773d87d4f3b5bac8353aebafe080b365d62e58855ce4c716488f120fe2",
             "generation_id": "v1",
             "drift_loss": 71.0,
             "pass_fail": true,
@@ -17868,7 +17924,7 @@
       "entries": [
         {
           "entry_id": "b1",
-          "run_id": "run_2026-05-30_e0_v0_b1",
+          "run_id": "seed-none.tournament.r0.f274625539515392b92e8d0338bb346369f694423aba3fc80b8709f0bd71adfc",
           "generation_id": "v0",
           "drift_loss": 70.0,
           "pass_fail": true,
@@ -17901,7 +17957,7 @@
       "entries": [
         {
           "entry_id": "b1",
-          "run_id": "run_2026-05-30_e0_v1_b1",
+          "run_id": "seed-none.tournament.r0.6fee92773d87d4f3b5bac8353aebafe080b365d62e58855ce4c716488f120fe2",
           "generation_id": "v1",
           "drift_loss": 71.0,
           "pass_fail": true,
@@ -18188,7 +18244,7 @@
         "entries": [
           {
             "entry_id": "b1",
-            "run_id": "run_2026-05-30_e0_v1_b1",
+            "run_id": "seed-none.tournament.r0.6fee92773d87d4f3b5bac8353aebafe080b365d62e58855ce4c716488f120fe2",
             "generation_id": "v1",
             "drift_loss": 71.0,
             "pass_fail": true,
@@ -19507,7 +19563,7 @@
       "entries": [
         {
           "entry_id": "b1",
-          "run_id": "run_2026-05-30_e0_v0_b1",
+          "run_id": "seed-none.tournament.r0.f274625539515392b92e8d0338bb346369f694423aba3fc80b8709f0bd71adfc",
           "generation_id": "v0",
           "drift_loss": 70.0,
           "pass_fail": true,
@@ -19540,7 +19596,7 @@
       "entries": [
         {
           "entry_id": "b1",
-          "run_id": "run_2026-05-30_e0_v1_b1",
+          "run_id": "seed-none.tournament.r0.6fee92773d87d4f3b5bac8353aebafe080b365d62e58855ce4c716488f120fe2",
           "generation_id": "v1",
           "drift_loss": 71.0,
           "pass_fail": true,
@@ -19827,7 +19883,7 @@
         "entries": [
           {
             "entry_id": "b1",
-            "run_id": "run_2026-05-30_e0_v1_b1",
+            "run_id": "seed-none.tournament.r0.6fee92773d87d4f3b5bac8353aebafe080b365d62e58855ce4c716488f120fe2",
             "generation_id": "v1",
             "drift_loss": 71.0,
             "pass_fail": true,
@@ -23867,7 +23923,7 @@
       "entries": [
         {
           "entry_id": "b1",
-          "run_id": "run_2026-05-30_e0_v0_b1",
+          "run_id": "seed-none.tournament.r0.f274625539515392b92e8d0338bb346369f694423aba3fc80b8709f0bd71adfc",
           "generation_id": "v0",
           "drift_loss": 70.0,
           "pass_fail": true,
@@ -23900,7 +23956,7 @@
       "entries": [
         {
           "entry_id": "b1",
-          "run_id": "run_2026-05-30_e0_v1_b1",
+          "run_id": "seed-none.tournament.r0.6fee92773d87d4f3b5bac8353aebafe080b365d62e58855ce4c716488f120fe2",
           "generation_id": "v1",
           "drift_loss": 71.0,
           "pass_fail": true,
@@ -24187,7 +24243,7 @@
         "entries": [
           {
             "entry_id": "b1",
-            "run_id": "run_2026-05-30_e0_v1_b1",
+            "run_id": "seed-none.tournament.r0.6fee92773d87d4f3b5bac8353aebafe080b365d62e58855ce4c716488f120fe2",
             "generation_id": "v1",
             "drift_loss": 71.0,
             "pass_fail": true,

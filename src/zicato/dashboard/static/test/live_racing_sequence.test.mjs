@@ -138,7 +138,8 @@ function gatePending() {
     stage_index: 2, label: 'Champion gate',
     matches: [{
       match_id: 'racing-final', competitors: ['v0', 'v1'], winner: null, decision: '',
-      survivors: [], cut: [], board_fraction: 1.0, pending: true,
+      survivors: [], cut: [], board_fraction: 1.0, pending: true, total: 16, done: 8, queued: false,
+      projected: {v0: {scalar: CHAMP_LOSS, boards_total: 16, boards_done: 0}, v1: {scalar: 63, boards_done: 8, boards_total: 16}},
       live_progress: {
         v0: { boards_total: 16, inflight: 1, projected_scalar: CHAMP_LOSS, projected: true },
         v1: { boards_total: 16, inflight: 1, projected_scalar: 63.0, projected: true, boards_done: 8 },

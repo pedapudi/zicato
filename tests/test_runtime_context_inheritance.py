@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -17,7 +18,8 @@ from zicato.core.adapter_config import DriverImportContext
 from zicato.core.configuration import ConfigurationError
 from zicato.core.measurement import (
     MeasurementDraw,
-    artifact_replicate_index,
+    MeasurementPurpose,
+    artifact_measurement,
     measurement_artifact_path,
 )
 from zicato.core.run_context import RunContext
@@ -120,17 +122,21 @@ def test_interleaved_workers_and_real_nested_children_keep_distinct_contexts(tmp
                     },
                     "sink_events_path": str(
                         measurement_artifact_path(
-                            events_jsonl_path(workspace, "e0", generation.id, "probe").parent,
+                            events_jsonl_path(
+                                workspace, "e0", generation.id, "probe"
+                            ).parent.parent,
                             "events",
-                            0,
+                            MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0),
                             base_seed=None,
                         )
                     ),
                     "loss_path": str(
                         measurement_artifact_path(
-                            loss_profile_path(workspace, "e0", generation.id, "probe").parent,
+                            loss_profile_path(
+                                workspace, "e0", generation.id, "probe"
+                            ).parent.parent,
                             "loss",
-                            0,
+                            MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0),
                             base_seed=None,
                         )
                     ),
@@ -139,16 +145,16 @@ def test_interleaved_workers_and_real_nested_children_keep_distinct_contexts(tmp
                     "configuration": resolve_configuration({}).to_json(),
                     "runtime_context": context.to_json(),
                     "driver_imports": DriverImportContext().document(),
-                    "measurement": MeasurementDraw.from_index(
-                        artifact_replicate_index(
+                    "measurement": replace(
+                        artifact_measurement(
                             Path(
                                 str(
                                     measurement_artifact_path(
                                         loss_profile_path(
                                             workspace, "e0", generation.id, "probe"
-                                        ).parent,
+                                        ).parent.parent,
                                         "loss",
-                                        0,
+                                        MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0),
                                         base_seed=None,
                                     )
                                 )

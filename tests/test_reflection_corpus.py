@@ -1,8 +1,8 @@
 """Observation corpus — passive ingest fidelity + active reserved-base draws.
 
 Passive: an ingest over a workspace built with the R1 writers stamps
-``verbatim`` when a ``judge_io.jsonl`` sidecar is present, degrades to
-``preview`` for a legacy run with only ``loss.json``, and REFERENCES the
+``verbatim`` when a ``judge_io.tournament.r0.jsonl`` sidecar is present, degrades to
+``preview`` for a legacy run with only ``loss.tournament.r0.json``, and REFERENCES the
 artifacts by path (never copies their bytes).
 
 Active: draws land at ``REFLECTION_REPLICATE_BASE + j`` (asserted on the cache
@@ -30,7 +30,10 @@ from zicato.core import (
     RuntimeConfig,
     ScoringWeights,
 )
-from zicato.core.measurement import MeasurementDraw, range_at
+from zicato.core.measurement import (
+    MeasurementDraw,
+    MeasurementPurpose,
+)
 from zicato.core.workspace import loss_profile_path, run_dir, run_id_for_unit
 from zicato.judge_runtime.io_capture import JudgeIOFileSink, judge_io_path_for_loss
 from zicato.reflection.corpus import (
@@ -45,7 +48,7 @@ from zicato.reflection.corpus import (
 from zicato.reflection.plan import new_plan, read_plan
 from zicato.runtime.lock import WorkspaceLock
 from zicato.tournament.unit_cache import _unit_loss_path, unit_events_path, unit_result_path
-from zicato.tournament.worker_transport import _entry_replicate_index
+from zicato.tournament.worker_transport import _entry_measurement
 
 EPOCH = "epoch-1"
 CREATED_AT = "2026-07-01T00:00:00+00:00"
@@ -79,21 +82,28 @@ def _loss(
     )
 
 
-def _write_loss(workspace: Path, gen: str, entry: str, replicate: int, loss: LossProfile) -> Path:
+def _write_loss(
+    workspace: Path, gen: str, entry: str, replicate: MeasurementDraw, loss: LossProfile
+) -> Path:
     from zicato.telemetry import reducer
 
     path = _unit_loss_path(workspace, EPOCH, gen, entry, replicate)
-    if range_at(replicate):
-        loss = replace(loss, measurement=MeasurementDraw.from_index(replicate))
+    loss = replace(
+        loss, measurement=replicate, run_id=run_id_for_unit(gen, entry, replicate, epoch_id=EPOCH)
+    )
     reducer.write_loss_profile(loss, path)
     return path
 
 
 def _write_result_json(loss_path: Path) -> None:
-    """A minimal valid result.json (the R1 result-tier capture)."""
+    """A minimal valid result.tournament.r0.json (the R1 result-tier capture)."""
+    from zicato.telemetry.reducer import read_loss_profile
+
+    loss = read_loss_profile(loss_path)
     payload = {
         "format_version": 1,
-        "run_id": "run-x",
+        "run_id": loss.run_id,
+        "measurement": loss.measurement.to_json(),
         "entry_id": "entryA",
         "final_output": TRANSCRIPT_SENTINEL,
         "transcript": [TRANSCRIPT_SENTINEL],
@@ -106,8 +116,13 @@ def _write_result_json(loss_path: Path) -> None:
 
 
 def _write_judge_io(loss_path: Path, *, fired: bool) -> None:
-    """One verbatim judge_io.jsonl record via the R1 sink."""
-    sink = JudgeIOFileSink(judge_io_path_for_loss(loss_path))
+    """One verbatim judge_io.tournament.r0.jsonl record via the R1 sink."""
+    from zicato.telemetry.reducer import read_loss_profile
+
+    loss = read_loss_profile(loss_path)
+    sink = JudgeIOFileSink(
+        judge_io_path_for_loss(loss_path), measurement=loss.measurement, run_id=loss.run_id
+    )
     sink.record(
         "citation_judge",
         reasoning_text=TRANSCRIPT_SENTINEL,
@@ -135,7 +150,9 @@ def test_passive_ingest_verbatim_tier_when_judge_io_present(tmp_path: Path) -> N
             MetricCount(name="drift:custom:citation_judge", severity="warning", count=1),
         ),
     )
-    loss_path = _write_loss(workspace, "v1", "entryA", 0, loss)
+    loss_path = _write_loss(
+        workspace, "v1", "entryA", MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0), loss
+    )
     _write_result_json(loss_path)
     _write_judge_io(loss_path, fired=True)
 
@@ -163,7 +180,9 @@ def test_passive_ingest_verbatim_tier_when_judge_io_present(tmp_path: Path) -> N
 def test_passive_ingest_preview_tier_for_legacy_run_without_result(tmp_path: Path) -> None:
     workspace = tmp_path / ".zicato"
     loss = _loss(generation_id="v0", entry_id="entryA")
-    _write_loss(workspace, "v0", "entryA", 0, loss)  # loss.json only — legacy
+    _write_loss(
+        workspace, "v0", "entryA", MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0), loss
+    )  # loss.tournament.r0.json only — legacy
 
     runs = ingest_lineage(
         workspace_root=workspace,
@@ -182,7 +201,9 @@ def test_passive_ingest_preview_tier_for_legacy_run_without_result(tmp_path: Pat
 def test_passive_ingest_references_artifacts_never_copies(tmp_path: Path) -> None:
     workspace = tmp_path / ".zicato"
     loss = _loss(generation_id="v1", entry_id="entryA")
-    loss_path = _write_loss(workspace, "v1", "entryA", 0, loss)
+    loss_path = _write_loss(
+        workspace, "v1", "entryA", MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0), loss
+    )
     _write_result_json(loss_path)
 
     runs = ingest_lineage(
@@ -204,7 +225,11 @@ def test_passive_ingest_references_artifacts_never_copies(tmp_path: Path) -> Non
 def test_passive_ingest_picks_up_calibration_replicate_slots(tmp_path: Path) -> None:
     """loss.r1000 (a free A/A calibration replicate) is ingested too."""
     workspace = tmp_path / ".zicato"
-    for replicate in (0, 1000, 1001):
+    for replicate in (
+        MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0),
+        MeasurementDraw(MeasurementPurpose.CALIBRATION, 0),
+        MeasurementDraw(MeasurementPurpose.CALIBRATION, 1),
+    ):
         loss_path = _write_loss(
             workspace, "v1", "entryA", replicate, _loss(generation_id="v1", entry_id="entryA")
         )
@@ -218,15 +243,29 @@ def test_passive_ingest_picks_up_calibration_replicate_slots(tmp_path: Path) -> 
         entries=["entryA"],
         weights=ScoringWeights(),
     )
-    assert sorted(o.replicate for o in runs) == [0, 1000, 1001]
-    refs = {o.replicate: Path(o.transcript_ref or "").name for o in runs}
-    assert refs == {0: "events.jsonl", 1000: "events.r1000.jsonl", 1001: "events.r1001.jsonl"}
+    assert {(o.measurement.purpose, o.replicate) for o in runs} == {
+        ("tournament", 0),
+        ("calibration", 0),
+        ("calibration", 1),
+    }
+    assert {Path(o.transcript_ref or "").name for o in runs} == {
+        "events.tournament.r0.jsonl",
+        "events.calibration.r0.jsonl",
+        "events.calibration.r1.jsonl",
+    }
 
 
 def test_passive_ingest_reserved_base_allowlist_excludes_degraded_probes(tmp_path: Path) -> None:
     """B1: r0/1000/4000/5000 are ingested; r2000 (preflight) + r3000 (screen) excluded."""
     workspace = tmp_path / ".zicato"
-    for replicate in (0, 1000, 2000, 3000, 4000, 5000):
+    for replicate in (
+        MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0),
+        MeasurementDraw(MeasurementPurpose.CALIBRATION, 0),
+        MeasurementDraw(MeasurementPurpose.PREFLIGHT, 0),
+        MeasurementDraw(MeasurementPurpose.SCREEN, 0),
+        MeasurementDraw(MeasurementPurpose.CONFIRMATION, 0),
+        MeasurementDraw(MeasurementPurpose.REFLECTION, 0),
+    ):
         _write_loss(
             workspace, "v1", "entryA", replicate, _loss(generation_id="v1", entry_id="entryA")
         )
@@ -239,32 +278,22 @@ def test_passive_ingest_reserved_base_allowlist_excludes_degraded_probes(tmp_pat
         entries=["entryA"],
         weights=ScoringWeights(),
     )
-    ingested = sorted(o.replicate for o in runs)
-    # r1000 (calibration), r4000 (evidence), r5000 (reflection), r0 (duel) IN;
-    # r2000 (preflight degraded probe) + r3000 (screen base) OUT.
-    assert ingested == [0, 1000, 4000, 5000]
-    assert 2000 not in ingested
-    assert 3000 not in ingested
+    assert {o.measurement.purpose for o in runs} == {
+        MeasurementPurpose.TOURNAMENT,
+        MeasurementPurpose.CALIBRATION,
+        MeasurementPurpose.CONFIRMATION,
+        MeasurementPurpose.REFLECTION,
+    }
 
 
-def test_reserved_base_filter_is_an_allowlist() -> None:
-    """An unclaimed index answers False, so a band added later starts EXCLUDED.
-
-    The filter is shared with the proposer's baseline reader, where admitting
-    an unattributed slot by default would let a future degraded-probe band
-    reach the prompt as champion behaviour.
-    """
+def test_source_evidence_excludes_preflight_and_screening() -> None:
     from zicato.tournament.unit_cache import is_own_code_board_draw
 
-    # Every claimed own-code base, at both ends of its block.
-    for index in (0, 1, 999, 1000, 1999, 4000, 4999, 5000, 5999, 6000, 6999):
-        assert is_own_code_board_draw(index), index
-    # The pre-flight's degraded probes and the screen's panel-subset draws.
-    for index in (2000, 2999, 3000, 3001, 3999):
-        assert not is_own_code_board_draw(index), index
-    # Unclaimed above the ledger, and defensively below it.
-    for index in (7000, 10_000, -1):
-        assert not is_own_code_board_draw(index), index
+    for purpose in MeasurementPurpose:
+        for draw in (0, 10001):
+            assert is_own_code_board_draw(MeasurementDraw(purpose, draw)) is (
+                purpose not in {MeasurementPurpose.PREFLIGHT, MeasurementPurpose.SCREEN}
+            )
 
 
 def test_observation_run_json_round_trip() -> None:
@@ -282,8 +311,8 @@ def test_observation_run_json_round_trip() -> None:
         fidelity=FIDELITY_VERBATIM,
         has_result=True,
         has_judge_io=True,
-        loss_ref="/x/loss.json",
-        transcript_ref="/x/result.json",
+        loss_ref="/x/loss.tournament.r0.json",
+        transcript_ref="/x/result.tournament.r0.json",
         drift_events=({"kind": "off_topic", "severity": "info", "judge_name": "", "count": 1},),
         judge_decisions=({"judge_name": "j", "fired": True},),
         loss_decomposition={"judge:j": 1.0},
@@ -342,7 +371,11 @@ class _CountingRunSingle:
         self.calls += 1
         return LossProfile(
             run_id=run_id_for_unit(
-                generation.id, entry.id, _entry_replicate_index(entry), base_seed=config.seed
+                generation.id,
+                entry.id,
+                _entry_measurement(entry),
+                base_seed=config.seed,
+                epoch_id=generation.epoch_id,
             ),
             entry_id=entry.id,
             generation_id=generation.id,
@@ -390,14 +423,20 @@ def test_active_corpus_lands_draws_at_reserved_base(tmp_path: Path, monkeypatch)
 
     # 1 candidate x 2 entries x 3 replicates = 6 observations, all at base 5000+j.
     assert len(runs) == 6
-    assert {o.replicate for o in runs} == {5000, 5001, 5002}
+    assert {o.replicate for o in runs} == {0, 1, 2}
+    assert {o.measurement.purpose for o in runs} == {MeasurementPurpose.REFLECTION}
     # The cache slot filenames prove the reserved base.
     rundir = _unit_loss_path(
-        workspace, EPOCH, "v1", "entryA", 5000, base_seed=_config(workspace).seed
+        workspace,
+        EPOCH,
+        "v1",
+        "entryA",
+        MeasurementDraw(MeasurementPurpose.REFLECTION, 0),
+        base_seed=_config(workspace).seed,
     ).parent
-    assert (rundir / "loss.r5000.json").exists()
-    assert (rundir / "loss.r5001.json").exists()
-    assert (rundir / "loss.r5002.json").exists()
+    assert (rundir / "loss.board_reflection.r0.json").exists()
+    assert (rundir / "loss.board_reflection.r1.json").exists()
+    assert (rundir / "loss.board_reflection.r2.json").exists()
     # r0 (the canonical tournament slot) is NEVER touched.
     assert not loss_profile_path(workspace, EPOCH, "v1", "entryA").exists()
     # First run: a fresh _run_single per (entry, replicate).
@@ -469,4 +508,6 @@ def test_active_corpus_infra_abort_voids_the_draw(tmp_path: Path, monkeypatch) -
             )
         )
     # Infra aborts are never cached, so nothing was persisted at the slot.
-    assert not (run_dir(workspace, EPOCH, "v1", "entryA") / "loss.r5000.json").exists()
+    assert not (
+        run_dir(workspace, EPOCH, "v1", "entryA") / "loss.board_reflection.r0.json"
+    ).exists()

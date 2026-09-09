@@ -739,9 +739,7 @@ is the contract pre-flight and the noise-floor calibration.
    the datum from the champion snapshot + board (never mutating real lineage —
    the pre-flight degrades the FIRST mutation point in an ephemeral
    `TemporaryDirectory`). Return a JSON-able report. If it draws replicates, use
-   a RESERVED replicate base so its draws never collide with duels/calibration/
-   screening/evidence (`PREFLIGHT_REPLICATE_BASE = 2000` is the precedent; the
-   ledger is 06-tournament-and-selection.md §"The reserved replicate ladder").
+   an explicit measurement purpose and a distinct local draw number for each independent sample. Pass the `MeasurementDraw` through runner arguments and task context, and preserve its seed in artifact paths. See 01-orientation.md §4, G7.
 2. **Add the additive, never-hashed epoch field.** In `lifecycle.py`, add a
    `set_epoch_<field>` that loads the epoch config, `replace(cfg, <field>=…)`,
    and writes it back — mirroring `set_epoch_preflight`. Thread the field through
@@ -1014,8 +1012,7 @@ leaves its `tmp_path` workspace; a live run leaves `.zicato/`.)
 | Artifact | Path (relative to workspace root) | What it tells you |
 |---|---|---|
 | Round log | `epochs/{epoch}/rounds/{round}/round_log.jsonl` | the decision trail (typed events, gap-free `seq`) |
-| Per-run loss | `runs/<entry>/loss.json` (the canonical `r0` slot) | the scalar for one board unit |
-| Replicate losses | the unit cache under RESERVED bases (`_unit_loss_path`) | replicates >0 (r0 = the canonical path) |
+| Measurement loss | `epochs/{epoch}/generations/{gen}/runs/{entry}/seed-{seed}/loss.{purpose}.r{draw}.json` | one board unit’s loss and measurement identity; a null seed uses `seed-none` |
 | Heartbeat | `.zicato/runtime/heartbeat.json` | the live PHASE (`proposing` / `screening:r{n}` / `tournament:…` / `holdout` / `gate`) |
 | Active runs | `.zicato/runtime/active_runs/{run_id}.json` | in-flight runs; one present-but-unsettled = a worker that never returned |
 | Worker args | a temp file (`python -m zicato._tournament_worker <args-file>`) | the worker spec + `configuration` (ephemeral — cleaned in a `finally`) |
@@ -1034,10 +1031,7 @@ leaves its `tmp_path` workspace; a live run leaves `.zicato/`.)
    `GateEvaluated`, `HoldoutReleased`, `EvidenceReplicated`, `DecisionRecorded`,
    `RoundClosed`. A round that never reached `DecisionRecorded` tells you where
    it stalled.
-2. **Read the per-run loss files.** Each board unit writes `runs/<entry>/loss.json`
-   — this is the CANONICAL replicate-0 (`r0`) slot. Replicates >0 live in the
-   unit cache under RESERVED bases (`_unit_loss_path`); `r0` maps to the
-   canonical path. A wrong scalar traces back to a specific `loss.json`.
+2. **Read the measurement loss files.** Each entry’s run directory contains `seed-{seed}/loss.{purpose}.r{draw}.json`, with `seed-none` for a null seed. Verify that the recorded purpose, draw, and base seed agree with the path. Trace a wrong scalar to the measurements selected by the relevant score aggregation.
 3. **Read the heartbeat for the phase it died in.** `.zicato/runtime/heartbeat.json`
    carries the live phase string — `proposing`,
    `proposing:round_{n}:{next_id}`, `screening:r{n}`,
@@ -1065,15 +1059,10 @@ leaves its `tmp_path` workspace; a live run leaves `.zicato/`.)
 - ⚠️ **An absent round-log event does NOT mean the step did not happen.** RoundLog
   emission is best-effort (the best-effort-round-log rule —
   07-runtime-and-durability.md §7.10.4, invariant `D11`) — the canonical stores
-  (`loss.json`, the journal, lineage)
+  (measurement loss files, the journal, lineage)
   stay authoritative. Corroborate a missing event against the canonical files
   before concluding the step was skipped.
-- ⚠️ **`runs/<entry>/loss.json` is the canonical `r0` slot — do not confuse it
-  with a replicate.** Replicate 0 IS the canonical run; replicates >0 live under
-  reserved bases in the unit cache. A tool that overwrites `loss.json` with a
-  replicate's bytes is the replicate-cache clobbering case (12-bug-casebook.md
-  §"Case 1"). When reading, treat `loss.json` as replicate 0 rather than as the
-  most recent run.
+- ⚠️ **Read the requested measurement identity.** Purpose, local draw, and seed select a loss file. Copying another measurement into that path corrupts its provenance (12-bug-casebook.md §"Case 1"). Check that modified-source preflight and screening results are excluded when investigating a generation’s own-source evidence.
 - ⚠️ **A hung run may be a killed CONCURRENT process rather than your loop.** The
   reaper kills by process-group; a test-suite reaper `killpg`-ing a
   concurrently-running evolve looks like a hang in the wrong process
@@ -1093,7 +1082,7 @@ print(fold_round_record(RoundLog('WS','EPOCH',0).read()))"
 ```
 
 **Definition of done.** You located the failing round from `round_log.jsonl`,
-confirmed the scalar against the canonical `loss.json`, identified the wedged
+confirmed the scalar against the selected measurement loss files, identified the wedged
 phase from the heartbeat, and distinguished a real loop failure from a
 concurrent-process or best-effort-emission artifact.
 
@@ -1153,16 +1142,11 @@ documented act with a stated reason.
   documents it. A silently widened bound is a DELETED measurement
   (04-evaluation-statistics.md §"Operating characteristics as pinned tests").
 - ⚠️ **A pinned number can itself be WRONG.** The A/A calibration pinned a
-  false-zero floor because a replicate index never reached the harness
+  false-zero floor because draw identity never reached the harness
   (12-bug-casebook.md §"Case 3"). If a number looks too good (a zero floor, a
   perfect rate), suspect the measurement before you pin it: an operating
   characteristic that cannot come out badly is not measuring the procedure.
-- ⚠️ **If your change touches persistence or replicate indices, add a
-  slot-integrity test.** Prove the canonical `r0` bytes are unchanged and your
-  draws land under your RESERVED base for every side (the
-  `test_full_mode_evidence_loop_never_touches_canonical_slots` pattern). That
-  test guards against the replicate-cache clobbering and evidence-gate slot-reuse
-  cases (12-bug-casebook.md §"Case 1", §"Case 8").
+- ⚠️ **If your change touches persistence or measurement identity, test artifact separation.** Prove that each side’s independent draws have distinct purpose, draw, and seed coordinates; that confirmation preserves tournament loss files; and that recovery reuses only complete matching measurements. These checks protect against cache corruption and repeated evidence (12-bug-casebook.md §"Case 1", §"Case 8").
 
 **Verify.**
 
@@ -1268,9 +1252,7 @@ Each recipe's owning chapter carries the theory the recipe applies:
   §"Recipe: proving a change to the decision procedure" (Recipe 13).
 - 05-proposer.md §5.8 + §"The channel-author's
   checklist" — the banding Recipe 2 must satisfy.
-- 06-tournament-and-selection.md §"The reserved replicate ladder" — the base
-  ledger Recipes 8, 13 draw on (duels 0.., calibration 1000, preflight 2000,
-  screening 3000/3001, evidence 4000).
+- 01-orientation.md §4, G7 — measurement purposes, local draw numbers, seeds, and artifact separation for Recipes 8 and 13.
 - 07-runtime-and-durability.md §7.1 the files-canonical rule (invariant `D1`)
   and §7.11 supported record formats (invariant `D12`) — Recipe 7;
   §7.10.4 the best-effort-round-log rule (invariant `D11`) — Recipes 9 and 12;

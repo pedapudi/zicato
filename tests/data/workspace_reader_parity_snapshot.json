@@ -277,53 +277,53 @@
     "total_events_seen": 195
   },
   "zicato.analyzer.collect_events_jsonl_paths::e10": [
-    "<ws>/epochs/e10/generations/v0/runs/t1/events.jsonl",
-    "<ws>/epochs/e10/generations/v0/runs/t10/events.jsonl",
-    "<ws>/epochs/e10/generations/v0/runs/t2/events.jsonl",
-    "<ws>/epochs/e10/generations/v1/runs/t1/events.jsonl",
-    "<ws>/epochs/e10/generations/v1/runs/t10/events.jsonl",
-    "<ws>/epochs/e10/generations/v1/runs/t2/events.jsonl"
+    "<ws>/epochs/e10/generations/v0/runs/t1/seed-none/events.tournament.r0.jsonl",
+    "<ws>/epochs/e10/generations/v0/runs/t10/seed-none/events.tournament.r0.jsonl",
+    "<ws>/epochs/e10/generations/v0/runs/t2/seed-none/events.tournament.r0.jsonl",
+    "<ws>/epochs/e10/generations/v1/runs/t1/seed-none/events.tournament.r0.jsonl",
+    "<ws>/epochs/e10/generations/v1/runs/t10/seed-none/events.tournament.r0.jsonl",
+    "<ws>/epochs/e10/generations/v1/runs/t2/seed-none/events.tournament.r0.jsonl"
   ],
   "zicato.analyzer.collect_events_jsonl_paths::e2": [
-    "<ws>/epochs/e2/generations/v0/runs/t1/events.jsonl",
-    "<ws>/epochs/e2/generations/v0/runs/t1/events.r1.jsonl",
-    "<ws>/epochs/e2/generations/v0/runs/t10/events.jsonl",
-    "<ws>/epochs/e2/generations/v0/runs/t10/events.r1.jsonl",
-    "<ws>/epochs/e2/generations/v0/runs/t2/events.jsonl",
-    "<ws>/epochs/e2/generations/v0/runs/t2/events.r1.jsonl",
-    "<ws>/epochs/e2/generations/v1/runs/t1/events.jsonl",
-    "<ws>/epochs/e2/generations/v1/runs/t1/events.r1.jsonl",
-    "<ws>/epochs/e2/generations/v1/runs/t10/events.jsonl",
-    "<ws>/epochs/e2/generations/v1/runs/t10/events.r1.jsonl",
-    "<ws>/epochs/e2/generations/v1/runs/t2/events.jsonl",
-    "<ws>/epochs/e2/generations/v1/runs/t2/events.r1.jsonl",
-    "<ws>/epochs/e2/generations/v10/runs/t1/events.jsonl",
-    "<ws>/epochs/e2/generations/v10/runs/t10/events.jsonl",
-    "<ws>/epochs/e2/generations/v10/runs/t2/events.jsonl",
-    "<ws>/epochs/e2/generations/v2/runs/t1/events.jsonl",
-    "<ws>/epochs/e2/generations/v2/runs/t10/events.jsonl",
-    "<ws>/epochs/e2/generations/v2/runs/t2/events.jsonl",
-    "<ws>/epochs/e2/generations/v3/runs/t1/events.jsonl",
-    "<ws>/epochs/e2/generations/v3/runs/t10/events.jsonl",
-    "<ws>/epochs/e2/generations/v3/runs/t2/events.jsonl",
-    "<ws>/epochs/e2/generations/v4/runs/t1/events.jsonl",
-    "<ws>/epochs/e2/generations/v4/runs/t10/events.jsonl",
-    "<ws>/epochs/e2/generations/v4/runs/t2/events.jsonl",
-    "<ws>/epochs/e2/generations/v5/runs/t1/events.jsonl",
-    "<ws>/epochs/e2/generations/v5/runs/t10/events.jsonl",
-    "<ws>/epochs/e2/generations/v5/runs/t2/events.jsonl",
-    "<ws>/epochs/e2/generations/v6/runs/t1/events.jsonl",
-    "<ws>/epochs/e2/generations/v6/runs/t10/events.jsonl",
-    "<ws>/epochs/e2/generations/v6/runs/t2/events.jsonl",
-    "<ws>/epochs/e2/generations/v7/runs/t1/events.jsonl",
-    "<ws>/epochs/e2/generations/v7/runs/t10/events.jsonl",
-    "<ws>/epochs/e2/generations/v7/runs/t2/events.jsonl",
-    "<ws>/epochs/e2/generations/v8/runs/t1/events.jsonl",
-    "<ws>/epochs/e2/generations/v8/runs/t10/events.jsonl",
-    "<ws>/epochs/e2/generations/v8/runs/t2/events.jsonl",
-    "<ws>/epochs/e2/generations/v9/runs/t1/events.jsonl",
-    "<ws>/epochs/e2/generations/v9/runs/t10/events.jsonl",
-    "<ws>/epochs/e2/generations/v9/runs/t2/events.jsonl"
+    "<ws>/epochs/e2/generations/v0/runs/t1/seed-none/events.tournament.r0.jsonl",
+    "<ws>/epochs/e2/generations/v0/runs/t1/seed-none/events.tournament.r1.jsonl",
+    "<ws>/epochs/e2/generations/v0/runs/t10/seed-none/events.tournament.r0.jsonl",
+    "<ws>/epochs/e2/generations/v0/runs/t10/seed-none/events.tournament.r1.jsonl",
+    "<ws>/epochs/e2/generations/v0/runs/t2/seed-none/events.tournament.r0.jsonl",
+    "<ws>/epochs/e2/generations/v0/runs/t2/seed-none/events.tournament.r1.jsonl",
+    "<ws>/epochs/e2/generations/v1/runs/t1/seed-none/events.tournament.r0.jsonl",
+    "<ws>/epochs/e2/generations/v1/runs/t1/seed-none/events.tournament.r1.jsonl",
+    "<ws>/epochs/e2/generations/v1/runs/t10/seed-none/events.tournament.r0.jsonl",
+    "<ws>/epochs/e2/generations/v1/runs/t10/seed-none/events.tournament.r1.jsonl",
+    "<ws>/epochs/e2/generations/v1/runs/t2/seed-none/events.tournament.r0.jsonl",
+    "<ws>/epochs/e2/generations/v1/runs/t2/seed-none/events.tournament.r1.jsonl",
+    "<ws>/epochs/e2/generations/v10/runs/t1/seed-none/events.tournament.r0.jsonl",
+    "<ws>/epochs/e2/generations/v10/runs/t10/seed-none/events.tournament.r0.jsonl",
+    "<ws>/epochs/e2/generations/v10/runs/t2/seed-none/events.tournament.r0.jsonl",
+    "<ws>/epochs/e2/generations/v2/runs/t1/seed-none/events.tournament.r0.jsonl",
+    "<ws>/epochs/e2/generations/v2/runs/t10/seed-none/events.tournament.r0.jsonl",
+    "<ws>/epochs/e2/generations/v2/runs/t2/seed-none/events.tournament.r0.jsonl",
+    "<ws>/epochs/e2/generations/v3/runs/t1/seed-none/events.tournament.r0.jsonl",
+    "<ws>/epochs/e2/generations/v3/runs/t10/seed-none/events.tournament.r0.jsonl",
+    "<ws>/epochs/e2/generations/v3/runs/t2/seed-none/events.tournament.r0.jsonl",
+    "<ws>/epochs/e2/generations/v4/runs/t1/seed-none/events.tournament.r0.jsonl",
+    "<ws>/epochs/e2/generations/v4/runs/t10/seed-none/events.tournament.r0.jsonl",
+    "<ws>/epochs/e2/generations/v4/runs/t2/seed-none/events.tournament.r0.jsonl",
+    "<ws>/epochs/e2/generations/v5/runs/t1/seed-none/events.tournament.r0.jsonl",
+    "<ws>/epochs/e2/generations/v5/runs/t10/seed-none/events.tournament.r0.jsonl",
+    "<ws>/epochs/e2/generations/v5/runs/t2/seed-none/events.tournament.r0.jsonl",
+    "<ws>/epochs/e2/generations/v6/runs/t1/seed-none/events.tournament.r0.jsonl",
+    "<ws>/epochs/e2/generations/v6/runs/t10/seed-none/events.tournament.r0.jsonl",
+    "<ws>/epochs/e2/generations/v6/runs/t2/seed-none/events.tournament.r0.jsonl",
+    "<ws>/epochs/e2/generations/v7/runs/t1/seed-none/events.tournament.r0.jsonl",
+    "<ws>/epochs/e2/generations/v7/runs/t10/seed-none/events.tournament.r0.jsonl",
+    "<ws>/epochs/e2/generations/v7/runs/t2/seed-none/events.tournament.r0.jsonl",
+    "<ws>/epochs/e2/generations/v8/runs/t1/seed-none/events.tournament.r0.jsonl",
+    "<ws>/epochs/e2/generations/v8/runs/t10/seed-none/events.tournament.r0.jsonl",
+    "<ws>/epochs/e2/generations/v8/runs/t2/seed-none/events.tournament.r0.jsonl",
+    "<ws>/epochs/e2/generations/v9/runs/t1/seed-none/events.tournament.r0.jsonl",
+    "<ws>/epochs/e2/generations/v9/runs/t10/seed-none/events.tournament.r0.jsonl",
+    "<ws>/epochs/e2/generations/v9/runs/t2/seed-none/events.tournament.r0.jsonl"
   ],
   "zicato.analyzer.extract_process_exemplars": [
     {
@@ -510,6 +510,7 @@
         "expected_metric_movements": [],
         "expected_pass_rate_delta": "",
         "gen_score": {
+          "base_seed": null,
           "format_version": 1,
           "generation_id": "v0",
           "mean_drift_loss": 0.4,
@@ -565,6 +566,7 @@
         ],
         "expected_pass_rate_delta": "+0.05",
         "gen_score": {
+          "base_seed": null,
           "format_version": 1,
           "generation_id": "v1",
           "mean_drift_loss": 0.38,
@@ -814,6 +816,7 @@
         "expected_metric_movements": [],
         "expected_pass_rate_delta": "",
         "gen_score": {
+          "base_seed": null,
           "format_version": 1,
           "generation_id": "v0",
           "mean_drift_loss": 0.4,
@@ -869,6 +872,7 @@
         ],
         "expected_pass_rate_delta": "+0.05",
         "gen_score": {
+          "base_seed": null,
           "format_version": 1,
           "generation_id": "v1",
           "mean_drift_loss": 0.38,
@@ -947,6 +951,7 @@
         ],
         "expected_pass_rate_delta": "+0.05",
         "gen_score": {
+          "base_seed": null,
           "format_version": 1,
           "generation_id": "v2",
           "mean_drift_loss": 0.36,
@@ -1025,6 +1030,7 @@
         ],
         "expected_pass_rate_delta": "+0.05",
         "gen_score": {
+          "base_seed": null,
           "format_version": 1,
           "generation_id": "v3",
           "mean_drift_loss": 0.34,
@@ -1103,6 +1109,7 @@
         ],
         "expected_pass_rate_delta": "+0.05",
         "gen_score": {
+          "base_seed": null,
           "format_version": 1,
           "generation_id": "v4",
           "mean_drift_loss": 0.32,
@@ -1181,6 +1188,7 @@
         ],
         "expected_pass_rate_delta": "+0.05",
         "gen_score": {
+          "base_seed": null,
           "format_version": 1,
           "generation_id": "v5",
           "mean_drift_loss": 0.3,
@@ -1259,6 +1267,7 @@
         ],
         "expected_pass_rate_delta": "+0.05",
         "gen_score": {
+          "base_seed": null,
           "format_version": 1,
           "generation_id": "v6",
           "mean_drift_loss": 0.28,
@@ -1337,6 +1346,7 @@
         ],
         "expected_pass_rate_delta": "+0.05",
         "gen_score": {
+          "base_seed": null,
           "format_version": 1,
           "generation_id": "v7",
           "mean_drift_loss": 0.26,
@@ -1415,6 +1425,7 @@
         ],
         "expected_pass_rate_delta": "+0.05",
         "gen_score": {
+          "base_seed": null,
           "format_version": 1,
           "generation_id": "v8",
           "mean_drift_loss": 0.24,
@@ -1493,6 +1504,7 @@
         ],
         "expected_pass_rate_delta": "+0.05",
         "gen_score": {
+          "base_seed": null,
           "format_version": 1,
           "generation_id": "v9",
           "mean_drift_loss": 0.22,
@@ -1571,6 +1583,7 @@
         ],
         "expected_pass_rate_delta": "+0.05",
         "gen_score": {
+          "base_seed": null,
           "format_version": 1,
           "generation_id": "v10",
           "mean_drift_loss": 0.2,
@@ -1707,32 +1720,26 @@
         "units": [
           {
             "entry_id": "t1",
-            "replicate": 0,
             "side": "champion"
           },
           {
             "entry_id": "t1",
-            "replicate": 0,
             "side": "challenger"
           },
           {
             "entry_id": "t2",
-            "replicate": 0,
             "side": "champion"
           },
           {
             "entry_id": "t2",
-            "replicate": 0,
             "side": "challenger"
           },
           {
             "entry_id": "t10",
-            "replicate": 0,
             "side": "champion"
           },
           {
             "entry_id": "t10",
-            "replicate": 0,
             "side": "challenger"
           }
         ],
@@ -1785,32 +1792,26 @@
         "units": [
           {
             "entry_id": "t1",
-            "replicate": 0,
             "side": "champion"
           },
           {
             "entry_id": "t1",
-            "replicate": 0,
             "side": "challenger"
           },
           {
             "entry_id": "t2",
-            "replicate": 0,
             "side": "champion"
           },
           {
             "entry_id": "t2",
-            "replicate": 0,
             "side": "challenger"
           },
           {
             "entry_id": "t10",
-            "replicate": 0,
             "side": "champion"
           },
           {
             "entry_id": "t10",
-            "replicate": 0,
             "side": "challenger"
           }
         ],
@@ -1863,32 +1864,26 @@
         "units": [
           {
             "entry_id": "t1",
-            "replicate": 0,
             "side": "champion"
           },
           {
             "entry_id": "t1",
-            "replicate": 0,
             "side": "challenger"
           },
           {
             "entry_id": "t2",
-            "replicate": 0,
             "side": "champion"
           },
           {
             "entry_id": "t2",
-            "replicate": 0,
             "side": "challenger"
           },
           {
             "entry_id": "t10",
-            "replicate": 0,
             "side": "champion"
           },
           {
             "entry_id": "t10",
-            "replicate": 0,
             "side": "challenger"
           }
         ],
@@ -3009,7 +3004,11 @@
         "generation_id": "v0",
         "judge_errors": [],
         "match_id": "",
-        "measurement": null,
+        "measurement": {
+          "base_seed": null,
+          "draw": 0,
+          "purpose": "tournament"
+        },
         "memory_failure_count": null,
         "metric_counts": [
           {
@@ -3047,7 +3046,7 @@
           }
         ],
         "plan_revisions": 0,
-        "run_id": "e10-v0-t1-r0",
+        "run_id": "seed-none.tournament.r0.1dab1736c54359226cdb10fce05f5b03b580008e3dbc303b3042434812ab2ff6",
         "runtime_ms": 1000,
         "schema_failures": 0,
         "score": 0.6,
@@ -3081,7 +3080,11 @@
         "generation_id": "v0",
         "judge_errors": [],
         "match_id": "",
-        "measurement": null,
+        "measurement": {
+          "base_seed": null,
+          "draw": 0,
+          "purpose": "tournament"
+        },
         "memory_failure_count": null,
         "metric_counts": [
           {
@@ -3119,7 +3122,7 @@
           }
         ],
         "plan_revisions": 0,
-        "run_id": "e10-v0-t2-r0",
+        "run_id": "seed-none.tournament.r0.baffecae4b822f0db61657ef0d568797d4fe76c2ff66910780a93764a4248d01",
         "runtime_ms": 1001,
         "schema_failures": 0,
         "score": 0.55,
@@ -3153,7 +3156,11 @@
         "generation_id": "v0",
         "judge_errors": [],
         "match_id": "",
-        "measurement": null,
+        "measurement": {
+          "base_seed": null,
+          "draw": 0,
+          "purpose": "tournament"
+        },
         "memory_failure_count": null,
         "metric_counts": [
           {
@@ -3184,7 +3191,7 @@
         "pass_fail": true,
         "per_judge_loss": [],
         "plan_revisions": 0,
-        "run_id": "e10-v0-t10-r0",
+        "run_id": "seed-none.tournament.r0.f0295c46cb0cb7f3d3756c0d57ce5399618add992acc917b5c496cc80c88e05e",
         "runtime_ms": 1002,
         "schema_failures": 0,
         "score": 0.5,
@@ -3220,7 +3227,11 @@
         "generation_id": "v1",
         "judge_errors": [],
         "match_id": "",
-        "measurement": null,
+        "measurement": {
+          "base_seed": null,
+          "draw": 0,
+          "purpose": "tournament"
+        },
         "memory_failure_count": null,
         "metric_counts": [
           {
@@ -3258,7 +3269,7 @@
           }
         ],
         "plan_revisions": 1,
-        "run_id": "e10-v1-t1-r0",
+        "run_id": "seed-none.tournament.r0.13c4aa0b3b12e7e8812884a40f255673187cf8297c0805f55e0382a668ed882c",
         "runtime_ms": 1010,
         "schema_failures": 0,
         "score": 0.62,
@@ -3292,7 +3303,11 @@
         "generation_id": "v1",
         "judge_errors": [],
         "match_id": "",
-        "measurement": null,
+        "measurement": {
+          "base_seed": null,
+          "draw": 0,
+          "purpose": "tournament"
+        },
         "memory_failure_count": null,
         "metric_counts": [
           {
@@ -3330,7 +3345,7 @@
           }
         ],
         "plan_revisions": 1,
-        "run_id": "e10-v1-t2-r0",
+        "run_id": "seed-none.tournament.r0.95d7ae4f7e9f825f44739f9de5622307bcb5f757bf5d97f156e27a4f3ad52eeb",
         "runtime_ms": 1011,
         "schema_failures": 0,
         "score": 0.57,
@@ -3364,7 +3379,11 @@
         "generation_id": "v1",
         "judge_errors": [],
         "match_id": "",
-        "measurement": null,
+        "measurement": {
+          "base_seed": null,
+          "draw": 0,
+          "purpose": "tournament"
+        },
         "memory_failure_count": null,
         "metric_counts": [
           {
@@ -3395,7 +3414,7 @@
         "pass_fail": false,
         "per_judge_loss": [],
         "plan_revisions": 1,
-        "run_id": "e10-v1-t10-r0",
+        "run_id": "seed-none.tournament.r0.ecf8239c5e4559fe9236b0d72300134aa554bb7cbae6d596430d7351a58bee87",
         "runtime_ms": 1012,
         "schema_failures": 0,
         "score": 0.52,
@@ -3433,7 +3452,11 @@
         "generation_id": "v0",
         "judge_errors": [],
         "match_id": "",
-        "measurement": null,
+        "measurement": {
+          "base_seed": null,
+          "draw": 0,
+          "purpose": "tournament"
+        },
         "memory_failure_count": null,
         "metric_counts": [
           {
@@ -3471,7 +3494,7 @@
           }
         ],
         "plan_revisions": 0,
-        "run_id": "e2-v0-t1-r0",
+        "run_id": "seed-none.tournament.r0.191816768532ad778729ff1b67f96fb059bb29609346e9bd4fae938c5803d9c4",
         "runtime_ms": 1000,
         "schema_failures": 0,
         "score": 0.6,
@@ -3505,7 +3528,11 @@
         "generation_id": "v0",
         "judge_errors": [],
         "match_id": "",
-        "measurement": null,
+        "measurement": {
+          "base_seed": null,
+          "draw": 0,
+          "purpose": "tournament"
+        },
         "memory_failure_count": null,
         "metric_counts": [
           {
@@ -3543,7 +3570,7 @@
           }
         ],
         "plan_revisions": 0,
-        "run_id": "e2-v0-t2-r0",
+        "run_id": "seed-none.tournament.r0.eab04c59dc4682d3c1477ff434df9295359eca78a1e5d84c24831cef2ed11ef1",
         "runtime_ms": 1001,
         "schema_failures": 0,
         "score": 0.55,
@@ -3577,7 +3604,11 @@
         "generation_id": "v0",
         "judge_errors": [],
         "match_id": "",
-        "measurement": null,
+        "measurement": {
+          "base_seed": null,
+          "draw": 0,
+          "purpose": "tournament"
+        },
         "memory_failure_count": null,
         "metric_counts": [
           {
@@ -3608,7 +3639,7 @@
         "pass_fail": true,
         "per_judge_loss": [],
         "plan_revisions": 0,
-        "run_id": "e2-v0-t10-r0",
+        "run_id": "seed-none.tournament.r0.1cf4f6a91e0100792b2c8cdafc66ed3942fc77c7d785acfbcab410bea982bbf8",
         "runtime_ms": 1002,
         "schema_failures": 0,
         "score": 0.5,
@@ -3644,7 +3675,11 @@
         "generation_id": "v1",
         "judge_errors": [],
         "match_id": "",
-        "measurement": null,
+        "measurement": {
+          "base_seed": null,
+          "draw": 0,
+          "purpose": "tournament"
+        },
         "memory_failure_count": null,
         "metric_counts": [
           {
@@ -3682,7 +3717,7 @@
           }
         ],
         "plan_revisions": 1,
-        "run_id": "e2-v1-t1-r0",
+        "run_id": "seed-none.tournament.r0.7c6c460aa39b4645aa60a5c3b9c1ee626e785094b72c2c88f2191d33df177cdf",
         "runtime_ms": 1010,
         "schema_failures": 0,
         "score": 0.62,
@@ -3716,7 +3751,11 @@
         "generation_id": "v1",
         "judge_errors": [],
         "match_id": "",
-        "measurement": null,
+        "measurement": {
+          "base_seed": null,
+          "draw": 0,
+          "purpose": "tournament"
+        },
         "memory_failure_count": null,
         "metric_counts": [
           {
@@ -3754,7 +3793,7 @@
           }
         ],
         "plan_revisions": 1,
-        "run_id": "e2-v1-t2-r0",
+        "run_id": "seed-none.tournament.r0.d25a4e6899d07a5025b673450d26b79d188056c22d1108144ac261a8a9a28d5c",
         "runtime_ms": 1011,
         "schema_failures": 0,
         "score": 0.57,
@@ -3788,7 +3827,11 @@
         "generation_id": "v1",
         "judge_errors": [],
         "match_id": "",
-        "measurement": null,
+        "measurement": {
+          "base_seed": null,
+          "draw": 0,
+          "purpose": "tournament"
+        },
         "memory_failure_count": null,
         "metric_counts": [
           {
@@ -3819,7 +3862,7 @@
         "pass_fail": false,
         "per_judge_loss": [],
         "plan_revisions": 1,
-        "run_id": "e2-v1-t10-r0",
+        "run_id": "seed-none.tournament.r0.fad4994149dc8be4f8f38fc830ffd9562e0c4e374bad536928e6eb5eb87c16cb",
         "runtime_ms": 1012,
         "schema_failures": 0,
         "score": 0.52,
@@ -3855,7 +3898,11 @@
         "generation_id": "v10",
         "judge_errors": [],
         "match_id": "",
-        "measurement": null,
+        "measurement": {
+          "base_seed": null,
+          "draw": 0,
+          "purpose": "tournament"
+        },
         "memory_failure_count": null,
         "metric_counts": [
           {
@@ -3893,7 +3940,7 @@
           }
         ],
         "plan_revisions": 2,
-        "run_id": "e2-v10-t1-r0",
+        "run_id": "seed-none.tournament.r0.f7bcda4af39394eb758ebae5920917001ccf0bcbbf79bcfbb39b89d1de9ce7a2",
         "runtime_ms": 1100,
         "schema_failures": 0,
         "score": 0.8,
@@ -3927,7 +3974,11 @@
         "generation_id": "v10",
         "judge_errors": [],
         "match_id": "",
-        "measurement": null,
+        "measurement": {
+          "base_seed": null,
+          "draw": 0,
+          "purpose": "tournament"
+        },
         "memory_failure_count": null,
         "metric_counts": [
           {
@@ -3965,7 +4016,7 @@
           }
         ],
         "plan_revisions": 2,
-        "run_id": "e2-v10-t2-r0",
+        "run_id": "seed-none.tournament.r0.b46854bd780743b258c2fe7fc36ea68551aa0f06b8bd7afd917601bdc92a0cd7",
         "runtime_ms": 1101,
         "schema_failures": 0,
         "score": 0.75,
@@ -3999,7 +4050,11 @@
         "generation_id": "v10",
         "judge_errors": [],
         "match_id": "",
-        "measurement": null,
+        "measurement": {
+          "base_seed": null,
+          "draw": 0,
+          "purpose": "tournament"
+        },
         "memory_failure_count": null,
         "metric_counts": [
           {
@@ -4030,7 +4085,7 @@
         "pass_fail": true,
         "per_judge_loss": [],
         "plan_revisions": 2,
-        "run_id": "e2-v10-t10-r0",
+        "run_id": "seed-none.tournament.r0.c7d1dee4dc0e2e5241f2472c9cfe49b2cb8d6147fa3e424ff7ea14838045712d",
         "runtime_ms": 1102,
         "schema_failures": 0,
         "score": 0.7,
@@ -4066,7 +4121,11 @@
         "generation_id": "v2",
         "judge_errors": [],
         "match_id": "",
-        "measurement": null,
+        "measurement": {
+          "base_seed": null,
+          "draw": 0,
+          "purpose": "tournament"
+        },
         "memory_failure_count": null,
         "metric_counts": [
           {
@@ -4104,7 +4163,7 @@
           }
         ],
         "plan_revisions": 2,
-        "run_id": "e2-v2-t1-r0",
+        "run_id": "seed-none.tournament.r0.dc23c88c6ffdceb22c643daaa0ddd3bcce37cd106d52c3989e01f3b33833d675",
         "runtime_ms": 1020,
         "schema_failures": 0,
         "score": 0.64,
@@ -4138,7 +4197,11 @@
         "generation_id": "v2",
         "judge_errors": [],
         "match_id": "",
-        "measurement": null,
+        "measurement": {
+          "base_seed": null,
+          "draw": 0,
+          "purpose": "tournament"
+        },
         "memory_failure_count": null,
         "metric_counts": [
           {
@@ -4176,7 +4239,7 @@
           }
         ],
         "plan_revisions": 2,
-        "run_id": "e2-v2-t2-r0",
+        "run_id": "seed-none.tournament.r0.b954bc9603cf92eb03937ccf5a8e996bc475e1129202a1615945bfb22f998b33",
         "runtime_ms": 1021,
         "schema_failures": 0,
         "score": 0.59,
@@ -4210,7 +4273,11 @@
         "generation_id": "v2",
         "judge_errors": [],
         "match_id": "",
-        "measurement": null,
+        "measurement": {
+          "base_seed": null,
+          "draw": 0,
+          "purpose": "tournament"
+        },
         "memory_failure_count": null,
         "metric_counts": [
           {
@@ -4241,7 +4308,7 @@
         "pass_fail": true,
         "per_judge_loss": [],
         "plan_revisions": 2,
-        "run_id": "e2-v2-t10-r0",
+        "run_id": "seed-none.tournament.r0.b7e9ae00fd3cc55642d153b7abad142330a0a40614b90d31b627c01b5d8f5d69",
         "runtime_ms": 1022,
         "schema_failures": 0,
         "score": 0.54,
@@ -4277,7 +4344,11 @@
         "generation_id": "v3",
         "judge_errors": [],
         "match_id": "",
-        "measurement": null,
+        "measurement": {
+          "base_seed": null,
+          "draw": 0,
+          "purpose": "tournament"
+        },
         "memory_failure_count": null,
         "metric_counts": [
           {
@@ -4315,7 +4386,7 @@
           }
         ],
         "plan_revisions": 3,
-        "run_id": "e2-v3-t1-r0",
+        "run_id": "seed-none.tournament.r0.a24ef1016a7c0b4457b0d7d62c72495f87fa94fd070f4c03166d142aa822e151",
         "runtime_ms": 1030,
         "schema_failures": 0,
         "score": 0.66,
@@ -4349,7 +4420,11 @@
         "generation_id": "v3",
         "judge_errors": [],
         "match_id": "",
-        "measurement": null,
+        "measurement": {
+          "base_seed": null,
+          "draw": 0,
+          "purpose": "tournament"
+        },
         "memory_failure_count": null,
         "metric_counts": [
           {
@@ -4387,7 +4462,7 @@
           }
         ],
         "plan_revisions": 3,
-        "run_id": "e2-v3-t2-r0",
+        "run_id": "seed-none.tournament.r0.f304a03b3106a36d2b9d6a8e58b495f9ed5d68e22c17212175cc6ff967a02368",
         "runtime_ms": 1031,
         "schema_failures": 0,
         "score": 0.61,
@@ -4421,7 +4496,11 @@
         "generation_id": "v3",
         "judge_errors": [],
         "match_id": "",
-        "measurement": null,
+        "measurement": {
+          "base_seed": null,
+          "draw": 0,
+          "purpose": "tournament"
+        },
         "memory_failure_count": null,
         "metric_counts": [
           {
@@ -4452,7 +4531,7 @@
         "pass_fail": true,
         "per_judge_loss": [],
         "plan_revisions": 3,
-        "run_id": "e2-v3-t10-r0",
+        "run_id": "seed-none.tournament.r0.881fe5eca6df5da80c3c334b1c3ad681ec71e257b2b09f1834d13d05278b10ee",
         "runtime_ms": 1032,
         "schema_failures": 0,
         "score": 0.56,
@@ -4488,7 +4567,11 @@
         "generation_id": "v4",
         "judge_errors": [],
         "match_id": "",
-        "measurement": null,
+        "measurement": {
+          "base_seed": null,
+          "draw": 0,
+          "purpose": "tournament"
+        },
         "memory_failure_count": null,
         "metric_counts": [
           {
@@ -4526,7 +4609,7 @@
           }
         ],
         "plan_revisions": 0,
-        "run_id": "e2-v4-t1-r0",
+        "run_id": "seed-none.tournament.r0.b24da60236eb5aca86630b2a0b597688bc4ed318917a179dddc60904d5c07d33",
         "runtime_ms": 1040,
         "schema_failures": 0,
         "score": 0.68,
@@ -4560,7 +4643,11 @@
         "generation_id": "v4",
         "judge_errors": [],
         "match_id": "",
-        "measurement": null,
+        "measurement": {
+          "base_seed": null,
+          "draw": 0,
+          "purpose": "tournament"
+        },
         "memory_failure_count": null,
         "metric_counts": [
           {
@@ -4598,7 +4685,7 @@
           }
         ],
         "plan_revisions": 0,
-        "run_id": "e2-v4-t2-r0",
+        "run_id": "seed-none.tournament.r0.323e8ddad445b28f25517d1ebb61cd1e4a4b971bde9589439ab58e5c01e1cfad",
         "runtime_ms": 1041,
         "schema_failures": 0,
         "score": 0.63,
@@ -4632,7 +4719,11 @@
         "generation_id": "v4",
         "judge_errors": [],
         "match_id": "",
-        "measurement": null,
+        "measurement": {
+          "base_seed": null,
+          "draw": 0,
+          "purpose": "tournament"
+        },
         "memory_failure_count": null,
         "metric_counts": [
           {
@@ -4663,7 +4754,7 @@
         "pass_fail": true,
         "per_judge_loss": [],
         "plan_revisions": 0,
-        "run_id": "e2-v4-t10-r0",
+        "run_id": "seed-none.tournament.r0.d4901cb4fffd082666555f288547aeb7e8b6e74e691fc3e87fa2cc8c25bf3b14",
         "runtime_ms": 1042,
         "schema_failures": 0,
         "score": 0.58,
@@ -4699,7 +4790,11 @@
         "generation_id": "v5",
         "judge_errors": [],
         "match_id": "",
-        "measurement": null,
+        "measurement": {
+          "base_seed": null,
+          "draw": 0,
+          "purpose": "tournament"
+        },
         "memory_failure_count": null,
         "metric_counts": [
           {
@@ -4737,7 +4832,7 @@
           }
         ],
         "plan_revisions": 1,
-        "run_id": "e2-v5-t1-r0",
+        "run_id": "seed-none.tournament.r0.1312f8a256f82bf4d392616ea16d17be8840003ce7468424f569eaca90a347a8",
         "runtime_ms": 1050,
         "schema_failures": 0,
         "score": 0.7,
@@ -4771,7 +4866,11 @@
         "generation_id": "v5",
         "judge_errors": [],
         "match_id": "",
-        "measurement": null,
+        "measurement": {
+          "base_seed": null,
+          "draw": 0,
+          "purpose": "tournament"
+        },
         "memory_failure_count": null,
         "metric_counts": [
           {
@@ -4809,7 +4908,7 @@
           }
         ],
         "plan_revisions": 1,
-        "run_id": "e2-v5-t2-r0",
+        "run_id": "seed-none.tournament.r0.62afe876d501f18c32267ca4bb7ececacd56351644c4f41563b4134355f20427",
         "runtime_ms": 1051,
         "schema_failures": 0,
         "score": 0.65,
@@ -4843,7 +4942,11 @@
         "generation_id": "v5",
         "judge_errors": [],
         "match_id": "",
-        "measurement": null,
+        "measurement": {
+          "base_seed": null,
+          "draw": 0,
+          "purpose": "tournament"
+        },
         "memory_failure_count": null,
         "metric_counts": [
           {
@@ -4874,7 +4977,7 @@
         "pass_fail": false,
         "per_judge_loss": [],
         "plan_revisions": 1,
-        "run_id": "e2-v5-t10-r0",
+        "run_id": "seed-none.tournament.r0.cb2bd76fd44bfe63fb8372fabc2726f5e977b2c24e622ee0e7aedbcc8ac0ce6e",
         "runtime_ms": 1052,
         "schema_failures": 0,
         "score": 0.6,
@@ -4910,7 +5013,11 @@
         "generation_id": "v6",
         "judge_errors": [],
         "match_id": "",
-        "measurement": null,
+        "measurement": {
+          "base_seed": null,
+          "draw": 0,
+          "purpose": "tournament"
+        },
         "memory_failure_count": null,
         "metric_counts": [
           {
@@ -4948,7 +5055,7 @@
           }
         ],
         "plan_revisions": 2,
-        "run_id": "e2-v6-t1-r0",
+        "run_id": "seed-none.tournament.r0.a328cdc6081bc2fe973681d5f4b8692614f8a09b3bca2f56a539f39a7685391d",
         "runtime_ms": 1060,
         "schema_failures": 0,
         "score": 0.72,
@@ -4982,7 +5089,11 @@
         "generation_id": "v6",
         "judge_errors": [],
         "match_id": "",
-        "measurement": null,
+        "measurement": {
+          "base_seed": null,
+          "draw": 0,
+          "purpose": "tournament"
+        },
         "memory_failure_count": null,
         "metric_counts": [
           {
@@ -5020,7 +5131,7 @@
           }
         ],
         "plan_revisions": 2,
-        "run_id": "e2-v6-t2-r0",
+        "run_id": "seed-none.tournament.r0.71f3cb60441e9bf4f279928a5aaa905474879f5c3b94a13bbd4b4b00e15b25f0",
         "runtime_ms": 1061,
         "schema_failures": 0,
         "score": 0.67,
@@ -5054,7 +5165,11 @@
         "generation_id": "v6",
         "judge_errors": [],
         "match_id": "",
-        "measurement": null,
+        "measurement": {
+          "base_seed": null,
+          "draw": 0,
+          "purpose": "tournament"
+        },
         "memory_failure_count": null,
         "metric_counts": [
           {
@@ -5085,7 +5200,7 @@
         "pass_fail": true,
         "per_judge_loss": [],
         "plan_revisions": 2,
-        "run_id": "e2-v6-t10-r0",
+        "run_id": "seed-none.tournament.r0.ebf3fb94a617a21dfdc7e5a3a3b47f227e86e604f39830bf2605fc71ab05d66b",
         "runtime_ms": 1062,
         "schema_failures": 0,
         "score": 0.62,
@@ -5121,7 +5236,11 @@
         "generation_id": "v7",
         "judge_errors": [],
         "match_id": "",
-        "measurement": null,
+        "measurement": {
+          "base_seed": null,
+          "draw": 0,
+          "purpose": "tournament"
+        },
         "memory_failure_count": null,
         "metric_counts": [
           {
@@ -5159,7 +5278,7 @@
           }
         ],
         "plan_revisions": 3,
-        "run_id": "e2-v7-t1-r0",
+        "run_id": "seed-none.tournament.r0.d717deb0648dd43669f80281d7de1dbcc4aff92dc5c95ebec024b53ea3a175ab",
         "runtime_ms": 1070,
         "schema_failures": 0,
         "score": 0.74,
@@ -5193,7 +5312,11 @@
         "generation_id": "v7",
         "judge_errors": [],
         "match_id": "",
-        "measurement": null,
+        "measurement": {
+          "base_seed": null,
+          "draw": 0,
+          "purpose": "tournament"
+        },
         "memory_failure_count": null,
         "metric_counts": [
           {
@@ -5231,7 +5354,7 @@
           }
         ],
         "plan_revisions": 3,
-        "run_id": "e2-v7-t2-r0",
+        "run_id": "seed-none.tournament.r0.555ca4a98493c8160f288407b30909e54c43cbda08580d9fa0492211b5bdfdd5",
         "runtime_ms": 1071,
         "schema_failures": 0,
         "score": 0.69,
@@ -5265,7 +5388,11 @@
         "generation_id": "v7",
         "judge_errors": [],
         "match_id": "",
-        "measurement": null,
+        "measurement": {
+          "base_seed": null,
+          "draw": 0,
+          "purpose": "tournament"
+        },
         "memory_failure_count": null,
         "metric_counts": [
           {
@@ -5296,7 +5423,7 @@
         "pass_fail": true,
         "per_judge_loss": [],
         "plan_revisions": 3,
-        "run_id": "e2-v7-t10-r0",
+        "run_id": "seed-none.tournament.r0.d6e2d3d723f297d90ba3cb038d01c752e4b1638679cd70b35cd8f06b2f3f241d",
         "runtime_ms": 1072,
         "schema_failures": 0,
         "score": 0.64,
@@ -5332,7 +5459,11 @@
         "generation_id": "v8",
         "judge_errors": [],
         "match_id": "",
-        "measurement": null,
+        "measurement": {
+          "base_seed": null,
+          "draw": 0,
+          "purpose": "tournament"
+        },
         "memory_failure_count": null,
         "metric_counts": [
           {
@@ -5370,7 +5501,7 @@
           }
         ],
         "plan_revisions": 0,
-        "run_id": "e2-v8-t1-r0",
+        "run_id": "seed-none.tournament.r0.5abbbebffa033a2fc86256822e5253b41dffc23889fbbc89f75ad9bd38b013c8",
         "runtime_ms": 1080,
         "schema_failures": 0,
         "score": 0.76,
@@ -5404,7 +5535,11 @@
         "generation_id": "v8",
         "judge_errors": [],
         "match_id": "",
-        "measurement": null,
+        "measurement": {
+          "base_seed": null,
+          "draw": 0,
+          "purpose": "tournament"
+        },
         "memory_failure_count": null,
         "metric_counts": [
           {
@@ -5442,7 +5577,7 @@
           }
         ],
         "plan_revisions": 0,
-        "run_id": "e2-v8-t2-r0",
+        "run_id": "seed-none.tournament.r0.df78786e9ac8943002817f995a881ba9c6019abc4c44684bfb9897b058cfaece",
         "runtime_ms": 1081,
         "schema_failures": 0,
         "score": 0.71,
@@ -5476,7 +5611,11 @@
         "generation_id": "v8",
         "judge_errors": [],
         "match_id": "",
-        "measurement": null,
+        "measurement": {
+          "base_seed": null,
+          "draw": 0,
+          "purpose": "tournament"
+        },
         "memory_failure_count": null,
         "metric_counts": [
           {
@@ -5507,7 +5646,7 @@
         "pass_fail": true,
         "per_judge_loss": [],
         "plan_revisions": 0,
-        "run_id": "e2-v8-t10-r0",
+        "run_id": "seed-none.tournament.r0.e1a4d17e9f5519abc4b8dd4ea061c27f75d1d16da1312c5825f9da880e754dbf",
         "runtime_ms": 1082,
         "schema_failures": 0,
         "score": 0.66,
@@ -5543,7 +5682,11 @@
         "generation_id": "v9",
         "judge_errors": [],
         "match_id": "",
-        "measurement": null,
+        "measurement": {
+          "base_seed": null,
+          "draw": 0,
+          "purpose": "tournament"
+        },
         "memory_failure_count": null,
         "metric_counts": [
           {
@@ -5581,7 +5724,7 @@
           }
         ],
         "plan_revisions": 1,
-        "run_id": "e2-v9-t1-r0",
+        "run_id": "seed-none.tournament.r0.3fb45f223e1bf78af505f5c73d69b46769b7ec35ed223d247baa0e5b9b9277b5",
         "runtime_ms": 1090,
         "schema_failures": 0,
         "score": 0.78,
@@ -5615,7 +5758,11 @@
         "generation_id": "v9",
         "judge_errors": [],
         "match_id": "",
-        "measurement": null,
+        "measurement": {
+          "base_seed": null,
+          "draw": 0,
+          "purpose": "tournament"
+        },
         "memory_failure_count": null,
         "metric_counts": [
           {
@@ -5653,7 +5800,7 @@
           }
         ],
         "plan_revisions": 1,
-        "run_id": "e2-v9-t2-r0",
+        "run_id": "seed-none.tournament.r0.4135c7f85fcea57f64c9cedddce0eba8d5f5e0ba2a61e650fc0e469b71683524",
         "runtime_ms": 1091,
         "schema_failures": 0,
         "score": 0.73,
@@ -5687,7 +5834,11 @@
         "generation_id": "v9",
         "judge_errors": [],
         "match_id": "",
-        "measurement": null,
+        "measurement": {
+          "base_seed": null,
+          "draw": 0,
+          "purpose": "tournament"
+        },
         "memory_failure_count": null,
         "metric_counts": [
           {
@@ -5718,7 +5869,7 @@
         "pass_fail": false,
         "per_judge_loss": [],
         "plan_revisions": 1,
-        "run_id": "e2-v9-t10-r0",
+        "run_id": "seed-none.tournament.r0.3c50103db38d1158197321b88d2d17e0f0b5baadface6b5733ea4cec445f8e69",
         "runtime_ms": 1092,
         "schema_failures": 0,
         "score": 0.68,
@@ -7566,10 +7717,10 @@
       "entry_id": "t1",
       "epoch_id": "e2",
       "generation_id": "v0",
-      "loss_json": "{\"abort_cause\": null, \"adk_session_id\": \"\", \"cached\": false, \"context_loss_count\": null, \"drift_loss\": 0.4, \"ended_at\": null, \"entry_id\": \"t1\", \"epoch_id\": \"e2\", \"expectation_result\": {\"detail\": \"\", \"kind\": \"rubric\", \"metrics\": null, \"passed\": true, \"score\": null}, \"generation_id\": \"v0\", \"judge_errors\": [], \"match_id\": \"\", \"memory_failure_count\": null, \"metric_counts\": [{\"count\": 0.0, \"name\": \"drift:plan_thrash\", \"severity\": \"warning\"}, {\"count\": 1.0, \"name\": \"drift:custom:tone_guard\", \"severity\": \"warning\"}, {\"count\": 500.0, \"name\": \"cost:tokens_spent\", \"severity\": \"\"}, {\"count\": 1200.0, \"name\": \"output:chars\", \"severity\": \"\"}], \"metrics\": null, \"not_completed\": false, \"not_completed_reason\": null, \"output_chars\": 1200, \"pass_fail\": true, \"per_judge_loss\": [{\"judge_name\": \"tone_guard\", \"raw_loss\": 1.0, \"weight\": 3.0, \"weighted_loss\": 3.0}], \"plan_revisions\": 0, \"run_id\": \"e2-v0-t1-r0\", \"runtime_ms\": 1000, \"schema_failures\": 0, \"score\": 0.6, \"scoring_provenance\": null, \"source_epoch\": \"\", \"source_run\": \"\", \"started_at\": null, \"task_failure_ratio\": 0.0, \"tokens_spent\": 500, \"turns_completed\": null, \"wall_clock_budget_exceeded\": false}",
+      "loss_json": "{\"abort_cause\": null, \"adk_session_id\": \"\", \"cached\": false, \"context_loss_count\": null, \"drift_loss\": 0.4, \"ended_at\": null, \"entry_id\": \"t1\", \"epoch_id\": \"e2\", \"expectation_result\": {\"detail\": \"\", \"kind\": \"rubric\", \"metrics\": null, \"passed\": true, \"score\": null}, \"generation_id\": \"v0\", \"judge_errors\": [], \"match_id\": \"\", \"measurement\": {\"base_seed\": null, \"draw\": 0, \"purpose\": \"tournament\"}, \"memory_failure_count\": null, \"metric_counts\": [{\"count\": 0.0, \"name\": \"drift:plan_thrash\", \"severity\": \"warning\"}, {\"count\": 1.0, \"name\": \"drift:custom:tone_guard\", \"severity\": \"warning\"}, {\"count\": 500.0, \"name\": \"cost:tokens_spent\", \"severity\": \"\"}, {\"count\": 1200.0, \"name\": \"output:chars\", \"severity\": \"\"}], \"metrics\": null, \"not_completed\": false, \"not_completed_reason\": null, \"output_chars\": 1200, \"pass_fail\": true, \"per_judge_loss\": [{\"judge_name\": \"tone_guard\", \"raw_loss\": 1.0, \"weight\": 3.0, \"weighted_loss\": 3.0}], \"plan_revisions\": 0, \"run_id\": \"seed-none.tournament.r0.191816768532ad778729ff1b67f96fb059bb29609346e9bd4fae938c5803d9c4\", \"runtime_ms\": 1000, \"schema_failures\": 0, \"score\": 0.6, \"scoring_provenance\": null, \"source_epoch\": \"\", \"source_run\": \"\", \"started_at\": null, \"task_failure_ratio\": 0.0, \"tokens_spent\": 500, \"turns_completed\": null, \"wall_clock_budget_exceeded\": false}",
       "match_id": null,
       "pass_fail": 1,
-      "run_id": "e2-v0-t1-r0",
+      "run_id": "seed-none.tournament.r0.191816768532ad778729ff1b67f96fb059bb29609346e9bd4fae938c5803d9c4",
       "runtime_ms": 1000,
       "source_epoch": null,
       "source_run": null,
@@ -7582,10 +7733,10 @@
       "entry_id": "t10",
       "epoch_id": "e2",
       "generation_id": "v0",
-      "loss_json": "{\"abort_cause\": null, \"adk_session_id\": \"\", \"cached\": false, \"context_loss_count\": null, \"drift_loss\": 0.5, \"ended_at\": null, \"entry_id\": \"t10\", \"epoch_id\": \"e2\", \"expectation_result\": {\"detail\": \"\", \"kind\": \"predicate\", \"metrics\": null, \"passed\": true, \"score\": null}, \"generation_id\": \"v0\", \"judge_errors\": [], \"match_id\": \"\", \"memory_failure_count\": null, \"metric_counts\": [{\"count\": 0.0, \"name\": \"drift:plan_thrash\", \"severity\": \"warning\"}, {\"count\": 0.0, \"name\": \"drift:custom:tone_guard\", \"severity\": \"warning\"}, {\"count\": 500.0, \"name\": \"cost:tokens_spent\", \"severity\": \"\"}, {\"count\": 1200.0, \"name\": \"output:chars\", \"severity\": \"\"}], \"metrics\": null, \"not_completed\": false, \"not_completed_reason\": null, \"output_chars\": 1200, \"pass_fail\": true, \"per_judge_loss\": [], \"plan_revisions\": 0, \"run_id\": \"e2-v0-t10-r0\", \"runtime_ms\": 1002, \"schema_failures\": 0, \"score\": 0.5, \"scoring_provenance\": null, \"source_epoch\": \"\", \"source_run\": \"\", \"started_at\": null, \"task_failure_ratio\": 0.0, \"tokens_spent\": 500, \"turns_completed\": null, \"wall_clock_budget_exceeded\": false}",
+      "loss_json": "{\"abort_cause\": null, \"adk_session_id\": \"\", \"cached\": false, \"context_loss_count\": null, \"drift_loss\": 0.5, \"ended_at\": null, \"entry_id\": \"t10\", \"epoch_id\": \"e2\", \"expectation_result\": {\"detail\": \"\", \"kind\": \"predicate\", \"metrics\": null, \"passed\": true, \"score\": null}, \"generation_id\": \"v0\", \"judge_errors\": [], \"match_id\": \"\", \"measurement\": {\"base_seed\": null, \"draw\": 0, \"purpose\": \"tournament\"}, \"memory_failure_count\": null, \"metric_counts\": [{\"count\": 0.0, \"name\": \"drift:plan_thrash\", \"severity\": \"warning\"}, {\"count\": 0.0, \"name\": \"drift:custom:tone_guard\", \"severity\": \"warning\"}, {\"count\": 500.0, \"name\": \"cost:tokens_spent\", \"severity\": \"\"}, {\"count\": 1200.0, \"name\": \"output:chars\", \"severity\": \"\"}], \"metrics\": null, \"not_completed\": false, \"not_completed_reason\": null, \"output_chars\": 1200, \"pass_fail\": true, \"per_judge_loss\": [], \"plan_revisions\": 0, \"run_id\": \"seed-none.tournament.r0.1cf4f6a91e0100792b2c8cdafc66ed3942fc77c7d785acfbcab410bea982bbf8\", \"runtime_ms\": 1002, \"schema_failures\": 0, \"score\": 0.5, \"scoring_provenance\": null, \"source_epoch\": \"\", \"source_run\": \"\", \"started_at\": null, \"task_failure_ratio\": 0.0, \"tokens_spent\": 500, \"turns_completed\": null, \"wall_clock_budget_exceeded\": false}",
       "match_id": null,
       "pass_fail": 1,
-      "run_id": "e2-v0-t10-r0",
+      "run_id": "seed-none.tournament.r0.1cf4f6a91e0100792b2c8cdafc66ed3942fc77c7d785acfbcab410bea982bbf8",
       "runtime_ms": 1002,
       "source_epoch": null,
       "source_run": null,
@@ -7598,10 +7749,10 @@
       "entry_id": "t2",
       "epoch_id": "e2",
       "generation_id": "v0",
-      "loss_json": "{\"abort_cause\": null, \"adk_session_id\": \"\", \"cached\": false, \"context_loss_count\": null, \"drift_loss\": 0.45, \"ended_at\": null, \"entry_id\": \"t2\", \"epoch_id\": \"e2\", \"expectation_result\": {\"detail\": \"\", \"kind\": \"predicate\", \"metrics\": null, \"passed\": true, \"score\": null}, \"generation_id\": \"v0\", \"judge_errors\": [], \"match_id\": \"\", \"memory_failure_count\": null, \"metric_counts\": [{\"count\": 0.0, \"name\": \"drift:plan_thrash\", \"severity\": \"warning\"}, {\"count\": 1.0, \"name\": \"drift:custom:tone_guard\", \"severity\": \"warning\"}, {\"count\": 500.0, \"name\": \"cost:tokens_spent\", \"severity\": \"\"}, {\"count\": 1200.0, \"name\": \"output:chars\", \"severity\": \"\"}], \"metrics\": null, \"not_completed\": false, \"not_completed_reason\": null, \"output_chars\": 1200, \"pass_fail\": true, \"per_judge_loss\": [{\"judge_name\": \"tone_guard\", \"raw_loss\": 1.0, \"weight\": 3.0, \"weighted_loss\": 3.0}], \"plan_revisions\": 0, \"run_id\": \"e2-v0-t2-r0\", \"runtime_ms\": 1001, \"schema_failures\": 0, \"score\": 0.55, \"scoring_provenance\": null, \"source_epoch\": \"\", \"source_run\": \"\", \"started_at\": null, \"task_failure_ratio\": 0.0, \"tokens_spent\": 500, \"turns_completed\": null, \"wall_clock_budget_exceeded\": false}",
+      "loss_json": "{\"abort_cause\": null, \"adk_session_id\": \"\", \"cached\": false, \"context_loss_count\": null, \"drift_loss\": 0.45, \"ended_at\": null, \"entry_id\": \"t2\", \"epoch_id\": \"e2\", \"expectation_result\": {\"detail\": \"\", \"kind\": \"predicate\", \"metrics\": null, \"passed\": true, \"score\": null}, \"generation_id\": \"v0\", \"judge_errors\": [], \"match_id\": \"\", \"measurement\": {\"base_seed\": null, \"draw\": 0, \"purpose\": \"tournament\"}, \"memory_failure_count\": null, \"metric_counts\": [{\"count\": 0.0, \"name\": \"drift:plan_thrash\", \"severity\": \"warning\"}, {\"count\": 1.0, \"name\": \"drift:custom:tone_guard\", \"severity\": \"warning\"}, {\"count\": 500.0, \"name\": \"cost:tokens_spent\", \"severity\": \"\"}, {\"count\": 1200.0, \"name\": \"output:chars\", \"severity\": \"\"}], \"metrics\": null, \"not_completed\": false, \"not_completed_reason\": null, \"output_chars\": 1200, \"pass_fail\": true, \"per_judge_loss\": [{\"judge_name\": \"tone_guard\", \"raw_loss\": 1.0, \"weight\": 3.0, \"weighted_loss\": 3.0}], \"plan_revisions\": 0, \"run_id\": \"seed-none.tournament.r0.eab04c59dc4682d3c1477ff434df9295359eca78a1e5d84c24831cef2ed11ef1\", \"runtime_ms\": 1001, \"schema_failures\": 0, \"score\": 0.55, \"scoring_provenance\": null, \"source_epoch\": \"\", \"source_run\": \"\", \"started_at\": null, \"task_failure_ratio\": 0.0, \"tokens_spent\": 500, \"turns_completed\": null, \"wall_clock_budget_exceeded\": false}",
       "match_id": null,
       "pass_fail": 1,
-      "run_id": "e2-v0-t2-r0",
+      "run_id": "seed-none.tournament.r0.eab04c59dc4682d3c1477ff434df9295359eca78a1e5d84c24831cef2ed11ef1",
       "runtime_ms": 1001,
       "source_epoch": null,
       "source_run": null,
@@ -7616,10 +7767,10 @@
       "entry_id": "t1",
       "epoch_id": "e2",
       "generation_id": "v10",
-      "loss_json": "{\"abort_cause\": null, \"adk_session_id\": \"\", \"cached\": false, \"context_loss_count\": null, \"drift_loss\": 0.2, \"ended_at\": null, \"entry_id\": \"t1\", \"epoch_id\": \"e2\", \"expectation_result\": {\"detail\": \"\", \"kind\": \"rubric\", \"metrics\": null, \"passed\": true, \"score\": null}, \"generation_id\": \"v10\", \"judge_errors\": [], \"match_id\": \"\", \"memory_failure_count\": null, \"metric_counts\": [{\"count\": 1.0, \"name\": \"drift:plan_thrash\", \"severity\": \"warning\"}, {\"count\": 1.0, \"name\": \"drift:custom:tone_guard\", \"severity\": \"warning\"}, {\"count\": 750.0, \"name\": \"cost:tokens_spent\", \"severity\": \"\"}, {\"count\": 1600.0, \"name\": \"output:chars\", \"severity\": \"\"}], \"metrics\": null, \"not_completed\": false, \"not_completed_reason\": null, \"output_chars\": 1600, \"pass_fail\": true, \"per_judge_loss\": [{\"judge_name\": \"tone_guard\", \"raw_loss\": 1.0, \"weight\": 3.0, \"weighted_loss\": 3.0}], \"plan_revisions\": 2, \"run_id\": \"e2-v10-t1-r0\", \"runtime_ms\": 1100, \"schema_failures\": 0, \"score\": 0.8, \"scoring_provenance\": null, \"source_epoch\": \"\", \"source_run\": \"\", \"started_at\": null, \"task_failure_ratio\": 0.0, \"tokens_spent\": 750, \"turns_completed\": null, \"wall_clock_budget_exceeded\": false}",
+      "loss_json": "{\"abort_cause\": null, \"adk_session_id\": \"\", \"cached\": false, \"context_loss_count\": null, \"drift_loss\": 0.2, \"ended_at\": null, \"entry_id\": \"t1\", \"epoch_id\": \"e2\", \"expectation_result\": {\"detail\": \"\", \"kind\": \"rubric\", \"metrics\": null, \"passed\": true, \"score\": null}, \"generation_id\": \"v10\", \"judge_errors\": [], \"match_id\": \"\", \"measurement\": {\"base_seed\": null, \"draw\": 0, \"purpose\": \"tournament\"}, \"memory_failure_count\": null, \"metric_counts\": [{\"count\": 1.0, \"name\": \"drift:plan_thrash\", \"severity\": \"warning\"}, {\"count\": 1.0, \"name\": \"drift:custom:tone_guard\", \"severity\": \"warning\"}, {\"count\": 750.0, \"name\": \"cost:tokens_spent\", \"severity\": \"\"}, {\"count\": 1600.0, \"name\": \"output:chars\", \"severity\": \"\"}], \"metrics\": null, \"not_completed\": false, \"not_completed_reason\": null, \"output_chars\": 1600, \"pass_fail\": true, \"per_judge_loss\": [{\"judge_name\": \"tone_guard\", \"raw_loss\": 1.0, \"weight\": 3.0, \"weighted_loss\": 3.0}], \"plan_revisions\": 2, \"run_id\": \"seed-none.tournament.r0.f7bcda4af39394eb758ebae5920917001ccf0bcbbf79bcfbb39b89d1de9ce7a2\", \"runtime_ms\": 1100, \"schema_failures\": 0, \"score\": 0.8, \"scoring_provenance\": null, \"source_epoch\": \"\", \"source_run\": \"\", \"started_at\": null, \"task_failure_ratio\": 0.0, \"tokens_spent\": 750, \"turns_completed\": null, \"wall_clock_budget_exceeded\": false}",
       "match_id": null,
       "pass_fail": 1,
-      "run_id": "e2-v10-t1-r0",
+      "run_id": "seed-none.tournament.r0.f7bcda4af39394eb758ebae5920917001ccf0bcbbf79bcfbb39b89d1de9ce7a2",
       "runtime_ms": 1100,
       "source_epoch": null,
       "source_run": null,
@@ -7632,10 +7783,10 @@
       "entry_id": "t10",
       "epoch_id": "e2",
       "generation_id": "v10",
-      "loss_json": "{\"abort_cause\": null, \"adk_session_id\": \"\", \"cached\": false, \"context_loss_count\": null, \"drift_loss\": 0.3, \"ended_at\": null, \"entry_id\": \"t10\", \"epoch_id\": \"e2\", \"expectation_result\": {\"detail\": \"\", \"kind\": \"predicate\", \"metrics\": null, \"passed\": true, \"score\": null}, \"generation_id\": \"v10\", \"judge_errors\": [], \"match_id\": \"\", \"memory_failure_count\": null, \"metric_counts\": [{\"count\": 1.0, \"name\": \"drift:plan_thrash\", \"severity\": \"warning\"}, {\"count\": 0.0, \"name\": \"drift:custom:tone_guard\", \"severity\": \"warning\"}, {\"count\": 750.0, \"name\": \"cost:tokens_spent\", \"severity\": \"\"}, {\"count\": 1600.0, \"name\": \"output:chars\", \"severity\": \"\"}], \"metrics\": null, \"not_completed\": false, \"not_completed_reason\": null, \"output_chars\": 1600, \"pass_fail\": true, \"per_judge_loss\": [], \"plan_revisions\": 2, \"run_id\": \"e2-v10-t10-r0\", \"runtime_ms\": 1102, \"schema_failures\": 0, \"score\": 0.7, \"scoring_provenance\": null, \"source_epoch\": \"\", \"source_run\": \"\", \"started_at\": null, \"task_failure_ratio\": 0.0, \"tokens_spent\": 750, \"turns_completed\": null, \"wall_clock_budget_exceeded\": false}",
+      "loss_json": "{\"abort_cause\": null, \"adk_session_id\": \"\", \"cached\": false, \"context_loss_count\": null, \"drift_loss\": 0.3, \"ended_at\": null, \"entry_id\": \"t10\", \"epoch_id\": \"e2\", \"expectation_result\": {\"detail\": \"\", \"kind\": \"predicate\", \"metrics\": null, \"passed\": true, \"score\": null}, \"generation_id\": \"v10\", \"judge_errors\": [], \"match_id\": \"\", \"measurement\": {\"base_seed\": null, \"draw\": 0, \"purpose\": \"tournament\"}, \"memory_failure_count\": null, \"metric_counts\": [{\"count\": 1.0, \"name\": \"drift:plan_thrash\", \"severity\": \"warning\"}, {\"count\": 0.0, \"name\": \"drift:custom:tone_guard\", \"severity\": \"warning\"}, {\"count\": 750.0, \"name\": \"cost:tokens_spent\", \"severity\": \"\"}, {\"count\": 1600.0, \"name\": \"output:chars\", \"severity\": \"\"}], \"metrics\": null, \"not_completed\": false, \"not_completed_reason\": null, \"output_chars\": 1600, \"pass_fail\": true, \"per_judge_loss\": [], \"plan_revisions\": 2, \"run_id\": \"seed-none.tournament.r0.c7d1dee4dc0e2e5241f2472c9cfe49b2cb8d6147fa3e424ff7ea14838045712d\", \"runtime_ms\": 1102, \"schema_failures\": 0, \"score\": 0.7, \"scoring_provenance\": null, \"source_epoch\": \"\", \"source_run\": \"\", \"started_at\": null, \"task_failure_ratio\": 0.0, \"tokens_spent\": 750, \"turns_completed\": null, \"wall_clock_budget_exceeded\": false}",
       "match_id": null,
       "pass_fail": 1,
-      "run_id": "e2-v10-t10-r0",
+      "run_id": "seed-none.tournament.r0.c7d1dee4dc0e2e5241f2472c9cfe49b2cb8d6147fa3e424ff7ea14838045712d",
       "runtime_ms": 1102,
       "source_epoch": null,
       "source_run": null,
@@ -7648,10 +7799,10 @@
       "entry_id": "t2",
       "epoch_id": "e2",
       "generation_id": "v10",
-      "loss_json": "{\"abort_cause\": null, \"adk_session_id\": \"\", \"cached\": false, \"context_loss_count\": null, \"drift_loss\": 0.25, \"ended_at\": null, \"entry_id\": \"t2\", \"epoch_id\": \"e2\", \"expectation_result\": {\"detail\": \"expectation not met\", \"kind\": \"predicate\", \"metrics\": null, \"passed\": false, \"score\": null}, \"generation_id\": \"v10\", \"judge_errors\": [], \"match_id\": \"\", \"memory_failure_count\": null, \"metric_counts\": [{\"count\": 1.0, \"name\": \"drift:plan_thrash\", \"severity\": \"warning\"}, {\"count\": 1.0, \"name\": \"drift:custom:tone_guard\", \"severity\": \"warning\"}, {\"count\": 750.0, \"name\": \"cost:tokens_spent\", \"severity\": \"\"}, {\"count\": 1600.0, \"name\": \"output:chars\", \"severity\": \"\"}], \"metrics\": null, \"not_completed\": false, \"not_completed_reason\": null, \"output_chars\": 1600, \"pass_fail\": false, \"per_judge_loss\": [{\"judge_name\": \"tone_guard\", \"raw_loss\": 1.0, \"weight\": 3.0, \"weighted_loss\": 3.0}], \"plan_revisions\": 2, \"run_id\": \"e2-v10-t2-r0\", \"runtime_ms\": 1101, \"schema_failures\": 0, \"score\": 0.75, \"scoring_provenance\": null, \"source_epoch\": \"\", \"source_run\": \"\", \"started_at\": null, \"task_failure_ratio\": 0.0, \"tokens_spent\": 750, \"turns_completed\": null, \"wall_clock_budget_exceeded\": false}",
+      "loss_json": "{\"abort_cause\": null, \"adk_session_id\": \"\", \"cached\": false, \"context_loss_count\": null, \"drift_loss\": 0.25, \"ended_at\": null, \"entry_id\": \"t2\", \"epoch_id\": \"e2\", \"expectation_result\": {\"detail\": \"expectation not met\", \"kind\": \"predicate\", \"metrics\": null, \"passed\": false, \"score\": null}, \"generation_id\": \"v10\", \"judge_errors\": [], \"match_id\": \"\", \"measurement\": {\"base_seed\": null, \"draw\": 0, \"purpose\": \"tournament\"}, \"memory_failure_count\": null, \"metric_counts\": [{\"count\": 1.0, \"name\": \"drift:plan_thrash\", \"severity\": \"warning\"}, {\"count\": 1.0, \"name\": \"drift:custom:tone_guard\", \"severity\": \"warning\"}, {\"count\": 750.0, \"name\": \"cost:tokens_spent\", \"severity\": \"\"}, {\"count\": 1600.0, \"name\": \"output:chars\", \"severity\": \"\"}], \"metrics\": null, \"not_completed\": false, \"not_completed_reason\": null, \"output_chars\": 1600, \"pass_fail\": false, \"per_judge_loss\": [{\"judge_name\": \"tone_guard\", \"raw_loss\": 1.0, \"weight\": 3.0, \"weighted_loss\": 3.0}], \"plan_revisions\": 2, \"run_id\": \"seed-none.tournament.r0.b46854bd780743b258c2fe7fc36ea68551aa0f06b8bd7afd917601bdc92a0cd7\", \"runtime_ms\": 1101, \"schema_failures\": 0, \"score\": 0.75, \"scoring_provenance\": null, \"source_epoch\": \"\", \"source_run\": \"\", \"started_at\": null, \"task_failure_ratio\": 0.0, \"tokens_spent\": 750, \"turns_completed\": null, \"wall_clock_budget_exceeded\": false}",
       "match_id": null,
       "pass_fail": 0,
-      "run_id": "e2-v10-t2-r0",
+      "run_id": "seed-none.tournament.r0.b46854bd780743b258c2fe7fc36ea68551aa0f06b8bd7afd917601bdc92a0cd7",
       "runtime_ms": 1101,
       "source_epoch": null,
       "source_run": null,
@@ -7666,10 +7817,10 @@
       "entry_id": "t1",
       "epoch_id": "e2",
       "generation_id": "v2",
-      "loss_json": "{\"abort_cause\": null, \"adk_session_id\": \"\", \"cached\": false, \"context_loss_count\": null, \"drift_loss\": 0.36, \"ended_at\": null, \"entry_id\": \"t1\", \"epoch_id\": \"e2\", \"expectation_result\": {\"detail\": \"\", \"kind\": \"rubric\", \"metrics\": null, \"passed\": true, \"score\": null}, \"generation_id\": \"v2\", \"judge_errors\": [], \"match_id\": \"\", \"memory_failure_count\": null, \"metric_counts\": [{\"count\": 2.0, \"name\": \"drift:plan_thrash\", \"severity\": \"warning\"}, {\"count\": 1.0, \"name\": \"drift:custom:tone_guard\", \"severity\": \"warning\"}, {\"count\": 550.0, \"name\": \"cost:tokens_spent\", \"severity\": \"\"}, {\"count\": 1280.0, \"name\": \"output:chars\", \"severity\": \"\"}], \"metrics\": null, \"not_completed\": false, \"not_completed_reason\": null, \"output_chars\": 1280, \"pass_fail\": true, \"per_judge_loss\": [{\"judge_name\": \"tone_guard\", \"raw_loss\": 1.0, \"weight\": 3.0, \"weighted_loss\": 3.0}], \"plan_revisions\": 2, \"run_id\": \"e2-v2-t1-r0\", \"runtime_ms\": 1020, \"schema_failures\": 0, \"score\": 0.64, \"scoring_provenance\": null, \"source_epoch\": \"\", \"source_run\": \"\", \"started_at\": null, \"task_failure_ratio\": 0.0, \"tokens_spent\": 550, \"turns_completed\": null, \"wall_clock_budget_exceeded\": false}",
+      "loss_json": "{\"abort_cause\": null, \"adk_session_id\": \"\", \"cached\": false, \"context_loss_count\": null, \"drift_loss\": 0.36, \"ended_at\": null, \"entry_id\": \"t1\", \"epoch_id\": \"e2\", \"expectation_result\": {\"detail\": \"\", \"kind\": \"rubric\", \"metrics\": null, \"passed\": true, \"score\": null}, \"generation_id\": \"v2\", \"judge_errors\": [], \"match_id\": \"\", \"measurement\": {\"base_seed\": null, \"draw\": 0, \"purpose\": \"tournament\"}, \"memory_failure_count\": null, \"metric_counts\": [{\"count\": 2.0, \"name\": \"drift:plan_thrash\", \"severity\": \"warning\"}, {\"count\": 1.0, \"name\": \"drift:custom:tone_guard\", \"severity\": \"warning\"}, {\"count\": 550.0, \"name\": \"cost:tokens_spent\", \"severity\": \"\"}, {\"count\": 1280.0, \"name\": \"output:chars\", \"severity\": \"\"}], \"metrics\": null, \"not_completed\": false, \"not_completed_reason\": null, \"output_chars\": 1280, \"pass_fail\": true, \"per_judge_loss\": [{\"judge_name\": \"tone_guard\", \"raw_loss\": 1.0, \"weight\": 3.0, \"weighted_loss\": 3.0}], \"plan_revisions\": 2, \"run_id\": \"seed-none.tournament.r0.dc23c88c6ffdceb22c643daaa0ddd3bcce37cd106d52c3989e01f3b33833d675\", \"runtime_ms\": 1020, \"schema_failures\": 0, \"score\": 0.64, \"scoring_provenance\": null, \"source_epoch\": \"\", \"source_run\": \"\", \"started_at\": null, \"task_failure_ratio\": 0.0, \"tokens_spent\": 550, \"turns_completed\": null, \"wall_clock_budget_exceeded\": false}",
       "match_id": null,
       "pass_fail": 1,
-      "run_id": "e2-v2-t1-r0",
+      "run_id": "seed-none.tournament.r0.dc23c88c6ffdceb22c643daaa0ddd3bcce37cd106d52c3989e01f3b33833d675",
       "runtime_ms": 1020,
       "source_epoch": null,
       "source_run": null,
@@ -7682,10 +7833,10 @@
       "entry_id": "t10",
       "epoch_id": "e2",
       "generation_id": "v2",
-      "loss_json": "{\"abort_cause\": null, \"adk_session_id\": \"\", \"cached\": false, \"context_loss_count\": null, \"drift_loss\": 0.46, \"ended_at\": null, \"entry_id\": \"t10\", \"epoch_id\": \"e2\", \"expectation_result\": {\"detail\": \"\", \"kind\": \"predicate\", \"metrics\": null, \"passed\": true, \"score\": null}, \"generation_id\": \"v2\", \"judge_errors\": [], \"match_id\": \"\", \"memory_failure_count\": null, \"metric_counts\": [{\"count\": 2.0, \"name\": \"drift:plan_thrash\", \"severity\": \"warning\"}, {\"count\": 0.0, \"name\": \"drift:custom:tone_guard\", \"severity\": \"warning\"}, {\"count\": 550.0, \"name\": \"cost:tokens_spent\", \"severity\": \"\"}, {\"count\": 1280.0, \"name\": \"output:chars\", \"severity\": \"\"}], \"metrics\": null, \"not_completed\": false, \"not_completed_reason\": null, \"output_chars\": 1280, \"pass_fail\": true, \"per_judge_loss\": [], \"plan_revisions\": 2, \"run_id\": \"e2-v2-t10-r0\", \"runtime_ms\": 1022, \"schema_failures\": 0, \"score\": 0.54, \"scoring_provenance\": null, \"source_epoch\": \"\", \"source_run\": \"\", \"started_at\": null, \"task_failure_ratio\": 0.0, \"tokens_spent\": 550, \"turns_completed\": null, \"wall_clock_budget_exceeded\": false}",
+      "loss_json": "{\"abort_cause\": null, \"adk_session_id\": \"\", \"cached\": false, \"context_loss_count\": null, \"drift_loss\": 0.46, \"ended_at\": null, \"entry_id\": \"t10\", \"epoch_id\": \"e2\", \"expectation_result\": {\"detail\": \"\", \"kind\": \"predicate\", \"metrics\": null, \"passed\": true, \"score\": null}, \"generation_id\": \"v2\", \"judge_errors\": [], \"match_id\": \"\", \"measurement\": {\"base_seed\": null, \"draw\": 0, \"purpose\": \"tournament\"}, \"memory_failure_count\": null, \"metric_counts\": [{\"count\": 2.0, \"name\": \"drift:plan_thrash\", \"severity\": \"warning\"}, {\"count\": 0.0, \"name\": \"drift:custom:tone_guard\", \"severity\": \"warning\"}, {\"count\": 550.0, \"name\": \"cost:tokens_spent\", \"severity\": \"\"}, {\"count\": 1280.0, \"name\": \"output:chars\", \"severity\": \"\"}], \"metrics\": null, \"not_completed\": false, \"not_completed_reason\": null, \"output_chars\": 1280, \"pass_fail\": true, \"per_judge_loss\": [], \"plan_revisions\": 2, \"run_id\": \"seed-none.tournament.r0.b7e9ae00fd3cc55642d153b7abad142330a0a40614b90d31b627c01b5d8f5d69\", \"runtime_ms\": 1022, \"schema_failures\": 0, \"score\": 0.54, \"scoring_provenance\": null, \"source_epoch\": \"\", \"source_run\": \"\", \"started_at\": null, \"task_failure_ratio\": 0.0, \"tokens_spent\": 550, \"turns_completed\": null, \"wall_clock_budget_exceeded\": false}",
       "match_id": null,
       "pass_fail": 1,
-      "run_id": "e2-v2-t10-r0",
+      "run_id": "seed-none.tournament.r0.b7e9ae00fd3cc55642d153b7abad142330a0a40614b90d31b627c01b5d8f5d69",
       "runtime_ms": 1022,
       "source_epoch": null,
       "source_run": null,
@@ -7698,10 +7849,10 @@
       "entry_id": "t2",
       "epoch_id": "e2",
       "generation_id": "v2",
-      "loss_json": "{\"abort_cause\": null, \"adk_session_id\": \"\", \"cached\": false, \"context_loss_count\": null, \"drift_loss\": 0.41, \"ended_at\": null, \"entry_id\": \"t2\", \"epoch_id\": \"e2\", \"expectation_result\": {\"detail\": \"expectation not met\", \"kind\": \"predicate\", \"metrics\": null, \"passed\": false, \"score\": null}, \"generation_id\": \"v2\", \"judge_errors\": [], \"match_id\": \"\", \"memory_failure_count\": null, \"metric_counts\": [{\"count\": 2.0, \"name\": \"drift:plan_thrash\", \"severity\": \"warning\"}, {\"count\": 1.0, \"name\": \"drift:custom:tone_guard\", \"severity\": \"warning\"}, {\"count\": 550.0, \"name\": \"cost:tokens_spent\", \"severity\": \"\"}, {\"count\": 1280.0, \"name\": \"output:chars\", \"severity\": \"\"}], \"metrics\": null, \"not_completed\": false, \"not_completed_reason\": null, \"output_chars\": 1280, \"pass_fail\": false, \"per_judge_loss\": [{\"judge_name\": \"tone_guard\", \"raw_loss\": 1.0, \"weight\": 3.0, \"weighted_loss\": 3.0}], \"plan_revisions\": 2, \"run_id\": \"e2-v2-t2-r0\", \"runtime_ms\": 1021, \"schema_failures\": 0, \"score\": 0.59, \"scoring_provenance\": null, \"source_epoch\": \"\", \"source_run\": \"\", \"started_at\": null, \"task_failure_ratio\": 0.0, \"tokens_spent\": 550, \"turns_completed\": null, \"wall_clock_budget_exceeded\": false}",
+      "loss_json": "{\"abort_cause\": null, \"adk_session_id\": \"\", \"cached\": false, \"context_loss_count\": null, \"drift_loss\": 0.41, \"ended_at\": null, \"entry_id\": \"t2\", \"epoch_id\": \"e2\", \"expectation_result\": {\"detail\": \"expectation not met\", \"kind\": \"predicate\", \"metrics\": null, \"passed\": false, \"score\": null}, \"generation_id\": \"v2\", \"judge_errors\": [], \"match_id\": \"\", \"measurement\": {\"base_seed\": null, \"draw\": 0, \"purpose\": \"tournament\"}, \"memory_failure_count\": null, \"metric_counts\": [{\"count\": 2.0, \"name\": \"drift:plan_thrash\", \"severity\": \"warning\"}, {\"count\": 1.0, \"name\": \"drift:custom:tone_guard\", \"severity\": \"warning\"}, {\"count\": 550.0, \"name\": \"cost:tokens_spent\", \"severity\": \"\"}, {\"count\": 1280.0, \"name\": \"output:chars\", \"severity\": \"\"}], \"metrics\": null, \"not_completed\": false, \"not_completed_reason\": null, \"output_chars\": 1280, \"pass_fail\": false, \"per_judge_loss\": [{\"judge_name\": \"tone_guard\", \"raw_loss\": 1.0, \"weight\": 3.0, \"weighted_loss\": 3.0}], \"plan_revisions\": 2, \"run_id\": \"seed-none.tournament.r0.b954bc9603cf92eb03937ccf5a8e996bc475e1129202a1615945bfb22f998b33\", \"runtime_ms\": 1021, \"schema_failures\": 0, \"score\": 0.59, \"scoring_provenance\": null, \"source_epoch\": \"\", \"source_run\": \"\", \"started_at\": null, \"task_failure_ratio\": 0.0, \"tokens_spent\": 550, \"turns_completed\": null, \"wall_clock_budget_exceeded\": false}",
       "match_id": null,
       "pass_fail": 0,
-      "run_id": "e2-v2-t2-r0",
+      "run_id": "seed-none.tournament.r0.b954bc9603cf92eb03937ccf5a8e996bc475e1129202a1615945bfb22f998b33",
       "runtime_ms": 1021,
       "source_epoch": null,
       "source_run": null,
@@ -7927,7 +8078,7 @@
       "epoch_id": "e2",
       "generation_id": "v0",
       "match_id": null,
-      "run_id": "e2-v0-t1-r0",
+      "run_id": "seed-none.contract_preflight.r0.191816768532ad778729ff1b67f96fb059bb29609346e9bd4fae938c5803d9c4",
       "runtime_ms": 1000,
       "started_at": "",
       "tournament_id": null
@@ -7939,7 +8090,7 @@
       "epoch_id": "e2",
       "generation_id": "v0",
       "match_id": null,
-      "run_id": "e2-v0-t1-r1",
+      "run_id": "seed-none.tournament.r0.191816768532ad778729ff1b67f96fb059bb29609346e9bd4fae938c5803d9c4",
       "runtime_ms": 1000,
       "started_at": "",
       "tournament_id": null
@@ -7951,7 +8102,7 @@
       "epoch_id": "e2",
       "generation_id": "v0",
       "match_id": null,
-      "run_id": "e2-v0-t1-r2000",
+      "run_id": "seed-none.tournament.r1.191816768532ad778729ff1b67f96fb059bb29609346e9bd4fae938c5803d9c4",
       "runtime_ms": 1000,
       "started_at": "",
       "tournament_id": null
@@ -7963,7 +8114,7 @@
       "epoch_id": "e2",
       "generation_id": "v0",
       "match_id": null,
-      "run_id": "e2-v0-t10-r0",
+      "run_id": "seed-none.contract_preflight.r0.1cf4f6a91e0100792b2c8cdafc66ed3942fc77c7d785acfbcab410bea982bbf8",
       "runtime_ms": 1002,
       "started_at": "",
       "tournament_id": null
@@ -7975,7 +8126,7 @@
       "epoch_id": "e2",
       "generation_id": "v0",
       "match_id": null,
-      "run_id": "e2-v0-t10-r1",
+      "run_id": "seed-none.tournament.r0.1cf4f6a91e0100792b2c8cdafc66ed3942fc77c7d785acfbcab410bea982bbf8",
       "runtime_ms": 1002,
       "started_at": "",
       "tournament_id": null
@@ -7987,7 +8138,7 @@
       "epoch_id": "e2",
       "generation_id": "v0",
       "match_id": null,
-      "run_id": "e2-v0-t10-r2000",
+      "run_id": "seed-none.tournament.r1.1cf4f6a91e0100792b2c8cdafc66ed3942fc77c7d785acfbcab410bea982bbf8",
       "runtime_ms": 1002,
       "started_at": "",
       "tournament_id": null
@@ -7999,7 +8150,7 @@
       "epoch_id": "e2",
       "generation_id": "v0",
       "match_id": null,
-      "run_id": "e2-v0-t2-r0",
+      "run_id": "seed-none.contract_preflight.r0.eab04c59dc4682d3c1477ff434df9295359eca78a1e5d84c24831cef2ed11ef1",
       "runtime_ms": 1001,
       "started_at": "",
       "tournament_id": null
@@ -8011,7 +8162,7 @@
       "epoch_id": "e2",
       "generation_id": "v0",
       "match_id": null,
-      "run_id": "e2-v0-t2-r1",
+      "run_id": "seed-none.tournament.r0.eab04c59dc4682d3c1477ff434df9295359eca78a1e5d84c24831cef2ed11ef1",
       "runtime_ms": 1001,
       "started_at": "",
       "tournament_id": null
@@ -8023,7 +8174,7 @@
       "epoch_id": "e2",
       "generation_id": "v0",
       "match_id": null,
-      "run_id": "e2-v0-t2-r2000",
+      "run_id": "seed-none.tournament.r1.eab04c59dc4682d3c1477ff434df9295359eca78a1e5d84c24831cef2ed11ef1",
       "runtime_ms": 1001,
       "started_at": "",
       "tournament_id": null
@@ -8037,7 +8188,7 @@
       "epoch_id": "e2",
       "generation_id": "v10",
       "match_id": null,
-      "run_id": "e2-v10-t1-r0",
+      "run_id": "seed-none.tournament.r0.f7bcda4af39394eb758ebae5920917001ccf0bcbbf79bcfbb39b89d1de9ce7a2",
       "runtime_ms": 1100,
       "started_at": "",
       "tournament_id": "e2:v9->v10"
@@ -8049,7 +8200,7 @@
       "epoch_id": "e2",
       "generation_id": "v10",
       "match_id": null,
-      "run_id": "e2-v10-t10-r0",
+      "run_id": "seed-none.tournament.r0.c7d1dee4dc0e2e5241f2472c9cfe49b2cb8d6147fa3e424ff7ea14838045712d",
       "runtime_ms": 1102,
       "started_at": "",
       "tournament_id": "e2:v9->v10"
@@ -8061,7 +8212,7 @@
       "epoch_id": "e2",
       "generation_id": "v10",
       "match_id": null,
-      "run_id": "e2-v10-t2-r0",
+      "run_id": "seed-none.tournament.r0.b46854bd780743b258c2fe7fc36ea68551aa0f06b8bd7afd917601bdc92a0cd7",
       "runtime_ms": 1101,
       "started_at": "",
       "tournament_id": "e2:v9->v10"
@@ -8075,7 +8226,7 @@
       "epoch_id": "e2",
       "generation_id": "v2",
       "match_id": null,
-      "run_id": "e2-v2-t1-r0",
+      "run_id": "seed-none.tournament.r0.dc23c88c6ffdceb22c643daaa0ddd3bcce37cd106d52c3989e01f3b33833d675",
       "runtime_ms": 1020,
       "started_at": "",
       "tournament_id": "e2:v1->v2"
@@ -8087,7 +8238,7 @@
       "epoch_id": "e2",
       "generation_id": "v2",
       "match_id": null,
-      "run_id": "e2-v2-t10-r0",
+      "run_id": "seed-none.tournament.r0.b7e9ae00fd3cc55642d153b7abad142330a0a40614b90d31b627c01b5d8f5d69",
       "runtime_ms": 1022,
       "started_at": "",
       "tournament_id": "e2:v1->v2"
@@ -8099,7 +8250,7 @@
       "epoch_id": "e2",
       "generation_id": "v2",
       "match_id": null,
-      "run_id": "e2-v2-t2-r0",
+      "run_id": "seed-none.tournament.r0.b954bc9603cf92eb03937ccf5a8e996bc475e1129202a1615945bfb22f998b33",
       "runtime_ms": 1021,
       "started_at": "",
       "tournament_id": "e2:v1->v2"
@@ -8454,14 +8605,18 @@
         "drift:plan_thrash": 0.0,
         "judge:tone_guard": 3.0
       },
-      "loss_ref": "<ws>/epochs/e2/generations/v0/runs/t1/loss.json",
-      "measurement": null,
+      "loss_ref": "<ws>/epochs/e2/generations/v0/runs/t1/seed-none/loss.tournament.r0.json",
+      "measurement": {
+        "base_seed": null,
+        "draw": 0,
+        "purpose": "tournament"
+      },
       "pass_fail": true,
       "reflection_id": "r-10",
       "replicate": 0,
       "runtime_ms": 1000,
       "scalar": 4.3,
-      "transcript_ref": "<ws>/epochs/e2/generations/v0/runs/t1/result.json"
+      "transcript_ref": "<ws>/epochs/e2/generations/v0/runs/t1/seed-none/result.tournament.r0.json"
     },
     {
       "abort_cause": null,
@@ -8503,14 +8658,18 @@
         "drift:plan_thrash": 0.0,
         "judge:tone_guard": 3.0
       },
-      "loss_ref": "<ws>/epochs/e2/generations/v0/runs/t1/loss.r1.json",
-      "measurement": null,
+      "loss_ref": "<ws>/epochs/e2/generations/v0/runs/t1/seed-none/loss.tournament.r1.json",
+      "measurement": {
+        "base_seed": null,
+        "draw": 1,
+        "purpose": "tournament"
+      },
       "pass_fail": true,
       "reflection_id": "r-10",
       "replicate": 1,
       "runtime_ms": 1000,
       "scalar": 4.32,
-      "transcript_ref": "<ws>/epochs/e2/generations/v0/runs/t1/events.r1.jsonl"
+      "transcript_ref": "<ws>/epochs/e2/generations/v0/runs/t1/seed-none/events.tournament.r1.jsonl"
     },
     {
       "abort_cause": null,
@@ -8552,14 +8711,18 @@
         "drift:plan_thrash": 0.0,
         "judge:tone_guard": 3.0
       },
-      "loss_ref": "<ws>/epochs/e2/generations/v0/runs/t2/loss.json",
-      "measurement": null,
+      "loss_ref": "<ws>/epochs/e2/generations/v0/runs/t2/seed-none/loss.tournament.r0.json",
+      "measurement": {
+        "base_seed": null,
+        "draw": 0,
+        "purpose": "tournament"
+      },
       "pass_fail": true,
       "reflection_id": "r-10",
       "replicate": 0,
       "runtime_ms": 1001,
       "scalar": 4.4,
-      "transcript_ref": "<ws>/epochs/e2/generations/v0/runs/t2/result.json"
+      "transcript_ref": "<ws>/epochs/e2/generations/v0/runs/t2/seed-none/result.tournament.r0.json"
     },
     {
       "abort_cause": null,
@@ -8601,14 +8764,18 @@
         "drift:plan_thrash": 0.0,
         "judge:tone_guard": 3.0
       },
-      "loss_ref": "<ws>/epochs/e2/generations/v0/runs/t2/loss.r1.json",
-      "measurement": null,
+      "loss_ref": "<ws>/epochs/e2/generations/v0/runs/t2/seed-none/loss.tournament.r1.json",
+      "measurement": {
+        "base_seed": null,
+        "draw": 1,
+        "purpose": "tournament"
+      },
       "pass_fail": true,
       "reflection_id": "r-10",
       "replicate": 1,
       "runtime_ms": 1001,
       "scalar": 4.42,
-      "transcript_ref": "<ws>/epochs/e2/generations/v0/runs/t2/events.r1.jsonl"
+      "transcript_ref": "<ws>/epochs/e2/generations/v0/runs/t2/seed-none/events.tournament.r1.jsonl"
     },
     {
       "abort_cause": null,
@@ -8640,14 +8807,18 @@
         "drift:custom:tone_guard": 0.0,
         "drift:plan_thrash": 0.0
       },
-      "loss_ref": "<ws>/epochs/e2/generations/v0/runs/t10/loss.json",
-      "measurement": null,
+      "loss_ref": "<ws>/epochs/e2/generations/v0/runs/t10/seed-none/loss.tournament.r0.json",
+      "measurement": {
+        "base_seed": null,
+        "draw": 0,
+        "purpose": "tournament"
+      },
       "pass_fail": true,
       "reflection_id": "r-10",
       "replicate": 0,
       "runtime_ms": 1002,
       "scalar": 1.5,
-      "transcript_ref": "<ws>/epochs/e2/generations/v0/runs/t10/events.jsonl"
+      "transcript_ref": "<ws>/epochs/e2/generations/v0/runs/t10/seed-none/events.tournament.r0.jsonl"
     },
     {
       "abort_cause": null,
@@ -8679,14 +8850,18 @@
         "drift:custom:tone_guard": 0.0,
         "drift:plan_thrash": 0.0
       },
-      "loss_ref": "<ws>/epochs/e2/generations/v0/runs/t10/loss.r1.json",
-      "measurement": null,
+      "loss_ref": "<ws>/epochs/e2/generations/v0/runs/t10/seed-none/loss.tournament.r1.json",
+      "measurement": {
+        "base_seed": null,
+        "draw": 1,
+        "purpose": "tournament"
+      },
       "pass_fail": true,
       "reflection_id": "r-10",
       "replicate": 1,
       "runtime_ms": 1002,
       "scalar": 1.52,
-      "transcript_ref": "<ws>/epochs/e2/generations/v0/runs/t10/events.r1.jsonl"
+      "transcript_ref": "<ws>/epochs/e2/generations/v0/runs/t10/seed-none/events.tournament.r1.jsonl"
     },
     {
       "abort_cause": null,
@@ -8728,14 +8903,18 @@
         "drift:plan_thrash": 3.0,
         "judge:tone_guard": 3.0
       },
-      "loss_ref": "<ws>/epochs/e2/generations/v1/runs/t1/loss.json",
-      "measurement": null,
+      "loss_ref": "<ws>/epochs/e2/generations/v1/runs/t1/seed-none/loss.tournament.r0.json",
+      "measurement": {
+        "base_seed": null,
+        "draw": 0,
+        "purpose": "tournament"
+      },
       "pass_fail": true,
       "reflection_id": "r-10",
       "replicate": 0,
       "runtime_ms": 1010,
       "scalar": 4.285,
-      "transcript_ref": "<ws>/epochs/e2/generations/v1/runs/t1/result.json"
+      "transcript_ref": "<ws>/epochs/e2/generations/v1/runs/t1/seed-none/result.tournament.r0.json"
     },
     {
       "abort_cause": null,
@@ -8777,14 +8956,18 @@
         "drift:plan_thrash": 3.0,
         "judge:tone_guard": 3.0
       },
-      "loss_ref": "<ws>/epochs/e2/generations/v1/runs/t1/loss.r1.json",
-      "measurement": null,
+      "loss_ref": "<ws>/epochs/e2/generations/v1/runs/t1/seed-none/loss.tournament.r1.json",
+      "measurement": {
+        "base_seed": null,
+        "draw": 1,
+        "purpose": "tournament"
+      },
       "pass_fail": true,
       "reflection_id": "r-10",
       "replicate": 1,
       "runtime_ms": 1010,
       "scalar": 4.305,
-      "transcript_ref": "<ws>/epochs/e2/generations/v1/runs/t1/events.r1.jsonl"
+      "transcript_ref": "<ws>/epochs/e2/generations/v1/runs/t1/seed-none/events.tournament.r1.jsonl"
     },
     {
       "abort_cause": null,
@@ -8826,14 +9009,18 @@
         "drift:plan_thrash": 3.0,
         "judge:tone_guard": 3.0
       },
-      "loss_ref": "<ws>/epochs/e2/generations/v1/runs/t2/loss.json",
-      "measurement": null,
+      "loss_ref": "<ws>/epochs/e2/generations/v1/runs/t2/seed-none/loss.tournament.r0.json",
+      "measurement": {
+        "base_seed": null,
+        "draw": 0,
+        "purpose": "tournament"
+      },
       "pass_fail": true,
       "reflection_id": "r-10",
       "replicate": 0,
       "runtime_ms": 1011,
       "scalar": 4.385,
-      "transcript_ref": "<ws>/epochs/e2/generations/v1/runs/t2/result.json"
+      "transcript_ref": "<ws>/epochs/e2/generations/v1/runs/t2/seed-none/result.tournament.r0.json"
     },
     {
       "abort_cause": null,
@@ -8875,14 +9062,18 @@
         "drift:plan_thrash": 3.0,
         "judge:tone_guard": 3.0
       },
-      "loss_ref": "<ws>/epochs/e2/generations/v1/runs/t2/loss.r1.json",
-      "measurement": null,
+      "loss_ref": "<ws>/epochs/e2/generations/v1/runs/t2/seed-none/loss.tournament.r1.json",
+      "measurement": {
+        "base_seed": null,
+        "draw": 1,
+        "purpose": "tournament"
+      },
       "pass_fail": true,
       "reflection_id": "r-10",
       "replicate": 1,
       "runtime_ms": 1011,
       "scalar": 4.405,
-      "transcript_ref": "<ws>/epochs/e2/generations/v1/runs/t2/events.r1.jsonl"
+      "transcript_ref": "<ws>/epochs/e2/generations/v1/runs/t2/seed-none/events.tournament.r1.jsonl"
     },
     {
       "abort_cause": null,
@@ -8914,14 +9105,18 @@
         "drift:custom:tone_guard": 0.0,
         "drift:plan_thrash": 3.0
       },
-      "loss_ref": "<ws>/epochs/e2/generations/v1/runs/t10/loss.json",
-      "measurement": null,
+      "loss_ref": "<ws>/epochs/e2/generations/v1/runs/t10/seed-none/loss.tournament.r0.json",
+      "measurement": {
+        "base_seed": null,
+        "draw": 0,
+        "purpose": "tournament"
+      },
       "pass_fail": false,
       "reflection_id": "r-10",
       "replicate": 0,
       "runtime_ms": 1012,
       "scalar": 1.4849999999999999,
-      "transcript_ref": "<ws>/epochs/e2/generations/v1/runs/t10/events.jsonl"
+      "transcript_ref": "<ws>/epochs/e2/generations/v1/runs/t10/seed-none/events.tournament.r0.jsonl"
     },
     {
       "abort_cause": null,
@@ -8953,14 +9148,18 @@
         "drift:custom:tone_guard": 0.0,
         "drift:plan_thrash": 3.0
       },
-      "loss_ref": "<ws>/epochs/e2/generations/v1/runs/t10/loss.r1.json",
-      "measurement": null,
+      "loss_ref": "<ws>/epochs/e2/generations/v1/runs/t10/seed-none/loss.tournament.r1.json",
+      "measurement": {
+        "base_seed": null,
+        "draw": 1,
+        "purpose": "tournament"
+      },
       "pass_fail": false,
       "reflection_id": "r-10",
       "replicate": 1,
       "runtime_ms": 1012,
       "scalar": 1.505,
-      "transcript_ref": "<ws>/epochs/e2/generations/v1/runs/t10/events.r1.jsonl"
+      "transcript_ref": "<ws>/epochs/e2/generations/v1/runs/t10/seed-none/events.tournament.r1.jsonl"
     },
     {
       "abort_cause": null,
@@ -9002,14 +9201,18 @@
         "drift:plan_thrash": 6.0,
         "judge:tone_guard": 3.0
       },
-      "loss_ref": "<ws>/epochs/e2/generations/v2/runs/t1/loss.json",
-      "measurement": null,
+      "loss_ref": "<ws>/epochs/e2/generations/v2/runs/t1/seed-none/loss.tournament.r0.json",
+      "measurement": {
+        "base_seed": null,
+        "draw": 0,
+        "purpose": "tournament"
+      },
       "pass_fail": true,
       "reflection_id": "r-10",
       "replicate": 0,
       "runtime_ms": 1020,
       "scalar": 4.27,
-      "transcript_ref": "<ws>/epochs/e2/generations/v2/runs/t1/result.json"
+      "transcript_ref": "<ws>/epochs/e2/generations/v2/runs/t1/seed-none/result.tournament.r0.json"
     },
     {
       "abort_cause": null,
@@ -9051,14 +9254,18 @@
         "drift:plan_thrash": 6.0,
         "judge:tone_guard": 3.0
       },
-      "loss_ref": "<ws>/epochs/e2/generations/v2/runs/t2/loss.json",
-      "measurement": null,
+      "loss_ref": "<ws>/epochs/e2/generations/v2/runs/t2/seed-none/loss.tournament.r0.json",
+      "measurement": {
+        "base_seed": null,
+        "draw": 0,
+        "purpose": "tournament"
+      },
       "pass_fail": false,
       "reflection_id": "r-10",
       "replicate": 0,
       "runtime_ms": 1021,
       "scalar": 4.37,
-      "transcript_ref": "<ws>/epochs/e2/generations/v2/runs/t2/result.json"
+      "transcript_ref": "<ws>/epochs/e2/generations/v2/runs/t2/seed-none/result.tournament.r0.json"
     },
     {
       "abort_cause": null,
@@ -9090,14 +9297,18 @@
         "drift:custom:tone_guard": 0.0,
         "drift:plan_thrash": 6.0
       },
-      "loss_ref": "<ws>/epochs/e2/generations/v2/runs/t10/loss.json",
-      "measurement": null,
+      "loss_ref": "<ws>/epochs/e2/generations/v2/runs/t10/seed-none/loss.tournament.r0.json",
+      "measurement": {
+        "base_seed": null,
+        "draw": 0,
+        "purpose": "tournament"
+      },
       "pass_fail": true,
       "reflection_id": "r-10",
       "replicate": 0,
       "runtime_ms": 1022,
       "scalar": 1.47,
-      "transcript_ref": "<ws>/epochs/e2/generations/v2/runs/t10/events.jsonl"
+      "transcript_ref": "<ws>/epochs/e2/generations/v2/runs/t10/seed-none/events.tournament.r0.jsonl"
     }
   ],
   "zicato.reflection.judge_self_consistency": {
@@ -9149,9 +9360,9 @@
           "v10"
         ],
         "source_refs": [
-          "<ws>/epochs/e2/generations/v2/runs/t2/loss.json",
-          "<ws>/epochs/e2/generations/v6/runs/t2/loss.json",
-          "<ws>/epochs/e2/generations/v10/runs/t2/loss.json"
+          "<ws>/epochs/e2/generations/v2/runs/t2/seed-none/loss.tournament.r0.json",
+          "<ws>/epochs/e2/generations/v6/runs/t2/seed-none/loss.tournament.r0.json",
+          "<ws>/epochs/e2/generations/v10/runs/t2/seed-none/loss.tournament.r0.json"
         ]
       },
       "recency_key": 10,
@@ -9177,10 +9388,10 @@
           "v9"
         ],
         "source_refs": [
-          "<ws>/epochs/e2/generations/v1/runs/t10/loss.json",
-          "<ws>/epochs/e2/generations/v1/runs/t10/loss.r1.json",
-          "<ws>/epochs/e2/generations/v5/runs/t10/loss.json",
-          "<ws>/epochs/e2/generations/v9/runs/t10/loss.json"
+          "<ws>/epochs/e2/generations/v1/runs/t10/seed-none/loss.tournament.r0.json",
+          "<ws>/epochs/e2/generations/v1/runs/t10/seed-none/loss.tournament.r1.json",
+          "<ws>/epochs/e2/generations/v5/runs/t10/seed-none/loss.tournament.r0.json",
+          "<ws>/epochs/e2/generations/v9/runs/t10/seed-none/loss.tournament.r0.json"
         ]
       },
       "recency_key": 9,
@@ -9205,8 +9416,8 @@
           "v7"
         ],
         "source_refs": [
-          "<ws>/epochs/e2/generations/v3/runs/t1/loss.json",
-          "<ws>/epochs/e2/generations/v7/runs/t1/loss.json"
+          "<ws>/epochs/e2/generations/v3/runs/t1/seed-none/loss.tournament.r0.json",
+          "<ws>/epochs/e2/generations/v7/runs/t1/seed-none/loss.tournament.r0.json"
         ]
       },
       "recency_key": 7,
@@ -9284,14 +9495,18 @@
         "drift:plan_thrash": 0.0,
         "judge:tone_guard": 3.0
       },
-      "loss_ref": "<ws>/epochs/e2/generations/v0/runs/t1/loss.json",
-      "measurement": null,
+      "loss_ref": "<ws>/epochs/e2/generations/v0/runs/t1/seed-none/loss.tournament.r0.json",
+      "measurement": {
+        "base_seed": null,
+        "draw": 0,
+        "purpose": "tournament"
+      },
       "pass_fail": true,
       "reflection_id": "r-10",
       "replicate": 0,
       "runtime_ms": 1000,
       "scalar": 4.3,
-      "transcript_ref": "<ws>/epochs/e2/generations/v0/runs/t1/result.json"
+      "transcript_ref": "<ws>/epochs/e2/generations/v0/runs/t1/seed-none/result.tournament.r0.json"
     },
     {
       "abort_cause": null,
@@ -9333,14 +9548,18 @@
         "drift:plan_thrash": 0.0,
         "judge:tone_guard": 3.0
       },
-      "loss_ref": "<ws>/epochs/e2/generations/v0/runs/t1/loss.r1.json",
-      "measurement": null,
+      "loss_ref": "<ws>/epochs/e2/generations/v0/runs/t1/seed-none/loss.tournament.r1.json",
+      "measurement": {
+        "base_seed": null,
+        "draw": 1,
+        "purpose": "tournament"
+      },
       "pass_fail": true,
       "reflection_id": "r-10",
       "replicate": 1,
       "runtime_ms": 1000,
       "scalar": 4.32,
-      "transcript_ref": "<ws>/epochs/e2/generations/v0/runs/t1/events.r1.jsonl"
+      "transcript_ref": "<ws>/epochs/e2/generations/v0/runs/t1/seed-none/events.tournament.r1.jsonl"
     },
     {
       "abort_cause": null,
@@ -9382,14 +9601,18 @@
         "drift:plan_thrash": 0.0,
         "judge:tone_guard": 3.0
       },
-      "loss_ref": "<ws>/epochs/e2/generations/v0/runs/t2/loss.json",
-      "measurement": null,
+      "loss_ref": "<ws>/epochs/e2/generations/v0/runs/t2/seed-none/loss.tournament.r0.json",
+      "measurement": {
+        "base_seed": null,
+        "draw": 0,
+        "purpose": "tournament"
+      },
       "pass_fail": true,
       "reflection_id": "r-10",
       "replicate": 0,
       "runtime_ms": 1001,
       "scalar": 4.4,
-      "transcript_ref": "<ws>/epochs/e2/generations/v0/runs/t2/result.json"
+      "transcript_ref": "<ws>/epochs/e2/generations/v0/runs/t2/seed-none/result.tournament.r0.json"
     },
     {
       "abort_cause": null,
@@ -9431,14 +9654,18 @@
         "drift:plan_thrash": 0.0,
         "judge:tone_guard": 3.0
       },
-      "loss_ref": "<ws>/epochs/e2/generations/v0/runs/t2/loss.r1.json",
-      "measurement": null,
+      "loss_ref": "<ws>/epochs/e2/generations/v0/runs/t2/seed-none/loss.tournament.r1.json",
+      "measurement": {
+        "base_seed": null,
+        "draw": 1,
+        "purpose": "tournament"
+      },
       "pass_fail": true,
       "reflection_id": "r-10",
       "replicate": 1,
       "runtime_ms": 1001,
       "scalar": 4.42,
-      "transcript_ref": "<ws>/epochs/e2/generations/v0/runs/t2/events.r1.jsonl"
+      "transcript_ref": "<ws>/epochs/e2/generations/v0/runs/t2/seed-none/events.tournament.r1.jsonl"
     },
     {
       "abort_cause": null,
@@ -9470,14 +9697,18 @@
         "drift:custom:tone_guard": 0.0,
         "drift:plan_thrash": 0.0
       },
-      "loss_ref": "<ws>/epochs/e2/generations/v0/runs/t10/loss.json",
-      "measurement": null,
+      "loss_ref": "<ws>/epochs/e2/generations/v0/runs/t10/seed-none/loss.tournament.r0.json",
+      "measurement": {
+        "base_seed": null,
+        "draw": 0,
+        "purpose": "tournament"
+      },
       "pass_fail": true,
       "reflection_id": "r-10",
       "replicate": 0,
       "runtime_ms": 1002,
       "scalar": 1.5,
-      "transcript_ref": "<ws>/epochs/e2/generations/v0/runs/t10/events.jsonl"
+      "transcript_ref": "<ws>/epochs/e2/generations/v0/runs/t10/seed-none/events.tournament.r0.jsonl"
     },
     {
       "abort_cause": null,
@@ -9509,14 +9740,18 @@
         "drift:custom:tone_guard": 0.0,
         "drift:plan_thrash": 0.0
       },
-      "loss_ref": "<ws>/epochs/e2/generations/v0/runs/t10/loss.r1.json",
-      "measurement": null,
+      "loss_ref": "<ws>/epochs/e2/generations/v0/runs/t10/seed-none/loss.tournament.r1.json",
+      "measurement": {
+        "base_seed": null,
+        "draw": 1,
+        "purpose": "tournament"
+      },
       "pass_fail": true,
       "reflection_id": "r-10",
       "replicate": 1,
       "runtime_ms": 1002,
       "scalar": 1.52,
-      "transcript_ref": "<ws>/epochs/e2/generations/v0/runs/t10/events.r1.jsonl"
+      "transcript_ref": "<ws>/epochs/e2/generations/v0/runs/t10/seed-none/events.tournament.r1.jsonl"
     },
     {
       "abort_cause": null,
@@ -9558,14 +9793,18 @@
         "drift:plan_thrash": 3.0,
         "judge:tone_guard": 3.0
       },
-      "loss_ref": "<ws>/epochs/e2/generations/v1/runs/t1/loss.json",
-      "measurement": null,
+      "loss_ref": "<ws>/epochs/e2/generations/v1/runs/t1/seed-none/loss.tournament.r0.json",
+      "measurement": {
+        "base_seed": null,
+        "draw": 0,
+        "purpose": "tournament"
+      },
       "pass_fail": true,
       "reflection_id": "r-10",
       "replicate": 0,
       "runtime_ms": 1010,
       "scalar": 4.285,
-      "transcript_ref": "<ws>/epochs/e2/generations/v1/runs/t1/result.json"
+      "transcript_ref": "<ws>/epochs/e2/generations/v1/runs/t1/seed-none/result.tournament.r0.json"
     },
     {
       "abort_cause": null,
@@ -9607,14 +9846,18 @@
         "drift:plan_thrash": 3.0,
         "judge:tone_guard": 3.0
       },
-      "loss_ref": "<ws>/epochs/e2/generations/v1/runs/t1/loss.r1.json",
-      "measurement": null,
+      "loss_ref": "<ws>/epochs/e2/generations/v1/runs/t1/seed-none/loss.tournament.r1.json",
+      "measurement": {
+        "base_seed": null,
+        "draw": 1,
+        "purpose": "tournament"
+      },
       "pass_fail": true,
       "reflection_id": "r-10",
       "replicate": 1,
       "runtime_ms": 1010,
       "scalar": 4.305,
-      "transcript_ref": "<ws>/epochs/e2/generations/v1/runs/t1/events.r1.jsonl"
+      "transcript_ref": "<ws>/epochs/e2/generations/v1/runs/t1/seed-none/events.tournament.r1.jsonl"
     },
     {
       "abort_cause": null,
@@ -9656,14 +9899,18 @@
         "drift:plan_thrash": 3.0,
         "judge:tone_guard": 3.0
       },
-      "loss_ref": "<ws>/epochs/e2/generations/v1/runs/t2/loss.json",
-      "measurement": null,
+      "loss_ref": "<ws>/epochs/e2/generations/v1/runs/t2/seed-none/loss.tournament.r0.json",
+      "measurement": {
+        "base_seed": null,
+        "draw": 0,
+        "purpose": "tournament"
+      },
       "pass_fail": true,
       "reflection_id": "r-10",
       "replicate": 0,
       "runtime_ms": 1011,
       "scalar": 4.385,
-      "transcript_ref": "<ws>/epochs/e2/generations/v1/runs/t2/result.json"
+      "transcript_ref": "<ws>/epochs/e2/generations/v1/runs/t2/seed-none/result.tournament.r0.json"
     },
     {
       "abort_cause": null,
@@ -9705,14 +9952,18 @@
         "drift:plan_thrash": 3.0,
         "judge:tone_guard": 3.0
       },
-      "loss_ref": "<ws>/epochs/e2/generations/v1/runs/t2/loss.r1.json",
-      "measurement": null,
+      "loss_ref": "<ws>/epochs/e2/generations/v1/runs/t2/seed-none/loss.tournament.r1.json",
+      "measurement": {
+        "base_seed": null,
+        "draw": 1,
+        "purpose": "tournament"
+      },
       "pass_fail": true,
       "reflection_id": "r-10",
       "replicate": 1,
       "runtime_ms": 1011,
       "scalar": 4.405,
-      "transcript_ref": "<ws>/epochs/e2/generations/v1/runs/t2/events.r1.jsonl"
+      "transcript_ref": "<ws>/epochs/e2/generations/v1/runs/t2/seed-none/events.tournament.r1.jsonl"
     },
     {
       "abort_cause": null,
@@ -9744,14 +9995,18 @@
         "drift:custom:tone_guard": 0.0,
         "drift:plan_thrash": 3.0
       },
-      "loss_ref": "<ws>/epochs/e2/generations/v1/runs/t10/loss.json",
-      "measurement": null,
+      "loss_ref": "<ws>/epochs/e2/generations/v1/runs/t10/seed-none/loss.tournament.r0.json",
+      "measurement": {
+        "base_seed": null,
+        "draw": 0,
+        "purpose": "tournament"
+      },
       "pass_fail": false,
       "reflection_id": "r-10",
       "replicate": 0,
       "runtime_ms": 1012,
       "scalar": 1.4849999999999999,
-      "transcript_ref": "<ws>/epochs/e2/generations/v1/runs/t10/events.jsonl"
+      "transcript_ref": "<ws>/epochs/e2/generations/v1/runs/t10/seed-none/events.tournament.r0.jsonl"
     },
     {
       "abort_cause": null,
@@ -9783,14 +10038,18 @@
         "drift:custom:tone_guard": 0.0,
         "drift:plan_thrash": 3.0
       },
-      "loss_ref": "<ws>/epochs/e2/generations/v1/runs/t10/loss.r1.json",
-      "measurement": null,
+      "loss_ref": "<ws>/epochs/e2/generations/v1/runs/t10/seed-none/loss.tournament.r1.json",
+      "measurement": {
+        "base_seed": null,
+        "draw": 1,
+        "purpose": "tournament"
+      },
       "pass_fail": false,
       "reflection_id": "r-10",
       "replicate": 1,
       "runtime_ms": 1012,
       "scalar": 1.505,
-      "transcript_ref": "<ws>/epochs/e2/generations/v1/runs/t10/events.r1.jsonl"
+      "transcript_ref": "<ws>/epochs/e2/generations/v1/runs/t10/seed-none/events.tournament.r1.jsonl"
     },
     {
       "abort_cause": null,
@@ -9832,14 +10091,18 @@
         "drift:plan_thrash": 6.0,
         "judge:tone_guard": 3.0
       },
-      "loss_ref": "<ws>/epochs/e2/generations/v2/runs/t1/loss.json",
-      "measurement": null,
+      "loss_ref": "<ws>/epochs/e2/generations/v2/runs/t1/seed-none/loss.tournament.r0.json",
+      "measurement": {
+        "base_seed": null,
+        "draw": 0,
+        "purpose": "tournament"
+      },
       "pass_fail": true,
       "reflection_id": "r-10",
       "replicate": 0,
       "runtime_ms": 1020,
       "scalar": 4.27,
-      "transcript_ref": "<ws>/epochs/e2/generations/v2/runs/t1/result.json"
+      "transcript_ref": "<ws>/epochs/e2/generations/v2/runs/t1/seed-none/result.tournament.r0.json"
     },
     {
       "abort_cause": null,
@@ -9881,14 +10144,18 @@
         "drift:plan_thrash": 6.0,
         "judge:tone_guard": 3.0
       },
-      "loss_ref": "<ws>/epochs/e2/generations/v2/runs/t2/loss.json",
-      "measurement": null,
+      "loss_ref": "<ws>/epochs/e2/generations/v2/runs/t2/seed-none/loss.tournament.r0.json",
+      "measurement": {
+        "base_seed": null,
+        "draw": 0,
+        "purpose": "tournament"
+      },
       "pass_fail": false,
       "reflection_id": "r-10",
       "replicate": 0,
       "runtime_ms": 1021,
       "scalar": 4.37,
-      "transcript_ref": "<ws>/epochs/e2/generations/v2/runs/t2/result.json"
+      "transcript_ref": "<ws>/epochs/e2/generations/v2/runs/t2/seed-none/result.tournament.r0.json"
     },
     {
       "abort_cause": null,
@@ -9920,14 +10187,18 @@
         "drift:custom:tone_guard": 0.0,
         "drift:plan_thrash": 6.0
       },
-      "loss_ref": "<ws>/epochs/e2/generations/v2/runs/t10/loss.json",
-      "measurement": null,
+      "loss_ref": "<ws>/epochs/e2/generations/v2/runs/t10/seed-none/loss.tournament.r0.json",
+      "measurement": {
+        "base_seed": null,
+        "draw": 0,
+        "purpose": "tournament"
+      },
       "pass_fail": true,
       "reflection_id": "r-10",
       "replicate": 0,
       "runtime_ms": 1022,
       "scalar": 1.47,
-      "transcript_ref": "<ws>/epochs/e2/generations/v2/runs/t10/events.jsonl"
+      "transcript_ref": "<ws>/epochs/e2/generations/v2/runs/t10/seed-none/events.tournament.r0.jsonl"
     }
   ],
   "zicato.workspace.generation_ids::e10": [
@@ -10354,38 +10625,6 @@
         },
         "runId": "v0-t1",
         "sequence": 3
-      }
-    ],
-    [
-      {
-        "eventId": "v0-t1-1",
-        "ladderTransitionDecided": {
-          "fromLevel": "",
-          "reason": "drift observed",
-          "toLevel": "deep"
-        },
-        "runId": "v0-t1",
-        "sequence": 1
-      },
-      {
-        "detectorDispatchOrdered": {
-          "dispatchOrder": [
-            "tone_guard",
-            "fact_guard"
-          ]
-        },
-        "eventId": "v0-t1-2",
-        "runId": "v0-t1",
-        "sequence": 2
-      },
-      {
-        "eventId": "v0-t1-3",
-        "policyApplied": {
-          "outcome": "applied",
-          "policyName": "retry_once"
-        },
-        "runId": "v0-t1",
-        "sequence": 3
       },
       {
         "eventId": "v0-t1-4",
@@ -10427,6 +10666,7 @@
     ]
   ],
   "zicato.workspace.read_gen_score::v0": {
+    "base_seed": null,
     "format_version": 1,
     "generation_id": "v0",
     "mean_drift_loss": 0.4,
@@ -10445,6 +10685,7 @@
     "scalar": 0.5
   },
   "zicato.workspace.read_gen_score::v10": {
+    "base_seed": null,
     "format_version": 1,
     "generation_id": "v10",
     "mean_drift_loss": 0.2,
@@ -10463,6 +10704,7 @@
     "scalar": 0.4
   },
   "zicato.workspace.read_gen_score::v2": {
+    "base_seed": null,
     "format_version": 1,
     "generation_id": "v2",
     "mean_drift_loss": 0.36,
@@ -10482,6 +10724,7 @@
   },
   "zicato.workspace.read_gen_score_history::v0": [
     {
+      "base_seed": null,
       "format_version": 1,
       "generation_id": "v0",
       "mean_drift_loss": 0.4,
@@ -10502,6 +10745,7 @@
       "seq": 0
     },
     {
+      "base_seed": null,
       "format_version": 1,
       "generation_id": "v0",
       "mean_drift_loss": 0.4,
@@ -10524,6 +10768,7 @@
   ],
   "zicato.workspace.read_gen_score_history::v10": [
     {
+      "base_seed": null,
       "format_version": 1,
       "generation_id": "v10",
       "mean_drift_loss": 0.2,
@@ -10546,6 +10791,7 @@
   ],
   "zicato.workspace.read_gen_score_history::v2": [
     {
+      "base_seed": null,
       "format_version": 1,
       "generation_id": "v2",
       "mean_drift_loss": 0.36,
@@ -10585,6 +10831,11 @@
     "generation_id": "v0",
     "judge_errors": [],
     "match_id": "",
+    "measurement": {
+      "base_seed": null,
+      "draw": 0,
+      "purpose": "tournament"
+    },
     "memory_failure_count": null,
     "metric_counts": [
       {
@@ -10622,7 +10873,7 @@
       }
     ],
     "plan_revisions": 0,
-    "run_id": "e2-v0-t1-r0",
+    "run_id": "seed-none.tournament.r0.191816768532ad778729ff1b67f96fb059bb29609346e9bd4fae938c5803d9c4",
     "runtime_ms": 1000,
     "schema_failures": 0,
     "score": 0.6,
@@ -10654,6 +10905,11 @@
     "generation_id": "v10",
     "judge_errors": [],
     "match_id": "",
+    "measurement": {
+      "base_seed": null,
+      "draw": 0,
+      "purpose": "tournament"
+    },
     "memory_failure_count": null,
     "metric_counts": [
       {
@@ -10691,7 +10947,7 @@
       }
     ],
     "plan_revisions": 2,
-    "run_id": "e2-v10-t1-r0",
+    "run_id": "seed-none.tournament.r0.f7bcda4af39394eb758ebae5920917001ccf0bcbbf79bcfbb39b89d1de9ce7a2",
     "runtime_ms": 1100,
     "schema_failures": 0,
     "score": 0.8,
@@ -10723,6 +10979,11 @@
     "generation_id": "v2",
     "judge_errors": [],
     "match_id": "",
+    "measurement": {
+      "base_seed": null,
+      "draw": 0,
+      "purpose": "tournament"
+    },
     "memory_failure_count": null,
     "metric_counts": [
       {
@@ -10760,7 +11021,7 @@
       }
     ],
     "plan_revisions": 2,
-    "run_id": "e2-v2-t1-r0",
+    "run_id": "seed-none.tournament.r0.dc23c88c6ffdceb22c643daaa0ddd3bcce37cd106d52c3989e01f3b33833d675",
     "runtime_ms": 1020,
     "schema_failures": 0,
     "score": 0.64,

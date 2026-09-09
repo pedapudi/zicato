@@ -22,9 +22,9 @@ engine behind three surfaces:
   whatever a run happened to show.
 * :mod:`~zicato.reflection.corpus` — the observation corpus. A **passive**
   ingest that references (never copies) the lineage's already-persisted run
-  artifacts with zero LLM budget, plus an **active** scheduler that mirrors
-  the pre-flight's reserved-replicate discipline
-  (``REFLECTION_REPLICATE_BASE = 5000 + j``) to produce fresh draws.
+  artifacts without model calls, plus an active scheduler that uses the
+  ``board_reflection`` purpose with distinct local draws. Complete matching
+  measurements can be reused when the same frozen plan resumes.
 * :mod:`~zicato.reflection.analysis` — the **pure** pillar-1 (reliability) and
   pillar-2 (discrimination / power) analyzers over the corpus. No I/O; the
   noise floor is CONSUMED from the persisted epoch record, decision-flip is a

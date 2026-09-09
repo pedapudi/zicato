@@ -1087,12 +1087,12 @@ def write_loss_profile(profile: LossProfile, target_path: Path) -> None:
     slots carry an epoch revision before replacement. Archived attempts do
     not invalidate the projection.
     """
-    from zicato.core.measurement import artifact_replicate_index  # noqa: PLC0415
+    from zicato.core.measurement import artifact_measurement  # noqa: PLC0415
     from zicato.core.workspace import run_coordinates_from_dir  # noqa: PLC0415
     from zicato.storage import atomic_write_text  # noqa: PLC0415
     from zicato.workspace.projection import mark_epoch_changed  # noqa: PLC0415
 
-    if artifact_replicate_index(target_path.name) is not None:
+    if artifact_measurement(target_path.name) is not None:
         for entry_dir in (target_path.parent, target_path.parent.parent):
             coordinates = run_coordinates_from_dir(entry_dir)
             if coordinates is None:

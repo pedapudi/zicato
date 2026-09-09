@@ -41,7 +41,7 @@ from zicato.core.types import LossProfile, MetricCount, TournamentStructure
 from zicato.core.workspace import run_id_for_unit
 from zicato.epoch.journal import write_seed_experiment
 from zicato.epoch.lifecycle import new_epoch
-from zicato.tournament.worker_transport import _entry_replicate_index
+from zicato.tournament.worker_transport import _entry_measurement
 
 # Grab the REAL reducer helper before any test masks zicato.telemetry in
 # sys.modules — the unit cache persists a skipped unit through the writer
@@ -162,7 +162,11 @@ def _install_token_heavy_run_single(
         calls.append((generation.id, entry.id))
         return LossProfile(
             run_id=run_id_for_unit(
-                generation.id, entry.id, _entry_replicate_index(entry), base_seed=config.seed
+                generation.id,
+                entry.id,
+                _entry_measurement(entry),
+                base_seed=config.seed,
+                epoch_id=generation.epoch_id,
             ),
             entry_id=entry.id,
             generation_id=generation.id,
@@ -245,7 +249,7 @@ def test_token_heavy_round_clips_and_reports(
                 / "loss.json"
             )
             assert not loss_path.exists()
-            body = json.loads(loss_path.with_name("loss.a1.json").read_text())
+            body = json.loads(loss_path.with_name("loss.tournament.r0.a1.json").read_text())
             assert body["execution_started"] is False
             assert body["not_completed_reason"] == "scheduling_budget_exhausted"
 

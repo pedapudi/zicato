@@ -18,13 +18,14 @@ The penalty's ARITHMETIC is unchanged — the attribution is additive. The
 end-to-end proof that a crashed run still scores exactly 60.0 under the
 default weights lives in
 :func:`tests.test_subprocess_workers.test_worker_penalises_aborted_run_in_loss_json`,
-which also asserts the new attribution on a real worker's ``loss.json``.
+which also asserts the new attribution on a real worker's ``loss.tournament.r0.json``.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -39,7 +40,7 @@ from zicato.core import (
     RuntimeConfig,
     ScoringWeights,
 )
-from zicato.core.measurement import MeasurementDraw
+from zicato.core.measurement import MeasurementDraw, MeasurementPurpose, measurement_artifact_path
 from zicato.core.workspace import run_id_for_unit
 from zicato.runtime.lock import acquire_workspace_lock
 from zicato.telemetry.reducer import (
@@ -154,7 +155,7 @@ def test_timestamps_survive_the_loss_json_round_trip(tmp_path: Path) -> None:
         started_at="2026-08-18T10:00:00Z",
         ended_at="2026-08-18T10:00:42Z",
     )
-    path = tmp_path / "loss.json"
+    path = tmp_path / "loss.tournament.r0.json"
     write_loss_profile(profile, path)
 
     read_back = read_loss_profile(path)
@@ -172,8 +173,10 @@ def test_a_cached_unit_keeps_the_times_of_the_run_that_produced_it(
     entry = _entry()
 
     produced = make_loss_profile(
-        measurement=MeasurementDraw.from_index(0, base_seed=None),
-        run_id=run_id_for_unit(generation.id, entry.id, base_seed=None),
+        measurement=replace(MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0), base_seed=None),
+        run_id=run_id_for_unit(
+            generation.id, entry.id, base_seed=None, epoch_id=generation.epoch_id
+        ),
         entry_id=entry.id,
         generation_id=generation.id,
         epoch_id=_EPOCH,
@@ -185,7 +188,7 @@ def test_a_cached_unit_keeps_the_times_of_the_run_that_produced_it(
         epoch_id=_EPOCH,
         generation_id=generation.id,
         entry_id=entry.id,
-        replicate_index=0,
+        measurement=MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0),
         loss=produced,
     )
     calls = _stub_run_single(monkeypatch, [])
@@ -228,7 +231,7 @@ def test_the_replicate_fold_carries_the_representative_span(tmp_path: Path) -> N
 def test_a_failed_then_passing_unit_leaves_an_attempt_record(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """The infra abort is discarded for scoring but kept as ``loss.a1.json``."""
+    """The infra abort is discarded for scoring but kept as ``loss.tournament.r0.a1.json``."""
     workspace = tmp_path / ".zicato"
     workspace.mkdir()
     generation = _generation(tmp_path)
@@ -259,8 +262,15 @@ def test_a_failed_then_passing_unit_leaves_an_attempt_record(
     assert first.abort_cause == "parent_kill"
     assert second.drift_loss == pytest.approx(1.5)
 
-    canonical = _unit_loss_path(workspace, _EPOCH, generation.id, entry.id, 0, base_seed=None)
-    attempt = canonical.with_name("loss.a1.json")
+    canonical = _unit_loss_path(
+        workspace,
+        _EPOCH,
+        generation.id,
+        entry.id,
+        MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0),
+        base_seed=None,
+    )
+    attempt = canonical.with_name("loss.tournament.r0.a1.json")
     assert attempt.exists(), "the discarded execution must survive as an attempt"
     # Scoring reads the canonical slot, which holds the run that succeeded.
     assert read_loss_profile(canonical).drift_loss == pytest.approx(1.5)
@@ -279,10 +289,19 @@ def test_a_re_measured_unit_keeps_the_superseded_measurement_and_its_twin(
     generation = _generation(tmp_path)
     entry = _entry()
 
-    canonical = _unit_loss_path(workspace, _EPOCH, generation.id, entry.id, 0, base_seed=None)
+    canonical = _unit_loss_path(
+        workspace,
+        _EPOCH,
+        generation.id,
+        entry.id,
+        MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0),
+        base_seed=None,
+    )
     first = make_loss_profile(
-        measurement=MeasurementDraw.from_index(0, base_seed=None),
-        run_id=run_id_for_unit(generation.id, entry.id, base_seed=None),
+        measurement=replace(MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0), base_seed=None),
+        run_id=run_id_for_unit(
+            generation.id, entry.id, base_seed=None, epoch_id=generation.epoch_id
+        ),
         entry_id=entry.id,
         generation_id=generation.id,
         epoch_id=_EPOCH,
@@ -293,7 +312,7 @@ def test_a_re_measured_unit_keeps_the_superseded_measurement_and_its_twin(
         epoch_id=_EPOCH,
         generation_id=generation.id,
         entry_id=entry.id,
-        replicate_index=0,
+        measurement=MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0),
         loss=first,
     )
     unit_result_path(canonical).write_text('{"format_version": 1}', encoding="utf-8")
@@ -311,44 +330,31 @@ def test_a_re_measured_unit_keeps_the_superseded_measurement_and_its_twin(
 
     assert fresh.drift_loss == pytest.approx(9.0)
     assert read_loss_profile(canonical).drift_loss == pytest.approx(9.0)
-    archives = list((canonical.parent / "attempts").glob("loss-*"))
+    archives = list((canonical.parent / "attempts").glob("loss.tournament.r0-*"))
     assert len(archives) == 1
-    attempt = archives[0] / "loss.json"
+    attempt = archives[0] / "loss.tournament.r0.json"
     assert read_loss_profile(attempt).drift_loss == pytest.approx(4.0)
-    # The result.json twin rides along, so the superseded execution keeps
+    # The result.tournament.r0.json twin rides along, so the superseded execution keeps
     # the harness output that produced it.
     assert unit_result_path(attempt).exists()
 
 
 def test_an_attempt_record_never_reads_as_a_replicate(tmp_path: Path) -> None:
-    """Attempt siblings are invisible to every replicate-slot reader.
-
-    Reflection ingest, the evidence-count reader, and the champion carry-over
-    each reach a run directory by scan; an attempt file must not enter any of
-    them, or a discarded execution would become a scoring draw.
-    """
-    from zicato.query.replicate_scores import replicate_index
+    from zicato.core.measurement import artifact_measurement
     from zicato.tournament.unit_cache import own_code_board_draws
 
-    run_dir = tmp_path / "runs" / "entry_a"
-    run_dir.mkdir(parents=True)
-    # ``r1000`` is a calibration slot — one of the replicate bases reflection
-    # ingest vouches for, so the scan genuinely returns it.
-    for name in ("loss.json", "loss.r1000.json", "loss.a1.json", "loss.r1000.a1.json"):
-        write_loss_profile(
-            make_loss_profile(match_id="aa-calibration:0" if "r1000" in name else ""),
-            run_dir / name,
-        )
-
-    assert [p.name for _, p in own_code_board_draws(run_dir)] == [
-        "loss.json",
-        "loss.r1000.json",
-    ]
-    for attempt in ("loss.a1.json", "loss.r1000.a1.json"):
-        assert replicate_index(attempt) is None
-        assert is_unit_attempt_slot(run_dir / attempt) is True
-    for slot in ("loss.json", "loss.r1000.json"):
-        assert is_unit_attempt_slot(run_dir / slot) is False
+    for purpose in (MeasurementPurpose.TOURNAMENT, MeasurementPurpose.CALIBRATION):
+        record = MeasurementDraw(purpose, 0)
+        path = measurement_artifact_path(tmp_path, "loss", record)
+        write_loss_profile(make_loss_profile(measurement=record), path)
+        attempt = path.with_name(path.stem + ".a1.json")
+        write_loss_profile(make_loss_profile(measurement=record), attempt)
+        assert artifact_measurement(attempt.name) is None
+        assert is_unit_attempt_slot(attempt)
+    assert {path.name for _, path in own_code_board_draws(tmp_path)} == {
+        "loss.tournament.r0.json",
+        "loss.calibration.r0.json",
+    }
 
 
 def test_attempt_records_do_not_move_the_folded_per_entry_loss(tmp_path: Path) -> None:
@@ -357,10 +363,26 @@ def test_attempt_records_do_not_move_the_folded_per_entry_loss(tmp_path: Path) -
 
     run_dir = tmp_path / "runs" / "entry_a"
     run_dir.mkdir(parents=True)
-    write_loss_profile(make_loss_profile(entry_id="entry_a", drift_loss=2.0), run_dir / "loss.json")
     write_loss_profile(
-        make_loss_profile(entry_id="entry_a", drift_loss=4.0, match_id="aa-calibration:0"),
-        run_dir / "loss.r1000.json",
+        make_loss_profile(
+            entry_id="entry_a",
+            drift_loss=2.0,
+            measurement=MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0),
+        ),
+        measurement_artifact_path(
+            run_dir, "loss", MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0)
+        ),
+    )
+    write_loss_profile(
+        make_loss_profile(
+            entry_id="entry_a",
+            drift_loss=4.0,
+            measurement=MeasurementDraw(MeasurementPurpose.CALIBRATION, 0),
+            match_id="aa-calibration:0",
+        ),
+        measurement_artifact_path(
+            run_dir, "loss", MeasurementDraw(MeasurementPurpose.CALIBRATION, 0)
+        ),
     )
 
     def _folded() -> float:
@@ -369,10 +391,12 @@ def test_attempt_records_do_not_move_the_folded_per_entry_loss(tmp_path: Path) -
 
     assert _folded() == pytest.approx(3.0)
     write_loss_profile(
-        make_loss_profile(entry_id="entry_a", drift_loss=60.0), run_dir / "loss.a1.json"
+        make_loss_profile(entry_id="entry_a", drift_loss=60.0),
+        run_dir / "loss.tournament.r0.a1.json",
     )
     write_loss_profile(
-        make_loss_profile(entry_id="entry_a", drift_loss=60.0), run_dir / "loss.r1000.a1.json"
+        make_loss_profile(entry_id="entry_a", drift_loss=60.0),
+        run_dir / "loss.calibration.r0.a1.json",
     )
 
     assert _folded() == pytest.approx(3.0)
@@ -386,7 +410,7 @@ def test_a_failed_attempt_write_never_costs_the_round(tmp_path: Path) -> None:
         epoch_id=_EPOCH,
         generation_id="v0",
         entry_id="entry_a",
-        replicate_index=0,
+        measurement=MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0),
     )  # nothing on disk to copy — a no-op, not an error
 
 
@@ -425,7 +449,7 @@ def test_not_completed_reason_survives_the_loss_json_round_trip(tmp_path: Path) 
         drift_loss=60.0,
         not_completed_reason="harness_exception:ValueError",
     )
-    path = tmp_path / "loss.json"
+    path = tmp_path / "loss.tournament.r0.json"
     write_loss_profile(profile, path)
 
     assert read_loss_profile(path).not_completed_reason == "harness_exception:ValueError"
@@ -441,15 +465,27 @@ async def test_adding_seed_provenance_preserves_the_unknown_predecessor(
     from zicato.tournament.unit_cache import read_unit_loss_history
 
     generation, entry = _generation(tmp_path), _entry()
-    path = _unit_loss_path(tmp_path, _EPOCH, generation.id, entry.id, 0, base_seed=seed)
+    path = _unit_loss_path(
+        tmp_path,
+        _EPOCH,
+        generation.id,
+        entry.id,
+        MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0),
+        base_seed=seed,
+    )
     previous = make_loss_profile(
-        run_id=run_id_for_unit(generation.id, entry.id, base_seed=seed),
+        run_id=run_id_for_unit(
+            generation.id, entry.id, base_seed=seed, epoch_id=generation.epoch_id
+        ),
         epoch_id=_EPOCH,
         generation_id=generation.id,
         entry_id=entry.id,
     )
     write_loss_profile(previous, path)
-    measured = replace(previous, measurement=MeasurementDraw.from_index(0, base_seed=seed))
+    measured = replace(
+        previous,
+        measurement=replace(MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0), base_seed=seed),
+    )
     calls = _stub_run_single(monkeypatch, [measured])
     with acquire_workspace_lock(tmp_path, "test") as writer:
         for _ in range(2):

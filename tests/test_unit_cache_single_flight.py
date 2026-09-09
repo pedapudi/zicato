@@ -19,6 +19,7 @@ import pytest
 
 import zicato.tournament.runner as runner_mod
 from zicato.core import BoardEntry, Generation, LossProfile, RuntimeConfig, ScoringWeights
+from zicato.core.measurement import TOURNAMENT_DRAW, MeasurementDraw, MeasurementPurpose
 from zicato.core.workspace import run_id_for_unit
 from zicato.runtime.lock import WorkspaceLock, acquire_workspace_lock
 from zicato.testing.fixtures import make_loss_profile
@@ -73,7 +74,7 @@ async def _unit(
     generation: Generation,
     entry: BoardEntry,
     match_id: str = "",
-    replicate_index: int = 0,
+    measurement: MeasurementDraw = TOURNAMENT_DRAW,
     force_fresh: bool = False,
     provenance: dict[str, _UnitProvenance] | None = None,
 ) -> LossProfile:
@@ -88,7 +89,7 @@ async def _unit(
         workspace_root=workspace,
         epoch_id="e0",
         side="parent",
-        replicate_index=replicate_index,
+        measurement=measurement,
         match_id=match_id,
         force_fresh=force_fresh,
         provenance=provenance,
@@ -116,8 +117,9 @@ def _stub_run_single(
             "run_id": run_id_for_unit(
                 generation.id,
                 entry.id,
-                int(entry.context.get("replicate_index", 0)),
+                MeasurementDraw.from_context(entry.context),
                 base_seed=kwargs["config"].seed,
+                epoch_id=generation.epoch_id,
             ),
             "generation_id": generation.id,
             "entry_id": entry.id,
@@ -220,7 +222,7 @@ def test_replicate_slots_are_independent_draws(
                     generation=champion,
                     entry=entry,
                     match_id="r0",
-                    replicate_index=0,
+                    measurement=MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0),
                 ),
                 _unit(
                     writer=writer,
@@ -228,7 +230,7 @@ def test_replicate_slots_are_independent_draws(
                     generation=champion,
                     entry=entry,
                     match_id="r1",
-                    replicate_index=1,
+                    measurement=MeasurementDraw(MeasurementPurpose.TOURNAMENT, 1),
                 ),
             )
 

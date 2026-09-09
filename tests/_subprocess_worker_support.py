@@ -297,10 +297,10 @@ class CompletingAdapter:
 
 class _CaptureBlockedSession(_CompletingSession):
     async def run(self, entry: Any, sinks: Any, config: Any) -> Any:
-        from zicato.core.measurement import artifact_replicate_index, unit_artifact_name
+        from zicato.core.measurement import artifact_measurement, unit_artifact_name
 
         capture = config.judge_io_sink.path
-        index = artifact_replicate_index(capture.name, "judge_io")
+        index = artifact_measurement(capture.name, "judge_io")
         assert index is not None
         # Session startup follows archival and precedes both capture writes.
         capture.mkdir(parents=True)
@@ -321,10 +321,10 @@ def make_capture_blocked_adapter() -> CaptureBlockedAdapter:
 
 class _LossBlockedSession(_CompletingSession):
     async def run(self, entry: Any, sinks: Any, config: Any) -> Any:
-        from zicato.core.measurement import artifact_replicate_index, unit_artifact_name
+        from zicato.core.measurement import artifact_measurement, unit_artifact_name
 
         capture = config.judge_io_sink.path
-        index = artifact_replicate_index(capture.name, "judge_io")
+        index = artifact_measurement(capture.name, "judge_io")
         assert index is not None
         capture.with_name(unit_artifact_name("loss", index)).mkdir(parents=True)
         return await super().run(entry, sinks, config)

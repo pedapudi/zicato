@@ -49,8 +49,8 @@ def _convergence_round_events() -> list:
         PatchesApplied(generation_id="v1"),
     ]
     for entry_id in ENTRIES:
-        events.append(UnitCompleted(entry_id=entry_id, replicate=0, side="parent"))
-        events.append(UnitCompleted(entry_id=entry_id, replicate=0, side="child"))
+        events.append(UnitCompleted(entry_id=entry_id, side="parent"))
+        events.append(UnitCompleted(entry_id=entry_id, side="child"))
     events.extend(
         [
             GateEvaluated(rule_fired="scalar_margin", decision="promoted"),

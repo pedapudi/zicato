@@ -23,7 +23,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from zicato.core.measurement import artifact_replicate_index, unit_artifact_name
+from zicato.core.measurement import artifact_measurement, unit_artifact_name
 from zicato.epoch._storage import RecordError
 from zicato.query.events_index import (
     find_proposal_episode_log,
@@ -51,7 +51,7 @@ def _empty_execution() -> dict[str, Any]:
 
 def _add_run_artifacts(payload: dict[str, Any], events_path: Path) -> None:
     """Add the durable artifact inventory at run scope without inferring producers."""
-    index = artifact_replicate_index(events_path.name, "events")
+    index = artifact_measurement(events_path.name, "events")
     if index is None:
         return
     loss_path = events_path.with_name(unit_artifact_name("loss", index))
@@ -320,7 +320,7 @@ def _verbatim_capture_exists(events_path: Path) -> bool:
         unit_result_path,
     )
 
-    index = artifact_replicate_index(events_path.name, "events")
+    index = artifact_measurement(events_path.name, "events")
     if index is None:
         return False
     loss_path = events_path.with_name(unit_artifact_name("loss", index))

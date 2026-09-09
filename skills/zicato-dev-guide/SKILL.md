@@ -35,7 +35,7 @@ because breaking it caused a real failure.
 - **G4 — The two oracles pass in complete validation.** `tests/test_convergence_known_answer.py` (the loop converges to an exact floor) + `tests/test_decision_procedure_power.py` (the decision procedure's measured operating characteristics).
 - **G5 — Parity, import contracts and JavaScript pass in complete validation.** `make check` runs their shared verification commands.
 - **G6 — Complete configuration identity.** The shared dataclass serializer writes every effective scoring field, including defaults. The contract hash includes those values, and authored and frozen configuration use one strict decoder. Selected epochs require a valid hash and captured `execution.json` (`03-contract-and-epochs.md`).
-- **G7 — Reserved replicate-base ledger.** Duels `0..`, calibration `1000`, preflight `2000`, screening `3000/3001`, evidence `4000`. Squatting a base corrupts the unit cache — this was bugs #1 and #8 (`04-evaluation-statistics.md`).
+- **G7 — Measurement identity.** Carry purpose, local draw number, and base seed through cache keys, artifact paths, worker context, and runtime records. Independent samples require distinct draws; preflight and screening remain separate from measurements of the recorded generation’s own source (`04-evaluation-statistics.md`).
 - **G8 — Restricted-visibility envelope.** Nothing entry-identifying (entry ids, task text, holdout data, raw per-entry outcomes) reaches the proposer; every channel is banded/aggregated/anonymized/redacted (`05-proposer.md`).
 - **G9 — Module-level callables only across the worker boundary.** Closures are rejected by `_callable_dotted_path`; scripted proposers/harnesses are module-level functions + module state + `reset()` (`06-tournament-and-selection.md`).
 - **G10 — Digest-gated rendering.** A no-op SSE heartbeat must cause ZERO DOM rebuild (`09-dashboard-and-query.md`).
@@ -86,14 +86,14 @@ interacting knob OFF. The recurring class is **shared mutable state across
 per-candidate / per-replicate / per-feature artifacts**. Read the case before you
 touch its surface.
 
-1. **Replicate-cache clobbering** — you write a per-replicate result into the canonical (r0) slot.
+1. **Measurement-cache clobbering** — writing one measurement into another measurement’s artifact path destroys its provenance.
 2. **`worktree prune` vs concurrent `add`** — you run a repo-global git admin command while siblings run concurrently.
-3. **A/A false-zero floor** — you draw "independent" samples without varying the replicate index.
+3. **A/A false-zero floor** — requesting independent samples without varying the measurement draw repeats the same random stream.
 4. **Client champion-scan** — the client computes a decision the server already owns.
 5. **The "evolve hang"** — a fixture signals by process group / by name instead of by provenance.
 6. **Best-of-N tree mismatch (gauntlet)** — the mounted child tree is the last-sampled candidate rather than the chosen one.
 7. **…field-path + diversity** — you judge diversity on a hypothesis whose tree isn't on disk.
-8. **Evidence-gate replicate reuse** — your "replicates" reuse a canonical slot → replay shrinks the CI.
+8. **Evidence-gate draw reuse** — counting a repeated measurement as independent evidence narrows the confidence interval without another sample.
 9. **Git stale shared worktree** — you move a tag and leave a shared worktree at the commit it named before.
 10. **Contract hash embeds cwd/checkout** — you `resolve()` a path into an identity that must be location-independent.
 11. **`judge_view` opened the index READ-WRITE on a read path** — a reader holds a writable connection, contends with the live ingester and drifts the parity goldens.

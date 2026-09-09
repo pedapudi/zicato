@@ -56,7 +56,9 @@ from typing import Any
 
 from tests._reader_parity_harness import _MASK, _normalize_root, mask_volatile
 from tests._workspace_support import experiment_record
+from zicato.core.measurement import TOURNAMENT_DRAW, MeasurementDraw, MeasurementPurpose
 from zicato.core.mutation import MutationPoint
+from zicato.core.workspace import run_id_for_unit
 from zicato.epoch._storage import RECORD_FORMAT_VERSION
 from zicato.mutation.inventory import write_mutation_inventory
 
@@ -299,7 +301,9 @@ def _board_lines() -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
-def _loss_profile(epoch_id: str, generation_id: str, entry_id: str, replicate: int) -> Any:
+def _loss_profile(
+    epoch_id: str, generation_id: str, entry_id: str, measurement: MeasurementDraw
+) -> Any:
     """One run's reducer output, built through the canonical dataclasses.
 
     Every number is a function of the lineage position, the entry and the
@@ -310,7 +314,7 @@ def _loss_profile(epoch_id: str, generation_id: str, entry_id: str, replicate: i
 
     index = _generation_index(generation_id)
     entry_rank = ENTRY_IDS.index(entry_id)
-    base = 0.40 - 0.02 * index + 0.05 * entry_rank + 0.01 * replicate
+    base = 0.40 - 0.02 * index + 0.05 * entry_rank + 0.01 * measurement.draw
     passed = (index + entry_rank) % 4 != 3
     judges = (
         (JudgeLoss(judge_name="tone_guard", raw_loss=1.0, weight=3.0, weighted_loss=3.0),)
@@ -318,7 +322,8 @@ def _loss_profile(epoch_id: str, generation_id: str, entry_id: str, replicate: i
         else ()
     )
     return LossProfile(
-        run_id=f"{epoch_id}-{generation_id}-{entry_id}-r{replicate}",
+        run_id=run_id_for_unit(generation_id, entry_id, measurement, epoch_id=epoch_id),
+        measurement=measurement,
         entry_id=entry_id,
         generation_id=generation_id,
         epoch_id=epoch_id,
@@ -427,23 +432,34 @@ def _write_run(ws: Path, epoch_id: str, generation_id: str, entry_id: str) -> No
     from zicato.telemetry.reducer import write_loss_profile
     from zicato.tournament.unit_cache import RUN_RESULT_FORMAT_VERSION
 
-    run_dir = ws / "epochs" / epoch_id / "generations" / generation_id / "runs" / entry_id
+    run_dir = (
+        ws / "epochs" / epoch_id / "generations" / generation_id / "runs" / entry_id / "seed-none"
+    )
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    write_loss_profile(_loss_profile(epoch_id, generation_id, entry_id, 0), run_dir / "loss.json")
-    _write_jsonl(run_dir / "events.jsonl", _events_lines(generation_id, entry_id))
+    write_loss_profile(
+        _loss_profile(epoch_id, generation_id, entry_id, TOURNAMENT_DRAW),
+        run_dir / "loss.tournament.r0.json",
+    )
+    _write_jsonl(run_dir / "events.tournament.r0.jsonl", _events_lines(generation_id, entry_id))
 
     index = _generation_index(generation_id)
     replicated = epoch_id == RICH_EPOCH_ID and index <= 1
     if replicated:
         write_loss_profile(
-            _loss_profile(epoch_id, generation_id, entry_id, 1), run_dir / "loss.r1.json"
+            _loss_profile(
+                epoch_id, generation_id, entry_id, MeasurementDraw(MeasurementPurpose.TOURNAMENT, 1)
+            ),
+            run_dir / "loss.tournament.r1.json",
         )
-        _write_jsonl(run_dir / "events.r1.jsonl", _events_lines(generation_id, entry_id))
+        _write_jsonl(run_dir / "events.tournament.r1.jsonl", _events_lines(generation_id, entry_id))
         # A pre-flight probe cached beside the real draws. Every reader that
         # asks what this generation DID must leave it out.
         write_loss_profile(
-            _loss_profile(epoch_id, generation_id, entry_id, 2000), run_dir / "loss.r2000.json"
+            _loss_profile(
+                epoch_id, generation_id, entry_id, MeasurementDraw(MeasurementPurpose.PREFLIGHT, 0)
+            ),
+            run_dir / "loss.contract_preflight.r0.json",
         )
 
     # The capture sidecars decide the observation corpus' fidelity tier:
@@ -451,11 +467,12 @@ def _write_run(ws: Path, epoch_id: str, generation_id: str, entry_id: str) -> No
     # lower, neither is a preview. The fixture carries one of each.
     if entry_id == "t1":
         _write_json(
-            run_dir / "result.json",
+            run_dir / "result.tournament.r0.json",
             {
                 "format_version": RUN_RESULT_FORMAT_VERSION,
                 "final_output": f"summary from {generation_id}",
-                "run_id": f"{epoch_id}-{generation_id}-{entry_id}-r0",
+                "run_id": run_id_for_unit(generation_id, entry_id, epoch_id=epoch_id),
+                "measurement": TOURNAMENT_DRAW.to_json(),
                 "entry_id": entry_id,
                 "runtime_ms": 1,
                 "aborted": False,
@@ -465,10 +482,12 @@ def _write_run(ws: Path, epoch_id: str, generation_id: str, entry_id: str) -> No
             },
         )
         _write_jsonl(
-            run_dir / "judge_io.jsonl",
+            run_dir / "judge_io.tournament.r0.jsonl",
             [
                 build_judge_io_record(
                     judge_name="tone_guard",
+                    measurement=TOURNAMENT_DRAW,
+                    run_id=run_id_for_unit(generation_id, entry_id, epoch_id=epoch_id),
                     call_index=0,
                     reasoning_text=f"tone review for {generation_id}",
                     transcript_window=("agent: summary",),
@@ -483,11 +502,12 @@ def _write_run(ws: Path, epoch_id: str, generation_id: str, entry_id: str) -> No
         )
     elif entry_id == "t2":
         _write_json(
-            run_dir / "result.json",
+            run_dir / "result.tournament.r0.json",
             {
                 "format_version": RUN_RESULT_FORMAT_VERSION,
                 "final_output": f"defect list from {generation_id}",
-                "run_id": f"{epoch_id}-{generation_id}-{entry_id}-r0",
+                "run_id": run_id_for_unit(generation_id, entry_id, epoch_id=epoch_id),
+                "measurement": TOURNAMENT_DRAW.to_json(),
                 "entry_id": entry_id,
                 "runtime_ms": 1,
                 "aborted": False,
@@ -590,6 +610,7 @@ def _write_generation(ws: Path, epoch_id: str, generation_id: str) -> None:
 
     scalar = round(0.50 - 0.01 * index, 6)
     aggregate = {
+        "base_seed": None,
         "generation_id": generation_id,
         "scalar": scalar,
         "pass_rate": round(0.60 + 0.02 * index, 6),
@@ -676,7 +697,7 @@ def _write_round_logs(ws: Path, epoch_id: str) -> None:
         decision = _decision_for(generation_id)
         for entry_id in ENTRY_IDS:
             for side in ("champion", "challenger"):
-                log.append(UnitCompleted(entry_id=entry_id, replicate=0, side=side))
+                log.append(UnitCompleted(entry_id=entry_id, side=side))
         log.append(
             GateEvaluated(
                 rule_fired="" if decision == "promoted" else "insufficient improvement",

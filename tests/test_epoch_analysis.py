@@ -61,7 +61,7 @@ async def test_generate_analysis_writes_file(
 
     out = await generate_analysis(workspace, cfg.id, stub_call)
     assert out == analysis_path(workspace, cfg.id)
-    assert out.read_text().startswith(f"# Epoch analysis: {cfg.id}")
+    assert f"**Epoch id**: `{cfg.id}`" in out.read_text()
 
     # System prompt requests the structured sections.
     for section in REQUIRED_SECTIONS:

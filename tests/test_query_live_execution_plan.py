@@ -30,8 +30,13 @@ from starlette.testclient import TestClient
 
 import zicato.query.live_execution_plan as live_plan
 from zicato.core.loss import LossProfile
-from zicato.core.measurement import MeasurementDraw
-from zicato.core.workspace import loss_profile_path
+from zicato.core.measurement import (
+    TOURNAMENT_DRAW,
+    MeasurementDraw,
+    MeasurementPurpose,
+    measurement_artifact_path,
+)
+from zicato.core.workspace import loss_profile_path, run_id_for_unit
 from zicato.dashboard.server import create_app
 from zicato.epoch.preflight import PREFLIGHT_PHASE
 from zicato.epoch.round_log import (
@@ -86,10 +91,16 @@ def _workspace(tmp_path: Path) -> Path:
     return root
 
 
-def _write_loss(root: Path, generation_id: str, entry_id: str, *, replicate: int = 0) -> None:
+def _write_loss(
+    root: Path,
+    generation_id: str,
+    entry_id: str,
+    *,
+    replicate: MeasurementDraw = TOURNAMENT_DRAW,
+) -> None:
     """One settled draw, exactly as the worker writes it."""
     profile = LossProfile(
-        run_id=f"{generation_id}:{entry_id}:r{replicate}",
+        run_id=run_id_for_unit(generation_id, entry_id, replicate, epoch_id=EPOCH),
         entry_id=entry_id,
         generation_id=generation_id,
         epoch_id=EPOCH,
@@ -104,10 +115,10 @@ def _write_loss(root: Path, generation_id: str, entry_id: str, *, replicate: int
         match_id="rung0_m0",
         started_at="2026-08-20T00:01:00Z",
         ended_at="2026-08-20T00:01:01Z",
-        measurement=MeasurementDraw.from_index(replicate),
+        measurement=replicate,
     )
     base = loss_profile_path(root, EPOCH, generation_id, entry_id)
-    target = base if replicate == 0 else base.with_name(f"loss.r{replicate}.json")
+    target = measurement_artifact_path(base.parent.parent, "loss", replicate)
     reducer.write_loss_profile(profile, target)
 
 
@@ -267,7 +278,7 @@ def test_a_phase_naming_a_round_but_no_step_marks_the_round_alone(mid_round: Pat
 def test_the_calibrating_phase_marks_the_noise_floor_band(tmp_path: Path) -> None:
     """The epoch-open step maps to the band holding the draws it is taking."""
     root = _workspace(tmp_path)
-    _write_loss(root, "v0", "login", replicate=1000)
+    _write_loss(root, "v0", "login", replicate=MeasurementDraw(MeasurementPurpose.CALIBRATION, 0))
     _heartbeat(root, age_s=1.0, phase=f"{CALIBRATION_PHASE}:3/18", round_index=None)
     _active_run(root, run_id="v0--login", entry_id="login", generation_id="v0")
     plan = _plan(root)
@@ -287,7 +298,7 @@ def test_the_contract_preflight_phase_marks_its_probe_band(tmp_path: Path) -> No
     rather than at the generation the probes were drawn from.
     """
     root = _workspace(tmp_path)
-    _write_loss(root, "v0", "login", replicate=2000)
+    _write_loss(root, "v0", "login", replicate=MeasurementDraw(MeasurementPurpose.PREFLIGHT, 0))
     _heartbeat(root, age_s=1.0, phase=f"{PREFLIGHT_PHASE}:3/12", round_index=None)
     plan = _plan(root)
     assert plan["overlay"]["active_path"] == [
@@ -335,7 +346,7 @@ def test_a_beating_record_becomes_a_running_unit_beside_the_landed_draw(
     sweep = _node(plan, f"e:{EPOCH}/round:0/run/v1")
     ids = [child["id"] for child in sweep["children"]]
     assert ids == [
-        f"e:{EPOCH}/round:0/run/v1/login/r0",
+        f"e:{EPOCH}/round:0/run/v1/login/seed-none/tournament/r0",
         f"e:{EPOCH}/round:0/run/v1/search/run:v1--search",
     ]
     running = sweep["children"][1]
@@ -437,7 +448,9 @@ def test_a_dead_workspace_serves_the_durable_plan_with_an_empty_overlay(
     units = [node for node in _walk(plan) if node["kind"] == "board_entry_run"]
     assert not any(node["status"] == "running" for node in units)
     # The durable spine is still there.
-    assert _node(plan, f"e:{EPOCH}/round:0/run/v1/login/r0")["status"] == "done"
+    assert (
+        _node(plan, f"e:{EPOCH}/round:0/run/v1/login/seed-none/tournament/r0")["status"] == "done"
+    )
 
 
 def test_a_never_run_workspace_is_settled_with_an_empty_overlay(tmp_path: Path) -> None:

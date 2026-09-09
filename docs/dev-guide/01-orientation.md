@@ -2,7 +2,7 @@
 
 > **Covers:** what zicato is and where it sits in its ecosystem · the complete load-bearing vocabulary, each term anchored to the file that owns it · the repo map (every package, its public face, and its import rules) · **the Golden Rules** — the ten non-negotiable invariants that keep the repo healthy · your first hour, command by command.
 > **Prerequisites:** none — this is the entry chapter.
-> **Invariants introduced:** [G1 — the vendor rule] [G2 — the all-extras sync rule] [G3 — the live-run go-ahead rule] [G4 — the two-oracles rule] [G5 — the green-gates rule] [G6 — complete configuration identity] [G7 — the reserved-base ledger] [G8 — the restricted-visibility envelope] [G9 — the module-level-callable rule] [G10 — digest-gated rendering] [files are canonical, the index is derived] [contract edits roll epochs] [the hypothesis is written before the run]
+> **Invariants introduced:** [G1 — the vendor rule] [G2 — the all-extras sync rule] [G3 — the live-run go-ahead rule] [G4 — the two-oracles rule] [G5 — the green-gates rule] [G6 — complete configuration identity] [G7 — measurement identity] [G8 — the restricted-visibility envelope] [G9 — the module-level-callable rule] [G10 — digest-gated rendering] [files are canonical, the index is derived] [contract edits roll epochs] [the hypothesis is written before the run]
 
 This guide is written for coding agents extending zicato. It assumes zero
 prior context: every acronym is expanded on first use, every rule states
@@ -72,10 +72,10 @@ rather than here.
 Concretely, the coupling points are:
 
 - **Telemetry in:** zicato captures goldfive's `goldfive.v1.Event` stream
-  via goldfive's `JSONLPersistenceSink` — one `events.jsonl` per run
+  via goldfive's `JSONLPersistenceSink` — one `events.{purpose}.r{draw}.jsonl` per measurement
   (`src/zicato/telemetry/sink.py`). There is no zicato-specific event
   sink; the post-run reducer (`src/zicato/telemetry/reducer.py`) walks
-  that JSONL and emits a `LossProfile` to `loss.json`.
+  that JSONL and emits a `LossProfile` to the corresponding `loss.{purpose}.r{draw}.json` in the same seed directory.
 - **Console out:** every `zicato evolve` auto-launches an in-process
   harmonograf server bound to a free localhost port
   (`src/zicato/telemetry/harmonograf_supervisor.py`, resolved through
@@ -162,17 +162,17 @@ resolves to a glossary heading.
 | [pattern](../design/VOCABULARY.md#pattern) | `Pattern`, `detect_patterns` | `src/zicato/core/patterns.py`, `src/zicato/patterns/detectors.py` |
 | [failure profile](../design/VOCABULARY.md#failure-profile) | `_render_failure_profile` | `src/zicato/evolve/decision_support.py` (+ `analyzer/outcome_marginals.py`) |
 | [process exemplars](../design/VOCABULARY.md#process-exemplars) | `extract_process_exemplars` | `src/zicato/analyzer/process_exemplars.py` |
-| [noise floor](../design/VOCABULARY.md#noise-floor) | `NoiseFloor`, `CALIBRATION_REPLICATE_BASE` | `src/zicato/tournament/calibration.py` |
-| [preflight](../design/VOCABULARY.md#preflight) | `PreflightReport`, `PREFLIGHT_REPLICATE_BASE` | `src/zicato/epoch/preflight.py` |
+| [noise floor](../design/VOCABULARY.md#noise-floor) | `NoiseFloor` | `src/zicato/tournament/calibration.py` |
+| [preflight](../design/VOCABULARY.md#preflight) | `PreflightReport` | `src/zicato/epoch/preflight.py` |
 | [tournament (runner)](../design/VOCABULARY.md#tournament) | `run_tournament`, `run_matchup`, `TournamentResult` | `src/zicato/tournament/runner.py` |
 | [tournament structure](../design/VOCABULARY.md#tournament-structure) | `TournamentStructure` | `src/zicato/core/tournament.py` |
 | [selection strategy](../design/VOCABULARY.md#tournament-structure) / [decision](../design/VOCABULARY.md#crowning) | `SelectionStrategy`, `SelectionDecision` | `src/zicato/selection/strategy.py` |
 | [resolve / drive a field](../design/VOCABULARY.md#field) | `resolve_tournament`, `EvidencePreGate` | `src/zicato/selection/driver.py` |
-| [evidence gate](../design/VOCABULARY.md#evidence-gate) | `EVIDENCE_REPLICATE_BASE`, `rating_block` | `src/zicato/selection/evidence_gate.py` |
+| [evidence gate](../design/VOCABULARY.md#evidence-gate) | `EvidenceVerdict`, `rating_block` | `src/zicato/selection/evidence_gate.py` |
 | [holdout/train split](../design/VOCABULARY.md#board-split) | `split_board`, `rotation_seed` | `src/zicato/board/split.py` |
 | [facet slice (display only)](../design/VOCABULARY.md#facet) | `FACET_TAG_PREFIX`, `facet_scores_for_generation` | `src/zicato/query/eval_view.py` |
 | [Ladder](../design/VOCABULARY.md#ladder) | `LadderConfig` / `holdout_record` | `src/zicato/core/scoring_config.py` / `src/zicato/tournament/ladder.py` |
-| [screen](../design/VOCABULARY.md#screening) | `run_candidate_screen`, `SCREEN_REPLICATE_BASE` | `src/zicato/epoch/screen.py` |
+| [screen](../design/VOCABULARY.md#screening) | `run_candidate_screen` | `src/zicato/epoch/screen.py` |
 | [slate / best-of-N](../design/VOCABULARY.md#best-of-n) | `BestOfNProposerAgent`, `wrap_with_proposer_quality` | `src/zicato/proposer/best_of_n.py` |
 | [placebo](../design/VOCABULARY.md#placebo-arm) | `placebo_round_due`, `PLACEBO_HYPOTHESIS_MARKER` | `src/zicato/evolve/placebo.py`, `src/zicato/core/experiment.py` |
 | [experiment](../design/VOCABULARY.md#experiment) / [hypothesis](../design/VOCABULARY.md#hypothesis) / [outcome](../design/VOCABULARY.md#outcome) | `Experiment`, `HypothesisSpec`, `OutcomeRecord` | `src/zicato/core/experiment.py` |
@@ -248,14 +248,11 @@ distinct axes carry the word, and this guide keeps them apart:
 The unqualified word "round" in this guide always means the evolve round.
 
 **run** — one board entry executed against one generation; emits
-`events.jsonl` (goldfive telemetry) + `loss.json` (the reduced
-`LossProfile`). Run records live under
+purpose- and draw-qualified event JSONL and loss JSON files (the reduced `LossProfile`), grouped in a seed directory. Run records live under
 `epochs/{epoch}/generations/{gen}/runs/…`; path math in
 `src/zicato/core/workspace.py` (`loss_profile_path` and friends).
 
-**board unit** — the cache quantum `(generation, entry, replicate)`
-(`src/zicato/tournament/unit_cache.py`): evaluated at most once under a
-fixed contract and reused by every pairing, round, and structure. The
+**board unit** — one evaluation identified by generation, board entry, measurement purpose, local draw number, and base seed (`src/zicato/tournament/unit_cache.py`). Cache reads reuse a completed matching measurement. Full mode can remeasure a unit while retaining the prior attempt. The
 scheduler admits units per board entry: `RuntimeConfig.parallelism`
 bounds how many entries are in flight (`src/zicato/core/runtime.py`),
 and in full mode each entry runs its champion unit and its challenger
@@ -393,7 +390,7 @@ never an entry id.
 
 **process exemplars** — the opt-in, mechanically-redacted event windows
 (±3 events around an anchor drift) extracted from the champion's
-train-slice `events.jsonl` so the proposer sees HOW a failure unfolds,
+train-slice measurement event files so the proposer sees HOW a failure unfolds,
 never WHICH entry it unfolded on. Knob:
 `experimental.process_exemplars` (default 0 = off). Extractor:
 `src/zicato/analyzer/process_exemplars.py`; renderer:
@@ -457,12 +454,10 @@ champion pointer must agree — checked loudly in `evolve_field_round`
 **replicate** — one repeated evaluation of the same (generation, entry)
 under a distinct cache slot, which averages out noise. The per-duel
 `replicates` knob (structure param; default 2 for gauntlet/elim/swiss,
-1 for racing) averages paired runs before the gate. Production cache keys
-include generation, board entry, and replicate for both competitors. A missing
+1 for racing) averages paired runs before the gate. Production cache keys include generation, board entry, measurement purpose, local draw number, and base seed for both competitors. A missing
 slot executes instead of replaying another replicate. The standalone
 `run_fast_mode` API compares the challenger against the champion's
-aggregate from earlier rounds. Replicate indices are partitioned into
-claimed ranges — see the reserved-base ledger (§4).
+aggregate from earlier rounds. A `MeasurementDraw` records the purpose, local draw number, and base seed; each purpose numbers its draws independently (§4, G7).
 
 **evidence gate / pre-gate** — the opt-in Bradley–Terry confirmation of a
 crowning promote (`promote_confidence_threshold` structure param):
@@ -498,7 +493,7 @@ regression (pass-flip on a champion-passing entry, or a budget abort) is
 vetoed before selection. The screen disqualifies candidates rather than
 ranking them.
 `src/zicato/epoch/screen.py` (`run_candidate_screen`,
-`select_screen_entries`, `SCREEN_REPLICATE_BASE = 3000`).
+`select_screen_entries`).
 
 **slate / candidate (best-of-N)** — the `best_of_n` sampled candidate
 experiments per propose-step (default 3), each slot steered by a distinct
@@ -660,7 +655,8 @@ shape (assembled from `src/zicato/epoch/lifecycle.py`'s module docstring,
             experiment.json      # hypothesis + patches + outcome
             patches/{id}.json    # one record per patch
             gen_score.json       # cached aggregate (fast-mode reuse)
-            runs/... events.jsonl + loss.json per board entry
+            runs/{entry}/seed-{seed}/events.{purpose}.r{draw}.jsonl
+            runs/{entry}/seed-{seed}/loss.{purpose}.r{draw}.json
 ```
 
 Two orientation rules fall straight out of this tree. First, the
@@ -746,7 +742,7 @@ A/A calibration (`calibration.py`), and tournament-detail analytics
 `Contestant`/`Matchup`/`MatchupResult`/`SelectionDecision`/`Standing`),
 `registry.py` (`make_strategy`), the concrete strategies, `driver.py`
 (`resolve_tournament` + `EvidencePreGate` orchestration),
-`evidence_gate.py` (Bradley–Terry fit + `EVIDENCE_REPLICATE_BASE`),
+`evidence_gate.py` (Bradley–Terry fit),
 `dead_letter.py`, `diversity.py` (`jaccard`). The gate is imported from
 `tournament/`; strategies never re-decide a duel.
 
@@ -779,7 +775,7 @@ split + rotation seed).
 `Pattern` per finding.
 
 **`telemetry/`** — sink wiring (goldfive `JSONLPersistenceSink` per run),
-the post-run reducer (`events.jsonl` → `LossProfile`), and the
+the post-run reducer (measurement event JSONL → `LossProfile`), and the
 harmonograf supervisor (auto-launch + handle).
 
 **`scoring/`** — the two pluggable scoring seams: per-run drift
@@ -1107,7 +1103,7 @@ computed artifacts against committed goldens under
 #   REINDEX-DUMP   the SQLite index, rebuilt from a fixture workspace and
 #                  dumped to stable text, is byte-identical to the golden.
 #   MOCK-GOLDEN    a deterministic, no-live-LLM racing mock evolve produces
-#                  gen_score.json / experiment.json / loss.json / lineage.json
+#                  gen_score.json / experiment.json / loss.*.json / lineage.json
 #                  artifacts byte-identical (after masking wall-clock noise)
 #                  to the golden.
 #   MYPY           type checking must complete successfully.
@@ -1156,52 +1152,40 @@ Verify complete serialization, strict invalid-input refusal, source sensitivity,
 and the consuming worker boundary. The contract reference comparison checks
 identity; an expected hash change needs a component-level explanation.
 
-### G7 — The reserved-base ledger: every replicate base is claimed
+### G7 — Measurement identity separates purposes and independent draws
 
-> ⛔ **NEVER** schedule board-unit work at an ad-hoc replicate index. The
-> replicate axis is a partitioned ledger; claiming a base without
-> registering it in the cross-referenced constants corrupts the per-unit
-> cache for everyone.
+Every board evaluation carries a `MeasurementDraw` from
+`src/zicato/core/measurement.py`. It records the evaluation purpose
+(`purpose`), a nonnegative draw number within that purpose (`draw`), and an
+integer seed or null (`base_seed`).
 
-The ledger, cross-documented on each of its constants:
+Purposes distinguish tournament, calibration, contract preflight, candidate
+screening, evidence confirmation, board reflection, and evaluation-synthesis
+admission measurements. Draw numbers start at zero within each purpose.
+Advance the draw when requesting an independent sample of the same generation
+and entry. Pass the identity through the `measurement` or `first_measurement`
+API argument and the task context's `measurement` JSON value so the harness
+can vary its random stream for each draw.
 
-| Base | Owner | Constant (file) |
-|---|---|---|
-| `0..` | real tournament duels | (implicit — duel replicates count up from 0) |
-| `1000` | A/A noise-floor calibration | `CALIBRATION_REPLICATE_BASE` (`src/zicato/tournament/calibration.py`) |
-| `2000 + j` | contract pre-flight degraded draw, probe `j` | `PREFLIGHT_REPLICATE_BASE` / `PREFLIGHT_REPLICATE_SPAN` (`src/zicato/epoch/preflight.py`) |
-| `3000` / `3001` | candidate screen / its confirm-before-veto re-run | `SCREEN_REPLICATE_BASE` (`src/zicato/epoch/screen.py`) |
-| `4000` | evidence-gate replicate duels | `EVIDENCE_REPLICATE_BASE` (`src/zicato/selection/evidence_gate.py`) |
-| `5000` | board-reflection corpus draws | `REFLECTION_REPLICATE_BASE` (`src/zicato/reflection/corpus.py`) |
-| `6000` | eval-synthesis admission probes | `SYNTHESIS_REPLICATE_BASE` (`src/zicato/reflection/admission.py`) |
+The cache key includes generation, board entry, purpose, local draw, and seed.
+Within an entry's run directory, losses live at
+`seed-{seed}/loss.{purpose}.r{draw}.json`; a null seed uses `seed-none`.
+Events and result captures use the same purpose, draw, and seed. Recorded
+measurement identity must agree with the artifact path before reuse.
 
-**Why.** The per-unit cache is keyed `(generation, entry, replicate)`.
-The comment on `EVIDENCE_REPLICATE_BASE` names the two failure
-directions:
+Preflight and screening evaluate modified source and must remain separate
+from evidence about the recorded generation's own source. Confirmation draws
+must execute independent samples on both sides; replaying a completed draw
+does not add evidence. Recovery may reuse a completed matching measurement,
+and forced remeasurement retains previous attempts without counting them as
+additional independent draws.
 
-```python
-#: Replicate-index base for the pre-gate's evidence duels. Evidence replicate
-#: ``j`` runs the crowning pair at replicate index ``EVIDENCE_REPLICATE_BASE
-#: + j`` — a RESERVED per-unit cache slot — so each replicate draws BOTH
-#: sides (champion AND challenger) fresh instead of replaying the canonical
-#: replicate-0 sample the tournament already scored: identical data repeated
-#: through the fit would shrink the Bradley--Terry SE by repetition alone
-#: (fast mode), and a force-fresh re-run at slot 0 would clobber the child's
-#: canonical ``loss.json`` that reindex/crash-resume key on (full mode).
-EVIDENCE_REPLICATE_BASE: int = 4000
-```
-*(src/zicato/selection/evidence_gate.py, `EVIDENCE_REPLICATE_BASE` — excerpt)*
+**Verify:** test that different purposes, draws, and seeds use distinct paths;
+that worker context preserves measurement identity; that source-specific
+readers select the intended purpose; and that interrupted execution reuses
+only complete matching records.
 
-Colliding with `0..` either replays a cached sample as if it were a fresh
-draw (statistically corrupt: repetition counted as independent evidence) or
-clobbers the canonical `loss.json` that reindex and crash-resume key on
-(record corruption). Colliding with another reserved base cross-poisons
-two subsystems' caches. If you add a new evaluation channel, claim a new
-base far from the others AND cross-reference it in every sibling
-constant's docstring — that mutual documentation is the registration.
 
-**Verify:** `grep -rn "REPLICATE_BASE" src/zicato` — every base constant
-must list every other.
 
 ### G8 — The restricted-visibility envelope
 

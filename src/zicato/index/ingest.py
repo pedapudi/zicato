@@ -71,11 +71,11 @@ from typing import Any
 from zicato.core.loss import has_execution_evidence, validate_loss_identity
 from zicato.core.measurement import (
     UNKNOWN_SEED,
+    MeasurementPurpose,
     iter_measurement_artifacts,
     recorded_artifact_measurement,
 )
 from zicato.core.types import Experiment, LossProfile
-from zicato.core.workspace import loss_profile_path
 from zicato.epoch._storage import RecordError
 from zicato.epoch.lineage import LineageEpoch, LineageGeneration
 from zicato.index.schema import (
@@ -893,20 +893,10 @@ def _ingest_run_into(
         profile = _load_loss_profile(path)
         if profile is None:
             raise ValueError(f"cannot index unreadable canonical loss {path}")
-        try:
-            identity = recorded_artifact_measurement(
-                run_directory, path, profile.measurement, profile.match_id
-            )
-        except ValueError:
-            if profile.measurement is not None or path.parent != run_directory:
-                raise
-            # Historical files can establish a physical slot without proving
-            # its purpose. Keep the record auditable without admitting evidence.
-            identity = None
-        identity_key = identity if identity is not None else path.name
-        if identity_key in identities or profile.run_id in run_ids:
+        identity = recorded_artifact_measurement(run_directory, path, profile.measurement)
+        if identity in identities or profile.run_id in run_ids:
             raise ValueError(f"duplicate canonical measurement identity at {path}")
-        identities.add(identity_key)
+        identities.add(identity)
         run_ids.add(profile.run_id)
         validate_loss_identity(
             profile,
@@ -940,8 +930,8 @@ def _ingest_run_into(
         )
         if (
             selection_valid
-            and identity is not None
-            and identity.replicate_index == 0
+            and identity.purpose == MeasurementPurpose.TOURNAMENT
+            and identity.draw == 0
             and identity.base_seed == selected_seed
             and has_execution_evidence(profile)
         ):
@@ -1408,9 +1398,7 @@ def _epoch_signals(
         if experiment_json_path(workspace_root, epoch_id, generation_id).is_file():
             experiments += 1
         for entry_id in _iter_run_entry_ids(workspace_root, epoch_id, generation_id):
-            run_directory = loss_profile_path(
-                workspace_root, epoch_id, generation_id, entry_id
-            ).parent
+            run_directory = layout.run_dir(epoch_id, generation_id, entry_id)
             if next(iter_measurement_artifacts(run_directory), None) is not None:
                 runs += 1
 

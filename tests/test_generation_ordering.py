@@ -14,6 +14,8 @@ import json
 from pathlib import Path
 
 from tests._workspace_support import experiment_record
+from zicato.core.measurement import TOURNAMENT_DRAW
+from zicato.core.workspace import run_id_for_unit
 from zicato.telemetry.reducer import write_loss_profile
 from zicato.testing import make_loss_profile
 from zicato.workspace import (
@@ -109,8 +111,9 @@ def test_epoch_health_inputs_read_generations_in_round_number_order(tmp_path: Pa
         path.parent.mkdir(parents=True, exist_ok=True)
         write_loss_profile(
             make_loss_profile(
+                measurement=TOURNAMENT_DRAW,
                 **{
-                    "run_id": f"r-{gen_id}",
+                    "run_id": run_id_for_unit(gen_id, "entry_a", epoch_id="e0"),
                     "entry_id": "entry_a",
                     "generation_id": gen_id,
                     "epoch_id": "e0",
@@ -122,7 +125,7 @@ def test_epoch_health_inputs_read_generations_in_round_number_order(tmp_path: Pa
                     "expectation_result": None,
                     "drift_loss": 1.0,
                     "pass_fail": True,
-                }
+                },
             ),
             path,
         )

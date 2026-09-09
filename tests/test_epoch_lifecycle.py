@@ -226,7 +226,7 @@ def test_close_epoch_marks_closed_and_writes_analysis(
     out = close_epoch(workspace, cfg.id, aux_call_llm=stub_call)
     assert out.exists()
     text = out.read_text()
-    assert f"# Epoch analysis: {cfg.id}" in text
+    assert f"**Epoch id**: `{cfg.id}`" in text
     assert "## Headline movements" in text
     assert "## Recommended focus for next epoch" in text
 
@@ -242,8 +242,8 @@ def test_close_epoch_without_aux_writes_stub(
     cfg = new_epoch(workspace, "alpha", board_file, brief_file, ScoringWeights())
     out = close_epoch(workspace, cfg.id, aux_call_llm=None)
     text = out.read_text()
-    assert f"# Epoch analysis: {cfg.id}" in text
-    assert "stub" in text.lower()
+    assert f"**Epoch id**: `{cfg.id}`" in text
+    assert "## Methodology" in text
     assert load_epoch(workspace, cfg.id).closed
 
 

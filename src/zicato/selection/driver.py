@@ -14,14 +14,12 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from zicato.core.measurement import (
-    UNKNOWN_SEED,
     MeasurementDraw,
     MeasurementPurpose,
-    validate_measurement_interval,
+    validate_measurement_count,
 )
 from zicato.core.tournament import ConfirmationStatus
 from zicato.selection.evidence_gate import (
-    EVIDENCE_REPLICATE_BASE,
     EvidenceAttempt,
     EvidenceVerdict,
     evidence_verdict,
@@ -53,63 +51,43 @@ RunMatchup = Callable[[Matchup], Awaitable[MatchupResult]]
 #: the loop entirely — the pre-gate then defers/inconclusive on its current
 #: evidence without scheduling any new duel.
 #:
-#: CONTRACT: every call must return an INDEPENDENT fresh draw of the pair,
-#: under a matchup id that is unique within the audit. The orchestrator's
-#: implementations satisfy both by running each evidence replicate ``j`` at
-#: the reserved replicate index
-#: :data:`~zicato.selection.evidence_gate.EVIDENCE_REPLICATE_BASE` ``+ j``
-#: (both sides drawn fresh — never a cache replay of the canonical
-#: replicate-0 slots) and encoding that index in the matchup id
-#: (``bt-replicate:r{index}:{left}:{right}``). The driver refuses to append a
-#: result whose matchup id already appears in the audit: identical data
-#: re-presented to the fit would shrink the Bradley--Terry SE by repetition
-#: alone, letting duplicate duels "separate" CIs without new evidence.
+#: Each request must identify an independent confirmation draw on both sides.
+#: The factory advances the local draw under ``evidence_confirmation`` and
+#: assigns a unique matchup id. The driver rejects repeated matchup ids and
+#: measurement identities as evidence. Replaying a sample must not narrow
+#: confidence intervals without an additional independent observation.
+
 ReplicateDuel = Callable[[str, str], Awaitable[MatchupResult]]
 
-#: ``run_reserved_matchup(matchup, replicate_base=..., cache_scores=...)`` runs
-#: one duel at a caller-chosen replicate slot. The single injection point of
-#: :func:`make_evidence_replicate_duel`: everything ELSE about an evidence
-#: replicate — which slot, what the matchup is called, and that its scores stay
-#: out of the cache — is decided there, so a caller cannot satisfy the
-#: ``ReplicateDuel`` contract by accident.
+#: Run one matchup starting at ``first_measurement``. The confirmation
+#: factory chooses its purpose, local draw, and matchup id, and disables
+#: aggregate caching so confirmation preserves the tournament score.
+
 RunReservedMatchup = Callable[..., Awaitable[MatchupResult]]
 
 log = logging.getLogger("zicato.selection.driver")
 
 
 def make_evidence_replicate_duel(run_reserved_matchup: RunReservedMatchup) -> ReplicateDuel:
-    """Build the pre-gate's :data:`ReplicateDuel` over a reserved-slot runner.
+    """Build a callable that requests independent confirmation draws.
 
-    This is the one implementation of the ``ReplicateDuel`` contract that
-    ships. It owns the three properties the contract demands and that a
-    hand-written closure would have to restate correctly every time:
-
-    * replicate ``j`` of a crowning pair runs at the reserved slot
-      :data:`~zicato.selection.evidence_gate.EVIDENCE_REPLICATE_BASE` ``+ j``,
-      so both sides draw fresh rather than replaying (fast mode) or
-      clobbering (full mode) the canonical replicate-0 units;
-    * the slot is encoded in the matchup id, which the driver's audit guard
-      keys on to refuse a repeated draw;
-    * ``cache_scores`` is off, keeping single-draw aggregates out of the
-      per-generation score the next round reuses.
-
-    The counter lives in the returned closure, so each pre-gate loop numbers
-    its own replicates from zero.
-    """
+    Each call advances the draw within the confirmation purpose and disables
+    aggregate score caching. Confirmation cannot overwrite the tournament
+    measurements that selected the candidate."""
     replicates_run = 0
 
     async def _replicate_duel(left_id: str, right_id: str) -> MatchupResult:
         nonlocal replicates_run
-        replicate_slot = EVIDENCE_REPLICATE_BASE + replicates_run
-        validate_measurement_interval(replicate_slot, 1, purpose=MeasurementPurpose.CONFIRMATION)
+        replicate_slot = MeasurementDraw(MeasurementPurpose.CONFIRMATION, replicates_run)
+
         replicates_run += 1
         return await run_reserved_matchup(
             Matchup(
-                matchup_id=f"bt-replicate:r{replicate_slot}:{left_id}:{right_id}",
+                matchup_id=f"confirmation:r{replicate_slot.draw}:{left_id}:{right_id}",
                 left=Contestant(generation_id=left_id, role="champion"),
                 right=Contestant(generation_id=right_id, role="challenger"),
             ),
-            replicate_base=replicate_slot,
+            first_measurement=replicate_slot,
             cache_scores=False,
         )
 
@@ -159,9 +137,7 @@ class EvidencePreGate:
     replicate_budget: int
 
     def __post_init__(self) -> None:
-        validate_measurement_interval(
-            EVIDENCE_REPLICATE_BASE, self.replicate_budget, allow_empty=True
-        )
+        validate_measurement_count(self.replicate_budget, allow_empty=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -333,7 +309,7 @@ async def confirm_promotion_with_evidence(
             eligibility = "nonfinite"
         elif result.left_id == result.right_id:
             eligibility = "self_comparison"
-        elif measurement is None or measurement.base_seed is UNKNOWN_SEED:
+        elif measurement is None:
             eligibility = "missing_provenance"
         elif measurement.purpose != MeasurementPurpose.CONFIRMATION:
             eligibility = "wrong_purpose"

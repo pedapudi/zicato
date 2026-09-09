@@ -225,7 +225,7 @@
     "0/round_log.jsonl": [
       {
         "payload": {
-          "contract_hash": "76b5bf7a933769eb64fbc1fd0481777e56be2b21f99f636c808c94699ca9848f"
+          "contract_hash": "4530882653ef8e8a807dc047f002dd81d4bcaf0e93a4bed159b65975fb98ed4f"
         },
         "scope": {},
         "seq": 1,
@@ -368,7 +368,6 @@
       {
         "payload": {
           "entry_id": "picky_stakeholder_emulated",
-          "replicate": 0,
           "side": "parent"
         },
         "scope": {
@@ -386,7 +385,6 @@
       {
         "payload": {
           "entry_id": "picky_stakeholder_emulated",
-          "replicate": 0,
           "side": "child"
         },
         "scope": {
@@ -404,7 +402,6 @@
       {
         "payload": {
           "entry_id": "transformers_lay_audience",
-          "replicate": 0,
           "side": "parent"
         },
         "scope": {
@@ -422,7 +419,6 @@
       {
         "payload": {
           "entry_id": "transformers_lay_audience",
-          "replicate": 0,
           "side": "child"
         },
         "scope": {

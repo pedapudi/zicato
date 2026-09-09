@@ -69,7 +69,12 @@ from zicato.analyzer.redaction import (
     truncate_free_text,
 )
 from zicato.core import normalize_wire_drift_kind, normalize_wire_severity
-from zicato.core.measurement import UNKNOWN_SEED, BaseSeed, measurement_artifact_path
+from zicato.core.measurement import (
+    TOURNAMENT_DRAW,
+    UNKNOWN_SEED,
+    BaseSeed,
+    measurement_artifact_path,
+)
 from zicato.telemetry.event_log import EventRecord, read_event_log
 
 # ---------------------------------------------------------------------------
@@ -579,9 +584,9 @@ def extract_process_exemplars(
                     measurement_artifact_path(
                         events_jsonl_path(
                             workspace_root, epoch_id, parent_generation_id, entry_id
-                        ).parent,
+                        ).parent.parent,
                         "events",
-                        0,
+                        TOURNAMENT_DRAW,
                         base_seed=base_seed,
                     )
                 )

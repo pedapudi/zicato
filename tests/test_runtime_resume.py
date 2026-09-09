@@ -28,6 +28,7 @@ from pathlib import Path
 
 import pytest
 
+from zicato.core.measurement import TOURNAMENT_DRAW
 from zicato.core.types import (
     Experiment,
     Generation,
@@ -35,6 +36,7 @@ from zicato.core.types import (
     LossProfile,
     Patch,
 )
+from zicato.core.workspace import run_id_for_unit
 from zicato.runtime.paths import (
     active_runs_dir,
     active_tournament_log_path,
@@ -147,7 +149,8 @@ def _write_loss(workspace: Path, generation_id: str, entry_id: str) -> None:
     from zicato.core.types import MetricCount
 
     loss = LossProfile(
-        run_id=f"r-{generation_id}-{entry_id}",
+        run_id=run_id_for_unit(generation_id, entry_id, epoch_id=EPOCH),
+        measurement=TOURNAMENT_DRAW,
         entry_id=entry_id,
         generation_id=generation_id,
         epoch_id=EPOCH,
@@ -160,7 +163,13 @@ def _write_loss(workspace: Path, generation_id: str, entry_id: str) -> None:
         drift_loss=0.1,
         pass_fail=True,
     )
-    path = _gen_dir(workspace, generation_id) / "runs" / entry_id / "loss.json"
+    path = (
+        _gen_dir(workspace, generation_id)
+        / "runs"
+        / entry_id
+        / "seed-none"
+        / "loss.tournament.r0.json"
+    )
     write_loss_profile(loss, path)
 
 
@@ -270,7 +279,9 @@ def test_interrupted_tournament_with_loss_resumes_in_place(tmp_path: Path) -> No
     # NOTHING is discarded — the completed loss.json must survive to be a
     # cache HIT on resume.
     assert plan.discarded_generation_id is None
-    assert (_gen_dir(workspace, "v1") / "runs" / "entry_a" / "loss.json").is_file()
+    assert (
+        _gen_dir(workspace, "v1") / "runs" / "entry_a" / "seed-none" / "loss.tournament.r0.json"
+    ).is_file()
 
 
 def test_git_backed_interrupted_tournament_resumes_in_place(tmp_path: Path) -> None:

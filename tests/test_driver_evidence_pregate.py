@@ -13,7 +13,7 @@ from dataclasses import replace
 
 import pytest
 
-from zicato.core.measurement import MeasurementDraw
+from zicato.core.measurement import MeasurementDraw, MeasurementPurpose
 from zicato.core.scoring_config import ScoringWeights
 from zicato.core.types import ExperimentalConfig, TournamentStructure
 from zicato.selection import Contestant, Matchup, MatchupResult, make_strategy
@@ -23,7 +23,6 @@ from zicato.selection.driver import (
     evaluate_tournament,
     resolve_tournament,
 )
-from zicato.selection.evidence_gate import EVIDENCE_REPLICATE_BASE
 from zicato.tournament.gate import GateOutcome, evaluate_gate
 
 
@@ -48,7 +47,7 @@ def _result(m: Matchup, *, left_scalar: float, right_scalar: float) -> MatchupRe
     )
 
 
-_REPLICATE_SLOTS = itertools.count(EVIDENCE_REPLICATE_BASE)
+_REPLICATE_SLOTS = itertools.count()
 
 
 def _replicate_result(left_id: str, right_id: str, *, child_won: bool) -> MatchupResult:
@@ -66,7 +65,7 @@ def _replicate_result(left_id: str, right_id: str, *, child_won: bool) -> Matchu
         left_scalar, right_scalar, delta, dec = 0.5, 1.0, 0.5, "rejected"
     slot = next(_REPLICATE_SLOTS)
     return MatchupResult(
-        measurement_draw=MeasurementDraw.from_index(slot, base_seed=None),
+        measurement_draw=MeasurementDraw(MeasurementPurpose.CONFIRMATION, slot),
         matchup_id=f"bt-replicate:r{slot}:{left_id}:{right_id}",
         left_id=left_id,
         right_id=right_id,

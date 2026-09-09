@@ -6,13 +6,15 @@ import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 
+from zicato.core.measurement import MeasurementDraw
+
 
 @dataclass(frozen=True, slots=True)
 class DecisionObservation:
     workspace_seed: int
     generation_id: str
     entry_id: str
-    replicate_index: int
+    measurement: MeasurementDraw
     drift_loss: float
     passed: bool | None
 

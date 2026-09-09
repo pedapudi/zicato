@@ -19,7 +19,8 @@ from zicato.core import BoardEntry, LossProfile, RuntimeConfig, ScoringWeights
 from zicato.core.adapter_config import DriverImportContext
 from zicato.core.measurement import (
     MeasurementDraw,
-    artifact_replicate_index,
+    MeasurementPurpose,
+    artifact_measurement,
     measurement_artifact_path,
 )
 from zicato.core.run_context import RunContext
@@ -274,15 +275,15 @@ def test_worker_uses_configuration_from_args_file(tmp_path: Path) -> None:
     entry = _entry()
 
     sink_path = measurement_artifact_path(
-        events_jsonl_path(workspace, "e0", generation.id, entry.id).parent,
+        events_jsonl_path(workspace, "e0", generation.id, entry.id).parent.parent,
         "events",
-        0,
+        MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0),
         base_seed=None,
     )
     loss_path = measurement_artifact_path(
-        loss_profile_path(workspace, "e0", generation.id, entry.id).parent,
+        loss_profile_path(workspace, "e0", generation.id, entry.id).parent.parent,
         "loss",
-        0,
+        MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0),
         base_seed=None,
     )
     result_path = tmp_path / "result.json"
@@ -320,14 +321,14 @@ def test_worker_uses_configuration_from_args_file(tmp_path: Path) -> None:
                         Path(str(workspace)),
                         "e0",
                         generation.id,
-                        run_id_for_unit(generation.id, entry.id),
+                        run_id_for_unit(generation.id, entry.id, epoch_id=generation.epoch_id),
                         Path(str(generation.snapshot_root)),
                         None,
                     )
                 ).to_json(),
                 "driver_imports": DriverImportContext().document(),
-                "measurement": MeasurementDraw.from_index(
-                    artifact_replicate_index(Path(str(loss_path)).name), base_seed=None
+                "measurement": replace(
+                    artifact_measurement(Path(str(loss_path)).name), base_seed=None
                 ).to_json(),
             }
         ),

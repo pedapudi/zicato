@@ -178,10 +178,24 @@ def test_layout_paths(tmp_path: Path) -> None:
         root / "epochs" / "e0" / "generations" / "v1" / "runs" / "t1"
     )
     assert layout.loss("e0", "v1", "t1") == (
-        root / "epochs" / "e0" / "generations" / "v1" / "runs" / "t1" / "loss.json"
+        root
+        / "epochs"
+        / "e0"
+        / "generations"
+        / "v1"
+        / "runs"
+        / "t1"
+        / "seed-none/loss.tournament.r0.json"
     )
     assert layout.events("e0", "v1", "t1") == (
-        root / "epochs" / "e0" / "generations" / "v1" / "runs" / "t1" / "events.jsonl"
+        root
+        / "epochs"
+        / "e0"
+        / "generations"
+        / "v1"
+        / "runs"
+        / "t1"
+        / "seed-none/events.tournament.r0.jsonl"
     )
 
 
@@ -285,13 +299,26 @@ def test_epoch_experiments_empty_when_no_generations(tmp_path: Path) -> None:
 def test_read_loss_and_gen_score(tmp_path: Path) -> None:
     ws = tmp_path / ".zicato"
     run = ws / "epochs" / "e0" / "generations" / "v1" / "runs" / "t1"
-    _write(run / "loss.json", {"entry_id": "t1", "drift_loss": 0.5})
+    from zicato.core.measurement import TOURNAMENT_DRAW
+    from zicato.telemetry.reducer import loss_profile_to_dict
+    from zicato.testing.fixtures import make_loss_profile
+
+    loss = loss_profile_to_dict(
+        make_loss_profile(
+            epoch_id="e0",
+            generation_id="v1",
+            entry_id="t1",
+            drift_loss=0.5,
+            measurement=TOURNAMENT_DRAW,
+        )
+    )
+    _write(run / "seed-none/loss.tournament.r0.json", loss)
     _write(
         ws / "epochs" / "e0" / "generations" / "v1" / "gen_score.json",
         {"format_version": 1, "scalar": 0.25},
     )
     layout = WorkspaceLayout.from_root(ws)
-    assert read_loss(layout, "e0", "v1", "t1") == {"entry_id": "t1", "drift_loss": 0.5}
+    assert read_loss(layout, "e0", "v1", "t1") == loss
     assert read_loss(layout, "e0", "v1", "missing") is None
     assert read_gen_score(layout, "e0", "v1").to_dict() == {"format_version": 1, "scalar": 0.25}
     assert read_gen_score(layout, "e0", "missing") is None
@@ -300,8 +327,8 @@ def test_read_loss_and_gen_score(tmp_path: Path) -> None:
 def test_reads_never_raise_on_garbage(tmp_path: Path) -> None:
     ws = tmp_path / ".zicato"
     run = ws / "epochs" / "e0" / "generations" / "v1" / "runs" / "t1"
-    run.mkdir(parents=True)
-    (run / "loss.json").write_text("{broken")
+    (run / "seed-none").mkdir(parents=True)
+    (run / "seed-none/loss.tournament.r0.json").write_text("{broken")
     (ws / "epochs" / "e0" / "generations" / "v1" / "gen_score.json").write_text("[]")
     layout = WorkspaceLayout.from_root(ws)
     assert read_loss(layout, "e0", "v1", "t1") is None

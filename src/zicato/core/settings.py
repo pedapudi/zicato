@@ -15,7 +15,6 @@ from zicato.core.configuration import (
     validate_authored_overlay,
 )
 from zicato.core.constraints import KnobConstraint, validate_knobs
-from zicato.core.measurement import PREFLIGHT_REPLICATE_SPAN
 
 #: Initial delay and maximum delay after an infrastructure failure, in seconds.
 INFRA_BACKOFF_BASE_S_DEFAULT: float = 30.0
@@ -25,9 +24,6 @@ INFRA_BACKOFF_CAP_S_DEFAULT: float = 480.0
 PREFLIGHT_GATE_MODES: tuple[str, ...] = ("off", "warn", "refuse")
 PREFLIGHT_GATE_DEFAULT: str = "warn"
 PREFLIGHT_PROBE_POINTS_DEFAULT: int = 5
-
-#: A probe must fit inside the measurement owner's reserved preflight interval.
-PREFLIGHT_PROBE_POINTS_MAX: int = PREFLIGHT_REPLICATE_SPAN
 
 
 @dataclass(frozen=True, slots=True)
@@ -339,11 +335,9 @@ class RuntimeSettings:
     preflight_probe_points:
         CEILING on how many mutation points the pre-flight may degrade to
         measure the degradation signal (issue #106). Defaults to
-        :data:`PREFLIGHT_PROBE_POINTS_DEFAULT`; must be ``>= 1`` (``1``
-        reproduces the single-probe behaviour that made one inert point able
-        to veto a whole contract) and ``<=``
-        :data:`PREFLIGHT_PROBE_POINTS_MAX` (the pre-flight's reserved
-        replicate block cannot hold a wider sample). The pre-flight degrades
+        :data:`PREFLIGHT_PROBE_POINTS_DEFAULT`; must be ``>= 1``. A ceiling of
+        one measures only one mutation point, so an inert point can obscure
+        the signal available from other points. The pre-flight degrades
         a deterministic, role-diverse sample of this size
         (:func:`zicato.epoch.preflight.select_probe_points`) and reports the
         MAX signal, so one point that happens not to reach the deliverable
@@ -458,7 +452,7 @@ class RuntimeSettings:
     preflight_probe_points: int = field(
         default=PREFLIGHT_PROBE_POINTS_DEFAULT,
         metadata={
-            "constraint": KnobConstraint(minimum=1, maximum=PREFLIGHT_PROBE_POINTS_MAX),
+            "constraint": KnobConstraint(minimum=1),
         },
     )
     preflight_probe_mutation_ids: tuple[str, ...] = field(default=(), metadata={})

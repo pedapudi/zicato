@@ -30,7 +30,8 @@ from typing import Any
 import pytest
 
 from tests._workspace_support import experiment_record, write_epoch, write_lineage
-from zicato.core.workspace import loss_profile_path
+from zicato.core.measurement import TOURNAMENT_DRAW
+from zicato.core.workspace import loss_profile_path, run_id_for_unit
 from zicato.index.ingest import (
     _epoch_signals,
     _walk_epochs,
@@ -674,7 +675,7 @@ def test_delegated_writes_must_finish_before_the_parent_acknowledges_revisions(
     replace_file = atomic_mod.os.replace
 
     def pause_loss_publication(source: Path, destination: Path) -> None:
-        if destination.name == "loss.json":
+        if destination.name == "loss.tournament.r0.json":
             ready.wait()
             assert finish.wait(timeout=5)
         replace_file(source, destination)
@@ -940,7 +941,11 @@ def _write_loss_profile(ws: Path, epoch: str, gen: str, entry: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     write_loss_profile(
         make_loss_profile(
-            run_id=f"{epoch}--{gen}--{entry}", epoch_id=epoch, generation_id=gen, entry_id=entry
+            measurement=TOURNAMENT_DRAW,
+            run_id=run_id_for_unit(gen, entry, epoch_id=epoch),
+            epoch_id=epoch,
+            generation_id=gen,
+            entry_id=entry,
         ),
         path,
     )

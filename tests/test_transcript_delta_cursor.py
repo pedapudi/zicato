@@ -47,9 +47,9 @@ ENTRY = "waffles_single"
 
 
 def _events_path(root: Path) -> Path:
-    run_dir = root / "epochs" / EPOCH / "generations" / GEN / "runs" / ENTRY
+    run_dir = root / "epochs" / EPOCH / "generations" / GEN / "runs" / ENTRY / "seed-none"
     run_dir.mkdir(parents=True, exist_ok=True)
-    return run_dir / "events.jsonl"
+    return run_dir / "events.tournament.r0.jsonl"
 
 
 def _line(kind: str, payload: dict[str, Any], seq: int, *, run_id: str = "run-a") -> str:
@@ -305,8 +305,8 @@ def test_verbatim_available_tracks_a_valid_result_json(tmp_path: Path) -> None:
 
     path = _events_path(tmp_path)
     _opening(path)
-    write_loss_profile(make_loss_profile(), path.parent / "loss.json")
-    result = path.parent / "result.json"
+    write_loss_profile(make_loss_profile(), path.parent / "loss.tournament.r0.json")
+    result = path.parent / "result.tournament.r0.json"
 
     # A truncated / wrong-version capture is NOT a verbatim capture.
     result.write_text('{"format_version": "nope"}', encoding="utf-8")

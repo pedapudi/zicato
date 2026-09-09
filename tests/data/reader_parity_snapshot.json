@@ -225,7 +225,7 @@
         "output_chars": 0,
         "pass_fail": true,
         "plan_revisions": 0,
-        "run_id": "e1-v1-t1",
+        "run_id": "seed-none.tournament.r0.e5f25228adcf931bd7409b8e77719187f99c435009da8ec9883673e9195a6aca",
         "runtime_ms": 0,
         "tokens_spent": 0,
         "turns_completed": null,
@@ -233,7 +233,7 @@
       },
       "judges": {
         "judges": [],
-        "run_id": "e1-v1-t1"
+        "run_id": "seed-none.tournament.r0.e5f25228adcf931bd7409b8e77719187f99c435009da8ec9883673e9195a6aca"
       }
     },
     "episode_export": {
@@ -1189,15 +1189,17 @@
               {
                 "children": [],
                 "coordinates": {
+                  "base_seed": null,
                   "entry_id": "t1",
                   "epoch_id": "e0",
                   "generation_id": "v0",
                   "match_id": "",
+                  "measurement_purpose": "tournament",
                   "replicate": 0
                 },
                 "duration_ms": 0,
                 "ended_at": null,
-                "id": "e:e0/baseline/v0/t1/r0",
+                "id": "e:e0/baseline/v0/t1/seed-none/tournament/r0",
                 "kind": "board_entry_run",
                 "label": "t1 · replicate 0",
                 "outcome": {
@@ -1218,15 +1220,17 @@
               {
                 "children": [],
                 "coordinates": {
+                  "base_seed": null,
                   "entry_id": "t2",
                   "epoch_id": "e0",
                   "generation_id": "v0",
                   "match_id": "",
+                  "measurement_purpose": "tournament",
                   "replicate": 0
                 },
                 "duration_ms": 0,
                 "ended_at": null,
-                "id": "e:e0/baseline/v0/t2/r0",
+                "id": "e:e0/baseline/v0/t2/seed-none/tournament/r0",
                 "kind": "board_entry_run",
                 "label": "t2 · replicate 0",
                 "outcome": {
@@ -1307,15 +1311,17 @@
               {
                 "children": [],
                 "coordinates": {
+                  "base_seed": null,
                   "entry_id": "t1",
                   "epoch_id": "e1",
                   "generation_id": "v0",
                   "match_id": "",
+                  "measurement_purpose": "tournament",
                   "replicate": 0
                 },
                 "duration_ms": 0,
                 "ended_at": null,
-                "id": "e:e1/baseline/v0/t1/r0",
+                "id": "e:e1/baseline/v0/t1/seed-none/tournament/r0",
                 "kind": "board_entry_run",
                 "label": "t1 · replicate 0",
                 "outcome": {
@@ -1336,15 +1342,17 @@
               {
                 "children": [],
                 "coordinates": {
+                  "base_seed": null,
                   "entry_id": "t2",
                   "epoch_id": "e1",
                   "generation_id": "v0",
                   "match_id": "",
+                  "measurement_purpose": "tournament",
                   "replicate": 0
                 },
                 "duration_ms": 0,
                 "ended_at": null,
-                "id": "e:e1/baseline/v0/t2/r0",
+                "id": "e:e1/baseline/v0/t2/seed-none/tournament/r0",
                 "kind": "board_entry_run",
                 "label": "t2 · replicate 0",
                 "outcome": {
@@ -1389,15 +1397,17 @@
               {
                 "children": [],
                 "coordinates": {
+                  "base_seed": null,
                   "entry_id": "t1",
                   "epoch_id": "e1",
                   "generation_id": "v1",
                   "match_id": "",
+                  "measurement_purpose": "tournament",
                   "replicate": 0
                 },
                 "duration_ms": 0,
                 "ended_at": null,
-                "id": "e:e1/baseline/v1/t1/r0",
+                "id": "e:e1/baseline/v1/t1/seed-none/tournament/r0",
                 "kind": "board_entry_run",
                 "label": "t1 · replicate 0",
                 "outcome": {
@@ -1418,15 +1428,17 @@
               {
                 "children": [],
                 "coordinates": {
+                  "base_seed": null,
                   "entry_id": "t2",
                   "epoch_id": "e1",
                   "generation_id": "v1",
                   "match_id": "",
+                  "measurement_purpose": "tournament",
                   "replicate": 0
                 },
                 "duration_ms": 0,
                 "ended_at": null,
-                "id": "e:e1/baseline/v1/t2/r0",
+                "id": "e:e1/baseline/v1/t2/seed-none/tournament/r0",
                 "kind": "board_entry_run",
                 "label": "t2 · replicate 0",
                 "outcome": {
@@ -1750,15 +1762,17 @@
                 "active": false,
                 "children": [],
                 "coordinates": {
+                  "base_seed": null,
                   "entry_id": "t1",
                   "epoch_id": "e0",
                   "generation_id": "v0",
                   "match_id": "",
+                  "measurement_purpose": "tournament",
                   "replicate": 0
                 },
                 "duration_ms": 0,
                 "ended_at": null,
-                "id": "e:e0/baseline/v0/t1/r0",
+                "id": "e:e0/baseline/v0/t1/seed-none/tournament/r0",
                 "kind": "board_entry_run",
                 "label": "t1 · replicate 0",
                 "outcome": {
@@ -1780,15 +1794,17 @@
                 "active": false,
                 "children": [],
                 "coordinates": {
+                  "base_seed": null,
                   "entry_id": "t2",
                   "epoch_id": "e0",
                   "generation_id": "v0",
                   "match_id": "",
+                  "measurement_purpose": "tournament",
                   "replicate": 0
                 },
                 "duration_ms": 0,
                 "ended_at": null,
-                "id": "e:e0/baseline/v0/t2/r0",
+                "id": "e:e0/baseline/v0/t2/seed-none/tournament/r0",
                 "kind": "board_entry_run",
                 "label": "t2 · replicate 0",
                 "outcome": {

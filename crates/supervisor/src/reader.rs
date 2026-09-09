@@ -228,58 +228,34 @@ fn fold_active_tournament_value_with_stats(
         };
         match ty {
             "Snapshot" => current = payload.clone(),
-            "EntryUpdate" => apply_entry_update(&mut current, payload),
-            "PartialAggregate" => apply_partial_aggregate(&mut current, payload),
-            // ProjectedUpdate folds into the structure envelope the coarse
-            // supervisor view does not model; the Python dashboard renders
-            // it. Ignored here (the snapshot view did not surface it either).
+            "Update" => {
+                if let (Some(fields), Some(view)) = (
+                    payload.get("fields").and_then(|v| v.as_object()),
+                    current.as_object_mut(),
+                ) {
+                    view.extend(
+                        fields
+                            .iter()
+                            .map(|(key, value)| (key.clone(), value.clone())),
+                    );
+                }
+                if let (Some(updates), Some(entries)) = (
+                    payload.get("entries").and_then(|v| v.as_object()),
+                    current.get_mut("entries").and_then(|v| v.as_array_mut()),
+                ) {
+                    for (index, entry) in updates {
+                        if let Some(row) =
+                            index.parse::<usize>().ok().and_then(|i| entries.get_mut(i))
+                        {
+                            *row = entry.clone();
+                        }
+                    }
+                }
+            }
             _ => {}
         }
     }
     (Some(current), stats)
-}
-
-/// Apply one `EntryUpdate` delta: override the first `entries` row whose
-/// `(entry_id, side)` matches, mirroring the Python fold.
-fn apply_entry_update(current: &mut serde_json::Value, payload: &serde_json::Value) {
-    let entry_id = payload.get("entry_id").and_then(|v| v.as_str());
-    let side = payload.get("side").and_then(|v| v.as_str());
-    let updates = match payload.get("updates").and_then(|u| u.as_object()) {
-        Some(u) => u,
-        None => return,
-    };
-    let entries = match current.get_mut("entries").and_then(|e| e.as_array_mut()) {
-        Some(e) => e,
-        None => return,
-    };
-    for row in entries.iter_mut() {
-        let row_obj = match row.as_object_mut() {
-            Some(o) => o,
-            None => continue,
-        };
-        let matches = row_obj.get("entry_id").and_then(|v| v.as_str()) == entry_id
-            && row_obj.get("side").and_then(|v| v.as_str()) == side;
-        if matches {
-            for (k, v) in updates {
-                row_obj.insert(k.clone(), v.clone());
-            }
-            return; // only the first matching row, as in the Python fold.
-        }
-    }
-}
-
-/// Apply one `PartialAggregate` delta: replace the side(s) supplied.
-fn apply_partial_aggregate(current: &mut serde_json::Value, payload: &serde_json::Value) {
-    let obj = match current.as_object_mut() {
-        Some(o) => o,
-        None => return,
-    };
-    if let Some(champ) = payload.get("champion_agg") {
-        obj.insert("partial_champion_agg".to_string(), champ.clone());
-    }
-    if let Some(chal) = payload.get("challenger_agg") {
-        obj.insert("partial_challenger_agg".to_string(), chal.clone());
-    }
 }
 
 pub fn read_lineage(paths: &WorkspacePaths) -> Option<Lineage> {
@@ -722,23 +698,23 @@ mod tests {
 
     #[test]
     fn folds_the_active_tournament_event_log() {
-        // RUNTIME-V2 Phase 3: the live producer writes an append-only event
-        // log, not the mutable snapshot. The reader folds it: a base
-        // Snapshot + an EntryUpdate delta + a PartialAggregate delta.
+        // Published updates replace fields without recalculating display values.
         let (_t, p) = make_ws();
         let log = [
             r#"{"seq":1,"ts":"t","type":"Snapshot","payload":{"tournament_id":"t1","entries":[{"entry_id":"b0","side":"child","status":"queued"},{"entry_id":"b0","side":"parent","status":"queued"}]}}"#,
-            r#"{"seq":2,"ts":"t","type":"EntryUpdate","payload":{"entry_id":"b0","side":"child","updates":{"status":"running"}}}"#,
-            r#"{"seq":3,"ts":"t","type":"PartialAggregate","payload":{"challenger_agg":{"scalar":0.5}}}"#,
+            r#"{"seq":2,"ts":"t","type":"Update","payload":{"fields":{},"entries":{"0":{"entry_id":"b0","side":"child","status":"running"},"1":{"entry_id":"b0","side":"parent","status":"queued"}}}}"#,
+            r#"{"seq":3,"ts":"t","type":"Update","payload":{"fields":{"partial_challenger_agg":{"scalar":0.5},"standings":[{"generation_id":"v1","rank":1}],"projected":{"v1":{"scalar":0.25}}},"entries":{}}}"#,
         ]
         .join("\n");
         std::fs::write(p.active_tournament_log(), log).unwrap();
 
         let at = read_active_tournament(&p).expect("the folded tournament");
         assert_eq!(at.tournament_id.as_deref(), Some("t1"));
-        // The EntryUpdate landed on the child row only.
         let child = at.entries.iter().find(|e| e.entry_id == "b0").unwrap();
         assert_eq!(child.status.as_deref(), Some("running"));
+        let published = serde_json::to_value(&at).unwrap();
+        assert_eq!(published["standings"][0]["generation_id"], "v1");
+        assert_eq!(published["projected"]["v1"]["scalar"], 0.25);
     }
 
     #[test]
@@ -798,8 +774,8 @@ mod tests {
         let (_t, p) = make_ws();
         let log = [
             r#"{"seq":1,"ts":"t","type":"Snapshot","payload":{"tournament_id":"t1","entries":[]}}"#,
-            r#"{"seq":2,"ts":"t","type":"EntryUpdate","payload":{"entry_id":"b0","side":"child","updates":{"status":"running"}}}"#,
-            r#"{"seq":3,"ts":"t","type":"PartialAggregate","payload":{"challenger_agg":{"scalar":0.5}}}"#,
+            r#"{"seq":2,"ts":"t","type":"Update","payload":{"fields":{},"entries":{}}}"#,
+            r#"{"seq":3,"ts":"t","type":"Update","payload":{"fields":{"partial_challenger_agg":{"scalar":0.5}},"entries":{}}}"#,
         ]
         .join("\n");
         std::fs::write(p.active_tournament_log(), log).unwrap();
@@ -819,7 +795,7 @@ mod tests {
             r#"{"seq":1,"ts":"t","type":"Snapshot","payload":{"tournament_id":"t1","entries":[]}}"#,
             r#"{"seq":2,"ts":"t","type":"EntryUp"#, // torn mid-line
             r#"not json at all"#,                   // garbage
-            r#"{"seq":3,"ts":"t","type":"PartialAggregate","payload":{"challenger_agg":{"scalar":0.9}}}"#,
+            r#"{"seq":3,"ts":"t","type":"Update","payload":{"fields":{"partial_challenger_agg":{"scalar":0.9}},"entries":{}}}"#,
         ]
         .join("\n");
         std::fs::write(p.active_tournament_log(), log).unwrap();
@@ -841,9 +817,9 @@ mod tests {
         let (_t, p) = make_ws();
         let log = [
             r#"{"seq":1,"ts":"t","type":"Snapshot","payload":{"tournament_id":"t1","entries":[]}}"#,
-            r#"{"seq":2,"ts":"t","type":"PartialAggregate","payload":{}}"#,
-            r#"{"seq":5,"ts":"t","type":"PartialAggregate","payload":{}}"#,
-            r#"{"seq":3,"ts":"t","type":"PartialAggregate","payload":{}}"#,
+            r#"{"seq":2,"ts":"t","type":"Update","payload":{"fields":{},"entries":{}}}"#,
+            r#"{"seq":5,"ts":"t","type":"Update","payload":{"fields":{},"entries":{}}}"#,
+            r#"{"seq":3,"ts":"t","type":"Update","payload":{"fields":{},"entries":{}}}"#,
         ]
         .join("\n");
         std::fs::write(p.active_tournament_log(), log).unwrap();

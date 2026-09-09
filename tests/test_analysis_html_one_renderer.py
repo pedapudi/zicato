@@ -168,7 +168,7 @@ def test_close_without_an_evaluation_llm_serves_the_renderers_output(
     ws, epoch_id = epoch
     close_epoch(ws, epoch_id=epoch_id, aux_call_llm=None)
 
-    assert "this is a stub" in analysis_path(ws, epoch_id).read_text(encoding="utf-8")
+    assert "## Methodology" in analysis_path(ws, epoch_id).read_text(encoding="utf-8")
     assert _served(ws, epoch_id) == _rendered_from_the_markdown(ws, epoch_id)
 
 

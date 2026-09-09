@@ -248,7 +248,23 @@ def test_partial_outage_leaves_resume_in_place_classification(
     # all-abort run cached none, so write the marker the classifier reads).
     runs_dir = workspace / "epochs" / epoch_id / "generations" / "v1" / "runs" / "entry_a"
     runs_dir.mkdir(parents=True)
-    (runs_dir / "loss.json").write_text("{}")
+    from dataclasses import asdict
+
+    from zicato.core.measurement import TOURNAMENT_DRAW
+    from zicato.storage import atomic_write_json
+    from zicato.testing.fixtures import make_loss_profile
+
+    atomic_write_json(
+        runs_dir / "seed-none" / "loss.tournament.r0.json",
+        asdict(
+            make_loss_profile(
+                epoch_id=epoch_id,
+                generation_id="v1",
+                entry_id="entry_a",
+                measurement=TOURNAMENT_DRAW,
+            )
+        ),
+    )
 
     plan = prepare_resume(workspace, epoch_id)
     assert plan.classification == "resume_tournament"

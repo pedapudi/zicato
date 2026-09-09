@@ -469,10 +469,7 @@ marker; the parent `Generation` is constructed with `promoted=True`.
 
 Then two idempotent, opt-in epoch-open measurements, each persisted onto
 `EpochConfig` (never hashed): `_maybe_calibrate_noise_floor`
-(config.json `"calibrate_noise_floor": K` — champion vs itself K times
-at replicate base 1000) and `_maybe_contract_preflight`
-(`"contract_preflight": K` — A/A floor plus degradation signal against a
-degraded copy, replicate base 2000; recommend-only). On round 0 only,
+(config.json `"calibrate_noise_floor": K` — K champion draws under the `calibration` purpose) and `_maybe_contract_preflight` (`"contract_preflight": K` — A/A floor plus degradation signal against a degraded copy under the `contract_preflight` purpose; recommend-only). On round 0 only,
 `_warn_margin_below_noise_floor` warns when `promote_margin` sits inside
 the measured floor.
 
@@ -530,7 +527,7 @@ at computation time, rather than only at prompt-render time.
 callable even exists on the propose path — unless the contract opts in
 (`proposer_quality.screen_entries > 0` AND `best_of_n > 1`). When built,
 ONE closure per round binds one deterministic rotating TRAIN panel
-(`select_screen_entries` over the champion's replicate-0 baseline; the
+(`select_screen_entries` over the champion's tournament draw-zero baseline; the
 holdout is never eligible), so every propose site this round screens on
 the same panel. The closure also stamps a `screening:r{round}` heartbeat
 phase, so the stall detector attributes the wall-clock honestly.
@@ -552,8 +549,7 @@ evaluation and settlement function.
 
 `produce_candidate_batch` mints generation ids from `next_generation_id` and
 requests `strategy.field_size()` candidates. A one-candidate resume may reuse
-the plan's `resume_generation_id`; a fresh id would orphan completed
-`loss.json` units. The proposer's post-apply validation hook is built by the
+the plan's `resume_generation_id`; a fresh id would orphan completed measurement files. The proposer's post-apply validation hook is built by the
 shared seam:
 
 - `build_post_apply_validator` (`src/zicato/evolve/round.py`) — the
@@ -767,7 +763,7 @@ the dashboard, and fast mode. Its keys are therefore a wire contract:
 > your call site.
 
 **Fast mode.** Every matchup uses the cache-first board-unit
-evaluator. Its key is `(generation, entry, replicate)`, so both competitors
+evaluator. Its key is `(generation, entry, purpose, draw, base_seed)`, so both competitors
 reuse completed slots and execute only missing slots. A requested replicate
 is never synthesized by replaying another slot. Full mode forces both sides
 fresh; a conservative crash resume enables cache reads even when full mode
@@ -799,20 +795,18 @@ the duel.
 When the contract sets `promote_confidence_threshold`, the driver calls
 `confirm_promotion_with_evidence` before settlement. The pre-gate can only
 withhold a promotion. While the verdict is unresolved, the driver runs fresh
-crowning-pair duels on the train slice at reserved replicate slots:
+crowning-pair duels on the train slice using the `evidence_confirmation`
+purpose. `make_evidence_replicate_duel` creates
+`MeasurementDraw(MeasurementPurpose.CONFIRMATION, replicates_run)`, advances
+the local draw counter, and passes the identity as `first_measurement`.
+It also sets `cache_scores=False` so a confirmation aggregate cannot replace
+the tournament score.
 
-```python
-        nonlocal evidence_replicates_run
-        replicate_slot = EVIDENCE_REPLICATE_BASE + evidence_replicates_run
-        evidence_replicates_run += 1
-        matchup_id = f"bt-replicate:r{replicate_slot}:{left_id}:{right_id}"
-```
-*(src/zicato/selection/driver.py, `make_evidence_replicate_duel` — excerpt)*
-
-The reserved slot is a natural cache MISS the first time (a fresh draw of
-BOTH sides) and an idempotent HIT on a resumed confirm — the A/A
-calibration's reserved-index discipline, applied to evidence (the
-reserved-base ledger, `01-orientation.md §4`). Non-separating CIs within
+Each additional confirmation requires an independent measurement from both
+sides. A resumed request may reuse its matching completed measurement;
+replaying that measurement must not add another observation to the fit.
+The measurement identity rule is in `01-orientation.md §4`, G7.
+ Non-separating CIs within
 the budget leave the champion standing: the decision goes terminally
 inconclusive, the duel is recorded to the
 dead-letter queue (`record_inconclusive`), and the journaled `evidence`
@@ -1102,10 +1096,7 @@ contract reads a shared local:
   DURING the run instead of "being seeded" until settle. Best-effort.
 - **`make_evidence_replicate_duel` + `record_inconclusive_duel`** (only when
   `promote_confidence_threshold` is set) — the evidence pre-gate's extra
-  crowning-pair duels at RESERVED replicate slots
-  (`EVIDENCE_REPLICATE_BASE + j`, with `cache_scores=False` so a
-  single-draw aggregate never overwrites the round-scored
-  `gen_score.json`), and the dead-letter record + `evidence_replicated`
+  crowning-pair duels with distinct local draws under `evidence_confirmation` (with `cache_scores=False` so a single-draw aggregate never overwrites the round-scored `gen_score.json`), and the dead-letter record + `evidence_replicated`
   trail for an unresolved crowning.
 
 **Durable record opens BEFORE resolution.** `_open_field_tournament`
@@ -1297,27 +1288,24 @@ adapter and weights from the spec, attach the per-run goldfive
 `JSONLPersistenceSink` (plus the harmonograf live sink when the worker's
 runtime context contains telemetry endpoints), `chdir` into the ephemeral checkout, drive
 `RunnableHarness.run(entry, sinks, config)`, then reduce
-`events.jsonl` → `LossProfile` → `loss.json` and write the result file.
-The run id derives from the run's stable coordinate — per-generation
-unique (`conv-<generation>-<entry>` in the example harness; the index's
-`runs` table primary-keys on it).
+`events.{purpose}.r{draw}.jsonl` → `LossProfile` → `loss.{purpose}.r{draw}.json` in the selected seed directory and write the result file. Runtime run identities include generation, entry, purpose, local draw, and seed; the index’s `runs` table uses the run id as its primary key.
 
 **After the wait:** the runner stamps `match_id` onto the settled
-`LossProfile` AND rewrites `loss.json` with the tag, so that a later full
-`zicato repair index`, which re-reads `loss.json`, re-derives the same
-provenance. It then keys the ActiveTournament grid update on `(entry_id,
+`LossProfile` and rewrites the matching measurement loss file with the tag, so that a later full `zicato repair index` reconstructs the same provenance from that file. It then keys the ActiveTournament grid update on `(entry_id,
 side)` and dual-writes the run into the SQLite index
 (`_ingest_run_into_index`, best-effort). Each entry has TWO rows, one per
 side; keying on `entry_id` alone lands parent transitions on the child
 row.
 
-**The cache above it.** `_run_single` sits under the per-unit cache
-keyed `(generation, entry, replicate)`: a HIT reuses the persisted
-`loss.json`; a MISS runs. Infra-aborted profiles are never persisted to
-the cache (which is why `_count_infra_aborted_runs` reflects only THIS
-round's live failures). Every reserved-base subsystem (calibration,
-preflight, screen, evidence) is just this cache addressed at its
-reserved slots.
+**The cache above it.** `_run_single` sits under the per-unit cache keyed
+by generation, entry, purpose, local draw, and base seed. A hit reuses a
+complete matching measurement; a miss executes the unit. Infrastructure-aborted
+profiles cannot satisfy cache reads. Forced remeasurement retains previous
+attempts. Calibration, preflight, screening, and confirmation address this
+cache with explicit purposes, and readers distinguish modified-source probes
+from measurements of the recorded generation's own source.
+
+
 
 > ⛔ **NEVER** bypass `_run_single` to evaluate a generation "quickly"
 > in-process. Everything above — isolation, budgets, kill-ability,
@@ -1475,7 +1463,7 @@ payload removes `omit-summary`.
 3. **Tournament.** `run_tournament` schedules 5 board units × 2 sides =
    10 subprocess workers (bounded by `parallelism`). Each worker
    checks out an ephemeral copy of its side's tree, runs the
-   deterministic harness, and reduces to `loss.json`: every v0 run
+   deterministic harness, and reduces to its measurement loss file: every v0 run
    carries 3 info-drift frames (drift_loss 3.0), every v1 run 2.
    Champion aggregate: `drift_loss_mean=3.0, mean_score=0.4 (2/5),
    scalar=3.6`. Challenger: `2.0 + 0.6 = 2.4`. Ten `unit_completed`
@@ -1515,7 +1503,7 @@ types frozen (`frozen=True, slots=True`); state transitions go through
 | `HypothesisSpec` (`core/experiment.py`) | `core_idea`, `modulating` (the ONLY ids the patches may touch), `why`, expected drift/metric movements, `expected_pass_rate_delta`, `risks` | the proposer LLM, schema-validated with bounded retries | manifest check, diversity signatures, experiment memory, journal one-liners, hypothesis ledger | inside `experiment.json` |
 | `Patch` (`core/mutation.py`) | `mutation_id`, op kind, payload | the proposer | applier (`derive_generation` through the genstore), validator, diff-complexity | `patches/{id}.json` |
 | `Generation` (`core/epoch.py`) | `id`, `parent_id`, `snapshot_root`, `promoted`, `round_index` (birth round — never re-stamped) | orchestrator (parent from the marker; child at mint) | runner (mounts `snapshot_root`), lineage, genstore | `lineage.json` nodes + the genstore (git tag/commit per generation) |
-| `LossProfile` (`core/loss.py`) | `drift_counts`, `pass_fail`, continuous `score`, `metric_counts` (namespaced), `runtime_ms`, `abort_cause`, `tokens_spent` | the reducer (`telemetry/reducer.py`) inside the worker path, per run | scoring aggregation, gate, detectors, screen, health, failure profile | `runs/{…}/loss.json` (the per-unit cache keys on it) + index `runs` table |
+| `LossProfile` (`core/loss.py`) | `drift_counts`, `pass_fail`, continuous `score`, `metric_counts` (namespaced), `runtime_ms`, `abort_cause`, `tokens_spent` | the reducer (`telemetry/reducer.py`) inside the worker path, per run | scoring aggregation, gate, detectors, screen, health, failure profile | `runs/{entry}/seed-{seed}/loss.{purpose}.r{draw}.json` (the per-unit cache reads it) + index `runs` table |
 | `GateOutcome` (`tournament/gate.py`) | `decision`, `reason` (names the rule that fired), `delta_scalar`, `delta_pass_rate` | `evaluate_gate` at the end of every duel | strategies (read, never re-decide), evidence gate, RoundLog `gate_evaluated`, OutcomeRecord deltas | inside `TournamentResult` / `MatchupResult`; not standalone |
 | `TournamentResult` (`tournament/runner.py`) | both aggregates, `outcome`, `per_entry_losses`, `champion_eval_mode`, `unit_provenance`, `holdout`, `holdout_child_scalar` | `run_matchup`; standalone debug APIs also return it | canonical matchup closure, infra counter, aggregate caching | aggregates cached as `gen_score.json`; the rest is projected into `MatchupResult` and `OutcomeRecord` |
 | `MatchupResult` (`selection/strategy.py`) | matchup id, left/right ids + aggs, `outcome`, `stage_index`, `bracket_slot` | `_run_matchup` from a `TournamentResult` | strategies (`record_result`), `SelectionDecision.matchups`, standings, match records | inside the durable field record (`_serialise_rounds`) |
@@ -1536,7 +1524,7 @@ types frozen (`frozen=True, slots=True`); state transitions go through
 Reading the table column-wise gives you the three persistence planes:
 the **canonical record plane** (`experiment.json`, `lineage.json`,
 `journal.md`, RoundLog — under `epochs/`), the **cache plane**
-(`gen_score.json`, per-unit `loss.json` slots — reconstructible), and
+(`gen_score.json`, per-measurement loss files — reconstructible), and
 the **ephemeral plane** (`runtime/` envelopes — cleared on crash). A new
 field must pick its plane explicitly: a decision that lives only on the
 ephemeral plane does not exist for any later reader, which is why a

@@ -305,8 +305,8 @@ def _build_index(path: Path, e0: str, e1: str, source_root: Path) -> None:
     workspace_root = path.parent
     for gid in ("v0", "v1", "v1a", "v2"):
         run_dir = workspace_root / "epochs" / e0 / "generations" / gid / "runs" / "entry_alpha"
-        run_dir.mkdir(parents=True, exist_ok=True)
-        (run_dir / "loss.json").write_text(
+        (run_dir / "seed-none").mkdir(parents=True, exist_ok=True)
+        (run_dir / "seed-none" / "loss.tournament.r0.json").write_text(
             json.dumps({"run_id": f"run_{gid}", "entry_id": "entry_alpha"}),
             encoding="utf-8",
         )
@@ -622,7 +622,8 @@ def test_build_per_judge_for_entry_decodes_the_loss_file(phase1_workspace: Path)
         / "v2"
         / "runs"
         / "entry_alpha"
-        / "loss.json",
+        / "seed-none"
+        / "loss.tournament.r0.json",
         {
             "run_id": "run_v2",
             "per_judge_loss": [
@@ -722,7 +723,8 @@ def test_per_judge_by_entry_agrees_across_its_two_sources(
         / "v1"
         / "runs"
         / "entry_alpha"
-        / "loss.json"
+        / "seed-none"
+        / "loss.tournament.r0.json"
     )
     _write_json(
         loss_path,

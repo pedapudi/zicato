@@ -14,6 +14,7 @@ import pytest
 from tests._contract_pins import deterministic_weights
 from tests._runtime_builders import make_generation, runtime_config
 from zicato.core import BoardEntry
+from zicato.core.measurement import MeasurementDraw, MeasurementPurpose
 from zicato.core.runtime import RoundTokenLedger
 from zicato.core.workspace import run_id_for_unit
 from zicato.runtime.lock import acquire_workspace_lock
@@ -52,13 +53,17 @@ async def test_budget_skip_retries_in_fresh_round_and_coalesces_requests(
 
     async def measured(**kwargs: Any) -> Any:
         generation, entry = kwargs["generation"], kwargs["entry"]
-        replicate = int(entry.context.get("replicate_index", 0))
+        replicate = MeasurementDraw.from_context(entry.context)
         calls.append((generation.id, entry.id, replicate))
         await asyncio.sleep(0)
         baseline = 2.0 + random.Random(f"42:{entry.id}:{replicate}").uniform(-0.1, 0.1)
         return make_loss_profile(
             run_id=run_id_for_unit(
-                generation.id, entry.id, replicate, base_seed=kwargs["config"].seed
+                generation.id,
+                entry.id,
+                replicate,
+                base_seed=kwargs["config"].seed,
+                epoch_id=generation.epoch_id,
             ),
             generation_id=generation.id,
             entry_id=entry.id,
@@ -103,7 +108,12 @@ async def test_budget_skip_retries_in_fresh_round_and_coalesces_requests(
             for entry in board:
                 for replicate in range(replicates):
                     slot = _unit_loss_path(
-                        workspace, "e0", generation.id, entry.id, replicate, base_seed=config.seed
+                        workspace,
+                        "e0",
+                        generation.id,
+                        entry.id,
+                        MeasurementDraw(MeasurementPurpose.TOURNAMENT, replicate),
+                        base_seed=config.seed,
                     )
                     attempts = list(slot.parent.glob(f"{slot.stem}.a*.json"))
                     expected_skip = replicate > 0 or entry.id != board[0].id
@@ -152,6 +162,7 @@ def test_historical_zero_runtime_budget_records_require_execution_evidence(
 ) -> None:
     profile = make_loss_profile(
         abort_cause="budget_exhausted",
+        measurement=MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0),
         wall_clock_budget_exceeded=True,
         runtime_ms=0,
         epoch_id="e0",
@@ -161,7 +172,9 @@ def test_historical_zero_runtime_budget_records_require_execution_evidence(
         profile = replace(profile, runtime_ms=1)
     elif evidence == "started_at":
         profile = replace(profile, started_at="2026-09-05T00:00:00Z")
-    path = _unit_loss_path(tmp_path, "e0", "v0", "entry", 0)
+    path = _unit_loss_path(
+        tmp_path, "e0", "v0", "entry", MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0)
+    )
     write_loss_profile(profile, path)
     if evidence in {"explicit", "unstarted", "ended_at", "tokens_spent"}:
         payload = json.loads(path.read_text())
@@ -178,7 +191,7 @@ def test_historical_zero_runtime_budget_records_require_execution_evidence(
         epoch_id="e0",
         generation_id="v0",
         entry_id="entry",
-        replicate_index=0,
+        measurement=MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0),
     )
     from zicato.query.paths import WorkspacePaths
     from zicato.query.replicate_scores import (
@@ -195,7 +208,7 @@ def test_historical_zero_runtime_budget_records_require_execution_evidence(
     assert (
         read_loss(WorkspaceLayout.from_root(tmp_path), "e0", "v0", "entry") is not None
     ) == eligible
-    assert bool(own_code_board_draws(path.parent)) == eligible
+    assert bool(own_code_board_draws(path.parent.parent)) == eligible
     assert bool(cell_replicate_draws_indexed(paths, "e0", "v0", "entry")) == eligible
     bands = measurement_band_draws_indexed(paths, "e0", "v0", "entry")
     assert [band.key for _, band, _ in bands] == ([] if eligible else ["ambiguous"])
@@ -214,7 +227,7 @@ def test_incomplete_confirmation_cannot_promote(tmp_path: Path) -> None:
         match_id="confirmation",
         workspace_root=tmp_path,
         epoch_id="e0",
-        replicate_index=0,
+        measurement=MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0),
         side_force_fresh=False,
         provenance=None,
     )

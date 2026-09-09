@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 
+from zicato.core.measurement import TOURNAMENT_DRAW
 from zicato.core.types import (
     BoardEntry,
     JudgeLoss,
@@ -26,6 +27,7 @@ from zicato.core.types import (
 )
 from zicato.core.workspace import (
     loss_profile_path,
+    run_id_for_unit,
     scoring_path,
 )
 from zicato.epoch.lifecycle import new_epoch
@@ -164,7 +166,8 @@ def test_loss_profile_round_trips_per_judge_loss(tmp_path: Path) -> None:
     """A LossProfile written via write_loss_profile + read_loss_profile
     recovers the per_judge_loss tuple verbatim."""
     profile = LossProfile(
-        run_id="run-RT",
+        measurement=TOURNAMENT_DRAW,
+        run_id=run_id_for_unit("v1", "ent-RT", epoch_id="ep1"),
         entry_id="ent-RT",
         generation_id="v1",
         epoch_id="ep1",
@@ -245,7 +248,8 @@ def test_ingest_run_populates_judge_losses_from_loss_json(tmp_path: Path) -> Non
     """ingest_run writes a judge_losses row per JudgeLoss entry on the profile."""
     ws, epoch_id = _build_min_workspace(tmp_path)
     profile = LossProfile(
-        run_id="run_ing",
+        measurement=TOURNAMENT_DRAW,
+        run_id=run_id_for_unit("v0", "e1", epoch_id=epoch_id),
         entry_id="e1",
         generation_id="v0",
         epoch_id=epoch_id,
@@ -264,7 +268,7 @@ def test_ingest_run_populates_judge_losses_from_loss_json(tmp_path: Path) -> Non
     )
     write_loss_profile(profile, loss_profile_path(ws, epoch_id, "v0", "e1"))
     ingest_run(ws, None, epoch_id, "v0", "e1")
-    rows = judge_losses_for_run(ws / "index.db", "run_ing")
+    rows = judge_losses_for_run(ws / "index.db", run_id_for_unit("v0", "e1", epoch_id=epoch_id))
     by_name = {r["judge_name"]: r for r in rows}
     assert set(by_name) == {"quality", "schema"}
     assert by_name["quality"]["weighted_loss"] == pytest.approx(6.0)
@@ -283,7 +287,8 @@ def _seed_runs_with_judge_losses(ws: Path, epoch_id: str) -> None:
     per-generation aggregator + cross-generation trend have something to
     chew on."""
     profile_v0 = LossProfile(
-        run_id="run_v0",
+        measurement=TOURNAMENT_DRAW,
+        run_id=run_id_for_unit("v0", "e1", epoch_id=epoch_id),
         entry_id="e1",
         generation_id="v0",
         epoch_id=epoch_id,
@@ -300,7 +305,8 @@ def _seed_runs_with_judge_losses(ws: Path, epoch_id: str) -> None:
         ),
     )
     profile_v1 = LossProfile(
-        run_id="run_v1",
+        measurement=TOURNAMENT_DRAW,
+        run_id=run_id_for_unit("v1", "e1", epoch_id=epoch_id),
         entry_id="e1",
         generation_id="v1",
         epoch_id=epoch_id,
@@ -382,7 +388,8 @@ def _write_judge_scoring(ws: Path, epoch_id: str) -> None:
 def _unattributed_profile(epoch_id: str, run_id: str) -> LossProfile:
     """A loss profile carrying neither metric_counts nor per_judge_loss."""
     return LossProfile(
-        run_id=run_id,
+        measurement=TOURNAMENT_DRAW,
+        run_id=run_id_for_unit("v0", "e1", epoch_id=epoch_id),
         entry_id="e1",
         generation_id="v0",
         epoch_id=epoch_id,
@@ -495,7 +502,7 @@ def test_rebuild_index_populates_judge_losses_from_loss_profile(tmp_path: Path) 
     _seed_runs_with_judge_losses(ws, epoch_id)
     # Rebuild from scratch — drops index.db first, re-derives all rows.
     rebuild_index(ws)
-    rows_v0 = judge_losses_for_run(ws / "index.db", "run_v0")
+    rows_v0 = judge_losses_for_run(ws / "index.db", run_id_for_unit("v0", "e1", epoch_id=epoch_id))
     assert len(rows_v0) == 1
     assert rows_v0[0]["judge_name"] == "quality"
     assert rows_v0[0]["weighted_loss"] == pytest.approx(6.0)

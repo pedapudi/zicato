@@ -130,8 +130,8 @@ def _write_board_run_loss(ws: Path, *, adk_session_id: str) -> tuple[str, str, s
     """
     epoch_id, gen_id, entry_id = "e2e-epoch", "v1", "waffles_single"
     run_dir = ws / "epochs" / epoch_id / "generations" / gen_id / "runs" / entry_id
-    run_dir.mkdir(parents=True, exist_ok=True)
-    (run_dir / "loss.json").write_text(
+    (run_dir / "seed-none").mkdir(parents=True, exist_ok=True)
+    (run_dir / "seed-none" / "loss.tournament.r0.json").write_text(
         json.dumps(
             {
                 "drift_loss": 62.0,

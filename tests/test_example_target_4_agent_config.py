@@ -33,6 +33,7 @@ from tests._runtime_builders import runtime_config
 from zicato.adapter_factory import make_adapter_from_config
 from zicato.adapters.base import HarnessAdapter
 from zicato.core import BoardEntry, Patch, validate_board_entry
+from zicato.core.measurement import MeasurementDraw, MeasurementPurpose
 from zicato.mutation.applier import apply_patches
 from zicato.mutation.enumerator import enumerate_mutations
 from zicato_examples.target_4_agent_config import predicates
@@ -312,12 +313,24 @@ def test_run_ids_separate_generations_and_replicates() -> None:
     """
     base = run_identifier(_entry())
     generation = run_identifier(_entry(generation_id="v3"))
-    replicate = run_identifier(_entry(generation_id="v3", replicate_index="2"))
+    replicate = run_identifier(
+        _entry(
+            generation_id="v3",
+            measurement=json.dumps(MeasurementDraw(MeasurementPurpose.TOURNAMENT, 2).to_json()),
+        )
+    )
     assert len({base, generation, replicate}) == 3
-    assert "v3" in generation
-    assert replicate.endswith("-r2")
-    # A malformed replicate index degrades to 0 rather than failing a run.
-    assert run_identifier(_entry(generation_id="v3", replicate_index="?")) == generation
+    assert replicate.startswith("seed-none.tournament.r2.")
+    assert run_identifier(_entry(generation_id="v3", epoch_id="another")) != generation
+    seeded = run_identifier(
+        _entry(
+            generation_id="v3",
+            measurement=json.dumps(MeasurementDraw(MeasurementPurpose.TOURNAMENT, 2, 7).to_json()),
+        )
+    )
+    assert seeded != replicate
+    with pytest.raises(ValueError):
+        run_identifier(_entry(generation_id="v3", measurement="?"))
 
 
 async def test_wall_clock_budget_aborts_instead_of_raising(

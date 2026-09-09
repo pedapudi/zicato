@@ -89,6 +89,8 @@ from typing import Any
 
 from zicato.core.measurement import (
     UNKNOWN_SEED,
+    MeasurementDraw,
+    MeasurementPurpose,
     measurement_artifact_path,
     seed_qualifier,
     unit_artifact_name,
@@ -126,7 +128,6 @@ from zicato.query.paths import (
 )
 from zicato.query.replicate_scores import (
     AMBIGUOUS_BAND,
-    UNCLAIMED_BAND,
     MeasurementBand,
     cell_replicate_draws_indexed,
     measurement_band_draws_indexed,
@@ -421,7 +422,7 @@ def _unit_status(outcome: dict[str, Any]) -> str:
 
 
 def _attempt_nodes(
-    unit_id: str, run_dir: Path, replicate: int, coordinates: dict[str, Any]
+    unit_id: str, run_dir: Path, replicate: MeasurementDraw, coordinates: dict[str, Any]
 ) -> tuple[PlanNode, ...]:
     """The superseded executions recorded beside one unit's scoring slot.
 
@@ -489,14 +490,17 @@ def _unit_nodes(
             "epoch_id": epoch_id,
             "generation_id": generation_id,
             "entry_id": entry_id,
-            "replicate": replicate,
+            "replicate": replicate.draw,
+            "measurement_purpose": str(replicate.purpose),
             "match_id": str(getattr(profile, "match_id", "") or ""),
         }
         qualifier = seed_qualifier(base_seed)
         if qualifier:
             coordinates["base_seed"] = base_seed
         unit_id = (
-            f"{sweep_id}/{entry_id}/" + (f"{qualifier}/" if qualifier else "") + f"r{replicate}"
+            f"{sweep_id}/{entry_id}/"
+            + (f"{qualifier}/" if qualifier else "")
+            + f"{replicate.purpose}/r{replicate.draw}"
         )
         attempts = _attempt_nodes(unit_id, loss_path.parent, replicate, coordinates)
         started, ended, duration_ms, own = _timing(profile)
@@ -504,7 +508,7 @@ def _unit_nodes(
             PlanNode(
                 id=unit_id,
                 kind="board_entry_run",
-                label=f"{entry_id} · replicate {replicate}",
+                label=f"{entry_id} · replicate {replicate.draw}",
                 purpose="One board entry executed against this candidate.",
                 status=_unit_status(outcome),
                 provenance=_rolled(own, attempts),
@@ -608,7 +612,9 @@ def _band_draw_node(
     misreading the band vocabulary exists to prevent.
     """
     generation_id, entry_id = coordinates["generation_id"], coordinates["entry_id"]
-    replicate = coordinates["replicate"]
+    replicate = MeasurementDraw(
+        MeasurementPurpose(coordinates["measurement_purpose"]), coordinates["replicate"]
+    )
     base_seed = profile.measurement.base_seed if profile.measurement is not None else UNKNOWN_SEED
     qualifier = seed_qualifier(base_seed)
     if qualifier:
@@ -619,9 +625,9 @@ def _band_draw_node(
     return PlanNode(
         id=f"{band_id}/{generation_id}/{entry_id}/"
         + (f"{qualifier}/" if qualifier else "")
-        + f"r{replicate}",
+        + f"{replicate.purpose}/r{replicate.draw}",
         kind="measurement_draw",
-        label=f"{generation_id} · {entry_id} · replicate {replicate}",
+        label=f"{generation_id} · {entry_id} · replicate {replicate.draw}",
         purpose=band.purpose,
         status=_unit_status(outcome),
         provenance=provenance,
@@ -663,7 +669,8 @@ def _band_steps(
                     "epoch_id": epoch_id,
                     "generation_id": generation_id,
                     "entry_id": entry_id,
-                    "replicate": replicate,
+                    "replicate": replicate.draw,
+                    "measurement_purpose": str(replicate.purpose),
                     "match_id": str(getattr(profile, "match_id", "") or ""),
                     "band": band.key,
                 }
@@ -674,7 +681,7 @@ def _band_steps(
                 )
                 contributors.setdefault(band.key, set()).add(generation_id)
     steps: list[PlanNode] = []
-    for band in (*measurement_bands(), UNCLAIMED_BAND, AMBIGUOUS_BAND):
+    for band in (*measurement_bands(), AMBIGUOUS_BAND):
         children = tuple(draws.get(band.key, ()))
         if not children:
             continue
@@ -696,9 +703,6 @@ def _band_steps(
                 coordinates={"epoch_id": epoch_id, "band": band.key},
                 outcome={
                     "draw_count": len(children),
-                    "replicate_range": [band.start, band.stop - 1]
-                    if band.stop > band.start
-                    else [],
                     "generation_ids": generations,
                     "attribution": _STATED_ATTRIBUTION if attributed else _UNSTATED_ATTRIBUTION,
                 },

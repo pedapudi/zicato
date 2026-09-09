@@ -52,10 +52,11 @@ from zicato.core import (
     run_id_for_unit,
 )
 from zicato.core.measurement import (
+    TOURNAMENT_DRAW,
     UNKNOWN_SEED,
     BaseSeed,
     MeasurementDraw,
-    validate_measurement_interval,
+    validate_measurement_count,
 )
 from zicato.runtime.lock import WorkspaceLock
 from zicato.tournament.scoring import aggregate_generation_score
@@ -71,7 +72,7 @@ from zicato.tournament.unit_cache import (
     _UnitProvenance,
     record_unit_attempt,
 )
-from zicato.tournament.worker_transport import _runtime_state, _stamp_replicate_index
+from zicato.tournament.worker_transport import _runtime_state, _stamp_measurement
 from zicato.util.async_tasks import gather_owned
 
 log = logging.getLogger("zicato.tournament.runner")
@@ -92,7 +93,9 @@ _UnitResultT = TypeVar("_UnitResultT")
 # abort (never cached, by design) is re-attempted rather than fanned out, and
 # a failed or cancelled evaluation leaves the waiter a correct MISS.
 # Forced reruns wait for the same slot's writer, then execute independently.
-_inflight_cacheable_units: dict[tuple[str, str, str, str, int, BaseSeed], asyncio.Event] = {}
+_inflight_cacheable_units: dict[
+    tuple[str, str, str, str, MeasurementDraw, BaseSeed], asyncio.Event
+] = {}
 
 
 def _cacheable_unit_key(
@@ -100,16 +103,16 @@ def _cacheable_unit_key(
     epoch_id: str,
     generation_id: str,
     entry_id: str,
-    replicate_index: int,
+    measurement: MeasurementDraw,
     base_seed: BaseSeed = UNKNOWN_SEED,
-) -> tuple[str, str, str, str, int, BaseSeed]:
+) -> tuple[str, str, str, str, MeasurementDraw, BaseSeed]:
     """Return the in-process single-flight key for one cacheable board unit."""
     return (
         str(workspace_root.resolve()),
         epoch_id,
         generation_id,
         entry_id,
-        replicate_index,
+        measurement,
         base_seed,
     )
 
@@ -326,7 +329,7 @@ async def _run_full_board_unit(
     epoch_id: str,
     scorer: _IncrementalScorer | None = None,
     match_id: str = "",
-    replicate_index: int = 0,
+    measurement: MeasurementDraw = TOURNAMENT_DRAW,
     force_fresh: bool = False,
     parent_force_fresh: bool | None = None,
     provenance: dict[str, _UnitProvenance] | None = None,
@@ -353,7 +356,7 @@ async def _run_full_board_unit(
     see :func:`zicato.tournament.worker_transport._checkout_run_snapshot`)
     and writing to a distinct ``run_id`` (via ``run_id_for_unit``; the two
     generations differ). So nothing — snapshot checkout,
-    ``active_runs`` state file, ``loss.json`` — is shared between the
+    ``active_runs`` state file, the measurement loss file — is shared between the
     champion and challenger of the same entry.
 
     ``return_exceptions=True`` keeps a failing side from cancelling its
@@ -374,7 +377,6 @@ async def _run_full_board_unit(
     # challenger: ``parent_force_fresh`` defaults to the shared ``force_fresh``
     # (uniform behaviour) but ``run_tournament`` overrides it to False so the
     # immutable champion is reused rather than re-run every round.
-    validate_measurement_interval(replicate_index, 1)
     effective_parent_force_fresh = force_fresh if parent_force_fresh is None else parent_force_fresh
     parent_result, child_result = await gather_owned(
         _run_unit_cache_first(
@@ -387,7 +389,7 @@ async def _run_full_board_unit(
             workspace_root=workspace_root,
             epoch_id=epoch_id,
             side=Side.PARENT,
-            replicate_index=replicate_index,
+            measurement=measurement,
             match_id=match_id,
             force_fresh=effective_parent_force_fresh,
             provenance=provenance,
@@ -402,7 +404,7 @@ async def _run_full_board_unit(
             workspace_root=workspace_root,
             epoch_id=epoch_id,
             side=Side.CHILD,
-            replicate_index=replicate_index,
+            measurement=measurement,
             match_id=match_id,
             force_fresh=force_fresh,
             provenance=provenance,
@@ -435,7 +437,7 @@ async def _run_fast_board_unit(
     epoch_id: str,
     scorer: _IncrementalScorer | None = None,
     match_id: str = "",
-    replicate_index: int = 0,
+    measurement: MeasurementDraw = TOURNAMENT_DRAW,
     force_fresh: bool = False,
     provenance: dict[str, _UnitProvenance] | None = None,
 ) -> LossProfile:
@@ -450,7 +452,6 @@ async def _run_fast_board_unit(
     The side label is ``child`` for the rare case an ActiveTournament file
     does exist, and a benign no-op otherwise.
     """
-    validate_measurement_interval(replicate_index, 1)
     child_loss = await _run_unit_cache_first(
         writer=writer,
         adapter=adapter,
@@ -461,7 +462,7 @@ async def _run_fast_board_unit(
         workspace_root=workspace_root,
         epoch_id=epoch_id,
         side=Side.CHILD,
-        replicate_index=replicate_index,
+        measurement=measurement,
         match_id=match_id,
         force_fresh=force_fresh,
         provenance=provenance,
@@ -479,7 +480,7 @@ def _skip_unit_side(
     match_id: str,
     workspace_root: Path,
     epoch_id: str,
-    replicate_index: int,
+    measurement: MeasurementDraw,
     side_force_fresh: bool,
     provenance: dict[str, _UnitProvenance] | None,
     base_seed: BaseSeed = UNKNOWN_SEED,
@@ -500,7 +501,7 @@ def _skip_unit_side(
             epoch_id=epoch_id,
             generation_id=generation.id,
             entry_id=entry.id,
-            replicate_index=replicate_index,
+            measurement=measurement,
             base_seed=base_seed,
         )
     )
@@ -518,7 +519,7 @@ def _skip_unit_side(
         epoch_id=epoch_id,
         generation_id=generation.id,
         entry_id=entry.id,
-        replicate_index=replicate_index,
+        measurement=measurement,
         loss=loss,
         base_seed=base_seed,
     )
@@ -628,7 +629,7 @@ async def _run_board_units_full(
     workspace_root: Path,
     epoch_id: str,
     match_id: str = "",
-    replicate_index: int = 0,
+    measurement: MeasurementDraw = TOURNAMENT_DRAW,
     force_fresh: bool = False,
     parent_force_fresh: bool | None = None,
     provenance: dict[str, _UnitProvenance] | None = None,
@@ -636,7 +637,6 @@ async def _run_board_units_full(
     unit_semaphore: asyncio.Semaphore | None = None,
 ) -> tuple[dict[str, LossProfile], dict[str, LossProfile]]:
     """Measure both candidates with shared concurrency and budget scheduling."""
-    validate_measurement_interval(replicate_index, 1)
     scorer = _IncrementalScorer(
         weights,
         writer=writer,
@@ -659,7 +659,7 @@ async def _run_board_units_full(
             epoch_id=epoch_id,
             scorer=scorer,
             match_id=match_id,
-            replicate_index=replicate_index,
+            measurement=measurement,
             force_fresh=force_fresh,
             parent_force_fresh=parent_force_fresh,
             provenance=provenance,
@@ -673,7 +673,7 @@ async def _run_board_units_full(
             match_id=match_id,
             workspace_root=workspace_root,
             epoch_id=epoch_id,
-            replicate_index=replicate_index,
+            measurement=measurement,
             side_force_fresh=effective_parent_force_fresh,
             provenance=provenance,
             base_seed=config.seed,
@@ -685,7 +685,7 @@ async def _run_board_units_full(
             match_id=match_id,
             workspace_root=workspace_root,
             epoch_id=epoch_id,
-            replicate_index=replicate_index,
+            measurement=measurement,
             side_force_fresh=force_fresh,
             provenance=provenance,
             base_seed=config.seed,
@@ -726,13 +726,12 @@ async def _run_board_units_fast(
     workspace_root: Path,
     epoch_id: str,
     match_id: str = "",
-    replicate_index: int = 0,
+    measurement: MeasurementDraw = TOURNAMENT_DRAW,
     force_fresh: bool = False,
     provenance: dict[str, _UnitProvenance] | None = None,
     unit_semaphore: asyncio.Semaphore | None = None,
 ) -> dict[str, LossProfile]:
     """Measure the challenger while the caller retains the champion's score."""
-    validate_measurement_interval(replicate_index, 1)
     scorer = _IncrementalScorer(
         weights,
         writer=writer,
@@ -752,7 +751,7 @@ async def _run_board_units_fast(
             epoch_id=epoch_id,
             scorer=scorer,
             match_id=match_id,
-            replicate_index=replicate_index,
+            measurement=measurement,
             force_fresh=force_fresh,
             provenance=provenance,
         )
@@ -765,7 +764,7 @@ async def _run_board_units_fast(
             match_id=match_id,
             workspace_root=workspace_root,
             epoch_id=epoch_id,
-            replicate_index=replicate_index,
+            measurement=measurement,
             side_force_fresh=force_fresh,
             provenance=provenance,
             base_seed=config.seed,
@@ -801,7 +800,7 @@ async def _run_unit_cache_first(
     workspace_root: Path,
     epoch_id: str,
     side: str,
-    replicate_index: int = 0,
+    measurement: MeasurementDraw = TOURNAMENT_DRAW,
     match_id: str = "",
     force_fresh: bool = False,
     provenance: dict[str, _UnitProvenance] | None = None,
@@ -841,8 +840,7 @@ async def _run_unit_cache_first(
     performed rather than of requests made.
     """
 
-    entry = _stamp_replicate_index([entry], replicate_index)[0]
-    validate_measurement_interval(replicate_index, 1)
+    entry = _stamp_measurement([entry], measurement)[0]
 
     async def _evaluate() -> LossProfile:
         return await _run_unit_after_cache_miss(
@@ -855,7 +853,7 @@ async def _run_unit_cache_first(
             workspace_root=workspace_root,
             epoch_id=epoch_id,
             side=side,
-            replicate_index=replicate_index,
+            measurement=measurement,
             match_id=match_id,
             provenance=provenance,
         )
@@ -868,7 +866,7 @@ async def _run_unit_cache_first(
             epoch_id=epoch_id,
             generation_id=generation.id,
             entry_id=entry.id,
-            replicate_index=replicate_index,
+            measurement=measurement,
             base_seed=config.seed,
         )
 
@@ -886,7 +884,7 @@ async def _run_unit_cache_first(
     # caller becomes the one that evaluates. The re-check is a plain loop over
     # ``get`` because a settling caller pops its key before setting the event.
     key = _cacheable_unit_key(
-        workspace_root, epoch_id, generation.id, entry.id, replicate_index, config.seed
+        workspace_root, epoch_id, generation.id, entry.id, measurement, config.seed
     )
     while (settled := _inflight_cacheable_units.get(key)) is not None:
         await settled.wait()
@@ -919,13 +917,12 @@ async def _run_unit_after_cache_miss(
     workspace_root: Path,
     epoch_id: str,
     side: str,
-    replicate_index: int,
+    measurement: MeasurementDraw,
     match_id: str,
     provenance: dict[str, _UnitProvenance] | None,
 ) -> LossProfile:
     """Run and persist one board unit after cache reuse has been ruled out."""
 
-    validate_measurement_interval(replicate_index, 1)
     from zicato.telemetry.meta_loop import SPAN_WORKER, meta_span  # noqa: PLC0415
     from zicato.tournament.artifacts import archive_unit_artifacts  # noqa: PLC0415
 
@@ -935,7 +932,7 @@ async def _run_unit_after_cache_miss(
             epoch_id,
             generation.id,
             entry.id,
-            replicate_index,
+            measurement,
             base_seed=config.seed,
         )
     )
@@ -945,7 +942,9 @@ async def _run_unit_after_cache_miss(
     # stamped on close so a harmonograf user can cross-jump into the run's own
     # trace (HARMONOGRAF.md §7). Nests under the matchup span via the ambient
     # context var.
-    run_id = run_id_for_unit(generation.id, entry.id, replicate_index, base_seed=config.seed)
+    run_id = run_id_for_unit(
+        generation.id, entry.id, measurement, base_seed=config.seed, epoch_id=generation.epoch_id
+    )
     async with meta_span(
         run_id,
         kind=SPAN_WORKER,
@@ -969,9 +968,7 @@ async def _run_unit_after_cache_miss(
     # opportunistic token count into the round's ledger. This is the ONE
     # choke point every board unit (champion, challenger, screen, evidence
     # replicate) already routes through, so the tally spans the round.
-    loss = replace(
-        loss, measurement=MeasurementDraw.from_index(replicate_index, base_seed=config.seed)
-    )
+    loss = replace(loss, measurement=replace(measurement, base_seed=config.seed))
     if loss.execution_started is None and not is_infra_abort_cause(loss.abort_cause):
         loss = replace(loss, execution_started=True)
     if config.token_ledger is not None:
@@ -987,11 +984,12 @@ async def _run_unit_after_cache_miss(
     # not reused) evaluation so the journal's fast/full accounting is honest.
     if is_infra_abort_cause(loss.abort_cause):
         log.info(
-            "run %s/%s r%d aborted by infra (%s); NOT caching — re-running "
+            "run %s/%s %s draw %d aborted by infrastructure (%s); not caching — re-running "
             "will re-attempt the unit",
             generation.id,
             entry.id,
-            replicate_index,
+            measurement.purpose,
+            measurement.draw,
             loss.abort_cause,
         )
         # The profile is discarded for scoring, but the EXECUTION happened.
@@ -1002,7 +1000,7 @@ async def _run_unit_after_cache_miss(
             epoch_id=epoch_id,
             generation_id=generation.id,
             entry_id=entry.id,
-            replicate_index=replicate_index,
+            measurement=measurement,
             loss=loss,
         )
     else:
@@ -1011,7 +1009,7 @@ async def _run_unit_after_cache_miss(
             epoch_id=epoch_id,
             generation_id=generation.id,
             entry_id=entry.id,
-            replicate_index=replicate_index,
+            measurement=measurement,
             loss=loss,
         )
     _record_provenance(provenance, generation.id, cached=False)
@@ -1040,9 +1038,9 @@ async def _run_entry_replicate_chains(
     *,
     slot_boards: list[list[BoardEntry]],
     match_id: str,
-    replicate_base: int,
+    first_measurement: MeasurementDraw,
     semaphore: asyncio.Semaphore,
-    run_unit: Callable[[BoardEntry, int], Awaitable[_UnitResultT]],
+    run_unit: Callable[[BoardEntry, MeasurementDraw], Awaitable[_UnitResultT]],
 ) -> list[list[_UnitResultT]]:
     """Run every entry's replicate slots as one chain, all chains at once.
 
@@ -1056,16 +1054,16 @@ async def _run_entry_replicate_chains(
     Running an entry's own slots in order is the ordering rule the overlap
     is built on: no unit of ``(entry, slot N+1)`` starts before
     ``(entry, slot N)`` has settled. It keeps a matchup's in-flight units
-    distinct in ``(generation, entry, replicate)`` — the key the run
-    identity, the unit cache, and the in-process coalescing map all use —
+    distinct by generation, entry, purpose, local draw, and seed, as required
+    by runtime identities, the unit cache, and in-process coalescing,
     and it costs nothing the sequential path did not already cost: both cap
     the concurrency at ``min(parallelism, board size)``.
 
-    ``slot_boards`` holds one board per slot (the replicate index stamped
-    onto each entry's context), all in the SAME entry order;
+    ``slot_boards`` holds one board per draw with its measurement identity in
+    each entry’s context, preserving entry order;
     ``slot_boards[offset][position]`` is therefore entry ``position`` as
     slot ``offset`` must run it. ``run_unit`` receives that entry and its
-    absolute replicate index (``replicate_base + offset``).
+    measurement identity (``first_measurement.offset(offset)``).
 
     A failing unit ends its own chain and is re-raised — in board order —
     only after every chain has settled (``return_exceptions=True``), never
@@ -1091,7 +1089,7 @@ async def _run_entry_replicate_chains(
                 meta_span(entry.id, kind=SPAN_MATCHUP, meta=_mu_meta),
                 semaphore,
             ):
-                results.append(await run_unit(entry, replicate_base + offset))
+                results.append(await run_unit(entry, first_measurement.offset(offset)))
         return results
 
     chains = await gather_owned(
@@ -1118,7 +1116,7 @@ async def _run_replicate_slots_full(
     workspace_root: Path,
     epoch_id: str,
     match_id: str,
-    replicate_base: int,
+    first_measurement: MeasurementDraw,
     replicate_count: int,
     force_fresh: bool,
     parent_force_fresh: bool | None,
@@ -1147,10 +1145,10 @@ async def _run_replicate_slots_full(
     its per-duel scorers.
 
     Returns the per-slot ``(left_losses, right_losses)`` maps in SLOT
-    order — replicate 0 first — which is what the fold's
-    representative-replicate rule reads.
+    order, starting at ``first_measurement``. The fold uses that first draw’s
+    provenance for its representative profile.
     """
-    validate_measurement_interval(replicate_base, replicate_count)
+    validate_measurement_count(replicate_count)
     semaphore = _effective_unit_semaphore(unit_semaphore, config)
     scorer = _IncrementalScorer(
         weights,
@@ -1160,10 +1158,13 @@ async def _run_replicate_slots_full(
         board_total=len(board) * replicate_count,
     )
     slot_boards = [
-        _stamp_replicate_index(board, replicate_base + offset) for offset in range(replicate_count)
+        _stamp_measurement(board, first_measurement.offset(offset))
+        for offset in range(replicate_count)
     ]
 
-    async def _unit(entry: BoardEntry, replicate_index: int) -> tuple[LossProfile, LossProfile]:
+    async def _unit(
+        entry: BoardEntry, measurement: MeasurementDraw
+    ) -> tuple[LossProfile, LossProfile]:
         return await _run_full_board_unit(
             writer=writer,
             adapter=adapter,
@@ -1176,7 +1177,7 @@ async def _run_replicate_slots_full(
             epoch_id=epoch_id,
             scorer=scorer,
             match_id=match_id,
-            replicate_index=replicate_index,
+            measurement=measurement,
             force_fresh=force_fresh,
             parent_force_fresh=parent_force_fresh,
             provenance=provenance,
@@ -1185,7 +1186,7 @@ async def _run_replicate_slots_full(
     chains = await _run_entry_replicate_chains(
         slot_boards=slot_boards,
         match_id=match_id,
-        replicate_base=replicate_base,
+        first_measurement=first_measurement,
         semaphore=semaphore,
         run_unit=_unit,
     )
@@ -1211,7 +1212,7 @@ async def _run_replicate_slots_fast(
     workspace_root: Path,
     epoch_id: str,
     match_id: str = "",
-    replicate_base: int = 0,
+    first_measurement: MeasurementDraw = TOURNAMENT_DRAW,
     replicate_count: int = 1,
     force_fresh: bool = False,
     provenance: dict[str, _UnitProvenance] | None = None,
@@ -1231,7 +1232,7 @@ async def _run_replicate_slots_fast(
     first); see :func:`_run_replicate_slots_full` on what the shared
     scorer's live scalar means.
     """
-    validate_measurement_interval(replicate_base, replicate_count)
+    validate_measurement_count(replicate_count)
     semaphore = _effective_unit_semaphore(unit_semaphore, config)
     scorer = _IncrementalScorer(
         weights,
@@ -1240,10 +1241,11 @@ async def _run_replicate_slots_fast(
         board_total=len(board) * replicate_count,
     )
     slot_boards = [
-        _stamp_replicate_index(board, replicate_base + offset) for offset in range(replicate_count)
+        _stamp_measurement(board, first_measurement.offset(offset))
+        for offset in range(replicate_count)
     ]
 
-    async def _unit(entry: BoardEntry, replicate_index: int) -> LossProfile:
+    async def _unit(entry: BoardEntry, measurement: MeasurementDraw) -> LossProfile:
         return await _run_fast_board_unit(
             writer=writer,
             adapter=adapter,
@@ -1255,7 +1257,7 @@ async def _run_replicate_slots_fast(
             epoch_id=epoch_id,
             scorer=scorer,
             match_id=match_id,
-            replicate_index=replicate_index,
+            measurement=measurement,
             force_fresh=force_fresh,
             provenance=provenance,
         )
@@ -1263,7 +1265,7 @@ async def _run_replicate_slots_fast(
     chains = await _run_entry_replicate_chains(
         slot_boards=slot_boards,
         match_id=match_id,
-        replicate_base=replicate_base,
+        first_measurement=first_measurement,
         semaphore=semaphore,
         run_unit=_unit,
     )
@@ -1289,7 +1291,7 @@ async def _run_replicated(
     workspace_root: Path,
     epoch_id: str,
     replicates: int,
-    replicate_base: int = 0,
+    first_measurement: MeasurementDraw = TOURNAMENT_DRAW,
     match_id: str = "",
     fast: bool = False,
     matchup_budget_seconds: float | None = None,
@@ -1333,17 +1335,14 @@ async def _run_replicated(
     EVERY unit (``force_fresh``), re-running and re-persisting both sides
     regardless of any cache (noise re-sampling / debugging).
 
-    Replicate-aware / incremental: each replicate index keys a distinct
-    cache slot, so requesting R replicates when r<R already exist runs
-    only the missing ``R-r`` (the cached samples are reused, never
-    re-run).
+    Each local draw has a distinct measurement identity. When cache reads are
+    enabled, requesting R draws with r complete matching records executes
+    only the missing ``R-r`` measurements.
 
-    ``replicate_base`` offsets every slot: replicate ``i`` runs (and
-    caches, and stamps its harness noise draw) at index ``replicate_base +
-    i``. ``0`` (every tournament matchup) is byte-identical to before the
-    parameter existed; the evidence pre-gate passes a RESERVED base
-    (:data:`zicato.selection.evidence_gate.EVIDENCE_REPLICATE_BASE`) so its
-    extra draws never read or write the canonical replicate-0 slots.
+    ``first_measurement`` selects the purpose and starting local draw.
+    Replicate ``i`` uses ``first_measurement.offset(i)``; the runtime seed
+    completes its cache and artifact identity. Evidence confirmation uses
+    ``evidence_confirmation`` draws, separate from tournament measurements.
 
     The returned ``champion_eval_mode`` is derived from the LEFT side's
     cached-vs-fresh provenance, preserving the journal's existing
@@ -1357,7 +1356,7 @@ async def _run_replicated(
     unit_provenance)`` where ``unit_provenance`` is the per-generation
     cached-vs-fresh tally over both sides.
     """
-    validate_measurement_interval(replicate_base, replicates)
+    validate_measurement_count(replicates)
     force_fresh = not fast
     replicate_count = max(1, replicates)
     provenance: dict[str, _UnitProvenance] = {}
@@ -1380,7 +1379,7 @@ async def _run_replicated(
                 epoch_id=epoch_id,
                 generation_id=left_gen.id,
                 entry_id=entry.id,
-                replicate_index=replicate_base + r,
+                measurement=first_measurement.offset(r),
                 base_seed=config.seed,
             )
             is not None
@@ -1418,7 +1417,7 @@ async def _run_replicated(
             workspace_root=workspace_root,
             epoch_id=epoch_id,
             match_id=match_id,
-            replicate_base=replicate_base,
+            first_measurement=first_measurement,
             replicate_count=replicate_count,
             force_fresh=force_fresh,
             parent_force_fresh=None,
@@ -1432,19 +1431,19 @@ async def _run_replicated(
         # Every requested slot contributes either measurements or explicit
         # omissions. The board scheduler records attempts after budget expiry;
         # it launches no missing units and still reuses existing measurements.
-        replicate_index = replicate_base + replicate_offset
+        measurement = first_measurement.offset(replicate_offset)
         left_losses, right_losses = await _run_board_units_full(
             writer=writer,
             adapter=adapter,
             parent_gen=left_gen,
             child_gen=right_gen,
-            board=_stamp_replicate_index(board, replicate_index),
+            board=_stamp_measurement(board, measurement),
             weights=weights,
             config=config,
             workspace_root=workspace_root,
             epoch_id=epoch_id,
             match_id=match_id,
-            replicate_index=replicate_index,
+            measurement=measurement,
             force_fresh=force_fresh,
             provenance=provenance,
             matchup_deadline=matchup_deadline,

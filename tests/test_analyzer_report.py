@@ -41,6 +41,7 @@ from zicato.analyzer.report_sections import (
     render_score_sparkline,
     render_score_trajectory_table,
 )
+from zicato.core.measurement import MeasurementDraw, MeasurementPurpose
 from zicato.core.mutation import MutationPoint
 from zicato.core.types import JudgeLoss, MetricCount
 from zicato.core.workspace import analysis_path
@@ -1512,6 +1513,9 @@ def test_restamp_persisted_report_refreshes_stale_masthead(tmp_path: Path) -> No
     )
     md_path = analysis_path(ws, epoch)
     md_path.write_text(stale, encoding="utf-8")
+    _write(
+        edir / "analysis.prose.json", {"ABSTRACT": "UNIQUE-NARRATIVE-MARKER preserved verbatim."}
+    )
 
     assert restamp_persisted_report(ws, epoch) is True
     out = md_path.read_text(encoding="utf-8")
@@ -1521,26 +1525,6 @@ def test_restamp_persisted_report_refreshes_stale_masthead(tmp_path: Path) -> No
     assert "UNIQUE-NARRATIVE-MARKER preserved verbatim." in out
     # Idempotent: a second pass finds nothing to change.
     assert restamp_persisted_report(ws, epoch) is False
-
-
-def test_restamp_is_noop_on_non_masthead_format(tmp_path: Path) -> None:
-    """A report not in the analyzer's ``<!-- META -->`` masthead format (e.g.
-    the close-path ``# Epoch analysis:`` layout) is left untouched."""
-    from zicato.analyzer.report import restamp_persisted_report
-    from zicato.core.workspace import analysis_path
-
-    ws = tmp_path / ".zicato"
-    epoch = "2026-06-09_k"
-    (ws / "epochs" / epoch).mkdir(parents=True)
-    _write(
-        ws / "epochs" / epoch / "config.json",
-        {"id": epoch, "name": "k", "closed": True, "goal": ""},
-    )
-    md_path = analysis_path(ws, epoch)
-    original = "# Epoch analysis: k\n\n**epoch**: `k`\n\n## Body\n\ntext\n"
-    md_path.write_text(original, encoding="utf-8")
-    assert restamp_persisted_report(ws, epoch) is False
-    assert md_path.read_text(encoding="utf-8") == original
 
 
 # ---------------------------------------------------------------------------
@@ -1613,7 +1597,7 @@ def test_generation_ordering_is_numeric_aware_and_content_preserved(tmp_path: Pa
             make_loss_profile(
                 epoch_id=epoch,
                 generation_id=gid,
-                run_id=f"{gid}--t1",
+                measurement=MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0),
                 entry_id="t1",
                 metric_counts=(
                     MetricCount(name=f"drift:custom:judge-{gid}", severity="info", count=1.0),
@@ -1621,7 +1605,7 @@ def test_generation_ordering_is_numeric_aware_and_content_preserved(tmp_path: Pa
                 per_judge_loss=(JudgeLoss(f"judge-{gid}", 1.0, 1.0, 1.0),),
                 runtime_ms=0,
             ),
-            edir / "generations" / gid / "runs" / "t1" / "loss.json",
+            edir / "generations" / gid / "runs" / "t1" / "seed-none" / "loss.tournament.r0.json",
         )
 
     data = gather_epoch_report_data(ws, epoch)

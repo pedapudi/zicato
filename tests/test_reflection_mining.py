@@ -13,7 +13,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from zicato.core import LossProfile
-from zicato.core.workspace import reflection_adjudication_path
+from zicato.core.measurement import TOURNAMENT_DRAW, MeasurementDraw, MeasurementPurpose
+from zicato.core.workspace import reflection_adjudication_path, run_id_for_unit
 from zicato.query.paths import WorkspacePaths
 from zicato.reflection import mining as m
 from zicato.reflection.adjudicator import (
@@ -376,7 +377,8 @@ def _write_loss(workspace: Path, gen: str, entry: str, *, pass_fail: bool | None
     from zicato.telemetry import reducer
 
     loss = LossProfile(
-        run_id=f"run-{gen}-{entry}",
+        run_id=run_id_for_unit(gen, entry, epoch_id=EPOCH),
+        measurement=TOURNAMENT_DRAW,
         entry_id=entry,
         generation_id=gen,
         epoch_id=EPOCH,
@@ -389,7 +391,9 @@ def _write_loss(workspace: Path, gen: str, entry: str, *, pass_fail: bool | None
         drift_loss=1.0,
         pass_fail=pass_fail,
     )
-    path = _unit_loss_path(workspace, EPOCH, gen, entry, 0)
+    path = _unit_loss_path(
+        workspace, EPOCH, gen, entry, MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0)
+    )
     reducer.write_loss_profile(loss, path)
     return path
 

@@ -16,6 +16,7 @@ import pytest
 
 from tests._recommended_loop_support import CHOSEN_POLICIES, POLICY_PATH, bootstrap, run_round
 from zicato.core.measurement import (
+    MeasurementDraw,
     MeasurementPurpose,
     iter_measurement_attempts,
     measurement_artifact_path,
@@ -288,7 +289,12 @@ async def test_partial_application_preserves_confirmation_requirements(
             for run in records.iterdir()
             for replicate in range(2)
             for attempt in iter_measurement_attempts(
-                measurement_artifact_path(run, "loss", replicate, base_seed=17)
+                measurement_artifact_path(
+                    run,
+                    "loss",
+                    MeasurementDraw(MeasurementPurpose.TOURNAMENT, replicate),
+                    base_seed=17,
+                )
             )
         ]
         assert attempts

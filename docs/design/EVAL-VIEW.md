@@ -84,19 +84,19 @@ runtime_ms · wall_clock_budget_exceeded · loss_json · tournament_id
 match_id · cached · source_epoch · source_run · abort_cause
 ```
 
-**The primary key.** `run_id` is the **primary key** (`schema.py:133`) and
-the reducer's default is `run_id = "{generation_id}:{entry.id}"`
-(`reducer.py:1190`); ingest upserts `ON CONFLICT(run_id) DO UPDATE` with
-`match_id = COALESCE(...)` (`ingest.py:346`). So there is **one
-`loss_profiles` row per `(generation_id, entry_id)`**, and its
-`match_id`/`tournament_id` are last-wins at ingest. Two consequences follow,
-and they drive the bindings below:
+**The primary key and selected measurement.** `run_id` is the primary key.
+Runtime identities include generation, entry, measurement purpose, local draw,
+and seed. The `runs` audit table records measurements across purposes and
+seeds. For each generation and entry, the `loss_profiles` projection selects
+a usable tournament draw-zero measurement at the seed recorded by the
+generation score. Rebuilding the index replaces the cell's previous summary
+when that selection changes.
 
-* **A row count is not a replicate count** — it is always 1. Cell EVIDENCE
-  must come from the on-disk replicate files (§2.1) rather than `len(rows)`.
-* **"Same-match_id row pairs" cannot exist** — the table can never hold two
-  rows for one `(gen, entry)`, so discrimination CANNOT be derived from
-  `loss_profiles` (§2.3). It binds to the durable matchup records instead.
+The selected summary does not count independent draws. Cell evidence comes
+from validated measurement files (§2.1). Discrimination uses settled matchup
+records (§2.3), which preserve the comparisons the tournament actually made.
+
+
 
 The matrix is an **indexed query** over this table for the axes and cell
 membership; it adds no store. Read helpers already exist
@@ -110,53 +110,52 @@ per-cell EVIDENCE and DISCRIMINATION quantities read the durable **files**
 Each derived quantity, with the binding it reads:
 
 ### 2.1 The matrix cell (entry × candidate)
-The `loss_profiles` row for `(entry_id, generation_id)` supplies cell
-MEMBERSHIP, meaning which candidate columns an entry appears in, plus
-`cached` / `latest_run_id`. The row's `drift_loss` / `pass_fail` and its
-continuous `score` / `metrics` are fallback values; they are parsed from the
-`loss_json` blob the same way `build_per_entry_for_generation` parses it
-(`judge_view.py:255`). But **the replicate count and the evidence come from the
-durable replicate FILES rather than the row count**, which is always 1 — see
-the primary key above.
+The selected `loss_profiles` row for `(entry_id, generation_id)` supplies
+cell membership, reuse status (`cached`), and `latest_run_id`. Its scalar,
+verdict, score, and metrics provide fallback display values when measurement
+files are unavailable. Individual measurement files supply the cell's draw
+count and evidence when present.
 
-**The evidence binding (`_cell_replicate_draws`, `eval_view.py`).** For each
-cell the reader takes the `loss.json` (replicate 0) and the `loss.r<N>.json`
-siblings that exist under `generations/<gen>/runs/<entry>/`. It keeps only the
-replicate ranges that count as fresh evidence for that cell: the **duel
-replicates `[0, 1000)`** (replicate 0 canonical, plus the low duel slots the
-holdout-ladder confirmation re-runs reuse) and the **evidence-gate draws
-`[4000, 5000)`** (`EVIDENCE_REPLICATE_BASE`). Four ranges are EXCLUDED, because each
-is a different measurement rather than this cell's evidence. The
-champion-against-itself **calibration `[1000, 2000)`** is the champion
-noise-floor trace and feeds the flip badge (§2.2). The contract
-**pre-flight `[2000, 3000)`** and the pre-tournament candidate **screen
-`[3000, 4000)`** are veto probes. **Reflection `[5000, …)`** is a
-meta-evaluation of the judges. `pass_ratio` / `pass_fail`
-/ `drift_loss` / `score` are averaged over those same qualifying draws; the
-cell falls back to the single index row only when the `runs/` dir was pruned.
-`cached` / `source_epoch` / `source_run` mark a carried-over champion result
-(a materialised fast-mode reuse — schema v6, `schema.py:320`), so the view
-renders it as scored-but-cached and never double-counts it.
+
+
+**The evidence binding (`cell_replicate_draws`, `query/replicate_scores.py`).**
+For each cell, the reader enumerates measurement loss files beneath the
+entry's run directory: `seed-{seed}/loss.{purpose}.r{draw}.json`, with
+`seed-none` for a null seed. Tournament and evidence-confirmation purposes
+supply cell evidence. The record must agree with its artifact path and identify
+actual execution. The reader selects the seed recorded by the generation score
+and counts each measurement identity once.
+
+Calibration supplies the noise-floor trace and flip badge (§2.2). Contract
+preflight and candidate screening evaluate modified source. Board reflection
+assesses the evaluation, and evaluation-synthesis admission assesses drafted
+entries. These purposes remain separately visible and do not supply cell
+evidence. Conflicting provenance remains visible for diagnosis without
+contributing evidence.
+
+`pass_ratio`, `pass_fail`, `drift_loss`, and `score` aggregate the same
+qualifying draws. Index-row fallback can display a result when no usable
+measurement files remain, but does not establish additional independent
+draws. `cached`, `source_epoch`, and `source_run` identify a carried-over
+champion result so the view displays its reuse without counting it twice.
+
+
 
 ### 2.2 Per-entry flip rate (calibration) — THE TRACE
-The calibration that duels the champion against itself (`measure_noise_floor`,
-`src/zicato/tournament/calibration.py:129`) duels the champion against
-itself `runs=K` times (default 5, `DEFAULT_CALIBRATION_RUNS`). Each draw
-evaluates the **full board** through `_run_board_units_fast` on replicate
-index `CALIBRATION_REPLICATE_BASE + draw` (base **1000**) with
-`match_id="aa-calibration:{draw}"`. The runner persists each board unit's
-result per replicate: `_unit_loss_path`
-(`src/zicato/tournament/unit_cache.py:106`) maps replicate `r>0` to
-`epochs/<epoch>/generations/<gen>/runs/<entry>/loss.r<r>.json` (replicate 0
-is the canonical `loss.json`).
+The calibration function (`measure_noise_floor` in
+`src/zicato/tournament/calibration.py`) evaluates the champion `runs=K` times
+(default 5, `DEFAULT_CALIBRATION_RUNS`). Each draw evaluates the full board
+through `_run_board_units_fast` using
+`MeasurementDraw(MeasurementPurpose.CALIBRATION, draw)` and
+`match_id="aa-calibration:{draw}"`. The scheduler propagates the runtime seed
+into the measurement identity.
 
-**A constraint worth stating outright:** these replicate files are **NOT
-ingested** into `loss_profiles`. `_ingest_run_into`
-(`src/zicato/index/ingest.py:933`) reads a single `loss_profile_path`
-(replicate 0) per entry, and
-`_iter_run_entry_ids` (`:892`) walks only the per-entry `runs/` directories,
-never the `loss.r<N>.json` siblings. So the index cannot supply per-entry
-flip rates — the calibration draws live only on disk.
+Each entry's run directory stores a draw at
+`seed-{seed}/loss.calibration.r{draw}.json`; a null seed uses `seed-none`.
+The index's per-entry summary cannot supply the individual calibration
+observations. The flip-rate reader therefore reads the measurement files.
+
+
 
 **The binding.** The persisted `NoiseFloor` (config.json's additive
 `noise_floor` field, written by `set_epoch_noise_floor`,
@@ -164,9 +163,7 @@ flip rates — the calibration draws live only on disk.
 `calibration.py:98`) carries `generation_id` (the champion that duelled
 itself) and `runs` (K). The reader:
 1. reads `noise_floor` off `config.json` → `(champion_gen, K)`;
-2. for each board entry, reads `loss.r<1000+i>.json` for `i in [0, K)` via
-   `read_loss_profile` (the reducer's reader, `unit_cache` twin), taking
-   each draw's `pass_fail`;
+2. for each board entry, resolves `calibration` draws `0` through `K − 1` through the unit-cache reader, taking each usable draw’s `pass_fail`;
 3. **per-entry flip rate** = `min(#pass, #fail) / n_usable` over the usable
    (non-`None`) draws — the fraction of self-duel draws whose verdict flipped
    away from the majority. `None` when fewer than two usable draws exist.
@@ -188,7 +185,7 @@ reign's SETTLED matchups from the experiment records
 a decision (it raced) is a matchup `(parent_generation_id → champion,
 generation_id → challenger)`, deduped on the pair. For each matchup,
 `build_matchup_grid(paths, epoch, champion, challenger)` reads BOTH sides'
-per-entry `loss.json` (`entry_grid[].parent_pass` / `child_pass`, drift-free
+per-entry tournament loss files (`entry_grid[].parent_pass` / `child_pass`, drift-free
 pass bits). Per entry: a matchup is a **comparison** when both sides have a
 usable verdict, and **discriminating** when the two differ. Folding the
 per-entry `[(matchup_key, verdict), …]` through the pure `discrimination`
@@ -277,7 +274,7 @@ The OUTCOMES lens payload.
 
 Aggregation rules (the cell's **replicate draws**, §2.1 — the qualifying
 `loss*.json` files, NOT the `loss_profiles` row, whose count is always 1):
-- `replicates` = number of qualifying replicate FILES for that (gen, entry).
+- `replicates` counts distinct qualifying measurements for the selected seed. If no measurement files are available, one selected index summary supplies a single displayed result.
 - `pass_ratio` = mean of the non-`None` `pass_fail` bits; `pass_fail` = the
   ratio's majority verdict (`None` when no bits).
 - `drift_loss` / `score` / `runtime_ms_mean` = mean over the draws.
@@ -287,7 +284,7 @@ Aggregation rules (the cell's **replicate draws**, §2.1 — the qualifying
   carried over — never counted as a fresh measurement).
 - `evidence` = `"none"` (0 draws) | `"single"` (1) | `"replicated"` (≥2).
   Drives §4 shading: a single-sample verdict renders faint. `"replicated"`
-  applies only when two or more qualifying replicate files exist on disk.
+  applies only when two or more distinct qualifying measurement identities have usable persisted records.
 
 Column ordering: `(round_index ?? +inf, created_at, generation_id)`.
 `promoted` is **tri-state**: the canonical
@@ -388,7 +385,7 @@ of `0.0` nothing differs; under a non-zero weight a facet scalar omits a
 per-candidate constant the headline scalar carries, because a diff is not
 attributable to a board tag.
 
-Reads the persisted `loss.json` files rather than the index (the files
+Reads the persisted tournament measurement loss files rather than the index (the files
 are canonical, so a completed generation is readable with no index) and
 the epoch's `scoring.json`. Because every reader is best-effort, an
 unreadable board, absent run files, or a malformed `scoring.json` degrade to

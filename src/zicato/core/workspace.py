@@ -1,48 +1,11 @@
-"""Path math and construction-time invariants for the ``.zicato/`` workspace.
+"""Paths for the filesystem records that define a workspace.
 
-Pure path-resolution helpers — no I/O, no directory creation, no file
-reads. Callers compose these helpers and then perform whatever I/O they
-need; that separation keeps the path layout testable without a tmpdir
-and lets the CLI introspect paths (e.g. ``zicato paths``) without
-touching the filesystem.
-
-The canonical layout these helpers produce::
-
-    {workspace_root}/
-      epochs/{epoch_id}/
-        board.jsonl
-        brief.md
-        scoring.json
-        generations/{generation_id}/
-          experiment.json
-          runs/{entry_id}/
-            events.jsonl
-            loss.json
-        journal.md
-        analysis.md
-      lineage.json
-
-The two-callable invariant from :class:`zicato.core.types.RuntimeConfig`
-is enforced here by :func:`assert_distinct_callables`; the dataclass
-itself stays purely declarative.
-
-Convention drift — outer vs inner workspace root
--------------------------------------------------
-
-``workspace_root`` is, by convention, the inner ``.zicato`` directory
-itself: ``epochs/``, ``runtime/``, etc. hang directly off it. Some callers
-pass the *outer* project directory instead (the parent that holds
-``.zicato/``), and the helpers below then descend into ``.zicato/``
-whenever the inner layout exists.
-This is the single I/O exception in this module: a best-effort
-``Path.is_dir()`` probe that lets the report regenerator + dashboard
-read the right tree even when the caller hands us the outer dir.
-
-The descent only fires when the outer form does NOT carry an
-``epochs/`` directory but the inner ``.zicato/`` does. A caller that
-already passes the inner dir, and a test that builds a synthetic
-``{ws}/epochs/`` tree, are untouched.
-"""
+A measured board entry lives under
+`epochs/<epoch>/generations/<generation>/runs/<entry>/seed-<seed>/`.
+Losses, events, results, judge captures, and produced files identify their
+measurement purpose and draw in the filename. For example, an unseeded
+first tournament draw produces `seed-none/loss.tournament.r0.json`.
+The SQLite index is a rebuildable projection of these records."""
 
 from __future__ import annotations
 
@@ -50,7 +13,14 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from zicato.core.measurement import UNKNOWN_SEED, BaseSeed, MeasurementDraw, seed_qualifier
+from zicato.core.measurement import (
+    TOURNAMENT_DRAW,
+    UNKNOWN_SEED,
+    BaseSeed,
+    MeasurementDraw,
+    MeasurementPurpose,
+    seed_qualifier,
+)
 
 if TYPE_CHECKING:
     from zicato.workspace.layout import WorkspaceLayout
@@ -194,71 +164,37 @@ def reflection_suggestions_path(workspace_root: Path, epoch_id: str, reflection_
 def run_id_for_unit(
     generation_id: str,
     entry_id: str,
-    replicate_index: int = 0,
+    measurement: MeasurementDraw = TOURNAMENT_DRAW,
     *,
+    epoch_id: str,
     base_seed: BaseSeed = UNKNOWN_SEED,
 ) -> str:
-    """Identify a generation, entry, draw, and selected seed for runtime records.
+    """Identify the epoch, generation, entry, purpose, draw, and seed of an execution."""
+    import hashlib
+    import json
 
-    Historical runs use ``v0--entry`` or ``r2.v0--entry``. Known seeds add
-    the same qualifier as their artifact directory, such as
-    ``seed-17.r2.v0--entry``; an explicitly unseeded run uses ``seed-none``.
-    The label keys active-run records and kill requests. Generation identifiers
-    begin with ``v``, so seed and replicate prefixes cannot collide with them.
-    """
-    canonical = f"{generation_id}--{entry_id}"
-    unit = canonical if replicate_index <= 0 else f"r{replicate_index}.{canonical}"
-    qualifier = seed_qualifier(base_seed)
-    return f"{qualifier}.{unit}" if qualifier else unit
-
-
-def replicate_index_from_run_id(generation_id: str, entry_id: str, run_id: str) -> int | None:
-    """Recover a unit's replicate index from its validated runtime run id."""
-    coordinates = _coordinates_from_run_id(generation_id, entry_id, run_id)
-    return coordinates[0] if coordinates is not None else None
+    seed = measurement.base_seed if base_seed is UNKNOWN_SEED else base_seed
+    prefix = f"{seed_qualifier(seed)}.{measurement.purpose}.r{measurement.draw}"
+    coordinates = json.dumps([epoch_id, generation_id, entry_id], ensure_ascii=True)
+    return f"{prefix}.{hashlib.sha256(coordinates.encode()).hexdigest()}"
 
 
 def measurement_from_run_id(
-    generation_id: str, entry_id: str, run_id: str
+    generation_id: str, entry_id: str, run_id: str, *, epoch_id: str
 ) -> MeasurementDraw | None:
-    """Decode the complete measurement identity from its canonical runtime id."""
-    coordinates = _coordinates_from_run_id(generation_id, entry_id, run_id)
-    if coordinates is None:
-        return None
-    index, base_seed = coordinates
+    """Decode the supported runtime identifier and validate its complete spelling."""
+    from zicato.core.measurement import _seed_from_qualifier
+
     try:
-        return MeasurementDraw.from_index(index, base_seed=base_seed)
-    except ValueError:
+        seed, purpose, draw, _ = run_id.split(".", 3)
+        measurement = MeasurementDraw(
+            MeasurementPurpose(purpose), int(draw.removeprefix("r")), _seed_from_qualifier(seed)
+        )
+    except (ValueError, TypeError):
         return None
-
-
-def _coordinates_from_run_id(
-    generation_id: str, entry_id: str, run_id: str
-) -> tuple[int, BaseSeed] | None:
-    from zicato.core.measurement import _seed_from_qualifier  # noqa: PLC0415
-
-    original = run_id
-    base_seed: BaseSeed = UNKNOWN_SEED
-    if run_id.startswith("seed-"):
-        qualifier, separator, run_id = run_id.partition(".")
-        try:
-            base_seed = _seed_from_qualifier(qualifier)
-        except ValueError:
-            return None
-        if not separator:
-            return None
-    if run_id == run_id_for_unit(generation_id, entry_id):
-        index = 0
-    else:
-        prefix, separator, _rest = run_id.partition(".")
-        if separator != "." or not prefix.startswith("r") or not prefix[1:].isdigit():
-            return None
-        index = int(prefix[1:])
-        if index <= 0:
-            return None
     return (
-        (index, base_seed)
-        if original == run_id_for_unit(generation_id, entry_id, index, base_seed=base_seed)
+        measurement
+        if run_id == run_id_for_unit(generation_id, entry_id, measurement, epoch_id=epoch_id)
         else None
     )
 
@@ -286,10 +222,10 @@ def events_jsonl_path(
     epoch_id: str,
     generation_id: str,
     entry_id: str,
-    replicate_index: int = 0,
+    measurement: MeasurementDraw = TOURNAMENT_DRAW,
 ) -> Path:
     """Path to one replicate's events; replicate 0 is ``events.jsonl``."""
-    return _layout(workspace_root).events(epoch_id, generation_id, entry_id, replicate_index)
+    return _layout(workspace_root).events(epoch_id, generation_id, entry_id, measurement)
 
 
 def loss_profile_path(
@@ -308,19 +244,7 @@ def run_result_path(
     generation_id: str,
     entry_id: str,
 ) -> Path:
-    """Path to one run's persisted ``result.json`` (the RunResult capture).
-
-    The read twin of the worker's post-run write: the user-facing
-    transcript + final output the run produced, persisted beside
-    ``loss.json`` when :attr:`RuntimeConfig.persist_run_results` is on
-    (the default). The canonical replicate-0 slot; replicate ``r>0``
-    lives at the sibling ``result.r{n}.json``
-    (:func:`zicato.tournament.unit_cache.unit_result_path`). Readers
-    must tolerate absence — a run from before capture was enabled, an
-    opted-out runtime, or a best-effort write that failed all leave no file
-    (:func:`zicato.tournament.unit_cache.read_run_result` returns
-    ``None`` in every such case).
-    """
+    """Return the captured result of the first unseeded tournament draw."""
     return _layout(workspace_root).result(epoch_id, generation_id, entry_id)
 
 
@@ -504,7 +428,6 @@ def assert_distinct_callables(
 
 __all__ = [
     "run_coordinates_from_dir",
-    "measurement_from_run_id",
     "epoch_dir",
     "generations_dir",
     "generation_dir",
@@ -517,13 +440,11 @@ __all__ = [
     "reflection_scorecards_path",
     "reflection_findings_path",
     "reflection_practices_path",
-    # Defined since the eval-synthesis surface landed but never exported; the
-    # CLI reaches it through the module, so the omission was invisible.
     "reflection_suggestions_path",
     "run_dir",
     "events_jsonl_path",
     "run_id_for_unit",
-    "replicate_index_from_run_id",
+    "measurement_from_run_id",
     "loss_profile_path",
     "run_result_path",
     "experiment_json_path",

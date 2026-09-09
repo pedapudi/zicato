@@ -125,8 +125,8 @@ def test_emulator_timeout_aborts_with_emulator_timeout() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_analysis_timeout_substitutes_placeholder(tmp_path: Path) -> None:
-    """A hung analysis aux writes ``analysis.md`` with a placeholder narrative."""
+def test_analysis_timeout_preserves_recorded_narrative(tmp_path: Path) -> None:
+    """A timed-out request cannot erase the recorded report narrative."""
     aux_config = AuxConfig(call_timeout_s=0.05)
 
     from zicato.core.workspace import analysis_path
@@ -163,8 +163,14 @@ def test_analysis_timeout_substitutes_placeholder(tmp_path: Path) -> None:
         )
     )
 
+    from zicato.analyzer.report import regenerate_epoch_report_deterministic
+
+    narrative = "## Headline movements\n\nThe measured improvement persisted."
+    regenerate_epoch_report_deterministic(
+        tmp_path, "epoch_a", authored={"retrospective": narrative}
+    )
     out_path = asyncio.run(generate_analysis(tmp_path, "epoch_a", _hung_aux, aux_config=aux_config))
     assert out_path == analysis_path(tmp_path, "epoch_a")
     text = out_path.read_text()
-    assert "analysis LLM timed out" in text
+    assert narrative in text
     assert "## Headline movements" in text

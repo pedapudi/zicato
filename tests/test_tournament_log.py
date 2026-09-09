@@ -61,8 +61,13 @@ def test_write_produces_the_event_log_not_the_legacy_snapshot(tmp_path: Path) ->
 
 def test_each_mutation_is_one_append_no_read_modify_write(tmp_path: Path) -> None:
     with acquire_workspace_lock(tmp_path, "test-publication") as writer:
+        snapshot = _sample()
+        snapshot.entries.extend(
+            ActiveTournamentEntry(entry_id=f"entry-{i}", side="child", status="queued")
+            for i in range(1000)
+        )
         with patch.object(writer.tournament_log, "tail", wraps=writer.tournament_log.tail) as scan:
-            write_active_tournament(writer, _sample())
+            write_active_tournament(writer, snapshot)
             update_tournament_entry(writer, "b0", "child", status="running")
             update_tournament_partial_aggregate(writer, challenger_agg={"scalar": 0.5})
             update_tournament_projected(
@@ -73,8 +78,9 @@ def test_each_mutation_is_one_append_no_read_modify_write(tmp_path: Path) -> Non
     # Four mutations → four appended events, monotonic gap-free seq.
     types = [json.loads(line)["type"] for line in lines]
     seqs = [json.loads(line)["seq"] for line in lines]
-    assert types == ["Snapshot", "EntryUpdate", "PartialAggregate", "ProjectedUpdate"]
+    assert types == ["Snapshot", "Update", "Update", "Update"]
     assert seqs == [1, 2, 3, 4]
+    assert len(lines[1].encode()) < 1024, "one entry update must not copy the whole board"
 
 
 # ---------------------------------------------------------------------------
@@ -176,6 +182,7 @@ def test_projected_update_folds_into_live_progress_in_the_reader(tmp_path: Path)
                 "matches": [
                     {
                         "match_id": "rung1_m0",
+                        "pending": True,
                         "competitors": ["v0", "v5"],
                         "live_progress": {
                             "v5": {"boards_total": 8, "inflight": 1},
@@ -224,3 +231,38 @@ def test_missing_live_state_ignores_and_preserves_saved_snapshot(
 def test_read_is_none_when_nothing_written(tmp_path: Path) -> None:
     assert read_active_tournament(tmp_path) is None
     assert not tournament_log.has_log(tmp_path)
+
+
+def test_writer_recovers_after_an_append_reports_failure(tmp_path: Path) -> None:
+    with acquire_workspace_lock(tmp_path, "test-publication") as writer:
+        write_active_tournament(writer, _sample())
+        append = writer.tournament_log.append
+
+        def uncertain_append(*args, **kwargs):
+            append(*args, **kwargs)
+            raise OSError("write completion was not confirmed")
+
+        with patch.object(writer.tournament_log, "append", side_effect=uncertain_append):
+            with pytest.raises(OSError):
+                update_tournament_partial_aggregate(writer, challenger_agg={"scalar": 0.5})
+        update_tournament_entry(writer, "b0", "child", status="completed")
+    got = read_active_tournament(tmp_path)
+    assert got is not None
+    assert got.partial_challenger_agg == {"scalar": 0.5}
+    assert got.entries[1].status == "completed"
+
+
+def test_runtime_cleanup_prevents_updates_to_a_discarded_tournament(tmp_path: Path) -> None:
+    from zicato.runtime.resume import clear_runtime_state
+
+    with acquire_workspace_lock(tmp_path, "test-publication") as writer:
+        write_active_tournament(writer, _sample())
+        clear_runtime_state(writer)
+        update_tournament_partial_aggregate(writer, challenger_agg={"scalar": 0.5})
+        assert read_active_tournament(tmp_path) is None
+        assert not active_tournament_log_path(tmp_path).exists()
+        write_active_tournament(writer, _sample())
+        update_tournament_entry(writer, "b0", "child", status="running")
+    got = read_active_tournament(tmp_path)
+    assert got is not None and got.entries[1].status == "running"
+    assert not got.partial_challenger_agg

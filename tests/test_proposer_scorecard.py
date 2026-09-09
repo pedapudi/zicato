@@ -74,7 +74,7 @@ def _round(
     if generation_id:
         events.append(PatchesApplied(generation_id=generation_id))
     for i in range(units):
-        events.append(UnitCompleted(entry_id=f"entry_{i}", replicate=0, side="challenger"))
+        events.append(UnitCompleted(entry_id=f"entry_{i}", side="challenger"))
     if gate is not None:
         champion, challenger, required = gate
         events.append(

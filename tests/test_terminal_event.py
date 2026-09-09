@@ -41,7 +41,7 @@ from tests.test_subprocess_workers import (
     _worker_env,
     _write_args_file,
 )
-from zicato.core.measurement import measurement_artifact_path
+from zicato.core.measurement import MeasurementDraw, MeasurementPurpose, measurement_artifact_path
 from zicato.core.workspace import run_dir
 from zicato.telemetry.terminal_event import (
     SequenceTrackingSink,
@@ -241,7 +241,7 @@ def test_worker_emits_run_aborted_when_cooperative_budget_cancels_mid_emit(
     events_path = measurement_artifact_path(
         run_dir(workspace, "e0", generation.id, entry.id),
         "events",
-        0,
+        MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0),
         base_seed=None,
     )
     assert events_path.exists(), "the worker must have written an events file"

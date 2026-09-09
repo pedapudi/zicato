@@ -400,26 +400,8 @@ def test_probe_selection_is_validated_before_the_floor_spends_a_draw(
     assert measured == []
 
 
-def test_the_probe_ceiling_is_validated_at_construction() -> None:
-    """The knob cannot be set wider than the reserved replicate block.
-
-    ``preflight_probe_points`` indexes replicate slots at
-    ``PREFLIGHT_REPLICATE_BASE + j``; past the block width the pre-flight would
-    draw into the candidate screen's range and make ITS cache idempotence a
-    lie. The pre-flight already refused such a sample, but only after
-    enumerating a snapshot — validating the field fails at the config that set
-    it instead.
-    """
-    from zicato.core.runtime import PREFLIGHT_PROBE_POINTS_MAX
-    from zicato.epoch.preflight import PREFLIGHT_REPLICATE_SPAN
+def test_preflight_draw_count_has_no_purpose_boundary() -> None:
     from zicato.testing.fixtures import make_runtime_config
 
-    assert PREFLIGHT_PROBE_POINTS_MAX == PREFLIGHT_REPLICATE_SPAN, (
-        "the mirrored ceiling drifted from the replicate block it mirrors — "
-        "zicato.core cannot import zicato.epoch, so this equality is the seam"
-    )
-
-    ok = make_runtime_config(preflight_probe_points=PREFLIGHT_PROBE_POINTS_MAX)
-    assert ok.preflight_probe_points == PREFLIGHT_PROBE_POINTS_MAX
-    with pytest.raises(ValueError, match="must be <="):
-        make_runtime_config(preflight_probe_points=PREFLIGHT_PROBE_POINTS_MAX + 1)
+    config = make_runtime_config(preflight_probe_points=10001)
+    assert config.preflight_probe_points == 10001

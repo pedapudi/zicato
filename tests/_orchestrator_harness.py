@@ -46,7 +46,7 @@ from zicato.core.types import (
 from zicato.core.workspace import run_id_for_unit
 from zicato.epoch.lifecycle import new_epoch
 from zicato.import_path import _callable_dotted_path
-from zicato.tournament.worker_transport import _entry_replicate_index
+from zicato.tournament.worker_transport import _entry_measurement
 
 
 async def target_call_llm(system: str, user: str, model: str) -> str:
@@ -363,7 +363,11 @@ def install_telemetry_stubs(
         _runner_mod._ingest_run_into_index(workspace_root, epoch_id, generation.id, entry.id)
         return LossProfile(
             run_id=run_id_for_unit(
-                generation.id, entry.id, _entry_replicate_index(entry), base_seed=config.seed
+                generation.id,
+                entry.id,
+                _entry_measurement(entry),
+                base_seed=config.seed,
+                epoch_id=generation.epoch_id,
             ),
             entry_id=entry.id,
             generation_id=generation.id,

@@ -24,8 +24,9 @@ from tests._subprocess_worker_support import (
 )
 from zicato.core import BoardEntry
 from zicato.core.measurement import (
-    UNKNOWN_SEED,
+    TOURNAMENT_DRAW,
     MeasurementDraw,
+    MeasurementPurpose,
     iter_measurement_artifacts,
     iter_measurement_attempts,
     measurement_artifact_path,
@@ -53,7 +54,9 @@ class _CaptureSession:
     async def run(self, entry, sinks, config):
         from goldfive.events import emit, run_started_event
 
-        run_id = run_id_for_unit(entry.context["generation_id"], entry.id, base_seed=config.seed)
+        run_id = run_id_for_unit(
+            entry.context["generation_id"], entry.id, base_seed=config.seed, epoch_id="e0"
+        )
         await emit(
             list(sinks), run_started_event(run_id=run_id, sequence=1, goal_summary="capture")
         )
@@ -76,21 +79,29 @@ def make_capture_adapter():
     return _CaptureAdapter()
 
 
-@pytest.mark.parametrize("seed", [UNKNOWN_SEED, None, 0, 17, -17])
-def test_seed_identity_agrees_with_path_and_preserves_unknown_history(tmp_path: Path, seed) -> None:
-    draw = MeasurementDraw.from_index(4001, base_seed=seed)
-    run_id = run_id_for_unit("v0", "entry", 4001, base_seed=seed)
-    assert measurement_from_run_id("v0", "entry", run_id) == draw
+@pytest.mark.parametrize("seed", [None, 0, 17, -17])
+def test_seed_identity_agrees_with_path(tmp_path: Path, seed) -> None:
+    draw = replace(MeasurementDraw(MeasurementPurpose.CONFIRMATION, 1), base_seed=seed)
+    run_id = run_id_for_unit(
+        "v0",
+        "entry",
+        MeasurementDraw(MeasurementPurpose.CONFIRMATION, 1),
+        base_seed=seed,
+        epoch_id="e0",
+    )
+    assert measurement_from_run_id("v0", "entry", run_id, epoch_id="e0") == draw
     assert MeasurementDraw.from_json(draw.to_json()) == draw
-    assert ("base_seed" in draw.to_json()) == (seed is not UNKNOWN_SEED)
-    path = measurement_artifact_path(tmp_path, "loss", 4001, base_seed=seed)
+    assert "base_seed" in draw.to_json()
+    path = measurement_artifact_path(
+        tmp_path, "loss", MeasurementDraw(MeasurementPurpose.CONFIRMATION, 1), base_seed=seed
+    )
     write_loss_profile(make_loss_profile(measurement=draw), path)
     assert list(iter_measurement_artifacts(tmp_path)) == [path]
     assert (
         recorded_artifact_measurement(tmp_path, path, read_loss_profile(path).measurement) == draw
     )
-    other = MeasurementDraw.from_index(4001, base_seed=29)
-    with pytest.raises(ValueError, match="seed conflicts"):
+    other = replace(MeasurementDraw(MeasurementPurpose.CONFIRMATION, 1), base_seed=29)
+    with pytest.raises(ValueError, match="conflicts with its artifact path"):
         recorded_artifact_measurement(tmp_path, path, other)
 
 
@@ -100,34 +111,41 @@ def test_seed_identity_refuses_non_integer_values(seed) -> None:
         MeasurementDraw.from_json({"purpose": "tournament", "draw": 0, "base_seed": seed})
 
 
-def test_unknown_historical_seed_cannot_satisfy_an_unseeded_request(tmp_path: Path) -> None:
+def test_missing_measurement_cannot_satisfy_a_cache_request(tmp_path: Path) -> None:
     coordinates = dict(workspace_root=tmp_path, epoch_id="e0", generation_id="v0", entry_id="entry")
-    directory = run_dir(tmp_path, "e0", "v0", "entry")
-    historical = measurement_artifact_path(directory, "loss", 0)
-    write_loss_profile(
-        make_loss_profile(epoch_id="e0", generation_id="v0", entry_id="entry"), historical
+    path = measurement_artifact_path(
+        run_dir(tmp_path, "e0", "v0", "entry"), "loss", TOURNAMENT_DRAW
     )
-    original = historical.read_bytes()
-    assert _resolve_cached_unit(**coordinates, replicate_index=0) is not None
-    assert _resolve_cached_unit(**coordinates, replicate_index=0, base_seed=None) is None
-    assert historical.read_bytes() == original
+    write_loss_profile(make_loss_profile(epoch_id="e0", generation_id="v0", entry_id="entry"), path)
+    original = path.read_bytes()
+    assert _resolve_cached_unit(**coordinates, measurement=TOURNAMENT_DRAW) is None
+    assert path.read_bytes() == original
 
 
 @pytest.mark.parametrize("field", ["epoch_id", "generation_id", "entry_id"])
 def test_cache_refuses_misplaced_measurement_coordinates(tmp_path: Path, field: str) -> None:
     coordinates = dict(epoch_id="e0", generation_id="v0", entry_id="entry")
     profile_coordinates = {**coordinates, field: "other"}
-    path = measurement_artifact_path(run_dir(tmp_path, **coordinates), "loss", 0, base_seed=17)
+    path = measurement_artifact_path(
+        run_dir(tmp_path, **coordinates),
+        "loss",
+        MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0),
+        base_seed=17,
+    )
     write_loss_profile(
         make_loss_profile(
-            **profile_coordinates, measurement=MeasurementDraw.from_index(0, base_seed=17)
+            **profile_coordinates,
+            measurement=replace(MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0), base_seed=17),
         ),
         path,
     )
     original = path.read_bytes()
     assert (
         _resolve_cached_unit(
-            workspace_root=tmp_path, **coordinates, replicate_index=0, base_seed=17
+            workspace_root=tmp_path,
+            **coordinates,
+            measurement=MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0),
+            base_seed=17,
         )
         is None
     )
@@ -135,37 +153,31 @@ def test_cache_refuses_misplaced_measurement_coordinates(tmp_path: Path, field: 
     assert path.read_bytes() == original
 
 
-def test_descriptive_draws_do_not_count_filename_aliases_twice(tmp_path: Path) -> None:
-    for name in ("loss.json", "loss.r0.json", "loss.r00.json"):
-        path = tmp_path / "seed-17" / name
-        write_loss_profile(
-            make_loss_profile(measurement=MeasurementDraw.from_index(0, base_seed=17)), path
-        )
-    other_seed = measurement_artifact_path(tmp_path, "loss", 0, base_seed=29)
-    write_loss_profile(
-        make_loss_profile(measurement=MeasurementDraw.from_index(0, base_seed=29)), other_seed
-    )
-    assert own_code_board_draws(tmp_path) == [
-        (0, tmp_path / "seed-17" / "loss.json"),
-        (0, other_seed),
-    ]
+def test_equal_draw_numbers_with_different_seeds_remain_distinct(tmp_path: Path) -> None:
+    expected = []
+    for seed in (17, 29):
+        measurement = MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0, seed)
+        path = measurement_artifact_path(tmp_path, "loss", measurement)
+        write_loss_profile(make_loss_profile(measurement=measurement), path)
+        expected.append((TOURNAMENT_DRAW, path))
+    assert own_code_board_draws(tmp_path) == expected
 
 
 @pytest.mark.parametrize(
     "run_id", ["seed-017.v0--entry", "seed-17.seed-17.v0--entry", "seed-17.r0.v0--entry"]
 )
 def test_runtime_identity_refuses_noncanonical_aliases(run_id: str) -> None:
-    assert measurement_from_run_id("v0", "entry", run_id) is None
+    assert measurement_from_run_id("v0", "entry", run_id, epoch_id="e0") is None
 
 
 def _artifact_set(root: Path) -> dict[str, bytes]:
     return {
-        "loss.json": b'{"run_id":"measured"}\n',
-        "events.jsonl": b'{"event":"complete"}\n',
-        "result.json": b'{"final_output":"captured"}\n',
-        "judge_io.jsonl": b'{"verdict":"accepted"}\n',
-        "artifacts.json": b'{"files":["report.txt"]}\n',
-        "artifacts/report.txt": b"produced file\n",
+        "loss.tournament.r0.json": b'{"run_id":"measured"}\n',
+        "events.tournament.r0.jsonl": b'{"event":"complete"}\n',
+        "result.tournament.r0.json": b'{"final_output":"captured"}\n',
+        "judge_io.tournament.r0.jsonl": b'{"verdict":"accepted"}\n',
+        "artifacts.tournament.r0.json": b'{"files":["report.txt"]}\n',
+        "artifacts.tournament.r0/report.txt": b"produced file\n",
     }
 
 
@@ -186,7 +198,7 @@ def test_interrupted_attempt_archival_retains_a_complete_recoverable_copy(
         original = shutil.copyfile
 
         def interrupted(source, destination, **kwargs):
-            if Path(source).name == "result.json":
+            if Path(source).name == "result.tournament.r0.json":
                 raise OSError("copy interrupted")
             return original(source, destination, **kwargs)
 
@@ -195,28 +207,28 @@ def test_interrupted_attempt_archival_retains_a_complete_recoverable_copy(
         original_unlink = Path.unlink
 
         def interrupted_unlink(path, *args, **kwargs):
-            if path == tmp_path / "events.jsonl":
+            if path == tmp_path / "events.tournament.r0.jsonl":
                 raise OSError("clear interrupted")
             return original_unlink(path, *args, **kwargs)
 
         monkeypatch.setattr(Path, "unlink", interrupted_unlink)
     with pytest.raises(OSError, match="interrupted"):
-        archive_unit_artifacts(tmp_path / "loss.json")
-    archives = list((tmp_path / "attempts").glob("loss-*"))
+        archive_unit_artifacts(tmp_path / "loss.tournament.r0.json")
+    archives = list((tmp_path / "attempts").glob("loss.tournament.r0-*"))
     if interruption == "copy":
         assert not archives
-        assert list(iter_measurement_attempts(tmp_path / "loss.json")) == []
+        assert list(iter_measurement_attempts(tmp_path / "loss.tournament.r0.json")) == []
         assert all((tmp_path / name).read_bytes() == body for name, body in contents.items())
     else:
-        assert not (tmp_path / "loss.json").exists()
+        assert not (tmp_path / "loss.tournament.r0.json").exists()
         assert len(archives) == 1
-        assert list(iter_measurement_attempts(tmp_path / "loss.json")) == [
-            archives[0] / "loss.json"
+        assert list(iter_measurement_attempts(tmp_path / "loss.tournament.r0.json")) == [
+            archives[0] / "loss.tournament.r0.json"
         ]
         assert all((archives[0] / name).read_bytes() == body for name, body in contents.items())
     monkeypatch.undo()
-    archive_unit_artifacts(tmp_path / "loss.json")
-    archives = list((tmp_path / "attempts").glob("loss-*"))
+    archive_unit_artifacts(tmp_path / "loss.tournament.r0.json")
+    archives = list((tmp_path / "attempts").glob("loss.tournament.r0-*"))
     assert any(
         all(
             (archive / name).is_file() and (archive / name).read_bytes() == body
@@ -229,18 +241,18 @@ def test_interrupted_attempt_archival_retains_a_complete_recoverable_copy(
 
 def test_attempt_reader_excludes_unpublished_and_incomplete_archives(tmp_path: Path) -> None:
     _write_artifacts(tmp_path, _artifact_set(tmp_path))
-    archive = archive_unit_artifacts(tmp_path / "loss.json")
+    archive = archive_unit_artifacts(tmp_path / "loss.tournament.r0.json")
     assert archive is not None
     pending = tmp_path / "attempts" / ".pending-copy"
-    _write_artifacts(pending, {"loss.json": b"unpublished"})
+    _write_artifacts(pending, {"loss.tournament.r0.json": b"unpublished"})
     incomplete = tmp_path / "attempts" / ("loss-" + "a" * 64)
-    _write_artifacts(incomplete, {"events.jsonl": b"interrupted execution"})
+    _write_artifacts(incomplete, {"events.tournament.r0.jsonl": b"interrupted execution"})
     for attempt in (2, 1):
-        (tmp_path / f"loss.a{attempt}.json").write_text("{}")
-    assert list(iter_measurement_attempts(tmp_path / "loss.json")) == [
-        tmp_path / "loss.a1.json",
-        tmp_path / "loss.a2.json",
-        archive / "loss.json",
+        (tmp_path / f"loss.tournament.r0.a{attempt}.json").write_text("{}")
+    assert list(iter_measurement_attempts(tmp_path / "loss.tournament.r0.json")) == [
+        tmp_path / "loss.tournament.r0.a1.json",
+        tmp_path / "loss.tournament.r0.a2.json",
+        archive / "loss.tournament.r0.json",
     ]
 
 
@@ -275,15 +287,22 @@ async def test_real_workers_preserve_other_seeds_and_complete_attempt_captures(
                 side="child",
                 force_fresh=True,
             )
-            assert loss.measurement == MeasurementDraw.from_index(0, base_seed=seed)
+            assert loss.measurement == replace(
+                MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0), base_seed=seed
+            )
             identities.add(loss.run_id)
-            path = measurement_artifact_path(directory, "loss", 0, base_seed=seed)
+            path = measurement_artifact_path(
+                directory, "loss", MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0), base_seed=seed
+            )
             snapshots[seed] = {p.name: p.read_bytes() for p in path.parent.iterdir() if p.is_file()}
-            assert {"loss.json", "events.jsonl", "result.json", "judge_io.jsonl"} <= snapshots[
-                seed
-            ].keys()
+            assert {
+                "loss.tournament.r0.json",
+                "events.tournament.r0.jsonl",
+                "result.tournament.r0.json",
+                "judge_io.tournament.r0.jsonl",
+            } <= snapshots[seed].keys()
             assert (
-                json.loads(snapshots[seed]["result.json"])["measurement"]
+                json.loads(snapshots[seed]["result.tournament.r0.json"])["measurement"]
                 == loss.measurement.to_json()
             )
             assert read_run_result(unit_result_path(path), expected=loss) is not None
@@ -294,7 +313,7 @@ async def test_real_workers_preserve_other_seeds_and_complete_attempt_captures(
                 for row in captured_judges
             )
         assert len(identities) == 3
-        assert not (directory / "loss.json").exists()
+        assert not (directory / "loss.tournament.r0.json").exists()
         await _run_unit_cache_first(
             writer=writer,
             adapter=_CaptureAdapter(),
@@ -308,17 +327,21 @@ async def test_real_workers_preserve_other_seeds_and_complete_attempt_captures(
             force_fresh=True,
         )
         for seed in (29, None):
-            parent = measurement_artifact_path(directory, "loss", 0, base_seed=seed).parent
+            parent = measurement_artifact_path(
+                directory, "loss", MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0), base_seed=seed
+            ).parent
             assert all(
                 (parent / name).read_bytes() == body for name, body in snapshots[seed].items()
             )
-        parent = measurement_artifact_path(directory, "loss", 0, base_seed=17).parent
-        archives = list((parent / "attempts").glob("loss-*"))
+        parent = measurement_artifact_path(
+            directory, "loss", MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0), base_seed=17
+        ).parent
+        archives = list((parent / "attempts").glob("loss.tournament.r0-*"))
         assert len(archives) == 1
         assert all(
             (archives[0] / name).read_bytes() == body for name, body in snapshots[17].items()
         )
-        archived_path = archives[0] / "loss.json"
+        archived_path = archives[0] / "loss.tournament.r0.json"
         archived_loss = read_loss_profile(archived_path)
         assert read_run_result(unit_result_path(archived_path), expected=archived_loss) is not None
         assert read_judge_io(judge_io_path_for_loss(archived_path), expected=archived_loss)
@@ -326,12 +349,12 @@ async def test_real_workers_preserve_other_seeds_and_complete_attempt_captures(
         from zicato.tournament.unit_cache import read_unit_loss_history
 
         history = read_unit_loss_history(workspace, "e0", "v0", "entry", base_seed=17)
-        assert history == [archived_loss, read_loss_profile(parent / "loss.json")]
+        assert history == [archived_loss, read_loss_profile(parent / "loss.tournament.r0.json")]
 
 
 def test_replicate_fold_retains_seed_provenance_without_claiming_unknown_draws() -> None:
     profiles = [
-        make_loss_profile(measurement=MeasurementDraw.from_index(index, base_seed=17))
+        make_loss_profile(measurement=MeasurementDraw(MeasurementPurpose.TOURNAMENT, index, 17))
         for index in (0, 1)
     ]
     folded = _average_losses([{p.entry_id: p} for p in profiles])[profiles[0].entry_id]
@@ -420,7 +443,11 @@ async def test_forced_reruns_serialize_the_same_physical_slot(tmp_path: Path, mo
         assert calls == 2
         assert [first.drift_loss, second.drift_loss] == [1.0, 2.0]
         directory = run_dir(tmp_path, "e0", "v0", "entry")
-        path = measurement_artifact_path(directory, "loss", 0, base_seed=17)
-        archived = list((path.parent / "attempts").glob("loss-*/loss.json"))
+        path = measurement_artifact_path(
+            directory, "loss", MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0), base_seed=17
+        )
+        archived = list(
+            (path.parent / "attempts").glob("loss.tournament.r0-*/loss.tournament.r0.json")
+        )
         assert len(archived) == 1
         assert read_loss_profile(archived[0]).drift_loss == 1

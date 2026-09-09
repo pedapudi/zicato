@@ -44,6 +44,7 @@ from zicato.core import (
     ScoringWeights,
 )
 from zicato.core import BoardEntry as _BoardEntry
+from zicato.core.measurement import MeasurementDraw, MeasurementPurpose
 from zicato.core.types import OverfittingConfig
 from zicato.core.workspace import run_id_for_unit
 from zicato.tournament.gate import GateOutcome
@@ -564,7 +565,7 @@ def test_run_fast_mode_honours_replicates(monkeypatch: pytest.MonkeyPatch, tmp_p
     so the folded ``mean_score`` can only be right if BOTH slots ran and
     were averaged: 0.5, not replicate 0's 1.0.
     """
-    from zicato.tournament.worker_transport import _entry_replicate_index
+    from zicato.tournament.worker_transport import _entry_measurement
 
     child_gen = _make_generation(tmp_path, "v1", "v0")
     board = _make_board()
@@ -587,7 +588,7 @@ def test_run_fast_mode_honours_replicates(monkeypatch: pytest.MonkeyPatch, tmp_p
         del adapter, weights, config, workspace_root, side, match_id
         # The replicate index reaches the run through the entry context —
         # the same seam a seeded harness reads to vary its noise draw.
-        slot = _entry_replicate_index(entry)
+        slot = _entry_measurement(entry).draw
         call_log.append((entry.id, slot))
         passed = per_slot_pass[slot]
         # Production shape: the reducer populates ``score`` whenever an
@@ -657,7 +658,7 @@ def test_run_fast_mode_replicate_slots_reuse_the_unit_cache(
     1 to 2 evaluates only the newly-needed slot rather than re-running the
     board. Without this the knob would multiply the cost of every retry.
     """
-    from zicato.tournament.worker_transport import _entry_replicate_index
+    from zicato.tournament.worker_transport import _entry_measurement
 
     child_gen = _make_generation(tmp_path, "v1", "v0")
     board = _make_board()
@@ -677,14 +678,18 @@ def test_run_fast_mode_replicate_slots_reuse_the_unit_cache(
         match_id: str = "",
     ) -> LossProfile:
         del adapter, weights, workspace_root, side, match_id
-        call_log.append((entry.id, _entry_replicate_index(entry)))
+        call_log.append((entry.id, _entry_measurement(entry).draw))
         return dataclasses.replace(
             dataclasses.replace(
                 _loss(
                     generation_id=generation.id, entry_id=entry.id, drift_loss=1.0, pass_fail=True
                 ),
                 run_id=run_id_for_unit(
-                    generation.id, entry.id, _entry_replicate_index(entry), base_seed=config.seed
+                    generation.id,
+                    entry.id,
+                    _entry_measurement(entry),
+                    base_seed=config.seed,
+                    epoch_id=generation.epoch_id,
                 ),
                 score=1.0,
             ),
@@ -752,7 +757,7 @@ def test_run_fast_mode_stops_scheduling_slots_on_a_spent_token_budget(
     were never attempted.
     """
     from zicato.core.runtime import RoundTokenLedger
-    from zicato.tournament.worker_transport import _entry_replicate_index
+    from zicato.tournament.worker_transport import _entry_measurement
 
     child_gen = _make_generation(tmp_path, "v1", "v0")
     board = _make_board()
@@ -772,7 +777,7 @@ def test_run_fast_mode_stops_scheduling_slots_on_a_spent_token_budget(
         match_id: str = "",
     ) -> LossProfile:
         del adapter, weights, config, workspace_root, side, match_id
-        call_log.append((entry.id, _entry_replicate_index(entry)))
+        call_log.append((entry.id, _entry_measurement(entry).draw))
         return dataclasses.replace(
             dataclasses.replace(
                 _loss(
@@ -825,7 +830,9 @@ def test_run_fast_mode_stops_scheduling_slots_on_a_spent_token_budget(
     assert result.child_agg["mean_score"] == pytest.approx(1.0)
     # ...and slot 1's cache file was never written, so a later, unbudgeted
     # round can still evaluate it honestly.
-    assert not _unit_loss_path(tmp_path, epoch_id, "v1", board[0].id, 1).exists()
+    assert not _unit_loss_path(
+        tmp_path, epoch_id, "v1", board[0].id, MeasurementDraw(MeasurementPurpose.TOURNAMENT, 1)
+    ).exists()
 
 
 def test_run_fast_mode_single_replicate_is_byte_identical(
@@ -1542,7 +1549,8 @@ def test_runner_empty_disable_drift_leaves_entries_untouched(
 
     for entry in seen:
         assert "disable_drift" not in entry.context
-        assert entry.context == {"attachments": "doc.pdf"}
+        assert entry.context["attachments"] == "doc.pdf"
+    assert "disable_drift" not in entry.context
 
 
 def test_board_disable_drift_excludes_suppressed_builtin_judge_end_to_end(

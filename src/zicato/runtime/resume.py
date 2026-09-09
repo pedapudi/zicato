@@ -178,10 +178,11 @@ def clear_runtime_state(writer: WorkspaceLock) -> None:
     exists. Their generations' ``loss.json`` outputs, if any completed,
     survive under ``epochs/`` and are picked up by the unit cache.
     """
-    tournament = writer.tournament_log
+    from zicato.runtime.state import clear_active_tournament
+
     workspace_root = writer.workspace_root
     try:
-        tournament.clear()
+        clear_active_tournament(writer)
     except OSError as exc:
         log.debug("resume: could not clear tournament log: %s", exc)
     path = heartbeat_path(workspace_root)

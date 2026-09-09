@@ -77,7 +77,7 @@ def captured(tmp_path: Path) -> Capture:
     ) -> _Result:
         artifacts = capture_run_artifacts(
             scratch,
-            tmp_path / f"run-{next(sequence)}" / "loss.json",
+            tmp_path / f"run-{next(sequence)}" / "loss.tournament.r0.json",
             max_files=max_files,
         )
         return _Result(final_output=final_output, transcript=transcript, artifacts=artifacts)

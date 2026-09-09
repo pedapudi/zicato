@@ -24,7 +24,12 @@ from starlette.testclient import TestClient
 
 from tests._workspace_support import experiment_record, write_epoch, write_lineage
 from zicato.core import LossProfile
-from zicato.core.measurement import MeasurementDraw
+from zicato.core.measurement import (
+    TOURNAMENT_DRAW,
+    MeasurementDraw,
+    MeasurementPurpose,
+)
+from zicato.core.workspace import run_id_for_unit
 from zicato.dashboard.server import create_app
 from zicato.index.schema import apply_schema
 from zicato.query import eval_view as ev
@@ -54,16 +59,15 @@ def _write_run_loss(
     passes: bool | None,
     drift: float,
     runtime: int,
-    replicate: int = 0,
+    replicate: MeasurementDraw = TOURNAMENT_DRAW,
     cached: bool = False,
     score: float | None = None,
 ) -> None:
     """Write ONE per-replicate ``loss.json`` / ``loss.r<N>.json`` (the worker's output)."""
     from zicato.telemetry import reducer  # noqa: PLC0415
 
-    suffix = "" if replicate == 0 else f":r{replicate}"
     loss = LossProfile(
-        run_id=f"{gen}:{entry}{suffix}",
+        run_id=run_id_for_unit(gen, entry, replicate, epoch_id=epoch),
         entry_id=entry,
         generation_id=gen,
         epoch_id=epoch,
@@ -75,7 +79,7 @@ def _write_run_loss(
         expectation_result=None,
         drift_loss=drift,
         pass_fail=passes,
-        measurement=MeasurementDraw.from_index(replicate),
+        measurement=replicate,
         cached=cached,
         score=score,
     )
@@ -214,6 +218,15 @@ def _write_calibration_replicate(
 
 
 def _seed_index(workspace: Path) -> None:
+    from zicato.tournament.scoring import write_gen_score
+
+    for generation_id in ("g0", "g1", "g2"):
+        write_gen_score(
+            workspace,
+            EPOCH,
+            generation_id,
+            {"generation_id": generation_id, "base_seed": None, "scalar": 0.0},
+        )
     conn = sqlite3.connect(str(workspace / "index.db"))
     try:
         apply_schema(conn)
@@ -246,7 +259,12 @@ def _seed(workspace: Path, *, with_calibration: bool = True) -> None:
     edir.mkdir(parents=True, exist_ok=True)
     config: dict = {"id": EPOCH, "created_at": "2026-07-01", "closed": False}
     if with_calibration:
-        config["noise_floor"] = {"generation_id": "g0", "runs": 3, "max_abs_delta": 0.06}
+        config["noise_floor"] = {
+            "generation_id": "g0",
+            "runs": 3,
+            "max_abs_delta": 0.06,
+            "base_seed": None,
+        }
     write_epoch(WorkspaceLayout(workspace), EPOCH, config=config)
     # holdout_fraction must be in (0, 1); the explicit ``holdout`` tag on entryC
     # wins outright (split_board rule 1), so only entryC is held regardless.
@@ -289,7 +307,15 @@ def _seed(workspace: Path, *, with_calibration: bool = True) -> None:
     # cell is genuinely REPLICATED off the durable files, not a fabricated count.
     _write_run_loss(workspace, EPOCH, "g0", "entryA", passes=True, drift=0.2, runtime=10, score=0.9)
     _write_run_loss(
-        workspace, EPOCH, "g0", "entryA", passes=True, drift=0.4, runtime=20, replicate=1, score=0.7
+        workspace,
+        EPOCH,
+        "g0",
+        "entryA",
+        passes=True,
+        drift=0.4,
+        runtime=20,
+        replicate=MeasurementDraw(MeasurementPurpose.TOURNAMENT, 1),
+        score=0.7,
     )
     _write_run_loss(workspace, EPOCH, "g0", "entryB", passes=True, drift=0.0, runtime=5)
     _write_run_loss(
@@ -307,9 +333,21 @@ def _seed(workspace: Path, *, with_calibration: bool = True) -> None:
     if with_calibration:
         # entryA: T, T, F → flip 1/3 ; entryB: all pass → 0.0 ; entryC: no draws.
         for i, p in enumerate([True, True, False]):
-            _write_calibration_replicate(workspace, "g0", "entryA", passes=p, replicate=1000 + i)
+            _write_calibration_replicate(
+                workspace,
+                "g0",
+                "entryA",
+                passes=p,
+                replicate=MeasurementDraw(MeasurementPurpose.CALIBRATION, i),
+            )
         for i, p in enumerate([True, True, True]):
-            _write_calibration_replicate(workspace, "g0", "entryB", passes=p, replicate=1000 + i)
+            _write_calibration_replicate(
+                workspace,
+                "g0",
+                "entryB",
+                passes=p,
+                replicate=MeasurementDraw(MeasurementPurpose.CALIBRATION, i),
+            )
     _seed_index(workspace)
 
 
@@ -481,6 +519,7 @@ def test_matrix_flip_rates_from_calibration(tmp_path: Path) -> None:
         "generation_id": "g0",
         "runs": 3,
         "max_abs_delta": 0.06,
+        "base_seed": None,
     }
 
 

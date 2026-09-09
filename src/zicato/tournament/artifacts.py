@@ -17,7 +17,7 @@ from zicato.core.lineage import ArtifactFile, ArtifactSet
 from zicato.core.loss import LossProfile, capture_matches_loss
 from zicato.core.measurement import (
     MeasurementDraw,
-    artifact_replicate_index,
+    artifact_measurement,
     recorded_measurement,
     unit_artifact_name,
 )
@@ -48,7 +48,7 @@ def archive_unit_artifacts(loss_path: Path) -> Path | None:
     miss and the complete prior attempt remains recoverable from the archive.
     The caller serializes writers for the same seed and draw.
     """
-    index = artifact_replicate_index(loss_path.name)
+    index = artifact_measurement(loss_path.name)
     if index is None:
         raise ValueError("attempt archive requires a measurement loss path")
     sources = [
@@ -108,7 +108,7 @@ def archive_unit_artifacts(loss_path: Path) -> Path | None:
 
 def artifact_paths(loss_path: Path) -> tuple[Path, Path]:
     """Return the replicate-keyed ``(tree, manifest)`` paths for a loss slot."""
-    index = artifact_replicate_index(loss_path.name)
+    index = artifact_measurement(loss_path.name)
     if index is None:
         raise ValueError("artifact capture requires a measurement loss path")
     manifest = loss_path.with_name(unit_artifact_name("artifacts", index))
@@ -212,7 +212,7 @@ def read_artifact_manifest(
         if not capture_matches_loss(body, expected):
             raise ValueError("artifact provenance differs from the paired loss")
         if "measurement" in body:
-            index = artifact_replicate_index(loss_path.name)
+            index = artifact_measurement(loss_path.name)
             assert index is not None  # artifact_paths validated the physical slot.
             recorded_measurement(
                 index,
@@ -283,7 +283,7 @@ def capture_run_artifacts(
     """
     artifact_root, manifest_path = artifact_paths(loss_path)
     if measurement is not None:
-        index = artifact_replicate_index(loss_path.name)
+        index = artifact_measurement(loss_path.name)
         assert index is not None  # artifact_paths validated the physical slot.
         recorded_measurement(index, measurement=measurement)
     loss_path.parent.mkdir(parents=True, exist_ok=True)

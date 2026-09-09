@@ -160,18 +160,8 @@ def _run_rounds(workspace: Path, epoch_id: str, rounds: int = 1) -> list:
     )
 
 
-def test_run_count_may_not_walk_out_of_the_reserved_calibration_block() -> None:
-    """Draw ``j`` caches at ``CALIBRATION_REPLICATE_BASE + j``.
-
-    A run count wider than the block would squat the contract pre-flight's
-    range in both directions: a later ``board preflight`` reads these clean
-    A/A draws as its own cached degraded probes, and every reader of the
-    calibration band reads the pre-flight's degraded probes as champion
-    behaviour. The mirror of the pre-flight's own probe-sample guard.
-    """
+def test_calibration_requires_two_draws() -> None:
     import pytest
-
-    from zicato.tournament.calibration import CALIBRATION_REPLICATE_SPAN
 
     def _measure(runs: int) -> None:
         asyncio.run(
@@ -187,10 +177,6 @@ def test_run_count_may_not_walk_out_of_the_reserved_calibration_block() -> None:
             )
         )
 
-    with pytest.raises(ValueError, match="measurement interval"):
-        _measure(CALIBRATION_REPLICATE_SPAN + 1)
-    # The existing lower bound is unmoved, and the widest in-block count is
-    # refused by neither guard.
     with pytest.raises(ValueError, match="at least 2 runs"):
         _measure(1)
 

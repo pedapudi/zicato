@@ -18,6 +18,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from tests._workspace_support import experiment_record
+from zicato.core.measurement import TOURNAMENT_DRAW
 from zicato.dashboard.server import create_app
 from zicato.query import WorkspacePaths, build_gate_breakdown
 from zicato.runtime.lock import acquire_workspace_lock
@@ -65,6 +66,7 @@ def _write_loss(
     """Publish a complete loss carrying the requested scoring provenance."""
     values = {} if scoring_provenance == "__unset__" else {"scoring_provenance": scoring_provenance}
     loss = make_loss_profile(
+        measurement=TOURNAMENT_DRAW,
         epoch_id=EPOCH_ID,
         generation_id=generation_id,
         entry_id=entry_id,
@@ -74,7 +76,15 @@ def _write_loss(
     )
     write_loss_profile(
         loss,
-        ws / "epochs" / EPOCH_ID / "generations" / generation_id / "runs" / entry_id / "loss.json",
+        ws
+        / "epochs"
+        / EPOCH_ID
+        / "generations"
+        / generation_id
+        / "runs"
+        / entry_id
+        / "seed-none"
+        / "loss.tournament.r0.json",
     )
 
 

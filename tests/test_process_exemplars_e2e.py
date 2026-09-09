@@ -199,7 +199,10 @@ def test_exemplar_block_renders_redacted_from_the_first_round(
     from zicato.telemetry.reducer import read_loss_profile
 
     runs_dir = workspace / "epochs" / epoch_id / "generations" / "v1" / "runs"
-    losses = [read_loss_profile(runs_dir / e / "seed-none" / "loss.json") for e in _BOARD_ENTRY_IDS]
+    losses = [
+        read_loss_profile(runs_dir / e / "seed-none" / "loss.tournament.r0.json")
+        for e in _BOARD_ENTRY_IDS
+    ]
     from zicato.board.jsonl import load_board
 
     board = load_board(workspace / "epochs" / epoch_id / "board.jsonl")

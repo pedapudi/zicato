@@ -8,6 +8,7 @@ import json
 import os
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -15,7 +16,7 @@ import pytest
 from zicato.config import resolve_configuration
 from zicato.core.adapter_config import DriverImportContext
 from zicato.core.loss import validate_loss_identity
-from zicato.core.measurement import MeasurementDraw, measurement_artifact_path
+from zicato.core.measurement import MeasurementDraw, MeasurementPurpose, measurement_artifact_path
 from zicato.core.run_context import RunContext
 from zicato.core.runtime_context import WorkerRuntimeContext
 from zicato.core.workspace import run_dir, run_id_for_unit
@@ -151,14 +152,14 @@ def test_two_real_workers_import_their_own_snapshots_with_preloaded_decoys(tmp_p
     for generation, value in (("v0", "parent candidate"), ("v1", "child candidate")):
         snapshot = tmp_path / generation
         _package(snapshot, value)
-        measurement = MeasurementDraw.from_index(0, base_seed=None)
+        measurement = replace(MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0), base_seed=None)
         run_id = run_id_for_unit(
-            generation, "entry", measurement.replicate_index, base_seed=measurement.base_seed
+            generation, "entry", measurement, base_seed=measurement.base_seed, epoch_id="e0"
         )
         unit = measurement_artifact_path(
             run_dir(workspace, "e0", generation, "entry"),
             "loss",
-            measurement.replicate_index,
+            measurement,
             base_seed=measurement.base_seed,
         ).parent
         unit.mkdir(parents=True)
@@ -174,8 +175,8 @@ def test_two_real_workers_import_their_own_snapshots_with_preloaded_decoys(tmp_p
             },
             "target_role": {"models_role": {"call_llm": "fixed_driver:target"}},
             "evaluation_role": {"models_role": {"call_llm": "fixed_driver:evaluation"}},
-            "sink_events_path": str(unit / "events.jsonl"),
-            "loss_path": str(unit / "loss.json"),
+            "sink_events_path": str(unit / "events.tournament.r0.jsonl"),
+            "loss_path": str(unit / "loss.tournament.r0.json"),
             "measurement": measurement.to_json(),
             "weights": {},
             "result_path": str(unit / "worker.result.json"),
@@ -217,7 +218,7 @@ def test_two_real_workers_import_their_own_snapshots_with_preloaded_decoys(tmp_p
         )
         assert result.returncode == 0, result.stderr
         measured = json.loads((unit / "worker.result.json").read_text())
-        profile = read_loss_profile(unit / "loss.json")
+        profile = read_loss_profile(unit / "loss.tournament.r0.json")
         validate_loss_identity(
             profile,
             epoch_id="e0",
@@ -226,7 +227,7 @@ def test_two_real_workers_import_their_own_snapshots_with_preloaded_decoys(tmp_p
             measurement=measurement,
         )
         assert profile.measurement == measurement
-        capture = read_run_result(unit / "result.json", expected=profile)
+        capture = read_run_result(unit / "result.tournament.r0.json", expected=profile)
         assert capture is not None
         assert capture["final_output"] == value
         assert measured["run_result"]["final_output"] == value

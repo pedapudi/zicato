@@ -200,10 +200,17 @@ encoded once as immutable JSON and decoded separately for each consumer.
 Captures retain absence and read errors for the response lifetime. They are neither a
 cross-file transaction nor a process cache; the next request reads again.
 
-The polled epoch response carries analysis markdown and the availability
-of the saved HTML file. The publication view fetches rendered HTML from
-`/api/epoch/{epoch_id}/analysis`. Its `analysis_html_inline` field contains
-the report fragment, or an empty string when no fragment is available.
+The polled epoch response carries report Markdown and standalone HTML
+availability. The publication view fetches `/api/epoch/{epoch_id}/analysis`,
+whose `analysis_html_inline` field reads the saved `analysis.fragment.html`.
+The query performs no report assembly, measurement gathering, or figure rendering.
+
+The report writer combines measured data with authored sections stored in
+`analysis.prose.json`, then publishes Markdown and both HTML forms. The browser
+displays the saved fragment and adds interactive tournament figures and
+per-matchup tables. An absent fragment produces an unpublished notice while
+available tournament figures remain visible. The redraw digest includes the
+full text and figure inputs, so equal-length corrections update the display.
 
 Generation identity includes the epoch. The overview serves
 `champion_record` with its epoch, generation, recorded decision, and rating

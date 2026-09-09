@@ -21,10 +21,12 @@ from pathlib import Path
 import pytest
 
 from zicato.core.loss import LossProfile
-from zicato.core.workspace import loss_profile_path
+from zicato.core.measurement import MeasurementDraw, MeasurementPurpose
+from zicato.core.workspace import loss_profile_path, run_id_for_unit
 from zicato.query.paths import WorkspacePaths
 from zicato.query.replicate_scores import standard_error
 from zicato.query.tournament_view import build_matchup_grid
+from zicato.tournament.scoring import write_gen_score
 from zicato.workspace import WorkspaceLayout
 
 EPOCH = "2026-08-17_signal"
@@ -32,7 +34,7 @@ EPOCH = "2026-08-17_signal"
 
 def _unit_loss_path(workspace: Path, gen: str, entry: str, replicate: int) -> Path:
     base = loss_profile_path(workspace, EPOCH, gen, entry)
-    return base if replicate == 0 else base.with_name(f"loss.r{replicate}.json")
+    return base.with_name(f"loss.tournament.r{replicate}.json")
 
 
 def _write_loss(
@@ -50,7 +52,10 @@ def _write_loss(
     from zicato.telemetry import reducer  # noqa: PLC0415
 
     profile = LossProfile(
-        run_id=f"{gen}:{entry}" + ("" if replicate == 0 else f":r{replicate}"),
+        measurement=MeasurementDraw(MeasurementPurpose.TOURNAMENT, replicate),
+        run_id=run_id_for_unit(
+            gen, entry, MeasurementDraw(MeasurementPurpose.TOURNAMENT, replicate), epoch_id=EPOCH
+        ),
         entry_id=entry,
         generation_id=gen,
         epoch_id=EPOCH,
@@ -65,6 +70,7 @@ def _write_loss(
         score=score,
     )
     reducer.write_loss_profile(profile, _unit_loss_path(workspace, gen, entry, replicate))
+    write_gen_score(workspace, EPOCH, gen, {"generation_id": gen, "base_seed": None, "scalar": 0.0})
 
 
 @pytest.fixture

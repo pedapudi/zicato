@@ -77,7 +77,7 @@ from zicato.core import (
 )
 from zicato.core.measurement import (
     MeasurementDraw,
-    artifact_replicate_index,
+    artifact_measurement,
     recorded_artifact_measurement,
 )
 from zicato.core.runtime_context import WorkerRuntimeContext
@@ -618,11 +618,11 @@ async def _run_with_imports(args: dict[str, Any], runtime_context: WorkerRuntime
     events_path = Path(args["sink_events_path"])
     loss_path = Path(args["loss_path"])
     result_path = Path(args["result_path"])
-    slot = artifact_replicate_index(loss_path.name)
+    slot = artifact_measurement(loss_path.name)
     if slot is None:
         raise ValueError("worker loss path does not identify a measurement draw")
     if (
-        artifact_replicate_index(events_path.name, "events") != slot
+        artifact_measurement(events_path.name, "events") != slot
         or events_path.parent != loss_path.parent
     ):
         raise ValueError("worker events and loss paths disagree on the measurement draw")
@@ -633,7 +633,7 @@ async def _run_with_imports(args: dict[str, Any], runtime_context: WorkerRuntime
         loss_path,
         MeasurementDraw.from_json(args["measurement"]),
     )
-    if measurement != MeasurementDraw.from_index(slot, base_seed=configuration.values.runtime.seed):
+    if measurement != replace(slot, base_seed=configuration.values.runtime.seed):
         raise ValueError("worker seed differs from the recorded measurement")
     harmonograf_url = runtime_context.telemetry.web_url
     harmonograf_grpc = runtime_context.telemetry.grpc_target
@@ -646,8 +646,9 @@ async def _run_with_imports(args: dict[str, Any], runtime_context: WorkerRuntime
         scratch_dir.mkdir(parents=True, exist_ok=True)
 
     entry = validate_board_entry(args["entry"])
-    if int(entry.context.get("replicate_index", "0")) != slot:
-        raise ValueError("worker entry and measurement draw disagree")
+    entry = replace(
+        entry, context={**entry.context, "measurement": json.dumps(measurement.to_json())}
+    )
     from zicato.tournament.artifacts import archive_unit_artifacts  # noqa: PLC0415
 
     archive_unit_artifacts(loss_path)

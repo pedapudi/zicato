@@ -4,10 +4,13 @@ import hashlib
 import json
 import os
 import stat
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
+from zicato.core.measurement import MeasurementPurpose
+from zicato.core.workspace import run_id_for_unit
 from zicato.tournament.artifacts import artifact_paths, capture_run_artifacts
 
 
@@ -17,7 +20,7 @@ def test_capture_inventories_unknown_nested_files_deterministically(tmp_path: Pa
     (scratch / "z" / "page.html").write_text("<h1>result</h1>", encoding="utf-8")
     (scratch / "raw.bin").write_bytes(b"\x00\x01")
 
-    captured = capture_run_artifacts(scratch, tmp_path / "run" / "loss.json")
+    captured = capture_run_artifacts(scratch, tmp_path / "run" / "loss.tournament.r0.json")
 
     assert [file.path for file in captured.files] == ["raw.bin", "z/page.html"]
     assert captured.files[0].sha256 == hashlib.sha256(b"\x00\x01").hexdigest()
@@ -34,13 +37,16 @@ def test_capture_is_replicate_keyed_and_replaces_stale_tree(tmp_path: Path) -> N
     scratch = tmp_path / "scratch"
     scratch.mkdir()
     (scratch / "first.txt").write_text("first", encoding="utf-8")
-    loss = tmp_path / "loss.r2.json"
+    loss = tmp_path / "loss.tournament.r2.json"
     first = capture_run_artifacts(scratch, loss)
     (scratch / "first.txt").unlink()
     (scratch / "second.txt").write_text("second", encoding="utf-8")
     second = capture_run_artifacts(scratch, loss)
 
-    assert artifact_paths(loss) == (tmp_path / "artifacts.r2", tmp_path / "artifacts.r2.json")
+    assert artifact_paths(loss) == (
+        tmp_path / "artifacts.tournament.r2",
+        tmp_path / "artifacts.tournament.r2.json",
+    )
     assert first.root == second.root
     assert not (second.root / "first.txt").exists()
     assert (second.root / "second.txt").exists()
@@ -52,7 +58,7 @@ def test_capture_bounds_are_deterministic(tmp_path: Path) -> None:
     (scratch / "a.txt").write_text("aa", encoding="utf-8")
     (scratch / "b.txt").write_text("bb", encoding="utf-8")
 
-    captured = capture_run_artifacts(scratch, tmp_path / "loss.json", max_files=1)
+    captured = capture_run_artifacts(scratch, tmp_path / "loss.tournament.r0.json", max_files=1)
     manifest = json.loads(captured.manifest_path.read_text(encoding="utf-8"))
 
     assert [file.path for file in captured.files] == ["a.txt"]
@@ -70,7 +76,7 @@ def test_capture_does_not_follow_symlinks(tmp_path: Path) -> None:
     except OSError:
         pytest.skip("symlinks unavailable")
 
-    captured = capture_run_artifacts(scratch, tmp_path / "loss.json")
+    captured = capture_run_artifacts(scratch, tmp_path / "loss.tournament.r0.json")
     manifest = json.loads(captured.manifest_path.read_text(encoding="utf-8"))
 
     assert captured.files == ()
@@ -83,7 +89,7 @@ def test_manifest_sync_failure_preserves_the_committed_record(tmp_path, monkeypa
     scratch = tmp_path / "scratch"
     scratch.mkdir()
     (scratch / "report.txt").write_text("report")
-    captured = capture_run_artifacts(scratch, tmp_path / "loss.json")
+    captured = capture_run_artifacts(scratch, tmp_path / "loss.tournament.r0.json")
     original = captured.manifest_path.read_bytes()
     assert stat.S_IMODE(captured.manifest_path.stat().st_mode) == 0o600
     payload = json.loads(original)
@@ -110,7 +116,7 @@ def test_transcript_refuses_untrusted_artifact_manifest(tmp_path: Path, defect: 
     scratch = tmp_path / "scratch"
     scratch.mkdir()
     (scratch / "report.txt").write_text("report", encoding="utf-8")
-    loss_path = tmp_path / "run" / "loss.json"
+    loss_path = tmp_path / "run" / "loss.tournament.r0.json"
     captured = capture_run_artifacts(scratch, loss_path)
     body = json.loads(captured.manifest_path.read_text())
     if defect == "path":
@@ -122,12 +128,18 @@ def test_transcript_refuses_untrusted_artifact_manifest(tmp_path: Path, defect: 
     elif defect == "provenance":
         write_loss_profile(
             make_loss_profile(
-                run_id="selected", measurement=MeasurementDraw.from_index(0, base_seed=17)
+                run_id="selected",
+                measurement=replace(
+                    MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0), base_seed=17
+                ),
             ),
             loss_path,
         )
         body.update(
-            measurement=MeasurementDraw.from_index(0, base_seed=19).to_json(), run_id="other"
+            measurement=replace(
+                MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0), base_seed=19
+            ).to_json(),
+            run_id="other",
         )
     elif defect == "symlink":
         outside = tmp_path / "outside.txt"
@@ -137,7 +149,7 @@ def test_transcript_refuses_untrusted_artifact_manifest(tmp_path: Path, defect: 
     raw_manifest = captured.manifest_path.read_bytes()
     payload = {"turns": [{"text": "retained"}]}
 
-    _add_run_artifacts(payload, loss_path.with_name("events.jsonl"))
+    _add_run_artifacts(payload, loss_path.with_name("events.tournament.r0.jsonl"))
 
     assert not payload.get("execution", {}).get("nodes")
     assert "artifact manifest" in payload.get("error", "")
@@ -155,7 +167,7 @@ def test_manifest_codec_preserves_extensions_and_refuses_incomplete_inventory(
     scratch.mkdir()
     (scratch / "a.txt").write_bytes(b"a")
     (scratch / "b.txt").write_bytes(b"b")
-    loss_path = tmp_path / "loss.json"
+    loss_path = tmp_path / "loss.tournament.r0.json"
     assert read_artifact_manifest(loss_path) is None
     captured = capture_run_artifacts(scratch, loss_path, max_files=1)
     body = json.loads(captured.manifest_path.read_text())
@@ -168,7 +180,10 @@ def test_manifest_codec_preserves_extensions_and_refuses_incomplete_inventory(
     original = captured.manifest_path.read_bytes()
     with pytest.raises(ValueError, match="conflicts"):
         capture_run_artifacts(
-            scratch, loss_path, measurement=MeasurementDraw.from_index(2), run_id="wrong-slot"
+            scratch,
+            loss_path,
+            measurement=MeasurementDraw(MeasurementPurpose.TOURNAMENT, 2),
+            run_id="wrong-slot",
         )
     assert captured.manifest_path.read_bytes() == original
     body["total_bytes"] += 1
@@ -193,12 +208,18 @@ def test_artifact_reader_selects_replicate_and_retained_attempt_provenance(tmp_p
     loss_paths = []
     for index, name in [(0, "ordinary.txt"), (2, "replicate.txt")]:
         (scratch / name).write_text(name, encoding="utf-8")
-        loss_path = tmp_path / "seed-17" / ("loss.json" if index == 0 else "loss.r2.json")
-        draw = MeasurementDraw.from_index(index, base_seed=17)
+        loss_path = (
+            tmp_path
+            / "seed-17"
+            / ("loss.tournament.r0.json" if index == 0 else "loss.tournament.r2.json")
+        )
+        draw = MeasurementDraw(MeasurementPurpose.TOURNAMENT, index, 17)
         loss = make_loss_profile(run_id=f"selected-{index}", measurement=draw)
         captured = capture_run_artifacts(scratch, loss_path, measurement=draw, run_id=loss.run_id)
         write_loss_profile(loss, loss_path)
-        events = loss_path.with_name("events.jsonl" if index == 0 else "events.r2.jsonl")
+        events = loss_path.with_name(
+            "events.tournament.r0.jsonl" if index == 0 else "events.tournament.r2.jsonl"
+        )
         events.write_bytes(b"{}\n")
         payload = {}
         _add_run_artifacts(payload, events)
@@ -209,16 +230,17 @@ def test_artifact_reader_selects_replicate_and_retained_attempt_provenance(tmp_p
     original = captured.manifest_path.read_bytes()
     archive = archive_unit_artifacts(loss_paths[1])
     assert archive is not None
-    archived_loss = archive / "loss.r2.json"
+    archived_loss = archive / "loss.tournament.r2.json"
     assert read_artifact_manifest(archived_loss, expected=loss)["run_id"] == "selected-2"
     wrong = make_loss_profile(
-        run_id="selected-2", measurement=MeasurementDraw.from_index(2, base_seed=19)
+        run_id="selected-2",
+        measurement=replace(MeasurementDraw(MeasurementPurpose.TOURNAMENT, 2), base_seed=19),
     )
     with pytest.raises(ValueError, match="provenance"):
         read_artifact_manifest(archived_loss, expected=wrong)
-    assert (archive / "artifacts.r2.json").read_bytes() == original
+    assert (archive / "artifacts.tournament.r2.json").read_bytes() == original
     payload = {}
-    _add_run_artifacts(payload, archive / "events.r2.jsonl")
+    _add_run_artifacts(payload, archive / "events.tournament.r2.jsonl")
     assert [item["name"] for item in payload["execution"]["nodes"]] == ["replicate.txt"]
     assert artifact_paths(loss_paths[0])[1].exists()
 
@@ -234,19 +256,28 @@ def test_transcript_distinguishes_absent_and_invalid_paired_loss(
     scratch = tmp_path / "scratch"
     scratch.mkdir()
     (scratch / "report.txt").write_bytes(b"report")
-    loss_path = tmp_path / "epochs/e1/generations/v0/runs/task/loss.json"
+    loss_path = tmp_path / "epochs/e1/generations/v0/runs/task/seed-17/loss.tournament.r0.json"
     captured = capture_run_artifacts(
-        scratch, loss_path, measurement=MeasurementDraw.from_index(0, base_seed=17), run_id="run"
+        scratch,
+        loss_path,
+        measurement=replace(MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0), base_seed=17),
+        run_id="run",
     )
     manifest_bytes = captured.manifest_path.read_bytes()
-    loss_path.with_name("events.jsonl").write_text(
+    loss_path.with_name("events.tournament.r0.jsonl").write_text(
         json.dumps({"kind": "task_completed", "payload": {"summary": "retained turn"}}) + "\n"
     )
     if loss_bytes is not None:
         loss_path.write_bytes(loss_bytes)
 
     for reader in (build_run_transcript, build_run_transcript_delta):
-        payload = reader(WorkspacePaths(tmp_path), "e1", "v0", "task")
+        payload = reader(
+            WorkspacePaths(tmp_path),
+            "e1",
+            "v0",
+            "task",
+            run_id=run_id_for_unit("v0", "task", base_seed=17, epoch_id="e1"),
+        )
         assert payload["turns"][0]["text"] == "retained turn"
         artifacts = [node for node in payload["execution"]["nodes"] if node["kind"] == "artifact"]
         if loss_bytes is None:

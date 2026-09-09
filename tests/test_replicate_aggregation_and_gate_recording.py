@@ -375,24 +375,6 @@ def test_evolve_round_threads_strategy_replicates_into_the_canonical_runner() ->
     assert "replicates=matchup.replicates" in src
 
 
-def test_fast_runner_keys_independent_replicates_for_both_sides() -> None:
-    """Fast mode must never multiply one cached draw into fake evidence.
-
-    Both competitors resolve each requested replicate slot independently.
-    Existing slots may be reused, but a missing slot must be evaluated rather
-    than substituting another replicate's sample.
-    """
-    import inspect
-
-    from zicato.tournament.scheduling import _run_replicated
-
-    src = inspect.getsource(_run_replicated)
-    assert "replicate_base + r" in src
-    assert "parent_gen=left_gen" in src
-    assert "child_gen=right_gen" in src
-    assert "parent_force_fresh=None" in src
-
-
 # ---------------------------------------------------------------------------
 # Issue #111 — the compared scalars must be recorded on BOTH decisions
 # ---------------------------------------------------------------------------

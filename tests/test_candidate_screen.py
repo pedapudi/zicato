@@ -29,10 +29,10 @@ import zicato.tournament.runner as runner_mod
 import zicato.tournament.scheduling as scheduling_mod
 from zicato.core import BoardEntry, Generation, LossProfile, RuntimeConfig, ScoringWeights
 from zicato.core.loss import BUDGET_ABORT_CAUSE
+from zicato.core.measurement import MeasurementDraw, MeasurementPurpose
 from zicato.core.types import Experiment, HypothesisSpec
 from zicato.core.workspace import generations_dir
 from zicato.epoch.screen import (
-    SCREEN_REPLICATE_BASE,
     ScreenPanel,
     run_candidate_screen,
     select_screen_entries,
@@ -148,7 +148,7 @@ class _ScreenWorld:
         match_id: str = "",
     ) -> LossProfile:
         del adapter, weights, config, workspace_root, side
-        replicate = int(dict(entry.context).get("replicate_index", "0") or 0)
+        replicate = MeasurementDraw.from_context(entry.context)
         self.calls.append((generation.id, entry.id, replicate, match_id))
         verdict = self.verdicts.get((entry.id, replicate), True)
         abort_cause: str | None = None
@@ -302,8 +302,8 @@ def test_pass_flip_vetoes_only_after_confirm_re_run_flips_twice(
 ) -> None:
     world = _ScreenWorld(
         {
-            ("e_a", SCREEN_REPLICATE_BASE): False,
-            ("e_a", SCREEN_REPLICATE_BASE + 1): False,  # flips twice ⇒ veto
+            ("e_a", MeasurementDraw(MeasurementPurpose.SCREEN, 0)): False,
+            ("e_a", MeasurementDraw(MeasurementPurpose.SCREEN, 1)): False,  # flips twice ⇒ veto
         }
     )
     results = asyncio.run(_screen(tmp_path, monkeypatch, world, panel=_panel("e_a", "e_b")))
@@ -311,7 +311,7 @@ def test_pass_flip_vetoes_only_after_confirm_re_run_flips_twice(
     assert res.vetoed is True
     assert res.confirmed is True
     # ONE confirming re-run of the flipped entry at the reserved slot 3001.
-    confirms = [c for c in world.calls if c[2] == SCREEN_REPLICATE_BASE + 1]
+    confirms = [c for c in world.calls if c[2] == MeasurementDraw(MeasurementPurpose.SCREEN, 1)]
     assert [(c[1]) for c in confirms] == ["e_a"]
     assert confirms[0][3] == "candidate-screen-confirm:r0:c0"
 
@@ -319,8 +319,11 @@ def test_pass_flip_vetoes_only_after_confirm_re_run_flips_twice(
 def test_unconfirmed_flip_does_not_veto(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     world = _ScreenWorld(
         {
-            ("e_a", SCREEN_REPLICATE_BASE): False,
-            ("e_a", SCREEN_REPLICATE_BASE + 1): True,  # confirm run passes ⇒ noise
+            ("e_a", MeasurementDraw(MeasurementPurpose.SCREEN, 0)): False,
+            (
+                "e_a",
+                MeasurementDraw(MeasurementPurpose.SCREEN, 1),
+            ): True,  # confirm run passes ⇒ noise
         }
     )
     results = asyncio.run(_screen(tmp_path, monkeypatch, world, panel=_panel("e_a", "e_b")))
@@ -334,8 +337,8 @@ def test_infra_abort_is_no_signal_never_a_veto(
 ) -> None:
     world = _ScreenWorld(
         {
-            ("e_a", SCREEN_REPLICATE_BASE): "parent_kill",
-            ("e_b", SCREEN_REPLICATE_BASE): "gone_no_result",
+            ("e_a", MeasurementDraw(MeasurementPurpose.SCREEN, 0)): "parent_kill",
+            ("e_b", MeasurementDraw(MeasurementPurpose.SCREEN, 0)): "gone_no_result",
         }
     )
     results = asyncio.run(_screen(tmp_path, monkeypatch, world, panel=_panel("e_a", "e_b")))
@@ -344,7 +347,7 @@ def test_infra_abort_is_no_signal_never_a_veto(
     # Every panel unit infra-aborted — no usable signal, no scalar.
     assert res.scalar is None
     # No confirm run was spent on a no-signal panel.
-    assert all(c[2] == SCREEN_REPLICATE_BASE for c in world.calls)
+    assert all(c[2] == MeasurementDraw(MeasurementPurpose.SCREEN, 0) for c in world.calls)
 
 
 def test_spent_scheduling_budget_has_no_screen_scalar(
@@ -381,12 +384,14 @@ def test_spent_scheduling_budget_has_no_screen_scalar(
 def test_budget_abort_vetoes_immediately_without_confirm_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    world = _ScreenWorld({("e_a", SCREEN_REPLICATE_BASE): BUDGET_ABORT_CAUSE})
+    world = _ScreenWorld(
+        {("e_a", MeasurementDraw(MeasurementPurpose.SCREEN, 0)): BUDGET_ABORT_CAUSE}
+    )
     results = asyncio.run(_screen(tmp_path, monkeypatch, world, panel=_panel("e_a", "e_b")))
     (res,) = results
     assert res.vetoed is True
     assert res.confirmed is False  # immediate veto, not a confirmed flip
-    assert all(c[2] == SCREEN_REPLICATE_BASE for c in world.calls)
+    assert all(c[2] == MeasurementDraw(MeasurementPurpose.SCREEN, 0) for c in world.calls)
 
 
 def test_non_passing_baseline_entries_cannot_pass_flip_veto(
@@ -396,8 +401,8 @@ def test_non_passing_baseline_entries_cannot_pass_flip_veto(
     # candidate fails both — crash-only semantics keep it un-vetoed.
     world = _ScreenWorld(
         {
-            ("e_a", SCREEN_REPLICATE_BASE): False,
-            ("e_b", SCREEN_REPLICATE_BASE): False,
+            ("e_a", MeasurementDraw(MeasurementPurpose.SCREEN, 0)): False,
+            ("e_b", MeasurementDraw(MeasurementPurpose.SCREEN, 0)): False,
         }
     )
     results = asyncio.run(
@@ -407,7 +412,9 @@ def test_non_passing_baseline_entries_cannot_pass_flip_veto(
     assert res.vetoed is False
     assert res.baseline_passes == 0
     # ...but a budget abort still vetoes on a crash-only panel.
-    world2 = _ScreenWorld({("e_a", SCREEN_REPLICATE_BASE): BUDGET_ABORT_CAUSE})
+    world2 = _ScreenWorld(
+        {("e_a", MeasurementDraw(MeasurementPurpose.SCREEN, 0)): BUDGET_ABORT_CAUSE}
+    )
     results2 = asyncio.run(
         _screen(tmp_path, monkeypatch, world2, panel=_panel("e_a", "e_b", passing=()))
     )
@@ -419,9 +426,9 @@ def test_reason_strings_carry_counts_only_never_entry_ids(
 ) -> None:
     world = _ScreenWorld(
         {
-            ("entry_alpha", SCREEN_REPLICATE_BASE): False,
-            ("entry_alpha", SCREEN_REPLICATE_BASE + 1): False,
-            ("entry_beta", SCREEN_REPLICATE_BASE): BUDGET_ABORT_CAUSE,
+            ("entry_alpha", MeasurementDraw(MeasurementPurpose.SCREEN, 0)): False,
+            ("entry_alpha", MeasurementDraw(MeasurementPurpose.SCREEN, 1)): False,
+            ("entry_beta", MeasurementDraw(MeasurementPurpose.SCREEN, 0)): BUDGET_ABORT_CAUSE,
         }
     )
     results = asyncio.run(
@@ -507,7 +514,7 @@ def test_cache_isolation_reserved_replicate_and_no_phantom_dir_survives(
     # ephemeral screen ids, with the screen match_id.
     assert world.calls, "screen ran no units"
     for gen_id, _entry_id, replicate, match_id in world.calls:
-        assert replicate == SCREEN_REPLICATE_BASE
+        assert replicate == MeasurementDraw(MeasurementPurpose.SCREEN, 0)
         assert gen_id in ("v0-screen-r3c0", "v0-screen-r3c1")
         assert match_id.startswith("candidate-screen:r3:c")
     # (b) No *-screen-* phantom generation dir survives the screen.
@@ -523,7 +530,7 @@ def test_cache_isolation_reserved_replicate_and_no_phantom_dir_survives(
                     epoch_id="e1",
                     generation_id=gen_id,
                     entry_id=entry_id,
-                    replicate_index=0,
+                    measurement=MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0),
                 )
                 is None
             )
@@ -640,7 +647,9 @@ def test_screen_runner_closure_drives_the_engine(
 
     workspace_root, parent = _workspace(tmp_path)
     board = [_entry("e_a"), _entry("e_b"), _entry("e_c")]
-    world = _ScreenWorld({("e_a", SCREEN_REPLICATE_BASE): BUDGET_ABORT_CAUSE})
+    world = _ScreenWorld(
+        {("e_a", MeasurementDraw(MeasurementPurpose.SCREEN, 0)): BUDGET_ABORT_CAUSE}
+    )
     world.install(monkeypatch)
     runner = _build_candidate_screen_runner(
         weights=ScoringWeights(proposer_quality=ProposerQualityConfig(screen_entries=2)),
@@ -663,4 +672,4 @@ def test_screen_runner_closure_drives_the_engine(
     # budget abort on e_a vetoes immediately.
     assert res.vetoed is True
     assert {c[1] for c in world.calls} == {"e_a", "e_b"}
-    assert all(c[2] == SCREEN_REPLICATE_BASE for c in world.calls)
+    assert all(c[2] == MeasurementDraw(MeasurementPurpose.SCREEN, 0) for c in world.calls)

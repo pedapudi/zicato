@@ -9,8 +9,9 @@ import pytest
 from click.testing import CliRunner
 
 from zicato.cli.commands.reindex import reindex_cmd
+from zicato.core.measurement import TOURNAMENT_DRAW
 from zicato.core.types import Generation, ScoringWeights
-from zicato.core.workspace import events_jsonl_path, loss_profile_path
+from zicato.core.workspace import events_jsonl_path, loss_profile_path, run_id_for_unit
 from zicato.epoch.journal import write_experiment
 from zicato.epoch.lifecycle import new_epoch
 from zicato.epoch.lineage import append_to_lineage
@@ -37,6 +38,7 @@ from zicato.testing.fixtures import (
     make_outcome_record,
     make_synthetic_events_jsonl,
 )
+from zicato.tournament.scoring import write_gen_score
 
 
 def _build_indexed_workspace(tmp_path: Path) -> tuple[Path, Path, str]:
@@ -80,11 +82,13 @@ def _build_indexed_workspace(tmp_path: Path) -> tuple[Path, Path, str]:
     write_experiment(ws, eid, "v1", exp)
 
     for gid in ("v0", "v1"):
+        write_gen_score(ws, eid, gid, {"generation_id": gid, "base_seed": None, "scalar": 0.0})
         # The drift surface lives in loss.json (the canonical metric
         # source the index projects from); the events.jsonl alongside it is
         # written too but is never re-tallied by the index.
         profile = make_loss_profile(
-            run_id=f"run_{gid}_e1",
+            measurement=TOURNAMENT_DRAW,
+            run_id=run_id_for_unit(gid, "e1", epoch_id=eid),
             entry_id="e1",
             generation_id=gid,
             epoch_id=eid,
@@ -173,7 +177,7 @@ def test_runs_for_generation_returns_rows(tmp_path: Path) -> None:
     _, db, eid = _build_indexed_workspace(tmp_path)
     runs = runs_for_generation(db, eid, "v1")
     assert len(runs) == 1
-    assert runs[0]["run_id"] == "run_v1_e1"
+    assert runs[0]["run_id"] == run_id_for_unit("v1", "e1", epoch_id=eid)
 
 
 def test_loss_profiles_for_generation_returns_rows(tmp_path: Path) -> None:
@@ -184,8 +188,8 @@ def test_loss_profiles_for_generation_returns_rows(tmp_path: Path) -> None:
 
 
 def test_metric_counts_for_run_returns_rows(tmp_path: Path) -> None:
-    _, db, _ = _build_indexed_workspace(tmp_path)
-    metrics = metric_counts_for_run(db, "run_v0_e1")
+    _, db, eid = _build_indexed_workspace(tmp_path)
+    metrics = metric_counts_for_run(db, run_id_for_unit("v0", "e1", epoch_id=eid))
     drift = [m for m in metrics if m["namespace"] == "drift"]
     assert len(drift) == 1
     assert drift[0]["name"] == "drift:off_topic"

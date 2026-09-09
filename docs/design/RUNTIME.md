@@ -60,10 +60,11 @@ top of these state files, see [DASHBOARD.md](DASHBOARD.md).
 The runtime layer holds to four goals; everything else in the design
 follows from them.
 
-1. **No state in process memory that can be lost on crash.** Every
-   piece of runtime state lives on disk as a plain file. A crashed
-   orchestrator can be restarted and pick up where it left off; a
-   crashed supervisor can be restarted with no loss of information.
+1. **Persist the information required for recovery and observation.** Runtime
+   publishers write files that independent readers can inspect. The writer
+   retains tournament state and log sequence cursors in memory to avoid
+   repeated replay. That retained state grants no recovery authority; restart
+   reconstructs or clears runtime records under the workspace lease.
 2. **No model call in the watchdog path.** Hang detection,
    escalation, and process-kill decisions are made by a fast,
    deterministic process that reads file timestamps. A model call in
@@ -219,22 +220,33 @@ threshold is loose enough to absorb a slow disk sync or a
 paused-by-debugger orchestrator before it warns, and looser still
 before it escalates.
 
-### 2.3 `active_tournament.events.jsonl` — recorded tournament transitions
+### 2.3 `active_tournament.events.jsonl` — published tournament display state
 
-The dashboard and supervisor fold the event log into the in-progress
-tournament view. Each record has `seq`, `ts`, `type` and `payload` fields.
-A `Snapshot` carries the full `ActiveTournament` envelope and resets the
-fold. `EntryUpdate`, `PartialAggregate` and `ProjectedUpdate` carry later
-changes. The runtime writer appends each transition once; readers apply
-these events in order from the last `Snapshot`.
+Each record contains `seq`, `ts`, `type`, and `payload`. `Snapshot` carries a
+complete `ActiveTournament` envelope. `Update.fields` carries complete replacement
+values for changed top-level fields. `Update.entries` maps array positions to
+complete board-entry rows. Entry positions stay fixed until the next snapshot,
+so updating one row does not copy the whole board into the log. Readers apply
+these replacements in order without calculating display values.
 
-An absent, empty or unusable log supplies no live tournament state.
-Saved files outside this event protocol are ignored and left untouched.
-Restart cleanup removes the event log. Settled tournament results live
-under the selected epoch and remain available after that cleanup.
+The acquired workspace writer retains the published tournament state and log
+sequence. It computes pending-match progress, queued rounds, lane counts, and
+projected standings before each publication. Strategy results remain the basis
+for completed matches and Swiss points. Readers apply replacements and render
+the resulting fields without recalculating tournament progress.
 
-The dashboard computes progress and predicted gate verdicts from the
-folded state. See [DASHBOARD.md](DASHBOARD.md) §4 for the projection.
+Publication helpers run synchronously on the invocation's event loop. Concurrent
+matchups share the writer, so no task can intervene between reading retained
+state and appending its replacement. Other invocations are excluded by the
+kernel lease. Sharing the handle between threads requires additional
+synchronization.
+
+An absent or empty log supplies no live tournament. An update before a snapshot
+has no effect. Strict readers can raise on malformed JSONL or invalid envelope
+fields; they do not turn corrupt records into valid empty state. Restart
+cleanup removes this runtime log. Settled results remain under the epoch.
+
+See [DASHBOARD.md](DASHBOARD.md) §4 for the display.
 
 ### 2.4 `active_runs/{run_id}.json` — per-in-flight-run state
 
@@ -551,7 +563,7 @@ Inside `.zicato/runtime/` the writer rules are strict:
 | `lock.json` | Workspace writer publishes inspection metadata and removes its own record | supervisor |
 | `heartbeat.json` | orchestrator | supervisor, dashboard |
 | `dashboard.json` | dashboard service | orchestrator (URL readback) |
-| `active_tournament.events.jsonl` | orchestrator | supervisor, dashboard |
+| `active_tournament.events.jsonl` | Invocation publishes snapshots and field replacements through its exclusive workspace writer | supervisor, dashboard |
 | `active_runs/{run_id}.json` | Tournament worker or proposal producer publishes its owned record; its parent finalizes after confirmed exit; the supervisor finalizes a confirmed orphan under the writer guard | supervisor, dashboard |
 | `control/<command>` | dashboard service | orchestrator, at its safe points |
 | `control_log/*` | orchestrator, on consume | dashboard |

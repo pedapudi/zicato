@@ -76,7 +76,7 @@ from zicato.workspace.epochs import (
     next_generation_id,
     read_epoch_config,
 )
-from zicato.workspace.layout import WorkspaceLayout, events_replicate_index, is_events_file
+from zicato.workspace.layout import WorkspaceLayout, events_measurement, is_events_file
 from zicato.workspace.reads import (
     generation_ids,
     read_board,
@@ -95,7 +95,7 @@ __all__ = [
     "cumulative_scalars",
     "epoch_created_at",
     "epoch_sort_key",
-    "events_replicate_index",
+    "events_measurement",
     "generation_ids",
     "generation_round_number",
     "is_events_file",

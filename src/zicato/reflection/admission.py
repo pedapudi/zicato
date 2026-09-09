@@ -12,11 +12,11 @@ on the suggestion surface, never a silent auto-reject here:
   the same path the candidate screen / calibration / corpus draws compose),
   confirming it executes and produces a ``LossProfile``.
 * **(b) A/A NOISE** — K replicate draws of the champion against itself on JUST
-  the drafted entry, at the NEW reserved base :data:`SYNTHESIS_REPLICATE_BASE`
-  (``6000``), folded to a per-entry flip rate via the pure
+  the drafted entry, using distinct local draws under the
+  ``eval_synthesis_admission`` purpose, folded to a per-entry flip rate via the pure
   :func:`zicato.query.eval_view.flip_rate` helper. Draw 0 IS the execution
-  probe (a shared reserved cache slot), so the two stages spend one run
-  between them.
+  probe, so that execution check shares an existing noise draw and adds no
+  separate run.
 * **(c) DISCRIMINATION** — the drafted entry runs against a spread of recent
   SETTLED candidates (the reign's settled matchups, re-derived from records —
   the recombination builder's reconstruction precedent) and we count how many
@@ -55,10 +55,7 @@ from pathlib import Path
 from typing import Any
 
 from zicato.core import BoardEntry, Generation, JudgeSpec, RuntimeConfig, ScoringWeights
-from zicato.core.measurement import SYNTHESIS_REPLICATE_BASE as SYNTHESIS_REPLICATE_BASE
-from zicato.core.measurement import (
-    validate_measurement_interval,
-)
+from zicato.core.measurement import MeasurementDraw, MeasurementPurpose, validate_measurement_count
 from zicato.query.eval_view import flip_rate
 from zicato.reflection.mining import (
     HINT_COVERAGE_ENTRY,
@@ -136,7 +133,7 @@ class AdmissionCost:
     """Up-front board-run cost of the admission probes (the ``estimate`` tier).
 
     ``execution_units`` is the single champion-on-entry run that proves
-    executability; it is A/A noise draw 0 (a shared reserved cache slot), so it
+    executability; it is admission noise draw zero, so it
     is folded into ``noise_units`` and NOT re-counted in ``total_units``.
     """
 
@@ -248,12 +245,12 @@ async def admit_suggestion(
     ``test_admission_plan_mode_runs_nothing`` (zero ``_run_single`` calls).
 
     With ``spend=True``: run the execution / noise / discrimination probes
-    through the real board-unit runner at :data:`SYNTHESIS_REPLICATE_BASE`,
+    through the real board-unit runner under ``eval_synthesis_admission``,
     measure the flip rate + discrimination, and stamp them onto the record. A
     stage that cannot run degrades to ``unmeasured``; the pipeline never raises
     on a probe failure and never auto-rejects.
     """
-    validate_measurement_interval(SYNTHESIS_REPLICATE_BASE, max(2, noise_runs))
+    validate_measurement_count(max(2, noise_runs))
     cost = estimate_cost(
         experiments=experiments,
         noise_runs=noise_runs,
@@ -634,7 +631,7 @@ def _placeholder_config(workspace_root: Path) -> RuntimeConfig:
 
 
 # ---------------------------------------------------------------------------
-# (a) + (b) execution + A/A noise at the reserved base 6000
+# (a) + (b) execution and A/A noise under eval_synthesis_admission
 # ---------------------------------------------------------------------------
 
 
@@ -650,7 +647,7 @@ async def _execution_and_noise(
     epoch_id: str,
     noise_runs: int,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Run the champion against itself on JUST ``entry``, K draws at 6000 + j.
+    """Measure ``entry`` on the champion with distinct admission draws.
 
     Draw 0 IS the execution probe. Each draw's pass/fail bit feeds the pure
     :func:`flip_rate`; fewer than two usable draws leave the flip rate
@@ -658,7 +655,7 @@ async def _execution_and_noise(
     unexecutable draw 0 marks ``execution.ran = false`` loudly, but the pipeline
     keeps its footing.
     """
-    validate_measurement_interval(SYNTHESIS_REPLICATE_BASE, max(2, noise_runs))
+    validate_measurement_count(max(2, noise_runs))
     try:
         entry.validate()
     except Exception as exc:  # noqa: BLE001 — an invalid draft is a loud non-execution
@@ -670,7 +667,7 @@ async def _execution_and_noise(
     bits: list[bool | None] = []
     execution: dict[str, Any] | None = None
     for draw in range(max(2, noise_runs)):
-        replicate_index = SYNTHESIS_REPLICATE_BASE + draw
+        measurement = MeasurementDraw(MeasurementPurpose.ADMISSION, draw)
         try:
             loss = await _run_entry(
                 entry,
@@ -681,7 +678,7 @@ async def _execution_and_noise(
                 adapter=adapter,
                 workspace_root=workspace_root,
                 epoch_id=epoch_id,
-                replicate_index=replicate_index,
+                measurement=measurement,
                 match_id=f"admission-noise:{draw}",
             )
         except Exception as exc:  # noqa: BLE001 — a runner failure degrades, never crashes
@@ -711,7 +708,7 @@ async def _execution_and_noise(
         "flip_rate": rate,
         "runs": len(bits),
         "measured": measured,
-        "base": SYNTHESIS_REPLICATE_BASE,
+        "measurement_purpose": str(MeasurementPurpose.ADMISSION),
         "note": None if measured else _UNMEASURED,
     }
     return execution, noise
@@ -824,7 +821,7 @@ async def _run_side(
             adapter=adapter,
             workspace_root=workspace_root,
             epoch_id=epoch_id,
-            replicate_index=SYNTHESIS_REPLICATE_BASE,
+            measurement=MeasurementDraw(MeasurementPurpose.ADMISSION, 0),
             match_id=f"admission-discrimination:{side}:{generation_id}",
         )
     except Exception:  # noqa: BLE001 — a runner failure is a no-signal side, never a crash
@@ -953,30 +950,30 @@ async def _run_entry(
     adapter: Any,
     workspace_root: Path,
     epoch_id: str,
-    replicate_index: int,
+    measurement: MeasurementDraw,
     match_id: str,
 ) -> Any:
     """Run one drafted entry on one generation through the real board-unit runner.
 
-    Stamps the reserved replicate index onto the entry (the §7.3 same-number
-    rule: a seeded harness draws fresh per slot) and keys the per-unit cache with
-    it, as the calibration / screen / corpus draws do. Returns the
+    Passes the measurement purpose and local draw through task context and
+    runner arguments. The runner records the runtime seed with the measurement
+    and uses the same identity for cache selection and artifact paths. Returns the
     entry's :class:`LossProfile`, or ``None`` when the runner produced none.
     """
     from zicato.tournament.scheduling import _run_board_units_fast  # noqa: PLC0415
-    from zicato.tournament.worker_transport import _stamp_replicate_index  # noqa: PLC0415
+    from zicato.tournament.worker_transport import _stamp_measurement  # noqa: PLC0415
 
     losses = await _run_board_units_fast(
         writer=writer,
         adapter=adapter,
         child_gen=generation,
-        board=_stamp_replicate_index([entry], replicate_index),
+        board=_stamp_measurement([entry], measurement),
         weights=weights,
         config=config,
         workspace_root=workspace_root,
         epoch_id=epoch_id,
         match_id=match_id,
-        replicate_index=replicate_index,
+        measurement=measurement,
     )
     return losses.get(entry.id)
 
@@ -1011,7 +1008,7 @@ def _unmeasured_noise() -> dict[str, Any]:
         "flip_rate": None,
         "runs": 0,
         "measured": False,
-        "base": SYNTHESIS_REPLICATE_BASE,
+        "measurement_purpose": str(MeasurementPurpose.ADMISSION),
         "note": _UNMEASURED,
     }
 
@@ -1023,7 +1020,6 @@ def _unmeasured_discrimination() -> dict[str, Any]:
 __all__ = [
     "DEFAULT_DISCRIMINATION_CANDIDATES",
     "DEFAULT_NOISE_RUNS",
-    "SYNTHESIS_REPLICATE_BASE",
     "AdmissionCost",
     "AdmissionRecord",
     "AdmissionRequest",

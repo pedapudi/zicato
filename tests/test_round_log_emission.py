@@ -115,15 +115,15 @@ class TestRoundLogEmitter:
         emitter = _RoundLogEmitter(tmp_path, "e1", 3)
         emitter.emit(
             "unit_completed",
-            {"entry_id": "entry-1", "replicate": 2, "side": "child"},
+            {"entry_id": "entry-1", "side": "child"},
             {"generation_id": "gen-7"},
         )
         event = RoundLog(tmp_path, "e1", 3).read()[0]
-        # The entry, the side and the replicate stay where the payload
+        # The entry and the side stay where the payload
         # already states them — a second copy could only drift from the
         # first. The scope adds the challenger the payload cannot name.
         assert event.scope == RoundEventScope(generation_id="gen-7", step="run")
-        assert event.payload == {"entry_id": "entry-1", "replicate": 2, "side": "child"}
+        assert event.payload == {"entry_id": "entry-1", "side": "child"}
 
     def test_a_null_coordinate_reads_back_as_absent(self, tmp_path: Path) -> None:
         emitter = _RoundLogEmitter(tmp_path, "e1", 1)

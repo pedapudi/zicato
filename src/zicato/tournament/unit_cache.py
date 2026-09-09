@@ -29,13 +29,13 @@ from zicato.core import (
 )
 from zicato.core.loss import capture_matches_loss, has_execution_evidence, validate_loss_identity
 from zicato.core.measurement import (
+    TOURNAMENT_DRAW,
     UNKNOWN_SEED,
     BaseSeed,
     MeasurementDraw,
-    artifact_replicate_index,
+    artifact_measurement,
     iter_measurement_artifacts,
     measurement_artifact_path,
-    range_at,
     recorded_artifact_measurement,
     recorded_measurement,
     unit_artifact_name,
@@ -98,62 +98,45 @@ def _unit_loss_path(
     epoch_id: str,
     generation_id: str,
     entry_id: str,
-    replicate_index: int,
+    measurement: MeasurementDraw,
     *,
     base_seed: BaseSeed = UNKNOWN_SEED,
 ) -> Path:
-    """Locate one purpose/draw slot under its selected seed directory.
+    """Return the loss path for the requested purpose, draw, and seed."""
+    from zicato.core.workspace import run_dir  # noqa: PLC0415
 
-    Historical records omit the seed directory. Explicit unseeded executions
-    use seed-none; integer seeds use seed-<integer>. The integer filename
-    encoding remains the same within every seed directory."""
-    from zicato.core.workspace import loss_profile_path  # noqa: PLC0415
-
-    canonical = loss_profile_path(workspace_root, epoch_id, generation_id, entry_id)
-    return measurement_artifact_path(canonical.parent, "loss", replicate_index, base_seed=base_seed)
+    return measurement_artifact_path(
+        run_dir(workspace_root, epoch_id, generation_id, entry_id),
+        "loss",
+        measurement,
+        base_seed=base_seed,
+    )
 
 
 #: Current replicate transcripts used by the best-available capture reader.
 _EVENTS_REPLICATE_RE = re.compile(r"^events\.r(\d+)\.jsonl$")
 
 
-def is_own_code_board_draw(replicate_index: int) -> bool:
-    """Whether the registered purpose measures this generation's own code.
-
-    File enumeration also checks the recorded identity; a slot alone does not
-    establish historical provenance. Unclaimed slots supply no evidence.
-    """
-    allocation = range_at(replicate_index)
-    return allocation is not None and allocation.own_code
+def is_own_code_board_draw(measurement: MeasurementDraw) -> bool:
+    """Whether this purpose evaluates the generation’s own source."""
+    return measurement.own_code
 
 
 def _loss_slots(
-    run_dir: Path, keep: Callable[[int], bool], *, include_aliases: bool = False
-) -> list[tuple[int, Path]]:
-    """The persisted loss slots of ONE run dir that ``keep`` admits, ascending.
-
-    THE filename walk of a run directory: ``loss.json`` → replicate 0,
-    ``loss.r{n}.json`` → replicate ``n``. An attempt sibling
-    (``loss.a1.json``, ``loss.r2.a1.json``) matches neither form, so a
-    superseded execution is excluded by construction for every caller.
-    """
+    run_dir: Path, keep: Callable[[MeasurementDraw], bool]
+) -> list[tuple[MeasurementDraw, Path]]:
+    """Enumerate supported measurement files selected by purpose."""
     return sorted(
         (index, path)
-        for path in iter_measurement_artifacts(run_dir, include_aliases=include_aliases)
-        if (index := artifact_replicate_index(path.name, canonical=not include_aliases)) is not None
-        and keep(index)
+        for path in iter_measurement_artifacts(run_dir)
+        if (index := artifact_measurement(path.name)) is not None and keep(index)
     )
 
 
 def own_code_board_draws(
     run_dir: Path, *, base_seed: BaseSeed = UNKNOWN_SEED
-) -> list[tuple[int, Path]]:
-    """Enumerate eligible own-code draws, optionally restricted to one seed.
-
-    Every physical slot must agree with its recorded identity. An explicit
-    seed includes None for unseeded executions and excludes unknown history.
-    With no seed filter, descriptive readers may inspect all eligible records;
-    statistical admission still requires complete provenance."""
+) -> list[tuple[MeasurementDraw, Path]]:
+    """Read validated source evaluations, optionally restricted to a seed."""
     _, reducer_module = _telemetry_helpers()
     draws = []
     seen: set[MeasurementDraw] = set()
@@ -161,9 +144,7 @@ def own_code_board_draws(
     for index, path in _loss_slots(run_dir, is_own_code_board_draw):
         try:
             loss = reducer_module.read_loss_profile(path)
-            measurement = recorded_artifact_measurement(
-                run_dir, path, loss.measurement, loss.match_id
-            )
+            measurement = recorded_artifact_measurement(run_dir, path, loss.measurement)
             if coordinates is not None:
                 validate_loss_identity(
                     loss,
@@ -184,7 +165,7 @@ def own_code_board_draws(
     return draws
 
 
-def persisted_loss_slots(run_dir: Path) -> list[tuple[int, Path]]:
+def persisted_loss_slots(run_dir: Path) -> list[tuple[MeasurementDraw, Path]]:
     """Every persisted loss slot under ONE run dir, ascending: records rather than evidence.
 
     The unfiltered twin of :func:`own_code_board_draws`, and the two answer
@@ -204,7 +185,7 @@ def persisted_loss_slots(run_dir: Path) -> list[tuple[int, Path]]:
     filter. Attempt siblings stay excluded either way — they record
     executions that were superseded rather than slots.
     """
-    return _loss_slots(run_dir, lambda _index: True, include_aliases=True)
+    return _loss_slots(run_dir, lambda _index: True)
 
 
 #: Supported format of complete result captures; absent provenance remains historical.
@@ -221,30 +202,18 @@ RUN_RESULT_CLIP_MARKER: str = " … [truncated]"
 
 
 def unit_result_path(loss_path: Path) -> Path:
-    """Map ONE board unit's ``loss.json`` path to its ``result.json`` twin.
-
-    Pure sibling-name math mirroring :func:`_unit_loss_path`'s replicate
-    slotting: ``loss.json`` → ``result.json`` (the canonical replicate-0
-    slot, also :func:`zicato.core.workspace.run_result_path`) and
-    ``loss.r{n}.json`` → ``result.r{n}.json``. Taking the LOSS path (not
-    the coordinates) keeps the two artifacts glued to the same replicate
-    slot by construction — a caller cannot pair replicate 3's loss with
-    replicate 0's result.
-    """
-    name = loss_path.name
-    index = artifact_replicate_index(name)
-    if index is not None:
-        return loss_path.with_name(unit_artifact_name("result", index))
-    if name.startswith("loss."):
-        return loss_path.with_name("result." + name[len("loss.") :])
-    # Defensive: an unexpected filename still gets a deterministic sibling.
-    return loss_path.with_name("result.json")
+    """Return the result capture for the same measurement or attempt as the loss."""
+    if artifact_measurement(loss_path.name) is None and not is_unit_attempt_slot(loss_path):
+        raise ValueError("result capture requires a measurement loss path")
+    return loss_path.with_name("result." + loss_path.name.removeprefix("loss."))
 
 
 def unit_events_path(loss_path: Path) -> Path:
-    """Map one replicate's loss path to its events JSONL twin."""
-    index = artifact_replicate_index(loss_path.name)
-    return loss_path.with_name(unit_artifact_name("events", index or 0))
+    """Return the transcript path for the same measurement as the loss."""
+    measurement = artifact_measurement(loss_path.name)
+    if measurement is None:
+        raise ValueError("transcript capture requires a measurement loss path")
+    return loss_path.with_name(unit_artifact_name("events", measurement))
 
 
 def any_unit_transcript(canonical_events_path: Path) -> Path:
@@ -283,13 +252,12 @@ def any_unit_transcript(canonical_events_path: Path) -> Path:
     if not run_dir.is_dir():
         return canonical_events_path
 
-    own_code: list[tuple[int, Path]] = []
-    other: list[tuple[int, Path]] = []
+    own_code: list[tuple[MeasurementDraw, Path]] = []
+    other: list[tuple[MeasurementDraw, Path]] = []
     for path in run_dir.iterdir():
-        match = _EVENTS_REPLICATE_RE.match(path.name)
-        if not match or not _has_content(path):
+        index = artifact_measurement(path.name, "events")
+        if index is None or not _has_content(path):
             continue
-        index = int(match.group(1))
         (own_code if is_own_code_board_draw(index) else other).append((index, path))
     for candidates in (own_code, other):
         if candidates:
@@ -424,7 +392,7 @@ def read_run_result(path: Path, *, expected: LossProfile | None = None) -> dict[
     if "measurement" in body:
         try:
             measurement = MeasurementDraw.from_json(body["measurement"])
-            index = artifact_replicate_index(path.name, "result")
+            index = artifact_measurement(path.name, "result")
             if index is not None:
                 recorded_measurement(index, measurement=measurement)
         except ValueError as exc:
@@ -438,7 +406,7 @@ def _resolve_cached_unit(
     epoch_id: str,
     generation_id: str,
     entry_id: str,
-    replicate_index: int,
+    measurement: MeasurementDraw,
     base_seed: BaseSeed = UNKNOWN_SEED,
 ) -> LossProfile | None:
     """Resolve a completed draw for one generation, entry, purpose, and seed.
@@ -450,9 +418,8 @@ def _resolve_cached_unit(
     Missing, malformed, conflicting, or unstarted records produce a cache
     miss while their original artifacts remain available for audit."""
     _, reducer_module = _telemetry_helpers()
-    historical = _unit_loss_path(workspace_root, epoch_id, generation_id, entry_id, replicate_index)
-    path = measurement_artifact_path(
-        historical.parent, "loss", replicate_index, base_seed=base_seed
+    path = _unit_loss_path(
+        workspace_root, epoch_id, generation_id, entry_id, measurement, base_seed=base_seed
     )
     if not path.exists():
         return None
@@ -461,9 +428,7 @@ def _resolve_cached_unit(
     except (OSError, KeyError, ValueError, json.JSONDecodeError):
         return None
     try:
-        measurement = recorded_artifact_measurement(
-            historical.parent, path, loss.measurement, loss.match_id
-        )
+        measurement = recorded_artifact_measurement(path.parent.parent, path, loss.measurement)
         validate_loss_identity(
             loss,
             epoch_id=epoch_id,
@@ -491,7 +456,7 @@ def _persist_unit_loss(
     epoch_id: str,
     generation_id: str,
     entry_id: str,
-    replicate_index: int,
+    measurement: MeasurementDraw,
     loss: LossProfile,
 ) -> None:
     """Persist an executed draw in the slot identified by its measurement.
@@ -500,9 +465,9 @@ def _persist_unit_loss(
     already wrote the profile; this write also supports in-process adapters
     and preserves idempotence. The execution owner archives displaced
     profiles and their companions before a rerun starts."""
-    measurement = loss.measurement or MeasurementDraw.from_index(replicate_index)
+    measurement = loss.measurement or measurement
     if loss.measurement is not None:
-        recorded_measurement(replicate_index, measurement=loss.measurement)
+        recorded_measurement(measurement, measurement=loss.measurement)
     loss = replace(loss, measurement=measurement)
     if loss.execution_started is False:
         record_unit_attempt(
@@ -510,7 +475,7 @@ def _persist_unit_loss(
             epoch_id=epoch_id,
             generation_id=generation_id,
             entry_id=entry_id,
-            replicate_index=replicate_index,
+            measurement=measurement,
             loss=loss,
         )
         return
@@ -527,17 +492,17 @@ def _persist_unit_loss(
         epoch_id,
         generation_id,
         entry_id,
-        replicate_index,
+        measurement,
         base_seed=measurement.base_seed,
     )
     try:
         writer(loss, path)
     except OSError as exc:  # noqa: BLE001 — cache persist is best-effort
         log.debug(
-            "unit-loss cache persist skipped for %s/%s r%d: %s",
+            "unit-loss cache persist skipped for %s/%s %s: %s",
             generation_id,
             entry_id,
-            replicate_index,
+            measurement,
             exc,
         )
 
@@ -560,21 +525,7 @@ def is_unit_attempt_slot(path: Path) -> bool:
 
 
 def _next_attempt_path(loss_path: Path) -> Path:
-    """The next free attempt sibling of a canonical loss slot.
-
-    ``loss.json`` → ``loss.a1.json``, ``loss.a2.json``, …; a replicate slot
-    keeps its own series (``loss.r2.json`` → ``loss.r2.a1.json``), so an
-    attempt is never confused with a replicate. The ``.a{n}`` infix sits
-    where no reader of a replicate slot looks: every one of them matches
-    ``loss.json`` exactly or parses the ``r{digits}`` between ``loss.`` and
-    ``.json`` (:func:`zicato.reflection.corpus._discover_replicate_losses`,
-    :func:`zicato.query.eval_view._cell_evidence_replicate_index`), and
-    ``r2.a1`` is not digits. Attempts therefore never enter scoring,
-    reflection ingest, or the evidence count.
-
-    The index is one past however many siblings already exist, so a unit
-    that failed twice reads back as ``a1``, ``a2``, then the canonical file.
-    """
+    """Return the next attempt filename; attempts never count as independent draws."""
     stem = loss_path.stem
     existing = sum(1 for _ in loss_path.parent.glob(f"{stem}.a*.json"))
     return loss_path.with_name(f"{stem}.a{existing + 1}.json")
@@ -586,7 +537,7 @@ def record_unit_attempt(
     epoch_id: str,
     generation_id: str,
     entry_id: str,
-    replicate_index: int,
+    measurement: MeasurementDraw,
     loss: LossProfile | None = None,
     base_seed: BaseSeed = UNKNOWN_SEED,
 ) -> None:
@@ -622,14 +573,14 @@ def record_unit_attempt(
     """
     if loss is not None and loss.measurement is not None:
         base_seed = loss.measurement.base_seed
+    elif base_seed is UNKNOWN_SEED:
+        base_seed = measurement.base_seed
     path = _unit_loss_path(
-        workspace_root, epoch_id, generation_id, entry_id, replicate_index, base_seed=base_seed
+        workspace_root, epoch_id, generation_id, entry_id, measurement, base_seed=base_seed
     )
     try:
         if loss is not None:
-            loss = replace(
-                loss, measurement=MeasurementDraw.from_index(replicate_index, base_seed=base_seed)
-            )
+            loss = replace(loss, measurement=replace(measurement, base_seed=base_seed))
             _, reducer_module = _telemetry_helpers()
             writer = getattr(reducer_module, "write_loss_profile", None)
             if not callable(writer):
@@ -645,10 +596,10 @@ def record_unit_attempt(
             unit_result_path(attempt_path).write_bytes(result_path.read_bytes())
     except OSError as exc:  # noqa: BLE001 — attempt records are best-effort
         log.debug(
-            "unit attempt record skipped for %s/%s r%d: %s",
+            "unit attempt record skipped for %s/%s %s: %s",
             generation_id,
             entry_id,
-            replicate_index,
+            measurement,
             exc,
         )
 
@@ -657,16 +608,6 @@ def record_unit_attempt(
 #: overwrote, one JSON line per displaced profile, in the run directory
 #: beside the canonical ``loss.json`` / ``loss.r<n>.json`` slots.
 LOSS_ARCHIVE_FILENAME = "loss.archive.jsonl"
-
-
-def _replicate_index_from_slot(path: Path) -> int:
-    """The replicate index a loss-slot filename encodes — inverse of :func:`_unit_loss_path`.
-
-    ``loss.json`` is replicate 0; ``loss.r<n>.json`` is replicate ``n``.
-    An unrecognised name reads as 0 rather than raising: the index is
-    provenance on an archive record, never a lookup key.
-    """
-    return artifact_replicate_index(path.name) or 0
 
 
 def archive_outgoing_unit_loss(path: Path) -> None:
@@ -700,7 +641,7 @@ def archive_outgoing_unit_loss(path: Path) -> None:
     record = {
         "seq": seq,
         "slot": path.name,
-        "replicate_index": _replicate_index_from_slot(path),
+        "measurement": outgoing.get("measurement"),
         "profile": outgoing,
     }
     try:
@@ -715,7 +656,7 @@ def read_unit_loss_history(
     epoch_id: str,
     generation_id: str,
     entry_id: str,
-    replicate_index: int = 0,
+    measurement: MeasurementDraw = TOURNAMENT_DRAW,
     *,
     base_seed: BaseSeed = UNKNOWN_SEED,
 ) -> list[LossProfile]:
@@ -738,7 +679,7 @@ def read_unit_loss_history(
     )
 
     path = _unit_loss_path(
-        workspace_root, epoch_id, generation_id, entry_id, replicate_index, base_seed=base_seed
+        workspace_root, epoch_id, generation_id, entry_id, measurement, base_seed=base_seed
     )
     history: list[LossProfile] = []
     archive = path.with_name(LOSS_ARCHIVE_FILENAME)

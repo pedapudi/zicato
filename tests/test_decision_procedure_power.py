@@ -64,7 +64,12 @@ from zicato.core import (
     ScoringWeights,
     TournamentDecision,
 )
-from zicato.core.measurement import MeasurementDraw, measurement_artifact_path
+from zicato.core.measurement import (
+    TOURNAMENT_DRAW,
+    MeasurementDraw,
+    MeasurementPurpose,
+    measurement_artifact_path,
+)
 from zicato.core.types import (
     ExpectationResult,
     MetricCount,
@@ -81,16 +86,16 @@ from zicato.selection.driver import (
     evaluate_tournament,
     make_evidence_replicate_duel,
 )
-from zicato.selection.evidence_gate import EVIDENCE_REPLICATE_BASE, rating_block
+from zicato.selection.evidence_gate import rating_block
 from zicato.selection.strategies.gauntlet import GauntletStrategy
 from zicato.selection.strategy import Contestant, Matchup, MatchupResult, SelectionDecision
 from zicato.tournament.gate import evaluate_gate
 from zicato.tournament.runner import TournamentResult, run_matchup
 from zicato.tournament.scoring import aggregate_generation_score, fold_matchup_replicates
+from zicato.tournament.worker_transport import _entry_measurement
 from zicato_examples.target_0_convergence import mocks as t0_mocks
 from zicato_examples.target_0_convergence.harness import (
     GENERATION_ID_CONTEXT_KEY,
-    REPLICATE_INDEX_CONTEXT_KEY,
     draw_measured_tokens,
     make_noisy_adapter,
     stable_noise_seed,
@@ -249,23 +254,23 @@ class _NoisyWorld:
         match_id: str = "",
     ) -> LossProfile:
         del adapter, weights, workspace_root, side, match_id
-        replicate = int(dict(entry.context).get(REPLICATE_INDEX_CONTEXT_KEY, "0") or 0)
+        replicate = _entry_measurement(entry)
         return self.profile(
             self.observe(
                 workspace_seed=int(config.seed or 0),
                 generation_id=generation.id,
                 entry=entry,
-                replicate_index=replicate,
+                measurement=replicate,
             ),
             epoch_id=epoch_id,
         )
 
-    def observe(self, *, workspace_seed, generation_id, entry, replicate_index):
+    def observe(self, *, workspace_seed, generation_id, entry, measurement):
         seed = stable_noise_seed(
             workspace_seed=workspace_seed,
             generation_key=generation_id,
             entry_id=entry.id,
-            replicate_index=replicate_index,
+            measurement=measurement,
         )
         measured = draw_measured_tokens(
             list(self.tokens_by_gen[generation_id]), random.Random(seed), self.sigma
@@ -274,7 +279,7 @@ class _NoisyWorld:
         assert entry.expectation is not None
         passed = bool(_predicate(entry.expectation.spec)(SimpleNamespace(final_output=output)))
         return DecisionObservation(
-            workspace_seed, generation_id, entry.id, replicate_index, float(len(measured)), passed
+            workspace_seed, generation_id, entry.id, measurement, float(len(measured)), passed
         )
 
     @staticmethod
@@ -285,7 +290,7 @@ class _NoisyWorld:
                 "--"
                 f"{observation.entry_id}"
                 "--r"
-                f"{observation.replicate_index}"
+                f"{observation.measurement}"
             ),
             entry_id=observation.entry_id,
             generation_id=observation.generation_id,
@@ -304,9 +309,7 @@ class _NoisyWorld:
             expectation_result=ExpectationResult(kind="predicate", passed=observation.passed),
             drift_loss=observation.drift_loss,
             pass_fail=observation.passed,
-            measurement=MeasurementDraw.from_index(
-                observation.replicate_index, base_seed=observation.workspace_seed
-            ),
+            measurement=replace(observation.measurement, base_seed=observation.workspace_seed),
             execution_started=True,
         )
 
@@ -317,12 +320,13 @@ def _computed_matchup(
     seed: int,
     weights: ScoringWeights,
     *,
-    replicate_base: int = 0,
+    first_measurement: MeasurementDraw = TOURNAMENT_DRAW,
     observations: list[DecisionObservation] | None = None,
 ) -> MatchupResult:
     """Reduce immutable draws through the production scoring and gate functions."""
     runs = []
-    for replicate in range(replicate_base, replicate_base + matchup.replicates):
+    for offset in range(matchup.replicates):
+        replicate = first_measurement.offset(offset)
         left, right = {}, {}
         for entry in _board():
             for contestant, losses in ((matchup.left, left), (matchup.right, right)):
@@ -330,7 +334,7 @@ def _computed_matchup(
                     workspace_seed=seed,
                     generation_id=contestant.generation_id,
                     entry=entry,
-                    replicate_index=replicate,
+                    measurement=replicate,
                 )
                 if observations is not None:
                     observations.append(observed)
@@ -400,13 +404,21 @@ def _effective_evaluation(
         return champion, [challenger]
 
     async def _run(
-        m: Matchup, *, replicate_base: int = 0, cache_scores: bool = True
+        m: Matchup,
+        *,
+        first_measurement: MeasurementDraw = TOURNAMENT_DRAW,
+        cache_scores: bool = True,
     ) -> MatchupResult:
-        assert cache_scores is (replicate_base == 0)
+        assert cache_scores is (first_measurement.purpose == MeasurementPurpose.TOURNAMENT)
         seed = trial * 10_000 + next(duel_counter)
         if world is not None:
             return _computed_matchup(
-                world, m, seed, weights, replicate_base=replicate_base, observations=observations
+                world,
+                m,
+                seed,
+                weights,
+                first_measurement=first_measurement,
+                observations=observations,
             )
         assert workspace is not None, "scheduler conformance requires a workspace"
         config = _config(workspace, seed)
@@ -421,7 +433,7 @@ def _effective_evaluation(
             workspace_root=workspace,
             epoch_id=epoch_id,
             replicates=m.replicates,
-            replicate_base=replicate_base,
+            first_measurement=first_measurement,
             match_id=m.matchup_id,
         )
         return MatchupResult(
@@ -750,7 +762,7 @@ def _confirm(
         }
 
         async def _run_reserved_matchup(
-            matchup: Matchup, *, replicate_base: int, cache_scores: bool
+            matchup: Matchup, *, first_measurement: MeasurementDraw, cache_scores: bool
         ) -> MatchupResult:
             """The round's board-unit runner, as ``evolve_field_round`` calls it.
 
@@ -776,7 +788,7 @@ def _confirm(
                 config=config,
                 workspace_root=workspace,
                 epoch_id=epoch_id,
-                replicate_base=replicate_base,
+                first_measurement=first_measurement,
                 fast=fast_mode,
                 match_id=matchup.matchup_id,
             )
@@ -834,7 +846,7 @@ def test_evidence_replicates_are_independent_draws(monkeypatch, tmp_path):
     assert len(replicates) == budget
     # Every replicate ran at its own RESERVED slot, encoded in the id.
     assert [r.matchup_id for r in replicates] == [
-        f"bt-replicate:r{EVIDENCE_REPLICATE_BASE + j}:champion:challenger" for j in range(budget)
+        f"confirmation:r{j}:champion:challenger" for j in range(budget)
     ]
     # (a) Distinct draws: the audit deltas have variance > 0.
     deltas = [r.outcome.delta_scalar for r in replicates]
@@ -845,7 +857,12 @@ def test_evidence_replicates_are_independent_draws(monkeypatch, tmp_path):
 
 
 def _measured_loss_path(
-    workspace: Path, generation_id: str, entry_id: str, *, seed: int, index: int = 0
+    workspace: Path,
+    generation_id: str,
+    entry_id: str,
+    *,
+    seed: int,
+    index: MeasurementDraw = TOURNAMENT_DRAW,
 ) -> Path:
     return measurement_artifact_path(
         run_dir(workspace, _measured_epoch(workspace), generation_id, entry_id),
@@ -888,7 +905,7 @@ def test_full_mode_evidence_loop_never_touches_canonical_slots(monkeypatch, tmp_
     # The evidence draws persisted under the RESERVED base — for BOTH sides.
     for gid in ("champion", "challenger"):
         for j in range(budget):
-            slot = EVIDENCE_REPLICATE_BASE + j
+            slot = MeasurementDraw(MeasurementPurpose.CONFIRMATION, j)
             for entry in _board():
                 reserved = _measured_loss_path(tmp_path, gid, entry.id, seed=2, index=slot)
                 assert reserved.exists(), f"missing reserved draw {gid}/{entry.id} r{slot}"
@@ -897,7 +914,11 @@ def test_full_mode_evidence_loop_never_touches_canonical_slots(monkeypatch, tmp_
     # canonical slot: at least one entry's bytes differ from canonical r0.
     redrawn = any(
         _measured_loss_path(
-            tmp_path, "champion", entry.id, seed=2, index=EVIDENCE_REPLICATE_BASE
+            tmp_path,
+            "champion",
+            entry.id,
+            seed=2,
+            index=MeasurementDraw(MeasurementPurpose.CONFIRMATION, 0),
         ).read_bytes()
         != canonical[("champion", entry.id)]
         for entry in _board()
@@ -1000,7 +1021,12 @@ def test_noisy_adapter_seeded_draws_cross_the_worker_boundary(
         for entry_id in subset:
             directory = run_dir(tmp_path / "ws1", epoch_id, generation_id, entry_id)
             r0, r1 = (
-                measurement_artifact_path(directory, "events", index, base_seed=seed)
+                measurement_artifact_path(
+                    directory,
+                    "events",
+                    MeasurementDraw(MeasurementPurpose.TOURNAMENT, index),
+                    base_seed=seed,
+                )
                 for index in (0, 1)
             )
             assert r0.is_file() and r1.is_file()
@@ -1041,7 +1067,7 @@ def test_noisy_adapter_seeded_draws_cross_the_worker_boundary(
                 epoch_id=epoch_id,
                 generation_id=gen_id,
                 entry_id=entry_id,
-                replicate_index=0,
+                measurement=MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0),
                 base_seed=seed,
             )
             r1 = _resolve_cached_unit(
@@ -1049,7 +1075,7 @@ def test_noisy_adapter_seeded_draws_cross_the_worker_boundary(
                 epoch_id=epoch_id,
                 generation_id=gen_id,
                 entry_id=entry_id,
-                replicate_index=1,
+                measurement=MeasurementDraw(MeasurementPurpose.TOURNAMENT, 1),
                 base_seed=seed,
             )
             assert r0 is not None and r1 is not None
@@ -1088,7 +1114,9 @@ def test_noisy_session_seed_derives_only_from_stable_identifiers(tmp_path):
                 board_entry,
                 context={
                     GENERATION_ID_CONTEXT_KEY: gen,
-                    REPLICATE_INDEX_CONTEXT_KEY: replicate,
+                    "measurement": json.dumps(
+                        MeasurementDraw(MeasurementPurpose.TOURNAMENT, int(replicate)).to_json()
+                    ),
                 },
             )
             result = asyncio.run(session.run(entry, [], SimpleNamespace(seed=seed)))
@@ -1263,7 +1291,7 @@ def _fab_metrics_measured(seed: int, gen_key: str, replicate: int, sigma: float)
             workspace_seed=seed,
             generation_key=gen_key,
             entry_id="conv_no_fabrication",
-            replicate_index=replicate,
+            measurement=MeasurementDraw(MeasurementPurpose.TOURNAMENT, replicate),
         )
     )
     measured = draw_measured_tokens(list(BASE_TOKENS), rng, sigma)
