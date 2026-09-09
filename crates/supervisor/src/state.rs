@@ -171,6 +171,8 @@ pub struct ActiveTournament {
     /// time, so a producer cannot ship a stale fold.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gen_states: Option<serde_json::Value>,
+    #[serde(default, flatten)]
+    pub extra: BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -185,6 +187,8 @@ pub struct TournamentEntry {
     pub score: Option<f64>,
     #[serde(default)]
     pub run_id: Option<String>,
+    #[serde(default, flatten)]
+    pub extra: BTreeMap<String, serde_json::Value>,
 }
 
 /// Lineage view emitted by the Python side (compatible with the existing

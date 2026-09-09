@@ -36,7 +36,9 @@ from zicato.core.experiment import (
     OutcomeRecord,
 )
 from zicato.core.loss import JudgeLoss, LossProfile
+from zicato.core.measurement import TOURNAMENT_DRAW
 from zicato.core.types import Expectation, ExpectationKind, JudgeMode, JudgeSpec, OutputScope
+from zicato.core.workspace import run_id_for_unit
 from zicato.epoch.analysis import _scalar_trajectory
 from zicato.epoch.journal import write_experiment
 from zicato.epoch.round_log import (
@@ -153,7 +155,8 @@ def workspace(tmp_path: Path) -> Path:
         for entry_id in ENTRIES:
             write_loss_profile(
                 LossProfile(
-                    run_id=f"{generation_id}:{entry_id}",
+                    measurement=TOURNAMENT_DRAW,
+                    run_id=run_id_for_unit(generation_id, entry_id, epoch_id=EPOCH),
                     entry_id=entry_id,
                     generation_id=generation_id,
                     epoch_id=EPOCH,

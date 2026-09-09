@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from zicato.config import HealthConfig
+from zicato.core.measurement import TOURNAMENT_DRAW, MeasurementDraw, MeasurementPurpose
 from zicato.evolve.lifecycle_services import (
     _beat,
 )
@@ -112,7 +113,7 @@ def _defer_round_infra_outage(
     the tournament stays UN-OUTCOMED — the exact on-disk shape the
     conservative crash-resume (:func:`zicato.runtime.resume.prepare_resume`)
     already reconciles: with at least one completed unit's cached
-    ``loss.json`` the round resumes in place (the cache HITs the done
+    the measurement loss file the round resumes in place (the cache HITs the done
     units), with none it discards cleanly and re-proposes. The round log
     records the deferral, and the round's health report carries the
     ``infra_outage`` WARNING so the outage is visible on every surface
@@ -236,31 +237,19 @@ def _load_parent_losses(
     Board order keeps the view stable for detectors that care about ordering.
     Per entry the resolution is:
 
-    1. The canonical duel slot ``runs/<entry>/loss.json`` (replicate 0) when it
-       exists. It is a draw under the round's own conditions, so it always wins.
-    2. Otherwise the champion's A/A calibration draws
-       (``loss.r1000.json``, ``loss.r1001.json``, …), FOLDED across draws into
-       one profile. The contract pre-flight writes them by running the champion
-       over the whole board before the epoch's first duel exists, which is
-       which is when step 1 finds nothing; without this the proposer opens every
-       epoch with an empty baseline channel. Folding rather than picking keeps
-       one profile per entry, so the outcome marginals' denominator stays "runs
-       on the board" and detector counts do not multiply — and the draws differ
-       by construction, which is why the band exists at all. The folded
-       profile carries the first draw's ``aa-calibration:0`` ``match_id``, so a
-       calibration-sourced baseline reads as what it is.
-    3. Neither ⇒ the entry is skipped silently. A freshly-initialised epoch
-       whose pre-flight is off has no champion telemetry at all.
+    1. Read a complete tournament draw-zero measurement at the selected seed.
+    2. Otherwise fold the champion's usable calibration draws at that seed
+       into one profile. Calibration can supply a baseline before the first
+       tournament. Folding preserves one profile per entry and retains the
+       first draw's matchup provenance.
+    3. If neither source supplies a profile, skip the entry.
 
-    No other replicate band is read. The pre-flight's DELIBERATELY-DEGRADED
-    probes cache in this same directory under the champion's own generation id
-    (:data:`zicato.epoch.preflight.PREFLIGHT_REPLICATE_BASE`), so a
-    ``glob("loss*.json")`` would tell the proposer the champion fails in ways
-    its real code does not; discovery goes through the reserved-base filter
-    (:func:`zicato.tournament.unit_cache.own_code_board_draws`) and the
-    calibration band is then selected by name. The band is enumerated from
-    disk, never counted: draws accumulate across re-runs as cache hits, so what
-    is persisted is a high-water mark and not the current run count.
+    Discovery validates measurement paths and selects calibration by purpose.
+    Preflight evaluates degraded source and cannot supply this baseline.
+    Enumerate persisted calibration draws instead of inferring their presence
+    from a requested count: completed matching draws survive interrupted runs.
+
+
 
     Holdout entries are never opened: the caller passes the TRAIN slice, and
     the calibration draws covering the full board are read one entry at a
@@ -268,14 +257,8 @@ def _load_parent_losses(
     """
     from zicato.core.workspace import loss_profile_path  # noqa: PLC0415
 
-    # Nothing under evolve/ imports the unit cache at module scope; the
-    # reserved-base
-    # filter and the replicate fold both live there because that module owns
-    # the (generation, entry, replicate) key this reader is inverting.
-    from zicato.tournament.calibration import (  # noqa: PLC0415
-        CALIBRATION_REPLICATE_BASE,
-        CALIBRATION_REPLICATE_SPAN,
-    )
+    # Import cache readers lazily to avoid a module-level dependency cycle.
+    # Shared readers validate purpose, local draw, seed, and artifact identity.
     from zicato.tournament.unit_cache import (  # noqa: PLC0415
         _average_losses,
         _resolve_cached_unit,
@@ -296,7 +279,7 @@ def _load_parent_losses(
             epoch_id=epoch_id,
             generation_id=parent_id,
             entry_id=entry.id,
-            replicate_index=0,
+            measurement=TOURNAMENT_DRAW,
             base_seed=base_seed,
         )
         if profile is None:
@@ -304,20 +287,14 @@ def _load_parent_losses(
         else:
             canonical[entry.id] = profile
 
-    # One board map per calibration draw index, so the fold is a single
-    # `_average_losses` call over board-shaped runs rather than a per-entry
-    # singleton wrap (which would fold nothing). `_average_losses` takes its
-    # entry set from the FIRST map, which is sound here because every
-    # calibration draw covers the WHOLE board (a draw that aborts raises
-    # NoiseFloorInconclusive and persists nothing), so the lowest draw index
-    # covers every entry any later draw does — and being lowest, it is also
-    # the replicate whose provenance the folded profiles carry.
-    band_end = CALIBRATION_REPLICATE_BASE + CALIBRATION_REPLICATE_SPAN
-    draws: dict[int, dict[str, Any]] = {}
+    # Build one board map per calibration measurement before folding.
+    # The fold keeps the first draw's provenance and one profile per entry.
+
+    draws: dict[MeasurementDraw, dict[str, Any]] = {}
     for entry in uncovered:
-        run_dir = loss_profile_path(workspace_root, epoch_id, parent_id, entry.id).parent
+        run_dir = loss_profile_path(workspace_root, epoch_id, parent_id, entry.id).parent.parent
         for index, path in own_code_board_draws(run_dir, base_seed=base_seed):
-            if not CALIBRATION_REPLICATE_BASE <= index < band_end:
+            if index.purpose != MeasurementPurpose.CALIBRATION:
                 continue
             profile = _read(path)
             if profile is not None:
@@ -362,9 +339,9 @@ def _build_events_paths(
     return {
         entry.id: any_unit_transcript(
             measurement_artifact_path(
-                events_jsonl_path(workspace_root, epoch_id, parent_id, entry.id).parent,
+                events_jsonl_path(workspace_root, epoch_id, parent_id, entry.id).parent.parent,
                 "events",
-                0,
+                TOURNAMENT_DRAW,
                 base_seed=base_seed,
             )
         )
@@ -431,7 +408,7 @@ def _render_process_exemplars_block(
     (``docs/design/PROCESS-EXEMPLARS.md``): when the contract sets
     ``experimental.process_exemplars > 0``, extract up to that many
     drift-anchored event windows from the CHAMPION's TRAIN-slice
-    ``events.jsonl`` files — the same ``parent_id`` + train partition the
+    measurement event JSONL files — the same ``parent_id`` + train partition the
     patterns / loss summary / outcome marginals already use — mechanically
     redacted by the extractor (no entry ids, no task text, no model
     outputs), and render them through the proposer's block renderer.

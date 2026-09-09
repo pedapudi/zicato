@@ -22,10 +22,9 @@ sixteen of them, and the judge-reliability paths call `detect_noisy_judge`
 separately. Judge test–retest lives in `judge_runtime/reliability.py` and is
 reached from the CLI as `zicato board judges --test-retest`. The placebo arm,
 the per-round `RoundLog`, per-judge loss decomposition on disk
-(`LossProfile.per_judge_loss`), and the reserved replicate-base ledger all run
-today.
+(`LossProfile.per_judge_loss`), and explicit measurement identities are implemented.
 
-**Run-artifact capture.** Runs persist `result.json` and `judge_io.jsonl`,
+**Run-artifact capture.** Measurements persist `result.{purpose}.r{draw}.json` and `judge_io.{purpose}.r{draw}.jsonl` in the loss file’s seed directory,
 which supply the fidelity ladder the adjudicator reads. The capture design is
 specified in full below.
 
@@ -33,17 +32,19 @@ specified in full below.
 pre-registered `plan.json` and carries the stop/resume `executed` flag.
 `reflection/corpus.py` holds both corpus builders: `ingest_lineage` references
 lineage artifacts and makes zero LLM calls, and the active `run_corpus`
-scheduler executes at `REFLECTION_REPLICATE_BASE + j` = `5000 + j`, voids
-infrastructure aborts, and is cache-idempotent. The passive ingest reads only
-the replicate slots that `is_own_code_board_draw`
-(`tournament/unit_cache.py`) admits: the tournament duel and its replicates
-(0–999), the noise-floor calibration draws (1000s), the evidence-gate draws
-(4000s), reflection's own draws (5000s), and the eval-synthesis admission probes
-(6000s). That allowlist excludes the pre-flight's probes, which are degraded by
-design (2000s), and the screening draws (3000s). Both cache in the same
-directory under
-a real generation id and would otherwise read as that generation's behaviour. A
-band no owner has claimed is excluded by default. `reflection/analysis.py`
+scheduler executes `board_reflection` draws, rejects infrastructure-aborted
+measurements, and reuses complete matching draws when resumed. Each identity
+records the purpose, local draw number, and runtime seed. Passive ingest
+selects measurements that `is_own_code_board_draw`
+(`tournament/unit_cache.py`) identifies as evaluations of the recorded
+generation's own source: tournament, calibration, evidence confirmation,
+board reflection, and evaluation-synthesis admission.
+
+Contract-preflight draws evaluate degraded copies and candidate-screen draws
+evaluate proposed source, so passive ingest excludes both purposes. Recorded
+measurement identity must agree with the file path. Unsupported purposes
+cannot enter through the supported artifact reader.
+ `reflection/analysis.py`
 computes the reliability pillar (consumed
 noise floor, seeded-bootstrap decision-flip, judge self-consistency fed to
 `detect_noisy_judge`, cited placebo) and the discrimination pillar (per-entry
@@ -60,7 +61,7 @@ the per-unit σ the power analysis needs, and the bootstrap seed folds in the
 
 **The adjudication tier.** `reflection/adjudicator.py` is the meta-judge
 engine. `observation_to_judge_context` selects the highest available fidelity —
-verbatim `judge_io`, then `result.json`, then an `events.jsonl` preview —
+verbatim judge capture, then the result capture, then an event preview —
 reusing `_freeze_context`. The adjudicator model arrives through the
 `RuntimeConfig.adjudicator_call_llm` seam and
 `effective_adjudicator_call_llm()`. Collusion is blocked by a hard
@@ -410,11 +411,11 @@ cannot supply it:
   reads it back and unlinks it in its cleanup `finally`
   (`tournament/runner.py`). Nothing about that path retains the user-facing
   conversation the judges graded.
-- **`events.jsonl` carries previews only.** The transcript reconstruction
+- **Measurement event JSONL carries previews only.** The transcript reconstruction
   (`query/transcript_reconstruction.py`) reads the `input_preview`,
   `output_preview`, and `summary` fields, which are truncated summaries rather
   than verbatim text. The same limit applies to a judge's decision: it reaches
-  `events.jsonl` as a `JudgementEmitted` event with a one-line `detail`, which
+  measurement event JSONL as a `JudgementEmitted` event with a one-line `detail`, which
   carries neither the judge's input bytes nor its raw response.
 
 So each run persists two zicato-owned artifacts into its own run directory.
@@ -425,9 +426,7 @@ best-effort, so a capture failure never re-scores or aborts a run, and
 atomically, through the temp-file, fsync, rename sequence every mutable record
 uses:
 
-**`result.json`** — beside `loss.json`, replicate-slotted the same way
-(`result.r{n}.json` mirrors `loss.r{n}.json`; helper `unit_result_path` in
-`tournament/unit_cache.py`), written by the worker immediately after
+**`result.{purpose}.r{draw}.json`** — beside the matching loss file in its seed directory (helper `unit_result_path` in `tournament/unit_cache.py`), written by the worker immediately after
 `write_loss_profile` — including the budget-abort path's synthesized
 `RunResult`:
 
@@ -439,11 +438,10 @@ uses:
 Each turn and `final_output` is clipped at 262144 chars (256 KiB) with a
 `" … [truncated]"` marker and `clipped: true`.
 
-**`judge_io.jsonl`** — a zicato-owned sidecar beside `loss.json`
-(`judge_io.r{n}.jsonl` for replicates), append-only, one line per judge
+**`judge_io.{purpose}.r{draw}.jsonl`** — a capture file beside the matching loss file in its seed directory, append-only, one line per judge
 `evaluate` call, emitted through a small `io_sink` protocol
 (`judge_runtime/io_capture.py`) threaded into `_InlineCriterionJudge`. It is a
-zicato file rather than a new `events.jsonl` frame, because goldfive's proto
+separate file rather than another measurement event frame, because goldfive's proto
 taxonomy is pinned by three parsers that would each have to learn the new
 frame:
 
@@ -466,7 +464,7 @@ a verbatim-tier finding outranks a preview-tier one:
 |---|---|---|
 | `verbatim` | `judge_io.jsonl` | the judge's input bytes and its raw response |
 | `result` | `result.json` | the full user-facing transcript and final output |
-| `preview` | `events.jsonl` previews | truncated summaries |
+| `preview` | measurement event previews | truncated summaries |
 
 A run whose directory carries neither `result.json` nor `judge_io.jsonl` — one
 executed with the persistence knobs off, or before the run directory carried
@@ -494,36 +492,40 @@ that the filesystem is canonical and the index is derived (AGENTS.md, rule 4).
 ```
 epochs/{e}/reflections/{id}/
   plan.json              # pre-registered run plan (entries, K, candidates, adjudicator, checks)
-  corpus/
-    {candidate}/{entry}/r{n}/        # one observed run (references runs/ artifacts)
-      events.jsonl, loss.json        # reuse the existing run artifacts
-      observation.json               # the captured behavior record (below)
+  corpus.jsonl            # records reference the original measurement artifacts
   adjudication/{judge_name}/{run_ref}.json   # per-decision meta-judge verdict
   scorecards.json        # aggregated per-judge / per-entry / loss-term metrics
   findings.json          # ranked findings + proposed contract edits
   report.md / report.html
 ```
 
-**Reserved replicate base.** An active-corpus run — draw j of a
-(candidate, entry) unit — executes at `REFLECTION_REPLICATE_BASE + j` =
-`5000 + j`, reflection's claimed row in the reserved replicate-base ledger
-(dev-guide ch. 04 §8: `0` tournament duels, `1000` calibration, `2000`
-pre-flight probes, `3000` screening, `4000` evidence gate, **`5000`
-reflection**, `6000` eval-synthesis admission probes). Reflection follows the
-same three rules as every other owner in that ledger. It stamps the index onto
-the draw and keys the cache by it. It is cache-idempotent, so a re-run of the
-same frozen plan re-reads the persisted draws. And it never touches the
-canonical replicate-0 slots. The constant is defined in `reflection/corpus.py`
-beside the active scheduler.
+**Measurement identity.** Active corpus draw `j` uses
+`MeasurementDraw(MeasurementPurpose.REFLECTION, j)`. The scheduler passes the
+identity through task context and runner arguments and records the runtime
+seed. Complete matching measurements can be reused when resuming the same
+frozen plan; an infrastructure-aborted draw must execute again.
 
-**ObservationRun** (`observation.json`, one per (candidate, entry, replicate)):
+Each entry's run directory contains
+`seed-{seed}/loss.board_reflection.r{j}.json`, with `seed-none` for a null seed.
+Event, result, and judge-capture files share that measurement's purpose, draw,
+and seed. Reflection measurements remain separate from tournament evidence.
+
+**ObservationRun** (one `corpus.jsonl` record per candidate, entry, and
+measurement):
 ```
 { reflection_id, candidate_id, entry_id, replicate,
+  measurement: { purpose, draw, base_seed },
   scalar, drift_loss, pass_fail, runtime_ms, aborted, abort_cause,
-  transcript_ref, drift_events: [{kind, severity, judge_name, span_ref}],
-  judge_decisions: [{judge_name, fired, severity, claim, transcript_span}],
-  loss_decomposition: {term_name -> contribution_to_scalar} }
+  fidelity, has_result, has_judge_io, loss_ref, transcript_ref,
+  drift_events, judge_decisions, loss_decomposition }
 ```
+
+`replicate` repeats the local `measurement.draw` value. The full measurement
+identity distinguishes draws from different purposes or seeds. `loss_ref` and
+`transcript_ref` point to captured artifacts instead of duplicating their
+contents.
+
+
 
 **JudgeAdjudication** (`adjudication/{judge}/{run_ref}.json`, one per judge decision):
 ```
@@ -671,7 +673,7 @@ surfaces.
 
 **What the engine reuses:**
 - `tournament/runner.py` and `_tournament_worker.py` execute the board.
-- `query/transcript_reconstruction.py`, `RunResult`, `events.jsonl`, and
+- `query/transcript_reconstruction.py`, `RunResult`, measurement event files, and
   `emulator/audit.py` spans supply the observations.
 - `judge_runtime/` and the two-callable anti-collusion guard adjudicate
   independently.

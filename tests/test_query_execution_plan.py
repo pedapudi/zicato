@@ -29,8 +29,13 @@ import pytest
 
 from tests._workspace_support import write_tournament
 from zicato.core.loss import LossProfile
-from zicato.core.measurement import MeasurementDraw, range_at
-from zicato.core.workspace import loss_profile_path
+from zicato.core.measurement import (
+    TOURNAMENT_DRAW,
+    MeasurementDraw,
+    MeasurementPurpose,
+    measurement_artifact_path,
+)
+from zicato.core.workspace import loss_profile_path, run_id_for_unit
 from zicato.dashboard.server import create_app
 from zicato.epoch.round_log import (
     DecisionRecorded,
@@ -49,7 +54,7 @@ from zicato.epoch.round_log import (
 from zicato.query import WorkspacePaths, build_execution_plan
 from zicato.query.contracts import ENDPOINT_PAYLOADS
 from zicato.query.execution_plan import PlanNode
-from zicato.query.replicate_scores import band_of, measurement_bands
+from zicato.query.replicate_scores import band_of
 from zicato.telemetry import reducer
 from zicato.tournament.unit_cache import unit_result_path
 from zicato.workspace import WorkspaceLayout
@@ -84,9 +89,9 @@ def _workspace(tmp_path: Path) -> Path:
     return root
 
 
-def _loss_path(root: Path, generation_id: str, entry_id: str, replicate: int) -> Path:
+def _loss_path(root: Path, generation_id: str, entry_id: str, replicate: MeasurementDraw) -> Path:
     base = loss_profile_path(root, EPOCH, generation_id, entry_id)
-    return base if replicate == 0 else base.with_name(f"loss.r{replicate}.json")
+    return measurement_artifact_path(base.parent.parent, "loss", replicate)
 
 
 def _write_loss(
@@ -94,7 +99,7 @@ def _write_loss(
     generation_id: str,
     entry_id: str,
     *,
-    replicate: int = 0,
+    replicate: MeasurementDraw = TOURNAMENT_DRAW,
     path: Path | None = None,
     passes: bool | None = True,
     match_id: str = "rung0_m0",
@@ -103,7 +108,7 @@ def _write_loss(
 ) -> Path:
     """One per-replicate loss profile, exactly as the worker writes it."""
     profile = LossProfile(
-        run_id=f"{generation_id}:{entry_id}:r{replicate}",
+        run_id=run_id_for_unit(generation_id, entry_id, replicate, epoch_id=EPOCH),
         entry_id=entry_id,
         generation_id=generation_id,
         epoch_id=EPOCH,
@@ -116,7 +121,7 @@ def _write_loss(
         drift_loss=0.25,
         pass_fail=passes,
         match_id=match_id,
-        measurement=MeasurementDraw.from_index(replicate) if range_at(replicate) else None,
+        measurement=replicate,
         not_completed_reason=not_completed_reason,
         started_at="2026-08-18T00:01:00Z" if timed else None,
         ended_at="2026-08-18T00:01:01Z" if timed else None,
@@ -127,11 +132,15 @@ def _write_loss(
 
 
 def _write_result(loss_path: Path, *, aborted: bool, abort_reason: str) -> None:
+    from zicato.telemetry.reducer import read_loss_profile
+
+    loss = read_loss_profile(loss_path)
     unit_result_path(loss_path).write_text(
         json.dumps(
             {
                 "format_version": 1,
-                "run_id": "r",
+                "run_id": loss.run_id,
+                "measurement": loss.measurement.to_json(),
                 "entry_id": "e",
                 "final_output": "",
                 "transcript": [],
@@ -181,8 +190,12 @@ def complete_run(tmp_path: Path) -> Path:
     root = _workspace(tmp_path)
     for entry in ENTRIES:
         _write_loss(root, "v0", entry)
-        for replicate in (0, 1, 2):
-            _write_loss(root, "v1", entry, replicate=replicate, match_id=f"rung0_m{replicate}")
+        for replicate in (
+            MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0),
+            MeasurementDraw(MeasurementPurpose.TOURNAMENT, 1),
+            MeasurementDraw(MeasurementPurpose.TOURNAMENT, 2),
+        ):
+            _write_loss(root, "v1", entry, replicate=replicate, match_id=f"rung0_m{replicate.draw}")
     _complete_round(root)
     return root
 
@@ -306,7 +319,7 @@ def test_three_replicates_give_three_nodes_with_their_own_match_ids(
         "rung0_m2",
     ]
     assert {node["id"] for node in login} == {
-        f"e:{EPOCH}/round:0/run/v1/login/r{r}" for r in (0, 1, 2)
+        f"e:{EPOCH}/round:0/run/v1/login/seed-none/tournament/r{r}" for r in (0, 1, 2)
     }
 
 
@@ -325,7 +338,16 @@ def _files_the_plan_names(root: Path) -> set[Path]:
     named: set[Path] = set()
     for node in _of_kind(plan, "board_entry_run") + _of_kind(plan, "measurement_draw"):
         where = node["coordinates"]
-        named.add(_loss_path(root, where["generation_id"], where["entry_id"], where["replicate"]))
+        named.add(
+            _loss_path(
+                root,
+                where["generation_id"],
+                where["entry_id"],
+                MeasurementDraw(
+                    MeasurementPurpose(where["measurement_purpose"]), where["replicate"]
+                ),
+            )
+        )
     return named
 
 
@@ -347,17 +369,17 @@ def test_unit_count_equals_the_loss_files_on_disk(complete_run: Path) -> None:
 def test_an_attempt_hangs_under_its_unit_and_is_not_a_work_unit(tmp_path: Path) -> None:
     root = _workspace(tmp_path)
     canonical = _write_loss(root, "v0", "login")
-    _write_loss(root, "v0", "login", path=canonical.with_name("loss.a1.json"))
-    _write_loss(root, "v0", "login", replicate=1)
-    _write_loss(root, "v0", "login", path=canonical.with_name("loss.r1.a1.json"))
+    _write_loss(root, "v0", "login", path=canonical.with_name("loss.tournament.r0.a1.json"))
+    _write_loss(root, "v0", "login", replicate=MeasurementDraw(MeasurementPurpose.TOURNAMENT, 1))
+    _write_loss(root, "v0", "login", path=canonical.with_name("loss.tournament.r1.a1.json"))
 
     plan = _plan(root)
 
     assert len(_of_kind(plan, "board_entry_run")) == 2
     attempts = _of_kind(plan, "board_entry_attempt")
     assert [node["id"] for node in attempts] == [
-        f"e:{EPOCH}/baseline/v0/login/r0/a1",
-        f"e:{EPOCH}/baseline/v0/login/r1/a1",
+        f"e:{EPOCH}/baseline/v0/login/seed-none/tournament/r0/a1",
+        f"e:{EPOCH}/baseline/v0/login/seed-none/tournament/r1/a1",
     ]
     # An attempt belongs to the replicate slot its filename names.
     assert attempts[1]["coordinates"]["replicate"] == 1
@@ -407,27 +429,15 @@ def _bands(plan: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return {node["coordinates"]["band"]: node for node in _of_kind(plan, "measurement_band")}
 
 
-def test_the_band_ledger_tracks_the_bases_its_owners_stamp(tmp_path: Path) -> None:
-    """The bands are the owners' own constants, not numbers copied beside them."""
-    from zicato.epoch.preflight import PREFLIGHT_REPLICATE_BASE
-    from zicato.epoch.screen import SCREEN_REPLICATE_BASE
-    from zicato.reflection.admission import SYNTHESIS_REPLICATE_BASE
-    from zicato.reflection.corpus import REFLECTION_REPLICATE_BASE
-    from zicato.tournament.calibration import CALIBRATION_REPLICATE_BASE
-
-    starts = {band.key: band.start for band in measurement_bands()}
-
-    assert starts == {
-        "calibration": CALIBRATION_REPLICATE_BASE,
-        "contract_preflight": PREFLIGHT_REPLICATE_BASE,
-        "candidate_screen": SCREEN_REPLICATE_BASE,
-        "board_reflection": REFLECTION_REPLICATE_BASE,
-        "eval_synthesis_admission": SYNTHESIS_REPLICATE_BASE,
-    }
-    # Every band an owner claims is disjoint from the evidence a cell reads.
-    for band in measurement_bands():
-        assert band_of(band.start) is band
-        assert band_of(band.stop - 1) is band
+def test_measurement_descriptions_cover_every_non_tournament_purpose() -> None:
+    for purpose in MeasurementPurpose:
+        record = MeasurementDraw(purpose, 10001)
+        band = band_of(record)
+        if record.cell_evidence:
+            assert band is None
+        else:
+            assert band is not None
+            assert band.key == purpose
 
 
 def test_every_reserved_band_executed_against_the_champion_gets_its_own_step(
@@ -437,11 +447,14 @@ def test_every_reserved_band_executed_against_the_champion_gets_its_own_step(
     root = _workspace(tmp_path)
     _write_loss(root, "v0", "login")
     for replicate, match_id in (
-        (1000, "aa-calibration:0"),
-        (1001, "aa-calibration:1"),
-        (2000, "contract-preflight:degraded:tool_description"),
-        (5000, "reflection:refl-1:r0"),
-        (6000, "admission-noise:0"),
+        (MeasurementDraw(MeasurementPurpose.CALIBRATION, 0), "aa-calibration:0"),
+        (MeasurementDraw(MeasurementPurpose.CALIBRATION, 1), "aa-calibration:1"),
+        (
+            MeasurementDraw(MeasurementPurpose.PREFLIGHT, 0),
+            "contract-preflight:degraded:tool_description",
+        ),
+        (MeasurementDraw(MeasurementPurpose.REFLECTION, 0), "reflection:refl-1:r0"),
+        (MeasurementDraw(MeasurementPurpose.ADMISSION, 0), "admission-noise:0"),
     ):
         _write_loss(root, "v0", "login", replicate=replicate, match_id=match_id)
 
@@ -454,11 +467,13 @@ def test_every_reserved_band_executed_against_the_champion_gets_its_own_step(
         "eval_synthesis_admission": 1,
     }
     assert bands["calibration"]["id"] == f"e:{EPOCH}/baseline/band:calibration"
-    assert bands["calibration"]["outcome"]["replicate_range"] == [1000, 1999]
     assert bands["calibration"]["outcome"]["generation_ids"] == ["v0"]
     # A band draw is never a work unit: the cell still holds exactly one.
     assert len(_of_kind(_plan(root), "board_entry_run")) == 1
-    draw = _find(_stage(_plan(root), "/baseline"), f"{bands['calibration']['id']}/v0/login/r1000")
+    draw = _find(
+        _stage(_plan(root), "/baseline"),
+        f"{bands['calibration']['id']}/v0/login/seed-none/calibration/r0",
+    )
     assert draw["coordinates"]["match_id"] == "aa-calibration:0"
     assert draw["status"] == "done"
 
@@ -466,7 +481,13 @@ def test_every_reserved_band_executed_against_the_champion_gets_its_own_step(
 def test_the_preflight_band_says_its_probes_are_degraded(tmp_path: Path) -> None:
     """A probe failure must never read as champion behaviour — parent or not."""
     root = _workspace(tmp_path)
-    _write_loss(root, "v0", "login", replicate=2000, passes=False)
+    _write_loss(
+        root,
+        "v0",
+        "login",
+        replicate=MeasurementDraw(MeasurementPurpose.PREFLIGHT, 0),
+        passes=False,
+    )
 
     band = _bands(_plan(root))["contract_preflight"]
 
@@ -482,23 +503,16 @@ def test_a_band_with_no_draws_yields_no_step(complete_run: Path) -> None:
     assert _bands(_plan(complete_run)) == {}
 
 
-def test_an_unclaimed_replicate_index_is_visible_as_unclaimed(tmp_path: Path) -> None:
-    """The ledger is an allow-list: an index no owner claims is shown, not admitted."""
+def test_tournament_draw_numbers_have_no_upper_purpose_boundary(tmp_path: Path) -> None:
     root = _workspace(tmp_path)
-    _write_loss(root, "v0", "login", replicate=7000, match_id="")
-
-    bands = _bands(_plan(root))
-
-    assert set(bands) == {"unclaimed"}
-    assert bands["unclaimed"]["outcome"]["draw_count"] == 1
-    assert "never counted" in bands["unclaimed"]["purpose"]
-    # Never a work unit, and never inside a claimed band.
-    assert _of_kind(_plan(root), "board_entry_run") == []
+    _write_loss(root, "v0", "login", replicate=MeasurementDraw(MeasurementPurpose.TOURNAMENT, 7000))
+    assert _bands(_plan(root)) == {}
+    assert len(_of_kind(_plan(root), "board_entry_run")) == 1
 
 
 def test_a_band_states_that_the_files_record_no_round(tmp_path: Path) -> None:
     root = _workspace(tmp_path)
-    _write_loss(root, "v0", "login", replicate=1000)
+    _write_loss(root, "v0", "login", replicate=MeasurementDraw(MeasurementPurpose.CALIBRATION, 0))
 
     band = _bands(_plan(root))["calibration"]
 
@@ -515,7 +529,13 @@ def test_a_leftover_screen_snapshot_hangs_under_the_round_its_name_states(
         _write_loss(root, "v0", entry)
         _write_loss(root, "v1", entry)
     _complete_round(root)
-    _write_loss(root, "v0-screen-r0c1", "login", replicate=3000, match_id="candidate-screen:r0:c1")
+    _write_loss(
+        root,
+        "v0-screen-r0c1",
+        "login",
+        replicate=MeasurementDraw(MeasurementPurpose.SCREEN, 0),
+        match_id="candidate-screen:r0:c1",
+    )
 
     plan = _plan(root)
     band = _bands(plan)["candidate_screen"]
@@ -546,7 +566,9 @@ def test_a_screen_snapshot_naming_a_round_with_no_stage_falls_back_to_the_baseli
 ) -> None:
     """No stage to move to means no stated home — the band says so."""
     root = _workspace(tmp_path)
-    _write_loss(root, "v0-screen-r9c0", "login", replicate=3000)
+    _write_loss(
+        root, "v0-screen-r9c0", "login", replicate=MeasurementDraw(MeasurementPurpose.SCREEN, 0)
+    )
 
     band = _bands(_plan(root))["candidate_screen"]
 
@@ -565,18 +587,29 @@ def test_every_loss_file_on_disk_is_named_once_by_the_plan(tmp_path: Path) -> No
     root = _workspace(tmp_path)
     for entry in ENTRIES:
         _write_loss(root, "v0", entry)
-        _write_loss(root, "v0", entry, replicate=1000)
-        _write_loss(root, "v0", entry, replicate=2000)
-        _write_loss(root, "v0", entry, replicate=5000)
-        _write_loss(root, "v0", entry, replicate=7000)
+        _write_loss(root, "v0", entry, replicate=MeasurementDraw(MeasurementPurpose.CALIBRATION, 0))
+        _write_loss(root, "v0", entry, replicate=MeasurementDraw(MeasurementPurpose.PREFLIGHT, 0))
+        _write_loss(root, "v0", entry, replicate=MeasurementDraw(MeasurementPurpose.REFLECTION, 0))
+        _write_loss(
+            root, "v0", entry, replicate=MeasurementDraw(MeasurementPurpose.TOURNAMENT, 7000)
+        )
         _write_loss(root, "v1", entry)
-        _write_loss(root, "v1", entry, replicate=4000)
+        _write_loss(
+            root, "v1", entry, replicate=MeasurementDraw(MeasurementPurpose.CONFIRMATION, 0)
+        )
         # A superseded attempt is provenance, never a draw of either kind.
         _write_loss(
-            root, "v1", entry, path=_loss_path(root, "v1", entry, 0).with_name("loss.a1.json")
+            root,
+            "v1",
+            entry,
+            path=_loss_path(
+                root, "v1", entry, MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0)
+            ).with_name("loss.tournament.r0.a1.json"),
         )
     _complete_round(root)
-    _write_loss(root, "v0-screen-r0c1", "login", replicate=3000)
+    _write_loss(
+        root, "v0-screen-r0c1", "login", replicate=MeasurementDraw(MeasurementPurpose.SCREEN, 0)
+    )
 
     on_disk = _loss_files_on_disk(root)
 

@@ -21,7 +21,8 @@ import pytest
 
 from zicato.config import AuxConfig
 from zicato.core import RuntimeConfig, ScoringWeights
-from zicato.core.workspace import reflection_adjudication_path
+from zicato.core.measurement import MeasurementDraw, MeasurementPurpose
+from zicato.core.workspace import reflection_adjudication_path, run_id_for_unit
 from zicato.judge_runtime.io_capture import JudgeIOFileSink, judge_io_path_for_loss
 from zicato.reflection.adjudicator import (
     ADJUDICATOR_PROMPT_VERSION,
@@ -40,6 +41,7 @@ from zicato.reflection.adjudicator import (
     write_adjudication,
 )
 from zicato.reflection.corpus import FIDELITY_PREVIEW, FIDELITY_VERBATIM, ingest_lineage
+from zicato.telemetry.reducer import read_loss_profile
 from zicato.testing.adjudicators import (
     AlwaysConfirm,
     AlwaysRefute,
@@ -64,7 +66,10 @@ def _write_loss(workspace: Path, gen: str, entry: str, replicate: int, *, drift:
     from zicato.telemetry import reducer
 
     loss = LossProfile(
-        run_id=f"run-{gen}-{entry}",
+        measurement=MeasurementDraw(MeasurementPurpose.TOURNAMENT, replicate),
+        run_id=run_id_for_unit(
+            gen, entry, MeasurementDraw(MeasurementPurpose.TOURNAMENT, replicate), epoch_id=EPOCH
+        ),
         entry_id=entry,
         generation_id=gen,
         epoch_id=EPOCH,
@@ -87,7 +92,9 @@ def _write_loss(workspace: Path, gen: str, entry: str, replicate: int, *, drift:
             ),
         ),
     )
-    path = _unit_loss_path(workspace, EPOCH, gen, entry, replicate)
+    path = _unit_loss_path(
+        workspace, EPOCH, gen, entry, MeasurementDraw(MeasurementPurpose.TOURNAMENT, replicate)
+    )
     reducer.write_loss_profile(loss, path)
     return path
 
@@ -95,7 +102,10 @@ def _write_loss(workspace: Path, gen: str, entry: str, replicate: int, *, drift:
 def _plant_judge_io(
     loss_path: Path, *, judge_name: str, fired: bool, reasoning: str, severity: str = "warning"
 ) -> None:
-    sink = JudgeIOFileSink(judge_io_path_for_loss(loss_path))
+    loss = read_loss_profile(loss_path)
+    sink = JudgeIOFileSink(
+        judge_io_path_for_loss(loss_path), measurement=loss.measurement, run_id=loss.run_id
+    )
     sink.record(
         judge_name,
         reasoning_text=reasoning,
@@ -521,7 +531,12 @@ def test_scripted_table_yields_tp_and_tn_per_decision(tmp_path: Path) -> None:
 
     # Blind, content-correct verdicts scripted per run_ref (the prompt no longer
     # reveals the judge's action, so confirm/refute cannot vary per decision).
-    table = ScriptedTable({("j", "v1:entryA:r0"): True, ("j", "v1:entryB:r0"): False})
+    table = ScriptedTable(
+        {
+            ("j", "seed-none:v1:entryA:tournament:r0"): True,
+            ("j", "seed-none:v1:entryB:tournament:r0"): False,
+        }
+    )
     results = _run(
         adjudicate_corpus(
             corpus=corpus,
@@ -533,8 +548,8 @@ def test_scripted_table_yields_tp_and_tn_per_decision(tmp_path: Path) -> None:
         )
     )
     by_ref = {r.run_ref: r.verdict for r in results}
-    assert by_ref["v1:entryA:r0"] == VERDICT_TP
-    assert by_ref["v1:entryB:r0"] == VERDICT_TN
+    assert by_ref["seed-none:v1:entryA:tournament:r0"] == VERDICT_TP
+    assert by_ref["seed-none:v1:entryB:tournament:r0"] == VERDICT_TN
 
 
 def test_double_protocol_markers_match_production() -> None:

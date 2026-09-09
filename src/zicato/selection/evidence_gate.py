@@ -25,7 +25,6 @@ from dataclasses import dataclass, replace
 from statistics import NormalDist
 from typing import Any, Literal
 
-from zicato.core.measurement import EVIDENCE_REPLICATE_BASE as EVIDENCE_REPLICATE_BASE
 from zicato.core.measurement import MeasurementDraw
 from zicato.core.tournament import (
     DEFAULT_PROMOTE_CONFIDENCE_THRESHOLD as DEFAULT_PROMOTE_CONFIDENCE_THRESHOLD,
@@ -418,7 +417,6 @@ def disabled_rating_block() -> dict[str, Any]:
 
 
 __all__ = [
-    "EVIDENCE_REPLICATE_BASE",
     "MIN_CREDIBLE_DUELS",
     "CI_Z",
     "DEFAULT_PROMOTE_CONFIDENCE_THRESHOLD",

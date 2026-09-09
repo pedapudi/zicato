@@ -925,53 +925,53 @@ Rust supervisor's `/api/active-runs`, or any build predating it — which is
 the one case where the two can differ, and only by keeping a record whose
 worker the client cannot see is gone.
 
-### 7.6.3 The active-tournament event log and its fold
+### 7.6.3 The writer publishes complete tournament display fields
 
-The live tournament view is a **single-writer append-only event log**
-(`runtime/active_tournament.events.jsonl`,
-`src/zicato/runtime/tournament_log.py`) with a four-token vocabulary. A
-mutable tournament record that several writers read-modify-wrote would
-lose updates against itself; one atomic append per transition cannot:
+Live tournament publications use `runtime/active_tournament.events.jsonl`.
+The workspace writer retains the `ActiveTournament` state and its sequenced
+`EventLog` on the exclusive lease (§7.7).
 
-| Event | Payload | Written by | Fold semantics |
-|---|---|---|---|
-| `Snapshot` | a FULL `ActiveTournament.to_dict()` envelope | the orchestrator's republish, the gauntlet runner's open, the settle | RESETS the fold — replay starts from the last `Snapshot` |
-| `EntryUpdate` | `{entry_id, side, updates}` | the runner, per board-entry transition | overrides the first matching `(entry_id, side)` row |
-| `PartialAggregate` | `{champion_agg?, challenger_agg?}` | the runner, per settled board unit | replaces the matching partial-aggregate field(s) |
-| `ProjectedUpdate` | `{projected}` | the runner, per settled board unit | merges projected standings + folds `live_progress` lanes |
+| Event | Payload | Reader operation |
+|---|---|---|
+| `Snapshot` | Complete `ActiveTournament.to_dict()` envelope | Replace the accumulated state |
+| `Update` | Changed top-level fields, each containing its complete replacement value | Replace those fields in the accumulated state |
 
-Every state transition is one atomic append — never a read-modify-write — so
-concurrent writers cannot lose each other's updates. Readers call
-`read_active_tournament(workspace_root)`
-(`zicato.runtime.state`), which folds the log via
-`tournament_log.fold_active_tournament`. A missing log yields no tournament. The fold **shares the merge helpers with the
-full-envelope event publisher** (`_fold_projected_into_live_progress`, `_fold_one_lane` in
-`state.py`) so the folded view agrees with the published envelope —
-producer/consumer parity by shared code rather than by reimplementation.
+`write_active_tournament` calculates display progress and appends a snapshot.
+Entry transitions, partial aggregates, and competitor projections use the
+update helpers in `state.py`. They update the retained state, calculate display
+progress, and append changed fields. An update that changes no serialized
+field emits no event.
 
-Two behavioural details encoded in `_fold_one_lane` that dashboards depend
-on (both anti-flash / anti-thrash measures — change them and the UI regresses):
+`_complete_tournament_progress` derives pending-match counts, queued rounds,
+competitor lanes, and projected standings before publication. Strategies supply
+the competitors, scheduled matches, and completed results. Progress calculations
+preserve those results; Swiss points change when the strategy records a
+completed match. Live Swiss standings sort by wins and then scalar. Racing and
+elimination standings sort by scalar while competitors are in flight.
 
-- a lane mutates ONLY when a *rounded* value actually changes (the dashboard
-  digest-gates renders on rounded scalars + integer board counts);
-- the champion lane keeps its strategy-seeded `projected_scalar` benchmark
-  and its `boards_done` only ever grows to the most-progressed duel — N
-  concurrent duels all write the champion lane, and last-writer-wins would
-  thrash it.
+The writer also preserves the strategy's champion benchmark and takes the
+maximum champion board count across concurrent duels. Challenger lane scalars
+change when their values differ at four-decimal display precision. These rules
+run before persistence, so readers receive the resulting display state.
 
-> ⛔ NEVER add a writer that rewrites the folded view or the snapshot file.
-> If your feature needs to publish tournament state, add an event type to
-> `tournament_log` (one atomic append) and teach the fold — the single-writer
-> `seq` discipline (D10) is what keeps the dashboard's render gating and the
-> supervisor's fold diagnostics honest.
+`read_active_tournament(workspace_root)` replays snapshots and field
+replacements through `tournament_log.fold_active_tournament`. Replacing
+`entries`, `rounds`, or `projected` replaces that complete collection; readers
+do not merge individual rows or calculate progress. An absent or empty log
+returns no tournament. An update before any snapshot has no effect. Strict
+JSONL decoding can raise on malformed records.
 
-> ⚠️ TRAP: `update_tournament_entry` validates override *names* eagerly
-> against `ActiveTournamentEntry.__dataclass_fields__` so a producer typo
-> raises at the call site — but the override is *applied* only in the fold.
-> If you add a field to `ActiveTournamentEntry`, the eager validation accepts
-> it automatically; what you must hand-check is `to_dict`/`from_dict`
-> round-tripping and the default that keeps an old log decoding (§7.13
-> recipe).
+All publishers share one acquired writer on one event loop. No `await`
+separates reading retained state, calculating replacements, appending, and
+retaining the published result. This synchronous sequence protects concurrent
+matchup updates. The kernel lease excludes other invocations; it does not
+provide synchronization between threads sharing one handle.
+
+Add display fields to the typed envelope and its `to_dict`/`from_dict`
+conversion. Publish through the existing state helpers so display calculations
+remain on the writer. `update_tournament_entry` validates override names before
+updating the first matching `(entry_id, side)` row; unknown names raise
+`TypeError` at the call site. Test serialization and replay together.
 
 ---
 
@@ -989,11 +989,16 @@ name. Internal operations receive the already acquired `WorkspaceLock` and call
 lease, matching workspace, current process, and unchanged ownership metadata.
 A descriptor reconstructed from the JSON grants no mutation or release authority.
 
-The lease retains one progress EventLog and one tournament EventLog. Every runtime
-publication and clear operation receives that acquired writer. Concurrent matchups,
-standalone scheduling, and cleanup callbacks share the same log objects. Access
-requires a live lease in the current process; the append path does not reread the
-inspection metadata for each event. Fork cleanup and release invalidate that access.
+The lease retains one progress `EventLog`, one tournament `EventLog`, and the
+published tournament state. Concurrent matchups, standalone scheduling, and
+cleanup callbacks receive the same acquired writer. A tournament update reads
+the log only when no state is retained; subsequent updates use the retained
+value. Successful publication precedes replacing that value.
+
+Access requires a live lease in the current process. The append path does not
+reread inspection metadata for each event. Fork cleanup and release invalidate
+access to the logs and retained tournament state. `clear_active_tournament`
+removes the log and clears the retained state after successful removal.
 
 Each log validates existing history on its first append and retains the next
 sequence. A failed append or clear invalidates that state, so retry checks the
@@ -1069,16 +1074,15 @@ a wrong inference is journal / lineage corruption.
 ```
 — `src/zicato/runtime/resume.py` (module docstring)
 
-### 7.8.1 Why resume is nearly free — replicate-slot-aware unit caching
+### 7.8.1 Resume reuses completed measurements
 
-A board unit is cached by `(generation_id, entry_id, replicate)` — its
-`loss.json` on disk IS the cache (`zicato.tournament.runner`'s
-`_resolve_cached_unit`). A generation under a fixed contract is immutable, so
-a completed unit's `loss.json` is a permanent cache HIT. Resuming a
-tournament is therefore mostly "re-enter the loop and let the cache hit the
-done units": only entries (and replicate slots) with no `loss.json` yet
-re-run. Replicated contracts get this for free — the replicate index is part
-of the cache key, so a crash after replicate 1 of 2 re-runs only replicate 2.
+A cached board result identifies its generation, entry, purpose, draw, and
+seed. The loss record lives at
+`runs/<entry>/seed-<seed>/loss.<purpose>.r<draw>.json` within the generation;
+an unseeded measurement uses `seed-none`. The tournament runner validates
+the record's coordinates and source before reusing it. A resumed tournament
+executes only measurements without reusable results. A crash between two
+independent draws therefore preserves the completed draw.
 
 The load-bearing caveat: the unit cache key does **not** include the patch
 set. Reusing cached units is only sound if the *same patches* produced the

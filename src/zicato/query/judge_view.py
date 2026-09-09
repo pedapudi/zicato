@@ -10,9 +10,9 @@ from typing import Any
 
 from zicato.board.jsonl import load_board_document, load_board_rows
 from zicato.core.measurement import (
+    MeasurementDraw,
     iter_measurement_artifacts,
     measurement_artifact_path,
-    unit_artifact_name,
 )
 from zicato.core.workspace import measurement_from_run_id
 from zicato.epoch._storage import RecordError
@@ -77,7 +77,7 @@ def _judge_row(
     Three sources carry the same four fields under different names: the
     per-generation index query sums its losses into ``total_weighted_loss``
     and ``total_raw_loss``, the per-run query drops the ``total_`` prefix,
-    and a run's ``loss.json`` carries a mapping the reducer wrote. Each
+    and a run’s measurement loss file carries a mapping the reducer wrote. Each
     caller reads its own source and passes the values here, so the field
     names, their order, and the float coercion have one definition.
 
@@ -369,7 +369,7 @@ def build_per_entry_for_generation(
                 # Cached-champion provenance (additive). When the champion was
                 # reused in fast mode this row's scalar comes from a PRIOR
                 # epoch/run rather than a re-execution this round; the epoch's
-                # OWN loss.json / index materializes the provenance so this read
+                # OWN measurement loss file / index materializes the provenance so this read
                 # stays epoch-local. ``cached`` False / ``source_*`` None for a
                 # freshly-executed run.
                 "cached": bool(r["cached"]),
@@ -495,23 +495,23 @@ def _entry_loss_path(
     entry_id: str,
     *,
     run_id: str | None = None,
-    replicate_index: int | None = None,
+    measurement: MeasurementDraw | None = None,
 ) -> Path:
-    """Resolve one entry's exact replicate loss path, defaulting to r0."""
+    """Resolve an entry loss path from its run id or measurement selection."""
     canonical = layout_of(paths).loss(epoch_id, generation_id, entry_id)
-    run_dir = canonical.parent
+    run_dir = layout_of(paths).run_dir(epoch_id, generation_id, entry_id)
     if run_id:
-        inferred = measurement_from_run_id(generation_id, entry_id, run_id)
+        inferred = measurement_from_run_id(generation_id, entry_id, run_id, epoch_id=epoch_id)
         if inferred is not None:
             return measurement_artifact_path(
-                run_dir, "loss", inferred.replicate_index, base_seed=inferred.base_seed
+                run_dir, "loss", inferred, base_seed=inferred.base_seed
             )
         for candidate in iter_measurement_artifacts(run_dir):
             loss = _read_json_value(candidate)
             if isinstance(loss, dict) and loss.get("run_id") == run_id:
                 return candidate
-    if replicate_index is not None and replicate_index > 0:
-        return canonical.with_name(unit_artifact_name("loss", replicate_index))
+    if measurement is not None:
+        return measurement_artifact_path(run_dir, "loss", measurement)
     return canonical
 
 
@@ -522,24 +522,23 @@ def resolve_run_id_for_entry(
     entry_id: str,
     *,
     run_id: str | None = None,
-    replicate_index: int | None = None,
+    measurement: MeasurementDraw | None = None,
 ) -> str:
-    """Recover the persisted run id for one entry replicate.
+    """Recover the persisted run id for one entry measurement.
 
-    The run-level dashboard view routes by board-entry id; the index keys every
-    per-judge row by run id. ``run_id`` can select either the validated
-    runtime identity or the goldfive id persisted inside a loss sibling;
-    ``replicate_index`` is the coordinate-only alternative. With neither,
-    replicate 0 remains byte-compatible. Missing data degrades to the
-    requested run id or entry id, and never raises.
+    The run-level view routes by board-entry id; per-judge rows use run ids.
+    ``run_id`` selects a runtime identity or a matching persisted capture id.
+    ``measurement`` supplies an explicit draw selection. Missing data falls
+    back to the requested run id or entry id.
     """
+
     loss_path = _entry_loss_path(
         paths,
         epoch_id,
         generation_id,
         entry_id,
         run_id=run_id,
-        replicate_index=replicate_index,
+        measurement=measurement,
     )
     loss = _read_json_value(loss_path)
     if isinstance(loss, dict):
@@ -556,7 +555,7 @@ def build_per_judge_for_entry(
     entry_id: str,
     *,
     run_id: str | None = None,
-    replicate_index: int | None = None,
+    measurement: MeasurementDraw | None = None,
 ) -> dict[str, Any]:
     """Per-judge breakdown for one explicitly selected entry replicate."""
     loss_path = _entry_loss_path(
@@ -565,7 +564,7 @@ def build_per_judge_for_entry(
         generation_id,
         entry_id,
         run_id=run_id,
-        replicate_index=replicate_index,
+        measurement=measurement,
     )
     loss = _read_json_value(loss_path)
     resolved_run_id = resolve_run_id_for_entry(
@@ -574,7 +573,7 @@ def build_per_judge_for_entry(
         generation_id,
         entry_id,
         run_id=run_id,
-        replicate_index=replicate_index,
+        measurement=measurement,
     )
     if not isinstance(loss, dict):
         return {"run_id": resolved_run_id, "judges": []}
@@ -627,7 +626,7 @@ def _load_run_loss(
     generation_id: str,
     entry_id: str,
 ) -> dict[str, Any] | None:
-    """Read a board-entry run's ``loss.json`` defensively.
+    """Read a board-entry measurement loss file defensively.
 
     Returns the parsed dict or ``None`` when the file is absent or
     unreadable. Used by :func:`build_expectation_outcomes_for_run` and
@@ -651,7 +650,7 @@ def build_expectation_outcomes_for_run(
     """Structured expectation outcomes for a single run.
 
     The reducer stamps a single ``expectation_result`` on each run's
-    ``loss.json`` — a dict shaped ``{kind, passed, detail}`` (see
+    the measurement loss file — a dict shaped ``{kind, passed, detail}`` (see
     :class:`zicato.core.types.ExpectationResult`). This reader projects
     it into a list-shaped payload so the run view can render a uniform
     table regardless of whether the entry carried zero, one, or
@@ -674,7 +673,7 @@ def build_expectation_outcomes_for_run(
       otherwise.
 
     An entry with no expectation (``expectation_result`` is ``None``)
-    or no on-disk ``loss.json`` yields an empty ``outcomes`` list — the
+    or no persisted measurement loss file yields an empty ``outcomes`` list — the
     run view shows ``(no expectations recorded for this run)``.
     """
     empty: dict[str, Any] = {
@@ -746,7 +745,7 @@ def build_run_header(
     """Per-run header metrics.
 
     Projects the numeric / verdict header fields from a board-entry run's
-    ``loss.json``. The run page already shows ``drift_loss`` and ``pass_fail``
+    the measurement loss file. The run page already shows ``drift_loss`` and ``pass_fail``
     from the per-entry table; this reader surfaces the remaining header fields:
 
     * ``runtime_ms`` — total wall-clock duration in ms.
@@ -763,13 +762,13 @@ def build_run_header(
 
     * ``drift_loss``, ``pass_fail``, ``run_id``.
 
-    Also surfaces the ADK session id persisted in ``loss.json`` by the
+    Also surfaces the ADK session id persisted in the measurement loss file by the
     reducer, so the run header can deep-link into harmonograf at the
-    run's execution trace without a second roundtrip to ``events.jsonl``:
+    run's execution trace without a second roundtrip to measurement event JSONL:
 
     * ``adk_session_id`` — the goldfive/ADK session id for this run.
 
-    Every field defaults to ``None`` when ``loss.json`` is absent or
+    Every field defaults to ``None`` when the measurement loss file is absent or
     missing the key; the response shape is stable so the run renderer
     never branches on whether the file exists.
     """

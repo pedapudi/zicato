@@ -40,6 +40,7 @@ from pathlib import Path
 from typing import Any
 
 from zicato.config import IntegrationConfig, resolve_configuration
+from zicato.core.measurement import TOURNAMENT_DRAW, MeasurementDraw
 from zicato.core.workspace import events_jsonl_path
 from zicato.runtime.context import inherited_runtime_context
 
@@ -51,10 +52,10 @@ def make_run_sink_path(
     epoch_id: str,
     generation_id: str,
     entry_id: str,
-    replicate_index: int = 0,
+    measurement: MeasurementDraw = TOURNAMENT_DRAW,
 ) -> Path:
     """Return one replicate's canonical events path, parent ensured."""
-    path = events_jsonl_path(workspace_root, epoch_id, generation_id, entry_id, replicate_index)
+    path = events_jsonl_path(workspace_root, epoch_id, generation_id, entry_id, measurement)
     path.parent.mkdir(parents=True, exist_ok=True)
     return path
 

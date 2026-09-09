@@ -12,12 +12,11 @@ The measurement reuses the tournament's own board-unit machinery
 (:func:`zicato.tournament.scheduling._run_board_units_fast` — one side, the
 same subprocess workers, scoring, and per-unit persistence every duel uses)
 so the floor is measured under EXACTLY the conditions duels run under. Each
-draw is forced onto a DISTINCT replicate index: the per-unit cache is keyed
-``(generation, entry, replicate_index)`` (see
-:mod:`zicato.tournament.unit_cache`), so distinct indices are distinct cache
-slots — a fresh noise draw per run rather than K reads of one cached result.
-Re-running the audit under the same contract reuses the already-persisted
-draws (cache hits), so calibration is idempotent and never wastes a run.
+draw uses the ``calibration`` purpose and a distinct local draw number.
+The cache key includes generation, entry, purpose, draw, and runtime seed
+(:mod:`zicato.tournament.unit_cache`). Task context carries the same identity
+so the harness can vary its random stream for each draw. Repeating an audit
+with the same contract and seed reuses complete matching measurements.
 
 The floor is a RUNTIME measurement, never a contract input: it is persisted
 onto the epoch record (``config.json``'s additive ``noise_floor`` field, see
@@ -35,9 +34,11 @@ from pathlib import Path
 from typing import Any
 
 from zicato.core import BoardEntry, Generation, RuntimeConfig, ScoringWeights
-from zicato.core.measurement import CALIBRATION_REPLICATE_BASE as CALIBRATION_REPLICATE_BASE
-from zicato.core.measurement import CALIBRATION_REPLICATE_SPAN as CALIBRATION_REPLICATE_SPAN
-from zicato.core.measurement import UNKNOWN_SEED, BaseSeed, validate_measurement_interval
+from zicato.core.measurement import (
+    MeasurementDraw,
+    MeasurementPurpose,
+    validate_measurement_count,
+)
 from zicato.runtime.lock import WorkspaceLock
 from zicato.runtime.writer import workspace_writer
 
@@ -130,7 +131,7 @@ class NoiseFloor:
     max_abs_delta: float
     delta_std: float
     measured_at: str
-    base_seed: BaseSeed = UNKNOWN_SEED
+    base_seed: int | None = None
 
     def to_json(self) -> dict[str, Any]:
         """The JSON shape persisted onto the epoch record."""
@@ -143,8 +144,7 @@ class NoiseFloor:
             "delta_std": self.delta_std,
             "measured_at": self.measured_at,
         }
-        if self.base_seed is not UNKNOWN_SEED:
-            value["base_seed"] = self.base_seed
+        value["base_seed"] = self.base_seed
         return value
 
 
@@ -189,8 +189,9 @@ async def measure_noise_floor(
     Each draw evaluates the full board once through the SAME board-unit
     runner every duel uses (one side per draw — an A/A duel is two draws of
     the same generation, so K draws yield every pairwise duel at once), on a
-    distinct replicate index so the per-unit cache serves a fresh sample per
-    draw instead of replaying one cached result. Each draw's per-entry losses
+    distinct local draw under the ``calibration`` purpose. Measurement identity
+    reaches the cache and harness, so independent draws use distinct samples.
+    Each draw's per-entry losses
     aggregate through the SAME :func:`aggregate_generation_score` the gate
     scores with, so the measured scalars are the quantity ``promote_margin``
     thresholds.
@@ -215,7 +216,7 @@ async def measure_noise_floor(
     a hang. It is strictly an observability hook: it runs inside the draw loop,
     so it must be cheap and must not raise.
     """
-    validate_measurement_interval(CALIBRATION_REPLICATE_BASE, runs)
+    validate_measurement_count(runs)
     from zicato.tournament.runner import drain_worker_cleanup  # noqa: PLC0415
 
     if runs < 2:
@@ -232,7 +233,7 @@ async def measure_noise_floor(
         from zicato.tournament.worker_transport import (  # noqa: PLC0415
             _stamp_disable_drift,
             _stamp_judge_only,
-            _stamp_replicate_index,
+            _stamp_measurement,
         )
 
         board = _stamp_disable_drift(board, disable_drift)
@@ -240,26 +241,23 @@ async def measure_noise_floor(
 
         scalars: list[float] = []
         for draw in range(runs):
-            replicate_index = CALIBRATION_REPLICATE_BASE + draw
+            measurement = MeasurementDraw(MeasurementPurpose.CALIBRATION, draw)
             losses = await _run_board_units_fast(
                 writer=writer,
                 adapter=adapter,
                 child_gen=generation,
-                # Stamp the replicate index onto each entry's context, as the
-                # replicated-duel path does before it calls the same
-                # runner: the cache key alone does not reach the harness, and a
-                # seeded harness derives its noise draw from the STAMPED index
-                # — without the stamp every "fresh" draw re-rolls the identical
-                # seed and a stochastic harness measures a floor of 0.0.
-                board=_stamp_replicate_index(board, replicate_index),
+                # Pass measurement identity into task context so a seeded harness
+                # varies its random stream across draws. Distinct cache paths
+                # alone cannot make repeated harness samples independent.
+                board=_stamp_measurement(board, measurement),
                 weights=weights,
                 config=config,
                 workspace_root=workspace_root,
                 epoch_id=epoch_id,
                 match_id=f"aa-calibration:{draw}",
-                # Distinct replicate index per draw ⇒ distinct cache slot ⇒ a
-                # fresh sample (and an idempotent re-read on a repeated audit).
-                replicate_index=replicate_index,
+                # A distinct local draw requests another sample; a repeated audit
+                # can reuse its complete matching measurement.
+                measurement=measurement,
             )
             # An infra abort (endpoint outage, worker crash) is not a measurement
             # of the generation — folding its worst-case not-completed scalar into
@@ -523,7 +521,6 @@ def assess_margin_against_floor_record(
 __all__ = [
     "CALIBRATION_PHASE",
     "CALIBRATION_PHASE_TOKEN",
-    "CALIBRATION_REPLICATE_BASE",
     "DEFAULT_CALIBRATION_RUNS",
     "MARGIN_NOISE_MULTIPLE",
     "MarginNoiseAssessment",

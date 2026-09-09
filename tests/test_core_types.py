@@ -486,10 +486,24 @@ def test_path_helpers_layout(tmp_path: Path) -> None:
         ws / "epochs" / epoch_id / "generations" / gen_id / "runs" / entry_id
     )
     assert events_jsonl_path(ws, epoch_id, gen_id, entry_id) == (
-        ws / "epochs" / epoch_id / "generations" / gen_id / "runs" / entry_id / "events.jsonl"
+        ws
+        / "epochs"
+        / epoch_id
+        / "generations"
+        / gen_id
+        / "runs"
+        / entry_id
+        / "seed-none/events.tournament.r0.jsonl"
     )
     assert loss_profile_path(ws, epoch_id, gen_id, entry_id) == (
-        ws / "epochs" / epoch_id / "generations" / gen_id / "runs" / entry_id / "loss.json"
+        ws
+        / "epochs"
+        / epoch_id
+        / "generations"
+        / gen_id
+        / "runs"
+        / entry_id
+        / "seed-none/loss.tournament.r0.json"
     )
     assert experiment_json_path(ws, epoch_id, gen_id) == (
         ws / "epochs" / epoch_id / "generations" / gen_id / "experiment.json"

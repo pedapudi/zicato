@@ -17,18 +17,22 @@ import pytest
 from tests._reflection_support import finding_body, scorecard_body
 from tests._workspace_support import write_epoch, write_lineage
 from zicato.core import JudgeLoss, LossProfile, MetricCount, ScoringWeights
+from zicato.core.measurement import MeasurementDraw, MeasurementPurpose
 from zicato.core.workspace import (
     reflection_adjudication_path,
     reflection_dir,
     reflection_findings_path,
     reflection_plan_path,
     reflection_scorecards_path,
+    run_id_for_unit,
 )
 from zicato.index.ingest import ingest_reflection, rebuild_index
 from zicato.judge_runtime.io_capture import JudgeIOFileSink, judge_io_path_for_loss
 from zicato.query import reflection_view as rv
 from zicato.query.paths import WorkspacePaths
 from zicato.reflection.corpus import ingest_lineage, write_corpus
+from zicato.telemetry.reducer import read_loss_profile
+from zicato.tournament.scoring import write_gen_score
 from zicato.tournament.unit_cache import _unit_loss_path, unit_result_path
 from zicato.workspace import WorkspaceLayout
 
@@ -45,7 +49,10 @@ def _write_loss(workspace: Path, gen: str, entry: str, *, drift: float, replicat
     from zicato.telemetry import reducer
 
     loss = LossProfile(
-        run_id=f"run-{gen}-{entry}",
+        measurement=MeasurementDraw(MeasurementPurpose.TOURNAMENT, replicate),
+        run_id=run_id_for_unit(
+            gen, entry, MeasurementDraw(MeasurementPurpose.TOURNAMENT, replicate), epoch_id=EPOCH
+        ),
         entry_id=entry,
         generation_id=gen,
         epoch_id=EPOCH,
@@ -61,8 +68,11 @@ def _write_loss(workspace: Path, gen: str, entry: str, *, drift: float, replicat
         pass_fail=drift == 0.0,
         per_judge_loss=(JudgeLoss("j", raw_loss=drift, weight=1.0, weighted_loss=drift),),
     )
-    path = _unit_loss_path(workspace, EPOCH, gen, entry, replicate)
+    path = _unit_loss_path(
+        workspace, EPOCH, gen, entry, MeasurementDraw(MeasurementPurpose.TOURNAMENT, replicate)
+    )
     reducer.write_loss_profile(loss, path)
+    write_gen_score(workspace, EPOCH, gen, {"generation_id": gen, "base_seed": None, "scalar": 0.0})
     return path
 
 
@@ -71,7 +81,8 @@ def _write_result(loss_path: Path) -> None:
         json.dumps(
             {
                 "format_version": 1,
-                "run_id": "r",
+                "run_id": read_loss_profile(loss_path).run_id,
+                "measurement": read_loss_profile(loss_path).measurement.to_json(),
                 "entry_id": "entryA",
                 "final_output": "the final answer",
                 "transcript": ["user asked", "assistant replied"],
@@ -86,7 +97,10 @@ def _write_result(loss_path: Path) -> None:
 
 
 def _write_judge_io(loss_path: Path, *, fired: bool) -> None:
-    sink = JudgeIOFileSink(judge_io_path_for_loss(loss_path))
+    loss = read_loss_profile(loss_path)
+    sink = JudgeIOFileSink(
+        judge_io_path_for_loss(loss_path), measurement=loss.measurement, run_id=loss.run_id
+    )
     sink.record(
         "j",
         reasoning_text=SPAN,
@@ -300,7 +314,7 @@ def test_adjudication_xray_result_tier(tmp_path: Path) -> None:
     write_corpus(workspace, EPOCH, REFL, corpus)
     _write_reflection_meta(workspace, summary={}, findings=[], scorecards=[])
 
-    run_ref = "v1:entryA:r0"
+    run_ref = "seed-none:v1:entryA:tournament:r0"
     from zicato.reflection.adjudication import JudgeAdjudication, write_adjudication
 
     write_adjudication(

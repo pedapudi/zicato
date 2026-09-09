@@ -43,6 +43,7 @@ import pytest
 import zicato_examples.target_0_convergence as _t0_pkg
 from tests._contract_pins import resolved_contract_with_proposer
 from tests._foe_support import stand_in_proposer_block
+from zicato.core.measurement import MeasurementDraw, MeasurementPurpose
 from zicato.epoch.lifecycle import _scoring_from_dict, new_epoch
 from zicato_examples.target_0_convergence import mocks as t0_mocks
 
@@ -246,7 +247,14 @@ def test_gauntlet_converges_to_known_floor(tmp_path: Path) -> None:
 
     passes = {}
     for entry in load_board(board_path(workspace, epoch_id)):
-        lp_path = _unit_loss_path(workspace, epoch_id, "v3", entry.id, 0, base_seed=None)
+        lp_path = _unit_loss_path(
+            workspace,
+            epoch_id,
+            "v3",
+            entry.id,
+            MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0),
+            base_seed=None,
+        )
         assert lp_path.exists(), entry.id
         profile = read_loss_profile(lp_path)
         assert profile.drift_loss == 1.0, entry.id
@@ -349,7 +357,9 @@ def test_gauntlet_converges_to_known_floor(tmp_path: Path) -> None:
         conn.close()
     assert per_gen == {"v0": 7 * BOARD_SIZE, "v1": BOARD_SIZE, "v2": BOARD_SIZE, "v3": BOARD_SIZE}
     assert len(runs) == len({run_id for _, _, run_id in runs}) == 10 * BOARD_SIZE
-    measurements = [measurement_from_run_id(gid, eid, rid) for gid, eid, rid in runs]
+    measurements = [
+        measurement_from_run_id(gid, eid, rid, epoch_id=epoch_id) for gid, eid, rid in runs
+    ]
     assert all(m is not None and m.base_seed is None for m in measurements)
     assert Counter(m.purpose.value for m in measurements if m is not None) == {
         "tournament": 4 * BOARD_SIZE,

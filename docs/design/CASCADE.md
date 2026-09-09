@@ -4,8 +4,8 @@
 > is pending**. zicato ships **four partial cascade forms** — the
 > pre-tournament candidate screen, racing's board-slice rungs, the
 > full-board promote gate, and the holdout confirmation the Ladder
-> mediates — each independently configured, each with its own reserved
-> replicate base. This note asks whether to **unify them as one declared
+> mediates — each independently configured. Measurement purposes and local
+> draw numbers distinguish their samples. This note asks whether to **unify them as one declared
 > `screen → rung → full → holdout` pipeline with per-stage budgets**, and
 > it sets out why that unification has not been built: **stage thresholds
 > interact with the gate's statistics.** Each stage's cut is a selection
@@ -37,7 +37,7 @@ This note builds on five design documents and one dev-guide chapter:
   operating rule this note lifts to a *per-stage* discipline.
 - dev-guide `04-evaluation-statistics.md` — the noise doctrine, the
   same-versus-same (A/A) noise floor, the evidence gate, the placebo arm,
-  the reserved replicate-base ledger, and the power-harness methodology
+  measurement identity and artifact separation, and the power-harness methodology
   every claim below rests on.
 
 ---
@@ -50,12 +50,12 @@ few survivors. zicato already runs four such stages — but wired
 independently, tuned independently, and never reasoned about as *one*
 compounding-selection pipeline.
 
-| Stage (order) | Shipped as | Cut rule | Board slice | Replicate base | Selectivity |
+| Stage (order) | Shipped as | Cut rule | Board slice | Measurement purpose | Selectivity |
 |---|---|---|---|---|---|
-| **Screen** (upstream, in-propose-step) | `src/zicato/epoch/screen.py` | **veto-first, confirm-before-veto** — disqualify a candidate that flips a champion-passing train entry twice, or blows its wall-clock budget; never ranks | 1–2 rotating **train** entries | `3000` (`+1` confirm at `3001`) | high-recall filter: cuts only categorical breakage |
-| **Rung** (racing, downstream) | `selection/strategies/racing.py` (`TOURNAMENT-STRUCTURES.md §3.5`) | **rank-and-halve** — eliminate the worst `1 − 1/eta` by scalar per rung; escalating slice = escalating sample; gate applied only at the **final** rung | rung-0 `board_fraction`/`rung0_board_size`, escalating to full | `0` (real duel slots) | best-arm identification, margin-blind cut |
-| **Full** (the gate) | `tournament/gate.py::evaluate_gate` | the three-rule ladder — scalar margin, pass-rate monotonicity, namespace monotonicity | full board × `replicates` × both sides | `0` | the promotion decision itself |
-| **Holdout** (terminal confirm) | `tournament/ladder.py` + gate rule 4 | **Ladder-mediated confirmation** — a train-win must hold on a slice the proposer never saw; released only when the train improvement clears the threshold, budgeted per epoch | the `holdout`-tagged slice | (holdout entries, canonical slots) | anti-memorization guard, confirmation-only |
+| **Screen** (upstream, in-propose-step) | `src/zicato/epoch/screen.py` | **veto-first, confirm-before-veto** — disqualify a candidate that flips a champion-passing train entry twice, or blows its wall-clock budget; never ranks | 1–2 rotating **train** entries | `candidate_screen` (draw 0; draw 1 confirms) | high-recall filter: cuts only categorical breakage |
+| **Rung** (racing, downstream) | `selection/strategies/racing.py` (`TOURNAMENT-STRUCTURES.md §3.5`) | **rank-and-halve** — eliminate the worst `1 − 1/eta` by scalar per rung; escalating slice = escalating sample; gate applied only at the **final** rung | rung-0 `board_fraction`/`rung0_board_size`, escalating to full | `tournament` | best-arm identification, margin-blind cut |
+| **Full** (the gate) | `tournament/gate.py::evaluate_gate` | the three-rule ladder — scalar margin, pass-rate monotonicity, namespace monotonicity | full board × `replicates` × both sides | `tournament` | the promotion decision itself |
+| **Holdout** (terminal confirm) | `tournament/ladder.py` + gate rule 4 | **Ladder-mediated confirmation** — a train-win must hold on a slice the proposer never saw; released only when the train improvement clears the threshold, budgeted per epoch | the `holdout`-tagged slice | `tournament` on holdout entries | anti-memorization guard, confirmation-only |
 
 Two of these already **name each other as complementary**. The screen's
 own module docstring states the relationship: the screen runs *upstream*
@@ -70,7 +70,7 @@ slice the optimizer never queried.
 **The gap this note names.** These four are configured through four
 unrelated surfaces: the `proposer_quality` best-of-N params, the racing
 `tournament_structure` params, `ScoringWeights`, and the `overfitting`
-plus `ladder` blocks. They draw from three different reserved bases.
+plus `ladder` blocks. Screening has a separate measurement purpose; racing, full evaluation, and holdout use tournament measurements.
 Above all, **no single object reasons about the compounding selection
 bias across all four.** The candidate that reaches the holdout has
 survived up to three prior selective cuts. Its train scalar is optimistically biased by
@@ -88,7 +88,7 @@ independent wirings:
 ```
 propose-step candidates
       │
-      ▼  STAGE 0 — screen   (veto-first; 1–2 train entries; base 3000)
+      ▼  STAGE 0 — screen   (veto-first; 1–2 train entries; candidate_screen draws)
       │        cut: categorical breakage only (confirm-before-veto)
       ▼  STAGE 1..k — rungs  (rank-and-halve; escalating train slice)
       │        cut: worst 1−1/eta by scalar per rung
@@ -108,15 +108,13 @@ The unification buys three things the independent wirings cannot:
    embodies: cheap-and-many early, expensive-and-few late. Four
    independent numbers can instead sum silently to more evaluation than
    the operator meant to spend.
-2. **One reserved-base allocation.** The replicate-base ledger
-   (`04-evaluation-statistics.md §8`) already partitions the replicate
-   index space per out-of-tournament evaluator (calibration `1000`,
-   preflight `2000`, screen `3000`, evidence `4000`, reflection `5000`).
-   A declared cascade makes the *ordering* of stages explicit, so the
-   "each stage draws fresh, never replays an upstream stage's cached
-   sample" invariant (the whole reason bases exist) is enforced by
-   construction rather than by four modules independently remembering to
-   stamp their own base.
+2. **Explicit independent measurements between stages.** A declared cascade
+   must carry each stage's purpose, local draw number, and seed through the
+   runner, task context, and artifact paths. A stage that requires an
+   independent sample must request a distinct draw and vary the harness's
+   random stream. Reusing an upstream sample preserves the selection bias
+   associated with that sample.
+
 3. **One place to reason about compounding selection** — §3. This is the
    load-bearing reason to unify at all. A pipeline object can compute how
    selective each upstream stage was and *raise the terminal gate's
@@ -183,11 +181,7 @@ Survivors of stage `k` are, by definition, the candidates that drew
 **optimistically biased** — the classic optimizer's curse
 (`SELECTION-THEORY.md §4`), now incurred once per stage. Two regimes:
 
-- **If stage k+1 re-measures on fresh draws** (a new slice, a new
-  replicate index), the bias from stage `k` is *reset* — the fresh draw is
-  selection-independent of why the candidate survived. This is why the
-  reserved-base ledger and the both-sides-fresh rule
-  (`04-evaluation-statistics.md §6.2`, §8) exist. An evidence replicate
+- **If stage k+1 measures an independent draw**, its observation is independent of the sampling noise that selected the candidate at stage `k`. This requires a distinct measurement identity and random stream on both sides (`04-evaluation-statistics.md §6.2`, §8). An evidence replicate
   that cache-read an upstream stage's sample would "replay one identical
   sample into the fit … shrinking its SE by repetition alone", which is an
   unsound-promotion path and the defect that evidence-gate slot reuse
@@ -202,8 +196,7 @@ Survivors of stage `k` are, by definition, the candidates that drew
 The escalating-slice structure of racing partly offsets this: each rung
 runs a *larger* slice, and if the larger slice is drawn fresh rather than
 served as a superset cache-hit of the smaller, the survivor is re-measured
-with more signal. But racing caches at base `0` and escalates the *slice*
-rather than the *replicate index*, so whether a rung's larger slice is
+with more signal. But racing uses the `tournament` purpose and escalates the board slice while retaining draw identities for completed units, so whether a rung's larger slice is
 selection-independent of the smaller rung that fed it is the kind of claim
 the doctrine forbids asserting without measurement
 (`04-evaluation-statistics.md §3.2`). **A unified cascade must measure
@@ -217,15 +210,10 @@ correction the terminal stages must apply, built entirely from machinery
 zicato already ships:
 
 1. **The final gate measures on a fresh draw rather than a cached stage score.**
-   Already the canonical-r0 + both-sides-fresh rule
-   (`04-evaluation-statistics.md §6.2`, §7.3). The cascade must guarantee
-   the terminal full-board evaluation is drawn independently of every rung
-   that selected the survivor — the reserved-base discipline extended to
-   name the whole ordered pipeline.
+   The cascade must request independent measurements on both sides for terminal full-board evaluation (`04-evaluation-statistics.md §6.2`, §7.3). Their random streams must be independent of the observations used by the rungs that selected the survivor.
 2. **The evidence gate provides the selection-independent re-measurement.**
    The Bradley–Terry pre-gate (`evidence_gate.py`,
-   `04-evaluation-statistics.md §6`) fits over fresh reserved-base-`4000`
-   draws and crowns only when the confidence intervals (CIs) *separate*.
+   `04-evaluation-statistics.md §6`) fits over independent `evidence_confirmation` draws and crowns only when the confidence intervals (CIs) *separate*.
    Noise cannot pass that test by selection luck, because separation takes
    roughly 37 duels of an essentially unbroken win streak (fact #2). This is the natural home for the *N-stage correction*: **the more
    selective the upstream cascade, the larger the terminal replicate
@@ -284,7 +272,7 @@ convergence oracles) rather than introducing a new instrument.
 The harness inherits the deterministic convergence example world verbatim
 (`examples/zicato_examples/target_0_convergence/harness.py`): `stable_noise_seed`
 derives the RNG seed **only** from
-`(workspace_seed, generation_id, entry_id, replicate_index)` — no wall
+`(workspace_seed, generation_id, entry_id, measurement.purpose, measurement.draw)` — no wall
 clock, no global RNG (`04-evaluation-statistics.md §13.1`). This is what
 makes cascade trials reproducible run for run, and it lets "sides vary
 because the generation id is in the seed" serve as the A/A premise. The
@@ -299,7 +287,7 @@ The foundational measurement (§3.1). For each stage's slice size `m_k`:
 
 1. **Measure the slice-k floor.** Run K seeded A/A draws of the champion
    on the `m_k`-entry slice through the same `_run_board_units_fast`
-   calibration path (`calibration.py`), at a reserved base — this is the
+   calibration path (`calibration.py`), under the `calibration` purpose with distinct local draws — this is the
    existing `measure_noise_floor` restricted to the slice. Assert the
    floor grows as `m_k` shrinks (roughly `∝ 1/sqrt(m_k)`); a floor that
    *did not* grow on a smaller slice would mean the seeding stopped
@@ -350,11 +338,11 @@ The headline decision measurement. On the **identical seeded draws**:
 The build-decision artifact. A cascade's *only* justification is that it
 reaches a target power at **fewer total board-unit evaluations** than
 running the full board on every candidate. A board unit is one
-`(generation, entry, replicate)` evaluation, the smallest thing the
+`(generation, entry, purpose, draw, base_seed)` evaluation, the smallest thing the
 tournament pays for. Plot, at a fixed planted δ:
 
 - **x-axis:** total board-unit evaluations spent per promotion (summed
-  across all stages, counting each reserved-base draw once).
+  across all stages, counting each executed measurement once).
 - **y-axis:** power (`P(promote | true)`) at that δ.
 
 Sweep the cascade's stage allocation (screen panel size, rung `eta` /
@@ -370,17 +358,18 @@ result is a legitimate and expected outcome of the harness.**
 
 ### 4.5 Slot-integrity and the cross-stage independence proof
 
-Because a cascade adds stages and reserved bases, the harness must include
-a `persist=True` slot-integrity test (`§13.2`, `§8.1` step 5). That test
-asserts two things: the canonical r0 slots are byte-identical across a full
-cascade run, and every stage's draws persist **only** under that stage's
-reserved base. Together they prove that no stage replays an upstream
-stage's sample, which is the §3.2 independence invariant made mechanical.
-This is the
-`test_full_mode_evidence_loop_never_touches_canonical_slots` pattern
-lifted to the whole pipeline.
+Because a cascade composes stages with different sampling requirements, the
+harness must test artifact separation with `persist=True`. Preserve tournament
+loss files while additional purposes execute, and verify each artifact's
+purpose, local draw, and seed against its recorded identity.
 
----
+Artifact separation protects provenance. Independence also requires checking
+that a stage requesting a fresh sample executes a distinct draw on both sides
+and passes that identity into the harness's random-seed derivation. Cache
+replay must not count as another observation. Resume checks should reuse only
+complete matching measurements.
+
+
 
 ## 5. Measured results (first run)
 
@@ -427,8 +416,7 @@ the *budgets* do not.
 | Experiment C terminal margin | `0.55 × floor` | a legitimate operator choice (`04-evaluation-statistics.md §13.8`): below the 1× planted effect so power survives, above the R-averaged null noise so `P(promote|null)` stays small |
 | Experiment C terminal replicates | `16` | averages the terminal duel; the margin terminal's soundness/power hinge |
 
-All seeds derive from `stable_noise_seed(workspace_seed, generation_id,
-entry_id, replicate_index)` and are recorded in the JSON report. Every
+All seeds derive from `stable_noise_seed(workspace_seed, generation_id, entry_id, measurement)` and are recorded in the JSON report. Every
 confidence interval below is a **95% Wilson score interval** on the reported
 count `k` of `n` trials (stated once here; not restated per cell). The
 persisted JSON report is **byte-identical** across runs: the only run-to-run
@@ -545,13 +533,14 @@ trial.
 
 ### 5.5 The slot-integrity and cross-stage independence proof (§4.5)
 
-The test passes: across a full cascade run the canonical replicate-0 `loss.json` bytes
-are unchanged for both sides, the calibration draws persist under base
-**1000**, the evidence draws persist under base **4000** for both sides, and
-the three bases `{0, 1000, 4000}` are disjoint. The screen's base-3000 draws
-live under swept phantom directories by design, so its isolation is witnessed
-by r0 being untouched rather than by a persisted slot. The cross-stage
-draw-independence invariant (§3.2) holds mechanically.
+The reported integrity check preserves the tournament draw-zero loss files
+for both sides while calibration and evidence-confirmation draws execute in
+separate measurement paths. Screening uses temporary generation directories
+that are removed after execution. The check covers artifact preservation and
+separation; demonstrating statistical independence also requires the
+random-stream and execution checks in §4.5.
+
+
 
 ### 5.6 An honest reading of what this supports — and does not
 
@@ -560,8 +549,7 @@ What the first run **supports**:
 1. **The staged cascade is sound.** `P(promote|null)` is zero over all 60
    null trials under the cascade — indistinguishable from the single-stage
    contract's zero over 60 and from the doctrine's A/A behaviour (95% Wilson
-   upper ~0.06) — and the reserved-base ledger keeps every stage's draws
-   independent (§4.5). Measured on identical draws through the identical
+   upper ~0.06). Measurement identities separate stage artifacts; §4.5 specifies the additional checks needed to establish draw independence. Measured on identical draws through the identical
    evidence-gated terminal, the naive "gate-at-every-rung" alternative is
    zero over 60 **too**: the fresh-draw terminal is what enforces soundness
    (§3.3, item 1). Pairing that alternative with a weaker terminal instead
@@ -640,11 +628,11 @@ Design properties this sketch commits to:
 - **Default = empty stage list ⇒ today's behavior**: the screen, racing,
   gate, and holdout run as they do now, independently configured.
   The cascade block is purely additive opt-in.
-- **Each stage names its own reserved base** at load, extending the ledger
-  (`04-evaluation-statistics.md §8.1`) — the loader assigns and
-  cross-checks bases so §4.5's independence invariant holds by
-  construction. (`6000` is claimed by eval-synthesis admission —
-  EVAL-SYNTHESIS.md §5 — so a cascade build takes the next free base.)
+- **Each stage declares its measurement purpose and draw allocation.** The
+  loader must validate supported purposes and ensure that each independently
+  sampled stage requests distinct local draws. Runtime seeds and measurement
+  identities must reach both artifact persistence and harness execution.
+
 - **The terminal gate, the holdout/Ladder, the evidence gate, and the
   `SelectionStrategy` seam are all unchanged** — the cascade *orders and
   budgets* them; it does not reimplement any of them.
@@ -667,8 +655,7 @@ exists in the loader, the strategies, or the tests today.**
 | Placebo arm (`evolve/placebo.py`) | **not a stage** — the whole-pipeline control (§3.3, item 4) | unchanged; its finding is elevated to cascade-level |
 
 Unification is therefore a **configuration and accounting**
-change — one ordered spec, one budget ledger, one reserved-base
-allocation, and one place that scales the terminal evidence with upstream
+change — one ordered spec, one budget ledger, explicit measurement identities, and one place that scales the terminal evidence with upstream
 selectivity — over four mechanisms that already exist and already compose
 pairwise. The proposed empty stage list preserves their execution behavior;
 adding the configuration block still changes contract identity. The design
@@ -733,6 +720,6 @@ Experiment B's null bar (§4.3) and never ship.
 | The gauntlet gate, the schedulers, racing's board-slice rungs (`§3.5`) | [`SELECTION.md`](SELECTION.md), [`TOURNAMENT-STRUCTURES.md`](TOURNAMENT-STRUCTURES.md) |
 | Winner's curse / optimizer's curse, replicate-first-resolve-second | [`SELECTION-THEORY.md`](SELECTION-THEORY.md) |
 | Train/holdout split, the Ladder, restricted proposer visibility | [`OVERFITTING.md`](OVERFITTING.md) |
-| The noise doctrine, A/A floors, evidence gate, placebo, reserved bases, the power-harness methodology | dev-guide `04-evaluation-statistics.md` |
+| The noise doctrine, A/A floors, evidence gate, placebo, measurement identities, the power-harness methodology | dev-guide `04-evaluation-statistics.md` |
 | The candidate screen's veto-first / confirm-before-veto doctrine | `src/zicato/epoch/screen.py`, `04-evaluation-statistics.md §3.3` |
 | Complete configuration serialization and contract identity | `03-contract-and-epochs.md`, [`EPOCHS-AND-JOURNALING.md`](EPOCHS-AND-JOURNALING.md) |

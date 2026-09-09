@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from zicato.core.measurement import (
+    TOURNAMENT_DRAW,
     UNKNOWN_SEED,
     iter_measurement_artifacts,
     measurement_artifact_path,
@@ -40,7 +41,7 @@ from zicato.query.paths import (
     read_current_epoch,
 )
 from zicato.workspace import (
-    events_replicate_index,
+    events_measurement,
     generation_ids,
     is_events_file,
     iter_epochs,
@@ -134,10 +135,10 @@ def _replicate_events_in_run(run_dir: Path) -> list[Path]:
 
 def _loss_twin(events_path: Path) -> Path | None:
     """Return the loss sibling carrying the same replicate index."""
-    replicate_index = events_replicate_index(events_path)
-    if replicate_index is None:
+    measurement = events_measurement(events_path)
+    if measurement is None:
         return None
-    return events_path.with_name(unit_artifact_name("loss", replicate_index))
+    return events_path.with_name(unit_artifact_name("loss", measurement))
 
 
 def _build_run_id_index(paths: WorkspacePaths, *, epoch_id: str = "") -> dict[str, Path]:
@@ -267,12 +268,14 @@ def resolve_transcript_events(
     disambiguator = run_id or match_id
     if disambiguator:
         if run_id:
-            measurement = measurement_from_run_id(generation_id, entry_id, run_id)
+            measurement = measurement_from_run_id(
+                generation_id, entry_id, run_id, epoch_id=epoch_id
+            )
             if measurement is not None:
                 exact = measurement_artifact_path(
                     run_dir,
                     "events",
-                    measurement.replicate_index,
+                    measurement,
                     base_seed=measurement.base_seed,
                 )
                 return exact if exact.exists() else None
@@ -296,7 +299,7 @@ def resolve_transcript_events(
         seed = generation_base_seed(layout, coordinates[0], generation_id)
     except ValueError:
         return None
-    own = measurement_artifact_path(run_dir, "events", 0, base_seed=seed)
+    own = measurement_artifact_path(run_dir, "events", TOURNAMENT_DRAW, base_seed=seed)
     return own if own.is_file() else None
 
 
@@ -384,32 +387,20 @@ def find_generation_run(
             run_id = (
                 entry_id
                 if seed is UNKNOWN_SEED
-                else run_id_for_unit(generation_id, entry_id, base_seed=seed)
+                else run_id_for_unit(generation_id, entry_id, base_seed=seed, epoch_id=epoch.id)
             )
             return run_id, events
     return None
 
 
-def read_run_result(run_dir: Path) -> dict[str, Any] | None:
-    """Project a run directory's ``loss.json`` into a small dashboard shape.
+def read_run_result(events_path: Path) -> dict[str, Any] | None:
+    """Read the loss beside a transcript and expose the fields used by the dashboard."""
+    from zicato.core.measurement import artifact_measurement, unit_artifact_name
 
-    The frontend needs enough to render an honest "what happened" panel
-    for a zero-turn complete run — wall-clock budget exceeded, runtime,
-    pass/fail verdict, expectation outcome, and the user-visible metric
-    counts (LLM calls, output chars, anything else loss.json already
-    publicly exposes). The full ``LossProfile`` would leak internal
-    fields (the drift scalar's weight breakdown, schema versioning, the
-    canonical adk session id) that the dashboard does not render today;
-    project to the subset that matters.
-
-    Returns ``None`` when the run directory has no readable
-    ``loss.json`` — the frontend then falls back to the existing
-    "This run produced no transcript turns" message. The degrade is the
-    same-shaped ``None`` the caller already handles.
-    """
-    if not isinstance(run_dir, Path):
+    measurement = artifact_measurement(events_path.name, "events")
+    if measurement is None:
         return None
-    loss_path = run_dir / "loss.json"
+    loss_path = events_path.with_name(unit_artifact_name("loss", measurement))
     if not loss_path.exists():
         return None
     try:

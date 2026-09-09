@@ -1,23 +1,11 @@
 # 06 — Tournament & Selection
 
-> **Covers.** How zicato turns a proposed challenger into a promote/reject
-> decision. The **board unit** and the reserved replicate ladder. The
-> universal, structure-agnostic **unit cache** — its choke point, its
-> per-replicate slot map, the averaging fold, and the two bug cases that
-> shaped it (replicate-cache clobbering, and evidence-gate replicate-slot
-> reuse). **The worker boundary** as a formal spec: closures rejected,
-> module-level callables with reset-able module state, the scrubbed
-> environment, config-pin threading, the ephemeral-checkout contract, and the
-> args-file protocol. The run lifecycle (`_run_single`) and the board-unit
-> schedulers (`_run_replicated`, the full/budgeted/fast fan-outs, and the
-> per-round token ledger). The promote **gate** (`evaluate_gate`), which is
-> the per-duel decider, and its holdout confirmation. The four public runner
-> entry points. The **selection layer**: the `SelectionStrategy` contract,
-> `evaluate_tournament`'s structure-agnostic walk, the five strategies, the
-> Bradley–Terry evidence pre-gate with its dead-letter queue, and the
-> cycle-robust winner resolvers, which only ever *propose*. The **placebo**
-> control arm. Ends in two recipes — *Add a tournament structure* and *Make a
-> harness adapter*.
+> **Covers.** Measurement identity, artifact storage, cache reuse, and paired
+> scheduling. The subprocess worker's explicit inputs, import requirements,
+> isolated checkout, and failure handling. The promotion gate and holdout
+> confirmation. The runner interfaces, selection strategies, statistical
+> evidence confirmation, cycle resolution, and placebo control. Recipes cover
+> adding a tournament structure and implementing a harness adapter.
 >
 > **Prerequisites.**
 >
@@ -41,13 +29,13 @@
 > | ID | Name | Invariant |
 > |----|------|-----------|
 > | T1 | the evaluate-once rule | A **board unit** includes generation, entry, purpose, draw, and selected seed under a fixed contract. Completed measurements are reused only when that full identity matches. `_run_unit_cache_first` is the single choke point every unit — champion, challenger, screen, evidence replicate — routes through. |
-> | T2 | the canonical-replicate-slot rule | Replicate 0 is the canonical `runs/<entry>/loss.json`; replicate r>0 is the sibling `loss.r<r>.json`. Nothing may write one replicate's sample onto another replicate's slot. |
+> | T2 | the measurement-artifact-identity rule | Every measurement uses a seed directory and purpose/draw filename, including draw zero. A replacement archives the prior attempt before execution; separate measurements never share a file. |
 > | T3 | the cache-only-budget-exhaustion rule | Only a wall-clock-budget exhaustion is cache-eligible. An **infra abort** (`parent_kill` / `gone_no_result` / `nonzero_exit:{code}` / `prepare_failed` / `result_unreadable`) is NEVER persisted, so a transient blip cannot poison a unit's score for the epoch. |
 > | T4 | the importable-worker-callable rule | Every callable that crosses the worker boundary is a **module-level (or class-attribute) importable object**. A closure-local callable is rejected at spawn time (`_callable_dotted_path`) rather than surfacing later as an opaque worker failure. |
 > | T5 | the explicit-worker-input rule | Contract inputs and resolved invocation settings cross the worker boundary through **typed values in the args file**. A scrubbed worker environment carries only the process-essential keys plus the declared `api_key_env` names. |
 > | T6 | the gate-is-the-per-duel-decider rule | `evaluate_gate` is the one accept/reject test for a duel. A `SelectionStrategy` reads a `GateOutcome` and interprets it per its own bracket/Swiss/racing rules; it never re-implements or re-runs the gate. |
 > | T7 | the only-promotion-advances-the-champion rule | The champion pointer advances ONLY on a `"promoted"` `SelectionDecision`. Every layer above the gate (the Bradley–Terry pre-gate, the resolvers, the placebo) can only HOLD a promotion; none can force one. |
-> | T8 | the disjoint-reserved-bases rule | The reserved replicate bases are pairwise disjoint (duels `0..`, calibration `1000`, preflight `2000`, screen `3000`/`3001`, evidence `4000`) so an evaluation draw can neither read nor clobber a canonical replicate slot. |
+> | T8 | the separate-measurement-purposes rule | Tournament, calibration, preflight, screening, confirmation, reflection, and admission use distinct purposes. Each purpose numbers draws from zero independently. |
 > | T9 | the mounted-tree-matches-the-chosen-candidate rule | The child snapshot the tournament mounts is derived from the patches of the experiment the round persists. The enforcing seam is 05-proposer.md §"5.6.5 Mounting the chosen candidate". |
 > | T10 | the distinct-draws-only rule | Confirmation excludes selection observations and requires a separately identified draw. Repeated generation/draw identities are refused even when matchup names differ. |
 > | T11 | the placebo-never-crowns rule | The placebo arm is a real lineage child scored by the unchanged gate, but it NEVER advances the champion pointer and is split out of the optimization-stream health detectors. |
@@ -74,7 +62,7 @@ owns it, and the selection layer only *reads* its verdict.
 | `src/zicato/selection/registry.py` | `STRATEGY_REGISTRY`, `make_strategy`, `default_replicates_for` | 110 lines |
 | `src/zicato/selection/strategies/*.py` | `gauntlet` (164), `racing` (467), and the `ChampionGateStrategy` base | — |
 | `src/zicato/selection/experimental/*.py` | `single_elim` (413), `double_elim` (474), `swiss` (413) — admitted only by `experimental.tournament_structures` | — |
-| `src/zicato/selection/evidence_gate.py` | The Bradley–Terry pre-gate: `evidence_verdict`, `EVIDENCE_REPLICATE_BASE`, `MIN_CREDIBLE_DUELS`, `read_promote_confidence_threshold`, `rating_block` | 438 lines |
+| `src/zicato/selection/evidence_gate.py` | The Bradley–Terry pre-gate: `evidence_verdict`, `MIN_CREDIBLE_DUELS`, `read_promote_confidence_threshold`, `rating_block` | 438 lines |
 | `src/zicato/selection/resolve.py` | The cycle-robust winner resolvers (propose-only): `condorcet_check`, `smith_set`, `ranked_pairs`, `copeland_order`, `resolve_leader`, `build_matrix` | 383 lines |
 | `src/zicato/selection/dead_letter.py` | `InconclusiveRecord`, `record_inconclusive`, `read_inconclusive`, `list_inconclusive` | 122 lines |
 | `src/zicato/evolve/placebo.py` | `build_placebo_experiment`, `derive_placebo_snapshot`, `placebo_round_due`, `PLACEBO_HYPOTHESIS_MARKER` | 220 lines |
@@ -163,7 +151,7 @@ separate duel after settlement instead of riding inside the slate.
 
 ---
 
-## 6.1 The board unit and the reserved replicate ladder
+## 6.1 Board units include purpose, draw, and seed
 
 A board unit is one generation, board entry, measurement purpose, draw number,
 and selected base seed under a sealed epoch contract. The generation fixes the
@@ -171,11 +159,10 @@ candidate code; the purpose distinguishes tournament, calibration, preflight,
 screening, confirmation, reflection, and admission work. The selected seed is
 causal even when an adapter ignores it, so cache requests always include it.
 
-`MeasurementDraw` owns purpose, draw, and base-seed provenance. Its integer
-replicate index remains the compatibility encoding passed through the entry's
-context to the harness. Explicit `null` records an unseeded execution. An
-omitted seed records unknown historical provenance and cannot satisfy a
-request for an integer seed or an explicitly unseeded execution.
+`MeasurementDraw` contains a supported `MeasurementPurpose`, a nonnegative
+integer `draw`, and an integer or `null` `base_seed`. The JSON record requires
+all three fields; `null` identifies an unseeded execution. Invalid or missing
+fields fail validation.
 
 A completed unit can be reused across matchups and rounds when its full identity
 matches. Changing the selected seed creates another physical measurement and
@@ -191,170 +178,86 @@ provenance does not close that separate execution-identity gap.
 The harness session covers one board unit. A workflow that needs state across
 turns is one compound entry; separate entries and draws remain isolated.
 
-### 6.1.1 The reserved replicate ladder
+### 6.1.1 Measurement purposes separate evaluation work
 
-The replicate index is not only "which noise draw" — it is also a **namespace**.
-Several subsystems need to run *extra* draws of a pair without reading or
-clobbering the canonical sample the tournament already scored. They each get a
-reserved base far above the duel range, so the per-unit cache slots can never
-collide. This table is the single source of truth; memorize it before you add
-any new replicated evaluation:
+The purpose identifies which evaluation owns a draw. Each purpose has its own
+nonnegative draw sequence, so a confirmation draw cannot reuse a tournament
+measurement with the same draw number.
 
-| Base | Constant | Owner | Why reserved |
-|---|---|---|---|
-| `0..` | (none — the natural range) | Real tournament duels + the `replicates` knob | Replicate `i` of a duel is slot `i`; the canonical `loss.json` is slot 0 |
-| `1000` | `CALIBRATION_REPLICATE_BASE` (`zicato.tournament.calibration`) | A/A calibration draws — the champion re-run against itself to measure the noise floor | An A/A pair re-run of the champion against itself must not touch a real duel's slots — see 04-evaluation-statistics.md §4 |
-| `2000..2999` | `PREFLIGHT_REPLICATE_BASE` + probe ordinal, width `PREFLIGHT_REPLICATE_SPAN` (`zicato.epoch.preflight`) | Contract pre-flight | A dry-run of the contract before the first real round; probe `j` of the degradation-signal sample draws at `2000 + j` (issue #106), and the sample may never outgrow the block |
-| `3000` / `3001` | `SCREEN_REPLICATE_BASE` (+1 confirm) (`zicato.epoch.screen`) | The pre-tournament candidate screen | The best-of-N screen tries out candidates on an ephemeral tree; its confirm-before-veto re-run is `3001` — see 05-proposer.md §"5.6.2 The candidate SCREEN" |
-| `4000` | `EVIDENCE_REPLICATE_BASE` (`zicato.selection.evidence_gate`) | The Bradley–Terry pre-gate's evidence duels | Each Bradley–Terry replicate draws BOTH sides fresh; a replay at slot 0 would shrink the fit's standard error by repetition (fast mode) or clobber the child's canonical `loss.json` (full mode) — the evidence-gate replicate-slot reuse case, `12-bug-casebook.md` case 8 |
+| Purpose | Evaluation |
+|---|---|
+| `tournament` | Ordinary paired comparisons and generation scoring |
+| `calibration` | Repeated champion measurements that estimate evaluation noise |
+| `contract_preflight` | Contract probes, including degraded source variants |
+| `candidate_screen` | Candidate screening and its confirmation before a veto |
+| `evidence_confirmation` | Independent paired evidence after finalist selection |
+| `board_reflection` | Evaluation used to revise the board |
+| `eval_synthesis_admission` | Evaluation used to admit synthesized tasks |
 
-The evidence-gate constant carries the whole ladder in its own docstring, which
-is the canonical statement of **the disjoint-reserved-bases rule**:
+`MeasurementDraw.offset(i)` advances the draw by `i` while preserving purpose
+and seed. Add a supported purpose when introducing another evaluation owner;
+do not encode that owner in a draw number.
 
-```python
-#: Reserved far above every sibling base so the slots can never collide:
-#: real duel replicates count up from 0, A/A calibration draws at 1000
-#: (:data:`zicato.tournament.calibration.CALIBRATION_REPLICATE_BASE`), the
-#: contract pre-flight at 2000
-#: (:data:`zicato.epoch.preflight.PREFLIGHT_REPLICATE_BASE`), and the
-#: pre-tournament candidate screen at 3000
-#: (:data:`zicato.epoch.screen.SCREEN_REPLICATE_BASE`; its
-#: confirm-before-veto re-run at 3001).
-EVIDENCE_REPLICATE_BASE: int = 4000
-```
-— `src/zicato/selection/evidence_gate.py`
+Preflight and screening can evaluate source variants under an existing
+generation label. Their `MeasurementDraw.own_code` value is false, so their
+observations cannot represent that generation's own source. Tournament and
+evidence-confirmation draws have `cell_evidence=True`; the latter still remain
+separate from ordinary generation score publication.
 
-> ⛔ NEVER add a new replicated evaluation that draws at slot 0 or at an
-> already-reserved base. Pick a fresh base ≥ 5000, add it to this table, and
-> add its constant next to the others. A collision means an evaluation draw
-> either *reads* a canonical sample it should not (silent contamination) or
-> *writes over* one that crash-resume and `zicato repair index` key on. That is
-> the class of bug the evidence-gate replicate-slot reuse case documents
-> (`12-bug-casebook.md` case 8).
+### 6.1.2 The harness receives a validated measurement record
 
-### 6.1.2 The replicate index reaches the harness through `context`
+`_stamp_measurement` serializes the record as JSON in
+`BoardEntry.context["measurement"]`, including draw zero. Context values are
+strings, so harnesses read the record with
+`MeasurementDraw.from_context(entry.context)` rather than parsing an integer.
 
-A seeded/deterministic harness derives its per-run noise from stable
-identifiers, and the replicate index is the one identifier that distinguishes
-the N otherwise-identical paired runs. It travels to the harness the same way
-`generation_id`, `disable_drift`, and `judge_only` do — stamped onto each
-`BoardEntry.context`, the ONE per-entry channel that survives the full runner →
-args-file → subprocess-worker → `validate_board_entry` → adapter round-trip:
+The runner also sends a top-level `measurement` object in the worker arguments.
+The worker validates its purpose, draw, and seed against the artifact paths and
+selected runtime seed. It then replaces the entry's measurement context with
+that validated record before invoking the adapter. A conflicting entry context
+cannot change the executed measurement's identity.
 
-```python
-def _stamp_replicate_index(
-    board: list[BoardEntry],
-    replicate_index: int,
-) -> list[BoardEntry]:
-    ...
-    if replicate_index <= 0:
-        return board
-    stamped: list[BoardEntry] = []
-    for entry in board:
-        context = dict(entry.context)
-        context[_REPLICATE_INDEX_CONTEXT_KEY] = str(replicate_index)
-        stamped.append(replace(entry, context=context))
-    return stamped
-```
-— `src/zicato/tournament/worker_transport.py`, `_stamp_replicate_index`
-
-`replicate_index == 0` returns the board **unchanged**, preserving object
-identity. Every single-replicate path — the gauntlet, the seed scoring,
-replicate 0 of a replicated matchup — is therefore byte-identical to the same
-path with no key stamped. A reader treats an absent key as replicate 0
-(`_entry_replicate_index`). The stamping is done ONCE per replicate pass, by
-`_run_replicated` (§6.5). The key must actually *reach* the harness rather than
-being dropped at some boundary; a boundary that drops it is the A/A calibration
-false-zero-floor case (`12-bug-casebook.md` case 3). See §6.15's worked adapter,
-whose noise draw depends on the key.
-
-> ⚠️ TRAP — `context` is a `dict[str, str]`: every stamped value is a decimal
-> string, and a reader must coerce (`int(raw or 0)`) and tolerate a malformed
-> value as 0 rather than raising inside a scoring run. `_entry_replicate_index`
-> is the reference reader.
+A seeded harness must include purpose and draw in its deterministic noise seed.
+Dropping either field can make distinct requested draws repeat one sample and
+underestimate evaluation noise (§6.15).
 
 ---
 
 ## 6.2 The unit cache — in full
 
-The cache is not an optimization bolted onto the runner; it is the *evaluator*.
-Every board unit of every structure flows through one function, and that
-function is where the cache lives.
+Every structure evaluates board units through `_run_unit_cache_first`.
 
-### 6.2.1 The choke point: `_run_unit_cache_first`
+### 6.2.1 Cache reuse precedes execution
 
-```python
-async def _run_unit_cache_first(
-    ...
-    force_fresh: bool = False,
-    provenance: dict[str, _UnitProvenance] | None = None,
-) -> LossProfile:
-    if not force_fresh:
-        cached = _resolve_cached_unit(...)
-        if cached is not None:
-            _record_provenance(provenance, generation.id, cached=True)
-            return cached
+`_run_unit_cache_first` returns an eligible cached loss unless `force_fresh` is
+set. On a miss it runs the worker, charges the fresh token spend to the round's
+ledger, and publishes the loss when its execution and abort provenance permit
+reuse. Cache hits launch no subprocess and incur no additional token charge.
 
-    loss = await _run_single(...)
-    if config.token_ledger is not None:
-        config.token_ledger.add(loss.tokens_spent)
-    ...
-    if is_infra_abort_cause(loss.abort_cause):
-        log.info("run %s/%s r%d aborted by infra (%s); NOT caching ...", ...)
-    else:
-        _persist_unit_loss(...)
-    _record_provenance(provenance, generation.id, cached=False)
-    return loss
-```
-— `src/zicato/tournament/scheduling.py`, `_run_unit_cache_first` (abridged)
-
-Its docstring states the universality plainly:
-
-```python
-    The single choke point through which EVERY board unit — champion and
-    challenger, every structure (gauntlet / racing / swiss / elim /
-    round-robin), every round — is evaluated. Before executing the unit
-    it consults :func:`_resolve_cached_unit`:
-
-    * HIT → the persisted per-replicate result is reused; ``_run_single``
-      is NOT called (no agent run);
-    * MISS → ``_run_single`` runs the unit once, and the result is
-      persisted via :func:`_persist_unit_loss` so the next need is a hit.
-```
-— `src/zicato/tournament/scheduling.py`, `_run_unit_cache_first`
-
-Three consequences an extender leans on:
-
-1. **The cache is always-on.** `force_fresh` (the `--mode full` semantics) is
-   the *only* bypass of the read; the default (`fast`) is simply "do not force
-   fresh". Fast mode is not a separate code path — it is the cache turned on.
-2. **A HIT spends nothing.** No agent run, no subprocess, no token. That is why
-   the per-round token ledger's `.add(loss.tokens_spent)` is guarded by "only a
-   fresh run" (§6.5.3): a cache hit above the `add` cannot double-count.
-3. **Provenance is recorded either way** so the journal's cached-vs-fresh
-   accounting (`_UnitProvenance`) is honest, and the champion-eval mode
-   (`fast` / `fast-degraded` / `full`) can be derived from the LEFT side's
-   tally (§6.5.2).
+The helper records cached or fresh provenance for either outcome. The runner
+uses the champion's cache state to report its evaluation mode (§6.5.2).
+`force_fresh` implements full-mode remeasurement; its artifact replacement
+follows the archive protocol below.
 
 ### 6.2.2 Physical artifacts and repeated attempts
 
-The measurement owner resolves every loss, events file, result capture, and
-judge capture beneath the existing entry run directory. Historical files remain
-at their original paths. Recorded seeds receive separate child directories:
+The measurement owner resolves losses and captures beneath each entry's run
+directory. Every artifact includes the purpose and draw, including draw zero:
 
 | Selection | Example loss path within an entry directory |
 |---|---|
-| Unknown historical seed | `loss.r2.json` |
-| Explicitly unseeded | `seed-none/loss.r2.json` |
-| Integer seed 17 | `seed-17/loss.r2.json` |
-| Integer seed -17 | `seed--17/loss.r2.json` |
+| Unseeded tournament draw zero | `seed-none/loss.tournament.r0.json` |
+| Seed 17, tournament draw two | `seed-17/loss.tournament.r2.json` |
+| Seed -17, confirmation draw zero | `seed--17/loss.evidence_confirmation.r0.json` |
 
-The runtime run identifier uses the same seed qualifier. A persisted record
-must agree with the epoch, generation, entry, purpose, draw, and seed encoded
-by its path. Traversal is
-centralized in `iter_measurement_artifacts`; request-facing readers select the
-invocation's seed, while audit readers can enumerate every seed and historical
-record.
+Events, run results, and judge captures use the same identity. For example,
+tournament draw two with seed 17 uses `seed-17/events.tournament.r2.jsonl`,
+`seed-17/result.tournament.r2.json`, and `seed-17/judge_io.tournament.r2.jsonl`.
+
+A persisted record must agree with its epoch, generation, entry, purpose, draw,
+and seed. `iter_measurement_artifacts` centralizes traversal. Request readers
+select the invocation's seed; audit readers can enumerate every recorded seed
+and retained attempt.
 
 Before rerunning a slot, `archive_unit_artifacts` copies its loss, events,
 result, judge capture, and produced files into a staging directory. It flushes
@@ -381,26 +284,10 @@ miss instead of turning an incomplete write into reusable evidence.
 
 ### 6.2.4 Infra aborts are never cached
 
-After the evaluate-once and canonical-replicate-slot rules, the cache rule that
-matters most is **the cache-only-budget-exhaustion rule**. From
-`_run_unit_cache_first`, verbatim:
-
-```python
-    # Do NOT cache an INFRA abort (a parent/supervisor kill or a worker
-    # crash). Persisting its worst-case loss would make it a permanent cache
-    # HIT for the rest of the epoch, poisoning this unit's score off a single
-    # transient blip — only ``--mode full`` would ever re-attempt it. A
-    # genuine wall-clock-budget exhaustion IS cached (re-running re-hits the
-    # same budget), and a cleanly-reduced run (no abort_cause) always is.
-    # Skipping the persist leaves the next need a correct MISS, so re-running
-    # re-attempts the unit. The provenance still counts it as a fresh (run,
-    # not reused) evaluation so the journal's fast/full accounting is honest.
-    if is_infra_abort_cause(loss.abort_cause):
-        log.info(...)
-    else:
-        _persist_unit_loss(...)
-```
-— `src/zicato/tournament/scheduling.py`, `_run_unit_cache_first`
+The **cache-only-budget-exhaustion rule** permits clean executions and worker
+wall-clock budget aborts to populate the cache. Infrastructure failures remain
+ineligible, so a transient failure does not become a reusable worst-case score.
+`_run_unit_cache_first` enforces this distinction with `is_infra_abort_cause`.
 
 The `abort_cause` field (`zicato.core.LossProfile.abort_cause`) is the whole
 mechanism. It is one of:
@@ -425,16 +312,13 @@ a slot.
 
 Scheduling omissions carry `execution_started=False` and the reason
 `scheduling_budget_exhausted`. They persist only as attempt siblings, such as
-`loss.r2.a1.json`, and never fill measurement slots. They have no task-abort
+`seed-none/loss.tournament.r2.a1.json`, and never fill measurement slots. They have no task-abort
 cause, task-failure result, or wall-clock timeout. Fresh-run counts exclude them.
 
-A historical `budget_exhausted` profile remains reusable when its own runtime,
-timestamps, token spend, or explicit start fact proves execution. A profile
-without such evidence is ambiguous: the cache logs a warning and retries it.
-Canonical and replicate evidence readers exclude the same record; the execution
-plan retains it among ambiguous records. The original file remains on disk and
-is archived when a real measurement replaces it. Absence of evidence does not
-establish that a task timed out.
+A loss without evidence of execution cannot satisfy a cache request or enter
+measurement evidence. Runtime, timestamps, token spend, and an explicit start
+fact distinguish execution from a scheduling omission. An unstarted attempt
+does not establish that the task timed out.
 
 The replicate fold preserves any unstarted draw. Generation aggregates exclude
 incomplete entries from measured scalars and list them in `incomplete_entries`.
@@ -466,7 +350,7 @@ unaveraged.**
 — `src/zicato/tournament/scoring.py`, `average_replicate_losses`
 
 The rule: a field the scalar or the gate reads is aggregated; a field neither
-reads carries the representative replicate (slot 0), and the docstring names
+reads carries the first requested draw, and the docstring names
 every pass-through with the reason it may be one. `dataclasses.replace` keeps
 the profile shape intact, so a field added to `LossProfile` later defaults to
 pass-through. A new field's treatment is therefore justified in that docstring
@@ -480,8 +364,7 @@ Three design choices that matter for the gate:
   decides the duel. `entry_score` reads `score` BEFORE `pass_fail`, and the
   reducer populates `score` whenever an expectation fired, since a bool matcher
   yields `1.0` or `0.0` too. An unfolded `score` would therefore leave
-  `mean_score`, the whole outcome term of the scalar, computed from slot 0
-  alone;
+  `mean_score`, the whole outcome term of the scalar, computed from the first requested draw alone;
 - the **strict**-majority vote (`true_count * 2 > len`) keeps a flaky entry
   from "passing" on a coin flip: a 1-of-2 split resolves to `False`. This vote
   is display-only for the scalar, because `entry_score` returns the folded
@@ -649,11 +532,11 @@ these locations once for execution. The worker argument document carries them
 under `driver_imports`; this channel is independent of the adapter's own worker
 specification and the environment scrubber.
 
-The worker accepts run coordinates from `runtime_context.run` before importing
-target code. Every retained top-level coordinate must agree with that record;
-conflicts fail before any run state or scratch directory is created. Older
-argument documents without `runtime_context` retain their top-level coordinates.
-The accepted record supplies `RuntimeConfig.run_context` throughout execution.
+The worker requires `runtime_context.run` for run coordinates and uses the
+accepted record as `RuntimeConfig.run_context`. The argument document also
+requires resolved configuration, driver import roots, and measurement identity.
+Measurement validation precedes scratch-directory creation and execution
+(§6.3.7).
 
 Coordinator entry points keep a process scope around operator code. The worker
 mounts its candidate snapshot before importing the driver, model roles, or
@@ -865,40 +748,24 @@ cleanup (the reaper handles orphans).
 
 ### 6.3.7 The args-file protocol, top to bottom
 
-The complete args-file shape (one run), from the worker's own `_load_args`
-docstring:
+The parent writes a JSON argument document. `_load_args` requires:
 
-```python
-        {
-          "workspace_root": "<abs path to .zicato dir>",
-          "epoch_id": "<epoch id>",
-          "generation_id": "<generation id>",
-          "snapshot_root": "<abs path to a per-run code-snapshot working copy>",
-          "scratch_dir": "<abs path to a per-run scratch dir OUTSIDE the snapshot>",
-          "entry": { ...BoardEntry as a dict (validate_board_entry shape)... },
-          "adapter": {
-            "kind": "adk",
-            "entrypoint": "module.path:agent_symbol",
-            "mutable_trees": ["<abs path>", ...]
-          },
-          "target_role":   {"dotted": "pkg.module:callable"} | {"models_role": {...}},
-          "evaluation_role": {"dotted": "pkg.module:callable"} | {"models_role": {...}},
-          "judge_role":     {"dotted": "pkg.module:callable"} | {"models_role": {...}},
-          "sink_events_path": "<abs path to events.jsonl>",
-          "loss_path": "<abs path to loss.json>",
-          "result_path": "<abs path the worker writes its result JSON to>",
-          "instance_id": "default",
-          "seed": null,
-          "harmonograf_url": ""
-        }
-```
-— `src/zicato/_tournament_worker.py`, `_load_args`
+- `runtime_context`, `configuration`, and `driver_imports` for run coordinates,
+  selected settings, and import locations;
+- `measurement` and `weights` for measurement identity and scoring;
+- `entry`, `adapter`, `target_role`, and `evaluation_role` for execution;
+- `sink_events_path`, `loss_path`, and `result_path` for output.
 
-The parent (`_run_single`) additionally threads `weights` (§6.3.5) and
-`configuration` (§6.3.2), and stamps the `generation_id` onto the serialized
-entry's `context` (so a session mounted on a throwaway snapshot can still
-identify which generation it is measuring — §6.15). The worker's lifecycle,
-in `_run`:
+Additional configured roles and telemetry metadata travel in the same document.
+`runtime_context.run` supplies the workspace, epoch, generation, snapshot, and
+scratch paths. Artifact paths include the seed, purpose, and draw (§6.2.2).
+The serialized entry also carries its generation id for harnesses mounted on
+ephemeral checkouts.
+
+The worker checks that the loss and events paths identify the same measurement
+and that the top-level record agrees with those paths and the runtime seed.
+It stamps the validated measurement into the entry context before these
+execution steps:
 
 1. Re-pin config (§6.3.2), export the scratch dir.
 2. `validate_board_entry(args["entry"])`, resolve the three role callables.
@@ -911,8 +778,7 @@ in `_run`:
    every ~3s and keeps beating through GIL-releasing LLM waits, so the
    supervisor's staleness watchdog does not false-positive on a slow model call.
 5. Build sinks (`JSONLPersistenceSink` + optional harmonograf), stamping the
-   latter with exact epoch/tournament/matchup/generation/entry/side/replicate
-   session labels for filtered operator navigation; build the
+   latter with epoch, tournament, matchup, generation, entry, side, purpose, and draw labels for filtered operator navigation; build the
    adapter, `session = adapter.load(snapshot_root)`. `load` fails CLOSED when a
    MUTABLE TREE could not be what runs (issue #110): every registered tree's
    top-level name must resolve under `snapshot_root` — already imported, or
@@ -930,29 +796,19 @@ in `_run`:
    — the first of three defence lines (§6.4).
 7. Close the sinks, then call `capture_run_artifacts(scratch_dir, loss_path)`.
    Capture sorts relative paths, copies only regular files without following
-   symlinks, hashes the bytes, atomically replaces the replicate's artifact
-   tree, and writes its manifest. It attaches the resulting `ArtifactSet` to
+   symlinks, hashes the bytes, atomically replaces the measurement's artifact tree, and writes its manifest. It attaches the resulting `ArtifactSet` to
    `RunResult` before `evaluate_expectation`, so a predicate can grade
    arbitrary produced files. Capture is bounded at 1,000 files and 100 MiB per
    run; skipped entries and truncation are explicit manifest data.
-8. Evaluate the expectation, `reduce_loss` → `loss.json`, stamp the abort
+8. Evaluate the expectation, reduce the measurement loss, stamp the abort
    provenance (`abort_cause=BUDGET_ABORT_CAUSE` on a budget abort), write the
    result file (atomically, tmp→fsync→replace), remove the `active_runs` file
    on a clean exit.
 
-The result file the parent reads back:
-
-```python
-        {
-          "schema": "zicato.tournament_worker.result/1",
-          "run_result": { ...RunResult dict... } | null,
-          "loss_profile_path": "<abs path to loss.json>",
-          "runtime_ms": <int>,
-          "aborted": <bool>,
-          "abort_reason": "<symbolic reason or empty string>"
-        }
-```
-— `src/zicato/_tournament_worker.py`, `_write_result`
+The worker's result envelope records the run result, loss path, runtime,
+abort status, and measurement identity. The parent validates the returned
+measurement and persisted loss against its requested draw before accepting
+the result.
 
 > ⚠️ TRAP — the worker is killable by design, so "process gone + no result
 > file" is a NORMAL outcome rather than a crash. The parent treats a
@@ -1092,58 +948,32 @@ than subprocesses: in full mode each admitted unit runs champion + challenger
 concurrently, so `parallelism` units mean up to `2 × parallelism` run
 subprocesses alive at once.
 
-### 6.5.1 `_run_replicated` — the replication loop + index stamping
+### 6.5.1 Replication advances an explicit measurement draw
 
-`_run_replicated` (`scheduling.py`) is the entry point `run_matchup` calls. It
-runs the paired board `replicates` times, each on its own cache slot, and
-averages:
+`_run_replicated` accepts `first_measurement` and a positive `replicates` count.
+Each pass uses `first_measurement.offset(i)` and stamps that record into the
+board entries. The invocation's selected seed accompanies every cache request
+and executed measurement. Ordinary matchups begin at tournament draw zero;
+evidence confirmation supplies the confirmation purpose.
 
-```python
-    replicate_index = replicate_base + replicate_offset
-    left_losses, right_losses = await _run_board_units_full(
-        ...
-        board=_stamp_replicate_index(board, replicate_index),
-        ...
-        replicate_index=replicate_index,
-        force_fresh=force_fresh,
-        provenance=provenance,
-        matchup_deadline=matchup_deadline,
-        unit_semaphore=unit_semaphore,
-    )
-    runs.append((left_losses, right_losses))
-```
-— `src/zicato/tournament/scheduling.py`, `_run_replicated`
+When neither budget requires sequential scheduling, entry chains overlap:
+each entry's next draw starts after its preceding draw settles, while different
+entries share one concurrency semaphore. Budgeted paths run draw passes in
+order and account for every requested draw after budget exhaustion. Both paths
+fold per-entry losses before generation aggregation.
 
-Each replicate offset keys a distinct slot (`replicate_base + replicate_offset`,
-under the disjoint-reserved-bases rule), and the board is
-`_stamp_replicate_index`-ed once per pass (§6.1.2).
-Because each slot is cache-first, requesting R replicates when r<R already exist
-runs only the missing `R − r` — replication is incremental. `replicate_base`
-defaults to 0 (every tournament matchup), and the evidence pre-gate passes the
-reserved `EVIDENCE_REPLICATE_BASE` so its extra draws never touch canonical
-slots.
+Reuse is incremental: requesting R draws with r eligible cached draws executes
+only the missing R − r draws. Full mode remeasures each requested draw and
+archives its preceding artifacts.
 
-### 6.5.2 The champion-eval mode is decided PRE-run
+### 6.5.2 The champion evaluation mode uses the initial cache state
 
-```python
-    if force_fresh:
-        mode = "full"
-    else:
-        left_fully_cached = all(
-            _resolve_cached_unit(..., generation_id=left_gen.id, ...,
-                                 replicate_index=replicate_base + r) is not None
-            for r in range(replicate_count)
-            for entry in board
-        )
-        mode = "fast" if left_fully_cached else "fast-degraded"
-```
-— `src/zicato/tournament/scheduling.py`, `_run_replicated`
-
-The snapshot is taken **before** any unit runs, because a MISS re-persists
-immediately — reading the provenance afterward would always look cached. `full`
-= fast not requested; `fast` = every left (champion) unit already cached from a
-prior round / its seed; `fast-degraded` = fast requested but at least one left
-unit had to run live. Only the LEFT side's provenance drives the label.
+Before execution, `_run_replicated` checks every requested champion entry and
+`first_measurement.offset(i)` under the selected seed. It reports `fast` when
+all are cached, `fast-degraded` when at least one is missing, and `full` when
+fresh execution is required. Checking before publication prevents newly
+completed work from being reported as reuse. Challenger cache state does not
+change this label.
 
 ### 6.5.3 The per-round token ledger (opt-in, latching)
 
@@ -1235,17 +1065,12 @@ their resource owners before the invocation drains retained workers. An empty
 retained-owner registry is sufficient only after every tournament task has
 finished unwinding.
 
-> ⛔ The run id names a board unit — `(generation, entry, replicate)` — rather
-> than a `(generation, entry)` pair. Build it ONLY through
-> `zicato.core.workspace.run_id_for_unit`; replicate 0 returns
-> `{generation_id}--{entry_id}` and `r>0` prefixes that with a reserved
-> `r{index}.` marker. It keys the `active_runs` record, the supervisor's
-> kill-request marker, and the run's telemetry span, so two units sharing an id
-> share those artifacts and the later writer wins (issue #250). A hand-rolled
-> f-string at a call site is how two units come to share an id. Every generation
-> id is `v{n}` (`next_generation_id`), so no replicate-0 id can begin `r` +
-> digits + `.`: the two namespaces are disjoint without reserving any board
-> entry id.
+> Build runtime ids through `zicato.core.workspace.run_id_for_unit`. The id
+> includes selected seed, purpose, and draw, followed by a SHA-256 digest of
+> the epoch, generation, and entry. The digest keeps long entry names within
+> filesystem limits. The id keys active-run records, kill requests,
+> and telemetry. Omitting a coordinate lets distinct measurements overwrite
+> one another's runtime state.
 
 The `scorer.record(...)` fold happens the instant BOTH runs of a unit settle,
 BEFORE the unit returns — so a finished board's score materialises while sibling
@@ -1450,13 +1275,13 @@ evolve_once
           run_matchup=canonical board-unit runner)
         strategy schedules Matchup("gauntlet", replicates=2)
         run_matchup
-          ├─ resolve both competitors at replicate slots 0 and 1
+          ├─ resolve both competitors at tournament draws 0 and 1
           ├─ fast: cache hits are reused and missing slots execute
           ├─ full: both competitors execute freshly
           ├─ _average_losses per entry
           └─ aggregate_generation_score → evaluate_gate
         optional confirm_promotion_with_evidence
-          └─ fresh paired duels at EVIDENCE_REPLICATE_BASE + j
+          └─ paired evidence_confirmation draws numbered from zero
     resolve_field_verdict
       optional confirm_crowning_holdout
       integrity checks and operator overrides
@@ -1848,8 +1673,7 @@ disjoint board subsets sharing one draw. Every attempted draw consumes budget.
 
 Complete, distinct, non-tied confirmation duels enter the fit. Ties and unusable
 results remain in the observational audit; runner failures remain in the attempt
-records. Confirmation uses reserved slots `EVIDENCE_REPLICATE_BASE + j`, and its
-aggregates do not replace ordinary generation scores. This is the
+records. Confirmation uses `MeasurementDraw(MeasurementPurpose.CONFIRMATION, j)` and passes it as `first_measurement` with `cache_scores=False`. Its aggregates do not replace ordinary generation scores. This is the
 **distinct-draws-only rule** from the replicate-slot reuse case
 (`12-bug-casebook.md` case 8).
 
@@ -2202,38 +2026,23 @@ explicit context and the subprocess regressions no longer require the variable.
 The isolated checkout also contains accidental writes beside candidate source;
 its cleanup removes those writes after the run.
 
-**Step 6 — a stable run id, and the noise seed from stable identifiers.** A
-seeded or deterministic harness must derive its per-run identity and noise from
-STABLE identifiers rather than from the ephemeral snapshot path, which is a
-throwaway `ztw-snap-*` name. Recover the generation id and replicate index from the
-`entry.context` keys the runner stamped (§6.1.2), and build a run id unique per
-`(generation, entry, replicate)`:
+**Step 6 — stable measurement identity and noise.** Use
+`config.run_context.run_id` for the worker's runtime identity. It includes the
+seed, purpose, draw, and the digest of epoch, generation, and entry (§6.5.6). An ephemeral snapshot path
+changes on every execution and cannot identify a repeatable measurement.
 
-```python
-    context = dict(getattr(entry, "context", {}) or {})
-    generation = str(context.get(GENERATION_ID_CONTEXT_KEY, "") or "")
-    ...
-    parts = ["conv"]
-    if generation:
-        parts.append(generation)
-    parts.append(str(entry.id))
-    if replicate:
-        parts.append(f"r{replicate}")
-    return "-".join(parts)
-```
-— `examples/zicato_examples/target_0_convergence/harness.py`, `_run_identifier`
+Read the measurement with `MeasurementDraw.from_context(entry.context)` and
+the generation from the runner-stamped generation context. The noisy example
+passes the measurement to
+`stable_noise_seed(workspace_seed, generation_key, entry_id, measurement)`.
+The helper hashes seed, generation, entry, purpose, and draw so repeated
+coordinates reproduce a sample and separate draws can vary.
 
-An id built from the entry alone, such as `conv-<entry>`, repeats across
-generations and replicates, so the index's `runs` rows (PRIMARY KEY `run_id`)
-silently overwrite one another as the lineage advances and only the last
-generation's runs survive. Recovering the generation and the replicate makes the
-id a pure function of the run's coordinate. The noisy session
-(`_NoisyPolicySession._measured_tokens`) seeds its random number generator from
-`stable_noise_seed(workspace_seed, generation, entry_id, replicate_index)`. That
-seed is the whole reason `_stamp_replicate_index` exists (§6.1.2), and it is the
-axis of the A/A calibration false-zero-floor case (`12-bug-casebook.md` case 3):
-if the replicate index never reaches the harness, every replicate draws the
-identical sample and the measured noise collapses to zero.
+The example normalizes an absent runtime seed to zero for deterministic test
+noise. Persisted provenance still records `null`; an unseeded cache request
+and a request for seed zero remain distinct. Test the full subprocess path:
+if purpose or draw disappears before the harness runs, repeated samples can
+produce a false zero noise estimate.
 
 **Verify**
 
@@ -2253,8 +2062,7 @@ uv run pytest tests/test_best_of_n_tree_integrity.py -q
   Ladder budget that governs when a holdout confirmation counts.
 - 05-proposer.md — where the challenger tree comes from. §"5.6.5 Mounting the
   chosen candidate" is the seam that enforces the
-  mounted-tree-matches-the-chosen-candidate rule; §"5.6.2 The candidate SCREEN"
-  owns replicate base 3000.
+  mounted-tree-matches-the-chosen-candidate rule; §"5.6.2 The candidate SCREEN" describes candidate-screen measurements.
 - 07-runtime-and-durability.md — `checkout_ephemeral` and the `ztw-snap-`
   contract; the atomic-write contract behind `loss.json`; the store inventory's
   per-run cache row; the generation store `derive_generation` all-or-nothing.
@@ -2268,13 +2076,13 @@ uv run pytest tests/test_best_of_n_tree_integrity.py -q
   test).
 - 12-bug-casebook.md — the cases this chapter's invariants close:
   - the replicate-cache clobbering case (case 1), closed by the
-    canonical-replicate-slot rule;
+    measurement-artifact-identity rule;
   - the A/A calibration false-zero-floor case (case 3), which §6.15 traces to
-    the replicate seed reaching the harness;
+    the measurement purpose and draw reaching the harness;
   - the best-of-N and field-path tree mismatch cases (cases 6 and 7), closed by
     the mounted-tree-matches-the-chosen-candidate rule;
   - the evidence-gate replicate-slot reuse case (case 8), closed by the
-    disjoint-reserved-bases and distinct-draws-only rules;
+    separate-measurement-purposes and distinct-draws-only rules;
   - the git re-derive and contract-hash checkout-path cases (cases 9 and 10),
     which the ephemeral-checkout path touches.
 - `docs/design/TOURNAMENT-STRUCTURES.md`, `docs/design/SELECTION.md`,

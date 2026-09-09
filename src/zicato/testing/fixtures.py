@@ -161,6 +161,15 @@ def make_loss_profile(**overrides: Any) -> LossProfile:
         "pass_fail": None,
     }
     kwargs.update(overrides)
+    if kwargs.get("measurement") is not None and "run_id" not in overrides:
+        from zicato.core.workspace import run_id_for_unit
+
+        kwargs["run_id"] = run_id_for_unit(
+            kwargs["generation_id"],
+            kwargs["entry_id"],
+            kwargs["measurement"],
+            epoch_id=kwargs["epoch_id"],
+        )
     return LossProfile(**kwargs)
 
 

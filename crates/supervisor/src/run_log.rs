@@ -365,16 +365,27 @@ fn is_events_file(path: &Path) -> bool {
     let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
         return false;
     };
-    if name == "events.jsonl" {
-        return true;
-    }
-    let Some(index) = name
-        .strip_prefix("events.r")
-        .and_then(|value| value.strip_suffix(".jsonl"))
+    let Some(stem) = name
+        .strip_prefix("events.")
+        .and_then(|s| s.strip_suffix(".jsonl"))
     else {
         return false;
     };
-    !index.is_empty() && !index.starts_with('0') && index.chars().all(|ch| ch.is_ascii_digit())
+    let Some((purpose, draw)) = stem.rsplit_once(".r") else {
+        return false;
+    };
+    matches!(
+        purpose,
+        "tournament"
+            | "calibration"
+            | "contract_preflight"
+            | "candidate_screen"
+            | "evidence_confirmation"
+            | "board_reflection"
+            | "eval_synthesis_admission"
+    ) && !draw.is_empty()
+        && (draw == "0" || !draw.starts_with('0'))
+        && draw.chars().all(|ch| ch.is_ascii_digit())
 }
 
 /// Assemble `GET /api/run-log`. Never fails: a missing/absent log file
@@ -458,7 +469,7 @@ mod tests {
     #[test]
     fn tail_returns_last_n() {
         let (_t, p) = ws();
-        let f = p.epochs.join("events.jsonl");
+        let f = p.epochs.join("events.tournament.r0.jsonl");
         let mut body = String::new();
         for i in 0..10 {
             body.push_str(&format!(
@@ -519,7 +530,7 @@ mod tests {
             .join("r1");
         std::fs::create_dir_all(&gen_dir).unwrap();
         std::fs::write(
-            gen_dir.join("events.jsonl"),
+            gen_dir.join("events.tournament.r0.jsonl"),
             "{\"sequence\":5,\"taskCompleted\":{\"summary\":\"done\"}}\n",
         )
         .unwrap();
@@ -534,12 +545,12 @@ mod tests {
         let run = p.epochs.join("e0/generations/v0/runs/entry");
         std::fs::create_dir_all(&run).unwrap();
         std::fs::write(
-            run.join("events.r7.jsonl"),
+            run.join("events.tournament.r7.jsonl"),
             "{\"sequence\":7,\"runCompleted\":{}}\n",
         )
         .unwrap();
         std::fs::write(
-            run.join("events.r8.prev.jsonl"),
+            run.join("events.tournament.r8.prev.jsonl"),
             "{\"sequence\":99,\"runFailed\":{}}\n",
         )
         .unwrap();

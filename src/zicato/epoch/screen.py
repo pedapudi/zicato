@@ -28,12 +28,10 @@ every screen run is an **ephemeral** evaluation — the candidate's patches
 are applied into a tempdir scratch (never ``derive_generation``; the real
 lineage is untouched), the :class:`~zicato.core.Generation` id is a
 ``{parent}-screen-r{round}c{i}`` name that can never match a real ``v\\d+``
-generation, and the board is stamped with the reserved
-:data:`SCREEN_REPLICATE_BASE` so the unit cache slots can never collide
-with — or pre-seed — a real duel (0..), the A/A calibration (1000..), the
-contract pre-flight (2000..) or the evidence gate (4000..); see the
-reserved-ladder note on
-:data:`zicato.selection.evidence_gate.EVIDENCE_REPLICATE_BASE`. The
+generation. The board context and runner arguments carry the
+``candidate_screen`` measurement purpose and local draw number. The cache
+records the runtime seed and keeps screening separate from tournament,
+calibration, preflight, and confirmation measurements. The
 phantom ``generations/{screen-id}`` directory the unit cache creates is
 removed in a ``finally:`` per candidate, and stale ``*-screen-*``
 directories from a crashed prior run are swept at entry (self-heal).
@@ -62,10 +60,7 @@ from zicato.core import (
     ScoringWeights,
 )
 from zicato.core.loss import BUDGET_ABORT_CAUSE, is_infra_abort_cause
-from zicato.core.measurement import SCREEN_REPLICATE_BASE as SCREEN_REPLICATE_BASE
-from zicato.core.measurement import (
-    validate_measurement_interval,
-)
+from zicato.core.measurement import MeasurementDraw, MeasurementPurpose, validate_measurement_count
 from zicato.core.types import Experiment
 from zicato.proposer.best_of_n import CandidateScreenResult
 from zicato.runtime.lock import WorkspaceLock
@@ -174,12 +169,12 @@ def sweep_stale_screen_dirs(workspace_root: Path, epoch_id: str) -> int:
 
     A crash between a screen run and its ``finally:`` cleanup can leave a
     phantom ``generations/{screen-id}`` directory (the unit cache writes
-    its per-replicate ``loss.json`` there). Screen generations are
+    its measurement loss files there). Screen generations are
     ephemeral by contract — nothing may read them back — so any survivor
     is stale garbage: sweep them at screen entry. Returns the number of
     directories removed. Best-effort; a failure to remove is logged and
-    skipped (the reserved replicate base keeps even a stale slot from
-    colliding with anything real).
+    skipped. The screen generation id and measurement purpose keep stale
+    screening records separate from tournament measurements.
     """
     from zicato.workspace import WorkspaceLayout, generation_ids  # noqa: PLC0415
 
@@ -220,9 +215,8 @@ async def run_candidate_screen(
 
     Per candidate: apply its patches into a tempdir scratch (the real
     lineage is never touched), run the panel through the SAME board-unit
-    runner every duel uses (reserved replicate
-    :data:`SCREEN_REPLICATE_BASE`; the ephemeral checkout falls out of the
-    store-unmanaged generation id automatically), aggregate the panel
+    runner every duel uses (``candidate_screen`` draw zero; the unregistered
+    generation id selects an ephemeral checkout), aggregate the panel
     scalar, and classify:
 
     * candidate unit INFRA-aborted (:func:`is_infra_abort_cause`) — NO
@@ -231,7 +225,7 @@ async def run_candidate_screen(
       exhaustion is deterministic; re-running re-hits the same budget).
     * candidate FAILS an entry the champion baseline PASSES — a
       pass-flip, subject to **confirm-before-veto**: the flipped entries
-      re-run ONCE at ``SCREEN_REPLICATE_BASE + 1``, and only a flip that
+      rerun once at ``candidate_screen`` draw one, and only a flip that
       flips TWICE vetoes. Under per-entry flip probability ``p`` (harness
       noise) the false-veto probability is bounded near ``p²`` per entry
       instead of ``p``.
@@ -241,7 +235,7 @@ async def run_candidate_screen(
     never fail (or empty) a propose step. Result strings carry counts
     only, never entry ids.
     """
-    validate_measurement_interval(SCREEN_REPLICATE_BASE, 2)
+    validate_measurement_count(2)
     from zicato.tournament.runner import drain_worker_cleanup  # noqa: PLC0415
 
     async with workspace_writer(
@@ -317,7 +311,7 @@ async def _screen_one_candidate(
     from zicato.tournament.worker_transport import (  # noqa: PLC0415
         _stamp_disable_drift,
         _stamp_judge_only,
-        _stamp_replicate_index,
+        _stamp_measurement,
     )
 
     screen_id = f"{parent_gen.id}{_SCREEN_ID_MARKER}r{round_index}c{index}"
@@ -348,17 +342,15 @@ async def _screen_one_candidate(
                 writer=writer,
                 adapter=adapter,
                 child_gen=screen_gen,
-                # Stamped like the calibration/pre-flight draws: seeded
-                # harness noise derives from the STAMPED index, so a screen
-                # run is an independent sample, and the reserved slot keeps
-                # its cache entry out of every real duel's way.
-                board=_stamp_replicate_index(stamped, SCREEN_REPLICATE_BASE),
+                # Pass measurement identity to the harness so screening has a
+                # distinct random stream and cannot reuse tournament evidence.
+                board=_stamp_measurement(stamped, MeasurementDraw(MeasurementPurpose.SCREEN, 0)),
                 weights=weights,
                 config=config,
                 workspace_root=workspace_root,
                 epoch_id=epoch_id,
                 match_id=f"candidate-screen:r{round_index}:c{index}",
-                replicate_index=SCREEN_REPLICATE_BASE,
+                measurement=MeasurementDraw(MeasurementPurpose.SCREEN, 0),
             )
 
             budget_aborts = 0
@@ -380,7 +372,7 @@ async def _screen_one_candidate(
                     flipped.append(entry)
 
             # Confirm-before-veto: each flipped entry re-runs ONCE at the
-            # reserved confirm slot; only a twice-flipped entry vetoes.
+            # separate confirmation draw; only a twice-flipped entry vetoes.
             # Skipped when a budget abort already vetoes (nothing to buy).
             confirmed_flips = 0
             if flipped and budget_aborts == 0:
@@ -388,13 +380,15 @@ async def _screen_one_candidate(
                     writer=writer,
                     adapter=adapter,
                     child_gen=screen_gen,
-                    board=_stamp_replicate_index(flipped, SCREEN_REPLICATE_BASE + 1),
+                    board=_stamp_measurement(
+                        flipped, MeasurementDraw(MeasurementPurpose.SCREEN, 1)
+                    ),
                     weights=weights,
                     config=config,
                     workspace_root=workspace_root,
                     epoch_id=epoch_id,
                     match_id=f"candidate-screen-confirm:r{round_index}:c{index}",
-                    replicate_index=SCREEN_REPLICATE_BASE + 1,
+                    measurement=MeasurementDraw(MeasurementPurpose.SCREEN, 1),
                 )
                 for entry in flipped:
                     confirm = confirm_losses.get(entry.id)
@@ -482,7 +476,6 @@ def _summarize(
 
 
 __all__ = [
-    "SCREEN_REPLICATE_BASE",
     "ScreenPanel",
     "run_candidate_screen",
     "screen_generation_round",

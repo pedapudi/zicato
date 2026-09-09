@@ -7,8 +7,9 @@ from pathlib import Path
 
 import pytest
 
+from zicato.core.measurement import TOURNAMENT_DRAW
 from zicato.core.types import Generation, ScoringWeights
-from zicato.core.workspace import loss_profile_path
+from zicato.core.workspace import loss_profile_path, run_id_for_unit
 from zicato.epoch.journal import write_experiment
 from zicato.epoch.lifecycle import new_epoch
 from zicato.epoch.lineage import append_to_lineage, register_epoch
@@ -32,6 +33,7 @@ from zicato.testing.fixtures import (
     make_outcome_record,
     make_patch,
 )
+from zicato.tournament.scoring import write_gen_score
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -115,12 +117,14 @@ def _seed_chain(ws: Path, epoch_id: str) -> None:
     write_experiment(ws, epoch_id, "v1", exp)
 
     profile = make_loss_profile(
-        run_id=f"run_{epoch_id}_v1_e1",
+        measurement=TOURNAMENT_DRAW,
+        run_id=run_id_for_unit("v1", "e1", epoch_id=epoch_id),
         entry_id="e1",
         generation_id="v1",
         epoch_id=epoch_id,
     )
     write_loss_profile(profile, loss_profile_path(ws, epoch_id, "v1", "e1"))
+    write_gen_score(ws, epoch_id, "v1", {"generation_id": "v1", "base_seed": None, "scalar": 0.0})
 
 
 # ---------------------------------------------------------------------------
@@ -155,7 +159,7 @@ def test_rebuild_index_populates_tournament_id_on_runs(tmp_path: Path) -> None:
     tournament_id = f"{eid_a}:v0->v1"
     runs = runs_for_tournament(db, tournament_id)
     assert len(runs) == 1
-    assert runs[0]["run_id"] == f"run_{eid_a}_v1_e1"
+    assert runs[0]["run_id"] == run_id_for_unit("v1", "e1", epoch_id=eid_a)
     assert runs[0]["tournament_id"] == tournament_id
 
 
@@ -166,7 +170,7 @@ def test_rebuild_index_populates_tournament_id_on_loss_profiles(tmp_path: Path) 
     tournament_id = f"{eid_a}:v0->v1"
     losses = loss_profiles_for_tournament(db, tournament_id)
     assert len(losses) == 1
-    assert losses[0]["run_id"] == f"run_{eid_a}_v1_e1"
+    assert losses[0]["run_id"] == run_id_for_unit("v1", "e1", epoch_id=eid_a)
     assert losses[0]["tournament_id"] == tournament_id
 
 
@@ -203,7 +207,8 @@ def test_v0_seed_run_has_null_tournament_id(tmp_path: Path) -> None:
     ws, eid_a, _ = _build_two_epoch_workspace(tmp_path)
     # Add a v0 loss profile so a run exists.
     profile = make_loss_profile(
-        run_id=f"run_{eid_a}_v0_e1",
+        measurement=TOURNAMENT_DRAW,
+        run_id=run_id_for_unit("v0", "e1", epoch_id=eid_a),
         entry_id="e1",
         generation_id="v0",
         epoch_id=eid_a,
@@ -214,7 +219,7 @@ def test_v0_seed_run_has_null_tournament_id(tmp_path: Path) -> None:
     try:
         row = conn.execute(
             "SELECT tournament_id FROM runs WHERE run_id = ?",
-            (f"run_{eid_a}_v0_e1",),
+            (run_id_for_unit("v0", "e1", epoch_id=eid_a),),
         ).fetchone()
     finally:
         conn.close()
@@ -232,8 +237,8 @@ def test_runs_for_tournament_returns_only_matching_runs(tmp_path: Path) -> None:
     db = rebuild_index(ws)
     a_runs = runs_for_tournament(db, f"{eid_a}:v0->v1")
     b_runs = runs_for_tournament(db, f"{eid_b}:v0->v1")
-    assert {r["run_id"] for r in a_runs} == {f"run_{eid_a}_v1_e1"}
-    assert {r["run_id"] for r in b_runs} == {f"run_{eid_b}_v1_e1"}
+    assert {r["run_id"] for r in a_runs} == {run_id_for_unit("v1", "e1", epoch_id=eid_a)}
+    assert {r["run_id"] for r in b_runs} == {run_id_for_unit("v1", "e1", epoch_id=eid_b)}
 
 
 def test_runs_for_tournament_empty_for_unknown_id(tmp_path: Path) -> None:

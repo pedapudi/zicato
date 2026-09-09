@@ -22,8 +22,8 @@ import pytest
 import zicato_examples.target_0_convergence as _t0_pkg
 from tests._contract_pins import resolved_contract_with_proposer
 from tests._foe_support import stand_in_proposer_block
+from zicato.core.measurement import MeasurementDraw, MeasurementPurpose
 from zicato.epoch.lifecycle import _scoring_from_dict, new_epoch
-from zicato.selection.evidence_gate import EVIDENCE_REPLICATE_BASE
 from zicato_examples.target_0_convergence import mocks as t0_mocks
 
 EXAMPLE_DIR = Path(_t0_pkg.__file__).resolve().parent
@@ -132,24 +132,28 @@ def _assert_replicates_ran_at_reserved_slots(
 
     For each evidence replicate ``j`` and BOTH sides of the crowning pair,
     the per-unit draw persisted as ``loss.r{EVIDENCE_REPLICATE_BASE+j}.json``
-    next to — never over — the canonical ``loss.json``, and carries the
+    next to — never over — the canonical ``loss.tournament.r0.json``, and carries the
     slot-encoding matchup id the driver's audit guard keys on. The canonical
     slot itself belongs to the crowning tournament (no replicate tag).
     """
     for gen_id in ("v0", "v1"):
         runs_dir = workspace / "epochs" / epoch_id / "generations" / gen_id / "runs"
         for entry_id in _BOARD_ENTRY_IDS:
-            canonical = json.loads((runs_dir / entry_id / "seed-none" / "loss.json").read_text())
+            canonical = json.loads(
+                (runs_dir / entry_id / "seed-none" / "loss.tournament.r0.json").read_text()
+            )
             assert not str(canonical.get("match_id", "")).startswith(
-                "bt-replicate:"
+                "confirmation:"
             ), f"{gen_id}/{entry_id}: an evidence replicate clobbered the canonical slot"
             for j in range(replicates_run):
-                slot = EVIDENCE_REPLICATE_BASE + j
-                reserved = runs_dir / entry_id / "seed-none" / f"loss.r{slot}.json"
+                slot = MeasurementDraw(MeasurementPurpose.CONFIRMATION, j)
+                reserved = (
+                    runs_dir / entry_id / "seed-none" / f"loss.{slot.purpose}.r{slot.draw}.json"
+                )
                 assert reserved.exists(), f"{gen_id}/{entry_id}: no reserved draw at r{slot}"
                 profile = json.loads(reserved.read_text())
                 assert (
-                    profile.get("match_id") == f"bt-replicate:r{slot}:v0:v1"
+                    profile.get("match_id") == f"confirmation:r{slot.draw}:v0:v1"
                 ), f"{gen_id}/{entry_id}: r{slot} draw is not tagged with its slot"
 
 

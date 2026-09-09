@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from zicato.core.board import ExpectationKind
-from zicato.core.measurement import UNKNOWN_SEED, MeasurementDraw
+from zicato.core.measurement import MeasurementDraw
 
 # ---------------------------------------------------------------------------
 # Telemetry / loss
@@ -464,47 +464,28 @@ def validate_loss_identity(
     entry_id: str,
     measurement: MeasurementDraw | None,
 ) -> None:
-    """Require recorded coordinates to agree with the requested measurement.
-
-    Audit mappings without known seed provenance may omit coordinates.
-    Recorded coordinates must agree wherever present. Known seeds require
-    complete coordinates and the canonical runtime identifier for that draw.
-    """
+    """Require coordinates and runtime identity to agree with the requested measurement."""
     from zicato.core.workspace import run_id_for_unit  # noqa: PLC0415
 
-    missing = object()
-
     def value(name: str) -> Any:
-        return record.get(name, missing) if isinstance(record, Mapping) else getattr(record, name)
+        return record.get(name) if isinstance(record, Mapping) else getattr(record, name)
 
     actual = tuple(value(name) for name in ("epoch_id", "generation_id", "entry_id"))
-    expected = (epoch_id, generation_id, entry_id)
-    if any(
-        found is not missing and found != wanted
-        for found, wanted in zip(actual, expected, strict=False)
-    ):
+    if actual != (epoch_id, generation_id, entry_id):
         raise ValueError("recorded loss coordinates conflict with the requested cell")
-    if measurement is not None and measurement.base_seed is not UNKNOWN_SEED:
-        run_id = run_id_for_unit(
-            generation_id, entry_id, measurement.replicate_index, base_seed=measurement.base_seed
-        )
-        if actual != expected or value("run_id") != run_id:
-            raise ValueError("recorded loss runtime identity conflicts with the requested draw")
+    if measurement is not None and value("run_id") != run_id_for_unit(
+        generation_id, entry_id, measurement, epoch_id=epoch_id
+    ):
+        raise ValueError("recorded loss runtime identity conflicts with the requested draw")
 
 
 def capture_matches_loss(body: Mapping[str, Any], expected: LossProfile | None) -> bool:
-    """Require complete capture identity for a loss with recorded seed provenance.
-
-    Unpaired reads and unknown seeds remain available for audit;
-    accepting their capture bytes does not establish a measurement match.
-    """
+    """Whether a capture agrees with its paired loss; unpaired reads support inspection."""
     try:
         draw = MeasurementDraw.from_json(body["measurement"]) if "measurement" in body else None
     except (TypeError, ValueError):
         return False
     if expected is None or expected.measurement is None:
-        return True
-    if expected.measurement.base_seed is UNKNOWN_SEED:
         return True
     return (
         bool(expected.run_id)

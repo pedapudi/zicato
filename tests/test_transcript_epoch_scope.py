@@ -19,7 +19,7 @@ from zicato.workspace import WorkspaceLayout
 def _events(root: Path, epoch: str, identity: str) -> tuple[str, Path]:
     layout = WorkspaceLayout.from_root(root)
     if identity == "seeded":
-        run_id = run_id_for_unit("v0", "entry", base_seed=17)
+        run_id = run_id_for_unit("v0", "entry", base_seed=17, epoch_id=epoch)
         path = layout.events(epoch, "v0", "entry", base_seed=17)
     else:
         run_id = "recorded-run"
@@ -51,8 +51,8 @@ def test_requested_epoch_cannot_borrow_another_epochs_transcript(
 
 @pytest.mark.parametrize("identity", ["seeded", "opaque"])
 def test_requested_epoch_selects_its_own_repeated_generation(tmp_path: Path, identity: str) -> None:
-    run_id, other = _events(tmp_path, "earlier", identity)
-    _, expected = _events(tmp_path, "requested", identity)
+    _, other = _events(tmp_path, "earlier", identity)
+    run_id, expected = _events(tmp_path, "requested", identity)
     assert other != expected
     paths = WorkspacePaths(tmp_path)
 
@@ -74,10 +74,10 @@ def test_omitted_epoch_retains_transcript_discovery(tmp_path: Path, identity: st
 
 def test_match_disambiguator_cannot_change_requested_epoch(tmp_path: Path) -> None:
     run = WorkspaceLayout.from_root(tmp_path).run_dir("available", "v0", "entry")
-    events = run / "seed-none" / "events.r1.jsonl"
+    events = run / "seed-none" / "events.tournament.r1.jsonl"
     events.parent.mkdir(parents=True)
     events.write_text('{"runId":"rung-run"}\n')
-    events.with_name("loss.r1.json").write_text(json.dumps({"match_id": "rung0"}))
+    events.with_name("loss.tournament.r1.json").write_text(json.dumps({"match_id": "rung0"}))
     paths = WorkspacePaths(tmp_path)
 
     assert resolve_transcript_events(paths, "missing", "v0", "entry", match_id="rung0") is None
@@ -86,15 +86,17 @@ def test_match_disambiguator_cannot_change_requested_epoch(tmp_path: Path) -> No
 
 @pytest.mark.parametrize("identity", ["seeded", "opaque"])
 def test_epoch_only_lookup_separates_identical_run_ids(tmp_path: Path, identity: str) -> None:
-    run_id, earlier = _events(tmp_path, "earlier", identity)
-    _, requested = _events(tmp_path, "requested", identity)
+    _, earlier = _events(tmp_path, "earlier", identity)
+    run_id, requested = _events(tmp_path, "requested", identity)
     paths = WorkspacePaths(tmp_path)
 
-    assert resolve_conversation(paths, run_id) == earlier
+    assert resolve_conversation(paths, run_id) == (requested if identity == "seeded" else earlier)
     assert resolve_conversation(paths, run_id, epoch="requested") == requested
     assert resolve_conversation(paths, run_id, epoch="missing") is None
-    assert resolve_conversation(paths, run_id, epoch="earlier") == earlier
-    assert find_run_events_path(paths, run_id) == earlier
+    assert resolve_conversation(paths, run_id, epoch="earlier") == (
+        None if identity == "seeded" else earlier
+    )
+    assert find_run_events_path(paths, run_id) == (requested if identity == "seeded" else earlier)
 
 
 @pytest.mark.parametrize("source", ["active", "events"])

@@ -44,6 +44,7 @@ from tests._runtime_builders import (
     record_tournament_score,
 )
 from zicato.core.board import BoardEntry
+from zicato.core.measurement import MeasurementDraw, MeasurementPurpose
 from zicato.core.runtime import RoundTokenLedger, RuntimeConfig
 from zicato.core.types import Generation, LossProfile
 from zicato.runtime.lock import WorkspaceLock, acquire_workspace_lock
@@ -89,10 +90,10 @@ def _generation(gen_id: str) -> Generation:
     )
 
 
-def _loss(entry_id: str, replicate_index: int) -> LossProfile:
+def _loss(entry_id: str, measurement: int) -> LossProfile:
     """A LossProfile tagged with the slot it came from."""
     return LossProfile(
-        run_id=f"{entry_id}-r{replicate_index}",
+        run_id=f"{entry_id}-r{measurement}",
         entry_id=entry_id,
         generation_id="v1",
         epoch_id="e1",
@@ -102,7 +103,7 @@ def _loss(entry_id: str, replicate_index: int) -> LossProfile:
         runtime_ms=1,
         wall_clock_budget_exceeded=False,
         expectation_result=None,
-        drift_loss=float(replicate_index),
+        drift_loss=float(measurement),
         pass_fail=None,
     )
 
@@ -123,16 +124,16 @@ class _UnitRecorder:
         self._dwell = dwell
         self._later_slot_started = asyncio.Event()
 
-    async def run(self, entry_id: str, replicate_index: int) -> None:
-        self.events.append(("start", entry_id, replicate_index))
-        if replicate_index > 0:
+    async def run(self, entry_id: str, measurement: int) -> None:
+        self.events.append(("start", entry_id, measurement))
+        if measurement > 0:
             self._later_slot_started.set()
-        if entry_id == self._hold_entry and replicate_index == 0:
+        if entry_id == self._hold_entry and measurement == 0:
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(self._later_slot_started.wait(), timeout=5.0)
         else:
             await asyncio.sleep(self._dwell)
-        self.events.append(("end", entry_id, replicate_index))
+        self.events.append(("end", entry_id, measurement))
 
     # -- readings taken from the recording -------------------------------
 
@@ -176,11 +177,11 @@ def _patch_full_unit(monkeypatch: pytest.MonkeyPatch, recorder: _UnitRecorder) -
     from zicato.tournament import scheduling as sched
 
     async def _fake_unit(
-        *, entry: BoardEntry, replicate_index: int = 0, scorer: Any = None, **_kw: Any
+        *, entry: BoardEntry, measurement: int = 0, scorer: Any = None, **_kw: Any
     ) -> tuple[LossProfile, LossProfile]:
         recorder.scorers.append(scorer)
-        await recorder.run(entry.id, replicate_index)
-        return _loss(entry.id, replicate_index), _loss(entry.id, replicate_index)
+        await recorder.run(entry.id, measurement.draw)
+        return _loss(entry.id, measurement.draw), _loss(entry.id, measurement.draw)
 
     monkeypatch.setattr(sched, "_run_full_board_unit", _fake_unit)
 
@@ -189,11 +190,11 @@ def _patch_fast_unit(monkeypatch: pytest.MonkeyPatch, recorder: _UnitRecorder) -
     from zicato.tournament import scheduling as sched
 
     async def _fake_unit(
-        *, entry: BoardEntry, replicate_index: int = 0, scorer: Any = None, **_kw: Any
+        *, entry: BoardEntry, measurement: int = 0, scorer: Any = None, **_kw: Any
     ) -> LossProfile:
         recorder.scorers.append(scorer)
-        await recorder.run(entry.id, replicate_index)
-        return _loss(entry.id, replicate_index)
+        await recorder.run(entry.id, measurement.draw)
+        return _loss(entry.id, measurement.draw)
 
     monkeypatch.setattr(sched, "_run_fast_board_unit", _fake_unit)
 
@@ -378,7 +379,7 @@ async def test_slot_maps_come_back_in_slot_order(
         workspace_root=writer.workspace_root,
         epoch_id="e1",
         match_id="m1",
-        replicate_base=0,
+        first_measurement=MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0),
         replicate_count=3,
         force_fresh=False,
         parent_force_fresh=None,
@@ -417,7 +418,7 @@ async def test_replicate_base_offsets_every_overlapped_slot(
         workspace_root=writer.workspace_root,
         epoch_id="e1",
         match_id="m1",
-        replicate_base=5000,
+        first_measurement=MeasurementDraw(MeasurementPurpose.REFLECTION, 0),
         replicate_count=2,
         force_fresh=False,
         parent_force_fresh=None,
@@ -425,7 +426,7 @@ async def test_replicate_base_offsets_every_overlapped_slot(
         unit_semaphore=None,
     )
 
-    assert {r for _phase, _entry, r in recorder.events} == {5000, 5001}
+    assert {r for _phase, _entry, r in recorder.events} == {0, 1}
 
 
 # ---------------------------------------------------------------------------
@@ -486,9 +487,9 @@ async def _run_fast_mode(
 
     async def _fake_sequential(**kwargs: Any) -> dict[str, LossProfile]:
         used.append("sequential")
-        replicate_index = int(kwargs["replicate_index"])
+        measurement = kwargs["measurement"]
         return {
-            entry.id: replace(_loss(entry.id, replicate_index), epoch_id=epoch_id)
+            entry.id: replace(_loss(entry.id, measurement.draw), epoch_id=epoch_id)
             for entry in board
         }
 

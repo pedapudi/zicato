@@ -21,6 +21,7 @@ from typing import Any
 
 import pytest
 
+from zicato.core.measurement import MeasurementDraw, MeasurementPurpose
 from zicato.telemetry.meta_loop import (
     SPAN_MATCHUP,
     SPAN_PHASE,
@@ -297,7 +298,7 @@ async def test_real_bounded_opens_matchup_span_with_worker_nested(
                     parent_gen=_Gen("v0"),
                     child_gen=_Gen("v1"),
                     board=board,
-                    replicate_index=0,
+                    measurement=MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0),
                     force_fresh=False,
                     provenance=None,
                     matchup_deadline=time.monotonic() + 3600.0,

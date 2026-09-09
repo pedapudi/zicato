@@ -57,7 +57,7 @@
 | `src/zicato/proposer/brief.py` | `ProposerBrief` / `load_brief` / `enforce_forbidden` — the operator's `brief.md` parser | 217 lines |
 | `src/zicato/proposer/skills.py` | `resolve_proposer_spec`, `load_proposer_skills`, `normalize_skill_body`, `parse_frontmatter` | 169 lines |
 | `src/zicato/core/proposer.py` | `ProposerSpec` / `ProposerSkill` — the hash-ready proposer identity types | — |
-| `src/zicato/epoch/screen.py` | The candidate-screen engine (`run_candidate_screen`, `select_screen_entries`, `ScreenPanel`, `SCREEN_REPLICATE_BASE`) | 468 lines |
+| `src/zicato/epoch/screen.py` | The candidate-screen engine (`run_candidate_screen`, `select_screen_entries`, `ScreenPanel`) | 468 lines |
 | `src/zicato/analyzer/process_exemplars.py` | The four-rule redaction machine (§5.8.3) for the opt-in process-exemplar channel | 678 lines |
 | `src/zicato/index/query.py` | `prior_experiments_for_epoch` (experiment memory), `mutation_point_track_record` (fertility map) | — |
 | `src/zicato/epoch/round_log.py` | The round-log event vocabulary the propose step emits into | 974 lines |
@@ -940,10 +940,7 @@ invariant with four clauses:
    length), or a per-candidate engine failure degrades to unscreened /
    no-signal — logged at debug; the selection then runs over the whole slate.
 4. **Confirm-before-veto.** A pass-flip (the candidate FAILS a panel entry the
-   champion's replicate-0 baseline PASSES) does not veto on one observation:
-   the flipped entries re-run ONCE at the reserved confirm slot
-   (`SCREEN_REPLICATE_BASE + 1 = 3001`), and only a flip that flips TWICE
-   vetoes. Under per-entry flip probability `p` (harness noise) the
+   champion's tournament draw-zero baseline PASSES) does not veto on one observation: the flipped entries rerun at `candidate_screen` draw 1, and only a repeated flip vetoes. Under per-entry flip probability `p` (harness noise) the
    false-veto probability is bounded near `p²` per entry instead of `p`.
    A **budget abort** vetoes immediately with no confirm run — a wall-clock
    exhaustion is deterministic; re-running re-hits the same budget.
@@ -954,9 +951,7 @@ The engine (`src/zicato/epoch/screen.py::run_candidate_screen`) evaluates each
 candidate on an **ephemeral** tree: `apply_patches` into a tempdir scratch —
 NEVER `derive_generation`; the real lineage is untouched — under a phantom
 generation id `{parent}-screen-r{round}c{i}` (can never match a real `v\d+`),
-with the board stamped at `SCREEN_REPLICATE_BASE = 3000` so its unit-cache
-slots can never collide with — or pre-seed — a real duel (see
-06-tournament-and-selection.md §6.1.1). The phantom
+with `MeasurementDraw(MeasurementPurpose.SCREEN, 0)` in the board context and runner arguments. The `candidate_screen` purpose separates these measurements from tournament evidence (see 06-tournament-and-selection.md §6.1.1). The phantom
 `generations/{screen-id}` dir the unit cache creates is removed in a
 `finally:` per candidate; `sweep_stale_screen_dirs` reaps crash leftovers at
 entry (self-heal).
@@ -991,7 +986,7 @@ Outcome classification per candidate, in order of precedence:
 
 `_build_candidate_screen_runner` (`src/zicato/evolve/round_context.py`) builds ONE
 closure per round binding: the rotating train panel (`select_screen_entries`
-over the champion's replicate-0 baseline), the parent generation, the frozen
+over the champion's tournament draw-zero baseline), the parent generation, the frozen
 weights/config, and the round index. Every propose site this round — the
 gauntlet's single challenger AND every slot of a multi-challenger field —
 screens on the SAME panel. Each invocation beats a `screening:r{round}`
@@ -1280,13 +1275,13 @@ Points where the trace changes under non-default knobs:
   in the episode's instructions and the skill bodies folded into the
   contract hash.
 - `screen_entries: 4` → after slot 2, `_screen_slate` runs each candidate on
-  the rotating 4-entry train panel at replicate 3000 (+3001 confirms);
+  the rotating 4-entry train panel at `candidate_screen` draw 0 (draw 1 confirms pass-flips);
   `candidate_screened` × 3 events; survivors feed selection; all-vetoed
   triggers the one revise.
 - a resume-in-place round → the propose step is SKIPPED entirely: the
   persisted experiment is re-validated once through the same hook (idempotent
   re-derive) and reused verbatim — "the proposer is non-deterministic; a
-  fresh proposal would invalidate the on-disk loss.json cache"
+  fresh proposal would invalidate the persisted measurement cache"
   (`evolve_once` step 6r).
 - the field path (`field_size > 1`) → `_propose_and_apply_challenger` per
   slot; each success is persisted (`write_experiment` + index ingest +
@@ -1328,7 +1323,7 @@ consumed by the wrapper. Frozen + slotted.)
 | `reason` | human-readable veto/clear summary | **COUNTS ONLY by contract** — never an entry id, never a question/output token; flows into the round log AND the restricted-visibility prompt via revise feedback |
 | `scalar` | aggregate panel scalar (lower = better) or `None` (no usable signal) | SELECTION-BIASED by construction — advisory tiebreak only, never journaled as evidence, never compared to tournament scalars |
 | `entries_screened` | panel size this candidate ran | `0` ⇒ "not screened (no signal)" in the critic block |
-| `baseline_passes` | champion replicate-0 passes on the panel — the flip-eligible subset | `0` on a cold start ⇒ crash-only screening, and no revise trigger by design |
+| `baseline_passes` | champion tournament draw-zero passes on the panel — the flip-eligible subset | `0` on a cold start ⇒ crash-only screening, and no revise trigger by design |
 | `candidate_passes` | candidate's panel passes | counts only |
 | `confirmed` | `True` iff the veto survived the confirm re-run (flipped twice) | immediate budget-abort vetoes carry `False` |
 
@@ -1727,7 +1722,7 @@ the leakage budget is ≤ `cap` windows per (champion, pattern-set) state.
 | **R4 — the identity corpus + scrub** | every DROPPED string value across the WHOLE file (≥ 12 chars — `_MIN_SCRUB_LEN`, so enum-ish strings don't mangle text) is substring-scrubbed out of every KEPT free-text value, longest-first; identity TOKENS (entry id, run/session/event ids, every raw task/invocation id) are scrubbed at ANY length on word boundaries; replacement is `[withheld]` | `_identity_corpus`, `_scrub_identity` | a drift detail that QUOTES the task prompt verbatim loses the quote mechanically — the defense-in-depth behind R1 |
 
 Two more structural guarantees: the extractor only ever reads
-`events.jsonl` files of the caller-supplied `train_entry_ids` under the
+measurement event files of the caller-supplied `train_entry_ids` under the
 champion generation (pattern-named entries are intersected with the slice;
 empty intersection ⇒ skipped) — "it never reads the board, so it cannot widen
 the slice it is given"; and drift-kind/severity enum wire forms are normalized
@@ -2186,9 +2181,7 @@ content with its own design doc).
 - 04-evaluation-statistics.md §5 — the Ladder budget that governs holdout
   queries; the slice everything in §5.8 hangs off is
   `docs/design/OVERFITTING.md` §3.
-- 06-tournament-and-selection.md §6.1.1 — where the screen's 3000/3001 slots
-  sit; §6.3 — why the screen's ephemeral trees and phantom dirs matter to the
-  reaper.
+- 01-orientation.md §4, G7 — measurement identity and purpose separation; 06-tournament-and-selection.md §6.3 — why screening uses ephemeral trees and phantom generation directories.
 - 07-runtime-and-durability.md §7.6.1 — the `proposing:`/`applying:`/
   `screening:` phases the propose step beats.
 - 09-dashboard-and-query.md §9.11 — how the server-projected pipeline stepper

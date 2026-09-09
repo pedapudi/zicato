@@ -44,8 +44,10 @@ from zicato.core.experiment import (
     OutcomeRecord,
     Patch,
 )
+from zicato.core.measurement import TOURNAMENT_DRAW
 from zicato.core.tournament import EXPERIMENTAL_TOURNAMENT_STRUCTURES
 from zicato.core.types import JudgeLoss, LossProfile
+from zicato.core.workspace import run_id_for_unit
 from zicato.epoch.journal import write_experiment
 from zicato.index.ingest import rebuild_index
 from zicato.telemetry.reducer import write_loss_profile
@@ -125,7 +127,8 @@ def _run(
     round reused rather than re-ran.
     """
     profile = LossProfile(
-        run_id=run_id,
+        measurement=TOURNAMENT_DRAW,
+        run_id=run_id_for_unit(generation_id, entry_id, epoch_id=epoch_id),
         entry_id=entry_id,
         generation_id=generation_id,
         epoch_id=epoch_id,
@@ -166,6 +169,7 @@ def _gen_score(
         generation_id,
         {
             "drift_loss_mean": components.get("drift"),
+            "base_seed": None,
             "pass_rate": pass_rate,
             # The aggregator reports the pass rate here for a board whose
             # entries carry no continuous score.
@@ -676,14 +680,19 @@ def _write_epoch_spec(layout: WorkspaceLayout, spec: EpochSpec) -> dict[str, Any
                 runtime_ms=1000,
                 match_id=gen.matches[-1].match_id if gen.matches else "",
             )
-        if gen.scalar is not None:
+        if gen.scalar is not None or gen.entries:
+            scalar = (
+                gen.scalar
+                if gen.scalar is not None
+                else sum(drift for _, drift, _ in gen.entries) / len(gen.entries)
+            )
             _gen_score(
                 layout,
                 spec.id,
                 gen.id,
-                scalar=gen.scalar,
+                scalar=scalar,
                 pass_rate=1.0 if all(p for _e, _d, p in gen.entries) else 0.0,
-                components={"drift": gen.scalar},
+                components={"drift": scalar},
                 per_entry={
                     entry_id: {
                         "drift_loss": drift,

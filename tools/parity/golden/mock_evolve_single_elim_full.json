@@ -898,7 +898,7 @@
     "0/round_log.jsonl": [
       {
         "payload": {
-          "contract_hash": "a728a4e760ede0d89b47963ee061d049f7a0e902dc8ddb86c061b091a47315cb"
+          "contract_hash": "bb4a245a839d5b110eb6d5a8aada77f27f081fbdc20cf8e1f93e3cd71f669614"
         },
         "scope": {},
         "seq": 1,
@@ -1112,7 +1112,6 @@
       {
         "payload": {
           "entry_id": "every_expectation_kind_demo",
-          "replicate": 0,
           "side": "parent"
         },
         "scope": {
@@ -1130,7 +1129,6 @@
       {
         "payload": {
           "entry_id": "every_expectation_kind_demo",
-          "replicate": 0,
           "side": "child"
         },
         "scope": {
@@ -1148,7 +1146,6 @@
       {
         "payload": {
           "entry_id": "picky_stakeholder_emulated",
-          "replicate": 0,
           "side": "parent"
         },
         "scope": {
@@ -1166,7 +1163,6 @@
       {
         "payload": {
           "entry_id": "picky_stakeholder_emulated",
-          "replicate": 0,
           "side": "child"
         },
         "scope": {
@@ -1184,7 +1180,6 @@
       {
         "payload": {
           "entry_id": "transformers_lay_audience",
-          "replicate": 0,
           "side": "parent"
         },
         "scope": {
@@ -1202,7 +1197,6 @@
       {
         "payload": {
           "entry_id": "transformers_lay_audience",
-          "replicate": 0,
           "side": "child"
         },
         "scope": {
@@ -1220,7 +1214,6 @@
       {
         "payload": {
           "entry_id": "transformers_progressive_scripted",
-          "replicate": 0,
           "side": "parent"
         },
         "scope": {
@@ -1238,7 +1231,6 @@
       {
         "payload": {
           "entry_id": "transformers_progressive_scripted",
-          "replicate": 0,
           "side": "child"
         },
         "scope": {
@@ -1256,7 +1248,6 @@
       {
         "payload": {
           "entry_id": "waffles_single",
-          "replicate": 0,
           "side": "parent"
         },
         "scope": {
@@ -1274,7 +1265,6 @@
       {
         "payload": {
           "entry_id": "waffles_single",
-          "replicate": 0,
           "side": "child"
         },
         "scope": {
@@ -1313,7 +1303,6 @@
       {
         "payload": {
           "entry_id": "every_expectation_kind_demo",
-          "replicate": 0,
           "side": "parent"
         },
         "scope": {
@@ -1331,7 +1320,6 @@
       {
         "payload": {
           "entry_id": "every_expectation_kind_demo",
-          "replicate": 0,
           "side": "child"
         },
         "scope": {
@@ -1349,7 +1337,6 @@
       {
         "payload": {
           "entry_id": "picky_stakeholder_emulated",
-          "replicate": 0,
           "side": "parent"
         },
         "scope": {
@@ -1367,7 +1354,6 @@
       {
         "payload": {
           "entry_id": "picky_stakeholder_emulated",
-          "replicate": 0,
           "side": "child"
         },
         "scope": {
@@ -1385,7 +1371,6 @@
       {
         "payload": {
           "entry_id": "transformers_lay_audience",
-          "replicate": 0,
           "side": "parent"
         },
         "scope": {
@@ -1403,7 +1388,6 @@
       {
         "payload": {
           "entry_id": "transformers_lay_audience",
-          "replicate": 0,
           "side": "child"
         },
         "scope": {
@@ -1421,7 +1405,6 @@
       {
         "payload": {
           "entry_id": "transformers_progressive_scripted",
-          "replicate": 0,
           "side": "parent"
         },
         "scope": {
@@ -1439,7 +1422,6 @@
       {
         "payload": {
           "entry_id": "transformers_progressive_scripted",
-          "replicate": 0,
           "side": "child"
         },
         "scope": {
@@ -1457,7 +1439,6 @@
       {
         "payload": {
           "entry_id": "waffles_single",
-          "replicate": 0,
           "side": "parent"
         },
         "scope": {
@@ -1475,7 +1456,6 @@
       {
         "payload": {
           "entry_id": "waffles_single",
-          "replicate": 0,
           "side": "child"
         },
         "scope": {
@@ -1514,7 +1494,6 @@
       {
         "payload": {
           "entry_id": "every_expectation_kind_demo",
-          "replicate": 0,
           "side": "parent"
         },
         "scope": {
@@ -1532,7 +1511,6 @@
       {
         "payload": {
           "entry_id": "every_expectation_kind_demo",
-          "replicate": 0,
           "side": "child"
         },
         "scope": {
@@ -1550,7 +1528,6 @@
       {
         "payload": {
           "entry_id": "picky_stakeholder_emulated",
-          "replicate": 0,
           "side": "parent"
         },
         "scope": {
@@ -1568,7 +1545,6 @@
       {
         "payload": {
           "entry_id": "picky_stakeholder_emulated",
-          "replicate": 0,
           "side": "child"
         },
         "scope": {
@@ -1586,7 +1562,6 @@
       {
         "payload": {
           "entry_id": "transformers_lay_audience",
-          "replicate": 0,
           "side": "parent"
         },
         "scope": {
@@ -1604,7 +1579,6 @@
       {
         "payload": {
           "entry_id": "transformers_lay_audience",
-          "replicate": 0,
           "side": "child"
         },
         "scope": {
@@ -1622,7 +1596,6 @@
       {
         "payload": {
           "entry_id": "transformers_progressive_scripted",
-          "replicate": 0,
           "side": "parent"
         },
         "scope": {
@@ -1640,7 +1613,6 @@
       {
         "payload": {
           "entry_id": "transformers_progressive_scripted",
-          "replicate": 0,
           "side": "child"
         },
         "scope": {
@@ -1658,7 +1630,6 @@
       {
         "payload": {
           "entry_id": "waffles_single",
-          "replicate": 0,
           "side": "parent"
         },
         "scope": {
@@ -1676,7 +1647,6 @@
       {
         "payload": {
           "entry_id": "waffles_single",
-          "replicate": 0,
           "side": "child"
         },
         "scope": {
@@ -1721,7 +1691,6 @@
       {
         "payload": {
           "entry_id": "every_expectation_kind_demo",
-          "replicate": 0,
           "side": "parent"
         },
         "scope": {
@@ -1739,7 +1708,6 @@
       {
         "payload": {
           "entry_id": "every_expectation_kind_demo",
-          "replicate": 0,
           "side": "child"
         },
         "scope": {
@@ -1757,7 +1725,6 @@
       {
         "payload": {
           "entry_id": "picky_stakeholder_emulated",
-          "replicate": 0,
           "side": "parent"
         },
         "scope": {
@@ -1775,7 +1742,6 @@
       {
         "payload": {
           "entry_id": "picky_stakeholder_emulated",
-          "replicate": 0,
           "side": "child"
         },
         "scope": {
@@ -1793,7 +1759,6 @@
       {
         "payload": {
           "entry_id": "transformers_lay_audience",
-          "replicate": 0,
           "side": "parent"
         },
         "scope": {
@@ -1811,7 +1776,6 @@
       {
         "payload": {
           "entry_id": "transformers_lay_audience",
-          "replicate": 0,
           "side": "child"
         },
         "scope": {
@@ -1829,7 +1793,6 @@
       {
         "payload": {
           "entry_id": "transformers_progressive_scripted",
-          "replicate": 0,
           "side": "parent"
         },
         "scope": {
@@ -1847,7 +1810,6 @@
       {
         "payload": {
           "entry_id": "transformers_progressive_scripted",
-          "replicate": 0,
           "side": "child"
         },
         "scope": {
@@ -1865,7 +1827,6 @@
       {
         "payload": {
           "entry_id": "waffles_single",
-          "replicate": 0,
           "side": "parent"
         },
         "scope": {
@@ -1883,7 +1844,6 @@
       {
         "payload": {
           "entry_id": "waffles_single",
-          "replicate": 0,
           "side": "child"
         },
         "scope": {

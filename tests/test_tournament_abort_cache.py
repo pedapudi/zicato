@@ -39,7 +39,7 @@ from zicato.core import (
     ScoringWeights,
     is_infra_abort_cause,
 )
-from zicato.core.measurement import MeasurementDraw
+from zicato.core.measurement import MeasurementDraw, MeasurementPurpose
 from zicato.core.workspace import loss_profile_path, run_id_for_unit
 from zicato.runtime.lock import acquire_workspace_lock
 from zicato.telemetry.reducer import read_loss_profile, write_loss_profile
@@ -50,7 +50,7 @@ from zicato.tournament.runner import (
     _run_unit_cache_first,
     run_tournament,
 )
-from zicato.tournament.worker_transport import _entry_replicate_index
+from zicato.tournament.worker_transport import _entry_measurement
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -144,7 +144,8 @@ def test_abort_cause_is_ingested_into_index(tmp_path: Path) -> None:
 
     # An infra-aborted run (parent kill) — write its loss.json then ingest.
     infra = make_loss_profile(
-        run_id="run_infra",
+        run_id=run_id_for_unit("v0", "e1", epoch_id=epoch_id),
+        measurement=MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0),
         entry_id="e1",
         generation_id="v0",
         epoch_id=epoch_id,
@@ -152,6 +153,9 @@ def test_abort_cause_is_ingested_into_index(tmp_path: Path) -> None:
         abort_cause="parent_kill",
     )
     write_loss_profile(infra, loss_profile_path(ws, epoch_id, "v0", "e1"))
+    from zicato.tournament.scoring import write_gen_score
+
+    write_gen_score(ws, epoch_id, "v0", {"generation_id": "v0", "base_seed": None, "scalar": 0.0})
     ingest_run(ws, None, epoch_id, "v0", "e1")
 
     from zicato.index.ingest import _default_db_path
@@ -160,7 +164,8 @@ def test_abort_cause_is_ingested_into_index(tmp_path: Path) -> None:
     conn = sqlite3.connect(str(db_path))
     try:
         row = conn.execute(
-            "SELECT abort_cause FROM loss_profiles WHERE run_id = ?", ("run_infra",)
+            "SELECT abort_cause FROM loss_profiles WHERE run_id = ?",
+            (run_id_for_unit("v0", "e1", epoch_id=epoch_id),),
         ).fetchone()
     finally:
         conn.close()
@@ -195,7 +200,11 @@ def _stub_run_single_returning(monkeypatch: pytest.MonkeyPatch, profile: LossPro
         return replace(
             profile,
             run_id=run_id_for_unit(
-                generation.id, entry.id, _entry_replicate_index(entry), base_seed=config.seed
+                generation.id,
+                entry.id,
+                _entry_measurement(entry),
+                base_seed=config.seed,
+                epoch_id=generation.epoch_id,
             ),
         )
 
@@ -249,7 +258,7 @@ def test_infra_abort_is_not_cached(
                 epoch_id="e0",
                 generation_id=gen.id,
                 entry_id=entry.id,
-                replicate_index=0,
+                measurement=MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0),
                 base_seed=None,
             )
             is None
@@ -295,7 +304,7 @@ def test_budget_abort_is_cached(monkeypatch: pytest.MonkeyPatch, tmp_path: Path)
             epoch_id="e0",
             generation_id=gen.id,
             entry_id=entry.id,
-            replicate_index=0,
+            measurement=MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0),
             base_seed=None,
         )
         assert cached is not None
@@ -355,7 +364,7 @@ def test_clean_run_is_cached(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
                 epoch_id="e0",
                 generation_id=gen.id,
                 entry_id=entry.id,
-                replicate_index=0,
+                measurement=MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0),
                 base_seed=None,
             )
             is not None
@@ -371,19 +380,19 @@ def _seed_champion_cache(ws: Path, parent_gen: Generation, board: list[BoardEntr
     """Persist a per-board champion loss.json so the parent side is a cache HIT."""
     for entry in board:
         profile = make_loss_profile(
-            run_id=run_id_for_unit(parent_gen.id, entry.id, base_seed=None),
+            run_id=run_id_for_unit(
+                parent_gen.id, entry.id, base_seed=None, epoch_id=parent_gen.epoch_id
+            ),
             entry_id=entry.id,
             generation_id=parent_gen.id,
             epoch_id=parent_gen.epoch_id,
             drift_loss=2.0,
             pass_fail=True,
-            measurement=MeasurementDraw.from_index(0, base_seed=None),
+            measurement=replace(MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0), base_seed=None),
         )
         write_loss_profile(
             profile,
-            loss_profile_path(ws, parent_gen.epoch_id, parent_gen.id, entry.id).parent
-            / "seed-none"
-            / "loss.json",
+            loss_profile_path(ws, parent_gen.epoch_id, parent_gen.id, entry.id),
         )
 
 
@@ -409,7 +418,11 @@ def _stub_run_single_logging(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str,
         call_log.append((generation.id, entry.id))
         return make_loss_profile(
             run_id=run_id_for_unit(
-                generation.id, entry.id, _entry_replicate_index(entry), base_seed=config.seed
+                generation.id,
+                entry.id,
+                _entry_measurement(entry),
+                base_seed=config.seed,
+                epoch_id=generation.epoch_id,
             ),
             entry_id=entry.id,
             generation_id=generation.id,
@@ -544,7 +557,7 @@ def test_run_tournament_first_round_still_runs_champion(
             epoch_id=epoch_id,
             generation_id="v0",
             entry_id="entry_a",
-            replicate_index=0,
+            measurement=MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0),
             base_seed=None,
         )
         is not None

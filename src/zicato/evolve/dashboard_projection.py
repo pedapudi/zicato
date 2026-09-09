@@ -72,16 +72,23 @@ def _publish_active_tournament(
             write_active_tournament,
         )
 
-        # ``phase`` may arrive as the bare default ``"running"`` sentinel
-        # below or as a :class:`~zicato.runtime.state.TournamentPhase`
-        # member from a caller; both serialise to the same wire token.
-        # PRESERVE the runner-written live fields across a republish. The
-        # runner rewrites ``projected`` / ``partial_*_agg`` per settled board
-        # via its OWN read-modify-write; this full envelope republish (one per
-        # scheduled batch) would otherwise clobber them back to empty, killing
-        # the live projected standing. Carry them forward from the on-disk
-        # record so the two writers compose instead of racing to zero.
+        # A strategy republish retains results from this tournament's running matchups.
         prior = read_active_tournament(workspace_root)
+        if prior is not None and prior.tournament_id != tournament_id:
+            prior = None
+        if not standings and phase == "running":
+            standings = [
+                {
+                    "generation_id": c["generation_id"],
+                    "role": c.get("role", "challenger"),
+                    "rank": i,
+                    "scalar": None,
+                    "wins": 0,
+                    "losses": 0,
+                    "status": "competing",
+                }
+                for i, c in enumerate(competitors, 1)
+            ]
         projected = dict(prior.projected) if prior is not None else {}
         partial_champion = dict(prior.partial_champion_agg) if prior is not None else {}
         partial_challenger = dict(prior.partial_challenger_agg) if prior is not None else {}
@@ -238,71 +245,6 @@ def _serialise_rounds(rounds: Any) -> list[dict[str, Any]]:
     ]
 
 
-def _overlay_projected_live_progress(
-    rounds: list[dict[str, Any]],
-    workspace_root: Path,
-) -> None:
-    """Fold the runner's per-board ``projected`` into the rung ``live_progress``.
-
-    The racing strategy publishes the in-flight rung's per-lane
-    ``live_progress`` TOPOLOGY (which lanes are racing, each lane's
-    ``boards_total`` = the rung's board-slice size, the ``inflight`` flag,
-    and the lane's last-known running scalar vs the champion). The runner's
-    :class:`_IncrementalScorer` writes the live per-board ``projected`` map
-    (``{generation_id: {scalar, boards_done, boards_total, pass_rate}}``)
-    onto :attr:`ActiveTournament.projected` as each board unit settles. This
-    overlays the projected map onto the funnel field IN PLACE so each rung
-    lane carries
-    one authoritative progress row the dashboard consumes directly:
-
-    * ``boards_done`` — from the runner's projected row (the strategy can't
-      know mid-duel board progress).
-    * ``projected_scalar`` / ``projected`` — refreshed from the runner's
-      LIVE running aggregate when present (more current than the strategy's
-      last-rung scalar). The strategy's seeded scalar (a prior rung's
-      result) stays as the fallback when no live projected row exists yet.
-    * ``boards_total`` — kept from the strategy's authoritative rung-slice
-      size; only filled from the projected row when the strategy left it
-      unknown (whole-board fallback construction).
-
-    The separation of concerns is preserved: the STRATEGY owns the
-    ``live_progress`` topology (it is written into the serialised rounds),
-    the SCORER owns the ``projected`` scalars (read here from the on-disk
-    state). Best-effort — a missing / unreadable projected map leaves the
-    strategy-published ``live_progress`` untouched. Mutates ``rounds`` in
-    place; a no-op for any round whose matches carry no ``live_progress``
-    (every non-racing structure, and a racing rung before it is scheduled).
-    """
-    has_progress = any(m.get("live_progress") for r in rounds for m in (r.get("matches") or []))
-    if not has_progress:
-        return
-    try:
-        from zicato.runtime.state import read_active_tournament  # noqa: PLC0415
-
-        active = read_active_tournament(workspace_root)
-    except Exception:  # noqa: BLE001 — overlay is best-effort
-        active = None
-    projected = dict(active.projected) if active is not None else {}
-    if not projected:
-        return
-    for r in rounds:
-        for m in r.get("matches") or []:
-            lanes = m.get("live_progress")
-            if not lanes:
-                continue
-            for gid, lane in lanes.items():
-                proj = projected.get(str(gid))
-                if not isinstance(proj, dict):
-                    continue
-                if "boards_done" in proj:
-                    lane["boards_done"] = int(proj["boards_done"])
-                if "boards_total" in proj and "boards_total" not in lane:
-                    lane["boards_total"] = int(proj["boards_total"])
-                if "scalar" in proj:
-                    lane["projected_scalar"] = float(proj["scalar"])
-                    lane["projected"] = True
-
-
 def _serialise_standings(standings: Any) -> list[dict[str, Any]]:
     """Project a sequence of :class:`Standing` to the dashboard shape.
 
@@ -325,105 +267,6 @@ def _serialise_standings(standings: Any) -> list[dict[str, Any]]:
         }
         for s in standings
     ]
-
-
-def _overlay_projected_standings(
-    standings: list[dict[str, Any]],
-    rounds: list[dict[str, Any]],
-    workspace_root: Path,
-    structure: str,
-) -> list[dict[str, Any]]:
-    """Fold the runner's live PROJECTED standing onto the standings rows.
-
-    Reads :attr:`ActiveTournament.projected` (the runner's per-board
-    ``{generation_id: {scalar, boards_done, boards_total, pass_rate}}`` map)
-    and overlays it onto the matching standing rows for the competitors that
-    are IN FLIGHT — i.e. those appearing in a still-pending match of the
-    current live round. Each touched row gains ``projected_scalar``,
-    ``in_flight=True``, ``boards_done`` and ``boards_total``; settled rows
-    are left untouched (no ``in_flight`` key, original scalar).
-
-    Per-structure ranking rule (substitute the projected scalar into the
-    EXISTING sort key for the in-flight competitor ONLY):
-
-    * ``single_elim`` / ``double_elim`` / ``racing`` — scalar rank. The
-      projected scalar replaces the row's (still-zero) scalar in the sort
-      key, so an in-flight leader bubbles up live; settled rows keep their
-      real scalar.
-    * ``swiss`` — Copeland points are NEVER projected (a half-finished duel
-      has no win). The points-based rank is preserved; the projected
-      scalar only nudges the MEAN-SCALAR TIEBREAK among rows on equal points,
-      and the pairing is marked in-flight visually. Never re-ranks on points.
-    * ``gauntlet`` — not routed here (no multi-competitor standings).
-
-    Best-effort: a missing / unreadable projected map yields the input
-    standings unchanged.
-    """
-    if not standings:
-        return standings
-    try:
-        from zicato.runtime.state import read_active_tournament  # noqa: PLC0415
-
-        active = read_active_tournament(workspace_root)
-    except Exception:  # noqa: BLE001 — overlay is best-effort
-        active = None
-    projected = dict(active.projected) if active is not None else {}
-    if not projected:
-        return standings
-
-    # The IN-FLIGHT competitor set: every generation in a pending (unresolved)
-    # match of the live rounds. A row is only projected when its competitor is
-    # actually running right now — a stale projected row for a competitor whose
-    # match already settled must not override its real scalar.
-    in_flight: set[str] = set()
-    for r in rounds:
-        for m in r.get("matches", []) or []:
-            if not m.get("pending"):
-                continue
-            for g in m.get("competitors", []) or []:
-                if g:
-                    in_flight.add(str(g))
-
-    out: list[dict[str, Any]] = []
-    for s in standings:
-        row = dict(s)
-        gid = str(row.get("generation_id", ""))
-        proj = projected.get(gid)
-        if gid and gid in in_flight and isinstance(proj, dict) and "scalar" in proj:
-            row["in_flight"] = True
-            row["projected_scalar"] = float(proj["scalar"])
-            if "boards_done" in proj:
-                row["boards_done"] = int(proj["boards_done"])
-            if "boards_total" in proj:
-                row["boards_total"] = int(proj["boards_total"])
-        out.append(row)
-
-    def _scalar_key(row: dict[str, Any]) -> float:
-        # In-flight rows sort on the projected scalar (lower is better);
-        # settled rows keep their real scalar.
-        if row.get("in_flight") and isinstance(row.get("projected_scalar"), int | float):
-            return float(row["projected_scalar"])
-        sc = row.get("scalar")
-        return float(sc) if isinstance(sc, int | float) else float("inf")
-
-    if structure in ("single_elim", "double_elim", "racing"):
-        out.sort(key=_scalar_key)
-        for i, row in enumerate(out, start=1):
-            row["rank"] = i
-    elif structure == "swiss":
-        # Points-rank is authoritative; the projected scalar only breaks ties
-        # among rows on EQUAL wins (the mean-scalar tiebreak). Never re-rank on
-        # points — a half-finished duel has crowned no winner.
-        def _swiss_key(row: dict[str, Any]) -> tuple[int, float]:
-            wins = row.get("wins")
-            w = int(wins) if isinstance(wins, int) else 0
-            return (-w, _scalar_key(row))
-
-        out.sort(key=_swiss_key)
-        for i, row in enumerate(out, start=1):
-            row["rank"] = i
-    # Any other structure: overlay the markers but leave the published order.
-    return out
 
 
 def _open_field_tournament(

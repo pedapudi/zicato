@@ -29,8 +29,9 @@ from zicato.core import (
     RuntimeConfig,
     ScoringWeights,
 )
+from zicato.core.measurement import TOURNAMENT_DRAW, MeasurementPurpose
 from zicato.core.types import ExpectationResult, MetricCount
-from zicato.core.workspace import loss_profile_path
+from zicato.core.workspace import loss_profile_path, run_id_for_unit
 from zicato.epoch.journal import write_experiment
 from zicato.epoch.lifecycle import new_epoch
 from zicato.index.ingest import rebuild_index
@@ -301,10 +302,17 @@ def test_run_single_stamps_match_id_onto_loss_json(monkeypatch, tmp_path) -> Non
     from zicato.core.measurement import MeasurementDraw
     from zicato.tournament.unit_cache import _unit_loss_path
 
-    lpath = _unit_loss_path(ws, epoch_id, gen_id, entry_id, 0, base_seed=None)
+    lpath = _unit_loss_path(
+        ws,
+        epoch_id,
+        gen_id,
+        entry_id,
+        MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0),
+        base_seed=None,
+    )
     base = LossProfile(
         run_id=f"seed-none.{gen_id}--{entry_id}",
-        measurement=MeasurementDraw.from_index(0, base_seed=None),
+        measurement=replace(MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0), base_seed=None),
         entry_id=entry_id,
         generation_id=gen_id,
         epoch_id=epoch_id,
@@ -420,7 +428,7 @@ def _build_workspace_with_tagged_run(tmp_path: Path) -> tuple[Path, str]:
 
     # v1 run: tagged with a matchup id (the challenger ran within rung0_m1).
     tagged = LossProfile(
-        run_id=f"run_{eid}_v1_entry_a",
+        run_id=run_id_for_unit("v1", "entry_a", epoch_id=eid),
         entry_id="entry_a",
         generation_id="v1",
         epoch_id=eid,
@@ -433,12 +441,13 @@ def _build_workspace_with_tagged_run(tmp_path: Path) -> tuple[Path, str]:
         drift_loss=2.5,
         pass_fail=None,
         match_id="rung0_m1",
+        measurement=TOURNAMENT_DRAW,
     )
     write_loss_profile(tagged, loss_profile_path(ws, eid, "v1", "entry_a"))
 
     # v0 run: a legacy / untagged run (match_id left at the default "").
     untagged = LossProfile(
-        run_id=f"run_{eid}_v0_entry_a",
+        run_id=run_id_for_unit("v0", "entry_a", epoch_id=eid),
         entry_id="entry_a",
         generation_id="v0",
         epoch_id=eid,
@@ -450,8 +459,18 @@ def _build_workspace_with_tagged_run(tmp_path: Path) -> tuple[Path, str]:
         expectation_result=None,
         drift_loss=3.0,
         pass_fail=None,
+        measurement=TOURNAMENT_DRAW,
     )
     write_loss_profile(untagged, loss_profile_path(ws, eid, "v0", "entry_a"))
+    from zicato.tournament.scoring import write_gen_score
+
+    for generation_id in ("v0", "v1"):
+        write_gen_score(
+            ws,
+            eid,
+            generation_id,
+            {"generation_id": generation_id, "base_seed": None, "scalar": 0.0},
+        )
     return ws, eid
 
 

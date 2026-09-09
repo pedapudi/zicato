@@ -28,7 +28,7 @@ tournament worker's ``_build_adapter`` reconstruct from a dotted path.
 :class:`NoisyPolicyAdapter` (Tier 2) is the SEEDED-NOISE variant: true
 quality stays the policy's token set, but each run's measured pass/drift
 is a reproducible draw around it — the RNG seed derives only from
-``(workspace seed, generation id, entry id, replicate index)``, so the
+``(workspace seed, generation id, entry id, measurement purpose, local draw)``, so the
 stochastic operating characteristics of the decision procedure can be
 asserted in CI. See :func:`draw_measured_tokens`.
 """
@@ -43,6 +43,8 @@ from pathlib import Path
 from typing import Any
 
 from zicato.core import RunResult
+from zicato.core.measurement import MeasurementDraw
+from zicato.core.workspace import run_id_for_unit
 
 #: Where the policy lives inside a generation snapshot. The workspace
 #: registers the example's ``agent/`` directory as its mutable tree, so
@@ -60,16 +62,11 @@ KNOWN_DEFECTS = ("verbose-prose", "omit-summary", "skip-citations", "fabricate-m
 #: budget (see :data:`.predicates.CONCISE_MAX_CHARS`).
 _FILLER = "FILLER: " + "meandering prose that adds nothing " * 24
 
-#: ``BoardEntry.context`` keys carrying run provenance to the session.
-#: Kept in sync with the tournament runner's
-#: ``zicato.tournament.worker_transport._GENERATION_ID_CONTEXT_KEY`` /
-#: ``_REPLICATE_INDEX_CONTEXT_KEY`` — the two ends meet on these strings.
-#: The runner stamps the generation id onto every worker entry, and the
-#: replication loop stamps the replicate index for replicates > 0, so a
-#: session can derive its noise seed from stable identifiers even though
-#: it only ever sees an ephemeral snapshot copy with a throwaway name.
+#: The runner places the generation id in task context so the session can
+#: identify its source even in an ephemeral checkout. ``MeasurementDraw``
+#: reads purpose, local draw, and seed from the separate ``measurement`` value.
+
 GENERATION_ID_CONTEXT_KEY = "generation_id"
-REPLICATE_INDEX_CONTEXT_KEY = "replicate_index"
 
 #: Prefix of the INTERMITTENT defect-token form the noisy harness
 #: understands: ``sometimes-<pct>-<token>`` behaves as ``<token>`` with
@@ -85,18 +82,20 @@ def stable_noise_seed(
     workspace_seed: int,
     generation_key: str,
     entry_id: str,
-    replicate_index: int,
+    measurement: MeasurementDraw,
 ) -> int:
     """Derive one run's RNG seed from its stable identifiers.
 
     ``sha256`` over the joined identifier tuple, truncated to 64 bits.
     Deterministic across processes and interpreter versions (no
     ``hash()`` randomisation, no wall clock, no global RNG), so a run is
-    exactly reproducible given the same ``(workspace seed, generation,
-    entry, replicate)`` coordinate — and two coordinates that differ in
+    exactly reproducible given the same workspace seed, generation, entry,
+    purpose, and draw. Two coordinates that differ in
     ANY component draw independently.
     """
-    material = f"{workspace_seed}|{generation_key}|{entry_id}|{replicate_index}"
+    material = (
+        f"{workspace_seed}|{generation_key}|{entry_id}|{measurement.purpose}|{measurement.draw}"
+    )
     digest = hashlib.sha256(material.encode("utf-8")).digest()
     return int.from_bytes(digest[:8], "big")
 
@@ -248,33 +247,14 @@ def synthesize_output(entry_input: str, tokens: list[str]) -> str:
 
 
 def _run_identifier(entry: Any) -> str:
-    """One run's stable id, unique per ``(generation, entry, replicate)``.
-
-    The historical ``conv-<entry>`` id was REUSED across generations and
-    replicates, so the analytical index's ``runs`` rows (PRIMARY KEY
-    ``run_id``) were silently overwritten as the lineage advanced — only
-    the last generation's runs survived (task #11). The generation id and
-    replicate index are recovered from the same ``entry.context`` keys the
-    noisy session already reads (the runner stamps the generation onto
-    every worker entry; the replication loop stamps replicates > 0), so
-    the id is a pure function of the run's stable coordinate:
-    ``conv-<generation>-<entry>[-r<replicate>]``. An ad-hoc drive outside
-    the worker (no generation in context) keeps the historical
-    ``conv-<entry>`` form.
-    """
-    context = dict(getattr(entry, "context", {}) or {})
-    generation = str(context.get(GENERATION_ID_CONTEXT_KEY, "") or "")
-    try:
-        replicate = int(context.get(REPLICATE_INDEX_CONTEXT_KEY, "0") or 0)
-    except (TypeError, ValueError):
-        replicate = 0
-    parts = ["conv"]
-    if generation:
-        parts.append(generation)
-    parts.append(str(entry.id))
-    if replicate:
-        parts.append(f"r{replicate}")
-    return "-".join(parts)
+    """Use the runtime's measurement identity for the session and its files."""
+    context = entry.context
+    return run_id_for_unit(
+        context.get(GENERATION_ID_CONTEXT_KEY, ""),
+        entry.id,
+        MeasurementDraw.from_context(context),
+        epoch_id=context.get("epoch_id", ""),
+    )
 
 
 def _drift_event(run_id: str, sequence: int, token: str) -> Any:
@@ -554,10 +534,9 @@ class _NoisyPolicySession(_PolicySession):
     draw's RNG seed derives ONLY from stable identifiers — the workspace
     seed (``config.seed``), the generation id (stamped onto
     ``entry.context`` by the runner; content digest of the policy as the
-    ad-hoc fallback), the entry id, and the replicate index — so a run is
-    exactly reproducible in CI yet varies across replicates, generations,
-    and workspace seeds exactly like real noise. No wall clock, no global
-    RNG.
+    ad-hoc fallback), the entry id, measurement purpose, and local draw.
+    These inputs reproduce a draw across processes and vary its random stream
+    across measurements without depending on wall-clock time or global RNG state.
     """
 
     def __init__(self, generation_root: Path, noise_sigma: float) -> None:
@@ -578,15 +557,12 @@ class _NoisyPolicySession(_PolicySession):
             # content digest — still a stable identifier, never the
             # ephemeral snapshot path.
             generation_key = hashlib.sha256(policy_source.encode("utf-8")).hexdigest()
-        try:
-            replicate_index = int(context.get(REPLICATE_INDEX_CONTEXT_KEY, "0") or 0)
-        except (TypeError, ValueError):
-            replicate_index = 0
+        measurement = MeasurementDraw.from_context(entry.context)
         seed = stable_noise_seed(
             workspace_seed=int(getattr(config, "seed", None) or 0),
             generation_key=generation_key,
             entry_id=str(entry.id),
-            replicate_index=replicate_index,
+            measurement=measurement,
         )
         return draw_measured_tokens(tokens, random.Random(seed), self._noise_sigma)
 
@@ -676,7 +652,6 @@ __all__ = [
     "KNOWN_DEFECTS",
     "NoisyPolicyAdapter",
     "POLICY_RELPATH",
-    "REPLICATE_INDEX_CONTEXT_KEY",
     "draw_measured_tokens",
     "make_adapter",
     "make_noisy_adapter",

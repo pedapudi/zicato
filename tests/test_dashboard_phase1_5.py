@@ -62,7 +62,7 @@ def phase15_workspace(tmp_path: Path) -> Path:
 
     # Run 1 — predicate failure with full header metrics.
     _write_json(
-        runs_dir / "predicate_fail" / "loss.json",
+        runs_dir / "predicate_fail" / "seed-none" / "loss.tournament.r0.json",
         {
             "run_id": "run_predicate_fail",
             "entry_id": "predicate_fail",
@@ -88,7 +88,7 @@ def phase15_workspace(tmp_path: Path) -> Path:
     # counter set; budget exceeded flag set so the renderer can surface
     # the aborted-by-budget signal.
     _write_json(
-        runs_dir / "rubric_pass" / "loss.json",
+        runs_dir / "rubric_pass" / "seed-none" / "loss.tournament.r0.json",
         {
             "run_id": "run_rubric_pass",
             "entry_id": "rubric_pass",
@@ -114,7 +114,7 @@ def phase15_workspace(tmp_path: Path) -> Path:
 
     # Run 3 — no expectation attached (entries without ground truth).
     _write_json(
-        runs_dir / "no_expectation" / "loss.json",
+        runs_dir / "no_expectation" / "seed-none" / "loss.tournament.r0.json",
         {
             "run_id": "run_no_expectation",
             "entry_id": "no_expectation",
@@ -223,7 +223,7 @@ def test_expectation_outcomes_handles_list_shaped_legacy(tmp_path: Path) -> None
     run_dir = ws / "epochs" / epoch_id / "generations" / "v0" / "runs" / "entry_x"
     run_dir.mkdir(parents=True)
     _write_json(
-        run_dir / "loss.json",
+        run_dir / "seed-none" / "loss.tournament.r0.json",
         {
             "run_id": "r1",
             "entry_id": "entry_x",
@@ -304,7 +304,7 @@ def test_run_header_surfaces_adk_session_id(tmp_path: Path) -> None:
     run_dir = ws / "epochs" / epoch_id / "generations" / "v0" / "runs" / "x"
     run_dir.mkdir(parents=True)
     _write_json(
-        run_dir / "loss.json",
+        run_dir / "seed-none" / "loss.tournament.r0.json",
         {
             "run_id": "r1",
             "drift_loss": 0.1,
@@ -324,7 +324,7 @@ def test_run_header_skips_nested_loss_fields(tmp_path: Path) -> None:
     run_dir = ws / "epochs" / epoch_id / "generations" / "v0" / "runs" / "x"
     run_dir.mkdir(parents=True)
     _write_json(
-        run_dir / "loss.json",
+        run_dir / "seed-none" / "loss.tournament.r0.json",
         {
             "run_id": "r1",
             "drift_loss": 0.1,

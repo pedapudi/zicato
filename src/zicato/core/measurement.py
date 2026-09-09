@@ -1,10 +1,11 @@
-"""Measurement purpose, draw identity, and the integer storage encoding."""
+"""Measurement purpose, independent draw number, seed, and artifact paths."""
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Iterator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum, StrEnum
 from pathlib import Path
 from typing import Any
@@ -29,7 +30,7 @@ def seed_qualifier(base_seed: BaseSeed) -> str:
     return f"seed-{base_seed}"
 
 
-def _seed_from_qualifier(value: str) -> BaseSeed:
+def _seed_from_qualifier(value: str) -> int | None:
     if value == "seed-none":
         return None
     if value.startswith("seed-"):
@@ -56,196 +57,100 @@ class MeasurementPurpose(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
-class MeasurementRange:
-    """One purpose's half-open interval in the historical integer encoding."""
-
-    purpose: MeasurementPurpose
-    start: int
-    stop: int
-    own_code: bool
-    cell_evidence: bool = False
-
-    @property
-    def span(self) -> int:
-        return self.stop - self.start
-
-    def holds(self, index: int) -> bool:
-        return self.start <= index < self.stop
-
-
-MEASUREMENT_RANGES = (
-    MeasurementRange(MeasurementPurpose.TOURNAMENT, 0, 1000, True, True),
-    MeasurementRange(MeasurementPurpose.CALIBRATION, 1000, 2000, True),
-    MeasurementRange(MeasurementPurpose.PREFLIGHT, 2000, 3000, False),
-    MeasurementRange(MeasurementPurpose.SCREEN, 3000, 4000, False),
-    MeasurementRange(MeasurementPurpose.CONFIRMATION, 4000, 5000, True, True),
-    MeasurementRange(MeasurementPurpose.REFLECTION, 5000, 6000, True),
-    MeasurementRange(MeasurementPurpose.ADMISSION, 6000, 7000, True),
-)
-
-
-def measurement_range(purpose: MeasurementPurpose | str) -> MeasurementRange:
-    """Return the allocation owned by a named measurement purpose."""
-    for allocation in MEASUREMENT_RANGES:
-        if allocation.purpose == purpose:
-            return allocation
-    raise ValueError(f"unknown measurement purpose {purpose!r}")
-
-
-# Compatible imports for callers that still use integer replicate indices.
-CALIBRATION_REPLICATE_BASE = measurement_range(MeasurementPurpose.CALIBRATION).start
-CALIBRATION_REPLICATE_SPAN = measurement_range(MeasurementPurpose.CALIBRATION).span
-PREFLIGHT_REPLICATE_BASE = measurement_range(MeasurementPurpose.PREFLIGHT).start
-PREFLIGHT_REPLICATE_SPAN = measurement_range(MeasurementPurpose.PREFLIGHT).span
-SCREEN_REPLICATE_BASE = measurement_range(MeasurementPurpose.SCREEN).start
-EVIDENCE_REPLICATE_BASE = measurement_range(MeasurementPurpose.CONFIRMATION).start
-REFLECTION_REPLICATE_BASE = measurement_range(MeasurementPurpose.REFLECTION).start
-SYNTHESIS_REPLICATE_BASE = measurement_range(MeasurementPurpose.ADMISSION).start
-
-
-def range_at(index: int) -> MeasurementRange | None:
-    """Return the owner of an integer slot, or None for an unclaimed slot."""
-    return next((allocation for allocation in MEASUREMENT_RANGES if allocation.holds(index)), None)
-
-
-@dataclass(frozen=True, slots=True)
 class MeasurementDraw:
-    """A purpose-local draw and its selected execution seed.
-
-    Missing historical seed provenance is distinct from an explicitly
-    unseeded execution, whose base seed is None.
-    """
+    """The purpose, draw number, and seed of one measurement."""
 
     purpose: MeasurementPurpose
     draw: int
-    base_seed: BaseSeed = UNKNOWN_SEED
+    base_seed: int | None = None
 
     def __post_init__(self) -> None:
-        seed_qualifier(self.base_seed)
-        allocation = measurement_range(self.purpose)
-        if type(self.draw) is not int or not 0 <= self.draw < allocation.span:
-            raise ValueError(
-                f"measurement draw for {self.purpose!s} must be an integer in "
-                f"0..{allocation.span - 1}, got {self.draw!r}"
-            )
+        if not isinstance(self.purpose, MeasurementPurpose):
+            raise ValueError("measurement purpose must be a supported purpose")
+        if type(self.draw) is not int or self.draw < 0:
+            raise ValueError("measurement draw must be a nonnegative integer")
+        if self.base_seed is not None and type(self.base_seed) is not int:
+            raise ValueError("measurement base seed must be an integer or null")
+
+    def __lt__(self, other: MeasurementDraw) -> bool:
+        return (self.purpose, self.draw, seed_qualifier(self.base_seed)) < (
+            other.purpose,
+            other.draw,
+            seed_qualifier(other.base_seed),
+        )
 
     @property
-    def replicate_index(self) -> int:
-        """The compatible filename and harness-seed encoding."""
-        return measurement_range(self.purpose).start + self.draw
+    def own_code(self) -> bool:
+        """Whether this purpose evaluates the recorded generation's own source."""
+        return self.purpose not in {MeasurementPurpose.PREFLIGHT, MeasurementPurpose.SCREEN}
+
+    @property
+    def cell_evidence(self) -> bool:
+        return self.purpose in {MeasurementPurpose.TOURNAMENT, MeasurementPurpose.CONFIRMATION}
+
+    def offset(self, count: int) -> MeasurementDraw:
+        return replace(self, draw=self.draw + count)
+
+    @classmethod
+    def from_context(cls, context: Mapping[str, str]) -> MeasurementDraw:
+        raw = context.get("measurement")
+        return cls.from_json(json.loads(raw)) if raw is not None else TOURNAMENT_DRAW
 
     def to_json(self) -> dict[str, Any]:
-        value: dict[str, Any] = {"purpose": str(self.purpose), "draw": self.draw}
-        if self.base_seed is not UNKNOWN_SEED:
-            value["base_seed"] = self.base_seed
-        return value
+        return {"purpose": str(self.purpose), "draw": self.draw, "base_seed": self.base_seed}
 
     @classmethod
     def from_json(cls, value: Any) -> MeasurementDraw:
-        if not isinstance(value, Mapping) or set(value) not in (
-            {"purpose", "draw"},
-            {"purpose", "draw", "base_seed"},
-        ):
-            raise ValueError(
-                "measurement identity must contain purpose, draw, and optional base_seed"
-            )
-        return cls(
-            MeasurementPurpose(value["purpose"]),
-            value["draw"],
-            value.get("base_seed", UNKNOWN_SEED),
-        )
-
-    @classmethod
-    def from_index(cls, index: int, *, base_seed: BaseSeed = UNKNOWN_SEED) -> MeasurementDraw:
-        if type(index) is not int or (allocation := range_at(index)) is None:
-            raise ValueError(f"unclaimed measurement replicate index {index!r}")
-        return cls(allocation.purpose, index - allocation.start, base_seed)
+        if not isinstance(value, Mapping) or set(value) != {"purpose", "draw", "base_seed"}:
+            raise ValueError("measurement requires purpose, draw, and base_seed")
+        return cls(MeasurementPurpose(value["purpose"]), value["draw"], value["base_seed"])
 
 
-def validate_measurement_interval(
-    base: int, count: int, *, purpose: MeasurementPurpose | None = None, allow_empty: bool = False
-) -> MeasurementDraw:
-    """Validate the complete requested interval before any draw is scheduled."""
-    first = MeasurementDraw.from_index(base)
-    allocation = measurement_range(first.purpose)
+TOURNAMENT_DRAW = MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0)
+
+
+def validate_measurement_count(count: int, *, allow_empty: bool = False) -> None:
     minimum = 0 if allow_empty else 1
     if type(count) is not int or count < minimum:
         raise ValueError(f"measurement draw count must be an integer >= {minimum}, got {count!r}")
-    if purpose is not None and first.purpose != purpose:
-        raise ValueError(f"measurement index {base} belongs to {first.purpose}, not {purpose}")
-    if base + count > allocation.stop:
-        raise ValueError(
-            f"measurement interval [{base}, {base + count}) crosses the {first.purpose} "
-            f"range [{allocation.start}, {allocation.stop}); maximum count here is "
-            f"{allocation.stop - base}"
-        )
-    return first
 
 
 def recorded_measurement(
-    index: int, *, measurement: MeasurementDraw | None, match_id: str = ""
+    expected: MeasurementDraw, *, measurement: MeasurementDraw | None
 ) -> MeasurementDraw:
-    """Decode explicit identity or historical producer provenance without guessing conflicts."""
-    expected = MeasurementDraw.from_index(index)
-    if measurement is not None:
-        if (measurement.purpose, measurement.draw) != (expected.purpose, expected.draw):
-            raise ValueError(
-                f"ambiguous measurement: recorded {measurement.purpose} draw {measurement.draw} "
-                f"conflicts with slot {index}"
-            )
-        return measurement
-    prefixes = (
-        ("aa-calibration:", MeasurementPurpose.CALIBRATION),
-        ("contract-preflight:", MeasurementPurpose.PREFLIGHT),
-        ("candidate-screen", MeasurementPurpose.SCREEN),
-        ("bt-replicate:", MeasurementPurpose.CONFIRMATION),
-        ("reflection:", MeasurementPurpose.REFLECTION),
-        ("admission-", MeasurementPurpose.ADMISSION),
-    )
-    producer = next((purpose for prefix, purpose in prefixes if match_id.startswith(prefix)), None)
-    if producer is None and expected.purpose == MeasurementPurpose.TOURNAMENT:
-        return expected
-    if producer == expected.purpose:
-        return expected
-    raise ValueError(
-        f"ambiguous historical measurement at slot {index}: "
-        f"producer {match_id!r} does not establish purpose {expected.purpose}"
-    )
+    """Require the record to name the purpose and draw selected by its path."""
+    if measurement is None or (measurement.purpose, measurement.draw) != (
+        expected.purpose,
+        expected.draw,
+    ):
+        raise ValueError("recorded measurement conflicts with the selected purpose and draw")
+    return measurement
 
 
 def measurement_artifact_path(
-    run_dir: Path, artifact: str, index: int, *, base_seed: BaseSeed = UNKNOWN_SEED
+    run_dir: Path,
+    artifact: str,
+    measurement: MeasurementDraw,
+    *,
+    base_seed: BaseSeed = UNKNOWN_SEED,
 ) -> Path:
-    """Locate one draw without overwriting another seed or historical record."""
-    return run_dir / seed_qualifier(base_seed) / unit_artifact_name(artifact, index)
+    seed = measurement.base_seed if base_seed is UNKNOWN_SEED else base_seed
+    return run_dir / seed_qualifier(seed) / unit_artifact_name(artifact, measurement)
 
 
-def iter_measurement_artifacts(
-    run_dir: Path, artifact: str = "loss", *, include_aliases: bool = False
-) -> Iterator[Path]:
-    """Enumerate physical slots, including historical files and all recorded seeds.
-
-    Attempts remain separate from reusable slots. Unclaimed indices are
-    enumerated so audit readers can explain their exclusion. Audit readers
-    may include filename aliases, which never establish a valid physical slot.
-    """
+def iter_measurement_artifacts(run_dir: Path, artifact: str = "loss") -> Iterator[Path]:
+    """Enumerate supported measurement files for every recorded seed."""
     if not run_dir.is_dir():
         return
-    directories = [run_dir]
-    for child in sorted(run_dir.iterdir()):
-        if child.is_dir() and not child.is_symlink():
-            try:
-                _seed_from_qualifier(child.name)
-            except ValueError:
-                continue
-            directories.append(child)
-    for directory in directories:
+    for directory in sorted(run_dir.iterdir()):
+        if not directory.is_dir() or directory.is_symlink():
+            continue
+        try:
+            _seed_from_qualifier(directory.name)
+        except ValueError:
+            continue
         for path in sorted(directory.iterdir()):
-            if (
-                path.is_file()
-                and artifact_replicate_index(path.name, artifact, canonical=not include_aliases)
-                is not None
-            ):
+            if path.is_file() and artifact_measurement(path.name, artifact) is not None:
                 yield path
 
 
@@ -256,7 +161,7 @@ def iter_measurement_attempts(loss_path: Path) -> Iterator[Path]:
     directories follow in publication order, with their digest breaking ties.
     Missing loss files remain absent: a partial execution is never a measurement.
     """
-    index = artifact_replicate_index(loss_path.name)
+    index = artifact_measurement(loss_path.name)
     if index is None or not loss_path.parent.is_dir():
         return
     prefix = unit_artifact_name("loss", index)[:-5]
@@ -288,45 +193,30 @@ def recorded_artifact_measurement(
     run_dir: Path,
     path: Path,
     measurement: MeasurementDraw | None,
-    match_id: str = "",
     *,
     artifact: str = "loss",
 ) -> MeasurementDraw:
-    """Require persisted purpose, draw, and seed to agree with the physical path."""
-    index = artifact_replicate_index(path.name, artifact)
-    if index is None:
-        raise ValueError("artifact path does not identify a measurement draw")
-    if path.parent == run_dir:
-        base_seed: BaseSeed = UNKNOWN_SEED
-    elif path.parent.parent == run_dir:
-        base_seed = _seed_from_qualifier(path.parent.name)
-    else:
-        raise ValueError("measurement artifact is outside its entry directory")
-    recorded = recorded_measurement(index, measurement=measurement, match_id=match_id)
-    if recorded.base_seed != base_seed:
-        raise ValueError("recorded measurement seed conflicts with its artifact path")
-    return recorded
+    """Require recorded purpose, draw, and seed to agree with the physical path."""
+    expected = artifact_measurement(path.name, artifact)
+    if expected is None or path.parent.parent != run_dir:
+        raise ValueError("artifact path does not identify a measurement in this entry")
+    expected = replace(expected, base_seed=_seed_from_qualifier(path.parent.name))
+    if measurement != expected:
+        raise ValueError("recorded measurement conflicts with its artifact path")
+    return expected
 
 
-def unit_artifact_name(artifact: str, index: int) -> str:
-    """The compatible filename shared by a draw's loss and capture companions."""
+def unit_artifact_name(artifact: str, measurement: MeasurementDraw) -> str:
     extension = "jsonl" if artifact in {"events", "judge_io"} else "json"
-    suffix = f".r{index}" if index > 0 else ""
-    return f"{artifact}{suffix}.{extension}"
+    return f"{artifact}.{measurement.purpose}.r{measurement.draw}.{extension}"
 
 
-def artifact_replicate_index(
-    name: str, artifact: str = "loss", *, canonical: bool = True
-) -> int | None:
-    """Decode a slot name; noncanonical aliases are available only for audit."""
-    if name == unit_artifact_name(artifact, 0):
-        return 0
-    prefix = f"{artifact}.r"
-    suffix = ".jsonl" if artifact in {"events", "judge_io"} else ".json"
-    if name.startswith(prefix) and name.endswith(suffix):
-        value = name[len(prefix) : -len(suffix)]
-        if value.isdecimal():
-            index = int(value)
-            if not canonical or unit_artifact_name(artifact, index) == name:
-                return index
-    return None
+def artifact_measurement(name: str, artifact: str = "loss") -> MeasurementDraw | None:
+    extension = "jsonl" if artifact in {"events", "judge_io"} else "json"
+    match = re.fullmatch(re.escape(artifact) + r"\.([a-z_]+)\.r(0|[1-9][0-9]*)\." + extension, name)
+    if match is None:
+        return None
+    try:
+        return MeasurementDraw(MeasurementPurpose(match[1]), int(match[2]))
+    except ValueError:
+        return None

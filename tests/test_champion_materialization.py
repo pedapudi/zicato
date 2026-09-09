@@ -16,8 +16,9 @@ from pathlib import Path
 import pytest
 
 from tests._workspace_support import write_epoch
+from zicato.core.measurement import TOURNAMENT_DRAW
 from zicato.core.types import LossProfile, MetricCount
-from zicato.core.workspace import loss_profile_path
+from zicato.core.workspace import loss_profile_path, run_id_for_unit
 from zicato.evolve.round_baseline import (
     _materialize_carried_champion,
     _source_epoch_generation,
@@ -31,7 +32,8 @@ from zicato.workspace import WorkspaceLayout
 
 def _fresh_profile(*, epoch: str, gen: str, entry: str, drift: float) -> LossProfile:
     return LossProfile(
-        run_id=f"{gen}--{entry}",
+        measurement=TOURNAMENT_DRAW,
+        run_id=run_id_for_unit(gen, entry, epoch_id=epoch),
         entry_id=entry,
         generation_id=gen,
         epoch_id=epoch,
@@ -54,7 +56,7 @@ def _write_source_epoch(ws: Path, *, epoch: str, gen: str, entries: dict[str, fl
             _fresh_profile(epoch=epoch, gen=gen, entry=entry, drift=drift),
             loss_profile_path(ws, epoch, gen, entry),
         )
-    write_gen_score(ws, epoch, gen, {"generation_id": gen, "scalar": 0.42})
+    write_gen_score(ws, epoch, gen, {"generation_id": gen, "scalar": 0.42, "base_seed": None})
 
 
 # ---------------------------------------------------------------------------
@@ -97,7 +99,9 @@ def test_materialize_carried_champion_writes_cached_losses(tmp_path: Path) -> No
         profile = read_loss_profile(dst)
         assert profile.cached is True
         assert profile.source_epoch == "e1"
-        assert profile.source_run == f"v2--{entry}", "source_run names the original run"
+        assert profile.source_run == run_id_for_unit(
+            "v2", entry, epoch_id="e1"
+        ), "source_run names the original run"
         assert profile.epoch_id == "e2"
         assert profile.generation_id == "v0"
         assert profile.drift_loss == drift, "the carried scalar is preserved"
@@ -135,7 +139,7 @@ def test_materialized_champion_reads_as_cached_in_index(tmp_path: Path) -> None:
     row = rows[0]
     assert row["cached"] == 1, "the index marks the champion row cached"
     assert row["source_epoch"] == "e1"
-    assert row["source_run"] == "v2--task-a"
+    assert row["source_run"] == run_id_for_unit("v2", "task-a", epoch_id="e1")
 
 
 # ---------------------------------------------------------------------------
@@ -150,6 +154,7 @@ def test_fresh_profile_defaults_to_not_cached(tmp_path: Path) -> None:
     write_epoch(WorkspaceLayout.from_root(ws), "e1")
     path = loss_profile_path(ws, "e1", "v1", "task-a")
     write_loss_profile(_fresh_profile(epoch="e1", gen="v1", entry="task-a", drift=1.0), path)
+    write_gen_score(ws, "e1", "v1", {"generation_id": "v1", "base_seed": None, "scalar": 0.0})
 
     # On-disk profile is not cached.
     profile = read_loss_profile(path)

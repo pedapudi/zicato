@@ -26,9 +26,9 @@ import zicato_examples.target_0_convergence as _t0_pkg
 from tests._contract_pins import resolved_contract_with_proposer
 from tests._foe_support import stand_in_proposer_block
 from tests._runtime_builders import seed_baseline
+from zicato.core.measurement import MeasurementDraw, MeasurementPurpose
 from zicato.epoch.lifecycle import _scoring_from_dict, load_epoch, new_epoch
 from zicato.epoch.preflight import (
-    PREFLIGHT_REPLICATE_BASE,
     VERDICT_OK,
     VERDICT_REFUSE,
     VERDICT_WARN,
@@ -40,7 +40,7 @@ from zicato.epoch.preflight import (
     run_contract_preflight,
 )
 from zicato.health.diagnostics import detect_preflight_verdict
-from zicato.tournament.calibration import CALIBRATION_REPLICATE_BASE, NoiseFloor
+from zicato.tournament.calibration import NoiseFloor
 from zicato_examples.target_0_convergence import mocks as t0_mocks
 
 EXAMPLE_DIR = Path(_t0_pkg.__file__).resolve().parent
@@ -69,7 +69,9 @@ def _noisy_adapter(sigma: float) -> dict:
 
 def test_preflight_replicate_base_clears_calibration_slots() -> None:
     # The degraded draw must never collide with duels (0..) or A/A draws.
-    assert PREFLIGHT_REPLICATE_BASE > CALIBRATION_REPLICATE_BASE
+    assert MeasurementDraw(MeasurementPurpose.PREFLIGHT, 0) > MeasurementDraw(
+        MeasurementPurpose.CALIBRATION, 0
+    )
 
 
 def test_verdict_ok_when_signal_clears_floor() -> None:
@@ -583,16 +585,10 @@ def test_inert_first_point_no_longer_decides_the_verdict(tmp_path: Path) -> None
 
     # Both real probes must persist under distinct reserved draw identities.
     from zicato import workspace_loader
-    from zicato.epoch.preflight import PREFLIGHT_REPLICATE_SPAN
-    from zicato.epoch.screen import SCREEN_REPLICATE_BASE
     from zicato.tournament.unit_cache import _unit_loss_path
 
     n_probes = len(report.probed_points)
     assert n_probes == 2
-    # Reserved preflight slots must end before screening so neither operation
-    # can reuse the other's measurements.
-    assert PREFLIGHT_REPLICATE_BASE + PREFLIGHT_REPLICATE_SPAN <= SCREEN_REPLICATE_BASE
-    assert n_probes <= PREFLIGHT_REPLICATE_SPAN
 
     entry_id = workspace_loader.load_current_board(workspace)[0].id
     for ordinal in range(n_probes):
@@ -602,7 +598,7 @@ def test_inert_first_point_no_longer_decides_the_verdict(tmp_path: Path) -> None
             epoch_id,
             "v0",
             entry_id,
-            PREFLIGHT_REPLICATE_BASE + ordinal,
+            MeasurementDraw(MeasurementPurpose.PREFLIGHT, ordinal),
             base_seed=None,
         ).exists(), f"probe {ordinal} did not draw its own reserved cache slot"
 

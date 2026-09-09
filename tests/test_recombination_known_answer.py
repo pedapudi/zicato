@@ -45,6 +45,7 @@ from pathlib import Path
 import zicato_examples.target_0_convergence as _t0_pkg
 from tests._contract_pins import resolved_contract_with_proposer
 from tests._foe_support import stand_in_proposer_block
+from zicato.core.measurement import MeasurementDraw, MeasurementPurpose
 from zicato.epoch.lifecycle import _scoring_from_dict, new_epoch
 from zicato_examples.target_0_convergence import mocks_recombine as rec_mocks
 
@@ -279,7 +280,14 @@ def test_recombination_promotes_where_singles_reject(tmp_path: Path) -> None:
 
     for entry in load_board(board_path(workspace, epoch_id)):
         profile = read_loss_profile(
-            _unit_loss_path(workspace, epoch_id, "v3", entry.id, 0, base_seed=None)
+            _unit_loss_path(
+                workspace,
+                epoch_id,
+                "v3",
+                entry.id,
+                MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0),
+                base_seed=None,
+            )
         )
         assert profile.drift_loss == 0.0, entry.id
         assert profile.pass_fail is True, entry.id

@@ -20,8 +20,6 @@ import pytest
 
 from tests._workspace_support import experiment_record, write_epoch
 from zicato.analyzer.report import (
-    assemble_report_markdown,
-    parse_prose_from_markdown,
     regenerate_epoch_report_deterministic,
 )
 from zicato.analyzer.report_data import gather_epoch_report_data
@@ -269,52 +267,18 @@ def test_living_draft_stamp_removed_on_close(tmp_path: Path) -> None:
 def test_deterministic_refresh_preserves_prose_and_is_digest_noop(tmp_path: Path) -> None:
     ws = _base_epoch(tmp_path, scoring={"promote_margin": 0.01})
     epoch = "2026-07-12_pub"
-    # Seed a persisted report carrying real LLM prose.
+    prose = {
+        "ABSTRACT": "This campaign reduced drift.",
+        "ANALYSIS": "The prompt clause held.",
+        "CONCLUSION": "Keep the clause; widen the board.",
+    }
+    assert regenerate_epoch_report_deterministic(ws, epoch, authored=prose)
     md_path = analysis_path(ws, epoch)
-    md_path.parent.mkdir(parents=True, exist_ok=True)
-    seeded = assemble_report_markdown(
-        gather_epoch_report_data(ws, epoch),
-        {
-            "ABSTRACT": "This campaign cut off-topic drift by a fifth.",
-            "INTRODUCTION": "The target agent drifts off topic.",
-            "ANALYSIS": "The prompt clause held.",
-            "CONCLUSION": "Keep the clause; widen the board.",
-        },
-        "## Methodology\n\nstale",
-    )
-    md_path.write_text(seeded, encoding="utf-8")
-
-    changed = regenerate_epoch_report_deterministic(ws, epoch)
-    assert changed is True
-    refreshed = md_path.read_text(encoding="utf-8")
-    # Prose is preserved verbatim; deterministic sections are re-templated.
-    assert "This campaign cut off-topic drift by a fifth." in refreshed
-    assert "The prompt clause held." in refreshed
-    assert "Keep the clause; widen the board." in refreshed
-    assert "## Statistical Integrity" in refreshed  # a new deterministic section
-    assert "LIVING DRAFT — through round 1" in refreshed
-
-    # A second refresh with no data change is a byte-identical no-op.
+    assert "## Statistical Integrity" in md_path.read_text()
     before = md_path.read_bytes()
-    changed_again = regenerate_epoch_report_deterministic(ws, epoch)
-    assert changed_again is False
+    assert not regenerate_epoch_report_deterministic(ws, epoch)
     assert md_path.read_bytes() == before
-
-
-def test_parse_prose_from_markdown_skips_placeholders(tmp_path: Path) -> None:
-    ws = _base_epoch(tmp_path, scoring={"promote_margin": 0.01})
-    md = assemble_report_markdown(
-        gather_epoch_report_data(ws, "2026-07-12_pub"),
-        {"ABSTRACT": "real abstract", "CONCLUSION": "real conclusion"},
-        "## Methodology\n\nnot prose",
-    )
-    prose = parse_prose_from_markdown(md)
-    assert prose["ABSTRACT"] == "real abstract"
-    assert prose["CONCLUSION"] == "real conclusion"
-    # A placeholder body is NOT resurrected as prose.
-    assert "INTRODUCTION" not in prose
-    # A non-prose h2 (Methodology) is never captured as prose.
-    assert "METHODOLOGY" not in prose
+    assert all(text in before.decode() for text in prose.values())
 
 
 # ---------------------------------------------------------------------------
@@ -322,55 +286,19 @@ def test_parse_prose_from_markdown_skips_placeholders(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_prose_fences_survive_structural_lines_through_two_refreshes(tmp_path: Path) -> None:
-    """LLM prose carrying a ``---`` rule, an embedded ``## heading``, and a
-    fence-shaped line round-trips BYTE-IDENTICAL through two consecutive
-    deterministic refreshes — the old "stop at the first ``## ``/``---``"
-    heuristic would have permanently truncated it."""
+def test_authored_prose_survives_refresh_without_parsing_markdown(tmp_path: Path) -> None:
     ws = _base_epoch(tmp_path, scoring={"promote_margin": 0.01})
     epoch = "2026-07-12_pub"
-    md_path = analysis_path(ws, epoch)
-    md_path.parent.mkdir(parents=True, exist_ok=True)
-
-    tricky = (
-        "The clause held across the lineage.\n\n"
-        "---\n\n"
-        "## Deep Dive\n\n"
-        "An embedded heading the old heuristic would have severed here.\n\n"
-        "A fence-shaped line that is not our sentinel: <!-- PROSE:NOTES -->\n"
-        "and another block's close fence inline: <!-- /PROSE:CONCLUSION -->"
-    )
-    # A seed already in the fenced format, but with a STALE deterministic
-    # body so the first refresh genuinely rewrites (and thus exercises the
-    # parse→re-emit round-trip) rather than short-circuiting on the digest.
-    seeded = (
-        "<!-- EYEBROW -->\nZicato\n\n# Publication Fixture\n\n"
-        "## Abstract\n\n<!-- PROSE:ABSTRACT -->\nAbstract prose.\n<!-- /PROSE:ABSTRACT -->\n\n"
-        "## Introduction\n\n<!-- PROSE:INTRODUCTION -->\nIntro prose.\n"
-        "<!-- /PROSE:INTRODUCTION -->\n\n"
-        "## Methodology\n\nstale\n\n"
-        "## Analysis — What Worked and What Didn't\n\n"
-        "<!-- PROSE:ANALYSIS -->\n" + tricky + "\n<!-- /PROSE:ANALYSIS -->\n\n"
-        "## Conclusion & Next Directions\n\n"
-        "<!-- PROSE:CONCLUSION -->\nKeep the clause.\n<!-- /PROSE:CONCLUSION -->\n"
-    )
-    md_path.write_text(seeded, encoding="utf-8")
-
-    assert regenerate_epoch_report_deterministic(ws, epoch) is True
-    after_first = md_path.read_bytes()
-    refreshed = md_path.read_text(encoding="utf-8")
-    # Every structural line inside the prose survived verbatim — no truncation.
-    assert "## Deep Dive" in refreshed
-    assert "An embedded heading the old heuristic would have severed here." in refreshed
-    assert "<!-- PROSE:NOTES -->" in refreshed
-    assert "another block's close fence inline: <!-- /PROSE:CONCLUSION -->" in refreshed
-    # The prose after the embedded rule/heading is intact (not severed).
-    assert "Keep the clause." in refreshed
-
-    # A second refresh with no data change is a byte-identical no-op — the
-    # fenced round-trip is stable (the fence-shaped lines did not perturb it).
-    assert regenerate_epoch_report_deterministic(ws, epoch) is False
-    assert md_path.read_bytes() == after_first
+    prose = "The clause held.\n\n---\n\n## Detailed results\n\nA further observation."
+    regenerate_epoch_report_deterministic(ws, epoch, authored={"ANALYSIS": prose})
+    path = analysis_path(ws, epoch)
+    before = path.read_bytes()
+    # Markdown is derived: a partial output cannot erase the recorded narrative.
+    path.write_text("interrupted output")
+    assert regenerate_epoch_report_deterministic(ws, epoch)
+    assert path.read_bytes() == before
+    assert prose in path.read_text()
+    assert not regenerate_epoch_report_deterministic(ws, epoch)
 
 
 # ---------------------------------------------------------------------------
@@ -406,21 +334,18 @@ def test_epoch_close_clears_living_draft_and_preserves_prose(tmp_path: Path) -> 
     )
     md_path = analysis_path(ws, epoch)
     md_path.parent.mkdir(parents=True, exist_ok=True)
-    md_path.write_text(
-        assemble_report_markdown(
-            gather_epoch_report_data(ws, epoch),
-            {
-                "ABSTRACT": "Durable abstract prose.",
-                "INTRODUCTION": "Durable intro prose.",
-                "ANALYSIS": "Durable analysis prose.",
-                "CONCLUSION": "Durable conclusion prose.",
-            },
-            "## Methodology\n\nstale",
-        ),
-        encoding="utf-8",
+    regenerate_epoch_report_deterministic(
+        ws,
+        epoch,
+        authored={
+            "ABSTRACT": "Durable abstract prose.",
+            "INTRODUCTION": "Durable intro prose.",
+            "ANALYSIS": "Durable analysis prose.",
+            "CONCLUSION": "Durable conclusion prose.",
+        },
     )
-    # A mid-epoch refresh makes this a LIVING DRAFT (epoch still open).
-    assert regenerate_epoch_report_deterministic(ws, epoch) is True
+    # An unchanged open epoch retains the same draft.
+    assert regenerate_epoch_report_deterministic(ws, epoch) is False
     draft = md_path.read_text(encoding="utf-8")
     assert "LIVING DRAFT" in draft
     assert "Durable abstract prose." in draft

@@ -623,8 +623,8 @@ export function liveRacingField(extra) {
     ],
     // the backend publishes the active rung + the (pending) champion gate live.
     rounds: [
-      { round_index: 0, label: 'Rung 0', matches: [{ match_id: 'rung0', competitors: ['v5', 'v6', 'v7', 'v8'], survivors: [], cut: [], board_fraction: 0.25, pending: true }] },
-      { round_index: 1, label: 'Champion gate', matches: [{ match_id: 'racing-final', competitors: ['v0'], board_fraction: 1.0, winner: null, pending: true }] },
+      { round_index: 0, label: 'Rung 0', matches: [{ match_id: 'rung0', competitors: ['v5', 'v6', 'v7', 'v8'], survivors: [], cut: [], board_fraction: 0.25, pending: true, queued: false, total: 2, live_progress: Object.fromEntries(['v5','v6','v7','v8'].map(g => [g, {done: 0, total: 2, boards_total: 2}])) }] },
+      { round_index: 1, label: 'Champion gate', matches: [{ match_id: 'racing-final', competitors: ['v0'], board_fraction: 1.0, winner: null, pending: true, queued: true, total: 8 }] },
     ],
     standings: [],
     champion_lineage: ['v0'],
@@ -642,8 +642,8 @@ export function liveElimField(extra) {
     ],
     rounds: [
       { round_index: 0, label: 'Semifinal', matches: [
-        { match_id: 'WB-R0-0', competitors: ['v0', 'v3'], bracket_slot: 'WB-R0-0' },
-        { match_id: 'WB-R0-1', competitors: ['v1', 'v2'], bracket_slot: 'WB-R0-1' },
+        { match_id: 'WB-R0-0', competitors: ['v0', 'v3'], bracket_slot: 'WB-R0-0', pending: true, queued: false, total: 4, done: 0 },
+        { match_id: 'WB-R0-1', competitors: ['v1', 'v2'], bracket_slot: 'WB-R0-1', pending: true, queued: false, total: 4, done: 0 },
       ] },
     ],
     standings: [],

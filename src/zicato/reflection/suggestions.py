@@ -16,7 +16,7 @@ from typing import Any
 
 from zicato.core.board import BoardEntry, JudgeMode, JudgeSpec, validate_board_entry
 from zicato.core.drift_kinds import DriftSeverity
-from zicato.core.measurement import SYNTHESIS_REPLICATE_BASE as SYNTHESIS_REPLICATE_BASE
+from zicato.core.measurement import MeasurementPurpose
 from zicato.epoch._storage import RecordError
 from zicato.storage import atomic_write_json
 
@@ -404,10 +404,10 @@ def plan_cost(suggestions: list[Suggestion], *, replicates: int = 5) -> dict[str
         "suggestions": n,
         "would_probe": n,
         "noise_runs": n * replicates,
-        "replicate_base": SYNTHESIS_REPLICATE_BASE,
+        "measurement_purpose": str(MeasurementPurpose.ADMISSION),
         "note": (
             f"plan mode spent 0 champion runs; --probe would run execution + "
-            f"{replicates}-replicate A/A noise (base {SYNTHESIS_REPLICATE_BASE}) + "
+            f"{replicates}-replicate A/A noise (base {MeasurementPurpose.ADMISSION}) + "
             f"discrimination for {n} suggestion(s) — endpoint-gated, real budget"
         ),
     }
@@ -474,7 +474,6 @@ __all__ = [
     "SUGGESTION_JUDGE",
     "SUGGESTION_REGRESSION_ENTRY",
     "SUGGESTION_RUBRIC_REVISION",
-    "SYNTHESIS_REPLICATE_BASE",
     "Suggestion",
     "format_admission",
     "format_admission_compact",

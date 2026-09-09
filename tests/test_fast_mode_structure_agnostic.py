@@ -37,7 +37,7 @@ from zicato.core import (
     LossProfile,
     ScoringWeights,
 )
-from zicato.core.measurement import MeasurementDraw
+from zicato.core.measurement import MeasurementDraw, MeasurementPurpose
 from zicato.core.types import ExpectationResult, MetricCount
 from zicato.core.workspace import run_id_for_unit
 from zicato.telemetry.reducer import write_loss_profile
@@ -126,11 +126,19 @@ def _seed_champion_cache(
         profile = replace(
             profile,
             epoch_id=epoch_id,
-            measurement=MeasurementDraw.from_index(0, base_seed=None),
-            run_id=run_id_for_unit(champion_id, entry.id, base_seed=None),
+            measurement=replace(MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0), base_seed=None),
+            run_id=run_id_for_unit(champion_id, entry.id, base_seed=None, epoch_id=epoch_id),
         )
         write_loss_profile(
-            profile, _unit_loss_path(tmp_path, epoch_id, champion_id, entry.id, 0, base_seed=None)
+            profile,
+            _unit_loss_path(
+                tmp_path,
+                epoch_id,
+                champion_id,
+                entry.id,
+                MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0),
+                base_seed=None,
+            ),
         )
 
 
@@ -339,12 +347,18 @@ def _stub_run_single_persisting(monkeypatch, canned, *, log: list):
     ):
         del adapter, weights, side, match_id
         log.append((generation.id, entry.id))
-        replicate = int(entry.context.get("replicate_index", "0"))
+        replicate = MeasurementDraw.from_context(entry.context)
         profile = replace(
             canned[(generation.id, entry.id)],
             epoch_id=epoch_id,
-            run_id=run_id_for_unit(generation.id, entry.id, replicate, base_seed=config.seed),
-            measurement=MeasurementDraw.from_index(replicate, base_seed=config.seed),
+            run_id=run_id_for_unit(
+                generation.id,
+                entry.id,
+                replicate,
+                base_seed=config.seed,
+                epoch_id=generation.epoch_id,
+            ),
+            measurement=replace(replicate, base_seed=config.seed),
         )
         write_loss_profile(
             profile,
@@ -473,12 +487,18 @@ def test_replicates_incremental_runs_only_missing(monkeypatch, tmp_path):
     ):
         del adapter, weights, side, match_id
         log.append((generation.id, entry.id))
-        replicate = int(entry.context.get("replicate_index", "0"))
+        replicate = MeasurementDraw.from_context(entry.context)
         profile = replace(
             canned[(generation.id, entry.id)],
             epoch_id=epoch_id,
-            run_id=run_id_for_unit(generation.id, entry.id, replicate, base_seed=config.seed),
-            measurement=MeasurementDraw.from_index(replicate, base_seed=config.seed),
+            run_id=run_id_for_unit(
+                generation.id,
+                entry.id,
+                replicate,
+                base_seed=config.seed,
+                epoch_id=generation.epoch_id,
+            ),
+            measurement=replace(replicate, base_seed=config.seed),
         )
         write_loss_profile(
             profile,

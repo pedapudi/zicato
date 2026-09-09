@@ -39,10 +39,10 @@ from zicato.core.board import (
     JudgeMode,
     UserPersona,
 )
+from zicato.core.measurement import MeasurementDraw, MeasurementPurpose
 from zicato.core.workspace import generation_dir, loss_profile_path, run_dir
 from zicato.reflection.admission import (
     DEFAULT_NOISE_RUNS,
-    SYNTHESIS_REPLICATE_BASE,
     AdmissionRequest,
     admit_suggestion,
     estimate_cost,
@@ -96,11 +96,11 @@ class _ScriptedRunner:
         match_id: str = "",
     ) -> LossProfile:
         self.calls += 1
-        replicate_index = int(entry.context.get("replicate_index", "0"))
-        self.slots.append((generation.id, entry.id, replicate_index))
+        measurement = MeasurementDraw.from_context(entry.context)
+        self.slots.append((generation.id, entry.id, measurement))
         abort_cause = "wall_clock_budget" if entry.id == "abort_probe" else None
         return LossProfile(
-            run_id=f"run-{generation.id}-{entry.id}-{replicate_index}",
+            run_id=f"run-{generation.id}-{entry.id}-{measurement}",
             entry_id=entry.id,
             generation_id=generation.id,
             epoch_id=epoch_id,
@@ -111,16 +111,16 @@ class _ScriptedRunner:
             wall_clock_budget_exceeded=False,
             expectation_result=None,
             drift_loss=0.0,
-            pass_fail=self._verdict(entry.id, generation.id, replicate_index),
+            pass_fail=self._verdict(entry.id, generation.id, measurement),
             abort_cause=abort_cause,
         )
 
     @staticmethod
-    def _verdict(entry_id: str, gen_id: str, replicate_index: int) -> bool:
+    def _verdict(entry_id: str, gen_id: str, measurement: int) -> bool:
         if entry_id == "live_probe":
             return gen_id.startswith("champ")
         if entry_id == "noisy_probe":
-            return replicate_index % 2 == 0
+            return measurement.draw % 2 == 0
         # dead_probe / everything else: constant pass — never separates.
         return True
 
@@ -241,7 +241,7 @@ def test_oc_proof_live_entry_discriminates_dead_entry_does_not(tmp_path: Path, m
 
     # Flip rates are MEASURED at the reserved base 6000.
     assert live.noise["measured"] is True
-    assert live.noise["base"] == SYNTHESIS_REPLICATE_BASE
+    assert live.noise["measurement_purpose"] == MeasurementPurpose.ADMISSION
     assert live.noise["flip_rate"] == 0.0  # champion verdict is constant
     assert live.execution["ran"] is True
 
@@ -270,15 +270,17 @@ def test_oc_proof_noise_draws_land_at_base_6000_and_never_touch_r0(
 
     # A/A noise draws for the drafted entry on the CHAMPION land at 6000 + j.
     champ_noise = {ri for gid, eid, ri in stub.slots if gid == CHAMPION and eid == "noisy_probe"}
-    assert champ_noise == {SYNTHESIS_REPLICATE_BASE + j for j in range(DEFAULT_NOISE_RUNS)}
+    assert champ_noise == {
+        MeasurementDraw(MeasurementPurpose.ADMISSION, j) for j in range(DEFAULT_NOISE_RUNS)
+    }
     # Every synthesis draw is at or above the reserved base — r0 is never keyed.
-    assert all(ri >= SYNTHESIS_REPLICATE_BASE for _, _, ri in stub.slots)
+    assert all(ri.purpose == MeasurementPurpose.ADMISSION for _, _, ri in stub.slots)
 
     # The canonical r0 loss.json is never written for the drafted entry; the
     # reserved 6000 cache slots are.
     rundir = run_dir(workspace, EPOCH, CHAMPION, "noisy_probe")
     assert not loss_profile_path(workspace, EPOCH, CHAMPION, "noisy_probe").exists()
-    assert (rundir / "seed-none" / f"loss.r{SYNTHESIS_REPLICATE_BASE}.json").exists()
+    assert (rundir / "seed-none" / "loss.eval_synthesis_admission.r0.json").exists()
 
 
 def test_oc_proof_noisy_entry_has_nonzero_measured_flip_rate(tmp_path: Path, monkeypatch) -> None:
@@ -544,34 +546,3 @@ def test_emulator_guard_flags_persona_less_emulated_draft(tmp_path: Path) -> Non
 # ---------------------------------------------------------------------------
 # Reserved-base ledger self-audit (§8 / CASCADE §4.5)
 # ---------------------------------------------------------------------------
-
-
-def test_reserved_bases_are_disjoint() -> None:
-    from zicato.epoch.preflight import PREFLIGHT_REPLICATE_BASE
-    from zicato.epoch.screen import SCREEN_REPLICATE_BASE
-    from zicato.reflection.corpus import REFLECTION_REPLICATE_BASE
-    from zicato.selection.evidence_gate import EVIDENCE_REPLICATE_BASE
-    from zicato.tournament.calibration import CALIBRATION_REPLICATE_BASE
-
-    bases = {
-        CALIBRATION_REPLICATE_BASE,
-        PREFLIGHT_REPLICATE_BASE,
-        SCREEN_REPLICATE_BASE,
-        EVIDENCE_REPLICATE_BASE,
-        REFLECTION_REPLICATE_BASE,
-        SYNTHESIS_REPLICATE_BASE,
-    }
-    # Every reserved base is distinct, and the new synthesis base claims 6000
-    # without disturbing the calibration / evidence / screen / reflection bases.
-    assert len(bases) == 6
-    assert SYNTHESIS_REPLICATE_BASE == 6000
-    assert SYNTHESIS_REPLICATE_BASE not in {
-        CALIBRATION_REPLICATE_BASE,
-        PREFLIGHT_REPLICATE_BASE,
-        SCREEN_REPLICATE_BASE,
-        EVIDENCE_REPLICATE_BASE,
-        REFLECTION_REPLICATE_BASE,
-    }
-    # Bands are a full thousand apart, so no plausible K walks one into another.
-    ordered = sorted(bases)
-    assert all(b - a >= 1000 for a, b in zip(ordered, ordered[1:], strict=False))

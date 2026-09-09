@@ -22,12 +22,11 @@ from dataclasses import field as dataclass_field
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
+from zicato.core.measurement import TOURNAMENT_DRAW, MeasurementDraw
 from zicato.evolve.dashboard_projection import (
     _clear_active_tournament,
     _field_entries,
     _open_field_tournament,
-    _overlay_projected_live_progress,
-    _overlay_projected_standings,
     _publish_active_tournament,
     _serialise_rounds,
     _serialise_standings,
@@ -134,17 +133,15 @@ async def run_field_matchup(
     unit_semaphore: asyncio.Semaphore,
     matchup: Matchup,
     *,
-    replicate_base: int = 0,
+    first_measurement: MeasurementDraw = TOURNAMENT_DRAW,
     cache_scores: bool = True,
 ) -> MatchupResult:
     """Run one duel through the board-unit runner and the unchanged gate.
 
-    ``replicate_base`` and ``cache_scores`` exist for the evidence pre-gate's
-    replicate duels only: a reserved replicate base keeps evidence draws off
-    the canonical cache slots, and ``cache_scores=False`` keeps a single
-    evidence draw's aggregates from overwriting the round-scored
-    ``gen_score.json`` the fast-mode champion reuse reads.  Every strategy
-    matchup uses the defaults.
+    ``first_measurement`` selects the evidence-confirmation purpose and local
+    draw for the pre-gate’s additional duels. ``cache_scores=False`` preserves
+    the tournament aggregates in ``gen_score.json`` while confirmation runs.
+    Scheduled strategy matchups use the defaults.
     """
 
     prepared = field_round.prepared
@@ -176,7 +173,7 @@ async def run_field_matchup(
         epoch_id=prepared.epoch_id,
         board_subset=matchup.board_subset,
         replicates=matchup.replicates,
-        replicate_base=replicate_base,
+        first_measurement=first_measurement,
         disable_drift=prepared.disable_drift,
         judge_only=prepared.judge_only,
         fast=prepared.fast_mode or candidates.resume_cache,
@@ -208,7 +205,7 @@ async def run_field_matchup(
         tallies.champion_cached_units += champ_prov.cached
         tallies.champion_fresh_units += champ_prov.fresh
     # Cache both sides' aggregates for fast-mode reuse. Skipped for evidence
-    # replicate duels (``cache_scores=False``): one reserved-slot draw
+    # confirmation duels (``cache_scores=False``): one additional draw
     # must not overwrite the round-scored aggregates.
     if cache_scores:
         # Every matchup appends its own line to the archive beside the
@@ -284,20 +281,7 @@ def publish_live_structure(
     prepared = field_round.prepared
 
     live_rounds = _serialise_rounds(strategy.live_rounds())
-    # Overlay the runner's authoritative per-board ``projected`` map (the
-    # scorer's domain) onto the racing rung's per-lane ``live_progress``
-    # topology (the strategy's domain): the strategy publishes which lanes
-    # are racing + their board-slice totals; the scorer publishes each
-    # lane's live ``boards_done`` + streaming ``projected_scalar``. The
-    # two compose here so the rung carries one authoritative per-lane
-    # progress map the dashboard consumes directly.
-    _overlay_projected_live_progress(live_rounds, prepared.workspace_root)
-    live_standings = _overlay_projected_standings(
-        _serialise_standings(strategy.live_standings()),
-        live_rounds,
-        prepared.workspace_root,
-        prepared.tournament_spec.structure,
-    )
+    live_standings = _serialise_standings(strategy.live_standings())
     _publish_active_tournament(
         prepared.writer,
         tournament_id=candidates.tournament_id,
@@ -492,13 +476,10 @@ async def execute_field_tournament(
             threshold=bt_threshold,
             replicate_budget=read_replicate_budget(prepared.tournament_spec.params),
         )
-        # Each extra crowning-pair duel runs through the SAME board-unit
-        # runner and gate every other duel uses, so a replicate is scored
-        # identically to the original duel. The reserved slot, the matchup
-        # id that encodes it, and the score-cache suppression belong to the
-        # factory rather than to this round — one implementation of the
-        # ReplicateDuel contract, exercised by the decision-procedure
-        # oracle at the same seam production drives it from.
+        # Confirmation uses the same runner and gate as tournament duels.
+        # The factory assigns the confirmation draw and matchup id and
+        # disables aggregate caching to preserve the tournament score.
+
         replicate_duel = make_evidence_replicate_duel(run_one)
         on_inconclusive = partial(record_inconclusive_duel, field_round, candidates)
 

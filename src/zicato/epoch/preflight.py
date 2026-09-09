@@ -26,10 +26,10 @@ Measurements
     copy of the snapshot via the existing applier machinery
     (:func:`zicato.mutation.applier.apply_patches`). Each degraded tree is
     **ephemeral** — a temp directory, never registered in the lineage — and its
-    single draw caches under the champion's id on a reserved replicate index
-    (:data:`PREFLIGHT_REPLICATE_BASE` + the probe ordinal), so re-running the
-    pre-flight is idempotent and can never collide with a real duel's cache
-    slots. ``max`` over probes of ``|degraded_scalar -
+    single draw uses the champion’s id with the ``contract_preflight`` purpose
+    and probe ordinal as its local draw number. The cache includes the runtime
+    seed. Complete matching draws can be reused without mixing degraded-source
+    probes with tournament measurements. ``max`` over probes of ``|degraded_scalar -
     mean(champion_scalars)|`` is the contract's demonstrated **degradation
     signal**. The window section below explains why that is NOT the same as
     achievable improvement.
@@ -153,8 +153,7 @@ and acts on :func:`effective_gate_verdict` per the gate mode:
   they compare the margin against numbers that do not bound a challenger's
   reach (see the window section above) — and only here is the health finding a
   CRITICAL (moot for the breaker, since the run already stopped at pre-flight).
-  A deterministic probe-selection CONFIG error (an unknown pinned mutation id,
-  a probe ceiling wider than the reserved replicate block) also refuses under
+  An unknown pinned mutation id or a probe ceiling below one also refuses under
   this mode: an outage never disqualifies a contract, but an operator typo is
   not an outage, and silently proceeding unprotected is the one outcome a
   ``"refuse"`` operator did not ask for (:class:`PreflightConfigError`). An
@@ -178,11 +177,7 @@ from typing import Any
 from uuid import uuid4
 
 from zicato.core import BoardEntry, Generation, RuntimeConfig, ScoringWeights
-from zicato.core.measurement import PREFLIGHT_REPLICATE_BASE as PREFLIGHT_REPLICATE_BASE
-from zicato.core.measurement import PREFLIGHT_REPLICATE_SPAN as PREFLIGHT_REPLICATE_SPAN
-from zicato.core.measurement import (
-    validate_measurement_interval,
-)
+from zicato.core.measurement import MeasurementDraw, MeasurementPurpose, validate_measurement_count
 from zicato.core.mutation import MutationPoint, Patch
 from zicato.runtime.lock import WorkspaceLock
 from zicato.runtime.writer import workspace_writer
@@ -270,8 +265,8 @@ class PreflightConfigError(ValueError):
 
     Raised for an unknown pinned mutation id
     (:attr:`~zicato.core.runtime.RuntimeConfig.preflight_probe_mutation_ids` /
-    ``--degrade-mutation-id``) or a probe ceiling the reserved replicate block
-    cannot hold — never for anything the endpoint or the harness did.
+    ``--degrade-mutation-id``) or a probe ceiling below one. Endpoint and
+    harness failures use their own errors.
 
     A :class:`ValueError` subclass so every existing ``except ValueError``
     handler (and every test asserting one) keeps working; the distinct type
@@ -940,8 +935,8 @@ async def run_contract_preflight(
     (and nothing for an evolve loop to optimize either) — or when every
     point degrades to byte-identical content. Raises the
     :class:`PreflightConfigError` subclass for the two OPERATOR-config
-    failures (a pinned id that does not enumerate, a probe ceiling wider
-    than the reserved replicate block), which the evolve-start hook escalates
+    failures: an unknown pinned id or a probe ceiling below one. The evolve-start
+    hook escalates these errors
     to a refusal under ``preflight_gate="refuse"``. All four are raised
     before any draw is spent.
     """
@@ -966,7 +961,7 @@ async def run_contract_preflight(
         from zicato.tournament.worker_transport import (  # noqa: PLC0415
             _stamp_disable_drift,
             _stamp_judge_only,
-            _stamp_replicate_index,
+            _stamp_measurement,
         )
 
         # (b0) Probe SELECTION first, before a single draw is spent. Enumeration
@@ -993,20 +988,7 @@ async def run_contract_preflight(
                 "demonstrate any signal; the mutable surface needs real "
                 "content before the contract can be pre-flighted"
             )
-        if len(sample) > PREFLIGHT_REPLICATE_SPAN:
-            # Probe j draws at PREFLIGHT_REPLICATE_BASE + j, so a sample wider than
-            # the reserved block would squat the candidate screen's range and make
-            # ITS idempotence a lie. Refuse rather than silently overlap.
-            block_end = PREFLIGHT_REPLICATE_BASE + PREFLIGHT_REPLICATE_SPAN - 1
-            raise PreflightConfigError(
-                f"contract pre-flight: a {len(sample)}-point probe sample exceeds the "
-                f"reserved replicate block of {PREFLIGHT_REPLICATE_SPAN} "
-                f"({PREFLIGHT_REPLICATE_BASE}..{block_end}); lower "
-                "runtime.preflight_probe_points (or shorten "
-                "runtime.preflight_probe_mutation_ids)"
-            )
-
-        validate_measurement_interval(PREFLIGHT_REPLICATE_BASE, len(sample))
+        validate_measurement_count(len(sample))
 
         # Everything the measurement may spend is now known: K A/A draws plus one
         # draw per selected probe, each a serial pass over the whole board. That
@@ -1071,24 +1053,24 @@ async def run_contract_preflight(
                 # ``with`` block.
                 apply_patches(generation.snapshot_root, [patch], degraded_root)
                 degraded_gen = replace(generation, snapshot_root=degraded_root)
-                # One reserved slot per probe: distinct indices are distinct cache
-                # slots, so probe N never replays probe M's draw, and because the
+                # Each probe uses a distinct local draw under contract_preflight,
+                # so its cache identity cannot replay another probe, and because the
                 # sample is deterministic a re-run is an idempotent HIT throughout.
-                replicate_index = PREFLIGHT_REPLICATE_BASE + ordinal
+                measurement = MeasurementDraw(MeasurementPurpose.PREFLIGHT, ordinal)
                 losses = await _run_board_units_fast(
                     writer=writer,
                     adapter=adapter,
                     child_gen=degraded_gen,
-                    # Stamped like the calibration draws: the harness derives any
-                    # seeded noise from the STAMPED index, so the degraded draw is
+                    # Carry measurement identity into the harness's seeded random
+                    # stream so the degraded draw is
                     # an independent sample rather than a re-roll of an A/A seed.
-                    board=_stamp_replicate_index(stamped_board, replicate_index),
+                    board=_stamp_measurement(stamped_board, measurement),
                     weights=weights,
                     config=config,
                     workspace_root=workspace_root,
                     epoch_id=epoch_id,
                     match_id=f"contract-preflight:degraded:{point.id}",
-                    replicate_index=replicate_index,
+                    measurement=measurement,
                 )
                 # Same discipline as the A/A draws: a degraded-probe infra abort
                 # makes the signal un-measurable rather than zero — void the pre-flight
@@ -1173,8 +1155,6 @@ async def run_contract_preflight(
 __all__ = [
     "PREFLIGHT_PHASE",
     "PREFLIGHT_PHASE_TOKEN",
-    "PREFLIGHT_REPLICATE_BASE",
-    "PREFLIGHT_REPLICATE_SPAN",
     "VERDICT_INERT",
     "VERDICT_OK",
     "VERDICT_REFUSE",

@@ -39,12 +39,12 @@ class SourceRecordingSession:
 
     async def run(self, entry: Any, sinks: Any, config: Any) -> Any:
         generation = entry.context.get("generation_id", "")
-        replicate = int(entry.context.get("replicate_index", "0"))
+        replicate = MeasurementDraw.from_context(entry.context)
         control_path = config.workspace_root / "acceptance-control.json"
         control = json.loads(control_path.read_text()) if control_path.exists() else {}
         if (
             control.get("pause_generation") == generation
-            and MeasurementDraw.from_index(replicate).purpose == MeasurementPurpose.TOURNAMENT
+            and replicate.purpose == MeasurementPurpose.TOURNAMENT
         ):
             signal = config.workspace_root / "acceptance-worker-started.json"
             signal.write_text(json.dumps({"pid": os.getpid(), "generation": generation}))

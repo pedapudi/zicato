@@ -942,7 +942,7 @@
     "0/round_log.jsonl": [
       {
         "payload": {
-          "contract_hash": "0458e987cc26d2da11c5a256818b573073a851ddeb985d032c2224a72b60c320"
+          "contract_hash": "832ed09519f70985dfd492ab415f2881470efcd76daa1ad3719e877eddb8c1f7"
         },
         "scope": {},
         "seq": 1,
@@ -1156,7 +1156,6 @@
       {
         "payload": {
           "entry_id": "picky_stakeholder_emulated",
-          "replicate": 0,
           "side": "parent"
         },
         "scope": {
@@ -1174,7 +1173,6 @@
       {
         "payload": {
           "entry_id": "picky_stakeholder_emulated",
-          "replicate": 0,
           "side": "child"
         },
         "scope": {
@@ -1192,7 +1190,6 @@
       {
         "payload": {
           "entry_id": "q3_metrics_outline",
-          "replicate": 0,
           "side": "parent"
         },
         "scope": {
@@ -1210,7 +1207,6 @@
       {
         "payload": {
           "entry_id": "q3_metrics_outline",
-          "replicate": 0,
           "side": "child"
         },
         "scope": {
@@ -1228,7 +1224,6 @@
       {
         "payload": {
           "entry_id": "transformers_lay_audience",
-          "replicate": 0,
           "side": "parent"
         },
         "scope": {
@@ -1246,7 +1241,6 @@
       {
         "payload": {
           "entry_id": "transformers_lay_audience",
-          "replicate": 0,
           "side": "child"
         },
         "scope": {
@@ -1264,7 +1258,6 @@
       {
         "payload": {
           "entry_id": "waffles_single",
-          "replicate": 0,
           "side": "parent"
         },
         "scope": {
@@ -1282,7 +1275,6 @@
       {
         "payload": {
           "entry_id": "waffles_single",
-          "replicate": 0,
           "side": "child"
         },
         "scope": {
@@ -1321,7 +1313,6 @@
       {
         "payload": {
           "entry_id": "picky_stakeholder_emulated",
-          "replicate": 0,
           "side": "parent"
         },
         "scope": {
@@ -1339,7 +1330,6 @@
       {
         "payload": {
           "entry_id": "picky_stakeholder_emulated",
-          "replicate": 0,
           "side": "child"
         },
         "scope": {
@@ -1357,7 +1347,6 @@
       {
         "payload": {
           "entry_id": "q3_metrics_outline",
-          "replicate": 0,
           "side": "parent"
         },
         "scope": {
@@ -1375,7 +1364,6 @@
       {
         "payload": {
           "entry_id": "q3_metrics_outline",
-          "replicate": 0,
           "side": "child"
         },
         "scope": {
@@ -1393,7 +1381,6 @@
       {
         "payload": {
           "entry_id": "transformers_lay_audience",
-          "replicate": 0,
           "side": "parent"
         },
         "scope": {
@@ -1411,7 +1398,6 @@
       {
         "payload": {
           "entry_id": "transformers_lay_audience",
-          "replicate": 0,
           "side": "child"
         },
         "scope": {
@@ -1429,7 +1415,6 @@
       {
         "payload": {
           "entry_id": "waffles_single",
-          "replicate": 0,
           "side": "parent"
         },
         "scope": {
@@ -1447,7 +1432,6 @@
       {
         "payload": {
           "entry_id": "waffles_single",
-          "replicate": 0,
           "side": "child"
         },
         "scope": {
@@ -1486,7 +1470,6 @@
       {
         "payload": {
           "entry_id": "picky_stakeholder_emulated",
-          "replicate": 0,
           "side": "parent"
         },
         "scope": {
@@ -1504,7 +1487,6 @@
       {
         "payload": {
           "entry_id": "picky_stakeholder_emulated",
-          "replicate": 0,
           "side": "child"
         },
         "scope": {
@@ -1522,7 +1504,6 @@
       {
         "payload": {
           "entry_id": "q3_metrics_outline",
-          "replicate": 0,
           "side": "parent"
         },
         "scope": {
@@ -1540,7 +1521,6 @@
       {
         "payload": {
           "entry_id": "q3_metrics_outline",
-          "replicate": 0,
           "side": "child"
         },
         "scope": {
@@ -1558,7 +1538,6 @@
       {
         "payload": {
           "entry_id": "transformers_lay_audience",
-          "replicate": 0,
           "side": "parent"
         },
         "scope": {
@@ -1576,7 +1555,6 @@
       {
         "payload": {
           "entry_id": "transformers_lay_audience",
-          "replicate": 0,
           "side": "child"
         },
         "scope": {
@@ -1594,7 +1572,6 @@
       {
         "payload": {
           "entry_id": "waffles_single",
-          "replicate": 0,
           "side": "parent"
         },
         "scope": {
@@ -1612,7 +1589,6 @@
       {
         "payload": {
           "entry_id": "waffles_single",
-          "replicate": 0,
           "side": "child"
         },
         "scope": {
@@ -1656,7 +1632,6 @@
       {
         "payload": {
           "entry_id": "picky_stakeholder_emulated",
-          "replicate": 0,
           "side": "parent"
         },
         "scope": {
@@ -1674,7 +1649,6 @@
       {
         "payload": {
           "entry_id": "picky_stakeholder_emulated",
-          "replicate": 0,
           "side": "child"
         },
         "scope": {
@@ -1692,7 +1666,6 @@
       {
         "payload": {
           "entry_id": "q3_metrics_outline",
-          "replicate": 0,
           "side": "parent"
         },
         "scope": {
@@ -1710,7 +1683,6 @@
       {
         "payload": {
           "entry_id": "q3_metrics_outline",
-          "replicate": 0,
           "side": "child"
         },
         "scope": {
@@ -1728,7 +1700,6 @@
       {
         "payload": {
           "entry_id": "transformers_lay_audience",
-          "replicate": 0,
           "side": "parent"
         },
         "scope": {
@@ -1746,7 +1717,6 @@
       {
         "payload": {
           "entry_id": "transformers_lay_audience",
-          "replicate": 0,
           "side": "child"
         },
         "scope": {
@@ -1764,7 +1734,6 @@
       {
         "payload": {
           "entry_id": "waffles_single",
-          "replicate": 0,
           "side": "parent"
         },
         "scope": {
@@ -1782,7 +1751,6 @@
       {
         "payload": {
           "entry_id": "waffles_single",
-          "replicate": 0,
           "side": "child"
         },
         "scope": {
@@ -1821,7 +1789,6 @@
       {
         "payload": {
           "entry_id": "picky_stakeholder_emulated",
-          "replicate": 0,
           "side": "parent"
         },
         "scope": {
@@ -1839,7 +1806,6 @@
       {
         "payload": {
           "entry_id": "picky_stakeholder_emulated",
-          "replicate": 0,
           "side": "child"
         },
         "scope": {
@@ -1857,7 +1823,6 @@
       {
         "payload": {
           "entry_id": "q3_metrics_outline",
-          "replicate": 0,
           "side": "parent"
         },
         "scope": {
@@ -1875,7 +1840,6 @@
       {
         "payload": {
           "entry_id": "q3_metrics_outline",
-          "replicate": 0,
           "side": "child"
         },
         "scope": {
@@ -1893,7 +1857,6 @@
       {
         "payload": {
           "entry_id": "transformers_lay_audience",
-          "replicate": 0,
           "side": "parent"
         },
         "scope": {
@@ -1911,7 +1874,6 @@
       {
         "payload": {
           "entry_id": "transformers_lay_audience",
-          "replicate": 0,
           "side": "child"
         },
         "scope": {
@@ -1929,7 +1891,6 @@
       {
         "payload": {
           "entry_id": "waffles_single",
-          "replicate": 0,
           "side": "parent"
         },
         "scope": {
@@ -1947,7 +1908,6 @@
       {
         "payload": {
           "entry_id": "waffles_single",
-          "replicate": 0,
           "side": "child"
         },
         "scope": {
@@ -1986,7 +1946,6 @@
       {
         "payload": {
           "entry_id": "picky_stakeholder_emulated",
-          "replicate": 0,
           "side": "parent"
         },
         "scope": {
@@ -2004,7 +1963,6 @@
       {
         "payload": {
           "entry_id": "picky_stakeholder_emulated",
-          "replicate": 0,
           "side": "child"
         },
         "scope": {
@@ -2022,7 +1980,6 @@
       {
         "payload": {
           "entry_id": "q3_metrics_outline",
-          "replicate": 0,
           "side": "parent"
         },
         "scope": {
@@ -2040,7 +1997,6 @@
       {
         "payload": {
           "entry_id": "q3_metrics_outline",
-          "replicate": 0,
           "side": "child"
         },
         "scope": {
@@ -2058,7 +2014,6 @@
       {
         "payload": {
           "entry_id": "transformers_lay_audience",
-          "replicate": 0,
           "side": "parent"
         },
         "scope": {
@@ -2076,7 +2031,6 @@
       {
         "payload": {
           "entry_id": "transformers_lay_audience",
-          "replicate": 0,
           "side": "child"
         },
         "scope": {
@@ -2094,7 +2048,6 @@
       {
         "payload": {
           "entry_id": "waffles_single",
-          "replicate": 0,
           "side": "parent"
         },
         "scope": {
@@ -2112,7 +2065,6 @@
       {
         "payload": {
           "entry_id": "waffles_single",
-          "replicate": 0,
           "side": "child"
         },
         "scope": {

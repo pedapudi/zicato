@@ -1,67 +1,38 @@
-"""Comprehensive, academic-paper-style epoch analysis report.
+"""Publish an epoch report from measured results and recorded interpretation.
 
-This is the redesigned ``analysis.md`` / ``analysis.html`` artifact: a
-detailed, cogent, ACM-journal-style narrative of one improvement
-campaign (one epoch). It is **regenerated after every generation** —
-wired into the orchestrator's per-round flow alongside the existing
-decision-telemetry analyzer — so it is always current; by epoch close
-it reads as a complete write-up.
+Authored paper sections and the close-of-epoch retrospective are stored in
+``analysis.prose.json``. Deterministic refresh combines those blocks with the
+structured epoch view, tables, and figure markers to produce ``analysis.md``.
+The HTML writer renders one body and publishes standalone ``analysis.html``
+and dashboard ``analysis.fragment.html`` forms. File replacements are atomic
+individually; publication across files is not a transaction.
 
-Report structure (the section vocabulary an operator can rely on):
+The paper contains Abstract, Introduction, Methodology, Approach &
+Implementation, Experimental Results, Statistical Integrity, Proposer
+Analytics, Analysis, Threats to Validity & Limitations, and Conclusion.
+Recorded retrospective sections and their computed tournament outcomes join
+the same assembly. Headings, figures, and tables are numbered by the renderer;
+the Abstract remains unnumbered.
 
-* Title + metadata
-* Abstract
-* Introduction
-* Methodology
-* Approach & Implementation
-* Experimental Results
-* Analysis — What Worked and What Didn't
-* Threats to Validity & Limitations
-* Conclusion & Next Directions
+``report_sections`` templates measured facts from ``EpochReportData`` and
+``report_figures`` renders SVG from that view. ``report_prompts`` provides the
+bounded evaluation prompt for the paper's four interpretive blocks. A failed
+paper-authoring request preserves recorded blocks; absent blocks receive an
+unavailable notice. Deterministic refresh makes no evaluation call.
 
-The markdown source carries headings WITHOUT explicit section numbers;
-the HTML renderer auto-numbers ``h2 / h3 / h4`` (1, 1.1, 1.1.1) so the
-report is consistently numbered regardless of which sections happen to
-be present. Tables and figures are auto-numbered the same way.
-
-Hybrid generation, for correctness:
-
-* The deterministic, data-bearing sections (Methodology, every
-  Experimental Results table, the score trajectory, Threats) are
-  templated directly from the structured workspace data by
-  :mod:`zicato.analyzer.report_sections` — exact by construction.
-* The figures (inline SVG: score trajectory, drift-kind movements,
-  per-board heatmap, lineage diagram, mutation surface) are produced
-  by :mod:`zicato.analyzer.report_figures` from the same structured
-  view; the deterministic sections drop ``<!-- FIGURE:NAME -->``
-  markers and the HTML renderer substitutes the SVG at render time.
-* The prose sections (Abstract, Introduction, the Analysis
-  interpretation, Conclusion) are written by ONE bounded evaluation-LLM
-  call, given the structured data and the deterministic sections as
-  context (:mod:`zicato.analyzer.report_prompts`).
-
-The whole document is regenerated each round — not appended — which
-keeps it internally coherent. The pass is strictly best-effort: any
-failure (LLM timeout, LLM error, render error) substitutes a
-placeholder and still writes a file. Internal failures inside this
-module never propagate; the orchestrator wraps the call in a
-``try / except`` regardless.
-
-The report is written to ``epochs/{epoch_id}/analysis.md`` and a
-rendered ``analysis.html`` so the existing
-``/api/epoch/{epoch}/analysis.html`` dashboard endpoint serves the
-latest version. This artifact is distinct from the per-round
-``insights/round_NNNN.md`` proposer-feedback files, which are
-untouched.
+The round hook catches report-generation failures so reporting cannot abort
+optimization. This module logs HTML failures; malformed prose and failures
+reading inputs or writing Markdown can propagate to the caller. Report
+artifacts are separate from per-round proposer feedback in ``insights/``.
 """
 
 from __future__ import annotations
 
 import asyncio
 import html as _html
+import json
 import logging
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
 from pathlib import Path
 
 from zicato.analyzer.report_data import EpochReportData, gather_epoch_report_data
@@ -85,7 +56,7 @@ from zicato.aux_timeout import aux_call_timeout_s
 from zicato.core.settings import AuxConfig
 from zicato.core.types import Experiment
 from zicato.core.workspace import analysis_path
-from zicato.storage import atomic_write_text
+from zicato.storage import atomic_write_json, atomic_write_text
 
 log = logging.getLogger("zicato.analyzer.report")
 
@@ -94,42 +65,6 @@ _AuxCallLLM = Callable[[str, str, str], Awaitable[str]]
 
 # Placeholder prose used when the LLM omits a block or the call fails.
 _MISSING_PROSE = "_(prose section unavailable — the evaluation LLM did not return it this round.)_"
-
-
-# Explicit HTML-comment fences bracket each LLM-authored prose block in an
-# assembled document (same invisible-marker scheme as ``<!-- FIGURE:... -->``
-# / ``<!-- META -->``). The deterministic refresh re-lifts prose by these
-# ANCHOR-EXACT fences, so LLM prose containing a ``---`` rule, an embedded
-# ``## heading``, or any other structural line survives verbatim — the old
-# "stop at the first ``## ``/``---``" heuristic silently truncated it. The
-# fence lines render to nothing (HTML comments); see the renderer's skip
-# branch. The suffix is spaced to match the label form (``<!-- PROSE:X -->``).
-_PROSE_FENCE_OPEN_PREFIX = "<!-- PROSE:"
-_PROSE_FENCE_CLOSE_PREFIX = "<!-- /PROSE:"
-_PROSE_FENCE_SUFFIX = " -->"
-
-
-def _prose_fence_open(label: str) -> str:
-    """The opening fence line for a prose block, e.g. ``<!-- PROSE:ABSTRACT -->``."""
-    return f"{_PROSE_FENCE_OPEN_PREFIX}{label}{_PROSE_FENCE_SUFFIX}"
-
-
-def _prose_fence_close(label: str) -> str:
-    """The closing fence line for a prose block, e.g. ``<!-- /PROSE:ABSTRACT -->``."""
-    return f"{_PROSE_FENCE_CLOSE_PREFIX}{label}{_PROSE_FENCE_SUFFIX}"
-
-
-def _is_prose_fence_line(stripped: str) -> bool:
-    """True for either the open or close fence of any prose block."""
-    return (
-        stripped.startswith(_PROSE_FENCE_OPEN_PREFIX)
-        or stripped.startswith(_PROSE_FENCE_CLOSE_PREFIX)
-    ) and stripped.endswith(_PROSE_FENCE_SUFFIX.strip())
-
-
-# ---------------------------------------------------------------------------
-# Markdown assembly
-# ---------------------------------------------------------------------------
 
 
 def _placeholder_blocks() -> dict[str, str]:
@@ -142,64 +77,29 @@ def assemble_report_markdown(
     prose: dict[str, str],
     deterministic_sections: str,
 ) -> str:
-    """Stitch the deterministic sections and the LLM prose into one document.
+    """Render recorded interpretation beside deterministic tables and figures."""
 
-    The section order is fixed: Title, Abstract, Introduction,
-    Methodology, Approach, Results, Analysis, Threats, Conclusion. The
-    ``prose`` dict supplies the four interpretive sections keyed by the
-    labels in :data:`PROSE_BLOCK_LABELS`; a missing key falls back to a
-    placeholder so the document always carries every section.
-    """
-    abstract = prose.get("ABSTRACT", _MISSING_PROSE).strip() or _MISSING_PROSE
-    introduction = prose.get("INTRODUCTION", _MISSING_PROSE).strip() or _MISSING_PROSE
-    analysis = prose.get("ANALYSIS", _MISSING_PROSE).strip() or _MISSING_PROSE
-    conclusion = prose.get("CONCLUSION", _MISSING_PROSE).strip() or _MISSING_PROSE
+    def section(title: str, label: str) -> str:
+        body = prose.get(label, _MISSING_PROSE).strip() or _MISSING_PROSE
+        return f"## {title}\n\n{body}"
 
-    def _prose_block(label: str, body: str) -> None:
-        # Bracket every prose block in anchor-exact fences so a later
-        # deterministic refresh re-lifts it verbatim (see
-        # :func:`parse_prose_from_markdown`), even when the body carries a
-        # ``---`` rule or an embedded ``## heading``.
-        parts.append(_prose_fence_open(label))
-        parts.append(body)
-        parts.append(_prose_fence_close(label))
-
-    parts: list[str] = []
-    parts.append(render_title_block(data))
-    parts.append("")
-    parts.append("## Abstract")
-    parts.append("")
-    _prose_block("ABSTRACT", abstract)
-    parts.append("")
-    parts.append("## Introduction")
-    parts.append("")
-    _prose_block("INTRODUCTION", introduction)
-    parts.append("")
-    parts.append(deterministic_sections.strip())
-    parts.append("")
-    parts.append("## Analysis — What Worked and What Didn't")
-    parts.append("")
-    _prose_block("ANALYSIS", analysis)
-    parts.append("")
-    parts.append(render_threats_section(data))
-    parts.append("")
-    parts.append("## Conclusion & Next Directions")
-    parts.append("")
-    _prose_block("CONCLUSION", conclusion)
-    parts.append("")
-    parts.append("---")
-    parts.append("")
-    now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    parts = [
+        render_title_block(data),
+        section("Abstract", "ABSTRACT"),
+        section("Introduction", "INTRODUCTION"),
+        deterministic_sections.strip(),
+        section("Analysis — What Worked and What Didn't", "ANALYSIS"),
+        render_threats_section(data),
+        section("Conclusion & Next Directions", "CONCLUSION"),
+    ]
+    if prose.get("retrospective"):
+        parts.append(prose["retrospective"].strip())
     parts.append(
-        f"_Regenerated by zicato at {now} from `board.jsonl`, `scoring.json`, "
-        f"`mutations.json`, `generations/*/experiment.json`, and `journal.md` "
-        f"under epoch `{data.epoch_id}`. The data-bearing sections are "
-        f"templated exactly from those artifacts; the prose sections are "
-        f"LLM-authored. Section, table, and figure numbers are assigned by "
-        f"the renderer._"
+        f"_Report for epoch `{data.epoch_id}`. Tables and figures derive from "
+        "the recorded board, scoring, mutations, experiments, and journal. "
+        "Interpretive sections contain the recorded evaluation narrative._"
     )
-    parts.append("")
-    return "\n".join(parts)
+    return "\n\n".join(parts) + "\n"
 
 
 def _deterministic_sections(data: EpochReportData) -> str:
@@ -460,15 +360,6 @@ def markdown_to_html(md: str, *, data: EpochReportData | None = None) -> str:
         line = lines[i]
         stripped = line.strip()
 
-        # Prose fence — an invisible ``<!-- PROSE:LABEL -->`` / ``<!-- /PROSE:
-        # LABEL -->`` marker bracketing an LLM prose block. HTML comments
-        # render to nothing; skip the line so it neither prints literally
-        # nor gets swept into the following paragraph.
-        if _is_prose_fence_line(stripped):
-            _close_list()
-            i += 1
-            continue
-
         # Eyebrow marker — small-caps line above the title.
         if stripped == _EYEBROW_MARKER:
             _close_list()
@@ -505,7 +396,6 @@ def markdown_to_html(md: str, *, data: EpochReportData | None = None) -> str:
                     or nxt == _META_MARKER
                     or nxt == _EYEBROW_MARKER
                     or nxt.startswith(_CALLOUT_MARKER_PREFIX)
-                    or _is_prose_fence_line(nxt)
                     or _is_caption_line(nxt)
                     or "|" in nxt
                 ):
@@ -658,7 +548,6 @@ def markdown_to_html(md: str, *, data: EpochReportData | None = None) -> str:
                 or nxt == _META_MARKER
                 or nxt == _EYEBROW_MARKER
                 or nxt.startswith(_CALLOUT_MARKER_PREFIX)
-                or _is_prose_fence_line(nxt)
                 or _is_caption_line(nxt)
                 or "|" in nxt
             ):
@@ -1240,74 +1129,37 @@ def _paper_css(*, standalone: bool) -> str:
     return "\n".join(parts)
 
 
-def render_report_html(
-    epoch_id: str,
-    report_md: str,
-    *,
-    data: EpochReportData | None = None,
-) -> str:
-    """Render the report markdown into a self-contained, paper-styled HTML document.
-
-    Zero external resources — inline CSS, inline SVG, no web-font
-    fetches — so the file renders identically over ``file://`` as it
-    does through the dashboard endpoint. The standalone document reads
-    as a single page with the centred paper-article block; the same
-    fragment also embeds inline in the dashboard via
-    :func:`render_report_html_fragment`.
-
-    ``data`` carries the structured epoch view from which inline figure
-    SVGs are produced. When absent (e.g. a renderer-only test), figure
-    markers degrade to small placeholders so the structural envelope is
-    still well-formed.
-    """
-    body = markdown_to_html(report_md, data=data)
-    title = f"zicato — epoch {_html.escape(epoch_id)} analysis report"
-    css = _paper_css(standalone=True)
-    return (
-        "<!DOCTYPE html>"
-        '<html lang="en"><head>'
-        '<meta charset="utf-8" />'
-        '<meta name="viewport" content="width=device-width, initial-scale=1" />'
-        f"<title>{title}</title>"
-        f"<style>{css}</style>"
-        "</head><body>"
-        '<article class="paper"><div class="paper-article">'
-        f"{body}"
-        "</div></article>"
-        "</body></html>"
+def _wrap_report_html(epoch_id: str, body: str, *, standalone: bool) -> str:
+    css = _paper_css(standalone=standalone)
+    epoch_attr = _html.escape(epoch_id, quote=True)
+    classes = "paper" if standalone else "paper paper-card"
+    attributes = "" if standalone else f' data-epoch="{epoch_attr}"'
+    article = (
+        f'<style>{css}</style><article class="{classes}"{attributes}>'
+        f'<div class="paper-article">{body}</div></article>'
     )
+    if not standalone:
+        return article
+    return (
+        '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8" />'
+        '<meta name="viewport" content="width=device-width, initial-scale=1" />'
+        f"<title>zicato — epoch {epoch_attr} analysis report</title>"
+        f"</head><body>{article}</body></html>"
+    )
+
+
+def render_report_html(
+    epoch_id: str, report_md: str, *, data: EpochReportData | None = None
+) -> str:
+    """Render a standalone report with embedded styles and figures."""
+    return _wrap_report_html(epoch_id, markdown_to_html(report_md, data=data), standalone=True)
 
 
 def render_report_html_fragment(
-    epoch_id: str,
-    report_md: str,
-    *,
-    data: EpochReportData | None = None,
+    epoch_id: str, report_md: str, *, data: EpochReportData | None = None
 ) -> str:
-    """Render the report as a self-contained HTML fragment for inline embedding.
-
-    Used by the dashboard's Epoch view to drop the paper-styled report
-    inline (inside the dark dashboard chrome) without iframe-ing the
-    standalone document. The fragment carries its own ``<style>`` block
-    scoped to ``.paper`` so it cannot leak typography into the
-    dashboard's surrounding chrome. The dashboard wraps this fragment
-    in a paper card; the fragment itself is the article body.
-
-    ``epoch_id`` is accepted for parity with :func:`render_report_html`
-    (and for future use, e.g. anchor ids) — it is not embedded today.
-    """
-    body = markdown_to_html(report_md, data=data)
-    css = _paper_css(standalone=False)
-    # The ``data-epoch`` attribute is informational; the dashboard does
-    # not parse it but it eases debugging the rendered fragment.
-    epoch_attr = _html.escape(epoch_id, quote=True)
-    return (
-        f"<style>{css}</style>"
-        f'<article class="paper paper-card" data-epoch="{epoch_attr}">'
-        '<div class="paper-article">'
-        f"{body}"
-        "</div></article>"
-    )
+    """Render the same report body with styles scoped for the dashboard."""
+    return _wrap_report_html(epoch_id, markdown_to_html(report_md, data=data), standalone=False)
 
 
 # ---------------------------------------------------------------------------
@@ -1315,175 +1167,91 @@ def render_report_html_fragment(
 # ---------------------------------------------------------------------------
 
 
-def restamp_masthead(report_md: str, data: EpochReportData) -> str:
-    """Splice a freshly-rendered masthead over a report's title block.
-
-    The masthead (status / goal / generation counts) is fully data-derived,
-    so it can be regenerated without the evaluation LLM. The title block runs
-    from the top of the document to the first level-2 heading (the Abstract);
-    everything from that heading on — the LLM narrative — is preserved
-    verbatim. A no-op (returns the input unchanged) on any document that is
-    not in the analyzer's ``<!-- META -->`` masthead format.
-    """
-    if "<!-- META -->" not in report_md:
-        return report_md
-    lines = report_md.split("\n")
-    body_idx = next((i for i, line in enumerate(lines) if line.startswith("## ")), None)
-    if body_idx is None:
-        return report_md
-    return render_title_block(data) + "\n\n" + "\n".join(lines[body_idx:])
-
-
-def _mask_regen_timestamp(report_md: str) -> str:
-    """Blank the volatile ``_Regenerated by zicato at <ts>...`` footer line.
-
-    Used by the digest gate so a refresh whose only difference is the
-    regeneration timestamp reads as a content no-op.
-    """
-    return "\n".join(
-        "" if line.startswith("_Regenerated by zicato at ") else line
-        for line in report_md.replace("\r\n", "\n").split("\n")
-    )
-
-
-def parse_prose_from_markdown(report_md: str) -> dict[str, str]:
-    """Read the four authored prose blocks between their explicit report fences.
-
-    Embedded headings and horizontal rules remain part of the recorded prose.
-    Missing blocks and placeholder bodies contribute no authored prose.
-    """
-    return _parse_prose_fenced(report_md.replace("\r\n", "\n"))
-
-
-def _parse_prose_fenced(text: str) -> dict[str, str]:
-    """Lift each prose block by its anchor-exact ``<!-- PROSE:LABEL -->`` fence."""
-    lines = text.split("\n")
-    open_to_label = {_prose_fence_open(lbl): lbl for lbl in PROSE_BLOCK_LABELS}
-    out: dict[str, str] = {}
-    i = 0
-    n = len(lines)
-    while i < n:
-        label = open_to_label.get(lines[i].strip())
-        if label is None:
-            i += 1
-            continue
-        close = _prose_fence_close(label)
-        body: list[str] = []
-        i += 1
-        # Capture verbatim to the matching close fence (or EOF). Only the
-        # exact close sentinel terminates the block, so structural lines —
-        # rules, headings, other blocks' fences — are preserved as body.
-        while i < n and lines[i].strip() != close:
-            body.append(lines[i])
-            i += 1
-        i += 1  # consume the close fence
-        captured = "\n".join(body).strip()
-        if captured and captured != _MISSING_PROSE:
-            out[label] = captured
-    return out
-
-
 def write_html_companion(
     workspace_root: Path,
     epoch_id: str,
     md_path: Path,
     *,
-    report_md: str | None = None,
+    report_md: str,
+    data: EpochReportData,
+) -> Path | None:
+    """Render figures once and replace each HTML file atomically.
+
+    Standalone and embedded files share one body. Their replacements are
+    separate operations, so interruption can leave different publication ages.
+    """
+    try:
+        body = markdown_to_html(report_md, data=data)
+        for path, standalone in (
+            (md_path.with_suffix(".html"), True),
+            (md_path.with_name("analysis.fragment.html"), False),
+        ):
+            html = _wrap_report_html(epoch_id, body, standalone=standalone)
+            if not path.exists() or path.read_text(encoding="utf-8") != html:
+                atomic_write_text(path, html, mode=None)
+    except Exception as exc:  # noqa: BLE001 — Markdown remains available after a render failure
+        log.warning("epoch report HTML could not be published: %s", exc)
+        return None
+    return md_path.with_suffix(".html")
+
+
+def regenerate_epoch_report_deterministic(
+    workspace_root: Path,
+    epoch_id: str,
+    *,
+    authored: dict[str, str] | None = None,
     data: EpochReportData | None = None,
     recorded_experiments: tuple[list[tuple[str, Experiment]], list[str]] | None = None,
-) -> Path | None:
-    """Publish report HTML atomically, preserving Markdown if rendering fails.
+) -> bool:
+    """Publish Markdown and HTML from recorded prose and measured results.
 
-    Callers that assembled the report pass its text and captured data so the
-    figures use the same observations as the document's tables and prose.
+    Authored sections are stored directly. Refreshing tables never parses or
+    edits model output. A failed model request leaves existing prose intact.
     """
-    if report_md is None:
-        try:
-            report_md = md_path.read_text(encoding="utf-8")
-        except OSError:
-            return None
-    html_path = md_path.with_suffix(".html")
-    try:
-        if data is None:
-            data = gather_epoch_report_data(
-                workspace_root, epoch_id, recorded_experiments=recorded_experiments
-            )
-        atomic_write_text(html_path, render_report_html(epoch_id, report_md, data=data), mode=None)
-    except Exception as exc:  # noqa: BLE001 — HTML failure must preserve Markdown
-        log.debug("epoch report: analysis.html render skipped (%s)", exc)
-        return None
-    return html_path
-
-
-def regenerate_epoch_report_deterministic(workspace_root: Path, epoch_id: str) -> bool:
-    """Refresh a persisted report's DETERMINISTIC sections — no LLM call.
-
-    The event-driven freshness path (see ``docs/design/PUBLICATION.md``):
-    after each settled round the orchestrator calls this to re-template
-    every data-bearing section (masthead, methodology, results, validity,
-    proposer analytics, threats) from the CURRENT workspace data, while
-    preserving the existing LLM-authored prose verbatim. Cost discipline —
-    no evaluation-LLM call is made; the full LLM prose render happens at
-    epoch close. Mid-epoch the masthead carries the ``LIVING DRAFT`` stamp
-    (data-derived: dropped once the epoch is marked closed).
-
-    Idempotent and digest-gated: returns ``True`` only when the rewrite
-    actually changed ``analysis.md`` on disk; a byte-identical regeneration
-    is a no-op (``False``) and rewrites nothing, so a settled round that
-    moved no data never churns the file (and the dashboard's digest
-    discipline rebuilds zero DOM). Best-effort on the HTML companion — a
-    render failure there never loses the refreshed markdown.
-    """
-    data = gather_epoch_report_data(workspace_root, epoch_id)
-    deterministic = _deterministic_sections(data)
-
     md_path = analysis_path(workspace_root, epoch_id)
+    prose_path = md_path.with_name("analysis.prose.json")
     try:
-        existing = md_path.read_text(encoding="utf-8")
-    except OSError:
-        existing = ""
-    prose = parse_prose_from_markdown(existing) if existing else {}
-    for label in PROSE_BLOCK_LABELS:
-        prose.setdefault(label, _MISSING_PROSE)
+        prose = json.loads(prose_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        prose = {}
+    if not isinstance(prose, dict) or not all(
+        isinstance(k, str) and isinstance(v, str) for k, v in prose.items()
+    ):
+        raise ValueError(f"report prose must contain named text sections: {prose_path}")
+    if authored:
+        prose.update({k: v for k, v in authored.items() if v and v != _MISSING_PROSE})
+        atomic_write_json(prose_path, prose)
+    if prose.get("retrospective") and recorded_experiments is None:
+        from zicato.epoch.journal import read_epoch_experiments
 
-    new_md = assemble_report_markdown(data, prose, deterministic)
-    # Digest gate: the assembled document carries a volatile "Regenerated
-    # at <now>" footer, so a raw equality check would always differ. Mask
-    # that one line on both sides — when only the timestamp moved the
-    # content is unchanged, so keep the existing file byte-for-byte (the
-    # dashboard's digest discipline then rebuilds zero DOM).
-    if _mask_regen_timestamp(new_md) == _mask_regen_timestamp(existing):
-        return False
+        recorded_experiments = read_epoch_experiments(workspace_root, epoch_id)
+    if data is None:
+        data = gather_epoch_report_data(
+            workspace_root, epoch_id, recorded_experiments=recorded_experiments
+        )
+    deterministic = _deterministic_sections(data)
+    if prose.get("retrospective"):
+        from zicato.epoch.analysis import _generations_for, render_tournament_outcomes_section
 
-    atomic_write_text(md_path, new_md, mode=None)
-    write_html_companion(workspace_root, epoch_id, md_path, report_md=new_md, data=data)
-    return True
+        assert recorded_experiments is not None
+        records, _unreadable = recorded_experiments
+        experiments = [experiment for _, experiment in records]
+        generations = _generations_for(workspace_root, epoch_id, experiments)
+        deterministic += "\n\n" + render_tournament_outcomes_section(generations, experiments)
+    report_md = assemble_report_markdown(data, prose, deterministic)
+    existing = md_path.read_text(encoding="utf-8") if md_path.exists() else ""
+    changed = report_md != existing
+    if changed:
+        atomic_write_text(md_path, report_md, mode=None)
+    write_html_companion(workspace_root, epoch_id, md_path, report_md=report_md, data=data)
+    return changed
 
 
 def restamp_persisted_report(workspace_root: Path, epoch_id: str) -> bool:
-    """Rewrite a persisted ``analysis.md``/``.html`` masthead from CURRENT data.
-
-    The comprehensive report is regenerated after every round, so the copy
-    on disk is frozen at the *last mid-run* pass — its masthead reads
-    "in progress" with pre-close counts even after the epoch closes. This
-    re-renders just the (deterministic) masthead from the epoch's current
-    config + generations and rewrites both files, leaving the expensive LLM
-    narrative untouched. Cheap, no LLM, idempotent. Returns ``True`` when the
-    file actually changed; a no-op (``False``) when absent, already current,
-    or not in masthead format.
-    """
-    md_path = analysis_path(workspace_root, epoch_id)
-    try:
-        report_md = md_path.read_text(encoding="utf-8")
-    except OSError:
+    """Refresh an existing report after the epoch closes."""
+    if not analysis_path(workspace_root, epoch_id).exists():
         return False
-    data = gather_epoch_report_data(workspace_root, epoch_id)
-    new_md = restamp_masthead(report_md, data)
-    if new_md == report_md:
-        return False
-    atomic_write_text(md_path, new_md, mode=None)
-    write_html_companion(workspace_root, epoch_id, md_path, report_md=new_md, data=data)
-    return True
+    return regenerate_epoch_report_deterministic(workspace_root, epoch_id)
 
 
 async def generate_epoch_report(
@@ -1495,20 +1263,15 @@ async def generate_epoch_report(
 ) -> Path:
     """Regenerate the comprehensive epoch analysis report.
 
-    Gathers the structured workspace data, renders the deterministic
-    sections, asks the evaluation LLM for the four prose sections in one
-    bounded call, assembles the full document, and writes both
-    ``analysis.md`` and ``analysis.html`` under the epoch directory.
+    Gather the structured epoch view and deterministic sections, then request
+    the four interpretive blocks in one bounded evaluation call. Successful
+    blocks update ``analysis.prose.json``. The shared assembler publishes
+    Markdown and both HTML forms from recorded prose and measured results.
 
-    The pass is **best-effort**. The evaluation-LLM call is wrapped in
-    :func:`asyncio.wait_for` against :func:`aux_call_timeout_s`; a
-    timeout or any LLM error substitutes placeholder prose and the
-    deterministic sections still ship. The file is therefore *always*
-    written when this function returns normally.
-
-    Internal failures (path math, disk write) DO raise — that is the
-    correct behaviour for the orchestrator's ``try / except`` wrapper,
-    which keeps a wedge here from aborting the round or the loop.
+    Timeout or authoring failure preserves existing blocks. Missing blocks
+    receive unavailable notices. Input and Markdown publication failures can
+    propagate to the caller; HTML publication failures are logged. The round
+    hook catches report errors so reporting cannot abort optimization.
 
     Parameters
     ----------
@@ -1559,14 +1322,8 @@ async def generate_epoch_report(
         )
         prose = _placeholder_blocks()
 
-    report_md = assemble_report_markdown(data, prose, deterministic)
-
-    md_path = analysis_path(workspace_root, epoch_id)
-    atomic_write_text(md_path, report_md, mode=None)
-
-    write_html_companion(workspace_root, epoch_id, md_path, report_md=report_md, data=data)
-
-    return md_path
+    regenerate_epoch_report_deterministic(workspace_root, epoch_id, authored=prose, data=data)
+    return analysis_path(workspace_root, epoch_id)
 
 
 __all__ = [
@@ -1575,8 +1332,6 @@ __all__ = [
     "markdown_to_html",
     "render_report_html",
     "render_report_html_fragment",
-    "restamp_masthead",
     "restamp_persisted_report",
     "regenerate_epoch_report_deterministic",
-    "parse_prose_from_markdown",
 ]

@@ -163,6 +163,10 @@ zero and exited 0. `tests/test_slow_tier_registry.py` pins all four forms.
 > binding test needs a real port. Remove unrelated setup and repeated
 > executions when existing tests retain their assertions and distinct failure
 > cases. Tests of report formatting can supply measured inputs directly.
+> Report publication checks should cover stored narrative, deterministic
+> refresh, and matching standalone and embedded report bodies. Browser checks
+> should cover published-fragment display, absent-report behavior, interactive
+> figures, and redraws after equal-length text corrections.
 > Measure subprocess starts, child CPU time, and elapsed time under matching
 > conditions. Moving a test to the slow tier does not reduce complete
 > verification cost.

@@ -30,20 +30,26 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from zicato.core.measurement import UNKNOWN_SEED, BaseSeed, measurement_artifact_path
+from zicato.core.measurement import (
+    TOURNAMENT_DRAW,
+    UNKNOWN_SEED,
+    BaseSeed,
+    MeasurementDraw,
+    measurement_artifact_path,
+)
 
 
-def events_replicate_index(path: Path | str) -> int | None:
-    """Return a current events file's replicate index; archives are ``None``."""
-    from zicato.core.measurement import artifact_replicate_index  # noqa: PLC0415
+def events_measurement(path: Path | str) -> MeasurementDraw | None:
+    """Read the purpose and draw of an events filename; archives return None."""
+    from zicato.core.measurement import artifact_measurement  # noqa: PLC0415
 
-    index = artifact_replicate_index(Path(path).name, "events")
-    return None if index == 0 and Path(path).name != "events.jsonl" else index
+    index = artifact_measurement(Path(path).name, "events")
+    return index
 
 
 def is_events_file(path: Path | str) -> bool:
-    """Whether ``path`` is ``events.jsonl`` or a current ``events.rN.jsonl``."""
-    return events_replicate_index(path) is not None
+    """Whether the path names a supported measurement transcript."""
+    return events_measurement(path) is not None
 
 
 @dataclass(frozen=True)
@@ -534,15 +540,15 @@ class WorkspaceLayout:
         epoch_id: str,
         generation_id: str,
         entry_id: str,
-        replicate_index: int = 0,
+        measurement: MeasurementDraw = TOURNAMENT_DRAW,
         *,
         base_seed: BaseSeed = UNKNOWN_SEED,
     ) -> Path:
-        """One measurement's reducer output, with historical paths preserved."""
+        """Return the loss path for the requested measurement."""
         return measurement_artifact_path(
             self.run_dir(epoch_id, generation_id, entry_id),
             "loss",
-            replicate_index,
+            measurement,
             base_seed=base_seed,
         )
 
@@ -551,7 +557,7 @@ class WorkspaceLayout:
         epoch_id: str,
         generation_id: str,
         entry_id: str,
-        replicate_index: int = 0,
+        measurement: MeasurementDraw = TOURNAMENT_DRAW,
         *,
         base_seed: BaseSeed = UNKNOWN_SEED,
     ) -> Path:
@@ -559,7 +565,7 @@ class WorkspaceLayout:
         return measurement_artifact_path(
             self.run_dir(epoch_id, generation_id, entry_id),
             "result",
-            replicate_index,
+            measurement,
             base_seed=base_seed,
         )
 
@@ -568,7 +574,7 @@ class WorkspaceLayout:
         epoch_id: str,
         generation_id: str,
         entry_id: str,
-        replicate_index: int = 0,
+        measurement: MeasurementDraw = TOURNAMENT_DRAW,
         *,
         base_seed: BaseSeed = UNKNOWN_SEED,
     ) -> Path:
@@ -576,7 +582,7 @@ class WorkspaceLayout:
         return measurement_artifact_path(
             self.run_dir(epoch_id, generation_id, entry_id),
             "events",
-            replicate_index,
+            measurement,
             base_seed=base_seed,
         )
 
@@ -585,12 +591,12 @@ class WorkspaceLayout:
         epoch_id: str,
         generation_id: str,
         entry_id: str,
-        replicate_index: int = 0,
+        measurement: MeasurementDraw = TOURNAMENT_DRAW,
         *,
         base_seed: BaseSeed = UNKNOWN_SEED,
     ) -> Path:
         """The retained predecessor of one measurement's events JSONL."""
-        path = self.events(epoch_id, generation_id, entry_id, replicate_index, base_seed=base_seed)
+        path = self.events(epoch_id, generation_id, entry_id, measurement, base_seed=base_seed)
         return path.with_name(path.stem + ".prev.jsonl")
 
     def loss_archive(self, epoch_id: str, generation_id: str, entry_id: str) -> Path:

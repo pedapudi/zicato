@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import threading
+from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import get_args
@@ -13,7 +14,7 @@ from typing import get_args
 from zicato.config import resolve_configuration
 from zicato.core.adapter_config import DriverImportContext
 from zicato.core.drift_kinds import DriftKind
-from zicato.core.measurement import MeasurementDraw, measurement_artifact_path
+from zicato.core.measurement import MeasurementDraw, MeasurementPurpose, measurement_artifact_path
 from zicato.core.run_context import RunContext
 from zicato.core.runtime_context import WorkerRuntimeContext
 from zicato.core.workspace import run_dir, run_id_for_unit
@@ -220,10 +221,19 @@ def test_real_worker_preserves_captured_native_transport_and_tool_protocol(tmp_p
             "agent = LlmAgent(name='local_target', instruction='Write the report.', "
             "model=Gemini.model_fields['model'].default, tools=[write_report])\n"
         )
-        draw = MeasurementDraw.from_index(0, base_seed=17)
-        run_id = run_id_for_unit("v0", "entry", 0, base_seed=17)
+        draw = replace(MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0), base_seed=17)
+        run_id = run_id_for_unit(
+            "v0",
+            "entry",
+            MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0),
+            base_seed=17,
+            epoch_id="e0",
+        )
         unit = measurement_artifact_path(
-            run_dir(workspace, "e0", "v0", "entry"), "loss", 0, base_seed=17
+            run_dir(workspace, "e0", "v0", "entry"),
+            "loss",
+            MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0),
+            base_seed=17,
         ).parent
         unit.mkdir(parents=True)
         payload = {
@@ -239,8 +249,8 @@ def test_real_worker_preserves_captured_native_transport_and_tool_protocol(tmp_p
             },
             "target_role": roles["target"],
             "evaluation_role": roles["evaluation"],
-            "sink_events_path": str(unit / "events.jsonl"),
-            "loss_path": str(unit / "loss.json"),
+            "sink_events_path": str(unit / "events.tournament.r0.jsonl"),
+            "loss_path": str(unit / "loss.tournament.r0.json"),
             "measurement": draw.to_json(),
             "weights": {"goldfive": {}},
             "result_path": str(unit / "worker.result.json"),
@@ -272,10 +282,10 @@ def test_real_worker_preserves_captured_native_transport_and_tool_protocol(tmp_p
             timeout=30,
         )
         assert result.returncode == 0, result.stderr
-        loss = read_loss_profile(unit / "loss.json")
+        loss = read_loss_profile(unit / "loss.tournament.r0.json")
         assert loss.pass_fail is True, result.stderr
         assert loss.measurement == draw
-        capture = read_run_result(unit / "result.json", expected=loss)
+        capture = read_run_result(unit / "result.tournament.r0.json", expected=loss)
         assert capture is not None and capture["final_output"] == "task completed"
         assert (package / "report.txt").read_text() == "tool completed"
         assert len(requests) == 2

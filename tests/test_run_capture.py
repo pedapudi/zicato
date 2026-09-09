@@ -1,11 +1,11 @@
-"""Tests for the board-reflection capture fix (result.json + judge_io.jsonl).
+"""Tests for the board-reflection capture fix (result.json + judge_io.tournament.r0.jsonl).
 
 Two run artifacts close BOARD-REFLECTION.md's capture gap:
 
 * ``result.json`` — the worker persists each run's user-facing
-  :class:`~zicato.core.RunResult` beside ``loss.json``, replicate-slotted
+  :class:`~zicato.core.RunResult` beside ``loss.tournament.r0.json``, replicate-slotted
   (``result.r{n}.json``), atomic, and STRICTLY best-effort;
-* ``judge_io.jsonl`` — an append-only sidecar retaining every inline
+* ``judge_io.tournament.r0.jsonl`` — an append-only sidecar retaining every inline
   judge ``evaluate`` call's verbatim I/O, emitted through the
   :mod:`zicato.judge_runtime.io_capture` sink seam.
 
@@ -16,12 +16,12 @@ and never contract-hashed. The load-bearing invariants pinned here:
 * the worker writes result.json on a clean exit AND on its own
   cooperative budget abort (the synthesized RunResult persists too);
 * replicate slotting mirrors the loss slotting exactly;
-* with both knobs OFF the worker writes NO new files and its loss.json
+* with both knobs OFF the worker writes NO new files and its loss.tournament.r0.json
   is byte-identical to a knobs-on run's (the byte-identical proof);
 * every text field is clipped with the ``clipped`` flag set;
 * the judge sink records one line per evaluate call, with the sha256 of
   the UNCLIPPED input and the scripted raw response verbatim;
-* an unwritable capture path never changes loss.json or the exit code
+* an unwritable capture path never changes loss.tournament.r0.json or the exit code
   (the best-effort proof);
 * readers tolerate missing / old-version / garbage files;
 * the test-retest path emits judge_io when a sink-wired live judge is
@@ -35,6 +35,7 @@ import json
 import os
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -43,7 +44,7 @@ import pytest
 from zicato.config import resolve_configuration
 from zicato.core import RunResult
 from zicato.core.adapter_config import DriverImportContext
-from zicato.core.measurement import MeasurementDraw, artifact_replicate_index
+from zicato.core.measurement import MeasurementDraw, MeasurementPurpose, artifact_measurement
 from zicato.core.run_context import RunContext
 from zicato.core.runtime_context import WorkerRuntimeContext
 from zicato.core.workspace import (
@@ -76,24 +77,35 @@ from zicato.tournament.unit_cache import (
 
 
 def test_unit_result_path_mirrors_loss_slotting() -> None:
-    """loss.json -> result.json; loss.r{n}.json -> result.r{n}.json."""
+    """loss.tournament.r0.json -> result.json; loss.r{n}.json -> result.r{n}.json."""
     base = Path("/ws/epochs/e0/generations/v1/runs/entry_a")
-    assert unit_result_path(base / "loss.json") == base / "result.json"
-    assert unit_result_path(base / "loss.r1.json") == base / "result.r1.json"
-    assert unit_result_path(base / "loss.r4000.json") == base / "result.r4000.json"
+    assert unit_result_path(base / "loss.tournament.r0.json") == base / "result.tournament.r0.json"
+    assert unit_result_path(base / "loss.tournament.r1.json") == base / "result.tournament.r1.json"
+    assert (
+        unit_result_path(base / "loss.evidence_confirmation.r0.json")
+        == base / "result.evidence_confirmation.r0.json"
+    )
 
 
 def test_judge_io_path_mirrors_loss_slotting() -> None:
-    """loss.json -> judge_io.jsonl; loss.r{n}.json -> judge_io.r{n}.jsonl."""
+    """Judge capture filenames retain the paired measurement purpose and draw."""
     base = Path("/ws/epochs/e0/generations/v1/runs/entry_a")
-    assert judge_io_path_for_loss(base / "loss.json") == base / "judge_io.jsonl"
-    assert judge_io_path_for_loss(base / "loss.r2.json") == base / "judge_io.r2.jsonl"
+    assert (
+        judge_io_path_for_loss(base / "loss.tournament.r0.json")
+        == base / "judge_io.tournament.r0.jsonl"
+    )
+    assert (
+        judge_io_path_for_loss(base / "loss.tournament.r2.json")
+        == base / "judge_io.tournament.r2.jsonl"
+    )
 
 
 def test_run_result_path_is_the_canonical_slot(tmp_path: Path) -> None:
     """The core read twin resolves to run_dir/result.json (replicate 0)."""
     got = run_result_path(tmp_path, "e0", "v1", "entry_a")
-    assert got == loss_profile_path(tmp_path, "e0", "v1", "entry_a").with_name("result.json")
+    assert got == loss_profile_path(tmp_path, "e0", "v1", "entry_a").with_name(
+        "result.tournament.r0.json"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -123,7 +135,7 @@ def test_run_result_payload_round_trips(tmp_path: Path) -> None:
     assert payload["format_version"] == RUN_RESULT_FORMAT_VERSION
     assert payload["clipped"] is False
     payload["extension"] = {"nested": [1, None, {"flag": True}]}
-    path = tmp_path / "result.json"
+    path = tmp_path / "result.tournament.r0.json"
     atomic_write_json(path, payload)
     assert read_run_result(path) == payload
     # No stray .tmp survives the atomic write.
@@ -203,7 +215,7 @@ def test_judge_io_record_sha256_is_of_the_unclipped_input() -> None:
 
 def test_judge_io_file_sink_one_line_per_call(tmp_path: Path) -> None:
     """Two record() calls -> two lines with call_index 0 and 1."""
-    sink = JudgeIOFileSink(tmp_path / "judge_io.jsonl")
+    sink = JudgeIOFileSink(tmp_path / "judge_io.tournament.r0.jsonl")
     for response in ("VIOLATION bad", "OK fine"):
         sink.record(
             "j",
@@ -235,7 +247,7 @@ def test_read_judge_io_distinguishes_complete_corruption_and_unfinished_append(
     """Complete malformed rows cannot be silently removed from a judge record."""
     assert read_judge_io(tmp_path / "absent.jsonl") == []
 
-    path = tmp_path / "judge_io.jsonl"
+    path = tmp_path / "judge_io.tournament.r0.jsonl"
     good = build_judge_io_record(
         judge_name="j",
         call_index=0,
@@ -274,7 +286,7 @@ def test_read_judge_io_distinguishes_complete_corruption_and_unfinished_append(
 
 def test_judge_io_file_sink_swallows_unwritable_path(tmp_path: Path) -> None:
     """A sink pointed at a directory logs-and-continues; record never raises."""
-    blocked = tmp_path / "judge_io.jsonl"
+    blocked = tmp_path / "judge_io.tournament.r0.jsonl"
     blocked.mkdir()
     sink = JudgeIOFileSink(blocked)
     sink.record(
@@ -416,7 +428,7 @@ async def test_test_retest_emits_judge_io_when_sink_wired(tmp_path: Path) -> Non
         body: str = "stays on topic"
         severity: str = "warning"
 
-    sink = JudgeIOFileSink(tmp_path / "judge_io.jsonl")
+    sink = JudgeIOFileSink(tmp_path / "judge_io.tournament.r0.jsonl")
     aux = _scripted_aux(["OK a", "VIOLATION b", "OK c"])
     live = judge_spec_to_goldfive(_Spec(), aux, io_sink=sink)
     frozen = "the one frozen transcript"
@@ -498,12 +510,10 @@ def _write_args(
     gen_snap.mkdir(parents=True, exist_ok=True)
     loss = loss_path
     if loss is None:
-        loss = (
-            loss_profile_path(workspace, "e0", "v0", "entry_a").parent / "seed-none" / "loss.json"
-        )
+        loss = loss_profile_path(workspace, "e0", "v0", "entry_a")
     from zicato.core.measurement import unit_artifact_name
 
-    replicate = artifact_replicate_index(loss.name)
+    replicate = artifact_measurement(loss.name)
     assert replicate is not None
     sink_path = loss.with_name(unit_artifact_name("events", replicate))
     payload: dict[str, Any] = {
@@ -512,7 +522,7 @@ def _write_args(
             "kind": "single_turn",
             "wall_clock_budget_seconds": budget_s,
             "input": "hello",
-            "context": {"replicate_index": str(replicate)},
+            "context": {"measurement": json.dumps(replicate.to_json())},
         },
         "adapter": {"kind": "import", "factory": adapter_factory},
         "target_role": {
@@ -530,7 +540,7 @@ def _write_args(
                 Path(str(workspace)),
                 "e0",
                 "v0",
-                run_id_for_unit("v0", "entry_a", replicate),
+                run_id_for_unit("v0", "entry_a", replicate, epoch_id="ep"),
                 Path(str(gen_snap)),
                 None,
             )
@@ -539,8 +549,8 @@ def _write_args(
             {"runtime": {"instance_id": "test", "seed": None}}
         ).to_json(),
         "driver_imports": DriverImportContext().document(),
-        "measurement": MeasurementDraw.from_index(
-            artifact_replicate_index(Path(str(loss)).name), base_seed=None
+        "measurement": replace(
+            artifact_measurement(Path(str(loss)).name), base_seed=None
         ).to_json(),
     }
     knobs = dict(knobs or {})
@@ -568,20 +578,23 @@ def _write_args(
 @pytest.mark.integration
 def test_worker_writes_result_json_and_judge_io_on_clean_exit(tmp_path: Path) -> None:
     """Default capture knobs retain both artifacts under the worker's unit identity."""
-    from zicato.core.measurement import MeasurementDraw, measurement_artifact_path
+    from zicato.core.measurement import measurement_artifact_path
     from zicato.telemetry.reducer import read_loss_profile
 
     workspace = tmp_path / ".zicato"
     workspace.mkdir()
-    measurement = MeasurementDraw.from_index(0, base_seed=17)
-    expected_run_id = run_id_for_unit("v0", "entry_a", base_seed=17)
+    measurement = replace(MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0), base_seed=17)
+    expected_run_id = run_id_for_unit("v0", "entry_a", base_seed=17, epoch_id="ep")
     loss_path = _write_args(
         tmp_path / "args.json",
         workspace=workspace,
         adapter_factory="tests._subprocess_worker_support:make_completing_adapter",
         result_path=tmp_path / "worker_result.json",
         loss_path=measurement_artifact_path(
-            loss_profile_path(workspace, "e0", "v0", "entry_a").parent, "loss", 0, base_seed=17
+            loss_profile_path(workspace, "e0", "v0", "entry_a").parent.parent,
+            "loss",
+            MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0),
+            base_seed=17,
         ),
         knobs={"seed": 17, "measurement": measurement.to_json(), "run_id": expected_run_id},
     )
@@ -600,7 +613,7 @@ def test_worker_writes_result_json_and_judge_io_on_clean_exit(tmp_path: Path) ->
     assert captured["clipped"] is False
 
     # The worker bound a live sink onto the config; the (stub) session
-    # recorded one scripted judge call through it, landing beside loss.json.
+    # recorded one scripted judge call through it, landing beside loss.tournament.r0.json.
     records = read_judge_io(judge_io_path_for_loss(loss_path), expected=loss)
     assert len(records) == 1
     assert records[0]["judge_name"] == "stub_judge"
@@ -631,39 +644,37 @@ def test_worker_persists_synthesized_run_result_on_budget_abort(tmp_path: Path) 
     assert captured["abort_reason"] == "wall_clock_budget"
     assert captured["final_output"] == ""
     assert captured["transcript"] == []
-    assert captured["run_id"] == "v0--entry_a"
+    assert captured["run_id"] == run_id_for_unit("v0", "entry_a", epoch_id="ep")
 
 
 @pytest.mark.integration
 def test_worker_replicate_slot_gets_replicate_named_artifacts(tmp_path: Path) -> None:
-    """A loss.r2.json unit writes result.r2.json + judge_io.r2.jsonl."""
+    """A loss.tournament.r2.json unit writes result.r2.json + judge_io.tournament.r2.jsonl."""
     workspace = tmp_path / ".zicato"
     workspace.mkdir()
-    canonical = (
-        loss_profile_path(workspace, "e0", "v0", "entry_a").parent / "seed-none" / "loss.json"
-    )
+    canonical = loss_profile_path(workspace, "e0", "v0", "entry_a")
     loss_path = _write_args(
         tmp_path / "args.json",
         workspace=workspace,
         adapter_factory="tests._subprocess_worker_support:make_completing_adapter",
         result_path=tmp_path / "worker_result.json",
-        loss_path=canonical.with_name("loss.r2.json"),
+        loss_path=canonical.with_name("loss.tournament.r2.json"),
     )
     proc = _spawn_worker(tmp_path / "args.json")
     assert proc.returncode == 0
 
     run_dir = loss_path.parent
-    assert (run_dir / "result.r2.json").exists()
-    assert (run_dir / "judge_io.r2.jsonl").exists()
-    assert not (run_dir / "result.json").exists()
-    assert not (run_dir / "judge_io.jsonl").exists()
-    assert read_run_result(run_dir / "result.r2.json") is not None
+    assert (run_dir / "result.tournament.r2.json").exists()
+    assert (run_dir / "judge_io.tournament.r2.jsonl").exists()
+    assert not (run_dir / "result.tournament.r0.json").exists()
+    assert not (run_dir / "judge_io.tournament.r0.jsonl").exists()
+    assert read_run_result(run_dir / "result.tournament.r2.json") is not None
 
 
 @pytest.mark.integration
 def test_worker_knobs_off_writes_no_new_files_and_identical_loss(tmp_path: Path) -> None:
     """The scored-loss pin: knobs OFF adds no files, and every scored field of
-    loss.json matches a knobs-ON run's (the stub run is deterministic, so the
+    loss.tournament.r0.json matches a knobs-ON run's (the stub run is deterministic, so the
     artifacts are the ONLY delta the knobs may introduce). The run's wall-clock
     span is excluded — it measures the execution, not the knobs."""
     on_ws = tmp_path / "on" / ".zicato"
@@ -690,10 +701,12 @@ def test_worker_knobs_off_writes_no_new_files_and_identical_loss(tmp_path: Path)
 
     on_files = sorted(p.name for p in on_loss.parent.iterdir())
     off_files = sorted(p.name for p in off_loss.parent.iterdir())
-    assert "result.json" in on_files
-    assert "judge_io.jsonl" in on_files
+    assert "result.tournament.r0.json" in on_files
+    assert "judge_io.tournament.r0.jsonl" in on_files
     # Knobs off: the run dir holds EXACTLY the pre-capture file set.
-    assert off_files == sorted(set(on_files) - {"result.json", "judge_io.jsonl"})
+    assert off_files == sorted(
+        set(on_files) - {"result.tournament.r0.json", "judge_io.tournament.r0.jsonl"}
+    )
     # ... and the loss the run scored is identical either way, apart from the
     # wall-clock span, which is a measurement of the run rather than an effect
     # of the knobs and so differs between any two executions.
@@ -714,7 +727,7 @@ def test_worker_knobs_off_writes_no_new_files_and_identical_loss(tmp_path: Path)
 
 @pytest.mark.integration
 def test_worker_capture_failure_is_best_effort(tmp_path: Path) -> None:
-    """Unwritable capture paths: loss.json + exit code + result file unchanged."""
+    """Unwritable capture paths: loss.tournament.r0.json + exit code + result file unchanged."""
     workspace = tmp_path / ".zicato"
     workspace.mkdir()
     (workspace / "logs").mkdir()
@@ -728,7 +741,7 @@ def test_worker_capture_failure_is_best_effort(tmp_path: Path) -> None:
     proc = _spawn_worker(tmp_path / "args.json")
     assert proc.returncode == 0, "capture failures must never fail the worker"
 
-    assert loss_path.exists(), "loss.json still written"
+    assert loss_path.exists(), "loss.tournament.r0.json still written"
     result = json.loads((tmp_path / "worker_result.json").read_text(encoding="utf-8"))
     assert result["schema"] == "zicato.tournament_worker.result/1"
     assert result["aborted"] is False
@@ -763,7 +776,7 @@ def test_worker_capture_failure_is_best_effort(tmp_path: Path) -> None:
     ]
     assert health["healthy"] is False
     assert len(failures) == 1
-    assert failures[0]["detail"]["run_id"] == run_id_for_unit("v0", "entry_a")
+    assert failures[0]["detail"]["run_id"] == run_id_for_unit("v0", "entry_a", epoch_id="ep")
     assert failures[0]["detail"]["fields"] == {
         "operation": "worker run-result capture",
         "exception_type": "IsADirectoryError",
@@ -792,7 +805,7 @@ def test_capture_loss_distinguishes_absence_and_present_defects(
 ) -> None:
     from zicato.tournament.unit_cache import read_capture_loss
 
-    path = tmp_path / "loss.json"
+    path = tmp_path / "loss.tournament.r0.json"
     assert read_capture_loss(path) is None
     if invalid is None:
         path.mkdir()
@@ -815,7 +828,7 @@ def test_invalid_paired_loss_declines_captures_in_fidelity_readers(
     from zicato.telemetry.reducer import write_loss_profile
     from zicato.testing.fixtures import make_loss_profile
 
-    loss_path = tmp_path / "loss.json"
+    loss_path = tmp_path / "loss.tournament.r0.json"
     write_loss_profile(make_loss_profile(), loss_path)
     unit_result_path(loss_path).write_text(json.dumps(run_result_to_payload(_run_result())))
     sink = JudgeIOFileSink(judge_io_path_for_loss(loss_path))
@@ -838,9 +851,9 @@ def test_invalid_paired_loss_declines_captures_in_fidelity_readers(
         lambda: _read_loss(loss_path),
     )
     assert all(reader() is not None for reader in readers)
-    assert _verbatim_capture_exists(loss_path.with_name("events.jsonl"))
+    assert _verbatim_capture_exists(loss_path.with_name("events.tournament.r0.jsonl"))
     loss_path.write_bytes(invalid)
     assert all(reader() is None for reader in readers)
-    assert not _verbatim_capture_exists(loss_path.with_name("events.jsonl"))
+    assert not _verbatim_capture_exists(loss_path.with_name("events.tournament.r0.jsonl"))
     assert loss_path.read_bytes() == invalid
     assert {path: path.read_bytes() for path in capture_bytes} == capture_bytes

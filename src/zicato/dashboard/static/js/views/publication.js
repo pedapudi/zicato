@@ -1,83 +1,12 @@
-// js/views/publication.js — ACM-style epoch publication, as a TAB.
-//
-// The publication is a TAB rather than the home page. It parses the section
-// markers; typesets eyebrow / title / meta / abstract / body; and splices live
-// Tufte figures at the <!-- FIGURE:NAME --> markers. GitHub-flavoured markdown
-// **tables render** (ui.renderMarkdown). The aggregate
-// generation-scores TABLE and its summary BAR CHART are COMBINED into ONE
-// cohesive visual; per-matchup detail (champion vs challenger per board) is
-// appended from the matchup grid.
-//
-// Bind: /api/epoch/{epoch_id}/analysis → { analysis_html_inline, analysis_md }.
-// Cold deep-link safe.
-//
-// THE SERVER RENDER IS PREFERRED. `/api/epoch` and `/api/epoch/{id}/analysis`
-// BOTH run the full report renderer (analyzer.report.render_report_html_fragment
-// over gather_epoch_report_data) on every call to produce `analysis_html_inline`
-// — a paper-styled, self-contained fragment with its own scoped <style> and
-// server-drawn figures. Re-rendering the markdown client-side threw that entire
-// render away and printed a lesser paper. So: prefer the fragment when it is
-// non-empty, and fall back to the markdown path (parsePaper + renderMarkdown)
-// only when the server did not produce one (no analysis yet, a render failure,
-// or the Rust supervisor). The live interactive figures are appended either way
-// — they are the thing the static fragment cannot carry.
+// Display the published report and its interactive tournament figures.
 
 import { el } from '../core/dom.js';
 import { state } from '../core/state.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
 import { harmonografIsLive, harmonografMini } from '../core/harmonograf.js';
-import { gatedSwap, empty, subhead, renderMarkdown, densityTokens, dataTable, deltaCell } from '../ui.js';
+import { gatedSwap, empty, subhead, densityTokens, dataTable, deltaCell } from '../ui.js';
 import { epochIsLive } from '../livestatus.js';
-
-// Parse analysis_md into { eyebrow, title, meta:[{label,value}], abstract,
-// body } — the same marker scheme K uses.
-export function parsePaper(md) {
-  const text = String(md || '').replace(/\r\n/g, '\n');
-  const lines = text.split('\n');
-  const out = { eyebrow: '', title: '', meta: [], abstract: '', body: '' };
-  let i = 0; const bodyLines = []; let inBody = false;
-  while (i < lines.length) {
-    const line = lines[i];
-    const trimmed = line.trim();
-    if (!inBody) {
-      if (/^<!--\s*EYEBROW\s*-->$/.test(trimmed)) {
-        i++; while (i < lines.length && lines[i].trim() === '') i++;
-        out.eyebrow = (lines[i] || '').trim(); i++; continue;
-      }
-      const h1 = /^#\s+(.*)$/.exec(line);
-      if (h1 && !out.title) { out.title = h1[1].trim(); i++; continue; }
-      if (/^<!--\s*META\s*-->$/.test(trimmed)) {
-        i++; const buf = [];
-        while (i < lines.length && lines[i].trim() !== '') { buf.push(lines[i].trim()); i++; }
-        out.meta = buf.join('\n').split(/\n|\s{2,}/).map((s) => parseMetaPair(s)).filter(Boolean);
-        continue;
-      }
-      const h2 = /^##\s+(.*)$/.exec(line);
-      if (h2) {
-        inBody = true;
-        if (/abstract/i.test(h2[1])) {
-          const buf = []; i++;
-          while (i < lines.length && !/^##\s+/.test(lines[i])) { buf.push(lines[i]); i++; }
-          out.abstract = buf.join('\n').trim(); continue;
-        }
-        bodyLines.push(line); i++; continue;
-      }
-      bodyLines.push(line); i++; continue;
-    }
-    bodyLines.push(line); i++;
-  }
-  out.body = bodyLines.join('\n').trim();
-  return out;
-}
-function parseMetaPair(s) {
-  const str = String(s || '').trim();
-  if (!str) return null;
-  const m = /^\*\*([^*]+)\*\*\s*:?\s*(.*)$/.exec(str);
-  if (m) return { label: m[1].trim().replace(/:$/, ''), value: stripTicks(m[2].trim()) };
-  return { label: '', value: stripTicks(str) };
-}
-function stripTicks(s) { return String(s || '').replace(/`/g, ''); }
 
 export async function render(host, ctx, params) {
   if (!host.firstChild) host.appendChild(el('p', { class: 'dn-empty', text: 'Reading epoch publication…' }));
@@ -97,8 +26,7 @@ export async function render(host, ctx, params) {
     D.analysis(epochId), D.generationsForEpoch(epochId), D.scoreTrajectory(epochId), D.bracket(epochId),
   ]);
   const md = (analysis && typeof analysis.analysis_md === 'string') ? analysis.analysis_md : '';
-  // The SERVER-rendered paper fragment — preferred over re-rendering `md`
-  // client-side (see the header note). Empty string = no server render.
+  // Display the published fragment. An empty string means no report is available.
   const inlineHtml = (analysis && typeof analysis.analysis_html_inline === 'string')
     ? analysis.analysis_html_inline : '';
 
@@ -125,71 +53,21 @@ export async function render(host, ctx, params) {
   });
 
   gatedSwap(host, digest, () => {
-    // ── PREFERRED PATH: the server's own paper render ────────────────────
-    if (inlineHtml.trim()) {
-      const served = el('article', { class: 'dn-paper' });
-      // the fragment ships its own scoped <style> + article markup; it scrolls
-      // inside its OWN container so a wide server-rendered table can never make
-      // the page scroll sideways (the never-overflow house rule).
-      served.appendChild(el('div', { class: 'dn-paper-served dn-table-scroll', html: inlineHtml }));
-      // the LIVE, interactive figures the static fragment cannot carry.
-      appendCanonicalFigures(served, figures);
-      appendMatchupDetail(served, figures);
-      return [served];
-    }
-
-    const paper = parsePaper(md);
     const article = el('article', { class: 'dn-paper' });
-
-    // masthead
-    const masthead = el('header', { class: 'dn-paper-masthead' });
-    if (paper.eyebrow) masthead.appendChild(el('div', { class: 'dn-paper-eyebrow', text: paper.eyebrow }));
-    masthead.appendChild(el('h1', { class: 'dn-paper-title', text: paper.title || `Epoch ${epochId}` }));
-    masthead.appendChild(el('div', { class: 'dn-paper-rule' }));
-    if (paper.meta.length) {
-      masthead.appendChild(el('div', { class: 'dn-paper-metagrid' }, paper.meta.map((m) => el('div', { class: 'dn-paper-meta-cell' }, [
-        m.label ? el('span', { class: 'dn-paper-meta-label', text: m.label }) : null,
-        el('span', { class: 'dn-paper-meta-value', text: m.value }),
-      ].filter(Boolean)))));
+    if (inlineHtml.trim()) {
+      article.appendChild(el('div', { class: 'dn-paper-served dn-table-scroll', html: inlineHtml }));
+    } else {
+      article.appendChild(el('h1', { class: 'dn-paper-title', text: `Epoch ${epochId}` }));
+      article.appendChild(el('p', { class: 'dn-faint', text: 'The report has not been published yet. Tournament figures are available below.' }));
     }
-    article.appendChild(masthead);
-
-    if (!md.trim()) {
-      article.appendChild(el('div', { class: 'dn-paper-statebox' }, [
-        el('p', { class: 'dn-paper-statebox-h', text: 'The narrative report has not been written yet for ' + epochId + '.' }),
-        el('p', { class: 'dn-faint' }, [
-          'Run ', el('code', { class: 'dn-paper-code', text: 'zicato epoch analyze --epoch ' + epochId }),
-          ' to build it. The live figures below are drawn from the run data regardless.',
-        ]),
-      ]));
-      appendCanonicalFigures(article, figures);
-      return [article];
-    }
-
-    if (paper.abstract) {
-      article.appendChild(el('section', { class: 'dn-paper-abstract' }, [
-        el('div', { class: 'dn-paper-abstract-label', text: 'Abstract' }),
-        renderMarkdown(paper.abstract),
-      ]));
-    }
-
-    // the body — GFM tables render; figure markers splice live figures.
-    let figuresUsed = 0;
-    const body = renderMarkdown(paper.body, {
-      onFigure: (name) => { const node = figureFor(name, figures); if (node) figuresUsed += 1; return node; },
-    });
-    article.appendChild(el('div', { class: 'dn-paper-body' }, [body]));
-    if (figuresUsed === 0) appendCanonicalFigures(article, figures);
-
-    // per-matchup detail (always appended — the brief mandates it in the paper).
+    appendCanonicalFigures(article, figures);
     appendMatchupDetail(article, figures);
     return [article];
   });
 }
 
-// A live Tufte figure for a FIGURE marker. The "scores" / "aggregate" figure
-// COMBINES the aggregate-generation-scores TABLE and a summary BAR CHART into
-// ONE cohesive visual (fix #3).
+// Build interactive figures below the published report. The score figure
+// combines a summary bar chart and a table from the same generation values.
 function figureFor(name, figures) {
   const key = String(name).toLowerCase();
   const { gens, scalarByGen, matchups, grids, ctx, epochId, epochLive } = figures;

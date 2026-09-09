@@ -23,9 +23,14 @@ import pytest
 from tests._proposal_evidence import render_proposal_evidence
 from zicato.board.split import HOLDOUT_TAG, split_board
 from zicato.core import BoardEntry, ExpectationResult, LossProfile, MetricCount, ScoringWeights
-from zicato.core.measurement import MeasurementDraw
+from zicato.core.measurement import (
+    TOURNAMENT_DRAW,
+    MeasurementDraw,
+    MeasurementPurpose,
+    measurement_artifact_path,
+)
 from zicato.core.types import OverfittingConfig
-from zicato.core.workspace import loss_profile_path
+from zicato.core.workspace import loss_profile_path, run_id_for_unit
 from zicato.evolve.decision_support import _load_parent_losses, _render_loss_summary
 from zicato.patterns import ALL_DETECTORS, DetectorInput, detect_patterns
 from zicato.telemetry.reducer import read_loss_profile, write_loss_profile
@@ -36,7 +41,8 @@ _PARENT = "v0"
 
 def _loss(entry_id: str, *, drift_count: int) -> LossProfile:
     return LossProfile(
-        run_id=f"run-{entry_id}",
+        run_id=run_id_for_unit(_PARENT, entry_id, epoch_id=_EPOCH),
+        measurement=TOURNAMENT_DRAW,
         entry_id=entry_id,
         generation_id=_PARENT,
         epoch_id=_EPOCH,
@@ -143,12 +149,18 @@ def test_small_board_degrades_to_the_full_board(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _write_replicate_loss(tmp_path: Path, entry_id: str, replicate: int, loss: LossProfile) -> None:
+def _write_replicate_loss(
+    tmp_path: Path, entry_id: str, replicate: MeasurementDraw, loss: LossProfile
+) -> None:
     canonical = loss_profile_path(tmp_path, _EPOCH, _PARENT, entry_id)
     canonical.parent.mkdir(parents=True, exist_ok=True)
     write_loss_profile(
-        replace(loss, measurement=MeasurementDraw.from_index(replicate)),
-        canonical.with_name(f"loss.r{replicate}.json"),
+        replace(
+            loss,
+            measurement=replicate,
+            run_id=run_id_for_unit(_PARENT, entry_id, replicate, epoch_id=_EPOCH),
+        ),
+        measurement_artifact_path(canonical.parent.parent, "loss", replicate),
     )
 
 
@@ -178,9 +190,24 @@ def test_baseline_round_reads_the_calibration_band_not_the_degraded_probes(
     # (2000+), but no duel has written replicate 0 yet.
     board = _board()
     for entry in board:
-        _write_replicate_loss(tmp_path, entry.id, 1000, _loss(entry.id, drift_count=2))
-        _write_replicate_loss(tmp_path, entry.id, 1001, _loss(entry.id, drift_count=4))
-        _write_replicate_loss(tmp_path, entry.id, 2000, _degraded_loss(entry.id))
+        _write_replicate_loss(
+            tmp_path,
+            entry.id,
+            MeasurementDraw(MeasurementPurpose.CALIBRATION, 0),
+            _loss(entry.id, drift_count=2),
+        )
+        _write_replicate_loss(
+            tmp_path,
+            entry.id,
+            MeasurementDraw(MeasurementPurpose.CALIBRATION, 1),
+            _loss(entry.id, drift_count=4),
+        )
+        _write_replicate_loss(
+            tmp_path,
+            entry.id,
+            MeasurementDraw(MeasurementPurpose.PREFLIGHT, 0),
+            _degraded_loss(entry.id),
+        )
     weights = ScoringWeights()
 
     train_ids, _holdout = split_board(board, weights.overfitting)
@@ -221,7 +248,12 @@ def test_duel_replicate_zero_wins_over_the_calibration_band(tmp_path: Path) -> N
     board = _board()
     _write_losses(tmp_path, board)  # drift_count=3 at replicate 0
     for entry in board:
-        _write_replicate_loss(tmp_path, entry.id, 1000, _loss(entry.id, drift_count=50))
+        _write_replicate_loss(
+            tmp_path,
+            entry.id,
+            MeasurementDraw(MeasurementPurpose.CALIBRATION, 0),
+            _loss(entry.id, drift_count=50),
+        )
     weights = ScoringWeights()
 
     train_ids, _holdout = split_board(board, weights.overfitting)
@@ -236,7 +268,12 @@ def test_calibration_fallback_never_opens_a_holdout_entry(tmp_path: Path) -> Non
     # from the reader iterating the train slice — not from what is on disk.
     board = _board()
     for entry in board:
-        _write_replicate_loss(tmp_path, entry.id, 1000, _loss(entry.id, drift_count=2))
+        _write_replicate_loss(
+            tmp_path,
+            entry.id,
+            MeasurementDraw(MeasurementPurpose.CALIBRATION, 0),
+            _loss(entry.id, drift_count=2),
+        )
     weights = ScoringWeights()
 
     train_ids, holdout_ids = split_board(board, weights.overfitting)

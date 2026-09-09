@@ -32,6 +32,7 @@ from tests._workspace_support import (
     write_workspace_config,
 )
 from zicato import query as sr
+from zicato.core.measurement import TOURNAMENT_DRAW
 from zicato.query.epoch_view import build_epochs_summary
 from zicato.query.events_index import build_meta_loop_ledger
 from zicato.telemetry.reducer import write_loss_profile
@@ -181,7 +182,7 @@ def build_fixture_workspace(tmp_path: Path) -> Path:
                         "scalar_score_delta": -0.05 if promoted else 0.02,
                     },
                 ),
-                gen_score={"scalar": 0.5 - 0.01 * gi, "pass_rate": 1.0},
+                gen_score={"base_seed": None, "scalar": 0.5 - 0.01 * gi, "pass_rate": 1.0},
                 indent=2,
             )
             for entry in ("t1", "t2"):
@@ -190,7 +191,7 @@ def build_fixture_workspace(tmp_path: Path) -> Path:
                         epoch_id=eid,
                         generation_id=gid,
                         entry_id=entry,
-                        run_id=f"{eid}-{gid}-{entry}",
+                        measurement=TOURNAMENT_DRAW,
                         drift_loss=0.3 + 0.01 * gi,
                         pass_fail=True,
                         score=0.9,

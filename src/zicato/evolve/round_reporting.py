@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeGuard
 
 from zicato.core.loss import has_execution_evidence
-from zicato.core.measurement import recorded_measurement
+from zicato.core.measurement import TOURNAMENT_DRAW, recorded_measurement
 from zicato.epoch._storage import RecordError
 from zicato.util import best_effort
 from zicato.workspace import WorkspaceLayout, generation_ids
@@ -182,11 +182,7 @@ class _RoundLogEmitter:
         ``step`` its wire token maps to in :data:`_ROUND_LOG_STEP`, which no
         payload carries. A token in :data:`_STEPLESS_EVENTS` gets none.
         Everything else comes from the caller, because only the caller knows
-        it. In particular ``replicate`` is never derived from the payload: the
-        one event that carries a replicate is ``unit_completed``, whose value
-        is the aggregate placeholder ``0`` rather than the draw's true index
-        (see :func:`_emit_tournament_units`), so promoting it would state a
-        plan coordinate the loss files contradict.
+        it. Aggregate board-entry events carry no measurement coordinate.
         """
         if self._log is None:
             return
@@ -217,26 +213,11 @@ def _emit_tournament_units(
     child_generation_id: str = "",
     matchup_id: str = "",
 ) -> None:
-    """Emit ``unit_completed`` events for a settled duel's board units.
+    """Record each board entry's aggregate result for both sides of a settled duel.
 
-    Emitted as an AGGREGATE after the duel settles (per-unit emission at
-    the runner layer would thread a callback through the subprocess-worker
-    boundary — too invasive for the runner's contract): one event per
-    ``(entry, side)`` pair off the duel's ``per_entry_losses`` map, with
-    ``replicate=0`` (the runner's per-entry map carries the canonical
-    replicate; extra replicates fold into the aggregates upstream and are
-    not re-derivable here). Best-effort like every emission.
-
-    ``parent_generation_id`` / ``child_generation_id`` NAME the two sides.
-    A field round settles several matchups into ONE round log, so the same
-    ``entry_id`` arrives with ``side="child"`` once per challenger; without
-    the generation id those events collide and no reader can separate them.
-    ``matchup_id`` distinguishes repeat or field matchups involving the same
-    generation. The entry and the side stay payload fields and are NOT copied
-    into the scope: a coordinate the payload already states does not need a
-    second copy that could drift from it. The placeholder replicate reaches
-    neither — the absent ``replicate`` coordinate is the honest statement that
-    this event does not name a draw.
+    The result combines repeated measurements, so these events carry no draw
+    coordinate. Generation, opponent, and matchup identify the comparison.
+    Individual measurement records remain available under the generation.
     """
     per_entry = getattr(tournament_result, "per_entry_losses", None) or {}
     try:
@@ -249,7 +230,7 @@ def _emit_tournament_units(
         for side in ("parent", "child"):
             round_log.emit(
                 "unit_completed",
-                {"entry_id": str(entry_id), "replicate": 0, "side": side},
+                {"entry_id": str(entry_id), "side": side},
                 _duel_scope(
                     generation_id=side_generations[side],
                     opponent_generation_id=side_opponents[side],
@@ -461,7 +442,7 @@ def _collect_epoch_health_inputs(
                 continue
             try:
                 profile = read_loss_profile(lpath)
-                recorded_measurement(0, measurement=profile.measurement, match_id=profile.match_id)
+                recorded_measurement(TOURNAMENT_DRAW, measurement=profile.measurement)
                 if has_execution_evidence(profile):
                     gen_losses.append(profile)
             except (OSError, ValueError, KeyError):

@@ -12,7 +12,7 @@ import errno
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 from weakref import WeakSet
 
@@ -21,6 +21,9 @@ from zicato.runtime.channel import EventLog
 from zicato.runtime.paths import ensure_runtime_dirs, lock_guard_path
 from zicato.storage import workspace_backend
 from zicato.util.iso_time import now_iso as _utc_now_iso
+
+if TYPE_CHECKING:
+    from zicato.runtime.state import ActiveTournament
 
 
 class WorkspaceLockHeld(RuntimeError):
@@ -32,6 +35,7 @@ class _WriterLease:
     fd: int
     progress_log: EventLog
     tournament_log: EventLog
+    tournament_state: ActiveTournament | None = None
 
     def __post_init__(self) -> None:
         _writer_leases.add(self)

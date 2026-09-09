@@ -35,8 +35,10 @@ from zicato.core import (
     Side,
 )
 from zicato.core.measurement import (
+    TOURNAMENT_DRAW,
     MeasurementDraw,
-    validate_measurement_interval,
+    MeasurementPurpose,
+    validate_measurement_count,
 )
 from zicato.driver_imports import with_workspace_imports
 from zicato.epoch.genstore import EphemeralCheckout
@@ -108,14 +110,13 @@ from zicato.tournament.worker_transport import (  # noqa: F401
     _INDEX_DB_RELPATH,
     _JUDGE_ONLY_CONTEXT_KEY,
     _PARENT_BUDGET_GRACE_S,
-    _REPLICATE_INDEX_CONTEXT_KEY,
     _SIGTERM_TO_SIGKILL_GRACE_S,
     _aborted_loss_profile,
     _checkout_run_snapshot,
     _configuration_spec,
     _discard_run_snapshot,
     _drift_kind_wire,
-    _entry_replicate_index,
+    _entry_measurement,
     _entry_to_dict,
     _index_db_path,
     _ingest_run_into_index,
@@ -127,7 +128,7 @@ from zicato.tournament.worker_transport import (  # noqa: F401
     _runtime_state,
     _stamp_disable_drift,
     _stamp_judge_only,
-    _stamp_replicate_index,
+    _stamp_measurement,
     _telemetry_helpers,
     _terminate_worker,
     _weights_spec,
@@ -454,11 +455,10 @@ async def _run_single(
     ``match_id`` is the tournament matchup this run executes within (e.g.
     ``"rung0_m2"``, ``"racing-final"``); empty string for a run that is
     not part of a tagged matchup (a gauntlet duel via
-    :func:`run_tournament`, or an ad-hoc caller). The worker — which
-    writes ``loss.json`` — does not know it, so the runner stamps it onto
-    the :class:`LossProfile` after the run settles AND rewrites
-    ``loss.json`` with the tag so a later full ``zicato repair index`` (which
-    re-reads ``loss.json``) re-derives the same provenance. The aborted
+    :func:`run_tournament`, or an ad-hoc caller). After the worker settles,
+    the runner stamps the matchup id onto the
+    :class:`LossProfile` and rewrites the matching measurement loss file.
+    ``zicato repair index`` reconstructs the matchup provenance from that file. The aborted
     profiles synthesised on a killed/crashed run carry it too.
 
     ``side`` is the tournament side this run belongs to — ``"parent"``
@@ -497,7 +497,7 @@ async def _run_single(
     5. On parent timeout: SIGTERM -> (grace) -> SIGKILL the worker, then
        synthesise an aborted :class:`LossProfile`.
     6. On clean exit: read the worker's result file -> the
-       :class:`LossProfile` written to ``loss.json``. A worker that
+       :class:`LossProfile` written to the measurement loss file. A worker that
        exited non-zero, OR a missing/corrupt result file (e.g. the
        SUPERVISOR SIGKILLed a wedged worker), is ALSO an aborted run —
        not a crash. The tournament continues to the next entry either
@@ -506,28 +506,26 @@ async def _run_single(
        Cancellation waits through bounded teardown. Unconfirmed termination
        retains ownership for :func:`retry_worker_cleanup`.
     """
-    validate_measurement_interval(_entry_replicate_index(entry), 1)
+    entry = _stamp_measurement([entry], replace(_entry_measurement(entry), base_seed=config.seed))[
+        0
+    ]
     _, reducer_module = _telemetry_helpers()
-    # The worker writes its loss into the run's REPLICATE-keyed cache slot (the
-    # stamped replicate index; see _stamp_replicate_index). Replicate 0 — every
-    # single-replicate path — maps to the canonical ``runs/<entry>/loss.json``;
-    # replicate r>0 maps to the sibling ``loss.r<r>.json``. Sharing one file
-    # would let a later replicate's worker write CLOBBER the canonical file
-    # that doubles as replicate 0's cache slot, replacing replicate 0's
-    # persisted sample with the last replicate's draw.
+    # The worker writes the loss identified by purpose, local draw, and seed.
+    # Separate paths preserve each measurement's recorded provenance.
+
     loss_path = _unit_loss_path(
         workspace_root,
         epoch_id,
         generation.id,
         entry.id,
-        _entry_replicate_index(entry),
+        _entry_measurement(entry),
         base_seed=config.seed,
     )
     from zicato.core.measurement import unit_artifact_name  # noqa: PLC0415
     from zicato.tournament.artifacts import archive_unit_artifacts  # noqa: PLC0415
 
     archive_unit_artifacts(loss_path)
-    sink_path = loss_path.with_name(unit_artifact_name("events", _entry_replicate_index(entry)))
+    sink_path = loss_path.with_name(unit_artifact_name("events", _entry_measurement(entry)))
     run_id = _run_id_for(generation, entry, base_seed=config.seed)
     budget_s = float(entry.wall_clock_budget_seconds)
 
@@ -614,13 +612,15 @@ async def _run_single(
             entry_dict["context"] = {
                 **entry_dict.get("context", {}),
                 _GENERATION_ID_CONTEXT_KEY: generation.id,
+                "epoch_id": epoch_id,
             }
             harmonograf_metadata = {
                 "zicato.epoch_id": epoch_id,
                 "zicato.generation_id": generation.id,
                 "zicato.entry_id": entry.id,
                 "zicato.side": side,
-                "zicato.replicate": str(_entry_replicate_index(entry)),
+                "zicato.measurement_purpose": str(_entry_measurement(entry).purpose),
+                "zicato.measurement_draw": _entry_measurement(entry).draw,
                 "zicato.trace_kind": "target",
             }
             runtime = _runtime_state()
@@ -644,9 +644,7 @@ async def _run_single(
             _hg_url = _resolve_harmonograf_url(workspace_root, config)
             _hg_grpc = _resolve_harmonograf_grpc(workspace_root, _hg_url, config)
             args_payload = {
-                "measurement": MeasurementDraw.from_index(
-                    _entry_replicate_index(entry), base_seed=config.seed
-                ).to_json(),
+                "measurement": replace(_entry_measurement(entry), base_seed=config.seed).to_json(),
                 "entry": entry_dict,
                 "adapter": adapter_spec,
                 "driver_imports": config.driver_imports.document(),
@@ -843,7 +841,7 @@ async def _run_single(
                     proc.returncode,
                 )
             # Terminal-event invariant: the worker is dead and the
-            # events.jsonl on disk most likely lacks a terminal
+            # measurement event JSONL on disk most likely lacks a terminal
             # lifecycle frame (the worker was SIGKILLed before it could
             # emit one, or crashed mid-call). Append a ``run_aborted``
             # line directly so the downstream transcript reconstructor
@@ -873,22 +871,22 @@ async def _run_single(
         # --- 6. Clean exit. Read the LossProfile the worker wrote. ---
         # The worker may itself have aborted via its OWN cooperative
         # budget — that is still a clean worker exit (exit code 0, result
-        # file present) and the loss.json it wrote already carries
+        # file present) and the measurement loss file it wrote already carries
         # ``wall_clock_budget_exceeded=True``. We just read it back.
         loss_profile_path_str = str(result.get("loss_profile_path", loss_path))
         try:
             loss: LossProfile = reducer_module.read_loss_profile(Path(loss_profile_path_str))
-            index = _entry_replicate_index(entry)
-            expected = MeasurementDraw.from_index(index, base_seed=config.seed)
+            index = _entry_measurement(entry)
+            expected = replace(index, base_seed=config.seed)
             if "measurement" in result:
                 if MeasurementDraw.from_json(result["measurement"]) != expected:
                     raise ValueError("worker result measurement differs from the requested draw")
             if loss.measurement != expected:
                 raise ValueError("worker loss measurement differs from the requested draw")
         except (OSError, KeyError, ValueError, json.JSONDecodeError) as exc:
-            # The worker said it finished cleanly but its loss.json is
+            # The worker said it finished cleanly but its measurement loss file is
             # unreadable — treat as aborted rather than crashing.
-            log.warning("run %s: worker result loss.json unreadable: %s", run_id, exc)
+            log.warning("run %s: worker loss record unreadable: %s", run_id, exc)
             final_loss = _aborted_loss_profile(
                 run_id=run_id,
                 entry=entry,
@@ -900,21 +898,16 @@ async def _run_single(
             )
             return final_loss
 
-        # Tag the run with the matchup it ran within. The worker (which
-        # wrote loss.json) does not know the match_id, so the runner
-        # stamps it here and rewrites loss.json so a later full ``zicato
-        # reindex`` — which re-reads loss.json — re-derives the same
-        # provenance rather than only the live dual-write below. ``match_id=""``
-        # (a gauntlet / ad-hoc run) leaves the profile and file byte-
-        # unchanged: there is nothing to stamp, so we skip the rewrite.
+        # Record matchup provenance in the measurement loss file so
+        # ``zicato repair index`` reconstructs the same attribution.
         if match_id:
             loss = replace(loss, match_id=match_id)
             try:
                 reducer_module.write_loss_profile(loss, Path(loss_profile_path_str))
             except OSError as exc:  # noqa: BLE001 — provenance rewrite is best-effort
-                log.debug("run %s: match_id loss.json rewrite skipped: %s", run_id, exc)
+                log.debug("run %s: match_id update in loss record skipped: %s", run_id, exc)
 
-        # Live index dual-write: the run's loss.json is on disk (now
+        # Live index dual-write: the run's measurement loss file is on disk (now
         # carrying match_id when tagged), so fold it into the SQLite
         # analytical index. Best-effort.
         _ingest_run_into_index(workspace_root, epoch_id, generation.id, entry.id)
@@ -974,7 +967,7 @@ async def _run_single(
                     # live active-tournament entry so the dashboard can
                     # deep-link a finished board run into harmonograf
                     # (/#/session/<adk_session_id>) WITHOUT the SSE hot
-                    # path ever opening events.jsonl. The LossProfile
+                    # path ever opening measurement event JSONL. The LossProfile
                     # carries it; empty string when the run had none.
                     adk_sid = str(getattr(final_loss, "adk_session_id", "") or "")
                     if adk_sid:
@@ -1092,7 +1085,7 @@ async def run_tournament(
     path re-evaluates BOTH sides from scratch (no cache read) so a ``--mode
     full`` round always re-samples noise. The orchestrator's conservative
     crash-resume (RUNTIME.md §4) passes ``force_fresh=False`` for the one round
-    it resumes in place, so the per-unit ``loss.json`` cache HITs every board
+    it resumes in place, so the measurement cache reuses every board
     unit the interrupted run already completed and only the unfinished entries
     re-run. Every other caller leaves the default, which re-runs every unit.
 
@@ -1133,7 +1126,7 @@ async def run_tournament(
     # The check happens here (and not just at config construction) so a
     # caller who hand-built a RuntimeConfig can't slip a colluding pair
     # through to the runner.
-    validate_measurement_interval(0, replicates)
+    validate_measurement_count(replicates)
     async with workspace_writer(
         workspace_root,
         writer=writer,
@@ -1213,7 +1206,8 @@ async def run_tournament(
             """Evaluate one board slice with the full runner's replicate policy."""
             replicate_count = max(1, replicates)
             replicate_runs: list[tuple[dict[str, LossProfile], dict[str, LossProfile]]] = []
-            for replicate_index in range(replicate_count):
+            for draw in range(replicate_count):
+                measurement = MeasurementDraw(MeasurementPurpose.TOURNAMENT, draw, config.seed)
                 run_parent, run_child = await _run_board_units_full(
                     writer=writer,
                     adapter=adapter,
@@ -1224,7 +1218,7 @@ async def run_tournament(
                     config=config,
                     workspace_root=workspace_root,
                     epoch_id=epoch_id,
-                    replicate_index=replicate_index,
+                    measurement=measurement,
                     force_fresh=force_fresh,
                     parent_force_fresh=champion_force_fresh,
                 )
@@ -1419,7 +1413,7 @@ async def run_fast_mode(
     the cached aggregate so the running partial table is meaningful
     from the first frame.
     """
-    validate_measurement_interval(0, replicates)
+    validate_measurement_count(replicates)
     async with workspace_writer(
         workspace_root,
         writer=writer,
@@ -1575,7 +1569,8 @@ async def run_fast_mode(
                     replicate_count=replicate_count,
                 )
             else:
-                for replicate_index in range(replicate_count):
+                for draw in range(replicate_count):
+                    measurement = MeasurementDraw(MeasurementPurpose.TOURNAMENT, draw, config.seed)
                     # Budget expiry records an omission for every missing draw,
                     # so the fold cannot present partial execution as complete.
                     replicate_runs.append(
@@ -1583,12 +1578,12 @@ async def run_fast_mode(
                             writer=writer,
                             adapter=adapter,
                             child_gen=child_gen,
-                            board=_stamp_replicate_index(board, replicate_index),
+                            board=_stamp_measurement(board, measurement),
                             weights=weights,
                             config=config,
                             workspace_root=workspace_root,
                             epoch_id=epoch_id,
-                            replicate_index=replicate_index,
+                            measurement=measurement,
                         )
                     )
             if len(replicate_runs) == 1:
@@ -1644,7 +1639,7 @@ async def run_matchup(
     epoch_id: str,
     board_subset: tuple[str, ...] | None = None,
     replicates: int = 1,
-    replicate_base: int = 0,
+    first_measurement: MeasurementDraw = TOURNAMENT_DRAW,
     disable_drift: tuple[Any, ...] = (),
     judge_only: bool = False,
     round_index: int = 0,
@@ -1675,19 +1670,19 @@ async def run_matchup(
     enabling per-run rung attribution in the dashboard. Empty string leaves
     direct library calls untagged.
 
-    ``replicate_base`` offsets every replicate's per-unit cache slot (and
-    the index stamped onto each entry for the harness's seeded noise draw):
-    replicate ``i`` runs at index ``replicate_base + i``. ``0`` (every
-    tournament matchup) is byte-identical to before the parameter existed;
-    the evidence pre-gate's replicate duels pass a RESERVED base
-    (:data:`zicato.selection.evidence_gate.EVIDENCE_REPLICATE_BASE`) so each
-    evidence draw is a fresh sample of both sides that never reads or
-    clobbers the canonical replicate-0 slots.
+    ``first_measurement`` selects a purpose and starting local draw.
+    Replicate ``i`` uses ``first_measurement.offset(i)``; the runner records
+    ``config.seed`` with that identity and passes it into the harness context.
+    Tournament matchups default to tournament draw zero. Evidence confirmation
+    uses distinct draws under ``evidence_confirmation``, preserving the
+    tournament measurements that selected the candidate.
+
+
 
     ``fast`` is the structure-independent cache-first evaluation knob (the
     runtime ``--mode fast`` setting, threaded identically to
     ``disable_drift`` and ``judge_only``). When set, both competitors resolve
-    each ``(generation, entry, replicate)`` slot through the unit cache and
+    each ``(generation, entry, purpose, draw, base_seed)`` measurement through the unit cache and
     only missing slots run. The ``left`` competitor is normally the champion,
     whose cached-versus-fresh counts determine the resolved mode
     (``"fast"`` / ``"fast-degraded"`` / ``"full"``), which is
@@ -1714,7 +1709,7 @@ async def run_matchup(
     matchups run ``N × parallelism`` units at once). ``None`` gives the
     matchup its own semaphore.
     """
-    validate_measurement_interval(replicate_base, replicates)
+    validate_measurement_count(replicates)
     async with workspace_writer(
         workspace_root,
         writer=writer,
@@ -1750,7 +1745,7 @@ async def run_matchup(
             workspace_root=workspace_root,
             epoch_id=epoch_id,
             replicates=replicates,
-            replicate_base=replicate_base,
+            first_measurement=first_measurement,
             match_id=match_id,
             fast=fast,
             matchup_budget_seconds=matchup_budget_seconds,

@@ -12,7 +12,7 @@ settled one. These pin the backend half:
 * the ``_IncrementalScorer`` writes a per-generation projected row
   (``scalar`` / ``boards_done`` / ``boards_total`` / ``pass_rate``) for
   every settled board unit;
-* ``_overlay_projected_standings`` folds the projected map onto the
+* ``_published_standings`` folds the projected map onto the
   standings rows for IN-FLIGHT competitors only and RE-SORTS per the
   per-structure rule — elim/racing re-rank on the projected scalar; SWISS
   does NOT project Copeland points (it only nudges the mean-scalar
@@ -24,10 +24,10 @@ No live ``zicato evolve`` is run — the projected state is simulated.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from pathlib import Path
 
 from zicato.core.loss import LossProfile
-from zicato.evolve.dashboard_projection import _overlay_projected_standings
 from zicato.runtime.lock import WorkspaceLock, acquire_workspace_lock
 from zicato.runtime.state import (
     ActiveTournament,
@@ -43,6 +43,16 @@ from zicato.tournament.scoring import ScoringWeights
 # ---------------------------------------------------------------------------
 # (a) the projected field round-trips + old payloads load byte-identical
 # ---------------------------------------------------------------------------
+
+
+def _published_standings(standings, rounds, root, structure):
+    current = read_active_tournament(root)
+    assert current is not None
+    with acquire_workspace_lock(root, "test-publication") as writer:
+        write_active_tournament(
+            writer, replace(current, rounds=rounds, standings=standings, structure=structure)
+        )
+    return read_active_tournament(root).standings
 
 
 def test_projected_round_trips_through_to_from_dict() -> None:
@@ -495,9 +505,7 @@ def test_overlay_elim_reranks_on_projected_scalar(tmp_path: Path) -> None:
                 "B": {"scalar": 1.0, "boards_done": 3, "boards_total": 5},
             },
         )
-    out = _overlay_projected_standings(
-        [dict(s) for s in standings], _PENDING_AB, tmp_path, "single_elim"
-    )
+    out = _published_standings([dict(s) for s in standings], _PENDING_AB, tmp_path, "single_elim")
     assert out[0]["generation_id"] == "B"
     assert out[0]["rank"] == 1
     assert out[0]["in_flight"] is True
@@ -526,7 +534,7 @@ def test_overlay_swiss_does_not_project_copeland_points(tmp_path: Path) -> None:
         update_tournament_projected(
             writer, {"B": {"scalar": 0.01, "boards_done": 4, "boards_total": 5}}
         )
-    out = _overlay_projected_standings([dict(s) for s in standings], rounds, tmp_path, "swiss")
+    out = _published_standings([dict(s) for s in standings], rounds, tmp_path, "swiss")
     assert out[0]["generation_id"] == "A", "swiss never re-ranks on a projected scalar"
     # B is still MARKED in-flight (the visual treatment), just not re-ranked up.
     b_row = next(r for r in out if r["generation_id"] == "B")
@@ -549,7 +557,7 @@ def test_overlay_swiss_tiebreaks_on_projected_scalar_within_equal_wins(tmp_path:
                 "B": {"scalar": 1.0, "boards_done": 3, "boards_total": 5},
             },
         )
-    out = _overlay_projected_standings([dict(s) for s in standings], _PENDING_AB, tmp_path, "swiss")
+    out = _published_standings([dict(s) for s in standings], _PENDING_AB, tmp_path, "swiss")
     assert out[0]["generation_id"] == "B"
 
 
@@ -578,9 +586,7 @@ def test_overlay_settled_row_keeps_its_real_scalar(tmp_path: Path) -> None:
             ],
         }
     ]
-    out = _overlay_projected_standings(
-        [dict(s) for s in standings], rounds, tmp_path, "single_elim"
-    )
+    out = _published_standings([dict(s) for s in standings], rounds, tmp_path, "single_elim")
     a_row = next(r for r in out if r["generation_id"] == "A")
     assert "in_flight" not in a_row
     assert a_row["scalar"] == 1.5  # the settled scalar, NOT the stale 9.9 projection
@@ -590,7 +596,5 @@ def test_overlay_no_projected_returns_input_unchanged(tmp_path: Path) -> None:
     standings = [{"generation_id": "A", "rank": 1, "scalar": 1.0}]
     with acquire_workspace_lock(tmp_path, "test-publication") as writer:
         _two_competitor_state(writer, "single_elim", standings)
-    out = _overlay_projected_standings(
-        [dict(s) for s in standings], _PENDING_AB, tmp_path, "single_elim"
-    )
+    out = _published_standings([dict(s) for s in standings], _PENDING_AB, tmp_path, "single_elim")
     assert out == standings

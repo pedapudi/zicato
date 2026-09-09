@@ -136,7 +136,8 @@ def run_ref_for(obs: ObservationRun) -> str:
     """Name a decision by candidate, entry, purpose, draw, and recorded seed."""
     from zicato.core.measurement import seed_qualifier  # noqa: PLC0415
 
-    reference = f"{obs.candidate_id}:{obs.entry_id}:r{obs.replicate}"
+    purpose = f"{obs.measurement.purpose}:" if obs.measurement is not None else ""
+    reference = f"{obs.candidate_id}:{obs.entry_id}:{purpose}r{obs.replicate}"
     qualifier = seed_qualifier(obs.measurement.base_seed) if obs.measurement is not None else ""
     return f"{qualifier}:{reference}" if qualifier else reference
 

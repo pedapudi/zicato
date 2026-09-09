@@ -78,7 +78,9 @@ from pathlib import Path
 from typing import Any
 
 from zicato.core import RunResult
+from zicato.core.measurement import MeasurementDraw
 from zicato.core.run_context import RunContext
+from zicato.core.workspace import run_id_for_unit
 
 _log = logging.getLogger(__name__)
 
@@ -169,40 +171,21 @@ VERSION_RECORD_NAME = "agent_binary_version.txt"
 #: Files never copied into a per-run working tree or agent directory.
 _COPY_IGNORE = shutil.ignore_patterns("__pycache__", "*.pyc", ".git")
 
-#: ``BoardEntry.context`` keys carrying run provenance to the session. Kept
-#: in sync with the tournament runner's
-#: ``zicato.tournament.worker_transport`` constants — the two ends meet on
-#: these strings. The runner stamps the generation id onto every worker
-#: entry and the replication loop stamps the replicate index, which is the
-#: only way a session can tell two runs of the same entry apart.
+#: The runner supplies the generation id in task context. Measurement
+#: purpose, local draw, and seed travel in the separate ``measurement`` value.
+
 GENERATION_ID_CONTEXT_KEY = "generation_id"
-REPLICATE_INDEX_CONTEXT_KEY = "replicate_index"
 
 
 def run_identifier(entry: Any) -> str:
-    """One run's id, unique per ``(generation, entry, replicate)``.
-
-    A bare ``t4-<entry>`` would be REUSED across generations and
-    replicates, which the analytical index (``runs`` rows keyed on
-    ``run_id``) reads as the same run overwritten — the exact defect
-    target 0 documents. It would also collide the per-run scratch
-    directory, so two concurrent replicates of one entry would delete each
-    other's working tree mid-run. An ad-hoc drive outside the worker (no
-    generation in context) keeps the short form.
-    """
-    context = dict(getattr(entry, "context", {}) or {})
-    try:
-        replicate = int(context.get(REPLICATE_INDEX_CONTEXT_KEY, "0") or 0)
-    except (TypeError, ValueError):
-        replicate = 0
-    parts = ["t4"]
-    generation = str(context.get(GENERATION_ID_CONTEXT_KEY, "") or "")
-    if generation:
-        parts.append(generation)
-    parts.append(str(getattr(entry, "id", "") or "entry"))
-    if replicate:
-        parts.append(f"r{replicate}")
-    return "-".join(parts)
+    """Use the runtime's measurement identity for the session and its files."""
+    context = entry.context
+    return run_id_for_unit(
+        context.get(GENERATION_ID_CONTEXT_KEY, ""),
+        entry.id,
+        MeasurementDraw.from_context(context),
+        epoch_id=context.get("epoch_id", ""),
+    )
 
 
 def agent_command() -> list[str]:
@@ -537,7 +520,6 @@ __all__ = [
     "FIXTURE_CONTEXT_KEY",
     "GENERATION_ID_CONTEXT_KEY",
     "OFFLINE_ENV",
-    "REPLICATE_INDEX_CONTEXT_KEY",
     "PATCH_SENTINEL",
     "VERSION_RECORD_NAME",
     "AgentConfigAdapter",

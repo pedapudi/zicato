@@ -50,7 +50,6 @@ from zicato.core.types import EpochConfig, ScoringWeights
 from zicato.core.workspace import (
     analysis_path,
     epoch_dir,
-    journal_path,
 )
 from zicato.epoch._storage import (
     RECORD_FORMAT_VERSION,
@@ -696,21 +695,10 @@ def _close_epoch_prelude(
 
 
 def _write_stub_analysis(workspace_root: Path, epoch_id: str, out_path: Path) -> None:
-    """Write a stub ``analysis.md`` + HTML companion (no-LLM close path)."""
-    if not out_path.exists():
-        jpath = journal_path(workspace_root, epoch_id)
-        journal_content = jpath.read_text() if jpath.exists() else "(no journal entries)"
-        out_path.write_text(
-            f"# Epoch analysis: {epoch_id}\n\n"
-            "_No evaluation LLM was supplied at close; this is a stub. "
-            "Re-run `zicato epoch close` with an `aux_call_llm` configured "
-            "to regenerate._\n\n"
-            "## Journal snapshot\n\n"
-            f"{journal_content}\n"
-        )
-    from zicato.analyzer.report import write_html_companion
+    """Publish measured results and any recorded prose without a model call."""
+    from zicato.analyzer.report import regenerate_epoch_report_deterministic
 
-    write_html_companion(workspace_root, epoch_id, out_path)
+    regenerate_epoch_report_deterministic(workspace_root, epoch_id)
 
 
 def close_epoch(

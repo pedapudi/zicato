@@ -1091,17 +1091,18 @@ configured at runtime, so workspaces never cross-talk.
           experiment.json          # absent for v0 (the baseline)
           runs/
             {entry_id}/
-              events.jsonl         # goldfive wire, via JSONLPersistenceSink
-              loss.json            # post-run reducer output
+              seed-{seed}/         # seed-none when unseeded
+                events.{purpose}.r{draw}.jsonl
+                loss.{purpose}.r{draw}.json
           gen_score.json
         v1/
           snapshot/
           experiment.json          # hypothesis + patch_ids + outcome
           patches/
             {patch_id}.json        # one file per patch
-          runs/{entry_id}/
-            events.jsonl
-            loss.json
+          runs/{entry_id}/seed-{seed}/
+            events.{purpose}.r{draw}.jsonl
+            loss.{purpose}.r{draw}.json
           gen_score.json
         ...
       current_generation           # marker: id of the promoted head

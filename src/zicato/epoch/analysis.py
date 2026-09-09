@@ -1,30 +1,16 @@
-"""At-epoch-close analysis pass.
+"""Author the close-of-epoch retrospective for the shared epoch report.
 
-Generates ``analysis.md`` for an epoch by handing the evaluation LLM:
+The bounded evaluation prompt receives the journal, experiment hypotheses
+and outcomes, optional patterns, and deterministic tournament outcomes.
+Those outcomes include lineage, scalar trajectory, a score sparkline, and
+metric movements. Prompt limits bound journal and per-experiment detail.
 
-* the running ``journal.md``,
-* every ``experiment.json`` written under the epoch's ``generations/``,
-* an optional patterns snapshot if one is available on disk,
-* a pre-rendered "Tournament outcomes" section computed deterministically
-  from the journal data (lineage graph, trajectory table, ASCII
-  sparkline, drift-kind movement table).
-
-The LLM is asked to produce a fixed-structure markdown document with the
-sections enumerated in :data:`REQUIRED_SECTIONS`, referencing the
-pre-rendered diagrams without re-emitting them. We do NOT parse or
-re-validate the LLM result beyond writing it through; downstream tooling
-that wants structure should read from ``experiment.json`` and
-``journal.md`` directly.
-
-The sibling ``analysis.html`` is not rendered here: :func:`write_html_companion`
-hands the markdown to :func:`zicato.analyzer.report.render_report_html`, the one
-renderer of the served document, so the HTML always matches the markdown beside
-it.
-
-The pass is **bounded**: we cap the journal slice and per-experiment detail we
-inline into the prompt so the call is predictable. Operators who need a fuller
-retrospective can re-run the pass with a larger budget by setting environment
-knobs; the function takes a ``model`` argument so a caller can select one.
+The response supplies the five narrative sections in ``REQUIRED_SECTIONS``.
+It is stored as the ``retrospective`` block in ``analysis.prose.json``.
+``regenerate_epoch_report_deterministic`` combines recorded narrative and
+measured results, then publishes Markdown, standalone HTML, and the dashboard
+fragment. Deterministic consumers read structured evaluation records rather
+than extracting facts from authored narrative.
 """
 
 from __future__ import annotations
@@ -35,7 +21,7 @@ import logging
 from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 
-from zicato.analyzer.report import write_html_companion
+from zicato.analyzer.report import regenerate_epoch_report_deterministic
 from zicato.aux_timeout import aux_call_timeout_s
 from zicato.core.settings import AuxConfig
 from zicato.core.types import (
@@ -49,7 +35,6 @@ from zicato.core.workspace import (
 )
 from zicato.epoch.journal import experiment_body, read_epoch_experiments
 from zicato.epoch.lineage import load_lineage
-from zicato.storage import atomic_write_text
 from zicato.workspace import ScalarStep, WorkspaceLayout, cumulative_scalars, generation_ids
 
 # A goldfive-compatible evaluation call_llm.
@@ -438,13 +423,12 @@ def render_trajectory_table(
             elif exp.outcome is None:
                 delta_cell = ""
                 decision_cell = "pending"
-                core = exp.hypothesis.core_idea.splitlines()[0].strip()
             else:
                 delta_cell = f"{exp.outcome.scalar_score_delta:+.3f}"
                 # An outcome recording no decision renders the same
                 # word as a missing outcome: the decision is pending.
                 decision_cell = exp.outcome.tournament_decision or "pending"
-                core = exp.hypothesis.core_idea.splitlines()[0].strip()
+            core = exp.hypothesis.core_idea.partition("\n")[0].strip() if exp else ""
         # Pipes and newlines break markdown tables — sanitize.
         core = core.replace("|", "\\|").replace("\n", " ")
         lines.append(f"| {g.id} | {score:+.3f} | {delta_cell} | {decision_cell} | {core} |")
@@ -876,77 +860,6 @@ def _generations_for(
 # ---------------------------------------------------------------------------
 
 
-def _render_unreadable_note(reasons: Sequence[str]) -> str:
-    """Render the reasons the epoch's unreadable records were left out.
-
-    A generation whose ``experiment.json`` does not parse is missing from
-    every table and diagram below, and a reader who is not told that reads
-    the epoch as one generation shorter than it was. The note says which
-    record and why, so the omission is visible in the document itself
-    rather than only in a log line nobody kept.
-    """
-    lines = [
-        f"> **{len(reasons)} generation record"
-        f"{'' if len(reasons) == 1 else 's'} could not be read** and "
-        "are absent from the tables and diagrams below:",
-        ">",
-    ]
-    lines.extend(f"> * {reason}" for reason in reasons)
-    return "\n".join(lines)
-
-
-def _render_metadata_header(
-    epoch_id: str,
-    generations: Sequence[Generation],
-    experiments: Sequence[Experiment],
-) -> str:
-    """Render a compact metadata line for the top of analysis.md.
-
-    Reports the number of generations attempted (anything past ``v0``),
-    the number that were promoted, and the timestamp span from the
-    earliest to the latest recorded generation. Best-effort: if a
-    timestamp is missing we omit the duration phrase rather than
-    fabricating one.
-    """
-    attempted = max(len(generations) - 1, 0) if generations else 0
-    exp_idx = _exp_by_child(experiments)
-    promoted = sum(
-        1
-        for g in generations
-        if g.parent_id is not None
-        and (exp := exp_idx.get(g.id)) is not None
-        and exp.outcome is not None
-        and exp.outcome.tournament_decision == "promoted"
-    )
-    rejected = sum(
-        1
-        for g in generations
-        if g.parent_id is not None
-        and (exp := exp_idx.get(g.id)) is not None
-        and exp.outcome is not None
-        and exp.outcome.tournament_decision == "rejected"
-    )
-
-    start = ""
-    end = ""
-    timestamps = [g.created_at for g in generations if g.created_at]
-    if timestamps:
-        start = min(timestamps)
-        end = max(timestamps)
-
-    parts: list[str] = []
-    parts.append(f"**epoch**: `{epoch_id}`")
-    parts.append(f"**generations attempted**: {attempted}")
-    parts.append(f"**promoted**: {promoted}")
-    parts.append(f"**rejected**: {rejected}")
-    if start and end and start != end:
-        parts.append(f"**span**: {start} → {end}")
-    elif start:
-        parts.append(f"**span**: {start}")
-
-    return "  \n".join(parts)
-
-
 # ---------------------------------------------------------------------------
 # Prompt composition
 # ---------------------------------------------------------------------------
@@ -1027,30 +940,16 @@ async def generate_analysis(
     model: str = "",
     aux_config: AuxConfig | None = None,
 ) -> Path:
-    """Run the analysis pass and write ``analysis.md``.
+    """Author the retrospective and publish it through the shared assembler.
 
-    Returns the path to the written file. The caller is responsible for
-    arranging that ``aux_call_llm`` is the EVALUATION callable (not the
-    target one) — see :class:`RuntimeConfig` and
-    :func:`assert_distinct_callables` for the collusion guard.
+    The prompt includes bounded journal text, recorded experiments, optional
+    patterns, and computed tournament outcomes. The response becomes the
+    stored retrospective; the complete report retains the paper's other
+    authored sections and deterministic results.
 
-    The function is async because the LLM call is. Callers in synchronous
-    contexts wrap with ``asyncio.run``; ``close_epoch`` does this for the
-    common path.
-
-    The output file structure is::
-
-        # Epoch analysis: <id>
-
-        <metadata header>
-
-        ## Tournament outcomes
-        <pre-computed mermaid + tables + sparkline>
-
-        <LLM-generated five narrative sections>
-
-        ---
-        <footer>
+    ``aux_call_llm`` must be the evaluation callable under the callable
+    separation rule enforced by ``assert_distinct_callables``. Synchronous
+    callers use ``asyncio.run``. Return the path to ``analysis.md``.
     """
     journal_text = ""
     jpath = journal_path(workspace_root, epoch_id)
@@ -1063,9 +962,6 @@ async def generate_analysis(
 
     typed_gens = _generations_for(workspace_root, epoch_id, experiments)
     tournament_outcomes_md = render_tournament_outcomes_section(typed_gens, experiments)
-    metadata_md = _render_metadata_header(epoch_id, typed_gens, experiments)
-    if unreadable:
-        metadata_md = metadata_md.rstrip() + "\n\n" + _render_unreadable_note(unreadable)
 
     user_prompt = _compose_user_prompt(
         epoch_id=epoch_id,
@@ -1082,59 +978,27 @@ async def generate_analysis(
         )
     except TimeoutError:
         logging.getLogger(__name__).warning(
-            "analysis pass timed out after %.1fs; substituting placeholder narrative",
+            "analysis pass timed out after %.1fs; retaining recorded narrative",
             aux_call_timeout_s(aux_config),
         )
-        narrative = (
-            "## Headline movements\n\n"
-            "_(analysis LLM timed out; placeholder narrative written. "
-            "Re-run the analysis pass after the endpoint recovers.)_\n\n"
-            "## Hypotheses that held\n\n_(unavailable)_\n\n"
-            "## Hypotheses that didn't\n\n_(unavailable)_\n\n"
-            "## Surface still open at epoch close\n\n_(unavailable)_\n\n"
-            "## Recommended focus for next epoch\n\n_(unavailable)_\n"
-        )
+        narrative = ""
 
-    composed: list[str] = []
-    composed.append(f"# Epoch analysis: {epoch_id}")
-    composed.append("")
-    composed.append(metadata_md)
-    composed.append("")
-    composed.append(tournament_outcomes_md.rstrip())
-    composed.append("")
-    composed.append(narrative.strip())
-    composed.append("")
-    composed.append("---")
-    composed.append("")
-    composed.append(
-        f"_Generated from `{journal_path(workspace_root, epoch_id).name}` and "
-        f"`generations/*/experiment.json` under epoch `{epoch_id}`._"
+    regenerate_epoch_report_deterministic(
+        workspace_root,
+        epoch_id,
+        authored={"retrospective": narrative.strip()},
+        recorded_experiments=(records, unreadable),
     )
-    composed.append("")
-
-    out_path = analysis_path(workspace_root, epoch_id)
-    atomic_write_text(out_path, "\n".join(composed), mode=None)
-
-    write_html_companion(
-        workspace_root, epoch_id, out_path, recorded_experiments=(records, unreadable)
-    )
-    return out_path
+    return analysis_path(workspace_root, epoch_id)
 
 
 def regenerate_in_progress_html(workspace_root: Path, epoch_id: str) -> Path | None:
-    """Refresh ``analysis.md`` and ``analysis.html`` mid-epoch — no LLM call.
+    """Refresh the epoch report without an evaluation call.
 
-    Delegates to the analyzer's deterministic report regeneration, which
-    re-templates every data-bearing section from the current workspace data,
-    preserves any LLM-authored prose verbatim, and rewrites the HTML
-    companion. Returns the HTML path once it exists, or ``None`` for an
-    epoch that has produced no generation yet.
-
-    The evolve loop calls this after every round so that ``file://`` readers
-    and the dashboard's static fallback see the latest round rather than
-    only the state at epoch close. It is the same call the round epilogue
-    makes (:func:`zicato.evolve.round_reporting._regenerate_epoch_report`),
-    is digest-gated, and rewrites nothing when the round moved no data.
+    The shared assembler reads stored narrative and measured results, then
+    publishes Markdown and both HTML forms. Unchanged bytes do not trigger
+    replacement. Return the standalone HTML path when it exists, or ``None``
+    before the epoch has an experiment record.
     """
     from zicato.analyzer.report import regenerate_epoch_report_deterministic
 
@@ -1158,5 +1022,4 @@ __all__ = [
     "render_score_sparkline",
     "render_tournament_outcomes_section",
     "render_trajectory_table",
-    "write_html_companion",
 ]

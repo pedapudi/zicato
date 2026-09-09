@@ -363,8 +363,8 @@ def _collect_artifacts(workspace: Path, epoch_id: str) -> dict[str, object]:
         if exp is not None:
             experiments[gid] = exp
 
-        # Per-run loss.json, wherever the run wrote it under the generation.
-        for loss_path in sorted(gen_dir.rglob("loss.json")):
+        # Capture every persisted measurement, including independent draws.
+        for loss_path in sorted(gen_dir.rglob("loss.*.r*.json")):
             key = str(loss_path.relative_to(gens_dir))
             losses[key] = _read_json_norm(loss_path, tmp_root)
 

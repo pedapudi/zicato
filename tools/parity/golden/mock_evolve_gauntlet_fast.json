@@ -257,7 +257,7 @@
     "format_version": 1
   },
   "losses": {
-    "v0/runs/every_expectation_kind_demo/seed-none/loss.json": {
+    "v0/runs/every_expectation_kind_demo/seed-none/loss.tournament.r0.json": {
       "abort_cause": null,
       "adk_session_id": "",
       "cached": false,
@@ -284,7 +284,7 @@
       "pass_fail": true,
       "per_judge_loss": [],
       "plan_revisions": 0,
-      "run_id": "seed-none.v0--every_expectation_kind_demo",
+      "run_id": "seed-none.tournament.r0.2a408ed79b8711c779de22c517e8b38d667c882edf9758cb2f649aabab24cba2",
       "runtime_ms": "<RUNTIME>",
       "schema_failures": 0,
       "score": null,
@@ -297,7 +297,47 @@
       "turns_completed": null,
       "wall_clock_budget_exceeded": false
     },
-    "v0/runs/picky_stakeholder_emulated/seed-none/loss.json": {
+    "v0/runs/every_expectation_kind_demo/seed-none/loss.tournament.r1.json": {
+      "abort_cause": null,
+      "adk_session_id": "",
+      "cached": false,
+      "context_loss_count": null,
+      "drift_loss": 2.0,
+      "ended_at": null,
+      "entry_id": "every_expectation_kind_demo",
+      "epoch_id": "<DATE>_t1_gauntlet_cached",
+      "expectation_result": null,
+      "generation_id": "v0",
+      "judge_errors": [],
+      "match_id": "",
+      "measurement": {
+        "base_seed": null,
+        "draw": 1,
+        "purpose": "tournament"
+      },
+      "memory_failure_count": null,
+      "metric_counts": [],
+      "metrics": null,
+      "not_completed": false,
+      "not_completed_reason": null,
+      "output_chars": 0,
+      "pass_fail": true,
+      "per_judge_loss": [],
+      "plan_revisions": 0,
+      "run_id": "seed-none.tournament.r1.2a408ed79b8711c779de22c517e8b38d667c882edf9758cb2f649aabab24cba2",
+      "runtime_ms": "<RUNTIME>",
+      "schema_failures": 0,
+      "score": null,
+      "scoring_provenance": null,
+      "source_epoch": "",
+      "source_run": "",
+      "started_at": null,
+      "task_failure_ratio": 0.0,
+      "tokens_spent": 0,
+      "turns_completed": null,
+      "wall_clock_budget_exceeded": false
+    },
+    "v0/runs/picky_stakeholder_emulated/seed-none/loss.tournament.r0.json": {
       "abort_cause": null,
       "adk_session_id": "",
       "cached": false,
@@ -324,7 +364,7 @@
       "pass_fail": true,
       "per_judge_loss": [],
       "plan_revisions": 0,
-      "run_id": "seed-none.v0--picky_stakeholder_emulated",
+      "run_id": "seed-none.tournament.r0.46e63bb4df498029d398bf5be592c6f7743df2f06361dd5f0379c8f612e13f1f",
       "runtime_ms": "<RUNTIME>",
       "schema_failures": 0,
       "score": null,
@@ -337,7 +377,47 @@
       "turns_completed": null,
       "wall_clock_budget_exceeded": false
     },
-    "v0/runs/q3_metrics_outline/seed-none/loss.json": {
+    "v0/runs/picky_stakeholder_emulated/seed-none/loss.tournament.r1.json": {
+      "abort_cause": null,
+      "adk_session_id": "",
+      "cached": false,
+      "context_loss_count": null,
+      "drift_loss": 2.0,
+      "ended_at": null,
+      "entry_id": "picky_stakeholder_emulated",
+      "epoch_id": "<DATE>_t1_gauntlet_cached",
+      "expectation_result": null,
+      "generation_id": "v0",
+      "judge_errors": [],
+      "match_id": "",
+      "measurement": {
+        "base_seed": null,
+        "draw": 1,
+        "purpose": "tournament"
+      },
+      "memory_failure_count": null,
+      "metric_counts": [],
+      "metrics": null,
+      "not_completed": false,
+      "not_completed_reason": null,
+      "output_chars": 0,
+      "pass_fail": true,
+      "per_judge_loss": [],
+      "plan_revisions": 0,
+      "run_id": "seed-none.tournament.r1.46e63bb4df498029d398bf5be592c6f7743df2f06361dd5f0379c8f612e13f1f",
+      "runtime_ms": "<RUNTIME>",
+      "schema_failures": 0,
+      "score": null,
+      "scoring_provenance": null,
+      "source_epoch": "",
+      "source_run": "",
+      "started_at": null,
+      "task_failure_ratio": 0.0,
+      "tokens_spent": 0,
+      "turns_completed": null,
+      "wall_clock_budget_exceeded": false
+    },
+    "v0/runs/q3_metrics_outline/seed-none/loss.tournament.r0.json": {
       "abort_cause": null,
       "adk_session_id": "",
       "cached": false,
@@ -364,7 +444,7 @@
       "pass_fail": true,
       "per_judge_loss": [],
       "plan_revisions": 0,
-      "run_id": "seed-none.v0--q3_metrics_outline",
+      "run_id": "seed-none.tournament.r0.4ae64d19732e035b782665a5d65aa7a76bb616a95265aa5d6ced3844b9f930d8",
       "runtime_ms": "<RUNTIME>",
       "schema_failures": 0,
       "score": null,
@@ -377,7 +457,47 @@
       "turns_completed": null,
       "wall_clock_budget_exceeded": false
     },
-    "v0/runs/transformers_lay_audience/seed-none/loss.json": {
+    "v0/runs/q3_metrics_outline/seed-none/loss.tournament.r1.json": {
+      "abort_cause": null,
+      "adk_session_id": "",
+      "cached": false,
+      "context_loss_count": null,
+      "drift_loss": 2.0,
+      "ended_at": null,
+      "entry_id": "q3_metrics_outline",
+      "epoch_id": "<DATE>_t1_gauntlet_cached",
+      "expectation_result": null,
+      "generation_id": "v0",
+      "judge_errors": [],
+      "match_id": "",
+      "measurement": {
+        "base_seed": null,
+        "draw": 1,
+        "purpose": "tournament"
+      },
+      "memory_failure_count": null,
+      "metric_counts": [],
+      "metrics": null,
+      "not_completed": false,
+      "not_completed_reason": null,
+      "output_chars": 0,
+      "pass_fail": true,
+      "per_judge_loss": [],
+      "plan_revisions": 0,
+      "run_id": "seed-none.tournament.r1.4ae64d19732e035b782665a5d65aa7a76bb616a95265aa5d6ced3844b9f930d8",
+      "runtime_ms": "<RUNTIME>",
+      "schema_failures": 0,
+      "score": null,
+      "scoring_provenance": null,
+      "source_epoch": "",
+      "source_run": "",
+      "started_at": null,
+      "task_failure_ratio": 0.0,
+      "tokens_spent": 0,
+      "turns_completed": null,
+      "wall_clock_budget_exceeded": false
+    },
+    "v0/runs/transformers_lay_audience/seed-none/loss.tournament.r0.json": {
       "abort_cause": null,
       "adk_session_id": "",
       "cached": false,
@@ -404,7 +524,7 @@
       "pass_fail": true,
       "per_judge_loss": [],
       "plan_revisions": 0,
-      "run_id": "seed-none.v0--transformers_lay_audience",
+      "run_id": "seed-none.tournament.r0.7465227a882e1674e1cc528d92c4e5e24d628d07cd4be001816fb8bcae24b152",
       "runtime_ms": "<RUNTIME>",
       "schema_failures": 0,
       "score": null,
@@ -417,7 +537,47 @@
       "turns_completed": null,
       "wall_clock_budget_exceeded": false
     },
-    "v0/runs/transformers_progressive_scripted/seed-none/loss.json": {
+    "v0/runs/transformers_lay_audience/seed-none/loss.tournament.r1.json": {
+      "abort_cause": null,
+      "adk_session_id": "",
+      "cached": false,
+      "context_loss_count": null,
+      "drift_loss": 2.0,
+      "ended_at": null,
+      "entry_id": "transformers_lay_audience",
+      "epoch_id": "<DATE>_t1_gauntlet_cached",
+      "expectation_result": null,
+      "generation_id": "v0",
+      "judge_errors": [],
+      "match_id": "",
+      "measurement": {
+        "base_seed": null,
+        "draw": 1,
+        "purpose": "tournament"
+      },
+      "memory_failure_count": null,
+      "metric_counts": [],
+      "metrics": null,
+      "not_completed": false,
+      "not_completed_reason": null,
+      "output_chars": 0,
+      "pass_fail": true,
+      "per_judge_loss": [],
+      "plan_revisions": 0,
+      "run_id": "seed-none.tournament.r1.7465227a882e1674e1cc528d92c4e5e24d628d07cd4be001816fb8bcae24b152",
+      "runtime_ms": "<RUNTIME>",
+      "schema_failures": 0,
+      "score": null,
+      "scoring_provenance": null,
+      "source_epoch": "",
+      "source_run": "",
+      "started_at": null,
+      "task_failure_ratio": 0.0,
+      "tokens_spent": 0,
+      "turns_completed": null,
+      "wall_clock_budget_exceeded": false
+    },
+    "v0/runs/transformers_progressive_scripted/seed-none/loss.tournament.r0.json": {
       "abort_cause": null,
       "adk_session_id": "",
       "cached": false,
@@ -444,7 +604,7 @@
       "pass_fail": true,
       "per_judge_loss": [],
       "plan_revisions": 0,
-      "run_id": "seed-none.v0--transformers_progressive_scripted",
+      "run_id": "seed-none.tournament.r0.dafd6e7302ba0afcb76bccfbeaf970d5ec49518ce76b809f76398ae16174189a",
       "runtime_ms": "<RUNTIME>",
       "schema_failures": 0,
       "score": null,
@@ -457,7 +617,47 @@
       "turns_completed": null,
       "wall_clock_budget_exceeded": false
     },
-    "v0/runs/waffles_revision_scripted/seed-none/loss.json": {
+    "v0/runs/transformers_progressive_scripted/seed-none/loss.tournament.r1.json": {
+      "abort_cause": null,
+      "adk_session_id": "",
+      "cached": false,
+      "context_loss_count": null,
+      "drift_loss": 2.0,
+      "ended_at": null,
+      "entry_id": "transformers_progressive_scripted",
+      "epoch_id": "<DATE>_t1_gauntlet_cached",
+      "expectation_result": null,
+      "generation_id": "v0",
+      "judge_errors": [],
+      "match_id": "",
+      "measurement": {
+        "base_seed": null,
+        "draw": 1,
+        "purpose": "tournament"
+      },
+      "memory_failure_count": null,
+      "metric_counts": [],
+      "metrics": null,
+      "not_completed": false,
+      "not_completed_reason": null,
+      "output_chars": 0,
+      "pass_fail": true,
+      "per_judge_loss": [],
+      "plan_revisions": 0,
+      "run_id": "seed-none.tournament.r1.dafd6e7302ba0afcb76bccfbeaf970d5ec49518ce76b809f76398ae16174189a",
+      "runtime_ms": "<RUNTIME>",
+      "schema_failures": 0,
+      "score": null,
+      "scoring_provenance": null,
+      "source_epoch": "",
+      "source_run": "",
+      "started_at": null,
+      "task_failure_ratio": 0.0,
+      "tokens_spent": 0,
+      "turns_completed": null,
+      "wall_clock_budget_exceeded": false
+    },
+    "v0/runs/waffles_revision_scripted/seed-none/loss.tournament.r0.json": {
       "abort_cause": null,
       "adk_session_id": "",
       "cached": false,
@@ -484,7 +684,7 @@
       "pass_fail": true,
       "per_judge_loss": [],
       "plan_revisions": 0,
-      "run_id": "seed-none.v0--waffles_revision_scripted",
+      "run_id": "seed-none.tournament.r0.be0cfd12c53030d79a79bcfd1a8ed026a757995b34077144fdbc2b4afeded40f",
       "runtime_ms": "<RUNTIME>",
       "schema_failures": 0,
       "score": null,
@@ -497,7 +697,47 @@
       "turns_completed": null,
       "wall_clock_budget_exceeded": false
     },
-    "v0/runs/waffles_single/seed-none/loss.json": {
+    "v0/runs/waffles_revision_scripted/seed-none/loss.tournament.r1.json": {
+      "abort_cause": null,
+      "adk_session_id": "",
+      "cached": false,
+      "context_loss_count": null,
+      "drift_loss": 2.0,
+      "ended_at": null,
+      "entry_id": "waffles_revision_scripted",
+      "epoch_id": "<DATE>_t1_gauntlet_cached",
+      "expectation_result": null,
+      "generation_id": "v0",
+      "judge_errors": [],
+      "match_id": "",
+      "measurement": {
+        "base_seed": null,
+        "draw": 1,
+        "purpose": "tournament"
+      },
+      "memory_failure_count": null,
+      "metric_counts": [],
+      "metrics": null,
+      "not_completed": false,
+      "not_completed_reason": null,
+      "output_chars": 0,
+      "pass_fail": true,
+      "per_judge_loss": [],
+      "plan_revisions": 0,
+      "run_id": "seed-none.tournament.r1.be0cfd12c53030d79a79bcfd1a8ed026a757995b34077144fdbc2b4afeded40f",
+      "runtime_ms": "<RUNTIME>",
+      "schema_failures": 0,
+      "score": null,
+      "scoring_provenance": null,
+      "source_epoch": "",
+      "source_run": "",
+      "started_at": null,
+      "task_failure_ratio": 0.0,
+      "tokens_spent": 0,
+      "turns_completed": null,
+      "wall_clock_budget_exceeded": false
+    },
+    "v0/runs/waffles_single/seed-none/loss.tournament.r0.json": {
       "abort_cause": null,
       "adk_session_id": "",
       "cached": false,
@@ -524,7 +764,7 @@
       "pass_fail": true,
       "per_judge_loss": [],
       "plan_revisions": 0,
-      "run_id": "seed-none.v0--waffles_single",
+      "run_id": "seed-none.tournament.r0.0cc5e88e94ac15d1693b89106b2aa2fc52a27649e9b5b2040684e5f29f1ae2e7",
       "runtime_ms": "<RUNTIME>",
       "schema_failures": 0,
       "score": null,
@@ -537,7 +777,47 @@
       "turns_completed": null,
       "wall_clock_budget_exceeded": false
     },
-    "v1/runs/every_expectation_kind_demo/seed-none/loss.json": {
+    "v0/runs/waffles_single/seed-none/loss.tournament.r1.json": {
+      "abort_cause": null,
+      "adk_session_id": "",
+      "cached": false,
+      "context_loss_count": null,
+      "drift_loss": 2.0,
+      "ended_at": null,
+      "entry_id": "waffles_single",
+      "epoch_id": "<DATE>_t1_gauntlet_cached",
+      "expectation_result": null,
+      "generation_id": "v0",
+      "judge_errors": [],
+      "match_id": "",
+      "measurement": {
+        "base_seed": null,
+        "draw": 1,
+        "purpose": "tournament"
+      },
+      "memory_failure_count": null,
+      "metric_counts": [],
+      "metrics": null,
+      "not_completed": false,
+      "not_completed_reason": null,
+      "output_chars": 0,
+      "pass_fail": true,
+      "per_judge_loss": [],
+      "plan_revisions": 0,
+      "run_id": "seed-none.tournament.r1.0cc5e88e94ac15d1693b89106b2aa2fc52a27649e9b5b2040684e5f29f1ae2e7",
+      "runtime_ms": "<RUNTIME>",
+      "schema_failures": 0,
+      "score": null,
+      "scoring_provenance": null,
+      "source_epoch": "",
+      "source_run": "",
+      "started_at": null,
+      "task_failure_ratio": 0.0,
+      "tokens_spent": 0,
+      "turns_completed": null,
+      "wall_clock_budget_exceeded": false
+    },
+    "v1/runs/every_expectation_kind_demo/seed-none/loss.tournament.r0.json": {
       "abort_cause": null,
       "adk_session_id": "",
       "cached": false,
@@ -576,7 +856,7 @@
       "pass_fail": true,
       "per_judge_loss": [],
       "plan_revisions": 0,
-      "run_id": "seed-none.v1--every_expectation_kind_demo",
+      "run_id": "seed-none.tournament.r0.3dc68da4b1ef6fdbc89785dbc4b293f2be47182870743027daa6d3cdafe90f33",
       "runtime_ms": "<RUNTIME>",
       "schema_failures": 0,
       "score": null,
@@ -589,7 +869,59 @@
       "turns_completed": null,
       "wall_clock_budget_exceeded": false
     },
-    "v1/runs/picky_stakeholder_emulated/seed-none/loss.json": {
+    "v1/runs/every_expectation_kind_demo/seed-none/loss.tournament.r1.json": {
+      "abort_cause": null,
+      "adk_session_id": "",
+      "cached": false,
+      "context_loss_count": null,
+      "drift_loss": 0.4,
+      "ended_at": null,
+      "entry_id": "every_expectation_kind_demo",
+      "epoch_id": "<DATE>_t1_gauntlet_cached",
+      "expectation_result": {
+        "detail": "",
+        "kind": "predicate",
+        "metrics": null,
+        "passed": true,
+        "score": null
+      },
+      "generation_id": "v1",
+      "judge_errors": [],
+      "match_id": "",
+      "measurement": {
+        "base_seed": null,
+        "draw": 1,
+        "purpose": "tournament"
+      },
+      "memory_failure_count": null,
+      "metric_counts": [
+        {
+          "count": 0,
+          "name": "drift:off_topic",
+          "severity": "info"
+        }
+      ],
+      "metrics": null,
+      "not_completed": false,
+      "not_completed_reason": null,
+      "output_chars": 0,
+      "pass_fail": true,
+      "per_judge_loss": [],
+      "plan_revisions": 0,
+      "run_id": "seed-none.tournament.r1.3dc68da4b1ef6fdbc89785dbc4b293f2be47182870743027daa6d3cdafe90f33",
+      "runtime_ms": "<RUNTIME>",
+      "schema_failures": 0,
+      "score": null,
+      "scoring_provenance": null,
+      "source_epoch": "",
+      "source_run": "",
+      "started_at": null,
+      "task_failure_ratio": 0.0,
+      "tokens_spent": 0,
+      "turns_completed": null,
+      "wall_clock_budget_exceeded": false
+    },
+    "v1/runs/picky_stakeholder_emulated/seed-none/loss.tournament.r0.json": {
       "abort_cause": null,
       "adk_session_id": "",
       "cached": false,
@@ -628,7 +960,7 @@
       "pass_fail": true,
       "per_judge_loss": [],
       "plan_revisions": 0,
-      "run_id": "seed-none.v1--picky_stakeholder_emulated",
+      "run_id": "seed-none.tournament.r0.02cca90c464df4fc120b8f91c20301816938b89f8d97c7459d747a562555f54a",
       "runtime_ms": "<RUNTIME>",
       "schema_failures": 0,
       "score": null,
@@ -641,7 +973,59 @@
       "turns_completed": null,
       "wall_clock_budget_exceeded": false
     },
-    "v1/runs/q3_metrics_outline/seed-none/loss.json": {
+    "v1/runs/picky_stakeholder_emulated/seed-none/loss.tournament.r1.json": {
+      "abort_cause": null,
+      "adk_session_id": "",
+      "cached": false,
+      "context_loss_count": null,
+      "drift_loss": 0.4,
+      "ended_at": null,
+      "entry_id": "picky_stakeholder_emulated",
+      "epoch_id": "<DATE>_t1_gauntlet_cached",
+      "expectation_result": {
+        "detail": "",
+        "kind": "predicate",
+        "metrics": null,
+        "passed": true,
+        "score": null
+      },
+      "generation_id": "v1",
+      "judge_errors": [],
+      "match_id": "",
+      "measurement": {
+        "base_seed": null,
+        "draw": 1,
+        "purpose": "tournament"
+      },
+      "memory_failure_count": null,
+      "metric_counts": [
+        {
+          "count": 0,
+          "name": "drift:off_topic",
+          "severity": "info"
+        }
+      ],
+      "metrics": null,
+      "not_completed": false,
+      "not_completed_reason": null,
+      "output_chars": 0,
+      "pass_fail": true,
+      "per_judge_loss": [],
+      "plan_revisions": 0,
+      "run_id": "seed-none.tournament.r1.02cca90c464df4fc120b8f91c20301816938b89f8d97c7459d747a562555f54a",
+      "runtime_ms": "<RUNTIME>",
+      "schema_failures": 0,
+      "score": null,
+      "scoring_provenance": null,
+      "source_epoch": "",
+      "source_run": "",
+      "started_at": null,
+      "task_failure_ratio": 0.0,
+      "tokens_spent": 0,
+      "turns_completed": null,
+      "wall_clock_budget_exceeded": false
+    },
+    "v1/runs/q3_metrics_outline/seed-none/loss.tournament.r0.json": {
       "abort_cause": null,
       "adk_session_id": "",
       "cached": false,
@@ -680,7 +1064,7 @@
       "pass_fail": true,
       "per_judge_loss": [],
       "plan_revisions": 0,
-      "run_id": "seed-none.v1--q3_metrics_outline",
+      "run_id": "seed-none.tournament.r0.3b7cab6835ffc731c347f8ecb803907a119f70f10d563ab0d7db69ab59885603",
       "runtime_ms": "<RUNTIME>",
       "schema_failures": 0,
       "score": null,
@@ -693,7 +1077,59 @@
       "turns_completed": null,
       "wall_clock_budget_exceeded": false
     },
-    "v1/runs/transformers_lay_audience/seed-none/loss.json": {
+    "v1/runs/q3_metrics_outline/seed-none/loss.tournament.r1.json": {
+      "abort_cause": null,
+      "adk_session_id": "",
+      "cached": false,
+      "context_loss_count": null,
+      "drift_loss": 0.4,
+      "ended_at": null,
+      "entry_id": "q3_metrics_outline",
+      "epoch_id": "<DATE>_t1_gauntlet_cached",
+      "expectation_result": {
+        "detail": "",
+        "kind": "predicate",
+        "metrics": null,
+        "passed": true,
+        "score": null
+      },
+      "generation_id": "v1",
+      "judge_errors": [],
+      "match_id": "",
+      "measurement": {
+        "base_seed": null,
+        "draw": 1,
+        "purpose": "tournament"
+      },
+      "memory_failure_count": null,
+      "metric_counts": [
+        {
+          "count": 0,
+          "name": "drift:off_topic",
+          "severity": "info"
+        }
+      ],
+      "metrics": null,
+      "not_completed": false,
+      "not_completed_reason": null,
+      "output_chars": 0,
+      "pass_fail": true,
+      "per_judge_loss": [],
+      "plan_revisions": 0,
+      "run_id": "seed-none.tournament.r1.3b7cab6835ffc731c347f8ecb803907a119f70f10d563ab0d7db69ab59885603",
+      "runtime_ms": "<RUNTIME>",
+      "schema_failures": 0,
+      "score": null,
+      "scoring_provenance": null,
+      "source_epoch": "",
+      "source_run": "",
+      "started_at": null,
+      "task_failure_ratio": 0.0,
+      "tokens_spent": 0,
+      "turns_completed": null,
+      "wall_clock_budget_exceeded": false
+    },
+    "v1/runs/transformers_lay_audience/seed-none/loss.tournament.r0.json": {
       "abort_cause": null,
       "adk_session_id": "",
       "cached": false,
@@ -732,7 +1168,7 @@
       "pass_fail": true,
       "per_judge_loss": [],
       "plan_revisions": 0,
-      "run_id": "seed-none.v1--transformers_lay_audience",
+      "run_id": "seed-none.tournament.r0.b2e1a6ab1e172072ee9f39d213aacfd13f0fe0b57318422588a8e3fe1c7dc7c5",
       "runtime_ms": "<RUNTIME>",
       "schema_failures": 0,
       "score": null,
@@ -745,7 +1181,7 @@
       "turns_completed": null,
       "wall_clock_budget_exceeded": false
     },
-    "v1/runs/transformers_progressive_scripted/seed-none/loss.json": {
+    "v1/runs/transformers_progressive_scripted/seed-none/loss.tournament.r0.json": {
       "abort_cause": null,
       "adk_session_id": "",
       "cached": false,
@@ -784,7 +1220,7 @@
       "pass_fail": true,
       "per_judge_loss": [],
       "plan_revisions": 0,
-      "run_id": "seed-none.v1--transformers_progressive_scripted",
+      "run_id": "seed-none.tournament.r0.d3ff2377672ceb099831f453164ecb159afd36161cbd4187c4bb2515c7a685a5",
       "runtime_ms": "<RUNTIME>",
       "schema_failures": 0,
       "score": null,
@@ -797,7 +1233,7 @@
       "turns_completed": null,
       "wall_clock_budget_exceeded": false
     },
-    "v1/runs/waffles_revision_scripted/seed-none/loss.json": {
+    "v1/runs/waffles_revision_scripted/seed-none/loss.tournament.r0.json": {
       "abort_cause": null,
       "adk_session_id": "",
       "cached": false,
@@ -830,7 +1266,7 @@
       "pass_fail": true,
       "per_judge_loss": [],
       "plan_revisions": 0,
-      "run_id": "seed-none.v1--waffles_revision_scripted",
+      "run_id": "seed-none.tournament.r0.fc420cba164393bd9441b87d8771ad582b056b5f207ca626462afb7d47a9ac0c",
       "runtime_ms": "<RUNTIME>",
       "schema_failures": 0,
       "score": null,
@@ -843,7 +1279,53 @@
       "turns_completed": null,
       "wall_clock_budget_exceeded": false
     },
-    "v1/runs/waffles_single/seed-none/loss.json": {
+    "v1/runs/waffles_revision_scripted/seed-none/loss.tournament.r1.json": {
+      "abort_cause": null,
+      "adk_session_id": "",
+      "cached": false,
+      "context_loss_count": null,
+      "drift_loss": 0.4,
+      "ended_at": null,
+      "entry_id": "waffles_revision_scripted",
+      "epoch_id": "<DATE>_t1_gauntlet_cached",
+      "expectation_result": null,
+      "generation_id": "v1",
+      "judge_errors": [],
+      "match_id": "",
+      "measurement": {
+        "base_seed": null,
+        "draw": 1,
+        "purpose": "tournament"
+      },
+      "memory_failure_count": null,
+      "metric_counts": [
+        {
+          "count": 0,
+          "name": "drift:off_topic",
+          "severity": "info"
+        }
+      ],
+      "metrics": null,
+      "not_completed": false,
+      "not_completed_reason": null,
+      "output_chars": 0,
+      "pass_fail": true,
+      "per_judge_loss": [],
+      "plan_revisions": 0,
+      "run_id": "seed-none.tournament.r1.fc420cba164393bd9441b87d8771ad582b056b5f207ca626462afb7d47a9ac0c",
+      "runtime_ms": "<RUNTIME>",
+      "schema_failures": 0,
+      "score": null,
+      "scoring_provenance": null,
+      "source_epoch": "",
+      "source_run": "",
+      "started_at": null,
+      "task_failure_ratio": 0.0,
+      "tokens_spent": 0,
+      "turns_completed": null,
+      "wall_clock_budget_exceeded": false
+    },
+    "v1/runs/waffles_single/seed-none/loss.tournament.r0.json": {
       "abort_cause": null,
       "adk_session_id": "",
       "cached": false,
@@ -882,7 +1364,59 @@
       "pass_fail": true,
       "per_judge_loss": [],
       "plan_revisions": 0,
-      "run_id": "seed-none.v1--waffles_single",
+      "run_id": "seed-none.tournament.r0.6c629c9e693c95682e420d844081b2675bc24a9535acb59bd4e3702f2bfa70d7",
+      "runtime_ms": "<RUNTIME>",
+      "schema_failures": 0,
+      "score": null,
+      "scoring_provenance": null,
+      "source_epoch": "",
+      "source_run": "",
+      "started_at": null,
+      "task_failure_ratio": 0.0,
+      "tokens_spent": 0,
+      "turns_completed": null,
+      "wall_clock_budget_exceeded": false
+    },
+    "v1/runs/waffles_single/seed-none/loss.tournament.r1.json": {
+      "abort_cause": null,
+      "adk_session_id": "",
+      "cached": false,
+      "context_loss_count": null,
+      "drift_loss": 0.4,
+      "ended_at": null,
+      "entry_id": "waffles_single",
+      "epoch_id": "<DATE>_t1_gauntlet_cached",
+      "expectation_result": {
+        "detail": "",
+        "kind": "predicate",
+        "metrics": null,
+        "passed": true,
+        "score": null
+      },
+      "generation_id": "v1",
+      "judge_errors": [],
+      "match_id": "",
+      "measurement": {
+        "base_seed": null,
+        "draw": 1,
+        "purpose": "tournament"
+      },
+      "memory_failure_count": null,
+      "metric_counts": [
+        {
+          "count": 0,
+          "name": "drift:off_topic",
+          "severity": "info"
+        }
+      ],
+      "metrics": null,
+      "not_completed": false,
+      "not_completed_reason": null,
+      "output_chars": 0,
+      "pass_fail": true,
+      "per_judge_loss": [],
+      "plan_revisions": 0,
+      "run_id": "seed-none.tournament.r1.6c629c9e693c95682e420d844081b2675bc24a9535acb59bd4e3702f2bfa70d7",
       "runtime_ms": "<RUNTIME>",
       "schema_failures": 0,
       "score": null,
@@ -900,7 +1434,7 @@
     "0/round_log.jsonl": [
       {
         "payload": {
-          "contract_hash": "76b5bf7a933769eb64fbc1fd0481777e56be2b21f99f636c808c94699ca9848f"
+          "contract_hash": "4530882653ef8e8a807dc047f002dd81d4bcaf0e93a4bed159b65975fb98ed4f"
         },
         "scope": {},
         "seq": 1,
@@ -1043,7 +1577,6 @@
       {
         "payload": {
           "entry_id": "every_expectation_kind_demo",
-          "replicate": 0,
           "side": "parent"
         },
         "scope": {
@@ -1061,7 +1594,6 @@
       {
         "payload": {
           "entry_id": "every_expectation_kind_demo",
-          "replicate": 0,
           "side": "child"
         },
         "scope": {
@@ -1079,7 +1611,6 @@
       {
         "payload": {
           "entry_id": "picky_stakeholder_emulated",
-          "replicate": 0,
           "side": "parent"
         },
         "scope": {
@@ -1097,7 +1628,6 @@
       {
         "payload": {
           "entry_id": "picky_stakeholder_emulated",
-          "replicate": 0,
           "side": "child"
         },
         "scope": {
@@ -1115,7 +1645,6 @@
       {
         "payload": {
           "entry_id": "q3_metrics_outline",
-          "replicate": 0,
           "side": "parent"
         },
         "scope": {
@@ -1133,7 +1662,6 @@
       {
         "payload": {
           "entry_id": "q3_metrics_outline",
-          "replicate": 0,
           "side": "child"
         },
         "scope": {
@@ -1151,7 +1679,6 @@
       {
         "payload": {
           "entry_id": "waffles_revision_scripted",
-          "replicate": 0,
           "side": "parent"
         },
         "scope": {
@@ -1169,7 +1696,6 @@
       {
         "payload": {
           "entry_id": "waffles_revision_scripted",
-          "replicate": 0,
           "side": "child"
         },
         "scope": {
@@ -1187,7 +1713,6 @@
       {
         "payload": {
           "entry_id": "waffles_single",
-          "replicate": 0,
           "side": "parent"
         },
         "scope": {
@@ -1205,7 +1730,6 @@
       {
         "payload": {
           "entry_id": "waffles_single",
-          "replicate": 0,
           "side": "child"
         },
         "scope": {

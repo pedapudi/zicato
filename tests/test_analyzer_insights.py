@@ -62,9 +62,21 @@ def _write_events(
     entry: str,
     events: list,
 ) -> Path:
-    run_dir = workspace / "epochs" / epoch_id / "generations" / generation / "runs" / entry
+    run_dir = (
+        workspace / "epochs" / epoch_id / "generations" / generation / "runs" / entry / "seed-none"
+    )
     run_dir.mkdir(parents=True, exist_ok=True)
-    path = run_dir / "events.jsonl"
+    from zicato.core.measurement import TOURNAMENT_DRAW
+    from zicato.telemetry.reducer import write_loss_profile
+    from zicato.testing.fixtures import make_loss_profile
+
+    write_loss_profile(
+        make_loss_profile(
+            epoch_id=epoch_id, generation_id=generation, entry_id=entry, measurement=TOURNAMENT_DRAW
+        ),
+        run_dir / "loss.tournament.r0.json",
+    )
+    path = run_dir / "events.tournament.r0.jsonl"
     with open(path, "w", encoding="utf-8") as f:
         for ev in events:
             f.write(json.dumps(ev) + "\n")

@@ -4,8 +4,8 @@
 > `aggregate_generation_score` → scalar), the promote gate's rule ladder, the noise
 > doctrine and its measured facts, A/A noise-floor calibration (repeat draws of
 > one generation measured against itself), the Ladder-mediated holdout, the
-> Bradley–Terry evidence gate, replication semantics, the reserved
-> replicate-base ledger, contract pre-flight, judge test–retest, the placebo arm,
+> Bradley–Terry evidence gate, replication semantics, measurement purposes,
+> contract pre-flight, judge test–retest, the placebo arm,
 > the overfitting program map, and the power-harness methodology for proving any
 > statistical change.
 >
@@ -26,11 +26,10 @@
 > 5. **Every measurement is a noise draw.** Every decision procedure over
 >    measurements must be explicitly noise-aware, and its operating
 >    characteristics must be *measured under seeded noise*, never asserted.
-> 6. **A board unit `(generation_id, entry_id, replicate_index)` is evaluated at
->    most once per contract** and its persisted result is immutable.
-> 7. **Replicate indices are a partitioned namespace** (the reserved-base
->    ledger, §8). Never run an out-of-tournament evaluation at an index you
->    have not formally claimed.
+> 6. **A measurement identifies its epoch, generation, entry, purpose, draw,
+>    and base seed.** Reusing that identity does not create independent evidence.
+> 7. **Measurement purposes separate evaluations.** Diagnostic probes cannot
+>    occupy tournament slots or supply promotion evidence (§8).
 > 8. **The holdout is confirmation-only and mediated by the Ladder**, the
 >    budgeted holdout-reuse mechanism of §5. It can flip a train-win to reject;
 >    it never promotes, never steers the proposer, and its raw per-entry results
@@ -59,9 +58,9 @@ stages. Every stage has exactly one home:
 
 | Stage | What happens | Home | Runs where |
 |---|---|---|---|
-| 1. Run | The system under test executes the entry; under the default `goldfive` dialect goldfive emits `events.jsonl` (one file per run) | adapter + goldfive `JSONLPersistenceSink` | killable worker subprocess |
+| 1. Run | The system under test executes the entry and emits the draw’s `events.{purpose}.r{draw}.jsonl` file (§7.3) | adapter + goldfive `JSONLPersistenceSink` | killable worker subprocess |
 | 2. Reduce | Events → one `LossProfile` (drift counts, pass/fail, per-judge loss, `drift_loss`) | `src/zicato/telemetry/reducer.py` (`reduce_loss`) | worker subprocess |
-| 3. Persist | `LossProfile` → the unit's replicate-keyed `loss.json` cache slot | `src/zicato/tournament/unit_cache.py` | worker writes; orchestrator reads |
+| 3. Persist | `LossProfile` → the draw’s `loss.{purpose}.r{draw}.json` file (§7.3) | `src/zicato/tournament/unit_cache.py` | worker writes; orchestrator reads |
 | 4. Aggregate | Per-entry losses → one per-generation summary dict (`scalar`, `pass_rate`, `mean_score`, `per_entry`, `namespace_aggregates`, `scalar_components`) | `src/zicato/tournament/scoring.py` (`aggregate_generation_score`) | orchestrator |
 | 5. Decide | Two aggregates → `GateOutcome` | `src/zicato/tournament/gate.py` (`evaluate_gate`) | orchestrator |
 
@@ -73,7 +72,7 @@ the wire form.
 
 > ✅ ALWAYS route any new signal you want to score through the reducer into a
 > `LossProfile` field (or a namespaced `MetricCount`). Never have a scorer or a
-> gate read `events.jsonl` directly — you would create a second event-schema
+> gate read event files directly — you would create a second event-schema
 > dependency that silently breaks when goldfive evolves.
 
 ### 1.1 Seam 1 — the per-run drift-loss formula
@@ -313,7 +312,7 @@ Both seams route through `src/zicato/scoring/dispatch.py`
 (`resolve_drift_loss` / `resolve_scalar`), which returns
 `(value, provenance)`. The provenance string (`"builtin"`,
 `"transform:pow"`, `"plugin:<dotted spec>"`, or the fail-open
-`"builtin (fallback: plugin raised)"`) is persisted onto `loss.json` /
+`"builtin (fallback: plugin raised)"`) is persisted onto measurement loss files and
 `gen_score.json` as `scalar_provenance` — additive, never a contract input.
 Rules the dispatch layer enforces that a change must not weaken:
 
@@ -606,8 +605,8 @@ choice plus winner's curse. Four rules follow.
   narrow but never empty a propose step, and a screen *error* degrades to
   no-signal — the screen must never fail a round).
 - **Confirm-before-veto.** A pass-flip is a *suspected* veto: the flipped
-  entries re-run ONCE at `SCREEN_REPLICATE_BASE + 1` (3001), and only a flip
-  that flips twice vetoes. Under per-entry flip probability p the false-veto
+  entries re-run once at `MeasurementDraw(MeasurementPurpose.SCREEN, 1)`,
+  and only a flip that repeats vetoes. Under per-entry flip probability p the false-veto
   probability is bounded near p² instead of p — the measured rates are fact
   #7 in §3.1. Budget aborts skip the confirm (deterministic; nothing to buy).
 - **The panel scalar is selection-biased by construction** — a handful of
@@ -635,39 +634,25 @@ draws form an A/A duel — two arms carrying identical treatment — whose true
 effect is exactly zero, so the observed `delta_scalar` spread IS the noise
 floor. Home: `src/zicato/tournament/calibration.py`.
 
-**How it measures.** `measure_noise_floor` runs K (default
-`DEFAULT_CALIBRATION_RUNS = 5`, giving 10 pairwise deltas) fresh draws of the
-champion through `_run_board_units_fast` — the *same* board-unit machinery,
-subprocess workers, scoring, and per-unit persistence every duel uses — so the
-floor is measured under the same conditions duels run under. Each draw runs
-at a distinct reserved replicate index (`CALIBRATION_REPLICATE_BASE = 1000`,
-`1000 + draw`), which does two things at once:
+**How it measures.** `measure_noise_floor` runs K draws of the champion through
+`_run_board_units_fast`, using the same workers, scoring, and persistence as a
+duel. The default `DEFAULT_CALIBRATION_RUNS = 5` gives 10 pairwise deltas.
 
-1. distinct cache slots ⇒ each draw is a fresh sample, and re-running the
-   audit under the same contract is an idempotent set of cache hits (a
-   repeated `zicato board audit` costs nothing);
-2. the index is **stamped onto each entry's context**
-   (`_stamp_replicate_index`) before the run — the cache key alone does not
-   reach the harness, and a seeded harness derives its noise draw from the
-   *stamped* index. Without the stamp, every "fresh" draw re-rolls the
-   identical seed and a stochastic harness measures a floor of exactly 0.0.
-   That failure shipped once, as the A/A false-zero-floor case
-   (`12-bug-casebook.md` case 3).
+Each draw uses `MeasurementDraw(MeasurementPurpose.CALIBRATION, draw)`.
+The runner resolves its base seed from the runtime configuration. Distinct draw
+numbers identify separate samples; repeating the audit with the same contract,
+generation, and seed can reuse completed calibration draws.
+
+The entry context carries the complete measurement as JSON through
+`_stamp_measurement`. A seeded harness must include the purpose and draw in
+its noise seed (§13.1). Distinct filenames alone cannot produce fresh noise.
 
 ```python
-# src/zicato/tournament/calibration.py — measure_noise_floor (the stamp)
-    for draw in range(runs):
-        replicate_index = CALIBRATION_REPLICATE_BASE + draw
-        losses = await _run_board_units_fast(
-            adapter=adapter,
-            child_gen=generation,
-            board=_stamp_replicate_index(board, replicate_index),
-            ...
-            match_id=f"aa-calibration:{draw}",
-            replicate_index=replicate_index,
-        )
-        agg = aggregate_generation_score(list(losses.values()), weights)
-        scalars.append(float(agg.get("scalar", 0.0)))
+# Measurement selection in measure_noise_floor
+for draw in range(runs):
+    measurement = MeasurementDraw(MeasurementPurpose.CALIBRATION, draw)
+    stamped_board = _stamp_measurement(board, measurement)
+    # Pass stamped_board and measurement to _run_board_units_fast.
 ```
 
 **The two spread statistics** (`delta_spread`, pure and unit-testable):
@@ -685,8 +670,7 @@ a **runtime measurement, never a contract input, never hashed** (mirroring the
 for its calibration draws. It estimates an evaluation distribution, so a later
 seed choice may reuse the identified estimate without claiming those physical
 draws were executed under the later seed. A seed change alone does not trigger
-automatic recalibration; explicit calibration can replace the estimate. Historical
-floors without seed provenance retain that uncertainty.
+automatic recalibration; explicit calibration can replace the estimate.
 
 **When it runs.** Three wirings:
 
@@ -740,7 +724,7 @@ one thing of its own: the `set_gate` payload built from the recommendation.
 > `examples/zicato_examples/target_0_convergence` measures exactly 0.0 by
 > design), or a seeding bug made every draw re-roll the same sample. If you see
 > 0.0 on a harness you believe is stochastic, suspect the
-> stamp path first (`_stamp_replicate_index` must reach the entries the run
+> stamp path first (`_stamp_measurement` must reach the entries the run
 > actually consumes), and confirm with the power harness's floor test which
 > asserts the σ=0.22 world lands in `[0.4, 1.0]`.
 
@@ -918,8 +902,8 @@ gauntlet alone: the multi-challenger path routes its crowning through
 
 Home: `src/zicato/selection/evidence_gate.py` (pure verdict machinery) +
 `src/zicato/selection/driver.py::confirm_promotion_with_evidence` (the
-defer→replicate loop) + the orchestrator's two `_replicate_duel`
-implementations (gauntlet confirm and multi-challenger field). Opt-in via
+defer→replicate loop) + `selection/driver.py::make_evidence_replicate_duel`,
+which constructs the confirmation runner shared by tournament paths. Opt-in via
 `TournamentStructure.params["promote_confidence_threshold"]` — an absent param
 adds nothing to the contract canonical form, so the contract hash is
 byte-identical when the operator does not opt in.
@@ -945,52 +929,31 @@ Below that, the verdict reports `credible=False`. The configured probability
 threshold is subject to the minimum one-sided probability 0.975 and comparison
 allocation, so the scaffold value 0.8 does not imply a 20% error allowance.
 
-### 6.2 The reserved base 4000 and both-sides-fresh
+### 6.2 Confirmation draws measure both competitors independently
 
-Every evidence replicate `j` runs the crowning pair at replicate index
-`EVIDENCE_REPLICATE_BASE + j` (`4000 + j`) through the same `run_matchup` every
-duel uses, with the `replicate_base` parameter threaded down to
-`_run_replicated`. Why a reserved slot, verbatim from the orchestrator's
-wiring:
+`make_evidence_replicate_duel` requests each additional comparison with
+`first_measurement=MeasurementDraw(MeasurementPurpose.CONFIRMATION, j)`,
+where `j` advances from zero. The matchup identity is
+`confirmation:r{j}:{left_id}:{right_id}`.
 
-```python
-# src/zicato/orchestrator.py — the gauntlet _replicate_duel closure
-        # ... at a RESERVED replicate index (EVIDENCE_REPLICATE_BASE
-        # + j for evidence replicate j), so each replicate draws BOTH sides
-        # fresh: a fast-mode cache read of the canonical replicate-0 slots
-        # would replay one identical sample into the Bradley--Terry fit
-        # (shrinking its SE by repetition alone), and a full-mode force-fresh
-        # re-run at slot 0 would clobber the canonical ``loss.json`` that
-        # reindex/crash-resume key on. The reserved slot is a natural MISS
-        # the first time (a fresh draw of champion AND challenger) and an
-        # idempotent cache HIT on a resumed confirm ...
-        replicate_slot = EVIDENCE_REPLICATE_BASE + evidence_replicates_run
-        evidence_replicates_run += 1
-        matchup_id = f"bt-replicate:r{replicate_slot}:{left_id}:{right_id}"
-```
+Both competitors use the requested confirmation draw. In fast mode, a missing
+draw runs and a completed draw can be reused after interruption. Full mode
+remeasures both competitors. Neither mode can substitute a tournament draw
+for a confirmation draw. Replaying an admitted sample would falsely reduce
+uncertainty; rerunning one side alone would understate the paired variance.
 
-Three properties the reserved slot buys. All three failed in a shipped build,
-and together they form the evidence-gate replicate-slot reuse case
-(`12-bug-casebook.md` case 8):
-
-1. **Fresh draws rather than replays** (fast mode). At slot 0 the child
-   cache-read its canonical `loss.json`, so every "replicate" was a
-   byte-identical replay: duplicate data shrank the BT SE by repetition alone
-   until CIs separated, an unsound promotion path inside the device that exists
-   for soundness.
-2. **Never clobber canonical** (full mode). A force-fresh re-run at slot 0
-   re-persisted over the child's canonical `loss.json` — the file reindex and
-   crash-resume key on.
-3. **Both sides fresh** (full mode). The champion side was never re-drawn, and
-   one-sided sampling makes the CIs narrower than the truth.
+Confirmation files remain separate from the tournament files that selected
+the challenger. The factory also passes `cache_scores=False`, so confirmation
+aggregates cannot replace the tournament’s cached generation scores.
 
 ### 6.3 The duplicate-audit refusal
 
 The driver records every attempt and charges each requested draw before
 calling the runner. A repeated matchup identity cannot enter the fit twice.
-The reserved draw index in `bt-replicate:r{slot}:{left}:{right}` identifies
-which independent measurement the runner was asked to produce. This guards
-against replay; actual draw independence still depends on correct execution.
+The driver also checks the returned `measurement_draw`, including its purpose,
+draw, and base seed, and rejects a repeated measurement for either competitor.
+Matchup names alone cannot establish fresh evidence. Actual independence
+still depends on correct execution.
 
 A runner that repeatedly returns one draw spends its finite budget and leaves
 confirmation incomplete. Ties, incomplete executions, nonfinite results,
@@ -1186,7 +1149,7 @@ Scoring never sees the individual replicates, so a field the fold does not
 aggregate is DISCARDED rather than merely unaveraged. The rule the fold holds
 to is:
 **a field the scalar or the gate reads is aggregated; a field neither reads
-carries the representative replicate (slot 0)**, and its docstring names every
+carries the first replicate in the requested sequence**, and its docstring names every
 pass-through with the reason it may be one.
 
 Aggregated:
@@ -1203,7 +1166,7 @@ Aggregated:
   is. An **aborted** replicate (spent budget, infra kill) records `score=None`
   with `pass_fail=False`, because it observed a failure rather than nothing, so
   `entry_score` maps it to `0.0` and it votes. Treating an abort as an
-  abstention is how a K-replicate duel silently collapses back to slot 0: one
+  abstention lets a K-replicate duel ignore a measured failure: one
   clean pass plus one abort reports the clean replicate's `1.0` verbatim while
   `pass_fail`'s majority says `False`, giving a folded profile that contradicts
   itself. Folding the resolved outcome also means an all-bool board (score-less,
@@ -1230,14 +1193,16 @@ Aggregated:
   and `score` `0.4`). Those are the binary and the continuous view of one duel
   rather than an inconsistency.
 
-Pass-through from slot 0, and why each may be: `run_id` /
+Pass-through from the first requested replicate, and why each may be: `run_id` /
 `expectation_result` (raw provenance of the representative replicate — the fold
 is not a run and has no matcher verdict of its own);
 `abort_cause` / cache provenance and friends (they describe ONE execution and
 have no meaningful fold).
 
-A single noisy run therefore cannot decide a duel, and the gate sees only the
-folded loss.
+A fold of multiple draws sets `measurement=None` and preserves their identities
+in `source_measurements`. It also retains an incomplete-execution marker if
+any requested unit did not start. The gate reads the folded loss without
+misrepresenting that aggregate as one physical measurement.
 
 ### 7.2 Per-structure defaults
 
@@ -1255,37 +1220,28 @@ noise-aware default (`src/zicato/selection/strategy.py`). Per structure:
 `replicates` lives in `TournamentStructure.params`, so changing it **rolls the
 epoch** — it changes what a measurement *is* under the contract.
 
-### 7.3 Replicate-keyed cache slots and the canonical-r0 rule
+### 7.3 Measurement identity determines artifact paths
 
-The unit cache key is the board unit itself: `(generation_id, entry_id,
-replicate_index)`. The path mapping (`_unit_loss_path`):
+Within an epoch, the unit cache distinguishes generation, entry, purpose,
+draw, and base seed. `_unit_loss_path` maps that identity to
+`run_dir/seed-{seed}/loss.{purpose}.r{draw}.json`, where `run_dir` is the
+entry’s run directory. An explicitly unset seed uses `seed-none`.
 
-- **replicate 0 ⇒ the canonical `runs/<entry>/loss.json`** the worker writes —
-  the same file the seed champion's full-board scoring, reindex, crash-resume,
-  and every single-replicate run key on;
-- **replicate r>0 ⇒ the sibling `runs/<entry>/loss.r<r>.json`** — additional
-  noise samples cache per replicate without colliding with the canonical file.
+Events, captured results, and judge captures use the same directory and
+measurement suffix: `events.{purpose}.r{draw}.jsonl`,
+`result.{purpose}.r{draw}.json`, and `judge_io.{purpose}.r{draw}.jsonl`.
+Tournament draw zero follows this naming rule.
 
-Corollaries you must not violate:
+`first_measurement` selects the purpose and starting draw for a replicated
+matchup. Replicate `i` uses `first_measurement.offset(i)`. The runner stamps
+the same identity into entry context and records the selected runtime seed.
+The worker request, persisted record, and path must agree.
 
-- **The canonical r0 slot is written by the tournament's own replicate-0 run
-  and by nothing else.** The worker routes its write through
-  `_unit_loss_path(..., _entry_replicate_index(entry))`. Without that routing,
-  later replicates clobber r0 with the last draw — the replicate-cache
-  clobbering case (`12-bug-casebook.md` case 1).
-- **Replication is incremental.** Requesting R replicates when r<R already
-  exist runs only the missing R−r; cached samples are reused, never re-run.
-  (Cheap replication is why the evidence gate's `DEFAULT_REPLICATE_BUDGET` can
-  be small.)
-- **`replicate_base` shifts the whole window**: replicate `i` runs, caches,
-  and stamps its harness noise draw at `replicate_base + i`. Base 0 is every
-  tournament matchup; the reserved bases are §8's ledger.
-- The stamped index and the cache index must be the **same number** — the
-  stamp is what a seeded harness derives its draw from, the key is where the
-  draw persists. Diverge them and you either alias draws or mislabel slots —
-  the replicate-cache clobbering case and the A/A false-zero-floor case
-  (`12-bug-casebook.md` cases 1 and 3) are the two halves of getting this
-  wrong.
+Cache reuse is incremental: a request runs only missing eligible draws when
+reuse is enabled. Forced reruns retain displaced artifacts before replacing
+a slot. Retained attempts document execution history and cannot count as
+additional independent draws. An interrupted run can reuse valid completed
+measurements; incomplete or conflicting records cannot satisfy a cache read.
 
 `champion_eval_mode` provenance (`"full"` / `"fast"` / `"fast-degraded"`) is
 derived from the LEFT side's pre-run cache state and is journal provenance
@@ -1296,9 +1252,9 @@ only — it never enters the gate or the contract.
 ### 7.4 Where replication does and does not reduce variance
 
 Production tournament evaluation resolves every requested replicate for both
-competitors through the cache key `(generation, entry, replicate)`. Fast mode
-may reuse a completed draw, but it cannot substitute replicate zero for a
-missing replicate one. Missing slots run and persist independently. Full mode
+competitors through the cache key `(generation, entry, purpose, draw, base_seed)`
+within an epoch. Fast mode may reuse a completed draw only for the requested
+identity. Missing slots run and persist independently. Full mode
 forces both competitors fresh. The power analysis therefore describes the
 paired production contrast.
 
@@ -1315,76 +1271,50 @@ Attempt records never populate measurement slots.
 
 ---
 
-## 8. Measurement purposes and compatible replicate indices
+## 8. Measurement purposes separate evidence sources
 
-`core/measurement.py` owns the measurement purposes, their allocated ranges,
-identity codec, and full-interval validation. A persisted draw has a named
-purpose and a zero-based draw number. The integer replicate index remains the
-compatible filename and harness-seed encoding; it is not a separate identity.
+`core/measurement.py` defines `MeasurementDraw(purpose, draw, base_seed)`.
+The purpose is a `MeasurementPurpose`, the draw is a nonnegative integer,
+and the base seed is an integer or `None`. Each purpose numbers its own
+draws from zero. Draw counts must be positive when work is requested.
 
-| Purpose | Allocated indices | Meaning |
-|---|---|---|
-| Tournament | 0–999 | Paired matchup samples; draw zero uses `loss.json` |
-| Calibration | 1000–1999 | Repeated own-code draws for the noise floor |
-| Contract preflight | 2000–2999 | One degraded-copy draw per selected mutation point |
-| Candidate screen | 3000–3999 | Panel screening, with draw one reserved for confirmation before veto |
-| Evidence confirmation | 4000–4999 | Additional paired draws for the promotion decision |
-| Board reflection | 5000–5999 | Active observation-corpus draws |
-| Eval-synthesis admission | 6000–6999 | Draft-entry noise and discrimination probes |
+| Purpose value | Meaning |
+|---|---|
+| `tournament` | Paired samples used to select a challenger |
+| `calibration` | Repeated measurements of a generation’s own source for the noise floor |
+| `contract_preflight` | Degraded-copy probes of selected mutation points |
+| `candidate_screen` | Candidate panel evaluation; draw one confirms a suspected veto |
+| `evidence_confirmation` | Additional paired draws for promotion confirmation |
+| `board_reflection` | Active observation-corpus draws |
+| `eval_synthesis_admission` | Draft-entry noise and discrimination probes |
 
-Every request must fit completely inside one allocation. Authored replicate
-counts and direct runner APIs reject overflow before starting a worker or
-writing a unit record. An offset near the end of an allocation reduces the
-permitted count: base 4999 permits one confirmation draw. The screen's two
-draws, preflight sample, calibration count, reflection plan, and admission noise
-count use the same registry. Existing module-level base imports remain compatible
-re-exports from that owner.
+Entry context carries `measurement` as JSON with `purpose`, `draw`, and
+`base_seed`. Loss records, worker envelopes, and captured results preserve
+those fields. Measurement output does not enter the evaluation contract hash.
 
-Loss records, worker envelopes, and captured results carry `measurement` with
-`purpose` and `draw`. Events, loss, result, and judge-capture companions keep their
-existing filenames and derive their slot from the same identity encoding.
-The worker refuses a mismatch between its entry context and measurement slot.
-These output fields do not enter the evaluation contract or change its hash.
+### 8.1 Readers validate identity and source eligibility
 
-### 8.1 Historical records and additional purposes
+The physical path and recorded identity must agree on purpose, draw, and seed.
+Loss validation also checks epoch, generation, and entry. Missing, malformed,
+conflicting, or unstarted records cannot supply a reusable measurement.
 
-The historical decoder accepts ordinary low-index draws and reserved draws
-whose recorded producer establishes the allocation: calibration, preflight,
-screen, evidence confirmation, reflection, or admission. Missing reserved
-provenance and conflicting identities remain visible as ambiguous records.
-They supply no cache hit, cell evidence, calibration statistic, or passive
-reflection observation. A replacement measurement archives the previous record;
-reading an ambiguous record does not rewrite it.
+Preflight and screen draws evaluate altered source under a generation’s
+identity. They are excluded from readers that require measurements of that
+generation’s own source. Tournament and confirmation draws are eligible for
+cell evidence; the independent confirmation gate further restricts admission
+as described in §6.3. A reader must check these roles before combining draws.
 
-A new purpose must declare its allocation and reader eligibility in
-`core/measurement.py`, use the validated board-unit runner, and provide a query
-label describing what its draws measure. Add boundary and writer/reader tests
-that prove isolation from adjacent purposes. Do not duplicate the registry in
-producer docstrings or query modules.
+### 8.2 Additional purposes require writer and reader checks
 
-### 8.2 The corruption that follows from squatting
+Add a purpose to `MeasurementPurpose` and define its source and evidence
+eligibility in `core/measurement.py`. Use the board-unit runner and provide
+a query label explaining what the draws measure. Tests must prove that
+artifacts, cache reads, context stamping, and evidence admission remain
+separate across purposes and seeds.
 
-What goes wrong if you run an out-of-band evaluation at an unreserved index.
-Every entry below is a *measured* failure mode:
-
-- **At 0**, one of two things happens. In fast mode you replay the canonical
-  sample as if it were fresh, counting repetition as evidence — the
-  unsound-promotion half of the evidence-gate replicate-slot reuse case. In full
-  mode you overwrite the canonical `loss.json` that reindex and crash-resume key
-  on, so a crash mid-loop resumes onto your corrupted r0 — the clobber half of
-  that same case, and the whole of the replicate-cache clobbering case
-  (`12-bug-casebook.md` cases 8 and 1).
-- **At 0..R-1 generally**: you pre-seed slots a later replicated duel will
-  cache-HIT, so *its* "fresh" samples are your probe's draws — your evaluation
-  leaks into tournament evidence. The screen's design pass identified this
-  cache-leakage trap: screen-selection luck would otherwise inflate the
-  subsequent tournament score on the screened entries.
-- **In another owner's range**: you make their idempotence a lie. A re-run
-  `board audit` would silently read your draws as its own, reporting a floor
-  measured on the wrong distribution.
-
-> ⛔ NEVER "borrow" a replicate index because the cache is conveniently warm
-> there. A warm cache at an index you did not claim is somebody's evidence.
+Recovery tests must cover interruption before publication, retained attempts,
+and repeated reads of completed measurements. Reusing a completed result
+resumes work; admitting the same result twice fabricates evidence.
 
 ---
 
@@ -1403,18 +1333,18 @@ its own noise floor**.
   character-by-character, code regions become `pass`, `.py` files blank to a
   comment) in an **ephemeral** scratch copy via the real applier. The degraded
   trees never enter the lineage; probe `j`'s draw caches under the
-  *champion's* id at `PREFLIGHT_REPLICATE_BASE + j` (2000 + j). The **max**
+  *champion's* id with `MeasurementDraw(MeasurementPurpose.PREFLIGHT, j)`. The **max**
   over probes of `|degraded_scalar − mean(champion_scalars)|` is the
   contract's demonstrated **degradation signal** — how far the scalar moves
   when a mutation point is destroyed. §9.3 explains why that is not the same as
   achievable improvement, and what the pre-flight is therefore allowed to claim.
 
-Board reflection's **active observation corpus** reuses this exact discipline
-one reserved base higher: `reflection/corpus.py`'s `run_corpus` mirrors the
-preflight's `_stamp_replicate_index(board, 5000 + j)` +
-`_run_board_units_fast(..., replicate_index=5000 + j)` shape at
-`REFLECTION_REPLICATE_BASE` (5000), voiding any infra-aborted draw with
-`ReflectionDrawInconclusive` just as the preflight voids on `NoiseFloorInconclusive`.
+Board reflection’s **active observation corpus** uses
+`MeasurementDraw(MeasurementPurpose.REFLECTION, j)` through
+`reflection/corpus.py::run_corpus`. These draws evaluate the generation’s own
+source and remain separate from degraded preflight probes. An infrastructure
+abort invalidates the draw with `ReflectionDrawInconclusive`, as it does with
+`NoiseFloorInconclusive` in preflight.
 
 ### 9.1 Probe selection draws a sample of mutation points (issue #106)
 
@@ -1464,10 +1394,8 @@ of the snapshot or of the operator's config, so `run_contract_preflight`
 validates them first and only then spends K champion draws on the A/A floor. The
 reverse order would charge an operator K real evaluations before reporting a
 mistyped knob. `RuntimeConfig.__post_init__` catches the
-cheapest case earlier still: `preflight_probe_points` must be in
-`1..PREFLIGHT_PROBE_POINTS_MAX`, the width of the reserved replicate block
-(mirrored from `PREFLIGHT_REPLICATE_SPAN`, since `zicato.core` cannot import
-`zicato.epoch`; a test pins the two equal).
+cheapest case earlier still: `preflight_probe_points` must be a positive
+integer.
 
 **`preflight_probe_points` is a ceiling rather than a spend.** Probing stops at
 the first probe whose signal clears `max(floor_max_abs_delta, promote_margin)`.
@@ -1734,13 +1662,13 @@ hook runs under `best_effort` because *an outage never disqualifies a
 contract* — a transient endpoint failure must skip the pre-flight and
 re-measure next round, never condemn the board. But that reasoning is about
 NONDETERMINISTIC infra. A misspelled `runtime.preflight_probe_mutation_ids`
-entry, or a probe ceiling the replicate block cannot hold, is deterministic
+entry, or a nonpositive probe count, is deterministic
 operator error: it will fail identically every round, and swallowing it would
 leave a `preflight_gate="refuse"` run proceeding with **no gate at all** because
-of a typo. Those two failures raise `PreflightConfigError` (a `ValueError` subclass,
-so existing handlers still catch it), and `_maybe_contract_preflight` escalates
-it to `PreflightRefusedError` under `"refuse"` while leaving the loud warning
-alone under `"warn"`.
+of a typo. Runtime configuration validation rejects invalid probe counts. Probe selection
+raises `PreflightConfigError` for unknown mutation ids;
+`_maybe_contract_preflight` escalates that error to `PreflightRefusedError`
+under `"refuse"` and reports a warning under `"warn"`.
 
 The evolve-start warning is **per-verdict prose** (`_preflight_diagnosis` in
 `orchestrator.py`): "noise swamps the signal", "the probe was inert", "the
@@ -1908,14 +1836,15 @@ The noise model is the target_0 example harness's own
 (`examples/zicato_examples/target_0_convergence/harness.py`):
 `stable_noise_seed` derives the random-number-generator (RNG) seed **only**
 from
-`(workspace_seed, generation_id, entry_id, replicate_index)`. No wall clock,
+`(workspace_seed, generation_id, entry_id, measurement.purpose, measurement.draw)`.
+No wall clock,
 no global RNG, no process ids, no tempdir names. Consequences:
 
 - trials are exactly reproducible (the asserted "rates" are deterministic
   functions of the chosen seeds — *calibrated documentation* rather than flaky
   statistics);
 - trials vary by advancing the workspace seed; replicates vary by the stamped
-  replicate index; sides vary because the generation id is in the seed (the
+  measurement purpose and draw; sides vary because the generation id is in the seed (the
   A/A premise: identical trees under two ids draw independent noise);
 - `test_noisy_session_seed_derives_only_from_stable_identifiers` pins each
   component independently: same coordinates ⇒ byte-identical run; any single
@@ -1941,7 +1870,7 @@ synthesis, and board predicates:
 ```
 
 `persist=True` keeps the real per-unit cache persistence for the
-slot-integrity tests that watch `loss.json` files on disk. One test at the
+slot-integrity tests that inspect measurement loss files on disk. One test at the
 bottom (`test_noisy_adapter_seeded_draws_cross_the_worker_boundary`) drives
 the actual `NoisyPolicyAdapter` through **real subprocess workers, twice**, to
 prove the seeded draw crosses the process boundary intact (reproducible,
@@ -2007,10 +1936,11 @@ consumed*, so the comparison is between rules rather than between samples.
 4. **Include the failing alternative** as a measured, printed, pinned
    comparison — the naive rule you are replacing must be shown failing on the
    same draws.
-5. **If your change touches persistence or replicate indices**, add a
-   slot-integrity test with `persist=True`: canonical r0 bytes unchanged,
-   your draws present under your reserved base for every side (the
-   `test_full_mode_evidence_loop_never_touches_canonical_slots` pattern).
+5. **If your change touches persistence or measurement identity**, add a
+   slot-integrity test with `persist=True`. Verify that confirmation leaves
+   tournament artifacts unchanged and writes its own purpose, draw, and seed
+   for both competitors. The existing pattern is
+   `test_full_mode_evidence_loop_never_touches_canonical_slots`.
 6. **Re-run the whole power file and the convergence oracle** — your change
    must leave every existing pinned number standing, or the commit message
    must say exactly which number moved and why that is honest (commit eb55266,
@@ -2118,11 +2048,7 @@ uv run pytest tests/test_gauntlet_evidence_gate_e2e.py tests/test_driver_evidenc
 | `NAMESPACE_MONOTONICITY_TOLERANCE` | `0.0` | `tournament/gate.py` |
 | `_TASK_FAILURE_RATIO_MULTIPLIER` | `10.0` (a pinned constant rather than a knob) | `scoring/builtins.py` |
 | `DEFAULT_CALIBRATION_RUNS` | `5` | `tournament/calibration.py` |
-| `CALIBRATION_REPLICATE_BASE` | `1000` | `tournament/calibration.py` |
-| `PREFLIGHT_REPLICATE_BASE` | `2000` | `epoch/preflight.py` |
-| `SCREEN_REPLICATE_BASE` (+1 confirm) | `3000` / `3001` | `epoch/screen.py` |
-| `EVIDENCE_REPLICATE_BASE` | `4000` | `selection/evidence_gate.py` |
-| `REFLECTION_REPLICATE_BASE` | `5000` | `reflection/corpus.py` |
+
 | `MIN_CREDIBLE_DUELS` | `3` | `selection/evidence_gate.py` |
 | `CI_Z` | `1.959963984540054` | `selection/evidence_gate.py` |
 | `DEFAULT_REPLICATE_BUDGET` | `3` | `selection/evidence_gate.py` |

@@ -20,7 +20,9 @@ from starlette.testclient import TestClient
 
 from tests._workspace_support import experiment_record, write_epoch, write_lineage, write_tournament
 from zicato.core import ScoringWeights
+from zicato.core.measurement import TOURNAMENT_DRAW, MeasurementDraw, MeasurementPurpose
 from zicato.core.mutation import MutationPoint
+from zicato.core.workspace import run_id_for_unit
 from zicato.dashboard.server import create_app
 from zicato.epoch.journal import patch_body
 from zicato.index.schema import apply_schema
@@ -119,7 +121,15 @@ def _populate_workspace(ws: Path) -> Path:
 
     # one active run, pointing at an events.jsonl
     run_events = (
-        ws / "epochs" / epoch_id / "generations" / "v1" / "runs" / "waffles_single" / "events.jsonl"
+        ws
+        / "epochs"
+        / epoch_id
+        / "generations"
+        / "v1"
+        / "runs"
+        / "waffles_single"
+        / "seed-none"
+        / "events.tournament.r0.jsonl"
     )
     _write(
         run_events,
@@ -177,7 +187,15 @@ def _populate_workspace(ws: Path) -> Path:
 
     # champion-side run for the matchup endpoint
     champ_events = (
-        ws / "epochs" / epoch_id / "generations" / "v0" / "runs" / "waffles_single" / "events.jsonl"
+        ws
+        / "epochs"
+        / epoch_id
+        / "generations"
+        / "v0"
+        / "runs"
+        / "waffles_single"
+        / "seed-none"
+        / "events.tournament.r0.jsonl"
     )
     _write(
         champ_events,
@@ -989,7 +1007,11 @@ def test_epoch_view_includes_experiments_journal_analysis(workspace: Path) -> No
     )
     # Write journal and analysis markdown.
     _write(epoch_dir / "journal.md", "# Journal\n\n## v1\nRejected.\n")
-    _write(epoch_dir / "analysis.md", "# Analysis\n\nTwo experiments.\n")
+    from zicato.analyzer.report import regenerate_epoch_report_deterministic
+
+    regenerate_epoch_report_deterministic(
+        workspace, epoch_dir.name, authored={"retrospective": "# Analysis\n\nTwo experiments.\n"}
+    )
 
     view = build_epoch_view(WorkspacePaths(workspace))
 
@@ -1010,7 +1032,7 @@ def test_epoch_view_includes_experiments_journal_analysis(workspace: Path) -> No
     assert "analysis_md" in view
     assert "Two experiments" in view["analysis_md"]
     assert "analysis_html_available" in view
-    assert view["analysis_html_available"] is False
+    assert view["analysis_html_available"] is True
     assert "analysis_html_inline" not in view
 
     # The dedicated analysis response renders the same markdown.
@@ -1037,7 +1059,7 @@ def test_epoch_view_experiments_empty_without_gens(workspace: Path) -> None:
     assert view["experiments"] == []
     assert view["journal"] == ""
     assert view["analysis_md"] == ""
-    assert view["analysis_html_available"] is False
+    assert view["analysis_html_available"] is True
     assert "analysis_html_inline" not in view
 
 
@@ -1326,7 +1348,11 @@ def test_epoch_analysis_endpoint(client: TestClient, workspace: Path) -> None:
     """The dedicated analysis endpoint renders the publication fragment."""
     epoch_id = "2026-05-16_e0"
     epoch_dir = workspace / "epochs" / epoch_id
-    _write(epoch_dir / "analysis.md", "# Analysis\n\nTwo experiments.\n")
+    from zicato.analyzer.report import regenerate_epoch_report_deterministic
+
+    regenerate_epoch_report_deterministic(
+        workspace, epoch_dir.name, authored={"retrospective": "# Analysis\n\nTwo experiments.\n"}
+    )
 
     r = client.get(f"/api/epoch/{epoch_id}/analysis")
     assert r.status_code == 200
@@ -1334,7 +1360,7 @@ def test_epoch_analysis_endpoint(client: TestClient, workspace: Path) -> None:
     assert body["epoch_id"] == epoch_id
     assert "Two experiments" in body["analysis_md"]
     assert "analysis_html_available" in body
-    assert body["analysis_html_available"] is False
+    assert body["analysis_html_available"] is True
     # The publication view reads the rendered fragment from this endpoint.
     assert "analysis_html_inline" in body
     assert "paper paper-card" in body["analysis_html_inline"]
@@ -1521,7 +1547,7 @@ def _seed_loss_files(workspace: Path) -> None:
     for gen, entries in layout.items():
         for entry, fields in entries.items():
             loss = {
-                "run_id": f"{gen}--{entry}",
+                "run_id": run_id_for_unit(gen, entry, epoch_id=epoch_id),
                 "entry_id": entry,
                 "generation_id": gen,
                 "epoch_id": gens,
@@ -1533,6 +1559,7 @@ def _seed_loss_files(workspace: Path) -> None:
                 "expectation_result": None,
                 "adk_session_id": f"session-{gen}-{entry}",
                 **fields,
+                "measurement": TOURNAMENT_DRAW,
             }
             _write_json(
                 workspace
@@ -1542,7 +1569,8 @@ def _seed_loss_files(workspace: Path) -> None:
                 / gen
                 / "runs"
                 / entry
-                / "loss.json",
+                / "seed-none"
+                / "loss.tournament.r0.json",
                 loss_profile_to_dict(make_loss_profile(**loss)),
             )
     # gen_score.json aggregates — the orchestrator's cached per-generation
@@ -1662,7 +1690,7 @@ def _seed_scored_loss_files(workspace: Path) -> None:
     for gen, entries in layout.items():
         for entry, fields in entries.items():
             loss = {
-                "run_id": f"{gen}--{entry}",
+                "run_id": run_id_for_unit(gen, entry, epoch_id=epoch_id),
                 "entry_id": entry,
                 "generation_id": gen,
                 "epoch_id": epoch_id,
@@ -1671,6 +1699,7 @@ def _seed_scored_loss_files(workspace: Path) -> None:
                 "wall_clock_budget_exceeded": False,
                 "adk_session_id": f"session-{gen}-{entry}",
                 **fields,
+                "measurement": TOURNAMENT_DRAW,
             }
             _write_json(
                 workspace
@@ -1680,7 +1709,8 @@ def _seed_scored_loss_files(workspace: Path) -> None:
                 / gen
                 / "runs"
                 / entry
-                / "loss.json",
+                / "seed-none"
+                / "loss.tournament.r0.json",
                 loss_profile_to_dict(make_loss_profile(**loss)),
             )
     write_gen_score(
@@ -1878,7 +1908,7 @@ def _build_facet_workspace(
     epoch_id = "2026-05-16_e0"
     for entry_id, pass_fail, score, drift_loss in runs:
         loss: dict[str, object] = {
-            "run_id": f"run_v1_{entry_id}",
+            "run_id": run_id_for_unit("v1", entry_id, epoch_id=epoch_id),
             "entry_id": entry_id,
             "generation_id": "v1",
             "epoch_id": epoch_id,
@@ -1890,11 +1920,20 @@ def _build_facet_workspace(
             "expectation_result": None,
             "drift_loss": drift_loss,
             "pass_fail": pass_fail,
+            "measurement": TOURNAMENT_DRAW,
         }
         if score is not None:
             loss["score"] = score
         _write_json(
-            ws / "epochs" / epoch_id / "generations" / "v1" / "runs" / entry_id / "loss.json",
+            ws
+            / "epochs"
+            / epoch_id
+            / "generations"
+            / "v1"
+            / "runs"
+            / entry_id
+            / "seed-none"
+            / "loss.tournament.r0.json",
             loss_profile_to_dict(make_loss_profile(**loss)),
         )
     _write(
@@ -1946,7 +1985,8 @@ def _build_facet_workspace(
                     / "v1"
                     / "runs"
                     / entry_id
-                    / "loss.json"
+                    / "seed-none"
+                    / "loss.tournament.r0.json"
                 ).read_text(),
                 None,
             )
@@ -2169,7 +2209,8 @@ def test_per_entry_facet_survives_a_torn_run_file(tmp_path: Path) -> None:
         / "v1"
         / "runs"
         / "dedupe_rows"
-        / "loss.json"
+        / "seed-none"
+        / "loss.tournament.r0.json"
     )
     torn.write_text("{ truncated mid-write", encoding="utf-8")
 
@@ -2229,7 +2270,8 @@ def test_per_entry_facet_overall_is_the_gates_own_number(tmp_path: Path) -> None
                     / "v1"
                     / "runs"
                     / entry_id
-                    / "loss.json"
+                    / "seed-none"
+                    / "loss.tournament.r0.json"
                 ).read_text()
             )
         )
@@ -2379,11 +2421,13 @@ def test_matchup_grid_one_sided(workspace: Path) -> None:
         / "v1"
         / "runs"
         / "extra_entry"
-        / "loss.json",
+        / "seed-none"
+        / "loss.tournament.r0.json",
         loss_profile_to_dict(
             make_loss_profile(
                 **{
-                    "run_id": "v1--extra_entry",
+                    "run_id": run_id_for_unit("v1", "extra_entry", epoch_id="2026-05-16_e0"),
+                    "measurement": TOURNAMENT_DRAW,
                     "entry_id": "extra_entry",
                     "generation_id": "v1",
                     "epoch_id": "2026-05-16_e0",
@@ -2973,7 +3017,8 @@ def test_run_transcript_resolves_inflight_run_without_loss_json(
         / "v1"
         / "runs"
         / "waffles_single"
-        / "loss.json"
+        / "seed-none"
+        / "loss.tournament.r0.json"
     )
     assert not loss.exists(), "precondition: the in-flight run has NO loss.json yet"
 
@@ -3019,7 +3064,8 @@ def test_conversation_resolves_by_run_id_not_dir_name(
         / "v3"
         / "runs"
         / entry_id
-        / "events.jsonl"
+        / "seed-none"
+        / "events.tournament.r0.jsonl"
     )
     _write(
         events,
@@ -3104,9 +3150,15 @@ def test_run_transcript_run_disambiguator_selects_specific_draw(
 
     _install_stub_transcript(monkeypatch)
     base = workspace / "epochs" / "2026-05-16_e0" / "generations" / "v1" / "runs" / "waffles_single"
-    run_id = run_id_for_unit("v1", "waffles_single", 1, base_seed=None)
+    run_id = run_id_for_unit(
+        "v1",
+        "waffles_single",
+        MeasurementDraw(MeasurementPurpose.TOURNAMENT, 1),
+        base_seed=None,
+        epoch_id="2026-05-16_e0",
+    )
     _write(
-        base / "seed-none" / "events.r1.jsonl",
+        base / "seed-none" / "events.tournament.r1.jsonl",
         "\n".join(
             [
                 json.dumps({"runId": run_id, "sequence": "0", "runStarted": {}}),
@@ -3209,7 +3261,7 @@ def test_matchup_conversations_carries_loss_json_result_block(
         workspace / "epochs" / "2026-05-16_e0" / "generations" / "v1" / "runs" / "waffles_single"
     )
     _write_json(
-        challenger_run_dir / "loss.json",
+        challenger_run_dir / "seed-none" / "loss.tournament.r0.json",
         {
             "run_id": "r1",
             "entry_id": "waffles_single",
@@ -3423,7 +3475,15 @@ def _populate_fast_mode_cached_workspace(
     # this generation was the live challenger. Path is the canonical
     # ``epochs/{epoch}/generations/{cached_gen}/runs/{entry}/events.jsonl``.
     cached_events_path = (
-        ws / "epochs" / epoch_id / "generations" / cached_gen / "runs" / entry_id / "events.jsonl"
+        ws
+        / "epochs"
+        / epoch_id
+        / "generations"
+        / cached_gen
+        / "runs"
+        / entry_id
+        / "seed-none"
+        / "events.tournament.r0.jsonl"
     )
     cached_events_path.parent.mkdir(parents=True, exist_ok=True)
     lines = (
@@ -3463,7 +3523,8 @@ def _populate_fast_mode_cached_workspace(
             / challenger_gen
             / "runs"
             / entry_id
-            / "events.jsonl"
+            / "seed-none"
+            / "events.tournament.r0.jsonl"
         )
         challenger_path.parent.mkdir(parents=True, exist_ok=True)
         challenger_path.write_text(

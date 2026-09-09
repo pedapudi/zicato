@@ -62,7 +62,7 @@ Every extractor is a **pure function** over already-parsed inputs (mirroring
 `reflection/analysis.py`'s pure-analyzer discipline); `mine_episodes` (§9) is
 the one I/O orchestrator that reads the artifacts and calls the extractors.
 
-### (a) FAILURE episodes — per-run `events.jsonl` + `loss.json`
+### (a) Failure episodes from measurement events and losses
 
 **Source (verified):** the dialect-agnostic **`LossProfile` convergence
 point** (TELEMETRY-DIALECTS.md §1: "`LossProfile` is the convergence point …
@@ -71,7 +71,7 @@ produced it"). The miner therefore binds to `LossProfile` rather than to a
 dialect's raw event shape — a `goldfive` run and an `adk_events` run both fold to the
 same `LossProfile`, so one binding covers both dialects. Concretely it reuses **`reflection.corpus.ObservationRun`** (`corpus.py:90`).
 `ingest_lineage` builds that record at `corpus.py:460` from the persisted
-`loss.json`, `result.json` and `judge_io.jsonl`, and it already carries the
+loss, result, and judge-capture files for each eligible measurement, and it carries the
 fields a failure needs:
 
 | Failure kind | `ObservationRun` binding (verified) |
@@ -287,21 +287,17 @@ suggestion, thresholds never auto-reject silently.
    Confirms the entry executes, produces a `LossProfile`, and the expectation
    is evaluable. A draft the runner cannot execute is rejected here, loudly.
 
-2. **Self-duel noise measurement at reserved base `6000`.** Measure the
-   drafted entry's own flip rate by replicating the champion against itself
-   on just that entry — the `measure_noise_floor` discipline
-   (`tournament/calibration.py`) restricted to the new entry, at
-   **`SYNTHESIS_REPLICATE_BASE = 6000`**. This is the **next free base** in
-   the reserved-replicate ledger (dev-guide 04 §8.1: *"5000 is claimed by
-   board reflection; the next free base is 6000"*; CASCADE.md §6 confirms
-   6000). The admission pipeline declares the constant with the §8.1 claiming
-   procedure, in four steps. Pick 6000 and declare
-   `SYNTHESIS_REPLICATE_BASE`. Cross-reference the ledger (this doc +
-   `EVIDENCE_REPLICATE_BASE`'s docstring + `calibration.py` /
-   `preflight.py` / `screen.py` / `corpus.py` + the dev-guide §8 table).
-   Stamp and key with the same index. Prove r0 isolation with the
-   `test_full_mode_evidence_loop_never_touches_canonical_slots` pattern. A
-   high flip rate ⇒ a noisy eval; the number rides the suggestion.
+2. **Self-duel noise measurement.** Measure the drafted entry's flip rate
+   from repeated champion draws under the `eval_synthesis_admission` purpose.
+   Each independent sample has a distinct local draw number. Draw zero also
+   supplies the execution probe, so the execution check does not spend an
+   additional run. Pass the same `MeasurementDraw` through task context and
+   runner arguments, and persist the runtime seed with its artifacts.
+   Admission measurements remain separate from tournament evidence. A high
+   flip rate identifies a noisy entry; the measured value accompanies the
+   suggestion for review.
+
+
 
 3. **Discrimination probe (the matchup-record method).** Run the drafted
    entry against a spread of **recent settled candidates** (the reign's
@@ -323,7 +319,8 @@ suggestion, thresholds never auto-reject silently.
 ```jsonc
 "admission": {
   "execution": { "ran": true, "aborted": false },
-  "noise": { "flip_rate": 0.10, "runs": 5, "measured": true, "base": 6000 },
+  "noise": { "flip_rate": 0.10, "runs": 5, "measured": true,
+    "measurement_purpose": "eval_synthesis_admission" },
   "discrimination": { "separated": 3, "pairs": 5, "measured": true },
   "leakage": { "target_slice_ok": true, "self_preference_flag": false }
 }
@@ -400,9 +397,7 @@ go-ahead before spending budget.
 Three areas repay adversarial review. The first is contamination control
 (§4): whether every coverage and judge suggestion lands in the incoming
 rotation set, and whether a regression entry can leak a holdout answer. The
-second is the admission statistics (§5): whether the flip rate is measured at
-base 6000 with replicate 0 untouched, and whether discrimination uses the
-matchup-record method. The third is the miner's episode precision (§2):
+second is the admission statistics (§5): whether independent admission draws preserve tournament artifacts and retain their purpose, local draw, and seed, and whether discrimination uses the matchup-record method. The third is the miner's episode precision (§2):
 whether the failure, false-negative and false-positive bindings are exact, and
 whether a cold workspace yields no fabricated episodes.
 
@@ -448,7 +443,7 @@ orchestrating `mine_episodes(paths, epoch_id) -> list[MinedEpisode]`:
   raises.
 
 Bindings are the tree-verified sources in §2. Fixtures are **seeded from the
-real writers** (real `loss.json` via `write_loss_profile`, real
+real writers** (measurement loss files via `write_loss_profile`, real
 `JudgeAdjudication` via `write_adjudication`, real experiment `patches/*.json`,
 real `HypothesisGrade`) — never a synthetic shape the pipeline cannot emit.
 
@@ -462,4 +457,4 @@ real `HypothesisGrade`) — never a synthetic shape the pipeline cannot emit.
 | The board entry + judge schema the drafts obey | [`BOARD-FORMAT.md`](BOARD-FORMAT.md) |
 | The mutable surface + `mutation_points()` | [`MUTATION-SURFACE.md`](MUTATION-SURFACE.md) |
 | The rotation / holdout split the contamination rule binds to | [`OVERFITTING.md`](OVERFITTING.md) |
-| The reserved-replicate-base ledger (6000 = next free) | dev-guide `04-evaluation-statistics.md` §8, [`CASCADE.md`](CASCADE.md) §6 |
+| Measurement purposes, local draws, seeds, and artifact separation | dev-guide `01-orientation.md` §4, G7; [`CASCADE.md`](CASCADE.md) §6 |

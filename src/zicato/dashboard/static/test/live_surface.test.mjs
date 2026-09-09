@@ -540,6 +540,7 @@ test('live racing model: an in-flight rung shows per-lane "k/N boards" progress 
   // the backend writes `partial_*_agg` as DICTS ({scalar, ...}); the model
   // reads `.scalar` (the dead `svg.isNum(dict)` plumbing has been fixed).
   const at = liveRacingField({ partial_champion_agg: { scalar: 12.0 }, partial_challenger_agg: { scalar: 9.5 } });
+  at.rounds[0].matches[0].live_progress.v5.partialDelta = -2.5;
   const model = STRUCT.buildLiveModel(
     at,
     { phase: 'tournament:round_0:rung0_m2', generation_id: 'v5' },
@@ -573,7 +574,7 @@ test('live racing model: a completed rung ACCUMULATES — when rung-1 starts, ru
     round_index: 1,
     rounds: [
       { round_index: 0, label: 'Rung 0', matches: [{ match_id: 'rung0', competitors: ['v5', 'v6', 'v7', 'v8'], survivors: ['v7', 'v8'], cut: ['v5', 'v6'], board_fraction: 0.25 }] },
-      { round_index: 1, label: 'Rung 1', matches: [{ match_id: 'rung1', competitors: ['v7', 'v8'], survivors: [], cut: [], board_fraction: 0.5, pending: true }] },
+      { round_index: 1, label: 'Rung 1', matches: [{ match_id: 'rung1', competitors: ['v7', 'v8'], survivors: [], cut: [], board_fraction: 0.5, pending: true, queued: false, total: 4, live_progress: {v7: {done: 0, total: 4}, v8: {done: 0, total: 4}} }] },
       { round_index: 2, label: 'Champion gate', matches: [{ match_id: 'racing-final', competitors: ['v0'], board_fraction: 1.0, winner: null, pending: true }] },
     ],
   });
@@ -707,66 +708,6 @@ test('live racing (e2e): the match-ups page fills progressively from the publish
 // challenger); the live funnel's entering rung is WIDENED to the whole field so
 // EVERY challenger races (≥4 lanes), with the champion v0 kept as the gate
 // benchmark — never a rung lane.
-test('live racing model (issue #8): a degenerate published rung-0 is widened to the FULL challenger field from competitors/entries (≥4 lanes), v0 stays the gate', () => {
-  const at = {
-    structure: 'racing', phase: 'running',
-    structure_params: { field_size: 4, eta: 2, board_fraction: 0.25, board_size: 8 },
-    round_index: 0, total_rounds: 2,
-    // the full field: champion v0 + four challengers v5..v8.
-    competitors: [
-      { generation_id: 'v0', seed: 1, role: 'champion' },
-      { generation_id: 'v5', seed: 2, role: 'challenger' },
-      { generation_id: 'v6', seed: 3, role: 'challenger' },
-      { generation_id: 'v7', seed: 4, role: 'challenger' },
-      { generation_id: 'v8', seed: 5, role: 'challenger' },
-    ],
-    // the per-entry rows the backend now publishes (one per competitor): the
-    // champion defends, the four challengers race.
-    entries: [
-      { entry_id: 'v0', side: 'champion', status: 'running', loss_summary: {} },
-      { entry_id: 'v5', side: 'challenger', status: 'running', loss_summary: {} },
-      { entry_id: 'v6', side: 'challenger', status: 'queued', loss_summary: {} },
-      { entry_id: 'v7', side: 'challenger', status: 'queued', loss_summary: {} },
-      { entry_id: 'v8', side: 'challenger', status: 'queued', loss_summary: {} },
-    ],
-    // DEGENERATE published rounds: the active rung-0 carries only champion + the
-    // FIRST challenger (the sparse/under-rendering shape from issue #8).
-    rounds: [
-      { round_index: 0, label: 'Rung 0', matches: [{ match_id: 'rung0', competitors: ['v0', 'v5'], survivors: [], cut: [], board_fraction: 0.25, pending: true }] },
-      { round_index: 1, label: 'Champion gate', matches: [{ match_id: 'racing-final', competitors: ['v0'], board_fraction: 1.0, winner: null, pending: true }] },
-    ],
-    standings: [], champion_lineage: ['v0'],
-  };
-  const model = STRUCT.buildLiveModel(
-    at,
-    { phase: 'tournament:round_0:rung0_m0', generation_id: 'v5' },
-    [{ generation_id: 'v5', entry_id: 'b0', run_id: 'r0', progress: 0.4 }],
-    ['v0', 'v5', 'v6', 'v7', 'v8'],
-  );
-  const r0 = model.rounds.find((r) => String(r.matches[0].match_id) === 'rung0').matches[0];
-  // the entering rung-0 field is widened to the FULL challenger field — v0 (the
-  // champion/benchmark) is NOT a rung lane.
-  assertDeep([...r0.competitors].sort(), ['v5', 'v6', 'v7', 'v8'], 'rung-0 is widened to the full challenger field {v5,v6,v7,v8}; champion v0 is excluded');
-  assert(r0.live_progress && r0.live_progress.v5 && r0.live_progress.v8, 'every widened lane carries a live_progress entry (incl. the queued challengers)');
-
-  // the rendered funnel shows ≥4 racing lanes (the FULL field), not 2.
-  const nodes = STRUCT.renderStructure(model, { navigate() {}, href: router.href }, EPOCH_ID);
-  const host = document.createElement('div');
-  for (const n of nodes) host.appendChild(n);
-  const funnel = svgsByClass(host, 'dn-funnel')[0];
-  assert(funnel, 'the live survival funnel rendered');
-  const laneNames = allByClass(funnel, 'dn-funnel-runner').map((g) => (g.textContent || '').trim());
-  const challengerLanes = laneNames.filter((t) => /^v[5-8]\b/.test(t));
-  assert(challengerLanes.length >= 4, 'rung-0 shows the FULL challenger field (≥4 lanes), not the degenerate "2 field" — got ' + challengerLanes.length);
-  for (const id of ['v5', 'v6', 'v7', 'v8']) assert(funnel.textContent.includes(id), 'every challenger lane is named — ' + id);
-  // the champion v0 is the benchmark/gate defender — NEVER a rung RUNNER lane.
-  assert(!laneNames.some((t) => /^v0\b/.test(t)), 'champion v0 is the benchmark/gate, never a rung-runner lane');
-
-  // the LIVE-HERO path (live.js → racingModel) widens the degenerate field too.
-  const heroModel = STRUCT.racingModel(STRUCT.normalizeStructure(at, true));
-  assert(heroModel && heroModel.live, 'racingModel built a live racing model from the degenerate payload');
-  assertDeep([...heroModel.rungs[0].competitors].sort(), ['v5', 'v6', 'v7', 'v8'], 'the live-hero racingModel widens rung-0 to the full challenger field too (champion v0 excluded)');
-});
 
 // ====================================================================
 // LIVE PROJECTED STANDINGS — an in-flight candidate (boards streaming) shows a
@@ -778,222 +719,83 @@ test('live racing model (issue #8): a degenerate published rung-0 is widened to 
 // into every digest so a no-op heartbeat is a true no-op (the anti-flash rule).
 // ====================================================================
 
-// the DICT-BUG fix: `partial_*_agg` is a DICT — buildLiveModel reads `.scalar`.
-test('projected — buildLiveModel reads partial_*_agg.scalar (the dead svg.isNum(dict) plumbing is fixed)', () => {
-  const at = liveRacingField({ partial_champion_agg: { scalar: 8.0 }, partial_challenger_agg: { scalar: 5.0 } });
-  const model = STRUCT.buildLiveModel(
-    at,
-    { phase: 'tournament:round_0:rung0_m1', generation_id: 'v5' },
-    [{ generation_id: 'v5', entry_id: 'b0', run_id: 'r0', progress: 0.5 }],
-    ['v0', 'v5', 'v6', 'v7', 'v8'],
-  );
-  const r0 = model.rounds.find((r) => String(r.matches[0].match_id) === 'rung0').matches[0];
-  // partialDelta = challenger.scalar − champion.scalar = 5.0 − 8.0 = −3.0 (was
-  // ALWAYS null when the code mis-read the dict as a number).
-  assertEqual(r0.live_progress.v5.partialDelta, -3.0, 'the partial Δ is read off the dict .scalar, not a (never-true) numeric guard');
-});
-
-// RACING — a lane with a server-side projected scalar reads "~proj".
-test('projected (racing): an in-flight lane shows its projected scalar (~proj) + a scored board sub-bar', () => {
-  const at = liveRacingField({
-    partial_champion_agg: { scalar: 8.0 },
-    projected: {
-      v5: { scalar: 6.0, boards_done: 1, boards_total: 2, pass_rate: 1.0 },
-      v6: { scalar: 7.5, boards_done: 1, boards_total: 2, pass_rate: 1.0 },
-    },
-  });
-  const model = STRUCT.buildLiveModel(
-    at,
-    { phase: 'tournament:round_0:rung0_m1', generation_id: 'v5' },
-    [{ generation_id: 'v5', entry_id: 'b0', run_id: 'r0', progress: 0.5 }],
-    ['v0', 'v5', 'v6', 'v7', 'v8'],
-  );
-  const r0 = model.rounds.find((r) => String(r.matches[0].match_id) === 'rung0').matches[0];
-  assertEqual(r0.live_progress.v5.projected, true, 'v5 lane carries the projected flag');
-  assertEqual(r0.live_progress.v5.projected_scalar, 6.0, 'the lane carries its projected scalar');
-  // per-lane Δ-vs-champion is computed from the lane projection (6.0 − 8.0).
-  assertEqual(r0.live_progress.v5.partialDelta, -2.0, 'a per-lane projected Δ vs champion (lane − champion)');
-  const nodes = STRUCT.renderStructure(model, { navigate() {}, href: router.href }, EPOCH_ID);
-  const host = document.createElement('div');
-  for (const n of nodes) host.appendChild(n);
-  const funnel = svgsByClass(host, 'dn-funnel')[0];
-  assert(/~/.test(funnel.textContent) && /proj/.test(funnel.textContent), 'a projected lane reads "~… proj"');
-  assert(allByClass(funnel, 'dn-proj').length >= 1, 'the projected treatment class is applied to the lane');
-  assert(allByClass(funnel, 'dn-proj-bar').length >= 1, 'a scored board-progress sub-bar renders for the projected lane');
-});
-
-// SWISS — projected scalar marks the row + the pairing, but NEVER projects
-// Copeland points (points-rank is authoritative; a half-finished duel has no win).
-function projSwissField(extra) {
-  return Object.assign({
-    structure: 'swiss', phase: 'running', epoch_id: EPOCH_ID,
-    structure_params: { rounds: 2 }, round_index: 1, total_rounds: 2,
-    competitors: [
-      { generation_id: 'v0', seed: 1, role: 'champion' },
-      { generation_id: 'v1', seed: 2, role: 'challenger' },
-      { generation_id: 'v2', seed: 3, role: 'challenger' },
-    ],
-    rounds: [
-      { round_index: 0, label: 'Round 1', matches: [{ match_id: 'r0m0', competitors: ['v0', 'v1'], winner: 'v1', delta_scalar: -0.1 }] },
-      { round_index: 1, label: 'Round 2', matches: [{ match_id: 'r1m0', competitors: ['v1', 'v2'], winner: '', pending: true }] },
-    ],
-    standings: [
-      { generation_id: 'v1', rank: 1, scalar: 0.4, wins: 1, losses: 0, status: 'alive' },
-      { generation_id: 'v2', rank: 2, scalar: 0.0, wins: 0, losses: 0, status: 'alive' },
-    ],
-    champion_lineage: ['v0'],
-  }, extra || {});
-}
-
-test('projected (swiss): an in-flight pairing marks the row projected but does NOT re-rank on Copeland points', () => {
-  // v1 leads on points (1W). v2 is in flight with a GREAT projected scalar but 0
-  // wins. swiss must keep v1 ranked above v2 — points are not projected.
-  const at = projSwissField({
-    projected: { v2: { scalar: 0.01, boards_done: 4, boards_total: 5, pass_rate: 1.0 } },
-  });
-  const model = STRUCT.buildLiveModel(
-    at,
-    { phase: 'tournament:round_1:r1m0', generation_id: 'v2' },
-    [{ generation_id: 'v2', entry_id: 'b0', run_id: 'r0', progress: 0.8 }],
-    ['v0', 'v1', 'v2'],
-  );
-  const sm = STRUCT.swissModel(model);
-  const v1 = sm.standings.find((s) => s.id === 'v1');
-  const v2 = sm.standings.find((s) => s.id === 'v2');
-  assert(v1.rank < v2.rank, 'swiss keeps the points-leader on top — NO Copeland projection');
-  assertEqual(v2.in_flight, true, 'the in-flight competitor IS marked projected (visual treatment)');
-  assertEqual(v2.projected_scalar, 0.01, 'its projected scalar rides along for the ~ treatment');
-  // the ladder renders the projected treatment on the row.
-  const node = svg.swissLadder({ rounds: sm.rounds, standings: sm.standings, championId: sm.championId, benchmarkId: sm.benchmarkId, live: true, gateState: sm.gateState });
-  assert(allByClass(node, 'dn-proj').length >= 1, 'the swiss ladder marks the projected row dn-proj');
-  assert(/~proj/.test(node.textContent), 'the projected swiss row reads ~proj');
-});
-
-test('projected (swiss): equal wins → the projected mean-scalar tiebreak applies', () => {
-  const at = projSwissField({
-    standings: [
-      { generation_id: 'v1', rank: 1, scalar: 0.0, wins: 0, losses: 0, status: 'alive' },
-      { generation_id: 'v2', rank: 2, scalar: 0.0, wins: 0, losses: 0, status: 'alive' },
-    ],
-    rounds: [
-      { round_index: 0, label: 'Round 1', matches: [{ match_id: 'r0m0', competitors: ['v1', 'v2'], winner: '', pending: true }] },
-    ],
-    projected: {
-      v1: { scalar: 2.0, boards_done: 2, boards_total: 5, pass_rate: 1.0 },
-      v2: { scalar: 1.0, boards_done: 2, boards_total: 5, pass_rate: 1.0 },
-    },
-  });
-  const model = STRUCT.buildLiveModel(
-    at,
-    { phase: 'tournament:round_0:r0m0', generation_id: 'v2' },
-    [{ generation_id: 'v2', entry_id: 'b0', run_id: 'r0', progress: 0.4 }],
-    ['v0', 'v1', 'v2'],
-  );
-  // v2 (lower projected scalar) wins the tiebreak among equal (0) wins.
-  const order = model.standings.map((s) => String(s.generation_id));
-  assertEqual(order[0], 'v2', 'on equal wins the lower projected scalar ranks first (mean-scalar tiebreak)');
-});
-
-// ELIM — an in-flight match re-ranks the standings on the projected scalar.
-function projElimField(extra) {
-  return Object.assign({
+function publishedElimination() {
+  const at = elimPayload('lone_final_pending', {
     structure: 'single_elim', phase: 'running', epoch_id: EPOCH_ID,
-    structure_params: { seed_order: 'scalar' }, round_index: 0, total_rounds: 1,
-    competitors: [
-      { generation_id: 'v0', seed: 1, role: 'champion' },
-      { generation_id: 'v1', seed: 2, role: 'challenger' },
-    ],
-    rounds: [
-      { round_index: 0, label: 'Final', matches: [{ match_id: 'WB-R0-0', competitors: ['v0', 'v1'], winner: '', bracket_slot: 'WB-R0-0', pending: true }] },
-    ],
+    competitors: [{generation_id: 'v0', role: 'champion'}, {generation_id: 'v1', role: 'challenger'}],
     standings: [
-      { generation_id: 'v0', rank: 1, scalar: 0.0, wins: 0, losses: 0, status: 'alive', role: 'champion' },
-      { generation_id: 'v1', rank: 2, scalar: 0.0, wins: 0, losses: 0, status: 'alive', role: 'challenger' },
+      {generation_id: 'v1', rank: 1, scalar: 0, wins: 0, in_flight: true, projected_scalar: 1, boards_done: 3, boards_total: 5},
+      {generation_id: 'v0', rank: 2, scalar: 0, wins: 0, in_flight: true, projected_scalar: 2, boards_done: 3, boards_total: 5},
     ],
     champion_lineage: ['v0'],
-  }, extra || {});
+  });
+  Object.assign(at.rounds[0].matches[0], {
+    pending: true, queued: false, total: 5, done: 6,
+    projected: {v0: {scalar: 2, boards_done: 3, boards_total: 5}, v1: {scalar: 1, boards_done: 3, boards_total: 5}},
+  });
+  return at;
 }
 
-test('projected (elim): an in-flight match re-ranks standings on the projected scalar + marks the lane projected', () => {
-  // v1 projects a lower (better) scalar → it bubbles to rank 1 live.
-  const at = projElimField({
-    projected: {
-      v0: { scalar: 2.0, boards_done: 3, boards_total: 5, pass_rate: 1.0 },
-      v1: { scalar: 1.0, boards_done: 3, boards_total: 5, pass_rate: 1.0 },
-    },
-  });
-  const model = STRUCT.buildLiveModel(
-    elimPayload('lone_final_pending', at),
-    { phase: 'tournament:round_0:WB-R0-0', generation_id: 'v1' },
-    [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r0', progress: 0.6 }],
-    ['v0', 'v1'],
-  );
-  const top = model.standings.slice().sort((a, b) => a.rank - b.rank)[0];
-  assertEqual(String(top.generation_id), 'v1', 'elim re-ranks the in-flight leader on its projected scalar');
-  assertEqual(top.in_flight, true, 'the leading row is marked in-flight/projected');
-  // the radial bracket renders the projected treatment on the spoke.
+test('published standings retain their order and measured progress', () => {
+  const at = publishedElimination();
+  const model = STRUCT.buildLiveModel(at, null, [], ['v0', 'v1']);
+  assertDeep(model.standings, at.standings, 'the browser preserves the published standings');
+  const nodes = STRUCT.renderStructure(model, {navigate() {}, href: router.href}, EPOCH_ID);
+  const host = document.createElement('div');
+  for (const node of nodes) host.appendChild(node);
+  assert(allByClass(host, 'dt-proj-row').length >= 1, 'running standings are marked');
+  assert(allByClass(host, 'dt-proj-bar').length >= 1, 'measured board progress renders');
+  assert(/~/.test(host.textContent), 'running scalars have the projection prefix');
   const em = STRUCT.elimModel(model);
-  const node = svg.elimRadial({ rounds: em.rounds, gen_states: em.gen_states, championId: em.championId, benchmarkId: em.benchmarkId, live: true, gateState: em.gateState });
-  assert(allByClass(node, 'dn-proj').length >= 1, 'the radial marks the in-flight spoke dn-proj');
-  const projLabel = allByClass(node, 'dn-elimradial-name').find((t) => (t.getAttribute('class') || '').includes('dn-proj'));
-  assert(projLabel && /~$/.test(projLabel.textContent), 'the projected spoke label reads the ~ suffix');
+  const bracket = svg.elimRadial({rounds: em.rounds, gen_states: em.gen_states, live: true});
+  assert(allByClass(bracket, 'dn-proj').length >= 1, 'the bracket marks running competitors');
 });
 
-// the STANDINGS TABLE projected treatment (dashed row + ~prefix + proj badge +
-// scored sub-bar).
-test('projected (standings table): an in-flight row renders the projected treatment (dt-proj-row + ~ + proj + scored bar)', () => {
-  const at = projElimField({
-    projected: { v1: { scalar: 1.0, boards_done: 3, boards_total: 5, pass_rate: 1.0 } },
+test('published Swiss standings render measured scalars beside completed match points', () => {
+  const at = {
+    structure: 'swiss', phase: 'running', competitors: [{generation_id: 'v1'}, {generation_id: 'v2'}],
+    rounds: [{stage_index: 0, matches: [{match_id: 'match', competitors: ['v1','v2'], pending: true, total: 5}]}],
+    standings: [
+      {generation_id: 'v1', rank: 1, scalar: 0.4, wins: 1, losses: 0, status: 'alive'},
+      {generation_id: 'v2', rank: 2, scalar: 0, wins: 0, losses: 0, status: 'alive', in_flight: true, projected_scalar: 0.01, boards_done: 4, boards_total: 5},
+    ],
+  };
+  const model = STRUCT.buildLiveModel(at, null, [], null);
+  assertDeep(model.standings, at.standings, 'published point order is preserved');
+  const sm = STRUCT.swissModel(model);
+  const node = svg.swissLadder({rounds: sm.rounds, standings: sm.standings, live: true});
+  assert(allByClass(node, 'dn-proj').length >= 1, 'the running scalar is marked');
+  assert(/~proj/.test(node.textContent), 'the projection label renders');
+});
+
+test('published racing progress renders scores and board counts for every lane', () => {
+  const at = liveRacingField({partial_champion_agg: {scalar: 8}});
+  Object.assign(at.rounds[0].matches[0].live_progress.v5, {
+    projected: true, projected_scalar: 6, boards_done: 1, done: 1, partialDelta: -2,
   });
-  const model = STRUCT.buildLiveModel(
-    elimPayload('lone_final_pending', at),
-    { phase: 'tournament:round_0:WB-R0-0', generation_id: 'v1' },
-    [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r0', progress: 0.6 }],
-    ['v0', 'v1'],
-  );
-  const nodes = STRUCT.renderStructure(model, { navigate() {}, href: router.href }, EPOCH_ID);
+  const model = STRUCT.buildLiveModel(at, null, [], null);
   const host = document.createElement('div');
-  for (const n of nodes) host.appendChild(n);
-  assert(allByClass(host, 'dt-proj-row').length >= 1, 'the in-flight standings row carries dt-proj-row');
-  assert(allByClass(host, 'dt-proj-badge').length >= 1, 'a "proj" badge renders on the projected scalar cell');
-  assert(allByClass(host, 'dt-proj-bar').length >= 1, 'a scored board-progress sub-bar renders');
-  assert(/~/.test(host.textContent), 'the projected scalar reads with a ~ prefix');
+  for (const node of STRUCT.renderStructure(model, {navigate() {}, href: router.href}, EPOCH_ID)) host.appendChild(node);
+  const funnel = svgsByClass(host, 'dn-funnel')[0];
+  assert(/~/.test(funnel.textContent) && /proj/.test(funnel.textContent), 'the measured score is marked');
+  assert(allByClass(funnel, 'dn-proj-bar').length >= 1, 'the measured board count renders');
+  for (const id of ['v5','v6','v7','v8']) assert(funnel.textContent.includes(id), 'the complete field remains visible');
 });
 
-// DIGEST STABILITY (anti-flash): an identical rounded projection → identical
-// digest → no repaint; a board landing → a different digest.
-test('projected (digest): identical projection yields an identical digest (no repaint); a board landing changes it', () => {
-  const mk = (proj) => STRUCT.buildLiveModel(
-    projElimField({ projected: proj }),
-    { phase: 'tournament:round_0:WB-R0-0', generation_id: 'v1' },
-    [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r0', progress: 0.6 }],
-    ['v0', 'v1'],
-  );
-  const p = { v0: { scalar: 2.0, boards_done: 3, boards_total: 5 }, v1: { scalar: 1.0, boards_done: 3, boards_total: 5 } };
-  const a = mk(p);
-  const b = mk({ v0: { scalar: 2.0, boards_done: 3, boards_total: 5 }, v1: { scalar: 1.0, boards_done: 3, boards_total: 5 } });
-  assertEqual(STRUCT.structureDigest(a), STRUCT.structureDigest(b), 'identical rounded projection → identical digest (no DOM rebuild)');
-  // a board landing (boards_done advances, scalar moves) → a different digest.
-  const c = mk({ v0: { scalar: 2.0, boards_done: 4, boards_total: 5 }, v1: { scalar: 0.9, boards_done: 4, boards_total: 5 } });
-  assert(STRUCT.structureDigest(a) !== STRUCT.structureDigest(c), 'a board landing (progress + scalar advanced) changes the digest');
-});
-
-test('projected (no-op beat): two identical projected ticks leave the rendered node identity unchanged (gated swap)', () => {
-  const proj = { v0: { scalar: 2.0, boards_done: 3, boards_total: 5 }, v1: { scalar: 1.0, boards_done: 3, boards_total: 5 } };
-  const mk = () => STRUCT.buildLiveModel(
-    projElimField({ projected: proj }),
-    { phase: 'tournament:round_0:WB-R0-0', generation_id: 'v1' },
-    [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r0', progress: 0.6 }],
-    ['v0', 'v1'],
-  );
+test('published progress changes redraw; repeated publications preserve the DOM', () => {
+  const at = publishedElimination();
   const host = document.createElement('div');
-  const ctx = { navigate() {}, href: router.href };
-  const a = mk();
-  ui.gatedSwap(host, STRUCT.structureDigest(a), () => STRUCT.renderStructure(a, ctx, EPOCH_ID));
-  const first = host.firstChild;
-  const b = mk();
-  ui.gatedSwap(host, STRUCT.structureDigest(b), () => STRUCT.renderStructure(b, ctx, EPOCH_ID));
-  assert(host.firstChild === first, 'a no-op projected beat did NOT rebuild the DOM (same node identity)');
+  const paint = () => {
+    const model = STRUCT.buildLiveModel(at, null, [], null);
+    ui.gatedSwap(host, STRUCT.structureDigest(model), () => STRUCT.renderStructure(model, {navigate() {}, href: router.href}, EPOCH_ID));
+  };
+  paint(); const first = host.firstChild;
+  paint(); assert(host.firstChild === first, 'identical progress preserves the DOM');
+  at.standings[0].boards_done = 4;
+  at.standings[0].projected_scalar = 0.9;
+  paint(); assert(host.firstChild !== first, 'a published result redraws');
+  const updated = host.firstChild;
+  paint(); assert(host.firstChild === updated, 'the repeated result preserves the DOM');
 });
 
 // ====================================================================
@@ -1093,12 +895,12 @@ function liveSwissField(extra) {
     competitors: [{ generation_id: 'v0' }, { generation_id: 'v1' }, { generation_id: 'v2' }, { generation_id: 'v3' }],
     rounds: [
       { round_index: 0, label: 'Round 1', matches: [
-        { match_id: 'sw_r0_m0', competitors: ['v0', 'v1'] },
-        { match_id: 'sw_r0_m1', competitors: ['v2', 'v3'] },
+        { match_id: 'sw_r0_m0', competitors: ['v0', 'v1'], pending: true, queued: false, total: 4, done: 0 },
+        { match_id: 'sw_r0_m1', competitors: ['v2', 'v3'], pending: true, queued: false, total: 4, done: 0 },
       ] },
-      { round_index: 1, label: 'Round 2', matches: [
-        { match_id: 'sw_r1_m0', competitors: ['v0', 'v2'] },
-        { match_id: 'sw_r1_m1', competitors: ['v1', 'v3'] },
+      { round_index: 1, label: 'Round 2', queued: true, matches: [
+        { match_id: 'sw_r1_m0', competitors: ['v0', 'v2'], pending: true, queued: true, total: 4, done: 0 },
+        { match_id: 'sw_r1_m1', competitors: ['v1', 'v3'], pending: true, queued: true, total: 4, done: 0 },
       ] },
     ],
     standings: [],
@@ -1215,7 +1017,7 @@ test('live elim model: a completed round PERSISTS when the next round starts (ac
         { match_id: 'WB-R0-1', competitors: ['v1', 'v2'], winner: 'v1', decision: 'win', bracket_slot: 'WB-R0-1' },
       ] },
       { round_index: 1, label: 'Final', matches: [
-        { match_id: 'WB-R1-0', competitors: ['v0', 'v1'], bracket_slot: 'WB-R1-0' },
+        { match_id: 'WB-R1-0', competitors: ['v0', 'v1'], bracket_slot: 'WB-R1-0', pending: true, queued: false, total: 4, done: 0 },
       ] },
     ],
   });

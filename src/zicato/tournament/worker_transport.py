@@ -78,14 +78,12 @@ def _ingest_run_into_index(
 ) -> None:
     """Best-effort dual-write of one run into the SQLite analytical index.
 
-    Called after the run's ``loss.json`` has been written so the live
-    index stays current as the tournament runs. The index module is a
-    sibling that may not be present (it lands in parallel); the import is
-    lazy and any failure — a missing module, a schema mismatch, an I/O
-    error — is logged at ``debug`` level and swallowed. The on-disk
-    ``loss.json`` / ``events.jsonl`` remain canonical and ``zicato
-    reindex`` can always rebuild the index from scratch.
+    Called after the measurement loss file is written. Import, schema, and
+    I/O failures are logged at ``debug`` level and do not fail execution.
+    Measurement files remain canonical; ``zicato repair index`` rebuilds
+    the derived index from them.
     """
+
     try:
         from zicato.index.ingest import ingest_run  # noqa: PLC0415
 
@@ -132,9 +130,13 @@ def _now_iso_utc() -> str:
 def _run_id_for(
     generation: Generation, entry: BoardEntry, *, base_seed: BaseSeed = UNKNOWN_SEED
 ) -> str:
-    """Return the canonical run id for the entry's stamped replicate."""
+    """Return the run id for the entry’s measurement and selected seed."""
     return run_id_for_unit(
-        generation.id, entry.id, _entry_replicate_index(entry), base_seed=base_seed
+        generation.id,
+        entry.id,
+        _entry_measurement(entry),
+        base_seed=base_seed,
+        epoch_id=generation.epoch_id,
     )
 
 
@@ -243,72 +245,28 @@ def _stamp_judge_only(
     return stamped
 
 
-#: ``BoardEntry.context`` key carrying the run's REPLICATE INDEX to the
-#: harness under test. Run provenance rather than a contract input: a
-#: deterministic/seeded harness (e.g. the convergence example's noisy
-#: adapter) derives its per-run noise from stable identifiers, and the
-#: replicate index is the one identifier that distinguishes the N
-#: otherwise-identical paired runs of a replicated matchup. ``context``
-#: is the one per-entry channel that survives the
-#: runner -> args-file -> subprocess-worker -> ``validate_board_entry`` ->
-#: adapter round-trip (see :data:`_DISABLE_DRIFT_CONTEXT_KEY`). The value
-#: is the decimal string form (``context`` is string-valued); an ABSENT
-#: key means replicate 0, so single-replicate runs are byte-identical to
-#: before this key existed.
-_REPLICATE_INDEX_CONTEXT_KEY = "replicate_index"
-
 #: ``BoardEntry.context`` key carrying the run's GENERATION ID to the
 #: harness under test. Stamped by ``_run_single`` onto the serialised
 #: worker entry only (the in-process board objects are untouched), so a
 #: session that never sees its canonical snapshot path — the worker
 #: mounts an ephemeral copy with a throwaway name — can still identify
-#: WHICH generation it is measuring from a stable identifier. Mirrors
-#: :data:`_REPLICATE_INDEX_CONTEXT_KEY`; consumers must tolerate absence
-#: (an ad-hoc / in-process drive outside the worker).
+#: which generation it is measuring. Measurement purpose, draw, and seed
+#: travel separately in the context's ``measurement`` JSON value. Direct
+#: in-process callers may omit the generation id.
 _GENERATION_ID_CONTEXT_KEY = "generation_id"
 
 
-def _stamp_replicate_index(
-    board: list[BoardEntry],
-    replicate_index: int,
-) -> list[BoardEntry]:
-    """Return ``board`` with the replicate index on each entry's context.
-
-    Stamped once per replicate pass by the replication loop
-    (:func:`zicato.tournament.scheduling._run_replicated`) so every run of
-    replicate ``r`` carries ``context['replicate_index'] == str(r)``
-    through the subprocess boundary to the adapter session.
-
-    Replicate zero preserves entries without a replicate context key and
-    removes a stale key when present. Invalid or unclaimed indices are
-    rejected before they can select a worker output path.
-    """
-    MeasurementDraw.from_index(replicate_index)
-    if replicate_index == 0 and all(
-        _REPLICATE_INDEX_CONTEXT_KEY not in entry.context for entry in board
-    ):
-        return board
-    stamped: list[BoardEntry] = []
-    for entry in board:
-        context = dict(entry.context)
-        if replicate_index == 0:
-            context.pop(_REPLICATE_INDEX_CONTEXT_KEY, None)
-        else:
-            context[_REPLICATE_INDEX_CONTEXT_KEY] = str(replicate_index)
-        stamped.append(replace(entry, context=context))
-    return stamped
+def _stamp_measurement(board: list[BoardEntry], measurement: MeasurementDraw) -> list[BoardEntry]:
+    """Pass the complete measurement to the harness through its entry context."""
+    return [
+        replace(entry, context={**entry.context, "measurement": json.dumps(measurement.to_json())})
+        for entry in board
+    ]
 
 
-def _entry_replicate_index(entry: BoardEntry) -> int:
-    """Read the replicate index stamped onto an entry's context, or ``0``.
-
-    The read side of :func:`_stamp_replicate_index`: an absent key is
-    replicate zero. A malformed or unclaimed value is refused so the worker
-    cannot silently select a different measurement slot.
-    """
-    raw = dict(entry.context).get(_REPLICATE_INDEX_CONTEXT_KEY, "0")
-    index = int(raw)
-    return MeasurementDraw.from_index(index).replicate_index
+def _entry_measurement(entry: BoardEntry) -> MeasurementDraw:
+    """Read a scheduled measurement; direct single-task execution starts at draw zero."""
+    return MeasurementDraw.from_context(entry.context)
 
 
 def _runtime_state() -> tuple[Any, Any] | None:
@@ -827,7 +785,6 @@ __all__ = [
     "_GENERATION_ID_CONTEXT_KEY",
     "_INDEX_DB_RELPATH",
     "_JUDGE_ONLY_CONTEXT_KEY",
-    "_REPLICATE_INDEX_CONTEXT_KEY",
     "_PARENT_BUDGET_GRACE_S",
     "_SIGTERM_TO_SIGKILL_GRACE_S",
     "_WORKER_ESSENTIAL_ENV_KEYS",
@@ -838,7 +795,7 @@ __all__ = [
     "_configuration_spec",
     "_discard_run_snapshot",
     "_drift_kind_wire",
-    "_entry_replicate_index",
+    "_entry_measurement",
     "_entry_to_dict",
     "_index_db_path",
     "_ingest_run_into_index",
@@ -851,7 +808,7 @@ __all__ = [
     "scrubbed_worker_env",
     "_stamp_disable_drift",
     "_stamp_judge_only",
-    "_stamp_replicate_index",
+    "_stamp_measurement",
     "_telemetry_helpers",
     "_terminate_worker",
     "_worker_processes_gone",

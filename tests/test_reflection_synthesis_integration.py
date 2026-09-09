@@ -24,7 +24,8 @@ from zicato.board.jsonl import save_board
 from zicato.cli.discovery import build_cli_root
 from zicato.core import BoardEntry, Generation, LossProfile, ScoringWeights
 from zicato.core.board import Expectation, ExpectationKind
-from zicato.core.workspace import generation_dir, reflection_suggestions_path
+from zicato.core.measurement import TOURNAMENT_DRAW, MeasurementDraw, MeasurementPurpose
+from zicato.core.workspace import generation_dir, reflection_suggestions_path, run_id_for_unit
 from zicato.epoch.lifecycle import new_epoch
 from zicato.index.schema import apply_schema
 from zicato.runtime.lock import WorkspaceLock
@@ -37,7 +38,8 @@ def _write_loss(ws: Path, epoch: str, gen: str, entry: str, *, passes: bool | No
     from zicato.telemetry import reducer  # noqa: PLC0415
 
     loss = LossProfile(
-        run_id=f"{gen}:{entry}",
+        run_id=run_id_for_unit(gen, entry, epoch_id=epoch),
+        measurement=TOURNAMENT_DRAW,
         entry_id=entry,
         generation_id=gen,
         epoch_id=epoch,
@@ -50,7 +52,10 @@ def _write_loss(ws: Path, epoch: str, gen: str, entry: str, *, passes: bool | No
         drift_loss=0.0 if passes else 0.5,
         pass_fail=passes,
     )
-    reducer.write_loss_profile(loss, _unit_loss_path(ws, epoch, gen, entry, 0))
+    reducer.write_loss_profile(
+        loss,
+        _unit_loss_path(ws, epoch, gen, entry, MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0)),
+    )
 
 
 def _seed_index(ws: Path, epoch: str) -> None:
@@ -165,7 +170,7 @@ def test_unmocked_probe_measures_against_the_fixture_runner(tmp_path: Path, monk
             side: str,
             match_id: str = "",
         ) -> LossProfile:
-            ri = int(entry.context.get("replicate_index", "0"))
+            ri = MeasurementDraw.from_context(entry.context)
             self.slots.append(ri)
             return LossProfile(
                 run_id=f"{generation.id}:{entry.id}:r{ri}",
@@ -210,9 +215,11 @@ def test_unmocked_probe_measures_against_the_fixture_runner(tmp_path: Path, monk
     assert admission is not None  # the probe stamped a record
     assert admission["executed"] is True
     assert admission["noise"]["measured"] is True
-    assert admission["noise"]["base"] == 6000  # measured at the reserved base
+    assert (
+        admission["noise"]["measurement_purpose"] == MeasurementPurpose.ADMISSION
+    )  # measured at the reserved base
     # Every synthesis draw landed at/above the reserved base — r0 untouched.
-    assert stub.slots and all(ri >= 6000 for ri in stub.slots)
+    assert stub.slots and all(ri.purpose == MeasurementPurpose.ADMISSION for ri in stub.slots)
 
 
 def test_admit_seam_plan_mode_runs_nothing(tmp_path: Path, monkeypatch) -> None:

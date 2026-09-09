@@ -24,11 +24,13 @@ from goldfive import DriftSeverity
 from tests._stub_adapter import STUB_ADAPTER_FACTORY
 from zicato.board.jsonl import save_board
 from zicato.cli.discovery import build_cli_root
+from zicato.core.measurement import TOURNAMENT_DRAW, MeasurementDraw, MeasurementPurpose
 from zicato.core.types import BoardEntry, JudgeMode, JudgeSpec, ScoringWeights
 from zicato.core.workspace import (
     reflection_findings_path,
     reflection_plan_path,
     reflection_scorecards_path,
+    run_id_for_unit,
 )
 from zicato.epoch.lifecycle import new_epoch, set_epoch_noise_floor
 from zicato.judge_runtime.io_capture import JudgeIOFileSink, judge_io_path_for_loss
@@ -69,7 +71,8 @@ def _write_run(workspace: Path, epoch_id: str, gen: str, *, fired: bool) -> None
 
     drift = 1.0 if fired else 0.0
     loss = LossProfile(
-        run_id=f"run-{gen}-entryA",
+        run_id=run_id_for_unit(gen, "entryA", epoch_id=epoch_id),
+        measurement=TOURNAMENT_DRAW,
         entry_id="entryA",
         generation_id=gen,
         epoch_id=epoch_id,
@@ -85,7 +88,9 @@ def _write_run(workspace: Path, epoch_id: str, gen: str, *, fired: bool) -> None
         pass_fail=not fired,
         per_judge_loss=(JudgeLoss("j", raw_loss=drift, weight=1.0, weighted_loss=drift),),
     )
-    loss_path = _unit_loss_path(workspace, epoch_id, gen, "entryA", 0)
+    loss_path = _unit_loss_path(
+        workspace, epoch_id, gen, "entryA", MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0)
+    )
     reducer.write_loss_profile(loss, loss_path)
     sink = JudgeIOFileSink(judge_io_path_for_loss(loss_path))
     sink.record(

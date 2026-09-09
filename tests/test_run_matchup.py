@@ -29,7 +29,7 @@ from zicato.core.types import ExpectationResult, ExperimentalConfig, MetricCount
 from zicato.core.workspace import run_id_for_unit
 from zicato.runtime.lock import WorkspaceLock, acquire_workspace_lock
 from zicato.tournament.runner import run_matchup, run_tournament
-from zicato.tournament.worker_transport import _entry_replicate_index
+from zicato.tournament.worker_transport import _entry_measurement
 from zicato.util.async_tasks import gather_owned
 
 
@@ -326,7 +326,11 @@ def test_run_matchup_budget_returns_partial_aggregate(monkeypatch, tmp_path):
                     generation_id=generation.id, entry_id=entry.id, drift_loss=1.0, pass_fail=True
                 ),
                 run_id=run_id_for_unit(
-                    generation.id, entry.id, _entry_replicate_index(entry), base_seed=config.seed
+                    generation.id,
+                    entry.id,
+                    _entry_measurement(entry),
+                    base_seed=config.seed,
+                    epoch_id=generation.epoch_id,
                 ),
             ),
             epoch_id=epoch_id,

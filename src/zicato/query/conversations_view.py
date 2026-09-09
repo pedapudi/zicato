@@ -94,7 +94,7 @@ def build_matchup_conversations(paths: WorkspacePaths, entry_id: str) -> dict[st
         # produced no transcript turns. Without this the dashboard's
         # zero-turn complete-run path falls back to "This run produced
         # no transcript turns" — accurate but useless to the operator.
-        run_result = read_run_result(events_path.parent)
+        run_result = read_run_result(events_path)
         return {
             "run_id": run_id,
             "generation_id": generation_id,

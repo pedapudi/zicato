@@ -7,15 +7,22 @@ trusted. It is the operator-facing write-up of a single improvement campaign,
 distinct from the per-round `insights/round_{N}.md` proposer-feedback files and
 from the live dashboard views.
 
-One source is rendered in two forms:
+The report combines recorded narrative with measured epoch data. Authored
+sections live in `epochs/{id}/analysis.prose.json`; refreshing tables and
+figures reads those sections directly. The shared assembler in
+`src/zicato/analyzer/report.py` publishes three derived artifacts:
 
-* `epochs/{id}/analysis.md` — the canonical markdown, assembled by
-  `src/zicato/analyzer/` (`report.py` / `report_data.py` / `report_sections.py`
-  / `report_figures.py` / `report_prompts.py` + the `svg/` figure package).
-* `epochs/{id}/analysis.html` — a self-contained, paper-styled render of the
-  same markdown, served at `/api/epoch/{id}/analysis` and typeset by the
-  dashboard's `publication.js` tab (ACM-style eyebrow / title / meta / abstract
-  markers with live `<!-- FIGURE:NAME -->` splicing).
+* `analysis.md` — the complete Markdown report, including interpretation,
+  deterministic sections, and figure markers.
+* `analysis.html` — the self-contained report with styles and static figures.
+* `analysis.fragment.html` — the same report body with styles scoped for
+  embedding in the dashboard.
+
+The HTML writer renders the body and figures once, then writes both HTML
+forms. Each file replacement is atomic; publication across the Markdown and
+HTML files is not a transaction. The dashboard reads the saved fragment through
+`/api/epoch/{id}/analysis` and appends interactive tournament figures. Opening
+`/api/epoch/{id}/analysis.html` serves the standalone document.
 
 The rules below are normative. They fix what every section must carry, when the
 document is regenerated and how it degrades mid-epoch, where each fact is
@@ -25,9 +32,11 @@ sourced, and how wide content is kept from overflowing the page.
 
 1. **Exact by construction.** Every data-bearing fact is templated directly
    from the structured workspace artifacts. Numbers are never paraphrased,
-   rounded, or invented by the LLM. Only the interpretive prose (Abstract,
-   Introduction, Analysis, Conclusion) is LLM-authored, and it is given the
-   deterministic sections as its only ground truth.
+      rounded, or invented by the narrative author. The paper’s Abstract,
+   Introduction, Analysis, and Conclusion are authored from the structured
+   epoch view and deterministic sections. The close-of-epoch retrospective
+   also receives the journal, experiments, optional patterns, and computed
+   tournament outcomes.
 2. **Degrade honestly, never fabricate.** A feature that was disabled for the
    epoch renders a one-line "not enabled for this epoch" notice or is omitted
    entirely — never a fabricated number, never a broken placeholder, never a
@@ -36,9 +45,9 @@ sourced, and how wide content is kept from overflowing the page.
 3. **Living through the run, complete at close.** The document is regenerated
    as the campaign runs so it is always current; by epoch close it reads as a
    finished paper. Mid-epoch it is visibly stamped a draft.
-4. **Read-side only.** The publication reads the store-of-record; it writes
-   nothing back into it and contributes nothing to the contract hash. Changing
-   the publication can never move a frozen artifact.
+4. **Reporting does not change evaluation.** Report generation stores authored
+   narrative and publishes derived documents. It reads evaluation records
+   without changing them and contributes nothing to the contract hash.
 5. **Contained rendering.** No element ever pushes the page sideways. Wide
    content scrolls inside its own container (per the console design language,
    `CONSOLE-DESIGN-LANGUAGE.md` §5); the page body
@@ -46,9 +55,11 @@ sourced, and how wide content is kept from overflowing the page.
 
 ## Content spec — the operator-approved outline
 
-The document is one consistently numbered paper. Headings carry no explicit
-numbers in the markdown source; the renderer auto-numbers `h2`/`h3`/`h4` and
-tables/figures by absolute position. The section vocabulary, in order:
+The renderer numbers headings, tables, and figures from their positions in
+one assembled paper. The paper contains Abstract, Introduction, Methodology,
+Approach & Implementation, Experimental Results, Statistical Integrity,
+Proposer Analytics, Analysis, Threats to Validity & Limitations, and Conclusion.
+The Abstract remains unnumbered. The content requirements are:
 
 **Title + masthead.** Eyebrow, epoch name, the goal, and a metadata grid
 (epoch id, status, generation counts, contract hash, span). Mid-epoch the
@@ -99,6 +110,13 @@ trends across the promoted lineage.
 real scale; the contract hash; seeds where recorded; the command that
 regenerates the document.
 
+The close-of-epoch retrospective adds headline movements, hypotheses that
+held or failed, mutation points still available for improvement, and recommended
+focus for a subsequent epoch. Its deterministic Tournament outcomes section
+includes lineage, scalar trajectory, a score sparkline, and metric movements.
+Both the retrospective and the paper’s four interpretive blocks remain stored
+in `analysis.prose.json` and participate in the same report assembly.
+
 Every section degrades honestly: absent data yields a one-line notice or an
 omission.
 
@@ -126,6 +144,8 @@ accepted generation scores, `workspace.read_loss` for loss records, the generati
 | 6 Proposer analytics | hypothesis calibration from each `GenerationView` (predicted vs realised Δ, the same projection the hypothesis-vs-outcome figure uses); slate/selection-mode + cost from the round records. |
 | 7 Reflection | the reflection artifacts (`reflection/`) when a pass ran; per-judge trends from `per_judge_loss_totals`. |
 | 8 Limitations | `EpochReportData` scale (board size, judge coverage, sample size) + `contract_hash`. |
+| Paper interpretation | Stored `ABSTRACT`, `INTRODUCTION`, `ANALYSIS`, and `CONCLUSION` blocks; the authoring prompt receives `EpochReportData` and deterministic sections. |
+| Close-of-epoch retrospective | Stored `retrospective` block; the authoring prompt receives bounded journal text, experiment hypotheses and outcomes, optional patterns, and deterministic tournament outcomes. |
 
 When a binding's source is absent for an epoch (e.g. no round has settled yet,
 the measure's feature was disabled — screening off, no holdout — or no rating
@@ -138,12 +158,11 @@ populated, with no change to the report code.
 The publication is refreshed by **round-settle events** rather than on a
 wall-clock timer.
 
-* **After each settled round** the orchestrator regenerates the
-  **deterministic sections only**, with no LLM call, which holds the cost down;
-  this is the `--no-llm` render path. The refresh is debounced to at most once
-  per settled round: the round epilogue runs exactly once when a round settles,
-  so the refresh is inherently one per round. LLM-authored prose already in the
-  document is preserved verbatim across the deterministic refresh.
+* **After each settled round** the orchestrator refreshes deterministic
+  sections and figures without an evaluation call. The shared assembler reads
+  authored blocks from `analysis.prose.json`; it does not recover narrative by
+  parsing the previous Markdown report. Unchanged Markdown and HTML bytes do
+  not trigger file replacements.
 * **The refresh is strictly best-effort.** A report failure NEVER aborts a
   round: the regeneration is wrapped so any exception is swallowed and logged
   quietly (debug level, structured/stdlib log). The optimization loop takes
@@ -152,16 +171,26 @@ wall-clock timer.
   masthead status carries a `LIVING DRAFT — through round N` stamp. The stamp
   is data-derived (it is present iff `config.json` has not been marked closed);
   the close render removes it automatically because the epoch is then closed.
-* **The full render with LLM prose happens at epoch close.** The close seam
-  runs the bounded evaluation-LLM prose pass, producing the finished paper and
-  dropping the LIVING DRAFT stamp.
-* **`zicato repair report` renders on demand.** The manual backfill runs the
-  full render, or the deterministic sections alone under `--no-llm`.
+* **Closing an epoch records its retrospective.** With an evaluation callable,
+  the close path authors the five retrospective sections. During automatic
+  epoch rollover, a further bounded call authors the paper’s four prose blocks.
+  Both paths update stored narrative and invoke the shared assembler. Closing
+  without an evaluation callable publishes measured results and existing prose;
+  the closed epoch status removes the draft stamp.
+* **`zicato repair report` renders on demand.** It regenerates the paper’s four
+  prose blocks and all derived artifacts. With `--no-llm`, it refreshes measured
+  content while retaining recorded narrative. Missing prose blocks receive an
+  explicit unavailable notice.
 
-The dashboard tab picks up the refresh through the ordinary server-sent events
-(SSE) path under the digest discipline: a byte-identical regeneration of
-`analysis.md` rebuilds **zero DOM** (a content digest folds the markdown length
-plus the live figure inputs), so a no-op refresh never flashes the view.
+The dashboard fetches the published HTML fragment and displays it directly.
+It does not render Markdown or substitute report figure markers. Interactive
+score, lineage, matchup, and drift figures remain below the published report,
+along with per-matchup detail. If the fragment is absent, the tab reports that
+the document is unpublished and still displays available tournament figures.
+
+The redraw digest includes the full Markdown and fragment text, generation
+rows, scalar trajectory, matchups, entry grids, and liveness. Identical display
+inputs leave the DOM intact; equal-length text corrections still redraw.
 
 ## Rendering rules — never overflow the page
 
@@ -169,11 +198,10 @@ Per the console design language, inherently-wide content scrolls inside its
 **own** container; the page body must never scroll horizontally. The
 publication enforces this on every wide element, in both rendered forms:
 
-* **Tables** (GFM in the body, and the deterministic `_render_md_table`
-  output) scroll inside an `overflow-x: auto` wrapper (`dn-table-scroll` in the
-  dashboard; the `figure.paper-table` wrapper in the standalone HTML). Path- and
-  hash-like `code` cells break anywhere so a long absolute path cannot widen a
-  column.
+* **Tables** rendered by `_render_md_table` scroll inside
+  `figure.paper-table` in both HTML forms. The dashboard also wraps the saved
+  fragment and interactive tables in `dn-table-scroll`. Long paths and hashes
+  in `code` cells break within the cell.
 * **Figures** (spliced SVG) scale to container width, aspect-locked
   (`max-width: 100%`), never fixed-width past their box.
 * **Code / `pre` blocks** scroll inside themselves (`overflow-x: auto`).
@@ -197,7 +225,12 @@ fails the suite.
   primitives.
 * `report_prompts.py` — the bounded evaluation-LLM prompt for the four prose
   blocks.
-* `report.py` — assembly, the markdown→paper-HTML renderer, the deterministic
-  refresh (`regenerate_epoch_report_deterministic`), the masthead re-stamp, and
-  the full `generate_epoch_report` entry point.
-* `dashboard/static/js/views/publication.js` — the dashboard tab.
+* `report.py` — stored prose, shared report assembly, deterministic refresh,
+  and the bounded four-block authoring entry point. Its HTML writer renders
+  one body for standalone and embedded publication.
+* `epoch/analysis.py` — the five-section retrospective and deterministic
+  tournament outcomes, passed to the shared assembler.
+* `query/epoch_view.py` — reads published Markdown and HTML artifacts without
+  gathering measurements or rendering report figures during a request.
+* `dashboard/static/js/views/publication.js` — displays the published fragment
+  and adds interactive tournament figures and per-matchup tables.
