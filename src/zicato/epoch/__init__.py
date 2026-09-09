@@ -35,7 +35,6 @@ from zicato.epoch.genstore import (
 )
 from zicato.epoch.journal import (
     ExperimentRecordError,
-    append_journal_entry,
     experiment_body,
     read_experiment,
     read_experiment_if_present,
@@ -76,7 +75,6 @@ __all__ = [
     "set_epoch_noise_floor",
     "set_epoch_preflight",
     # journal
-    "append_journal_entry",
     "read_journal",
     "write_experiment",
     "ExperimentRecordError",

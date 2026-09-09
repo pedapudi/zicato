@@ -23,7 +23,12 @@ from zicato.epoch._storage import (
     rounds_prefix,
 )
 from zicato.epoch.journal import outcome_from_dict, read_experiment
-from zicato.epoch.lineage import Lineage, load_lineage, validate_generation_resolution_rows
+from zicato.epoch.lineage import (
+    Lineage,
+    _load_raw,
+    decode_lineage,
+    validate_generation_resolution_rows,
+)
 from zicato.storage import workspace_backend
 from zicato.tournament.records import (
     FieldTournamentRecord,
@@ -242,8 +247,6 @@ def decode_settlement_receipt(
     index_error = index_projection["error_type"]
     if (index_state in {"repair_required", "repaired"}) != bool(index_error):
         raise RecordError("field settlement receipt has inconsistent index_projection result")
-    if state == "committed" and index_state == "pending":
-        raise RecordError("committed field settlement receipt has a pending index projection")
 
     raw_candidates = intent.get("candidates")
     if not isinstance(raw_candidates, list) or not raw_candidates:
@@ -275,6 +278,44 @@ def decode_settlement_receipt(
         if outcome.tournament_decision == "promoted":
             promoted_ids.add(generation_id)
         candidates.append((raw, outcome))
+
+    gates = intent.get("gate_results", [])
+    if not isinstance(gates, list):
+        raise RecordError("round gate_results must be an array")
+    for gate in gates:
+        if not isinstance(gate, dict):
+            raise RecordError("round gate result must be an object")
+        for key in ("champion", "challenger"):
+            _required_string(gate, key)
+        if gate.get("decision") not in ("promoted", "rejected", "deferred") or not isinstance(
+            gate.get("reason"), str
+        ):
+            raise RecordError("round gate result requires a decision and reason")
+        if any(
+            not isinstance(gate.get(key), dict) for key in ("parent_aggregate", "child_aggregate")
+        ):
+            raise RecordError("round gate result requires both compared aggregates")
+        for key in (
+            "champion_scalar",
+            "challenger_scalar",
+            "delta_scalar",
+            "delta_pass_rate",
+            "margin",
+        ):
+            _validate_optional_number(gate.get(key), key)
+        rules = gate.get("rules")
+        if not isinstance(rules, list) or any(
+            not isinstance(rule, dict)
+            or any(
+                not isinstance(rule.get(key), str) for key in ("id", "label", "status", "detail")
+            )
+            or not isinstance(rule.get("fired"), bool)
+            for rule in rules
+        ):
+            raise RecordError("round gate result requires recorded rule details")
+        deciding_rule = gate.get("deciding_rule")
+        if deciding_rule is not None and deciding_rule not in {rule["id"] for rule in rules}:
+            raise RecordError("round gate result names an unrecorded deciding rule")
 
     first_challenger = candidates[0][0]["generation_id"]
     if len(settlement_id) != 32 or any(
@@ -433,7 +474,7 @@ def validate_workspace_settlement(
     )
     layout = WorkspaceLayout.from_root(workspace_root)
     existing_field = None
-    if receipt.field_record is not None:
+    if receipt.state == "pending" and receipt.field_record is not None:
         try:
             existing_field = read_field_tournament_record(
                 layout.field_tournament(receipt.epoch_id, receipt.first_challenger_id)
@@ -442,15 +483,13 @@ def validate_workspace_settlement(
             pass
     marker = None
     if receipt.state == "pending" and receipt.primary_id is not None:
-        try:
-            marker = (
-                layout.current_generation_marker(receipt.epoch_id)
-                .read_text(encoding="utf-8")
-                .strip()
-            )
-        except FileNotFoundError:
-            pass
-    lineage = load_lineage(workspace_root)
+        marker = None
+        for prior in iter_settlement_receipts(workspace_root, receipt.epoch_id):
+            if prior.round_index >= receipt.round_index:
+                break
+            if prior.state == "committed" and prior.primary_id is not None:
+                marker = prior.primary_id
+    lineage = decode_lineage(_load_raw(workspace_root))
     parent_id = validate_settlement_records(
         receipt,
         experiments=experiments,
@@ -476,7 +515,7 @@ def validate_settlement_records(
         lineage,
         receipt.epoch_id,
         lineage_resolutions(parent_id, receipt),
-        require_resolved=receipt.state == "committed",
+        require_resolved=False,
     )
     if receipt.state == "pending" and receipt.primary_id is not None:
         if current_generation is not None and current_generation not in (

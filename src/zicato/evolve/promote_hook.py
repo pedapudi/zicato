@@ -1,45 +1,9 @@
-"""Post-promotion adapter hook — the ``on_promote`` fire seam (issue #125).
+"""Apply a committed promotion to the target's external state.
 
-A target whose evolved state lives outside the mutable tree (a database,
-a cache, a served artifact, a remote config) has nowhere to fold a
-promoted generation into its long-lived store: the promotion tail closes
-with the champion-marker advance and nothing tells the target it just
-won. :meth:`zicato.adapters.base.HarnessAdapter.on_promote` is that
-notification; this module is the one place it is fired from.
-
-Why the fire lives here and not in the write funnel
----------------------------------------------------
-The obvious seam is :func:`zicato.evolve.persist._finalize_generation`,
-which owns the champion-marker advance under
-``advance_current_generation``. It is the wrong one twice over:
-
-* that funnel is **synchronous** and is shared by three call sites, two
-  of which never promote (the multi-challenger per-generation outcome
-  write and the validation-reject tail). Hosting an awaited hook there
-  means making the whole funnel — and its callers — ``async`` to serve a
-  path that fires on a minority of rounds;
-* the funnel is the *storage* stage of the round pipeline. It knows
-  about experiments, lineage, and the journal, and by design not about
-  adapters. Threading a :class:`~zicato.adapters.base.HarnessAdapter`
-  through it would give a persistence module a dependency on the
-  system-under-test Protocol purely to carry it one frame deeper.
-
-The settlement caller already holds the adapter and invokes
-:func:`fire_on_promote` after the complete canonical settlement commits.
-
-At-most-once
-------------
-The settlement caller fires for the transition that advances
-``current_generation``. A promotion therefore produces one call per settled
-round. Field settlement may replay outcomes, lineage, the champion
-marker, journals, and the bracket from its persisted receipt. The receipt
-records ``delivery_unknown`` immediately before the external call and records
-``succeeded`` or ``failed`` after the await returns. Recovery never retries an
-unknown delivery, so a restart cannot repeat a hook whose completion is
-ambiguous. Startup converts a retained ``pending`` delivery to
-``delivery_unknown`` because it cannot prove whether the prior process reached
-the call. The loop-health report tells the operator to reconcile that external
-state manually.
+The settlement caller invokes the adapter hook once for the primary promoted
+candidate. The round record stores an unknown delivery status before the call
+and success or failure afterward. Recovery never retries an uncertain delivery;
+an operator must reconcile the external state after an interrupted call.
 """
 
 from __future__ import annotations

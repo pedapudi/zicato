@@ -274,11 +274,16 @@ def build_per_entry_for_generation(
     # Resolve the parent_generation_id from the child's experiment.json
     # so we can compose the FK. The reader is best-effort: a missing
     # / malformed file falls back to the generation-scoped query.
-    exp_path = layout_of(paths).experiment(epoch_id, generation_id)
     parent_gen_id: str | None = None
     if inputs is not None:
         inputs.check(paths, epoch_id)
-    raw_exp = inputs.experiment(generation_id) if inputs is not None else _read_json_value(exp_path)
+    from zicato.epoch.journal import read_experiment_body
+
+    raw_exp = (
+        inputs.experiment(generation_id)
+        if inputs is not None
+        else read_experiment_body(paths.root, epoch_id, generation_id)
+    )
     if isinstance(raw_exp, dict):
         raw_parent = raw_exp.get("parent_generation_id")
         if isinstance(raw_parent, str) and raw_parent:

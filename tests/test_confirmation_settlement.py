@@ -23,6 +23,7 @@ from tests.test_orchestrator_multi_challenger_holdout import (
 )
 from zicato.core.types import LadderConfig, OverfittingConfig
 from zicato.core.workspace import ladder_state_path
+from zicato.evolve.generation_phase import current_generation
 from zicato.query.gate_view import build_rating_view
 from zicato.query.paths import WorkspacePaths
 from zicato.selection import driver
@@ -104,7 +105,7 @@ def test_required_confirmation_settles_without_advancing_lineage(
     outcome = run_evolve_once(workspace, epoch_id, evaluation_call_llm)
     expected = "rejected" if cause == "holdout_failure" else "deferred"
     assert outcome.tournament_decision == expected
-    assert (workspace / "epochs" / epoch_id / "current_generation").read_text().strip() == "v0"
+    assert current_generation(workspace, epoch_id) == "v0"
     assert _lineage_promoted(workspace, epoch_id, "v1") is False
     record = _crowned_outcome(workspace, epoch_id, "v1")
     assert record["tournament_decision"] == expected
@@ -112,7 +113,13 @@ def test_required_confirmation_settles_without_advancing_lineage(
     assert bracket["decision"] == expected
     assert bracket["promoted_generation_id"] == ""
     if holdout_case:
+        from zicato.query import build_gate_breakdown
+
         block = record["holdout"]
+        gate = build_gate_breakdown(WorkspacePaths(workspace), epoch_id, "v0", "v1")
+        assert gate["decision"] == expected
+        assert gate["deciding_rule"] == "holdout"
+        assert gate["holdout"] == block
         assert block["confirmation_status"] == (
             "failed" if cause == "holdout_failure" else "incomplete"
         )

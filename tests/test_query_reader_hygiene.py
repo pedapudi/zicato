@@ -24,6 +24,7 @@ from pathlib import Path
 import pytest
 
 from tests._workspace_support import (
+    experiment_record,
     seed_index,
     workspace,
     write_epoch,
@@ -166,17 +167,36 @@ def test_read_epoch_journal_degrades_to_empty_string(tmp_path: Path) -> None:
 
 def test_read_epoch_journal_shape(tmp_path: Path) -> None:
     layout = _base_workspace(tmp_path)
-    layout.journal(EPOCH).write_text("# log\nentry", encoding="utf-8")
+    write_json(
+        layout.experiment(EPOCH, "v1"),
+        experiment_record(
+            "v1",
+            epoch_id=EPOCH,
+            hypothesis={
+                "core_idea": "Reduce redundant instructions",
+                "why": "Preserve all task requirements.",
+            },
+        ),
+    )
     out = read_epoch_journal(WorkspacePaths(layout.root), EPOCH)
-    assert out == {"epoch_id": EPOCH, "journal": "# log\nentry"}
+    assert out["epoch_id"] == EPOCH
+    assert "## v1 — Reduce redundant instructions" in out["journal"]
+    assert "**why**: Preserve all task requirements." in out["journal"]
 
 
 def test_read_epoch_journal_md_none_vs_text(tmp_path: Path) -> None:
     layout = _base_workspace(tmp_path)
     paths = WorkspacePaths(layout.root)
     assert read_epoch_journal_md(paths, EPOCH) is None
-    layout.journal(EPOCH).write_text("raw", encoding="utf-8")
-    assert read_epoch_journal_md(paths, EPOCH) == "raw"
+    write_json(
+        layout.experiment(EPOCH, "v1"),
+        experiment_record(
+            "v1",
+            epoch_id=EPOCH,
+            hypothesis={"core_idea": "Preserve the proposal text"},
+        ),
+    )
+    assert "## v1 — Preserve the proposal text" in read_epoch_journal_md(paths, EPOCH)
 
 
 # ---------------------------------------------------------------------------

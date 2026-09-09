@@ -43,8 +43,12 @@ import pytest
 import zicato_examples.target_0_convergence as _t0_pkg
 from tests._contract_pins import resolved_contract_with_proposer
 from tests._foe_support import stand_in_proposer_block
+from tests._workspace_support import read_experiment_record
 from zicato.core.measurement import MeasurementDraw, MeasurementPurpose
+from zicato.epoch.journal import read_journal
 from zicato.epoch.lifecycle import _scoring_from_dict, new_epoch
+from zicato.epoch.lineage import load_lineage
+from zicato.evolve.generation_phase import current_generation
 from zicato_examples.target_0_convergence import mocks as t0_mocks
 
 EXAMPLE_DIR = Path(_t0_pkg.__file__).resolve().parent
@@ -216,11 +220,11 @@ def test_gauntlet_converges_to_known_floor(tmp_path: Path) -> None:
         experiment = read_experiment(workspace, epoch_id, gid)
         assert len(experiment.patches) == 1, gid
         assert experiment.patches[0].mutation_id == "style_rules", gid
-        outcome = json.loads(exp_path.read_text())["outcome"]
+        outcome = read_experiment_record(exp_path)["outcome"]
         assert outcome["tournament_decision"] == decision, gid
 
     # Lineage: promoted flags + parents match the script.
-    lineage = json.loads((workspace / "lineage.json").read_text())
+    lineage = load_lineage(workspace).to_dict()
     nodes: dict[str, dict[str, object]] = {}
     for ep in lineage.get("epochs", []):
         if ep.get("id") == epoch_id:
@@ -231,9 +235,8 @@ def test_gauntlet_converges_to_known_floor(tmp_path: Path) -> None:
 
     # Journal: one markdown section per round (the journal is a running
     # narrative, one "## vN — <core idea>" heading per experiment).
-    from zicato.core.workspace import journal_path
 
-    journal_text = journal_path(workspace, epoch_id).read_text()
+    journal_text = read_journal(workspace, epoch_id)
     for gid in ("v1", "v2", "v3"):
         assert f"## {gid} — " in journal_text, gid
 
@@ -273,8 +276,7 @@ def test_gauntlet_converges_to_known_floor(tmp_path: Path) -> None:
     }
 
     # The promoted head advanced to the final champion only.
-    marker = workspace / "epochs" / epoch_id / "current_generation"
-    assert marker.read_text().strip() == "v3"
+    assert current_generation(workspace, epoch_id) == "v3"
 
     # --- (d) Loop health: the harness must not trip the signal detectors.
     # A degenerate_scoring or non_differentiating_entry finding would mean
@@ -419,14 +421,13 @@ def test_racing_field_best_arm_survives_to_floor(tmp_path: Path) -> None:
     # arm was promoted, the dead branches carry rejected racing outcomes.
     gens_dir = workspace / "epochs" / epoch_id / "generations"
     for gid in ("v1", "v2", "v3", "v4"):
-        oc = json.loads((gens_dir / gid / "experiment.json").read_text())["outcome"]
+        oc = read_experiment_record(gens_dir / gid / "experiment.json")["outcome"]
         assert oc["structure"] == "racing", gid
         expected = "promoted" if gid == "v2" else "rejected"
         assert oc["tournament_decision"] == expected, gid
 
     # The promoted head advanced to the surviving arm.
-    marker = workspace / "epochs" / epoch_id / "current_generation"
-    assert marker.read_text().strip() == "v2"
+    assert current_generation(workspace, epoch_id) == "v2"
 
     # RoundLog (WS8) on the multi-challenger path: the racing round left a
     # durable log that opens, traces the 4-challenger field's proposals and

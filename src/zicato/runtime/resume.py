@@ -2,7 +2,7 @@
 
 When ``evolve`` is killed mid-tournament (operator SIGTERM, host reboot,
 OOM) the durable artifacts under ``epochs/{epoch}/`` survive — promoted
-generations, the journal, ``experiment.json``, and any per-board
+generations, round decisions, ``experiment.json``, and any per-board
 ``loss.json`` a completed run wrote (see RUNTIME.md §4.1). The live
 ``runtime/`` state (heartbeat, active runs, active tournament) does
 not; it is rebuilt from scratch on restart.
@@ -38,15 +38,12 @@ snapshot cannot be reconciled with the patches, this module DISCARDS
 the generation directory so the next round re-proposes cleanly into a
 fresh ``vN`` — never reusing a unit cache it cannot vouch for.
 
-Lineage / journal safety
-------------------------
-An applied generation enters ``lineage.json`` immediately with
-``promoted=null``. Settlement later resolves that same node to ``true`` or
-``false`` and appends its journal section. Discarding an interrupted
-single-challenger generation therefore removes its pending lineage node as
-well as its directory. If a multi-challenger field reached a decision, its
-durable settlement receipt resolves every sibling together; without a
-receipt, recovery discards every pending sibling in the field.
+Candidate records and completed rounds
+---------------------------------------
+An applied generation enters ancestry with an unresolved promotion status.
+A committed round supplies every candidate outcome. Readers derive lineage
+status and journal text from those outcomes. Recovery preserves a recorded
+round and discards every pending sibling when no decision was recorded.
 
 Source state can precede both canonical registers. ``derive_generation``
 commits the candidate's tree before the pending lineage node is written. A

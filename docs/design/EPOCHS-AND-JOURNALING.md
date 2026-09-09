@@ -150,7 +150,7 @@ directory.
               loss.json
         v1/
           snapshot/
-          experiment.json            # lineage coords + hypothesis + patch_ids + outcome
+          experiment.json            # ancestry + hypothesis + patch references
           patches/
             {patch_id}.json          # one file per patch (see §3.2)
           gen_score.json
@@ -160,12 +160,13 @@ directory.
               loss.json
         v2/
           ...
-      current_generation             # marker: id of the promoted head
+      rounds/
+        {round_index}/
+          field_settlement.json      # outcomes, tournament details, primary promotion
       patterns/
         round_001.json               # detector output, one per round
         round_002.json
         ...
-      journal.md                     # running narrative across generations
       analysis.md                    # generated at epoch close (or a stub)
       analysis.html                  # deterministic render, refreshed each round
     epoch_after_board_edit/
@@ -180,7 +181,6 @@ directory.
         v1/
           ...
       patterns/
-      journal.md
       analysis.md
       analysis.html
 ```
@@ -330,9 +330,10 @@ applier resolves the id to a location and rewrites it. See
 
 ### 3.3 Outcome (written after the run)
 
-When the tournament concludes, the tournament runner appends an
-`outcome` block to the same `experiment.json` — atomic update, same
-file.
+When a tournament concludes, settlement records every candidate outcome in
+`rounds/<round_index>/field_settlement.json`. Committing that record publishes
+the outcomes together. The experiment reader combines the proposal file with
+its committed outcome and returns the following representation:
 
 ```json
 {
@@ -357,9 +358,9 @@ file.
 }
 ```
 
-The per-patch files are NOT rewritten when the outcome lands —
-`update_experiment_outcome` only re-writes `experiment.json`. The
-patches are immutable once written.
+Tournament settlement leaves the proposal and patch files unchanged. A proposal
+rejected before tournament execution stores its rejection directly in
+`experiment.json`, because that proposal has no tournament result.
 
 The fields (the `OutcomeRecord` dataclass):
 
@@ -382,10 +383,9 @@ gauge whether the proposer is reasoning or guessing.
 
 ### 3.4 The outcome feeds back into proposing (experiment memory)
 
-The `outcome` block is not only a backward-looking audit trail. Once it
-is written — and dual-written into the analytical index's `experiments`
-table (`tournament_decision`, `rejection_reason`, `scalar_score_delta`)
-— it becomes an input to the *next* round's proposer. A capped, curated
+A committed outcome is projected into the analytical index's `experiments`
+table (`tournament_decision`, `rejection_reason`, `scalar_score_delta`) and
+becomes an input to the next round's proposer. A capped, curated
 digest of prior experiments (each one's `core_idea`, its `modulating`
 ids, its verdict, and its Δscalar) is surfaced to the proposer in the
 `## What's already been tried` prompt section, so it stops re-proposing
@@ -405,11 +405,10 @@ multi-challenger field), the curation, and the contract scoping — is in
 
 ## 4. The journal (running)
 
-`journal.md` is appended one section per experiment with a short,
-human-readable rendering. The tournament runner re-renders the same
-section once the outcome is populated, so the proposal appears first
-and the verdict follows. Canonical format (one section per generation,
-headed by its version label and the one-line `core_idea`):
+The journal renderer produces one section per proposed generation, excluding
+the baseline `v0`. It reads the hypothesis from the proposal and the outcome
+from the committed round record. A pending proposal appears without an
+outcome. Each section begins with the generation id and its `core_idea`:
 
 ```markdown
 ## v1 — Tighten the researcher's system prompt so it stops asserting facts without citing sources.
@@ -428,11 +427,9 @@ headed by its version label and the one-line `core_idea`):
 **rejection_reason**: pass_rate_regression_on_summarise_short
 ```
 
-The journal is plain markdown, not JSONL, so the append is a single
-text write (a crash mid-write leaves the prior journal intact rather
-than a truncated record). There is no `zicato journal show` command —
-the file is meant to be read directly with `cat` / `less`, or rendered
-via the dashboard and `analysis.html`.
+The journal is generated Markdown available through the dashboard and report
+renderers. It has no separately written `journal.md` file. Reading it cannot
+change an outcome or replay a round.
 
 ## 5. The analysis (per-epoch)
 
@@ -444,8 +441,8 @@ without one wired through), the close path writes a deterministic stub
 supplied_` placeholder — that the operator can later re-render with
 `zicato repair report`. The LLM pass receives:
 
-- The full `journal.md` for the epoch.
-- The list of all `experiment.json` files (hypothesis + outcome).
+- The full rendered journal for the epoch.
+- The accepted experiments, combining each proposal with its recorded outcome.
 - The `brief.md` for the epoch.
 - The aggregate pattern statistics across the epoch (drift kinds
   that moved most, kinds that stayed flat, tag slices with notable
@@ -597,9 +594,9 @@ epoch-keyed shape the loader reads:
 {"epochs": []}
 ```
 
-Once `evolve` registers epochs and lands generations, the lineage
-mutators (`zicato.epoch.lineage`) populate it — a top-level `epochs`
-list, each epoch carrying its `generations`:
+The file records epoch membership and candidate ancestry. The lineage reader
+in `zicato.epoch.lineage` combines those facts with committed round outcomes.
+Its returned graph includes promotion status, rejection reasons, and scores:
 
 ```json
 {
@@ -643,9 +640,9 @@ for a root `v0`. An absent parent is `null` and never the empty string,
 so a lineage walker can distinguish a root from a generation whose
 parent is literally named with an empty id. Each row also carries a `promoted`
 flag (`true` / `false` / `null` while the generation is still in
-flight) and the `round_index` that minted it. The settle-time write adds
-the gate's `rejection_reason` plus the duel's `parent_scalar` /
-`child_scalar` / `delta_scalar`. The reason is non-empty **only** on a
+flight) and the `round_index` in which it was created. The reader obtains
+`rejection_reason`, `parent_scalar`, `child_scalar`, and `delta_scalar`
+from the committed round record. The reason is non-empty **only** on a
 settled rejection: an empty reason means promoted or pending
 everywhere else in the system, and the DAG must not disagree. The
 scalars are `null` when unrecorded, never `0.0` — zero is a legal
@@ -655,7 +652,7 @@ predecessor. Per-epoch promotion/rejection counts are derived from the
 `generations` list's `promoted` flags rather than stored as separate
 fields.
 
-`zicato epoch list` renders `lineage.json` as a table:
+`zicato epoch list` renders the accepted lineage graph as a table:
 
 ```
 epoch                started_at           closed_at            promoted  rejected  parent
@@ -744,8 +741,10 @@ A single round, in storage terms:
 6. Write `vN+1/gen_score.json` and the parent's updated
    `vN/gen_score.json` (if the parent's score changed under the
    freshly-run board).
-7. Append the `outcome` block to `vN+1/experiment.json`.
-8. Append a journal entry to `journal.md`.
+7. Atomically commit the round record containing candidate outcomes, tournament
+   details, and the primary promoted generation.
+8. Refresh the derived index and record the result of that refresh. Journal and
+   lineage readers derive their views from the committed outcomes.
 9. Run the pattern detectors; write `patterns/round_{NNN}.json`.
 
 Round numbers are global within an epoch (independent of whether the
@@ -759,11 +758,9 @@ views can attribute a generation to the outer round that minted it. It
 defaults to `0` for the seed `v0` and for records that predate the stamp,
 and it is always the OUTER evolve round — never an inner bracket round.
 
-Two artifacts live outside the per-generation directory because they
-aggregate across rounds:
-
-- `patterns/round_NNN.json` — pattern detector output for the round.
-- `journal.md` — running narrative.
+Round records and pattern detector output live outside individual generation
+directories because a round can evaluate several candidates. The journal
+aggregates accepted experiments across the epoch when it is requested.
 
 ## 9. Per-epoch tournament structure
 
@@ -826,34 +823,20 @@ structure.
 
 ### 9.3 How rounds / matchups journal under each structure
 
-The §8 round mechanics describe one *gauntlet* round (one champion, one
-challenger). Under a richer structure a single `zicato evolve` round can
-play several matches, but the journaling seams are unchanged — they
-**generalize additively**:
+The §8 round mechanics describe a gauntlet with one champion and one challenger.
+Other structures can play several matches within one evolve round. The same
+committed round record contains their candidate outcomes and tournament details.
 
-- **`experiment.json` `outcome`** — still written once per generation,
-  still carrying `tournament_decision` (the crowning verdict for *that*
-  generation: did it become / stay champion). It carries additive fields
-  — `structure`, `final_rank`, `eliminated_in_round`, and a
-  per-generation `match_record` of the matches that generation played —
-  plus the runtime `champion_eval_mode` provenance (§9.4). Old journals
-  deserialize unchanged (every added field defaults to the gauntlet /
-  `full` interpretation).
-- **`journal.md`** — still one human-readable section per experiment.
-  For a non-gauntlet structure the section additionally renders the
-  generation's rank / elimination round, but the
-  `## vN — <core_idea>` + outcome-line shape is preserved.
-- **Per-match detail** — each match is two (or, for a racing rung, N)
-  board runs under two (or N) generations, persisted under the usual
-  `generations/{id}/runs/{entry_id}/` layout. No new per-match
-  directory: a match is reconstructable from the per-run `loss.json`
-  files keyed on `(generation_id, entry_id)`, plus the structure's
-  `rounds` state carried on the live `ActiveTournament` and the settled
-  `tournaments` index row.
+- **Candidate outcome:** each outcome includes the generation's decision,
+  structure, final rank, elimination round, match record, and champion
+  evaluation provenance. The experiment reader combines it with the proposal.
+- **Journal:** the renderer produces one section per experiment containing
+  its hypothesis, score movements, decision, and rejection reason.
+- **Match detail:** execution records match results and tournament rounds.
+  Per-run measurements remain under each generation. Dashboard readers use
+  recorded decisions rather than inferring winners from measurement files.
 
-The full persisted shapes (the generalized `ActiveTournament`,
-`OutcomeRecord`, and `tournaments` table, with their back-compat
-defaults) are specified in
+The record schemas are specified in
 [TOURNAMENT-DATA-MODEL.md](TOURNAMENT-DATA-MODEL.md) §2 and
 [STORAGE.md](STORAGE.md) §5.
 

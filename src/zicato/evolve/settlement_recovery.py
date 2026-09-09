@@ -8,26 +8,17 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from zicato.epoch.journal import (
-    append_journal_entry_once,
-    read_experiment,
-    update_experiment_outcome,
-)
-from zicato.epoch.lineage import resolve_pending_generations
 from zicato.epoch.settlement_receipt import (
     HookDeliveryState,
     SettlementReceipt,
     decode_settlement_receipt,
     field_settlement_intent_key,
     iter_settlement_receipts,
-    lineage_resolutions,
     read_settlement_receipt,
     validate_workspace_settlement,
     write_settlement_receipt,
 )
-from zicato.evolve import generation_phase
 from zicato.runtime.lock import WorkspaceLock
-from zicato.tournament.records import decode_field_tournament_record, write_field_tournament_record
 
 log = logging.getLogger("zicato.orchestrator")
 CrashCheckpoint = Callable[[str], None]
@@ -57,7 +48,7 @@ def commit_field_settlement(
             raise RuntimeError(
                 f"field settlement receipt {key!r} conflicts with the recorded decision"
             )
-        if existing["state"] == "pending":
+        if existing["state"] == "pending" or existing["index_projection"]["state"] == "pending":
             replay_field_settlement(
                 workspace_root,
                 existing,
@@ -85,82 +76,25 @@ def replay_field_settlement(
     expected_round_index: int | None = None,
     crash_checkpoint: CrashCheckpoint | None = None,
 ) -> None:
-    """Idempotently complete every canonical write in a pending receipt."""
-    settlement, parent_id = validate_workspace_settlement(
+    """Publish all round outcomes atomically, then refresh derived views."""
+    settlement, _parent_id = validate_workspace_settlement(
         workspace_root,
         intent,
         expected_epoch_id=expected_epoch_id,
         expected_round_index=expected_round_index,
     )
-    if intent["state"] == "committed":
-        return
-
     receipt = copy.deepcopy(intent)
-    finalised: dict[str, Any] = {}
-    for candidate in settlement.candidates:
-        generation_id = candidate.generation_id
-        outcome = candidate.outcome
-        experiment = read_experiment(workspace_root, settlement.epoch_id, generation_id)
-        if experiment.outcome is None:
-            experiment = update_experiment_outcome(
-                workspace_root,
-                settlement.epoch_id,
-                generation_id,
-                outcome,
-            )
-        finalised[generation_id] = experiment
-        _checkpoint(crash_checkpoint, f"outcome:{generation_id}")
+    if settlement.state != "committed":
+        from zicato.workspace.projection import mark_epoch_changed
 
-    resolve_pending_generations(
-        workspace_root,
-        settlement.epoch_id,
-        lineage_resolutions(parent_id, settlement),
-    )
-    _checkpoint(crash_checkpoint, "lineage")
-
-    if settlement.primary_id is not None:
-        generation_phase.set_current_generation(
-            workspace_root,
-            settlement.epoch_id,
-            settlement.primary_id,
-        )
-        if (
-            generation_phase.current_generation(workspace_root, settlement.epoch_id)
-            != settlement.primary_id
-        ):
-            raise RuntimeError(
-                "crowning invariant violated: current_generation did not advance to "
-                f"{settlement.primary_id!r}"
-            )
-        _checkpoint(crash_checkpoint, "champion_marker")
-
-    for candidate in settlement.candidates:
-        generation_id = candidate.generation_id
-        append_journal_entry_once(
-            workspace_root,
-            settlement.epoch_id,
-            finalised[generation_id],
-            settlement_identity=f"{settlement.settlement_id}:{generation_id}",
-        )
-        _checkpoint(crash_checkpoint, f"journal:{generation_id}")
-
-    if settlement.field_record is not None:
-        write_field_tournament_record(
-            workspace_root,
-            epoch_id=settlement.epoch_id,
-            first_challenger_id=settlement.first_challenger_id,
-            record=decode_field_tournament_record(settlement.field_record),
-        )
-        _checkpoint(crash_checkpoint, "settled_bracket")
-
+        mark_epoch_changed(workspace_root, settlement.epoch_id)
+        receipt["state"] = "committed"
+        write_settlement_receipt(workspace_root, decode_settlement_receipt(receipt))
+        _checkpoint(crash_checkpoint, "receipt_committed")
     if receipt["index_projection"]["state"] == "pending":
         _project_settlement_index(workspace_root, settlement, receipt)
         write_settlement_receipt(workspace_root, decode_settlement_receipt(receipt))
         _checkpoint(crash_checkpoint, "index_projection")
-
-    receipt["state"] = "committed"
-    write_settlement_receipt(workspace_root, decode_settlement_receipt(receipt))
-    _checkpoint(crash_checkpoint, "receipt_committed")
 
 
 def recover_field_settlements(
@@ -184,7 +118,7 @@ def recover_field_settlements(
             expected_epoch_id=epoch_id,
             expected_round_index=stored.round_index,
         )
-        if raw["state"] == "pending":
+        if raw["state"] == "pending" or raw["index_projection"]["state"] == "pending":
             replay_field_settlement(
                 workspace_root,
                 raw,

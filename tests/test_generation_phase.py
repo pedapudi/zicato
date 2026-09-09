@@ -12,7 +12,6 @@ from zicato.evolve.generation_phase import (
     mutable_trees,
     next_generation_id,
     safe_parent,
-    set_current_generation,
 )
 from zicato.workspace import WorkspaceLayout, generation_round_number
 
@@ -87,20 +86,18 @@ def test_round_pipeline_structure_stays_bounded() -> None:
         assert public_async == [expected]
 
 
-def test_generation_head_prefers_marker_then_falls_back_to_highest_vn(tmp_path: Path) -> None:
-    (tmp_path / "config.json").write_text(
-        '{"generation_source_backend": "directory"}', encoding="utf-8"
-    )
+def test_generation_head_requires_a_baseline_and_ignores_unpromoted_candidates(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "config.json").write_text('{"generation_source_backend": "directory"}')
     layout = WorkspaceLayout.from_root(tmp_path)
     root = layout.generations_dir("e1")
     for name in ("v2", "v10", "named"):
         (root / name).mkdir(parents=True)
-
-    # The fallback is the highest round number. An id outside the vN scheme —
-    # which no minting path produces — no longer outranks every round.
-    assert current_generation(tmp_path, "e1") == "v10"
-    set_current_generation(tmp_path, "e1", "v2")
-    assert current_generation(tmp_path, "e1") == "v2"
+    with pytest.raises(FileNotFoundError, match="baseline"):
+        current_generation(tmp_path, "e1")
+    (root / "v0").mkdir()
+    assert current_generation(tmp_path, "e1") == "v0"
     assert next_generation_id(tmp_path, "e1") == "v11"
 
 

@@ -45,8 +45,10 @@ from pathlib import Path
 import zicato_examples.target_0_convergence as _t0_pkg
 from tests._contract_pins import resolved_contract_with_proposer
 from tests._foe_support import stand_in_proposer_block
+from tests._workspace_support import read_experiment_record
 from zicato.core.measurement import MeasurementDraw, MeasurementPurpose
 from zicato.epoch.lifecycle import _scoring_from_dict, new_epoch
+from zicato.evolve.generation_phase import current_generation
 from zicato_examples.target_0_convergence import mocks_recombine as rec_mocks
 
 EXAMPLE_DIR = Path(_t0_pkg.__file__).resolve().parent
@@ -239,8 +241,8 @@ def test_recombination_promotes_where_singles_reject(tmp_path: Path) -> None:
     for gid in ("v1", "v2"):
         exp = read_experiment(workspace, epoch_id, gid)
         assert exp.recombined_from == ()
-        body = json.loads(
-            (workspace / "epochs" / epoch_id / "generations" / gid / "experiment.json").read_text()
+        body = read_experiment_record(
+            workspace / "epochs" / epoch_id / "generations" / gid / "experiment.json"
         )
         assert "recombined_from" not in body
 
@@ -269,8 +271,7 @@ def test_recombination_promotes_where_singles_reject(tmp_path: Path) -> None:
     assert _proposal_episodes(workspace, epoch_id) == 2 * BEST_OF_N + (BEST_OF_N - 1)
 
     # The promoted head advanced to the union.
-    marker = workspace / "epochs" / epoch_id / "current_generation"
-    assert marker.read_text().strip() == "v3"
+    assert current_generation(workspace, epoch_id) == "v3"
 
     # The union's per-entry floor: zero drift, all five predicates pass.
     from zicato.board.jsonl import load_board
@@ -308,8 +309,7 @@ def test_stall_control_same_script_recombine_off_stays_v0(tmp_path: Path) -> Non
     outcomes = _run_rounds(workspace, epoch_id, 3)
 
     assert [o.tournament_decision for o in outcomes] == ["rejected", "rejected", "rejected"]
-    marker = workspace / "epochs" / epoch_id / "current_generation"
-    assert marker.read_text().strip() == "v0"
+    assert current_generation(workspace, epoch_id) == "v0"
 
     # No mint anywhere: every sampled candidate was an ordinary LLM sample
     # and no experiment carries recombination provenance.
@@ -343,8 +343,7 @@ def test_pair_dedup_a_persisted_rejected_union_never_reminits(tmp_path: Path) ->
     outcomes = _run_rounds(workspace, epoch_id, 4, max_consecutive_rejections=0)
 
     assert [o.tournament_decision for o in outcomes] == ["rejected"] * 4
-    marker = workspace / "epochs" / epoch_id / "current_generation"
-    assert marker.read_text().strip() == "v0"
+    assert current_generation(workspace, epoch_id) == "v0"
 
     from zicato.epoch.journal import read_experiment
     from zicato.epoch.round_log import RoundLog, fold_round_record

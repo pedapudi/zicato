@@ -72,11 +72,6 @@ def scoring_key(epoch_id: str) -> str:
     return storage_key(_LAYOUT.scoring(epoch_id))
 
 
-def journal_key(epoch_id: str) -> str:
-    """Storage key for one epoch's running ``journal.md``."""
-    return storage_key(_LAYOUT.journal(epoch_id))
-
-
 #: Supported stamp for canonical epoch, experiment, lineage, and score records.
 #: Owners with independently versioned formats pass their expected version.
 RECORD_FORMAT_VERSION = 1
@@ -156,7 +151,6 @@ __all__ = [
     "epoch_prefix",
     "epoch_config_key",
     "scoring_key",
-    "journal_key",
     "lineage_key",
     "current_epoch_key",
     "rounds_prefix",

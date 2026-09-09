@@ -21,7 +21,6 @@ from typing import TYPE_CHECKING, Any
 from zicato.core.settings import ResolvedConfiguration
 from zicato.core.types import (
     Experiment,
-    Generation,
     OutcomeRecord,
     TournamentDecision,
 )
@@ -46,68 +45,12 @@ def _finalize_generation(
     epoch_id: str,
     generation_id: str,
     outcome: OutcomeRecord,
-    lineage_generation: Generation | None = None,
-    lineage_parent_id: str | None = None,
-    lineage_parent_scalar: float | None = None,
-    lineage_child_scalar: float | None = None,
-    advance_current_generation: bool = False,
-    journal: bool = True,
 ) -> Experiment:
-    """Persist a terminal outcome that has no tournament settlement intent.
-
-    Validation and proposal failures use this direct write path. A resolved
-    tournament uses ``evolve.settlement_recovery`` so a crash can replay its
-    multi-record commit from durable intent.
-
-    This helper writes:
-
-    1. ``update_experiment_outcome`` — the :class:`OutcomeRecord` lands on
-       ``experiment.json`` (the canonical record; a field present on the
-       record cannot be dropped by one tail's hand-rolled copy);
-    2. live SQLite index dual-write (best-effort, never aborts the round);
-    3. optional lineage upsert (``lineage_generation`` — ``None`` for a
-       validation-rejected round that never entered lineage). The settle-time
-       facts ride along: the outcome's own ``rejection_reason`` and the duel's
-       two scalars
-       (``lineage_parent_scalar`` / ``lineage_child_scalar``, ``None``
-       when the caller has no measurement in scope) land on the lineage
-       node so the DAG says WHY without a per-generation join against
-       ``experiment.json`` (issue #124);
-    4. optional champion-marker advance (``advance_current_generation`` —
-       sequenced between lineage and journal in that order);
-    5. optional journal append.
-
-    Returns the finalised :class:`Experiment` for the caller to journal /
-    summarise.
-    """
-    from zicato.epoch import (  # noqa: PLC0415
-        append_journal_entry,
-        append_to_lineage,
-        update_experiment_outcome,
-    )
-    from zicato.evolve.generation_phase import set_current_generation  # noqa: PLC0415
+    """Record a proposal rejection that ended before a tournament was run."""
+    from zicato.epoch import update_experiment_outcome
 
     finalised = update_experiment_outcome(workspace_root, epoch_id, generation_id, outcome)
-    # Live index dual-write: experiment.json now carries the outcome —
-    # refresh the SQLite analytical index entry for it.
     _ingest_experiment_into_index(workspace_root, epoch_id, generation_id)
-    if lineage_generation is not None:
-        append_to_lineage(
-            workspace_root,
-            epoch_id,
-            lineage_generation,
-            parent_id=lineage_parent_id,
-            # ``append_to_lineage`` persists the reason only on a settled
-            # rejection, so handing it the outcome's reason unconditionally
-            # is safe on the promoted path too.
-            rejection_reason=outcome.rejection_reason,
-            parent_scalar=lineage_parent_scalar,
-            child_scalar=lineage_child_scalar,
-        )
-    if advance_current_generation:
-        set_current_generation(workspace_root, epoch_id, generation_id)
-    if journal:
-        append_journal_entry(workspace_root, epoch_id, finalised)
     return finalised
 
 

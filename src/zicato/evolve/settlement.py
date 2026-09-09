@@ -509,8 +509,7 @@ def _field_settlement_receipt(
             sorted(verdict.promoted_ids) if len(settlement.promoted_generation_ids) > 1 else None
         ),
     )
-    # The nonce prevents proposer-authored journal prose from forging the
-    # replay marker. Persisting it in the intent makes it stable across replay.
+    # The identifier distinguishes repeated publication from a conflicting decision.
     settlement_id = uuid4().hex
     hook = getattr(prepared.adapter, "on_promote", None)
     hook_adapter_name = str(
@@ -521,7 +520,7 @@ def _field_settlement_receipt(
         and hook is not None
         and callable(hook)
     )
-    return new_settlement_receipt(
+    record = new_settlement_receipt(
         settlement_id=settlement_id,
         epoch_id=prepared.epoch_id,
         round_index=prepared.round_index,
@@ -530,6 +529,47 @@ def _field_settlement_receipt(
         field_record=field_record.to_dict() if field_record is not None else None,
         hook_adapter_name=hook_adapter_name if hook_is_applicable else "",
     ).to_dict()
+    record["gate_results"] = [
+        {
+            **result.outcome.explanation,
+            "matchup_id": matchup_id,
+            "champion": result.parent_generation_id,
+            "challenger": result.child_generation_id,
+            "decision": result.outcome.decision,
+            "reason": result.outcome.reason,
+            "parent_aggregate": result.parent_agg,
+            "child_aggregate": result.child_agg,
+        }
+        for matchup_id, result in execution.raw_results.items()
+        if result.outcome.explanation is not None
+    ]
+    for gate in record["gate_results"]:
+        if (
+            gate["matchup_id"] != execution.decision.crowning_matchup_id
+            or verdict.holdout_block is None
+        ):
+            continue
+        block = dict(verdict.holdout_block)
+        status = block["confirmation_status"]
+        gate["holdout"] = block
+        gate["rules"] = [
+            *gate["rules"],
+            {
+                "id": "holdout",
+                "label": "Holdout confirmation",
+                "status": {
+                    "satisfied": "pass",
+                    "failed": "fail",
+                    "incomplete": "unknown",
+                    "disabled": "disabled",
+                }[status],
+                "fired": status in {"failed", "incomplete"},
+                "detail": block["reason"] or status,
+            },
+        ]
+        if status in {"failed", "incomplete"}:
+            gate["deciding_rule"] = "holdout"
+    return record
 
 
 def _round_summary(

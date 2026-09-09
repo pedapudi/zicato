@@ -120,7 +120,6 @@ from zicato.query.paths import (
     WorkspacePaths,
     _iso,
     _natural_key,
-    _read_json_value,
     _resolve_epoch_id,
     _utc_now,
     coerce_float,
@@ -1370,10 +1369,14 @@ def _experiment_outcomes(
     paths: WorkspacePaths, epoch_id: str, generation_ids: list[str]
 ) -> dict[str, dict[str, Any]]:
     """Each generation's recorded experiment outcome (journal detail)."""
-    layout = layout_of(paths)
+    from zicato.epoch.journal import read_experiment_body
+
     out: dict[str, dict[str, Any]] = {}
     for generation_id in generation_ids:
-        record = _read_json_value(layout.experiment(epoch_id, generation_id))
+        try:
+            record = read_experiment_body(paths.root, epoch_id, generation_id)
+        except (OSError, ValueError, RuntimeError):
+            continue
         if not isinstance(record, dict):
             continue
         outcome = record.get("outcome")

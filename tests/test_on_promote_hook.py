@@ -37,11 +37,13 @@ from tests._orchestrator_harness import (
     run_evolve_once,
     target_call_llm,
 )
+from tests._workspace_support import read_experiment_record
 from tests.test_orchestrator_multi_challenger import (
     _bootstrap_swiss_workspace,
 )
 from zicato.core.types import TournamentStructure
 from zicato.epoch.settlement_receipt import field_settlement_intent_path
+from zicato.evolve.generation_phase import current_generation
 from zicato.evolve.promote_hook import ON_PROMOTE_TIMEOUT_SECONDS, fire_on_promote
 from zicato.health.diagnostics import assess_loop_health, detect_on_promote_hook_failed
 
@@ -344,8 +346,7 @@ def test_gauntlet_promotion_fires_the_hook_once(
     assert (context["snapshot_root"] / "agent.py").is_file()
     # It fires only after the promotion is durable: the marker already
     # names the generation the hook was told about.
-    marker = workspace / "epochs" / epoch_id / "current_generation"
-    assert marker.read_text().strip() == "v1"
+    assert current_generation(workspace, epoch_id) == "v1"
     assert _findings(_health_report(workspace, epoch_id, 1), "on_promote_hook_failed") == []
     assert _settlement_receipt(workspace, epoch_id)["promotion_hook"]["state"] == "succeeded"
 
@@ -393,8 +394,7 @@ def test_multi_challenger_crowning_fires_the_hook_once(
     crowned = outcome.proposed_generation_id
     assert context["generation_id"] == crowned
     assert context["parent_generation_id"] == "v0"
-    marker = workspace / "epochs" / epoch_id / "current_generation"
-    assert marker.read_text().strip() == crowned
+    assert current_generation(workspace, epoch_id) == crowned
     hook_delivery = _settlement_receipt(workspace, epoch_id)["promotion_hook"]
     assert hook_delivery == {
         "state": "succeeded",
@@ -436,10 +436,9 @@ def test_a_failing_hook_leaves_the_promotion_standing(
     # The round settled normally and the promotion is intact on every store.
     assert len(calls) == 1
     assert outcome.tournament_decision == "promoted"
-    marker = workspace / "epochs" / epoch_id / "current_generation"
-    assert marker.read_text().strip() == "v1"
-    body = json.loads(
-        (workspace / "epochs" / epoch_id / "generations" / "v1" / "experiment.json").read_text()
+    assert current_generation(workspace, epoch_id) == "v1"
+    body = read_experiment_record(
+        workspace / "epochs" / epoch_id / "generations" / "v1" / "experiment.json"
     )
     assert body["outcome"]["tournament_decision"] == "promoted"
 

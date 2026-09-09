@@ -38,8 +38,13 @@ from tests._orchestrator_harness import (
     install_telemetry_stubs,
     run_evolve_once,
 )
+from tests._workspace_support import read_experiment_record
 from zicato.core.types import ScoringWeights, TournamentStructure
+from zicato.epoch.journal import read_journal
 from zicato.epoch.lifecycle import new_epoch
+from zicato.epoch.lineage import load_lineage
+from zicato.evolve.generation_phase import current_generation
+from zicato.tournament.records import read_field_tournament_record
 
 
 def _bootstrap_swiss_workspace(
@@ -224,8 +229,8 @@ def test_swiss_field_runs_end_to_end_and_promotes(
     # The crowned challenger carries a promoted outcome under the swiss
     # structure with a non-empty match_record (the audit trail); the dead
     # branch carries a rejected outcome — both with the structure stamped.
-    crowned_outcome = json.loads((gens / crowned / "experiment.json").read_text())["outcome"]
-    dead_outcome = json.loads((gens / dead / "experiment.json").read_text())["outcome"]
+    crowned_outcome = read_experiment_record(gens / crowned / "experiment.json")["outcome"]
+    dead_outcome = read_experiment_record(gens / dead / "experiment.json")["outcome"]
     assert crowned_outcome["tournament_decision"] == "promoted"
     assert crowned_outcome["structure"] == "swiss"
     assert crowned_outcome["match_record"], "crowned generation should carry a match audit"
@@ -236,12 +241,11 @@ def test_swiss_field_runs_end_to_end_and_promotes(
     assert dead_outcome["structure"] == "swiss"
 
     # current_generation advanced to the crowned challenger only.
-    marker = workspace / "epochs" / epoch_id / "current_generation"
-    assert marker.read_text().strip() == crowned
+    assert current_generation(workspace, epoch_id) == crowned
 
     # Lineage records every challenger as a child of the champion; the
     # crowned one is promoted, the dead branch is not.
-    lineage = json.loads((workspace / "lineage.json").read_text())
+    lineage = load_lineage(workspace).to_dict()
     gens_nodes: list[dict] = []
     for ep in lineage.get("epochs", []):
         if ep.get("id") == epoch_id:
@@ -289,7 +293,7 @@ def test_swiss_field_runs_end_to_end_and_promotes(
     assert crowned in json.loads(row[1])
 
     # Journal carries an entry for both challengers.
-    journal = (workspace / "epochs" / epoch_id / "journal.md").read_text()
+    journal = read_journal(workspace, epoch_id)
     assert journal.count("Tag the greeting literal for candidate") >= 2
 
     # Each slot announces "proposing" before it settles to "applied".
@@ -379,7 +383,7 @@ def test_field_diversity_soft_reject_persists_rejected_outcome(
     # v2 (the duplicate) was soft-rejected; its experiment.json now carries a
     # terminal REJECTED outcome (pre-fix it stayed null → the tree showed
     # "pending" while the live hero showed "rejected").
-    v2_exp = json.loads((gens / "v2" / "experiment.json").read_text())
+    v2_exp = read_experiment_record(gens / "v2" / "experiment.json")
     outcome = v2_exp.get("outcome")
     assert (
         outcome is not None
@@ -426,7 +430,7 @@ def test_swiss_field_rejects_when_no_challenger_beats_champion(
 
     gens = workspace / "epochs" / epoch_id / "generations"
     for gid in ("v1", "v2"):
-        oc = json.loads((gens / gid / "experiment.json").read_text())["outcome"]
+        oc = read_experiment_record(gens / gid / "experiment.json")["outcome"]
         assert oc["tournament_decision"] == "rejected"
         assert oc["structure"] == "swiss"
 
@@ -471,7 +475,7 @@ def test_fast_swiss_reuses_cached_champion(monkeypatch: pytest.MonkeyPatch, tmp_
     assert outcome.tournament_decision == "promoted"
     crowned = outcome.proposed_generation_id
     gens = workspace / "epochs" / epoch_id / "generations"
-    crowned_oc = json.loads((gens / crowned / "experiment.json").read_text())["outcome"]
+    crowned_oc = read_experiment_record(gens / crowned / "experiment.json")["outcome"]
     assert crowned_oc["champion_eval_mode"] == "fast"
 
 
@@ -795,7 +799,7 @@ def _field_tournament_record(workspace: Path, epoch_id: str, first_challenger_id
     from zicato.core.workspace import field_tournament_path
 
     path = field_tournament_path(workspace, epoch_id, first_challenger_id)
-    return json.loads(path.read_text())
+    return read_field_tournament_record(path).to_dict()
 
 
 def test_field_override_promotes_a_non_winner(
@@ -828,8 +832,8 @@ def test_field_override_promotes_a_non_winner(
     assert current_generation(workspace, epoch_id) == "v2"
 
     gens = workspace / "epochs" / epoch_id / "generations"
-    v2_oc = json.loads((gens / "v2" / "experiment.json").read_text())["outcome"]
-    v1_oc = json.loads((gens / "v1" / "experiment.json").read_text())["outcome"]
+    v2_oc = read_experiment_record(gens / "v2" / "experiment.json")["outcome"]
+    v1_oc = read_experiment_record(gens / "v1" / "experiment.json")["outcome"]
     assert v2_oc["tournament_decision"] == "promoted"
     assert v2_oc["operator_override"] is True
     assert v2_oc["operator_override_reason"] == "prefer the diverse idea"
@@ -837,7 +841,7 @@ def test_field_override_promotes_a_non_winner(
     assert v1_oc["operator_override"] is True
 
     # Lineage marks v2 promoted, v1 a dead branch.
-    lineage = json.loads((workspace / "lineage.json").read_text())
+    lineage = load_lineage(workspace).to_dict()
     by_id = {
         n["id"]: n for ep in lineage["epochs"] if ep["id"] == epoch_id for n in ep["generations"]
     }
@@ -878,8 +882,8 @@ def test_field_override_multi_promote_advances_two(
     assert current_generation(workspace, epoch_id) == "v1"
 
     gens = workspace / "epochs" / epoch_id / "generations"
-    v1_oc = json.loads((gens / "v1" / "experiment.json").read_text())["outcome"]
-    v3_oc = json.loads((gens / "v3" / "experiment.json").read_text())["outcome"]
+    v1_oc = read_experiment_record(gens / "v1" / "experiment.json")["outcome"]
+    v3_oc = read_experiment_record(gens / "v3" / "experiment.json")["outcome"]
     # Both candidates are promoted by operator override.
     assert v1_oc["tournament_decision"] == "promoted"
     assert v3_oc["tournament_decision"] == "promoted"
@@ -887,7 +891,7 @@ def test_field_override_multi_promote_advances_two(
     assert v3_oc["operator_override"] is True
 
     # Lineage marks BOTH promoted (the multi-promote spine).
-    lineage = json.loads((workspace / "lineage.json").read_text())
+    lineage = load_lineage(workspace).to_dict()
     by_id = {
         n["id"]: n for ep in lineage["epochs"] if ep["id"] == epoch_id for n in ep["generations"]
     }
@@ -931,12 +935,12 @@ def test_field_override_rejects_every_challenger_champion_stands(
 
     gens = workspace / "epochs" / epoch_id / "generations"
     for gid in ("v1", "v2"):
-        oc = json.loads((gens / gid / "experiment.json").read_text())["outcome"]
+        oc = read_experiment_record(gens / gid / "experiment.json")["outcome"]
         assert oc["tournament_decision"] == "rejected"
         assert oc["operator_override"] is True
         assert "regression risk" in oc["rejection_reason"]
 
-    lineage = json.loads((workspace / "lineage.json").read_text())
+    lineage = load_lineage(workspace).to_dict()
     by_id = {
         n["id"]: n for ep in lineage["epochs"] if ep["id"] == epoch_id for n in ep["generations"]
     }

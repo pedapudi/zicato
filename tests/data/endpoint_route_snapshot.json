@@ -696,7 +696,7 @@
         "champion_spine": null,
         "gross": -0.030000000000000002
       },
-      "journal": "",
+      "journal": "## v1 — hyp e1 v1\n\n**proposed_at**: 2026-01-01T00:00:00Z\n**modulating**: (none)\n**outcome**: rejected (Δscalar=+0.020, Δdrift_loss=+0.000, Δpass_rate=+0.000)\n",
       "goal": "First epoch chronologically.",
       "analysis_md": "",
       "analysis_html_available": false
@@ -2049,7 +2049,7 @@
     "status": 200,
     "body": {
       "epoch_id": "e1",
-      "journal": ""
+      "journal": "## v1 — hyp e1 v1\n\n**proposed_at**: 2026-01-01T00:00:00Z\n**modulating**: (none)\n**outcome**: rejected (Δscalar=+0.020, Δdrift_loss=+0.000, Δpass_rate=+0.000)\n"
     }
   },
   "epoch_journal/rejected": {
@@ -2435,47 +2435,18 @@
             "epoch_id": "e1",
             "champion": "v0",
             "challenger": "v1",
-            "decision": "promoted",
+            "decision": "rejected",
             "reason": "",
             "deciding_rule": null,
             "margin": 0.01,
             "regressed_predicate": null,
             "regressed_namespace": null,
-            "delta_scalar": -0.010000000000000009,
-            "delta_pass_rate": 0.0,
+            "delta_scalar": null,
+            "delta_pass_rate": null,
             "champion_scalar": 0.5,
             "challenger_scalar": 0.49,
             "live": null,
-            "rules": [
-              {
-                "id": "regression_suite",
-                "label": "Regression suite",
-                "status": "skipped",
-                "detail": "disabled",
-                "fired": false
-              },
-              {
-                "id": "scalar_margin",
-                "label": "Scalar margin",
-                "status": "pass",
-                "detail": "0.50 → 0.49 (-0.01; needs ≤ -0.01)",
-                "fired": false
-              },
-              {
-                "id": "pass_rate_monotonicity",
-                "label": "Pass-rate monotonicity",
-                "status": "pass",
-                "detail": "all preserved",
-                "fired": false
-              },
-              {
-                "id": "namespace_monotonicity",
-                "label": "Namespace monotonicity",
-                "status": "unknown",
-                "detail": "namespace aggregates not recorded",
-                "fired": false
-              }
-            ],
+            "rules": [],
             "scalar_components": {
               "champion": null,
               "challenger": null
@@ -2973,7 +2944,7 @@
       "rounds": [],
       "standings": [],
       "field_status": [],
-      "source": "loss_files"
+      "source": "unavailable"
     }
   },
   "tournament_structure/rejected": {
@@ -3085,47 +3056,18 @@
       "epoch_id": "e1",
       "champion": "v0",
       "challenger": "v1",
-      "decision": "promoted",
+      "decision": "rejected",
       "reason": "",
       "deciding_rule": null,
       "margin": 0.01,
       "regressed_predicate": null,
       "regressed_namespace": null,
-      "delta_scalar": -0.010000000000000009,
-      "delta_pass_rate": 0.0,
+      "delta_scalar": null,
+      "delta_pass_rate": null,
       "champion_scalar": 0.5,
       "challenger_scalar": 0.49,
       "live": null,
-      "rules": [
-        {
-          "id": "regression_suite",
-          "label": "Regression suite",
-          "status": "skipped",
-          "detail": "disabled",
-          "fired": false
-        },
-        {
-          "id": "scalar_margin",
-          "label": "Scalar margin",
-          "status": "pass",
-          "detail": "0.50 → 0.49 (-0.01; needs ≤ -0.01)",
-          "fired": false
-        },
-        {
-          "id": "pass_rate_monotonicity",
-          "label": "Pass-rate monotonicity",
-          "status": "pass",
-          "detail": "all preserved",
-          "fired": false
-        },
-        {
-          "id": "namespace_monotonicity",
-          "label": "Namespace monotonicity",
-          "status": "unknown",
-          "detail": "namespace aggregates not recorded",
-          "fired": false
-        }
-      ],
+      "rules": [],
       "scalar_components": {
         "champion": null,
         "challenger": null
@@ -3866,7 +3808,7 @@
         "champion_spine": null,
         "gross": 77.22
       },
-      "journal": "",
+      "journal": "## v1 — Enforce explicit slide-structure output.\n\n**proposed_at**: 2026-05-30T00:30:00Z\n**modulating**: coordinator_prompt, oversight_policy\n**why**: The coordinator's outline omits the slide structure the brief asks for.\n**outcome**: rejected (Δscalar=+75.710, Δdrift_loss=+75.710, Δpass_rate=+0.000)\n## v2 — Tighten coordinator oversight.\n\n**proposed_at**: 2026-05-30T01:30:00Z\n**modulating**: oversight_policy\n**why**: The oversight policy lets a drifting draft through.\n**outcome**: rejected (Δscalar=+1.510, Δdrift_loss=+1.510, Δpass_rate=+0.000)\n",
       "goal": "Make the presentation agent crisper.",
       "analysis_md": "",
       "analysis_html_available": false
@@ -4418,46 +4360,17 @@
       "champion": "v0",
       "challenger": "v1",
       "decision": "rejected",
-      "reason": "challenger regressed: loss rose by 75.710000 (champion 70.940000 -> challenger 146.650000); a promotion needs the loss to drop by at least 0.010000",
-      "deciding_rule": "scalar_margin",
+      "reason": "",
+      "deciding_rule": null,
       "margin": 0.01,
       "regressed_predicate": null,
       "regressed_namespace": null,
-      "delta_scalar": 75.71000000000001,
-      "delta_pass_rate": 0.0,
+      "delta_scalar": null,
+      "delta_pass_rate": null,
       "champion_scalar": 70.94,
       "challenger_scalar": 146.65,
       "live": null,
-      "rules": [
-        {
-          "id": "regression_suite",
-          "label": "Regression suite",
-          "status": "skipped",
-          "detail": "disabled",
-          "fired": false
-        },
-        {
-          "id": "scalar_margin",
-          "label": "Scalar margin",
-          "status": "fail",
-          "detail": "70.94 → 146.65 (+75.71; needs ≤ -0.01)",
-          "fired": true
-        },
-        {
-          "id": "pass_rate_monotonicity",
-          "label": "Pass-rate monotonicity",
-          "status": "not_reached",
-          "detail": "not reached (an earlier rule fired)",
-          "fired": false
-        },
-        {
-          "id": "namespace_monotonicity",
-          "label": "Namespace monotonicity",
-          "status": "not_reached",
-          "detail": "not reached (an earlier rule fired)",
-          "fired": false
-        }
-      ],
+      "rules": [],
       "scalar_components": {
         "champion": {
           "drift": 68.5,
@@ -4663,46 +4576,17 @@
       "champion": "v0",
       "challenger": "v2",
       "decision": "rejected",
-      "reason": "challenger regressed: loss rose by 1.510000 (champion 70.940000 -> challenger 72.450000); a promotion needs the loss to drop by at least 0.010000",
-      "deciding_rule": "scalar_margin",
+      "reason": "",
+      "deciding_rule": null,
       "margin": 0.01,
       "regressed_predicate": null,
       "regressed_namespace": null,
-      "delta_scalar": 1.5100000000000051,
-      "delta_pass_rate": 0.0,
+      "delta_scalar": null,
+      "delta_pass_rate": null,
       "champion_scalar": 70.94,
       "challenger_scalar": 72.45,
       "live": null,
-      "rules": [
-        {
-          "id": "regression_suite",
-          "label": "Regression suite",
-          "status": "skipped",
-          "detail": "disabled",
-          "fired": false
-        },
-        {
-          "id": "scalar_margin",
-          "label": "Scalar margin",
-          "status": "fail",
-          "detail": "70.94 → 72.45 (+1.51; needs ≤ -0.01)",
-          "fired": true
-        },
-        {
-          "id": "pass_rate_monotonicity",
-          "label": "Pass-rate monotonicity",
-          "status": "not_reached",
-          "detail": "not reached (an earlier rule fired)",
-          "fired": false
-        },
-        {
-          "id": "namespace_monotonicity",
-          "label": "Namespace monotonicity",
-          "status": "not_reached",
-          "detail": "not reached (an earlier rule fired)",
-          "fired": false
-        }
-      ],
+      "rules": [],
       "scalar_components": {
         "champion": {
           "drift": 68.5,
@@ -5160,46 +5044,17 @@
             "champion": "v0",
             "challenger": "v1",
             "decision": "rejected",
-            "reason": "challenger regressed: loss rose by 75.710000 (champion 70.940000 -> challenger 146.650000); a promotion needs the loss to drop by at least 0.010000",
-            "deciding_rule": "scalar_margin",
+            "reason": "",
+            "deciding_rule": null,
             "margin": 0.01,
             "regressed_predicate": null,
             "regressed_namespace": null,
-            "delta_scalar": 75.71000000000001,
-            "delta_pass_rate": 0.0,
+            "delta_scalar": null,
+            "delta_pass_rate": null,
             "champion_scalar": 70.94,
             "challenger_scalar": 146.65,
             "live": null,
-            "rules": [
-              {
-                "id": "regression_suite",
-                "label": "Regression suite",
-                "status": "skipped",
-                "detail": "disabled",
-                "fired": false
-              },
-              {
-                "id": "scalar_margin",
-                "label": "Scalar margin",
-                "status": "fail",
-                "detail": "70.94 → 146.65 (+75.71; needs ≤ -0.01)",
-                "fired": true
-              },
-              {
-                "id": "pass_rate_monotonicity",
-                "label": "Pass-rate monotonicity",
-                "status": "not_reached",
-                "detail": "not reached (an earlier rule fired)",
-                "fired": false
-              },
-              {
-                "id": "namespace_monotonicity",
-                "label": "Namespace monotonicity",
-                "status": "not_reached",
-                "detail": "not reached (an earlier rule fired)",
-                "fired": false
-              }
-            ],
+            "rules": [],
             "scalar_components": {
               "champion": {
                 "drift": 68.5,
@@ -5297,46 +5152,17 @@
             "champion": "v0",
             "challenger": "v2",
             "decision": "rejected",
-            "reason": "challenger regressed: loss rose by 1.510000 (champion 70.940000 -> challenger 72.450000); a promotion needs the loss to drop by at least 0.010000",
-            "deciding_rule": "scalar_margin",
+            "reason": "",
+            "deciding_rule": null,
             "margin": 0.01,
             "regressed_predicate": null,
             "regressed_namespace": null,
-            "delta_scalar": 1.5100000000000051,
-            "delta_pass_rate": 0.0,
+            "delta_scalar": null,
+            "delta_pass_rate": null,
             "champion_scalar": 70.94,
             "challenger_scalar": 72.45,
             "live": null,
-            "rules": [
-              {
-                "id": "regression_suite",
-                "label": "Regression suite",
-                "status": "skipped",
-                "detail": "disabled",
-                "fired": false
-              },
-              {
-                "id": "scalar_margin",
-                "label": "Scalar margin",
-                "status": "fail",
-                "detail": "70.94 → 72.45 (+1.51; needs ≤ -0.01)",
-                "fired": true
-              },
-              {
-                "id": "pass_rate_monotonicity",
-                "label": "Pass-rate monotonicity",
-                "status": "not_reached",
-                "detail": "not reached (an earlier rule fired)",
-                "fired": false
-              },
-              {
-                "id": "namespace_monotonicity",
-                "label": "Namespace monotonicity",
-                "status": "not_reached",
-                "detail": "not reached (an earlier rule fired)",
-                "fired": false
-              }
-            ],
+            "rules": [],
             "scalar_components": {
               "champion": {
                 "drift": 68.5,
@@ -5754,46 +5580,17 @@
             "champion": "v0",
             "challenger": "v1",
             "decision": "rejected",
-            "reason": "challenger regressed: loss rose by 75.710000 (champion 70.940000 -> challenger 146.650000); a promotion needs the loss to drop by at least 0.010000",
-            "deciding_rule": "scalar_margin",
+            "reason": "",
+            "deciding_rule": null,
             "margin": 0.01,
             "regressed_predicate": null,
             "regressed_namespace": null,
-            "delta_scalar": 75.71000000000001,
-            "delta_pass_rate": 0.0,
+            "delta_scalar": null,
+            "delta_pass_rate": null,
             "champion_scalar": 70.94,
             "challenger_scalar": 146.65,
             "live": null,
-            "rules": [
-              {
-                "id": "regression_suite",
-                "label": "Regression suite",
-                "status": "skipped",
-                "detail": "disabled",
-                "fired": false
-              },
-              {
-                "id": "scalar_margin",
-                "label": "Scalar margin",
-                "status": "fail",
-                "detail": "70.94 → 146.65 (+75.71; needs ≤ -0.01)",
-                "fired": true
-              },
-              {
-                "id": "pass_rate_monotonicity",
-                "label": "Pass-rate monotonicity",
-                "status": "not_reached",
-                "detail": "not reached (an earlier rule fired)",
-                "fired": false
-              },
-              {
-                "id": "namespace_monotonicity",
-                "label": "Namespace monotonicity",
-                "status": "not_reached",
-                "detail": "not reached (an earlier rule fired)",
-                "fired": false
-              }
-            ],
+            "rules": [],
             "scalar_components": {
               "champion": {
                 "drift": 68.5,
@@ -6183,46 +5980,17 @@
             "champion": "v0",
             "challenger": "v2",
             "decision": "rejected",
-            "reason": "challenger regressed: loss rose by 1.510000 (champion 70.940000 -> challenger 72.450000); a promotion needs the loss to drop by at least 0.010000",
-            "deciding_rule": "scalar_margin",
+            "reason": "",
+            "deciding_rule": null,
             "margin": 0.01,
             "regressed_predicate": null,
             "regressed_namespace": null,
-            "delta_scalar": 1.5100000000000051,
-            "delta_pass_rate": 0.0,
+            "delta_scalar": null,
+            "delta_pass_rate": null,
             "champion_scalar": 70.94,
             "challenger_scalar": 72.45,
             "live": null,
-            "rules": [
-              {
-                "id": "regression_suite",
-                "label": "Regression suite",
-                "status": "skipped",
-                "detail": "disabled",
-                "fired": false
-              },
-              {
-                "id": "scalar_margin",
-                "label": "Scalar margin",
-                "status": "fail",
-                "detail": "70.94 → 72.45 (+1.51; needs ≤ -0.01)",
-                "fired": true
-              },
-              {
-                "id": "pass_rate_monotonicity",
-                "label": "Pass-rate monotonicity",
-                "status": "not_reached",
-                "detail": "not reached (an earlier rule fired)",
-                "fired": false
-              },
-              {
-                "id": "namespace_monotonicity",
-                "label": "Namespace monotonicity",
-                "status": "not_reached",
-                "detail": "not reached (an earlier rule fired)",
-                "fired": false
-              }
-            ],
+            "rules": [],
             "scalar_components": {
               "champion": {
                 "drift": 68.5,
@@ -6640,46 +6408,17 @@
             "champion": "v0",
             "challenger": "v1",
             "decision": "rejected",
-            "reason": "challenger regressed: loss rose by 75.710000 (champion 70.940000 -> challenger 146.650000); a promotion needs the loss to drop by at least 0.010000",
-            "deciding_rule": "scalar_margin",
+            "reason": "",
+            "deciding_rule": null,
             "margin": 0.01,
             "regressed_predicate": null,
             "regressed_namespace": null,
-            "delta_scalar": 75.71000000000001,
-            "delta_pass_rate": 0.0,
+            "delta_scalar": null,
+            "delta_pass_rate": null,
             "champion_scalar": 70.94,
             "challenger_scalar": 146.65,
             "live": null,
-            "rules": [
-              {
-                "id": "regression_suite",
-                "label": "Regression suite",
-                "status": "skipped",
-                "detail": "disabled",
-                "fired": false
-              },
-              {
-                "id": "scalar_margin",
-                "label": "Scalar margin",
-                "status": "fail",
-                "detail": "70.94 → 146.65 (+75.71; needs ≤ -0.01)",
-                "fired": true
-              },
-              {
-                "id": "pass_rate_monotonicity",
-                "label": "Pass-rate monotonicity",
-                "status": "not_reached",
-                "detail": "not reached (an earlier rule fired)",
-                "fired": false
-              },
-              {
-                "id": "namespace_monotonicity",
-                "label": "Namespace monotonicity",
-                "status": "not_reached",
-                "detail": "not reached (an earlier rule fired)",
-                "fired": false
-              }
-            ],
+            "rules": [],
             "scalar_components": {
               "champion": {
                 "drift": 68.5,
@@ -6978,46 +6717,17 @@
             "champion": "v0",
             "challenger": "v1",
             "decision": "rejected",
-            "reason": "challenger regressed: loss rose by 75.710000 (champion 70.940000 -> challenger 146.650000); a promotion needs the loss to drop by at least 0.010000",
-            "deciding_rule": "scalar_margin",
+            "reason": "",
+            "deciding_rule": null,
             "margin": 0.01,
             "regressed_predicate": null,
             "regressed_namespace": null,
-            "delta_scalar": 75.71000000000001,
-            "delta_pass_rate": 0.0,
+            "delta_scalar": null,
+            "delta_pass_rate": null,
             "champion_scalar": 70.94,
             "challenger_scalar": 146.65,
             "live": null,
-            "rules": [
-              {
-                "id": "regression_suite",
-                "label": "Regression suite",
-                "status": "skipped",
-                "detail": "disabled",
-                "fired": false
-              },
-              {
-                "id": "scalar_margin",
-                "label": "Scalar margin",
-                "status": "fail",
-                "detail": "70.94 → 146.65 (+75.71; needs ≤ -0.01)",
-                "fired": true
-              },
-              {
-                "id": "pass_rate_monotonicity",
-                "label": "Pass-rate monotonicity",
-                "status": "not_reached",
-                "detail": "not reached (an earlier rule fired)",
-                "fired": false
-              },
-              {
-                "id": "namespace_monotonicity",
-                "label": "Namespace monotonicity",
-                "status": "not_reached",
-                "detail": "not reached (an earlier rule fired)",
-                "fired": false
-              }
-            ],
+            "rules": [],
             "scalar_components": {
               "champion": {
                 "drift": 68.5,
@@ -7115,46 +6825,17 @@
             "champion": "v0",
             "challenger": "v2",
             "decision": "rejected",
-            "reason": "challenger regressed: loss rose by 1.510000 (champion 70.940000 -> challenger 72.450000); a promotion needs the loss to drop by at least 0.010000",
-            "deciding_rule": "scalar_margin",
+            "reason": "",
+            "deciding_rule": null,
             "margin": 0.01,
             "regressed_predicate": null,
             "regressed_namespace": null,
-            "delta_scalar": 1.5100000000000051,
-            "delta_pass_rate": 0.0,
+            "delta_scalar": null,
+            "delta_pass_rate": null,
             "champion_scalar": 70.94,
             "challenger_scalar": 72.45,
             "live": null,
-            "rules": [
-              {
-                "id": "regression_suite",
-                "label": "Regression suite",
-                "status": "skipped",
-                "detail": "disabled",
-                "fired": false
-              },
-              {
-                "id": "scalar_margin",
-                "label": "Scalar margin",
-                "status": "fail",
-                "detail": "70.94 → 72.45 (+1.51; needs ≤ -0.01)",
-                "fired": true
-              },
-              {
-                "id": "pass_rate_monotonicity",
-                "label": "Pass-rate monotonicity",
-                "status": "not_reached",
-                "detail": "not reached (an earlier rule fired)",
-                "fired": false
-              },
-              {
-                "id": "namespace_monotonicity",
-                "label": "Namespace monotonicity",
-                "status": "not_reached",
-                "detail": "not reached (an earlier rule fired)",
-                "fired": false
-              }
-            ],
+            "rules": [],
             "scalar_components": {
               "champion": {
                 "drift": 68.5,
@@ -7572,46 +7253,17 @@
             "champion": "v0",
             "challenger": "v1",
             "decision": "rejected",
-            "reason": "challenger regressed: loss rose by 75.710000 (champion 70.940000 -> challenger 146.650000); a promotion needs the loss to drop by at least 0.010000",
-            "deciding_rule": "scalar_margin",
+            "reason": "",
+            "deciding_rule": null,
             "margin": 0.01,
             "regressed_predicate": null,
             "regressed_namespace": null,
-            "delta_scalar": 75.71000000000001,
-            "delta_pass_rate": 0.0,
+            "delta_scalar": null,
+            "delta_pass_rate": null,
             "champion_scalar": 70.94,
             "challenger_scalar": 146.65,
             "live": null,
-            "rules": [
-              {
-                "id": "regression_suite",
-                "label": "Regression suite",
-                "status": "skipped",
-                "detail": "disabled",
-                "fired": false
-              },
-              {
-                "id": "scalar_margin",
-                "label": "Scalar margin",
-                "status": "fail",
-                "detail": "70.94 → 146.65 (+75.71; needs ≤ -0.01)",
-                "fired": true
-              },
-              {
-                "id": "pass_rate_monotonicity",
-                "label": "Pass-rate monotonicity",
-                "status": "not_reached",
-                "detail": "not reached (an earlier rule fired)",
-                "fired": false
-              },
-              {
-                "id": "namespace_monotonicity",
-                "label": "Namespace monotonicity",
-                "status": "not_reached",
-                "detail": "not reached (an earlier rule fired)",
-                "fired": false
-              }
-            ],
+            "rules": [],
             "scalar_components": {
               "champion": {
                 "drift": 68.5,
@@ -8001,46 +7653,17 @@
             "champion": "v0",
             "challenger": "v2",
             "decision": "rejected",
-            "reason": "challenger regressed: loss rose by 1.510000 (champion 70.940000 -> challenger 72.450000); a promotion needs the loss to drop by at least 0.010000",
-            "deciding_rule": "scalar_margin",
+            "reason": "",
+            "deciding_rule": null,
             "margin": 0.01,
             "regressed_predicate": null,
             "regressed_namespace": null,
-            "delta_scalar": 1.5100000000000051,
-            "delta_pass_rate": 0.0,
+            "delta_scalar": null,
+            "delta_pass_rate": null,
             "champion_scalar": 70.94,
             "challenger_scalar": 72.45,
             "live": null,
-            "rules": [
-              {
-                "id": "regression_suite",
-                "label": "Regression suite",
-                "status": "skipped",
-                "detail": "disabled",
-                "fired": false
-              },
-              {
-                "id": "scalar_margin",
-                "label": "Scalar margin",
-                "status": "fail",
-                "detail": "70.94 → 72.45 (+1.51; needs ≤ -0.01)",
-                "fired": true
-              },
-              {
-                "id": "pass_rate_monotonicity",
-                "label": "Pass-rate monotonicity",
-                "status": "not_reached",
-                "detail": "not reached (an earlier rule fired)",
-                "fired": false
-              },
-              {
-                "id": "namespace_monotonicity",
-                "label": "Namespace monotonicity",
-                "status": "not_reached",
-                "detail": "not reached (an earlier rule fired)",
-                "fired": false
-              }
-            ],
+            "rules": [],
             "scalar_components": {
               "champion": {
                 "drift": 68.5,
@@ -8356,7 +7979,7 @@
         "champion_spine": null,
         "gross": -0.03
       },
-      "journal": "",
+      "journal": "## v2 — Name the audience up front and demand a slide outline before prose\n\n**proposed_at**: 2026-08-01T00:30:00Z\n**modulating**: prompt.system, agent.temperature\n**why**: The judge flags narrative drift whenever the agent starts writing paragraphs first.\n**outcome**: rejected (Δscalar=-0.030, Δdrift_loss=-0.030, Δpass_rate=-0.250)\n**rejection_reason**: pass_rate_regressed\n",
       "goal": "Identity.",
       "analysis_md": "",
       "analysis_html_available": false
@@ -8923,46 +8546,17 @@
             "champion": "v0",
             "challenger": "v2",
             "decision": "rejected",
-            "reason": "pass-rate regression on entries: q3_metrics_outline",
-            "deciding_rule": "pass_rate_monotonicity",
+            "reason": "pass_rate_regressed",
+            "deciding_rule": null,
             "margin": 0.02,
-            "regressed_predicate": "q3_metrics_outline",
+            "regressed_predicate": null,
             "regressed_namespace": null,
-            "delta_scalar": -0.030000000000000027,
-            "delta_pass_rate": -0.25,
+            "delta_scalar": null,
+            "delta_pass_rate": null,
             "champion_scalar": 0.72,
             "challenger_scalar": 0.69,
             "live": null,
-            "rules": [
-              {
-                "id": "regression_suite",
-                "label": "Regression suite",
-                "status": "skipped",
-                "detail": "disabled",
-                "fired": false
-              },
-              {
-                "id": "scalar_margin",
-                "label": "Scalar margin",
-                "status": "pass",
-                "detail": "0.72 → 0.69 (-0.03; needs ≤ -0.02)",
-                "fired": false
-              },
-              {
-                "id": "pass_rate_monotonicity",
-                "label": "Pass-rate monotonicity",
-                "status": "fail",
-                "detail": "regressed: q3_metrics_outline",
-                "fired": true
-              },
-              {
-                "id": "namespace_monotonicity",
-                "label": "Namespace monotonicity",
-                "status": "not_reached",
-                "detail": "not reached (an earlier rule fired)",
-                "fired": false
-              }
-            ],
+            "rules": [],
             "scalar_components": {
               "champion": {
                 "drift": 0.7,
@@ -9417,7 +9011,7 @@
         "champion_spine": null,
         "gross": 0.0
       },
-      "journal": "",
+      "journal": "## v1 — Idea v1.\n\n**proposed_at**: 2026-06-01T00:10:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: rejected (Δscalar=+0.000, Δdrift_loss=+0.000, Δpass_rate=+0.000)\n## v2 — Idea v2.\n\n**proposed_at**: 2026-06-01T00:20:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: rejected (Δscalar=+0.000, Δdrift_loss=+0.000, Δpass_rate=+0.000)\n## v3 — Idea v3.\n\n**proposed_at**: 2026-06-01T00:30:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: promoted (Δscalar=+0.000, Δdrift_loss=+0.000, Δpass_rate=+0.000)\n## v4 — Idea v4.\n\n**proposed_at**: 2026-06-01T00:40:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: rejected (Δscalar=+0.000, Δdrift_loss=+0.000, Δpass_rate=+0.000)\n",
       "goal": "g",
       "analysis_md": "",
       "analysis_html_available": false
@@ -10059,7 +9653,7 @@
       "epoch_id": "2026-06-01_e0",
       "champion": "v0",
       "challenger": "v3",
-      "decision": "deferred",
+      "decision": "promoted",
       "reason": "",
       "deciding_rule": null,
       "margin": 0.01,
@@ -10070,36 +9664,7 @@
       "champion_scalar": null,
       "challenger_scalar": 63.5,
       "live": null,
-      "rules": [
-        {
-          "id": "regression_suite",
-          "label": "Regression suite",
-          "status": "skipped",
-          "detail": "disabled",
-          "fired": false
-        },
-        {
-          "id": "scalar_margin",
-          "label": "Scalar margin",
-          "status": "unknown",
-          "detail": "champion or challenger aggregate not found",
-          "fired": false
-        },
-        {
-          "id": "pass_rate_monotonicity",
-          "label": "Pass-rate monotonicity",
-          "status": "unknown",
-          "detail": "aggregates not found",
-          "fired": false
-        },
-        {
-          "id": "namespace_monotonicity",
-          "label": "Namespace monotonicity",
-          "status": "unknown",
-          "detail": "aggregates not found",
-          "fired": false
-        }
-      ],
+      "rules": [],
       "scalar_components": {
         "champion": null,
         "challenger": {
@@ -10377,7 +9942,7 @@
             "epoch_id": "2026-06-01_e0",
             "champion": "v0",
             "challenger": "v3",
-            "decision": "deferred",
+            "decision": "promoted",
             "reason": "",
             "deciding_rule": null,
             "margin": 0.01,
@@ -10388,36 +9953,7 @@
             "champion_scalar": null,
             "challenger_scalar": 63.5,
             "live": null,
-            "rules": [
-              {
-                "id": "regression_suite",
-                "label": "Regression suite",
-                "status": "skipped",
-                "detail": "disabled",
-                "fired": false
-              },
-              {
-                "id": "scalar_margin",
-                "label": "Scalar margin",
-                "status": "unknown",
-                "detail": "champion or challenger aggregate not found",
-                "fired": false
-              },
-              {
-                "id": "pass_rate_monotonicity",
-                "label": "Pass-rate monotonicity",
-                "status": "unknown",
-                "detail": "aggregates not found",
-                "fired": false
-              },
-              {
-                "id": "namespace_monotonicity",
-                "label": "Namespace monotonicity",
-                "status": "unknown",
-                "detail": "aggregates not found",
-                "fired": false
-              }
-            ],
+            "rules": [],
             "scalar_components": {
               "champion": null,
               "challenger": {
@@ -10750,7 +10286,7 @@
         "champion_spine": null,
         "gross": 0.0
       },
-      "journal": "",
+      "journal": "## v1 — Idea v1.\n\n**proposed_at**: 2026-06-01T00:10:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: rejected (Δscalar=+0.000, Δdrift_loss=+0.000, Δpass_rate=+0.000)\n",
       "goal": "g",
       "analysis_md": "",
       "analysis_html_available": false
@@ -12218,7 +11754,7 @@
         "champion_spine": null,
         "gross": null
       },
-      "journal": "",
+      "journal": "## v1 — Idea v1.\n\n**proposed_at**: 2026-06-02T00:10:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n## v2 — Idea v2.\n\n**proposed_at**: 2026-06-02T00:20:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n",
       "goal": "g",
       "analysis_md": "",
       "analysis_html_available": false
@@ -12686,7 +12222,7 @@
         "champion_spine": null,
         "gross": 0.0
       },
-      "journal": "",
+      "journal": "## v1 — Idea v1.\n\n**proposed_at**: 2026-06-01T00:10:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: rejected (Δscalar=+0.000, Δdrift_loss=+0.000, Δpass_rate=+0.000)\n## v2 — Idea v2.\n\n**proposed_at**: 2026-06-01T00:20:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: rejected (Δscalar=+0.000, Δdrift_loss=+0.000, Δpass_rate=+0.000)\n## v3 — Idea v3.\n\n**proposed_at**: 2026-06-01T00:30:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: rejected (Δscalar=+0.000, Δdrift_loss=+0.000, Δpass_rate=+0.000)\n## v4 — Idea v4.\n\n**proposed_at**: 2026-06-01T00:40:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: promoted (Δscalar=+0.000, Δdrift_loss=+0.000, Δpass_rate=+0.000)\n",
       "goal": "g",
       "analysis_md": "",
       "analysis_html_available": false
@@ -13379,7 +12915,7 @@
         "champion_spine": null,
         "gross": null
       },
-      "journal": "",
+      "journal": "## v1 — Idea v1.\n\n**proposed_at**: 2026-06-02T00:10:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n## v2 — Idea v2.\n\n**proposed_at**: 2026-06-02T00:20:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n",
       "goal": "g",
       "analysis_md": "",
       "analysis_html_available": false
@@ -13812,7 +13348,7 @@
         "champion_spine": null,
         "gross": 0.0
       },
-      "journal": "",
+      "journal": "## v1 — Idea v1.\n\n**proposed_at**: 2026-05-30T00:10:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: promoted (Δscalar=+0.000, Δdrift_loss=+0.000, Δpass_rate=+0.000)\n## v2 — Idea v2.\n\n**proposed_at**: 2026-05-30T00:20:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: rejected (Δscalar=+0.000, Δdrift_loss=+0.000, Δpass_rate=+0.000)\n## v3 — Idea v3.\n\n**proposed_at**: 2026-05-30T00:30:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: rejected (Δscalar=+0.000, Δdrift_loss=+0.000, Δpass_rate=+0.000)\n",
       "goal": "g",
       "analysis_md": "",
       "analysis_html_available": false
@@ -14331,14 +13867,7 @@
   "racing_round_settled/tournament_structure/v1": {
     "status": 200,
     "body": {
-      "epoch_id": "2026-05-30_e0",
-      "tournament_id": "2026-05-30_e0:field:v1",
-      "structure": "racing",
-      "structure_params": {
-        "board_fraction": 0.5,
-        "eta": 2,
-        "field_size": 4
-      },
+      "champion_generation_id": "v0",
       "competitors": [
         {
           "generation_id": "v0",
@@ -14361,6 +13890,13 @@
           "seed": 4
         }
       ],
+      "decision": "promoted",
+      "delta_scalar": null,
+      "epoch_id": "2026-05-30_e0",
+      "field_status": [],
+      "promoted_generation_id": "v1",
+      "ran_at": "2026-05-30T03:00:00Z",
+      "reason": "",
       "rounds": [
         {
           "label": "Rung 0",
@@ -14427,8 +13963,15 @@
           "elo_games": 3
         }
       ],
-      "field_status": [],
-      "source": "index",
+      "state": "settled",
+      "structure": "racing",
+      "structure_params": {
+        "board_fraction": 0.5,
+        "eta": 2,
+        "field_size": 4
+      },
+      "tournament_id": "2026-05-30_e0:field:v1",
+      "source": "record",
       "diversity": {
         "field_size": 3,
         "distinct_ideas": 1,
@@ -14521,41 +14064,12 @@
       "margin": 0.01,
       "regressed_predicate": null,
       "regressed_namespace": null,
-      "delta_scalar": -14.0,
-      "delta_pass_rate": 0.0,
+      "delta_scalar": null,
+      "delta_pass_rate": null,
       "champion_scalar": 54.0,
       "challenger_scalar": 40.0,
       "live": null,
-      "rules": [
-        {
-          "id": "regression_suite",
-          "label": "Regression suite",
-          "status": "skipped",
-          "detail": "disabled",
-          "fired": false
-        },
-        {
-          "id": "scalar_margin",
-          "label": "Scalar margin",
-          "status": "pass",
-          "detail": "54.00 → 40.00 (-14.00; needs ≤ -0.01)",
-          "fired": false
-        },
-        {
-          "id": "pass_rate_monotonicity",
-          "label": "Pass-rate monotonicity",
-          "status": "pass",
-          "detail": "all preserved",
-          "fired": false
-        },
-        {
-          "id": "namespace_monotonicity",
-          "label": "Namespace monotonicity",
-          "status": "unknown",
-          "detail": "namespace aggregates not recorded",
-          "fired": false
-        }
-      ],
+      "rules": [],
       "scalar_components": {
         "champion": {
           "drift": 54.0
@@ -14841,41 +14355,12 @@
             "margin": 0.01,
             "regressed_predicate": null,
             "regressed_namespace": null,
-            "delta_scalar": -14.0,
-            "delta_pass_rate": 0.0,
+            "delta_scalar": null,
+            "delta_pass_rate": null,
             "champion_scalar": 54.0,
             "challenger_scalar": 40.0,
             "live": null,
-            "rules": [
-              {
-                "id": "regression_suite",
-                "label": "Regression suite",
-                "status": "skipped",
-                "detail": "disabled",
-                "fired": false
-              },
-              {
-                "id": "scalar_margin",
-                "label": "Scalar margin",
-                "status": "pass",
-                "detail": "54.00 → 40.00 (-14.00; needs ≤ -0.01)",
-                "fired": false
-              },
-              {
-                "id": "pass_rate_monotonicity",
-                "label": "Pass-rate monotonicity",
-                "status": "pass",
-                "detail": "all preserved",
-                "fired": false
-              },
-              {
-                "id": "namespace_monotonicity",
-                "label": "Namespace monotonicity",
-                "status": "unknown",
-                "detail": "namespace aggregates not recorded",
-                "fired": false
-              }
-            ],
+            "rules": [],
             "scalar_components": {
               "champion": {
                 "drift": 54.0
@@ -15279,7 +14764,7 @@
         "champion_spine": null,
         "gross": null
       },
-      "journal": "",
+      "journal": "## v1 — Idea v1.\n\n**proposed_at**: 2026-05-30T00:10:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n## v2 — Idea v2.\n\n**proposed_at**: 2026-05-30T00:20:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n## v3 — Idea v3.\n\n**proposed_at**: 2026-05-30T00:30:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n",
       "goal": "g",
       "analysis_md": "",
       "analysis_html_available": false
@@ -15971,7 +15456,7 @@
         "champion_spine": null,
         "gross": -0.01999999999999999
       },
-      "journal": "",
+      "journal": "## v1 — Idea v1.\n\n**proposed_at**: 2026-05-30T00:10:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: promoted (Δscalar=-0.120, Δdrift_loss=-0.120, Δpass_rate=+0.000)\n## v2 — Idea v2.\n\n**proposed_at**: 2026-05-30T00:20:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: rejected (Δscalar=+0.050, Δdrift_loss=+0.050, Δpass_rate=+0.000)\n## v3 — Idea v3.\n\n**proposed_at**: 2026-05-30T00:30:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: rejected (Δscalar=+0.050, Δdrift_loss=+0.050, Δpass_rate=+0.000)\n",
       "goal": "g",
       "analysis_md": "",
       "analysis_html_available": false
@@ -16551,12 +16036,7 @@
   "single_elim/tournament_structure/v1": {
     "status": 200,
     "body": {
-      "epoch_id": "2026-05-30_e0",
-      "tournament_id": "2026-05-30_e0:field:v1",
-      "structure": "single_elim",
-      "structure_params": {
-        "seed_order": "scalar"
-      },
+      "champion_generation_id": "v0",
       "competitors": [
         {
           "generation_id": "v0",
@@ -16579,6 +16059,13 @@
           "seed": 4
         }
       ],
+      "decision": "promoted",
+      "delta_scalar": null,
+      "epoch_id": "2026-05-30_e0",
+      "field_status": [],
+      "promoted_generation_id": "v1",
+      "ran_at": "2026-05-30T03:00:00Z",
+      "reason": "",
       "rounds": [
         {
           "label": "Semifinal",
@@ -16660,8 +16147,13 @@
           "elo_games": 5
         }
       ],
-      "field_status": [],
-      "source": "index",
+      "state": "settled",
+      "structure": "single_elim",
+      "structure_params": {
+        "seed_order": "scalar"
+      },
+      "tournament_id": "2026-05-30_e0:field:v1",
+      "source": "record",
       "gen_states": [
         {
           "generation_id": "v0",
@@ -16821,47 +16313,18 @@
       "epoch_id": "2026-05-30_e0",
       "champion": "v0",
       "challenger": "v1",
-      "decision": "rejected",
-      "reason": "challenger regressed: loss rose by 1.000000 (champion 70.000000 -> challenger 71.000000); a promotion needs the loss to drop by at least 0.010000",
-      "deciding_rule": "scalar_margin",
+      "decision": "promoted",
+      "reason": "",
+      "deciding_rule": null,
       "margin": 0.01,
       "regressed_predicate": null,
       "regressed_namespace": null,
-      "delta_scalar": 1.0,
-      "delta_pass_rate": 0.0,
+      "delta_scalar": null,
+      "delta_pass_rate": null,
       "champion_scalar": 70.0,
       "challenger_scalar": 71.0,
       "live": null,
-      "rules": [
-        {
-          "id": "regression_suite",
-          "label": "Regression suite",
-          "status": "skipped",
-          "detail": "disabled",
-          "fired": false
-        },
-        {
-          "id": "scalar_margin",
-          "label": "Scalar margin",
-          "status": "fail",
-          "detail": "70.00 → 71.00 (+1.00; needs ≤ -0.01)",
-          "fired": true
-        },
-        {
-          "id": "pass_rate_monotonicity",
-          "label": "Pass-rate monotonicity",
-          "status": "not_reached",
-          "detail": "not reached (an earlier rule fired)",
-          "fired": false
-        },
-        {
-          "id": "namespace_monotonicity",
-          "label": "Namespace monotonicity",
-          "status": "not_reached",
-          "detail": "not reached (an earlier rule fired)",
-          "fired": false
-        }
-      ],
+      "rules": [],
       "scalar_components": {
         "champion": {
           "drift": 70.0
@@ -17141,47 +16604,18 @@
             "epoch_id": "2026-05-30_e0",
             "champion": "v0",
             "challenger": "v1",
-            "decision": "rejected",
-            "reason": "challenger regressed: loss rose by 1.000000 (champion 70.000000 -> challenger 71.000000); a promotion needs the loss to drop by at least 0.010000",
-            "deciding_rule": "scalar_margin",
+            "decision": "promoted",
+            "reason": "",
+            "deciding_rule": null,
             "margin": 0.01,
             "regressed_predicate": null,
             "regressed_namespace": null,
-            "delta_scalar": 1.0,
-            "delta_pass_rate": 0.0,
+            "delta_scalar": null,
+            "delta_pass_rate": null,
             "champion_scalar": 70.0,
             "challenger_scalar": 71.0,
             "live": null,
-            "rules": [
-              {
-                "id": "regression_suite",
-                "label": "Regression suite",
-                "status": "skipped",
-                "detail": "disabled",
-                "fired": false
-              },
-              {
-                "id": "scalar_margin",
-                "label": "Scalar margin",
-                "status": "fail",
-                "detail": "70.00 → 71.00 (+1.00; needs ≤ -0.01)",
-                "fired": true
-              },
-              {
-                "id": "pass_rate_monotonicity",
-                "label": "Pass-rate monotonicity",
-                "status": "not_reached",
-                "detail": "not reached (an earlier rule fired)",
-                "fired": false
-              },
-              {
-                "id": "namespace_monotonicity",
-                "label": "Namespace monotonicity",
-                "status": "not_reached",
-                "detail": "not reached (an earlier rule fired)",
-                "fired": false
-              }
-            ],
+            "rules": [],
             "scalar_components": {
               "champion": {
                 "drift": 70.0
@@ -17475,7 +16909,7 @@
         "champion_spine": null,
         "gross": -0.06999999999999999
       },
-      "journal": "",
+      "journal": "## v1 — Idea v1.\n\n**proposed_at**: 2026-05-30T00:10:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: promoted (Δscalar=-0.120, Δdrift_loss=-0.120, Δpass_rate=+0.000)\n## v2 — Idea v2.\n\n**proposed_at**: 2026-05-30T00:20:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: rejected (Δscalar=+0.050, Δdrift_loss=+0.050, Δpass_rate=+0.000)\n",
       "goal": "g",
       "analysis_md": "",
       "analysis_html_available": false
@@ -17814,12 +17248,7 @@
   "swiss/tournament_structure/v1": {
     "status": 200,
     "body": {
-      "epoch_id": "2026-05-30_e0",
-      "tournament_id": "2026-05-30_e0:field:v1",
-      "structure": "swiss",
-      "structure_params": {
-        "rounds": 2
-      },
+      "champion_generation_id": "v0",
       "competitors": [
         {
           "generation_id": "v0",
@@ -17837,6 +17266,13 @@
           "seed": 3
         }
       ],
+      "decision": "promoted",
+      "delta_scalar": null,
+      "epoch_id": "2026-05-30_e0",
+      "field_status": [],
+      "promoted_generation_id": "v1",
+      "ran_at": "2026-05-30T03:00:00Z",
+      "reason": "",
       "rounds": [
         {
           "label": "Round 1",
@@ -17893,8 +17329,13 @@
           "elo_games": 3
         }
       ],
-      "field_status": [],
-      "source": "index",
+      "state": "settled",
+      "structure": "swiss",
+      "structure_params": {
+        "rounds": 2
+      },
+      "tournament_id": "2026-05-30_e0:field:v1",
+      "source": "record",
       "diversity": {
         "field_size": 2,
         "distinct_ideas": 1,
@@ -17981,47 +17422,18 @@
       "epoch_id": "2026-05-30_e0",
       "champion": "v0",
       "challenger": "v1",
-      "decision": "rejected",
-      "reason": "challenger regressed: loss rose by 1.000000 (champion 70.000000 -> challenger 71.000000); a promotion needs the loss to drop by at least 0.010000",
-      "deciding_rule": "scalar_margin",
+      "decision": "promoted",
+      "reason": "",
+      "deciding_rule": null,
       "margin": 0.01,
       "regressed_predicate": null,
       "regressed_namespace": null,
-      "delta_scalar": 1.0,
-      "delta_pass_rate": 0.0,
+      "delta_scalar": null,
+      "delta_pass_rate": null,
       "champion_scalar": 70.0,
       "challenger_scalar": 71.0,
       "live": null,
-      "rules": [
-        {
-          "id": "regression_suite",
-          "label": "Regression suite",
-          "status": "skipped",
-          "detail": "disabled",
-          "fired": false
-        },
-        {
-          "id": "scalar_margin",
-          "label": "Scalar margin",
-          "status": "fail",
-          "detail": "70.00 → 71.00 (+1.00; needs ≤ -0.01)",
-          "fired": true
-        },
-        {
-          "id": "pass_rate_monotonicity",
-          "label": "Pass-rate monotonicity",
-          "status": "not_reached",
-          "detail": "not reached (an earlier rule fired)",
-          "fired": false
-        },
-        {
-          "id": "namespace_monotonicity",
-          "label": "Namespace monotonicity",
-          "status": "not_reached",
-          "detail": "not reached (an earlier rule fired)",
-          "fired": false
-        }
-      ],
+      "rules": [],
       "scalar_components": {
         "champion": {
           "drift": 70.0
@@ -18301,47 +17713,18 @@
             "epoch_id": "2026-05-30_e0",
             "champion": "v0",
             "challenger": "v1",
-            "decision": "rejected",
-            "reason": "challenger regressed: loss rose by 1.000000 (champion 70.000000 -> challenger 71.000000); a promotion needs the loss to drop by at least 0.010000",
-            "deciding_rule": "scalar_margin",
+            "decision": "promoted",
+            "reason": "",
+            "deciding_rule": null,
             "margin": 0.01,
             "regressed_predicate": null,
             "regressed_namespace": null,
-            "delta_scalar": 1.0,
-            "delta_pass_rate": 0.0,
+            "delta_scalar": null,
+            "delta_pass_rate": null,
             "champion_scalar": 70.0,
             "challenger_scalar": 71.0,
             "live": null,
-            "rules": [
-              {
-                "id": "regression_suite",
-                "label": "Regression suite",
-                "status": "skipped",
-                "detail": "disabled",
-                "fired": false
-              },
-              {
-                "id": "scalar_margin",
-                "label": "Scalar margin",
-                "status": "fail",
-                "detail": "70.00 → 71.00 (+1.00; needs ≤ -0.01)",
-                "fired": true
-              },
-              {
-                "id": "pass_rate_monotonicity",
-                "label": "Pass-rate monotonicity",
-                "status": "not_reached",
-                "detail": "not reached (an earlier rule fired)",
-                "fired": false
-              },
-              {
-                "id": "namespace_monotonicity",
-                "label": "Namespace monotonicity",
-                "status": "not_reached",
-                "detail": "not reached (an earlier rule fired)",
-                "fired": false
-              }
-            ],
+            "rules": [],
             "scalar_components": {
               "champion": {
                 "drift": 70.0
@@ -18692,7 +18075,7 @@
         "champion_spine": null,
         "gross": -0.01999999999999999
       },
-      "journal": "",
+      "journal": "## v1 — Idea v1.\n\n**proposed_at**: 2026-05-30T00:10:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: promoted (Δscalar=-0.120, Δdrift_loss=-0.120, Δpass_rate=+0.000)\n## v2 — Idea v2.\n\n**proposed_at**: 2026-05-30T00:20:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: rejected (Δscalar=+0.050, Δdrift_loss=+0.050, Δpass_rate=+0.000)\n## v3 — Idea v3.\n\n**proposed_at**: 2026-05-30T00:30:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: rejected (Δscalar=+0.050, Δdrift_loss=+0.050, Δpass_rate=+0.000)\n",
       "goal": "g",
       "analysis_md": "",
       "analysis_html_available": false
@@ -19324,12 +18707,7 @@
   "double_elim/tournament_structure/v1": {
     "status": 200,
     "body": {
-      "epoch_id": "2026-05-30_e0",
-      "tournament_id": "2026-05-30_e0:field:v1",
-      "structure": "double_elim",
-      "structure_params": {
-        "grand_final_reset": true
-      },
+      "champion_generation_id": "v0",
       "competitors": [
         {
           "generation_id": "v0",
@@ -19352,6 +18730,13 @@
           "seed": 4
         }
       ],
+      "decision": "promoted",
+      "delta_scalar": null,
+      "epoch_id": "2026-05-30_e0",
+      "field_status": [],
+      "promoted_generation_id": "v1",
+      "ran_at": "2026-05-30T03:00:00Z",
+      "reason": "",
       "rounds": [
         {
           "label": "Semifinal",
@@ -19453,8 +18838,13 @@
           "elo_games": 6
         }
       ],
-      "field_status": [],
-      "source": "index",
+      "state": "settled",
+      "structure": "double_elim",
+      "structure_params": {
+        "grand_final_reset": true
+      },
+      "tournament_id": "2026-05-30_e0:field:v1",
+      "source": "record",
       "gen_states": [
         {
           "generation_id": "v0",
@@ -19620,47 +19010,18 @@
       "epoch_id": "2026-05-30_e0",
       "champion": "v0",
       "challenger": "v1",
-      "decision": "rejected",
-      "reason": "challenger regressed: loss rose by 1.000000 (champion 70.000000 -> challenger 71.000000); a promotion needs the loss to drop by at least 0.010000",
-      "deciding_rule": "scalar_margin",
+      "decision": "promoted",
+      "reason": "",
+      "deciding_rule": null,
       "margin": 0.01,
       "regressed_predicate": null,
       "regressed_namespace": null,
-      "delta_scalar": 1.0,
-      "delta_pass_rate": 0.0,
+      "delta_scalar": null,
+      "delta_pass_rate": null,
       "champion_scalar": 70.0,
       "challenger_scalar": 71.0,
       "live": null,
-      "rules": [
-        {
-          "id": "regression_suite",
-          "label": "Regression suite",
-          "status": "skipped",
-          "detail": "disabled",
-          "fired": false
-        },
-        {
-          "id": "scalar_margin",
-          "label": "Scalar margin",
-          "status": "fail",
-          "detail": "70.00 → 71.00 (+1.00; needs ≤ -0.01)",
-          "fired": true
-        },
-        {
-          "id": "pass_rate_monotonicity",
-          "label": "Pass-rate monotonicity",
-          "status": "not_reached",
-          "detail": "not reached (an earlier rule fired)",
-          "fired": false
-        },
-        {
-          "id": "namespace_monotonicity",
-          "label": "Namespace monotonicity",
-          "status": "not_reached",
-          "detail": "not reached (an earlier rule fired)",
-          "fired": false
-        }
-      ],
+      "rules": [],
       "scalar_components": {
         "champion": {
           "drift": 70.0
@@ -19940,47 +19301,18 @@
             "epoch_id": "2026-05-30_e0",
             "champion": "v0",
             "challenger": "v1",
-            "decision": "rejected",
-            "reason": "challenger regressed: loss rose by 1.000000 (champion 70.000000 -> challenger 71.000000); a promotion needs the loss to drop by at least 0.010000",
-            "deciding_rule": "scalar_margin",
+            "decision": "promoted",
+            "reason": "",
+            "deciding_rule": null,
             "margin": 0.01,
             "regressed_predicate": null,
             "regressed_namespace": null,
-            "delta_scalar": 1.0,
-            "delta_pass_rate": 0.0,
+            "delta_scalar": null,
+            "delta_pass_rate": null,
             "champion_scalar": 70.0,
             "challenger_scalar": 71.0,
             "live": null,
-            "rules": [
-              {
-                "id": "regression_suite",
-                "label": "Regression suite",
-                "status": "skipped",
-                "detail": "disabled",
-                "fired": false
-              },
-              {
-                "id": "scalar_margin",
-                "label": "Scalar margin",
-                "status": "fail",
-                "detail": "70.00 → 71.00 (+1.00; needs ≤ -0.01)",
-                "fired": true
-              },
-              {
-                "id": "pass_rate_monotonicity",
-                "label": "Pass-rate monotonicity",
-                "status": "not_reached",
-                "detail": "not reached (an earlier rule fired)",
-                "fired": false
-              },
-              {
-                "id": "namespace_monotonicity",
-                "label": "Namespace monotonicity",
-                "status": "not_reached",
-                "detail": "not reached (an earlier rule fired)",
-                "fired": false
-              }
-            ],
+            "rules": [],
             "scalar_components": {
               "champion": {
                 "drift": 70.0
@@ -20274,7 +19606,7 @@
         "champion_spine": null,
         "gross": 0.0
       },
-      "journal": "",
+      "journal": "## v1 — Idea v1.\n\n**proposed_at**: 2026-05-30T00:10:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: promoted (Δscalar=+0.000, Δdrift_loss=+0.000, Δpass_rate=+0.000)\n## v3 — Idea v3.\n\n**proposed_at**: 2026-05-30T00:30:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: rejected (Δscalar=+0.000, Δdrift_loss=+0.000, Δpass_rate=+0.000)\n",
       "goal": "g",
       "analysis_md": "",
       "analysis_html_available": false
@@ -20633,12 +19965,7 @@
   "swiss_proposing/tournament_structure/v1": {
     "status": 200,
     "body": {
-      "epoch_id": "2026-05-30_e0",
-      "tournament_id": "2026-05-30_e0:field:v1",
-      "structure": "swiss",
-      "structure_params": {
-        "rounds": 2
-      },
+      "champion_generation_id": "v0",
       "competitors": [
         {
           "generation_id": "v0",
@@ -20656,6 +19983,35 @@
           "seed": 3
         }
       ],
+      "decision": "promoted",
+      "delta_scalar": null,
+      "epoch_id": "2026-05-30_e0",
+      "field_status": [
+        {
+          "generation_id": "v1",
+          "reason": "",
+          "seed": 2,
+          "status": "applied",
+          "diversity_status": "applied"
+        },
+        {
+          "generation_id": "v2",
+          "reason": "proposer returned invalid JSON",
+          "seed": 3,
+          "status": "rejected",
+          "diversity_status": "applied"
+        },
+        {
+          "generation_id": "v3",
+          "reason": "",
+          "seed": 4,
+          "status": "applied",
+          "diversity_status": "applied"
+        }
+      ],
+      "promoted_generation_id": "v1",
+      "ran_at": "2026-05-30T03:00:00Z",
+      "reason": "",
       "rounds": [
         {
           "label": "Round 1",
@@ -20712,30 +20068,13 @@
           "elo_games": 3
         }
       ],
-      "field_status": [
-        {
-          "generation_id": "v1",
-          "reason": "",
-          "seed": 2,
-          "status": "applied",
-          "diversity_status": "applied"
-        },
-        {
-          "generation_id": "v2",
-          "reason": "proposer returned invalid JSON",
-          "seed": 3,
-          "status": "rejected",
-          "diversity_status": "applied"
-        },
-        {
-          "generation_id": "v3",
-          "reason": "",
-          "seed": 4,
-          "status": "applied",
-          "diversity_status": "applied"
-        }
-      ],
-      "source": "index",
+      "state": "settled",
+      "structure": "swiss",
+      "structure_params": {
+        "rounds": 2
+      },
+      "tournament_id": "2026-05-30_e0:field:v1",
+      "source": "record",
       "diversity": {
         "field_size": 2,
         "distinct_ideas": 1,
@@ -21397,7 +20736,7 @@
         "champion_spine": null,
         "gross": 0.0
       },
-      "journal": "",
+      "journal": "## v1 — Idea v1.\n\n**proposed_at**: 2026-05-30T00:10:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: promoted (Δscalar=+0.000, Δdrift_loss=+0.000, Δpass_rate=+0.000)\n## v2 — Idea v2.\n\n**proposed_at**: 2026-05-30T00:20:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: rejected (Δscalar=+0.000, Δdrift_loss=+0.000, Δpass_rate=+0.000)\n",
       "goal": "g",
       "analysis_md": "",
       "analysis_html_available": false
@@ -21736,12 +21075,7 @@
   "swiss_all_applied/tournament_structure/v1": {
     "status": 200,
     "body": {
-      "epoch_id": "2026-05-30_e0",
-      "tournament_id": "2026-05-30_e0:field:v1",
-      "structure": "swiss",
-      "structure_params": {
-        "rounds": 2
-      },
+      "champion_generation_id": "v0",
       "competitors": [
         {
           "generation_id": "v0",
@@ -21759,6 +21093,28 @@
           "seed": 3
         }
       ],
+      "decision": "promoted",
+      "delta_scalar": null,
+      "epoch_id": "2026-05-30_e0",
+      "field_status": [
+        {
+          "generation_id": "v1",
+          "reason": "",
+          "seed": 2,
+          "status": "applied",
+          "diversity_status": "applied"
+        },
+        {
+          "generation_id": "v2",
+          "reason": "",
+          "seed": 3,
+          "status": "applied",
+          "diversity_status": "applied"
+        }
+      ],
+      "promoted_generation_id": "v1",
+      "ran_at": "2026-05-30T03:00:00Z",
+      "reason": "",
       "rounds": [
         {
           "label": "Round 1",
@@ -21815,23 +21171,13 @@
           "elo_games": 3
         }
       ],
-      "field_status": [
-        {
-          "generation_id": "v1",
-          "reason": "",
-          "seed": 2,
-          "status": "applied",
-          "diversity_status": "applied"
-        },
-        {
-          "generation_id": "v2",
-          "reason": "",
-          "seed": 3,
-          "status": "applied",
-          "diversity_status": "applied"
-        }
-      ],
-      "source": "index",
+      "state": "settled",
+      "structure": "swiss",
+      "structure_params": {
+        "rounds": 2
+      },
+      "tournament_id": "2026-05-30_e0:field:v1",
+      "source": "record",
       "diversity": {
         "field_size": 2,
         "distinct_ideas": 1,
@@ -22215,7 +21561,7 @@
         "champion_spine": null,
         "gross": 0.030000000000000013
       },
-      "journal": "",
+      "journal": "## v1 — Idea v1.\n\n**proposed_at**: 2026-05-30T00:10:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: promoted (Δscalar=-0.120, Δdrift_loss=-0.120, Δpass_rate=+0.000)\n## v2 — Idea v2.\n\n**proposed_at**: 2026-05-30T00:20:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: rejected (Δscalar=+0.050, Δdrift_loss=+0.050, Δpass_rate=+0.000)\n## v3 — Idea v3.\n\n**proposed_at**: 2026-05-30T00:30:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: rejected (Δscalar=+0.050, Δdrift_loss=+0.050, Δpass_rate=+0.000)\n## v4 — Idea v4.\n\n**proposed_at**: 2026-05-30T00:40:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: rejected (Δscalar=+0.050, Δdrift_loss=+0.050, Δpass_rate=+0.000)\n## v5 — Idea v5.\n\n**proposed_at**: 2026-05-30T00:50:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n",
       "goal": "g",
       "analysis_md": "",
       "analysis_html_available": false
@@ -22802,12 +22148,7 @@
   "swiss_rated/tournament_structure/v1": {
     "status": 200,
     "body": {
-      "epoch_id": "2026-05-30_e0",
-      "tournament_id": "2026-05-30_e0:field:v1",
-      "structure": "swiss",
-      "structure_params": {
-        "rounds": 5
-      },
+      "champion_generation_id": "v0",
       "competitors": [
         {
           "generation_id": "v0",
@@ -22840,6 +22181,13 @@
           "seed": 6
         }
       ],
+      "decision": "promoted",
+      "delta_scalar": null,
+      "epoch_id": "2026-05-30_e0",
+      "field_status": [],
+      "promoted_generation_id": "v1",
+      "ran_at": "2026-05-30T03:00:00Z",
+      "reason": "",
       "rounds": [
         {
           "label": "Round 1",
@@ -22963,8 +22311,13 @@
           "elo_games": null
         }
       ],
-      "field_status": [],
-      "source": "index",
+      "state": "settled",
+      "structure": "swiss",
+      "structure_params": {
+        "rounds": 5
+      },
+      "tournament_id": "2026-05-30_e0:field:v1",
+      "source": "record",
       "diversity": {
         "field_size": 5,
         "distinct_ideas": 1,
@@ -23269,7 +22622,7 @@
         "champion_spine": null,
         "gross": -0.01999999999999999
       },
-      "journal": "",
+      "journal": "## v1 — Idea v1.\n\n**proposed_at**: 2026-05-30T00:10:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: promoted (Δscalar=-0.120, Δdrift_loss=-0.120, Δpass_rate=+0.000)\n## v2 — Idea v2.\n\n**proposed_at**: 2026-05-30T00:20:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: rejected (Δscalar=+0.050, Δdrift_loss=+0.050, Δpass_rate=+0.000)\n## v3 — Idea v3.\n\n**proposed_at**: 2026-05-30T00:30:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: rejected (Δscalar=+0.050, Δdrift_loss=+0.050, Δpass_rate=+0.000)\n",
       "goal": "g",
       "analysis_md": "",
       "analysis_html_available": false
@@ -23798,21 +23151,7 @@
   "racing_field/tournament_structure/v1": {
     "status": 200,
     "body": {
-      "epoch_id": "2026-05-30_e0",
-      "tournament_id": "2026-05-30_e0:field:v1",
-      "structure": "racing",
-      "structure_params": {
-        "rungs": [
-          {
-            "fraction": 0.5,
-            "keep": 0.5
-          },
-          {
-            "fraction": 1.0,
-            "keep": 0.5
-          }
-        ]
-      },
+      "champion_generation_id": "v0",
       "competitors": [
         {
           "generation_id": "v0",
@@ -23835,6 +23174,13 @@
           "seed": 4
         }
       ],
+      "decision": "promoted",
+      "delta_scalar": null,
+      "epoch_id": "2026-05-30_e0",
+      "field_status": [],
+      "promoted_generation_id": "v1",
+      "ran_at": "2026-05-30T03:00:00Z",
+      "reason": "",
       "rounds": [
         {
           "label": "Rung 1",
@@ -23892,8 +23238,22 @@
           "elo_games": 3
         }
       ],
-      "field_status": [],
-      "source": "index",
+      "state": "settled",
+      "structure": "racing",
+      "structure_params": {
+        "rungs": [
+          {
+            "fraction": 0.5,
+            "keep": 0.5
+          },
+          {
+            "fraction": 1.0,
+            "keep": 0.5
+          }
+        ]
+      },
+      "tournament_id": "2026-05-30_e0:field:v1",
+      "source": "record",
       "diversity": {
         "field_size": 3,
         "distinct_ideas": 1,
@@ -23980,47 +23340,18 @@
       "epoch_id": "2026-05-30_e0",
       "champion": "v0",
       "challenger": "v1",
-      "decision": "rejected",
-      "reason": "challenger regressed: loss rose by 1.000000 (champion 70.000000 -> challenger 71.000000); a promotion needs the loss to drop by at least 0.010000",
-      "deciding_rule": "scalar_margin",
+      "decision": "promoted",
+      "reason": "",
+      "deciding_rule": null,
       "margin": 0.01,
       "regressed_predicate": null,
       "regressed_namespace": null,
-      "delta_scalar": 1.0,
-      "delta_pass_rate": 0.0,
+      "delta_scalar": null,
+      "delta_pass_rate": null,
       "champion_scalar": 70.0,
       "challenger_scalar": 71.0,
       "live": null,
-      "rules": [
-        {
-          "id": "regression_suite",
-          "label": "Regression suite",
-          "status": "skipped",
-          "detail": "disabled",
-          "fired": false
-        },
-        {
-          "id": "scalar_margin",
-          "label": "Scalar margin",
-          "status": "fail",
-          "detail": "70.00 → 71.00 (+1.00; needs ≤ -0.01)",
-          "fired": true
-        },
-        {
-          "id": "pass_rate_monotonicity",
-          "label": "Pass-rate monotonicity",
-          "status": "not_reached",
-          "detail": "not reached (an earlier rule fired)",
-          "fired": false
-        },
-        {
-          "id": "namespace_monotonicity",
-          "label": "Namespace monotonicity",
-          "status": "not_reached",
-          "detail": "not reached (an earlier rule fired)",
-          "fired": false
-        }
-      ],
+      "rules": [],
       "scalar_components": {
         "champion": {
           "drift": 70.0
@@ -24300,47 +23631,18 @@
             "epoch_id": "2026-05-30_e0",
             "champion": "v0",
             "challenger": "v1",
-            "decision": "rejected",
-            "reason": "challenger regressed: loss rose by 1.000000 (champion 70.000000 -> challenger 71.000000); a promotion needs the loss to drop by at least 0.010000",
-            "deciding_rule": "scalar_margin",
+            "decision": "promoted",
+            "reason": "",
+            "deciding_rule": null,
             "margin": 0.01,
             "regressed_predicate": null,
             "regressed_namespace": null,
-            "delta_scalar": 1.0,
-            "delta_pass_rate": 0.0,
+            "delta_scalar": null,
+            "delta_pass_rate": null,
             "champion_scalar": 70.0,
             "challenger_scalar": 71.0,
             "live": null,
-            "rules": [
-              {
-                "id": "regression_suite",
-                "label": "Regression suite",
-                "status": "skipped",
-                "detail": "disabled",
-                "fired": false
-              },
-              {
-                "id": "scalar_margin",
-                "label": "Scalar margin",
-                "status": "fail",
-                "detail": "70.00 → 71.00 (+1.00; needs ≤ -0.01)",
-                "fired": true
-              },
-              {
-                "id": "pass_rate_monotonicity",
-                "label": "Pass-rate monotonicity",
-                "status": "not_reached",
-                "detail": "not reached (an earlier rule fired)",
-                "fired": false
-              },
-              {
-                "id": "namespace_monotonicity",
-                "label": "Namespace monotonicity",
-                "status": "not_reached",
-                "detail": "not reached (an earlier rule fired)",
-                "fired": false
-              }
-            ],
+            "rules": [],
             "scalar_components": {
               "champion": {
                 "drift": 70.0

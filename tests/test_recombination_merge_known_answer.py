@@ -40,6 +40,7 @@ import zicato_examples.target_0_convergence as _t0_pkg
 from tests._contract_pins import resolved_contract_with_proposer
 from tests._foe_support import stand_in_proposer_block
 from zicato.epoch.lifecycle import _scoring_from_dict, new_epoch
+from zicato.evolve.generation_phase import current_generation
 from zicato_examples.target_0_convergence import mocks_recombine_merge as merge_mocks
 
 EXAMPLE_DIR = Path(_t0_pkg.__file__).resolve().parent
@@ -243,8 +244,7 @@ def test_llm_merge_promotes_over_overlapping_pair(tmp_path: Path) -> None:
     assert _proposal_episodes(workspace, epoch_id) == 3 * BEST_OF_N - 1
     assert merge_mocks.merge_calls() - merges_before == 1
 
-    marker = workspace / "epochs" / epoch_id / "current_generation"
-    assert marker.read_text().strip() == "v3"
+    assert current_generation(workspace, epoch_id) == "v3"
 
 
 def test_mechanical_mode_mints_nothing_on_overlapping_pair(tmp_path: Path) -> None:
@@ -261,8 +261,7 @@ def test_mechanical_mode_mints_nothing_on_overlapping_pair(tmp_path: Path) -> No
     outcomes = _run_rounds(workspace, epoch_id, 3, aux=merge_mocks.aux_llm)
 
     assert [o.tournament_decision for o in outcomes] == ["rejected", "rejected", "rejected"]
-    marker = workspace / "epochs" / epoch_id / "current_generation"
-    assert marker.read_text().strip() == "v0"
+    assert current_generation(workspace, epoch_id) == "v0"
 
     from zicato.epoch.journal import read_experiment
     from zicato.epoch.round_log import RoundLog, fold_round_record
@@ -293,8 +292,7 @@ def test_llm_merge_garbage_response_degrades_to_fresh_sample(tmp_path: Path) -> 
     outcomes = _run_rounds(workspace, epoch_id, 3, aux=_garbage_merge_aux)
 
     assert [o.tournament_decision for o in outcomes] == ["rejected", "rejected", "rejected"]
-    marker = workspace / "epochs" / epoch_id / "current_generation"
-    assert marker.read_text().strip() == "v0"
+    assert current_generation(workspace, epoch_id) == "v0"
 
     from zicato.epoch.journal import read_experiment
     from zicato.epoch.round_log import RoundLog, fold_round_record

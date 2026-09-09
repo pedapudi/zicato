@@ -286,34 +286,53 @@ pub struct LineageView {
     pub generations: Vec<LineageGeneration>,
 }
 
-/// Fallback metadata for one generation, harvested from the legacy
-/// `lineage.json` (which lists only promoted generations).
+/// Parent relationships and birth metadata recorded before evaluation.
 #[derive(Debug, Clone, Default)]
-struct LegacyGenMeta {
+struct AncestryMetadata {
     parent_id: Option<String>,
     created_at: Option<String>,
     promoted: Option<bool>,
 }
 
-/// Build the directory-derived lineage view for `GET /api/lineage`.
-///
-/// Walks `epochs/{id}/generations/*` and emits one node per generation
-/// directory — promoted, rejected, *and* not-yet-resolved. Per node:
-///
-///   * `parent_generation_id` and `promoted` — from `lineage.json`, the
-///     single topology and promotion authority.
-///   * `created_at` — `experiment.json` `proposed_at`, else `lineage.json`
-///     `created_at`, else the directory's filesystem creation time.
-///
-/// Best-effort throughout: a malformed `experiment.json` degrades that
-/// one node's metadata rather than dropping it or failing the response.
+/// Read a committed outcome only when it names this proposal and round.
+fn committed_outcome(
+    paths: &WorkspacePaths,
+    epoch_id: &str,
+    generation_id: &str,
+    experiment: &serde_json::Value,
+) -> Option<serde_json::Value> {
+    let round = experiment.get("round_index")?.as_u64()?;
+    let path = paths
+        .workspace
+        .join("epochs")
+        .join(epoch_id)
+        .join("rounds")
+        .join(round.to_string())
+        .join("field_settlement.json");
+    let receipt: serde_json::Value = read_json(&path)?;
+    if receipt.get("state")?.as_str()? != "committed"
+        || receipt.get("epoch_id")?.as_str()? != epoch_id
+        || receipt.get("round_index")?.as_u64()? != round
+    {
+        return None;
+    }
+    receipt
+        .get("candidates")?
+        .as_array()?
+        .iter()
+        .find(|candidate| {
+            candidate.get("generation_id").and_then(|v| v.as_str()) == Some(generation_id)
+                && candidate.get("experiment_id") == experiment.get("id")
+        })?
+        .get("outcome")
+        .cloned()
+}
+
 pub fn build_lineage_view(paths: &WorkspacePaths) -> LineageView {
     use std::collections::HashMap;
 
-    // Index lineage.json by (epoch_id, generation_id) for fallback data.
-    // The legacy file only lists promoted generations, but it is a good
-    // source for the root's `created_at` and `parent_id`.
-    let mut lineage_meta: HashMap<(String, String), LegacyGenMeta> = HashMap::new();
+    // Ancestry supplies parents and birth metadata; rounds supply decisions.
+    let mut lineage_meta: HashMap<(String, String), AncestryMetadata> = HashMap::new();
     if let Some(value) = read_json::<serde_json::Value>(&paths.lineage()) {
         if let Some(epochs) = value.get("epochs").and_then(|v| v.as_array()) {
             for ep in epochs {
@@ -328,7 +347,7 @@ pub fn build_lineage_view(paths: &WorkspacePaths) -> LineageView {
                             Some(s) => s.to_string(),
                             None => continue,
                         };
-                        let meta = LegacyGenMeta {
+                        let meta = AncestryMetadata {
                             parent_id: g
                                 .get("parent_id")
                                 .and_then(|v| v.as_str())
@@ -376,14 +395,23 @@ pub fn build_lineage_view(paths: &WorkspacePaths) -> LineageView {
                 Err(_) => continue,
             };
 
-            let legacy = lineage_meta.get(&(epoch_id.clone(), generation_id.clone()));
+            let ancestry = lineage_meta.get(&(epoch_id.clone(), generation_id.clone()));
 
             // experiment.json — present once the generation has been
             // proposed; absent for the root `v0`.
             let experiment = read_json::<serde_json::Value>(&gen_path.join("experiment.json"));
 
-            let parent_generation_id = legacy.and_then(|m| m.parent_id.clone());
-            let promoted = legacy.and_then(|m| m.promoted);
+            let parent_generation_id = ancestry.and_then(|m| m.parent_id.clone());
+            let promoted = experiment
+                .as_ref()
+                .and_then(|e| committed_outcome(paths, &epoch_id, &generation_id, e))
+                .and_then(|outcome| {
+                    outcome
+                        .get("tournament_decision")
+                        .and_then(|v| v.as_str())
+                        .map(|decision| decision == "promoted")
+                })
+                .or_else(|| ancestry.and_then(|m| m.promoted));
 
             let created_at = experiment
                 .as_ref()
@@ -394,7 +422,7 @@ pub fn build_lineage_view(paths: &WorkspacePaths) -> LineageView {
                         .filter(|s| !s.is_empty())
                         .map(str::to_string)
                 })
-                .or_else(|| legacy.and_then(|m| m.created_at.clone()))
+                .or_else(|| ancestry.and_then(|m| m.created_at.clone()))
                 .or_else(|| dir_created_at(&gen_path));
 
             generations.push(LineageGeneration {
@@ -641,7 +669,7 @@ mod tests {
         // Cross-language contract: the Python worker serializes the pid
         // start time as a JSON float (the /proc tick count, e.g.
         // `116371304.0`). The Rust `ActiveRun.pid_start_time` must accept
-        // that shape; a record without the field stays `None` (legacy).
+        // that shape; a record without the field stays `None` (ancestry).
         let (_t, p) = make_ws();
         let dir = p.active_runs_dir();
         std::fs::write(
@@ -649,11 +677,15 @@ mod tests {
             r#"{"run_id":"withstart","pid":42,"pid_start_time":116371304.0}"#,
         )
         .unwrap();
-        std::fs::write(dir.join("legacy.json"), r#"{"run_id":"legacy","pid":7}"#).unwrap();
+        std::fs::write(
+            dir.join("ancestry.json"),
+            r#"{"run_id":"ancestry","pid":7}"#,
+        )
+        .unwrap();
         let runs = read_active_runs(&p);
         assert_eq!(runs.len(), 2);
-        // legacy (no field) → None
-        assert_eq!(runs[0].run_id, "legacy");
+        // ancestry (no field) → None
+        assert_eq!(runs[0].run_id, "ancestry");
         assert_eq!(runs[0].pid_start_time, None);
         // withstart → the float parses through intact
         assert_eq!(runs[1].run_id, "withstart");

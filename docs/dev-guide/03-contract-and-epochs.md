@@ -79,7 +79,7 @@ scoring.json              complete effective scoring configuration
 execution.json            captured execution bindings
 config.json               EpochConfig, including the required contract hash
 contract_components.json  component hashes used to explain drift
-journal.md                experiment journal projection
+rounds/                   committed decisions and recorded tournament details
 generations/              candidate records, source snapshots, and measurements
 ```
 
@@ -304,9 +304,10 @@ captured declaration.
 projection when a mapping is required. They do not decode raw topology again.
 
 Promotion has three meanings: `None` means unresolved, `True` means promoted,
-and `False` means rejected. An unresolved update cannot overwrite a settled
-decision. The query layer uses canonical lineage to find the reigning champion
-and to reject contradictory parent coordinates in other records.
+and `False` means rejected. The lineage reader combines recorded ancestry with
+the outcomes in committed round records. The primary generation in the most
+recent committed promotion is the champion; before any promotion, it is `v0`.
+Readers reject contradictory parent coordinates.
 
 ### 3.9.1 The seed generation
 
@@ -317,10 +318,16 @@ a new measurement of that source's performance.
 ### 3.9.2 Per-generation records
 
 `epoch.journal` owns accepted experiment bodies and their declared patches.
-An experiment carries a hypothesis before execution and an outcome after
-settlement. Mutation validation and generation derivation must complete before
-a partially written child can be accepted. Receipt replay resumes ordered
-settlement effects; reading a receipt alone performs no replay.
+The proposal file carries the hypothesis and patch references. A completed
+round records every candidate outcome in `rounds/<round>/field_settlement.json`.
+The experiment reader combines those records after the round is committed.
+Proposal rejection before tournament execution records its outcome directly in
+the proposal file. The journal is rendered from these accepted experiment
+records; no separate journal file is written.
+
+Mutation validation and generation derivation must complete before a child can
+be accepted. Recovery commits a pending round record and refreshes the derived
+index. Reading a record performs neither recovery nor external hook delivery.
 
 ### 3.9.3 Cross-epoch parent identity
 

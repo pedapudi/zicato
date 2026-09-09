@@ -16,7 +16,7 @@ from zicato.core.types import (
     HypothesisSpec,
     Patch,
 )
-from zicato.epoch import append_journal_entry, read_journal
+from zicato.epoch import read_journal, write_experiment
 
 # A ``why`` whose first sentence is a 24-character topic sentence and whose
 # remaining ~93% carries the three findings the next round actually needs.
@@ -92,7 +92,7 @@ def test_journal_preserves_the_whole_why(epoch_root: tuple[Path, str]) -> None:
     durable narrative of what each round tried and why.
     """
     ws, eid = epoch_root
-    append_journal_entry(ws, eid, _experiment())
+    write_experiment(ws, eid, "v1", _experiment())
     text = read_journal(ws, eid)
 
     assert _TOPIC_SENTENCE in text
@@ -107,7 +107,7 @@ def test_journal_preserves_a_multi_line_core_idea(epoch_root: tuple[Path, str]) 
     second line vanishing from the record entirely.
     """
     ws, eid = epoch_root
-    append_journal_entry(ws, eid, _experiment(core_idea=_MULTILINE_CORE_IDEA))
+    write_experiment(ws, eid, "v1", _experiment(core_idea=_MULTILINE_CORE_IDEA))
     text = read_journal(ws, eid)
 
     assert "Tighten the router's instruction" in text
@@ -123,10 +123,12 @@ def test_a_multi_line_field_does_not_swallow_the_field_after_it() -> None:
     every markdown renderer folded it into the same paragraph — the
     journal displayed ``line idea **why**: because`` as one run of prose.
     """
-    from zicato.epoch.journal import _render_section
+    from zicato.epoch.journal import experiment_body, render_journal_section
 
-    section = _render_section(
-        _experiment(core_idea="multi\nline idea", why="because", generation_id="v2")
+    section = render_journal_section(
+        experiment_body(
+            _experiment(core_idea="multi\nline idea", why="because", generation_id="v2")
+        )
     )
 
     assert "**core_idea**:\n\nmulti\nline idea\n\n**why**: because" in section

@@ -1019,20 +1019,60 @@ async def _gate_with_regression(
     # The gate phase span brackets the regression suite + promote gate
     # (HARMONOGRAF.md §7). It nests under the matchup / round span in scope.
     async with meta_span("gate", kind=SPAN_PHASE):
+        regression_rule = {
+            "id": "regression_suite",
+            "label": "Regression suite",
+            "status": "skipped",
+            "detail": "disabled",
+            "fired": False,
+        }
         if weights.regression_gate_enabled:
             regression = await run_regression_suite(
                 child_snapshot_root,
                 test_command=weights.regression_test_command,
                 timeout_s=weights.regression_timeout_s,
             )
+            regression_rule.update(
+                status="pass" if regression.passed else "fail",
+                detail=regression.summary,
+                fired=not regression.passed,
+            )
             if not regression.passed:
-                return _regression_rejection(parent_agg, child_agg, regression)
-        return evaluate_gate(
+                outcome = _regression_rejection(parent_agg, child_agg, regression)
+                return replace(
+                    outcome,
+                    explanation={
+                        "decision": outcome.decision,
+                        "reason": outcome.reason,
+                        "deciding_rule": "regression_suite",
+                        "rules": [regression_rule],
+                        "margin": weights.promote_margin,
+                        "champion_scalar": parent_agg["scalar"],
+                        "challenger_scalar": child_agg["scalar"],
+                        "delta_scalar": outcome.delta_scalar,
+                        "delta_pass_rate": outcome.delta_pass_rate,
+                        "regressed_predicate": None,
+                        "regressed_namespace": None,
+                    },
+                )
+        outcome = evaluate_gate(
             parent_agg,
             child_agg,
             weights,
             holdout_parent_agg=holdout_parent_agg,
             holdout_child_agg=holdout_child_agg,
+        )
+        if outcome.explanation is None:
+            return outcome
+        return replace(
+            outcome,
+            explanation={
+                **outcome.explanation,
+                "rules": [
+                    regression_rule if item["id"] == "regression_suite" else item
+                    for item in outcome.explanation["rules"]
+                ],
+            },
         )
 
 

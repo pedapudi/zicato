@@ -14,7 +14,7 @@ reasoning at publication time.
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from typing import Any, TypeVar
@@ -29,13 +29,11 @@ from zicato.core.types import (
     OutcomeRecord,
     Patch,
 )
-from zicato.core.workspace import epoch_dir
 from zicato.epoch._storage import (
     RECORD_FORMAT_VERSION,
     RecordError,
     check_record_format,
     experiment_key,
-    journal_key,
     patch_key,
 )
 from zicato.storage import StorageBackend, workspace_backend
@@ -84,10 +82,8 @@ def _field(name: str, text: str) -> str:
     away from the body and markdown folds it into the same paragraph, so a
     multi-line ``core_idea`` would visually swallow the field after it.
 
-    Nothing is dropped here. ``journal.md`` is append-only and is the one
-    durable surface a round's reasoning is read back from, so a truncation
-    at write time is permanent; budget-limited consumers cap on READ
-    instead (the analysis and report readers).
+    Full hypothesis text survives into every generated journal. Consumers with
+    a display or prompt budget shorten their own copy after rendering.
     """
     text = text.strip()
     if "\n" not in text:
@@ -119,7 +115,22 @@ def _format_outcome(outcome: OutcomeRecord) -> str:
     )
 
 
-def _render_section(experiment: Experiment) -> str:
+def render_journal_section(body: dict[str, Any]) -> str:
+    """Render the proposal and outcome captured by a composed response."""
+    return _journal_section(
+        body["generation_id"],
+        body["proposed_at"],
+        _hypothesis_from_dict(body["hypothesis"]),
+        _outcome_from_dict(body["outcome"]),
+    )
+
+
+def _journal_section(
+    generation_id: str,
+    proposed_at: str,
+    hypothesis: HypothesisSpec,
+    outcome: OutcomeRecord | None,
+) -> str:
     """Render one journal section in canonical markdown form.
 
     Format:
@@ -135,110 +146,59 @@ def _render_section(experiment: Experiment) -> str:
     a ``core_idea`` with more lines than that repeats in full as its own
     field rather than losing everything past line one (issue #123).
 
-    Missing-outcome experiments render just the proposed_at/modulating/why
-    triple. The tournament runner re-renders the same section once
-    outcome is populated; appending twice is fine — operators see the
-    proposal then the verdict.
+    A pending proposal renders its hypothesis without an outcome. Once its
+    round commits, the same section includes the recorded result.
     """
-    label = _version_label(experiment.generation_id)
-    core_idea = experiment.hypothesis.core_idea.strip()
+    label = _version_label(generation_id)
+    core_idea = hypothesis.core_idea.strip()
     core_lines = core_idea.splitlines()
     heading = core_lines[0] if core_lines else ""
 
     lines: list[str] = []
     lines.append(f"## {label} — {heading}")
     lines.append("")
-    lines.append(f"**proposed_at**: {experiment.proposed_at}")
-    if experiment.hypothesis.modulating:
-        lines.append("**modulating**: " + ", ".join(experiment.hypothesis.modulating))
+    lines.append(f"**proposed_at**: {proposed_at}")
+    if hypothesis.modulating:
+        lines.append("**modulating**: " + ", ".join(hypothesis.modulating))
     else:
         lines.append("**modulating**: (none)")
     if len(core_lines) > 1:
         lines.append(_field("core_idea", core_idea))
-    why = experiment.hypothesis.why.strip()
+    why = hypothesis.why.strip()
     if why:
         lines.append(_field("why", why))
-    if experiment.outcome is not None:
-        lines.append(_format_outcome(experiment.outcome))
-        if (
-            experiment.outcome.tournament_decision == "rejected"
-            and experiment.outcome.rejection_reason
-        ):
-            lines.append(f"**rejection_reason**: {experiment.outcome.rejection_reason}")
+    if outcome is not None:
+        lines.append(_format_outcome(outcome))
+        if outcome.tournament_decision == "rejected" and outcome.rejection_reason:
+            lines.append(f"**rejection_reason**: {outcome.rejection_reason}")
     lines.append("")
     return "\n".join(lines)
 
 
-def append_journal_entry(workspace_root: Path, epoch_id: str, experiment: Experiment) -> None:
-    """Append a markdown section for ``experiment`` to the epoch's journal.
-
-    Creates the file if it does not yet exist; otherwise appends with a
-    leading newline so consecutive sections do not run together. The
-    epoch directory MUST already exist — the caller is responsible for
-    having created it via :func:`zicato.epoch.lifecycle.new_epoch`.
-
-    The journal is plain markdown, not JSONL, so the append is a
-    read-modify-write of the whole text through the storage backend's
-    atomic :meth:`~zicato.storage.StorageBackend.write_text`. A crash
-    mid-write leaves the prior journal intact rather than a truncated
-    file.
-    """
-    edir = epoch_dir(workspace_root, epoch_id)
-    if not edir.exists():
-        raise FileNotFoundError(
-            f"epoch directory {edir} does not exist; create it with new_epoch first"
+def render_journal(experiments: Iterable[Experiment]) -> str:
+    """Render accepted experiments without reading the workspace again."""
+    return "".join(
+        _journal_section(
+            experiment.generation_id,
+            experiment.proposed_at,
+            experiment.hypothesis,
+            experiment.outcome,
         )
-    backend = workspace_backend(workspace_root, start=False)
-    key = journal_key(epoch_id)
-    section = _render_section(experiment)
-    existing = backend.read_text(key)
-    if existing:
-        if not existing.endswith("\n"):
-            existing += "\n"
-        backend.write_text(key, existing + section)
-    else:
-        backend.write_text(key, section)
-
-
-def append_journal_entry_once(
-    workspace_root: Path,
-    epoch_id: str,
-    experiment: Experiment,
-    *,
-    settlement_identity: str,
-) -> None:
-    """Append a settled experiment once under a stable settlement identity.
-
-    Field settlement can replay after any interrupted write. The journal
-    section therefore carries a machine-readable HTML comment whose identity
-    comes from the durable settlement intent and candidate generation. The
-    marker and section land in one atomic journal replacement, so a replay
-    either finds the complete entry or appends it once.
-    """
-    if not settlement_identity or any(c in settlement_identity for c in ('"', "\n", "\r")):
-        raise ValueError("settlement_identity must be non-empty and contain no quotes or newlines")
-    edir = epoch_dir(workspace_root, epoch_id)
-    if not edir.exists():
-        raise FileNotFoundError(
-            f"epoch directory {edir} does not exist; create it with new_epoch first"
-        )
-    backend = workspace_backend(workspace_root, start=False)
-    key = journal_key(epoch_id)
-    marker = f'<!-- zicato:field-settlement identity="{settlement_identity}" -->'
-    existing = backend.read_text(key) or ""
-    if marker in existing:
-        return
-    section = marker + "\n" + _render_section(experiment)
-    if existing:
-        if not existing.endswith("\n"):
-            existing += "\n"
-        section = existing + section
-    backend.write_text(key, section)
+        for experiment in experiments
+        if experiment.generation_id != "v0"
+    )
 
 
 def read_journal(workspace_root: Path, epoch_id: str) -> str:
-    """Return the epoch's full journal text, or an empty string if missing."""
-    return workspace_backend(workspace_root, start=False).read_text(journal_key(epoch_id)) or ""
+    """Render the journal from recorded hypotheses and resolved outcomes."""
+    experiments, errors = read_epoch_experiment_bodies(workspace_root, epoch_id)
+    if errors:
+        raise ExperimentRecordError("; ".join(errors))
+    return "".join(
+        render_journal_section(experiment)
+        for generation_id, experiment in experiments
+        if generation_id != "v0"
+    )
 
 
 def _coerce_paths(obj: Any) -> Any:
@@ -610,6 +570,26 @@ def _accepted_body(
         _outcome_from_dict(body["outcome"])
     except (AttributeError, KeyError, TypeError, ValueError) as exc:
         raise ExperimentRecordError(f"experiment.json for {where} does not parse: {exc}") from exc
+    from zicato.epoch.settlement_receipt import (
+        decode_settlement_receipt,
+        field_settlement_intent_key,
+    )
+
+    try:
+        raw = backend.read_json(field_settlement_intent_key(epoch_id, body["round_index"]))
+    except (OSError, ValueError) as exc:
+        raise ExperimentRecordError(f"round result for {where} cannot be read: {exc}") from exc
+    if raw is not None:
+        receipt = decode_settlement_receipt(
+            raw, expected_epoch_id=epoch_id, expected_round_index=body["round_index"]
+        )
+        if receipt.state == "committed":
+            for candidate in receipt.candidates:
+                if candidate.generation_id == generation_id:
+                    if candidate.experiment_id != body["id"]:
+                        raise ExperimentRecordError("round result names a different experiment")
+                    body = {**body, "outcome": candidate.to_dict()["outcome"]}
+                    break
     return body
 
 
@@ -788,8 +768,6 @@ def read_generation_patches(
 
 
 __all__ = [
-    "append_journal_entry",
-    "append_journal_entry_once",
     "experiment_body",
     "patch_body",
     "outcome_from_dict",

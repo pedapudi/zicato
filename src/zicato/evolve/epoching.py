@@ -280,7 +280,7 @@ def _create_epoch_from_contract(
 def _promoted_head_snapshot(workspace_root: Path, epoch_id: str) -> Path | None:
     """Return the snapshot dir of an epoch's last promoted generation.
 
-    Reads the epoch's ``current_generation`` marker (the promoted head)
+    Reads the epoch's champion from committed round decisions
     and returns that generation's ``snapshot/`` directory. Returns
     ``None`` when the epoch has no promoted generation beyond a seed
     that was never run, or when the snapshot directory is absent — the

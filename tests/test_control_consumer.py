@@ -32,6 +32,8 @@ from tests._orchestrator_harness import (
     run_evolve_once,
     target_call_llm,
 )
+from tests._workspace_support import read_experiment_record
+from zicato.evolve.generation_phase import current_generation
 from zicato.runtime.control import (
     CMD_PAUSE_EPOCH,
     CMD_PROMOTE_PREFIX,
@@ -363,8 +365,8 @@ def test_reject_override_flips_a_would_promote_round(
     assert not marker.exists()
 
     # Journal/experiment record carries the explicit operator override.
-    body = json.loads(
-        (workspace / "epochs" / epoch_id / "generations" / "v1" / "experiment.json").read_text()
+    body = read_experiment_record(
+        workspace / "epochs" / epoch_id / "generations" / "v1" / "experiment.json"
     )
     out = body["outcome"]
     assert out["tournament_decision"] == "rejected"
@@ -394,13 +396,11 @@ def test_promote_override_flips_a_would_reject_round(
     outcome = run_evolve_once(workspace, epoch_id, evaluation_call_llm)
     # The gate would have rejected (child regressed), but the override promoted.
     assert outcome.tournament_decision == "promoted"
-    # The current_generation marker WAS bumped to v1.
-    marker = workspace / "epochs" / epoch_id / "current_generation"
-    assert marker.exists()
-    assert marker.read_text().strip() == "v1"
+    # The committed round advances the champion.
+    assert current_generation(workspace, epoch_id) == "v1"
 
-    body = json.loads(
-        (workspace / "epochs" / epoch_id / "generations" / "v1" / "experiment.json").read_text()
+    body = read_experiment_record(
+        workspace / "epochs" / epoch_id / "generations" / "v1" / "experiment.json"
     )
     out = body["outcome"]
     assert out["tournament_decision"] == "promoted"
@@ -426,8 +426,8 @@ def test_override_for_other_generation_does_not_fire(
     outcome = run_evolve_once(workspace, epoch_id, evaluation_call_llm)
     # The gate's own verdict (promote) stands.
     assert outcome.tournament_decision == "promoted"
-    body = json.loads(
-        (workspace / "epochs" / epoch_id / "generations" / "v1" / "experiment.json").read_text()
+    body = read_experiment_record(
+        workspace / "epochs" / epoch_id / "generations" / "v1" / "experiment.json"
     )
     assert body["outcome"]["operator_override"] is False
     # The stale override is still pending — it never mis-fired on v1.

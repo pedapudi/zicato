@@ -313,11 +313,7 @@ async def _evolve_once(
         {**workspace_config, **execution_contract.adapter_configuration},
         writer=writer,
     )
-    # An interrupted challenger is already the newest generation record. When
-    # no champion marker exists, ``current_generation`` therefore falls back
-    # to that challenger even though it has not settled. Its persisted
-    # experiment is the authority on the parent the resumed tournament must
-    # compare against.
+    # Resume the comparison against the parent recorded before evaluation.
     if resume_plan is not None and resume_plan.resumes_in_place:
         resume_experiment = resume_plan.resume_experiment
         if resume_experiment is None or not resume_experiment.parent_generation_id:

@@ -191,20 +191,41 @@ def decode_lineage(value: Any) -> Lineage:
 
 
 def load_lineage(workspace_root: Path) -> Lineage:
-    """Read one strict canonical graph; absence is an empty graph."""
-    try:
-        text = workspace_backend(workspace_root, start=False).read_text(lineage_key())
-        return (
-            Lineage((), '{"epochs": []}', exists=False)
-            if text is None
-            else decode_lineage(json.loads(text))
-        )
-    except (OSError, ValueError) as exc:
-        raise RecordError(f"lineage.json: {exc}") from exc
+    """Read candidate ancestry and apply the outcomes of committed rounds."""
+    from zicato.epoch.settlement_receipt import iter_settlement_receipts
+
+    if not workspace_backend(workspace_root, start=False).exists(lineage_key()):
+        return Lineage((), '{"epochs": []}', exists=False)
+    raw = _load_raw(workspace_root)
+    for epoch in raw["epochs"]:
+        by_id = {row["id"]: row for row in epoch["generations"]}
+        for receipt in iter_settlement_receipts(workspace_root, epoch["id"]):
+            if receipt.state != "committed":
+                continue
+            for candidate in receipt.candidates:
+                row = by_id.get(candidate.generation_id)
+                if row is None:
+                    raise RecordError("round result names a candidate absent from ancestry")
+                if row["round_index"] != receipt.round_index:
+                    raise RecordError("round result disagrees with candidate birth round")
+                outcome = candidate.outcome
+                row.update(
+                    promoted=outcome.tournament_decision == "promoted",
+                    rejection_reason=outcome.rejection_reason,
+                    parent_scalar=candidate.parent_scalar,
+                    child_scalar=candidate.child_scalar,
+                    delta_scalar=(
+                        candidate.child_scalar - candidate.parent_scalar
+                        if candidate.child_scalar is not None
+                        and candidate.parent_scalar is not None
+                        else None
+                    ),
+                )
+    return decode_lineage(raw)
 
 
 def _replace_lineage(workspace_root: Path, lineage: Lineage, text: str) -> None:
-    before = {row.id: row.to_dict() for row in load_lineage(workspace_root).epochs}
+    before = {row.id: row.to_dict() for row in decode_lineage(_load_raw(workspace_root)).epochs}
     after = {row.id: row.to_dict() for row in lineage.epochs}
     for epoch_id in sorted(before.keys() | after.keys()):
         if json.dumps(before.get(epoch_id), sort_keys=True) != json.dumps(
@@ -231,8 +252,16 @@ def initialize_lineage(workspace_root: Path) -> None:
 
 
 def _load_raw(workspace_root: Path) -> dict[str, Any]:
-    """The lineage owner's detached mutation document."""
-    return load_lineage(workspace_root).to_dict()
+    """Read authored ancestry without copying round outcomes into it."""
+    try:
+        text = workspace_backend(workspace_root, start=False).read_text(lineage_key())
+        return (
+            decode_lineage(json.loads(text)).to_dict()
+            if text is not None
+            else {"format_version": RECORD_FORMAT_VERSION, "epochs": []}
+        )
+    except (OSError, ValueError) as exc:
+        raise RecordError(f"lineage.json: {exc}") from exc
 
 
 def _save_raw(workspace_root: Path, raw: dict[str, Any]) -> None:
@@ -477,39 +506,6 @@ def discard_pending_generations(
     return removed
 
 
-def resolve_pending_generations(
-    workspace_root: Path,
-    epoch_id: str,
-    resolutions: dict[str, dict[str, Any]],
-) -> None:
-    """Resolve one settlement's lineage nodes in one atomic rewrite.
-
-    Each resolution supplies the already-validated ``parent_id``,
-    ``created_at``, ``round_index``, verdict, reason, and optional scalars.
-    Coordinates must match the pending nodes exactly and are never rewritten.
-    An exact resolved node is accepted for idempotent crash replay.
-    """
-    raw, by_id = _validated_resolution_rows(
-        workspace_root, epoch_id, resolutions, require_resolved=False
-    )
-
-    for generation_id, resolution in resolutions.items():
-        row = by_id[generation_id]
-        promoted = resolution["promoted"]
-        parent_scalar = resolution["parent_scalar"]
-        child_scalar = resolution["child_scalar"]
-        row["promoted"] = promoted
-        row["rejection_reason"] = resolution["rejection_reason"] if promoted is False else ""
-        row["parent_scalar"] = parent_scalar
-        row["child_scalar"] = child_scalar
-        row["delta_scalar"] = (
-            child_scalar - parent_scalar
-            if child_scalar is not None and parent_scalar is not None
-            else None
-        )
-    _save_raw(workspace_root, raw)
-
-
 def validate_generation_resolutions(
     workspace_root: Path,
     epoch_id: str,
@@ -634,7 +630,6 @@ __all__ = [
     "mark_closed",
     "append_to_lineage",
     "discard_pending_generations",
-    "resolve_pending_generations",
     "validate_generation_resolutions",
     "load_lineage",
     "render_lineage_summary",

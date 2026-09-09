@@ -19,7 +19,7 @@ from zicato.epoch.seed_sources import (
     seed_content_identity,
     validated_seed_sources,
 )
-from zicato.storage import atomic_write_text, durable_unlink, sync_directory_tree
+from zicato.storage import durable_unlink, sync_directory_tree
 from zicato.workspace.projection import mark_epoch_changed
 
 if TYPE_CHECKING:
@@ -103,10 +103,6 @@ def finish_baseline_seed(
         ),
         parent_id=parent,
     )
-    marker = workspace_root / "epochs" / seed.epoch_id / "current_generation"
-    if not marker.exists():
-        mark_epoch_changed(workspace_root, seed.epoch_id)
-        atomic_write_text(marker, "v0\n")
     write_seed_experiment(workspace_root, seed.epoch_id, proposed_at=seed.created_at)
     durable_unlink(baseline_seed_path(workspace_root, seed.epoch_id))
     shutil.rmtree(prepared.parent, ignore_errors=True)
