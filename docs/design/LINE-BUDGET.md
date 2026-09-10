@@ -50,9 +50,9 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 469,770 | +61,109 |
-| Production | 197,702 | 188,436 | -9,266 |
-| Production logic | 110,276 | 109,953 | -323 |
+| Total | 408,661 | 469,931 | +61,270 |
+| Production | 197,702 | 188,435 | -9,267 |
+| Production logic | 110,276 | 109,952 | -324 |
 
 The baseline row is the reference `f9052dd` measured by the classification the
 checker holds, which counts the console's hand-written entry point
@@ -88,7 +88,7 @@ production-logic series per subsystem along a branch's first-parent commits.
 | src/zicato/query | 17,742 | 17,742 | 11,166 | 37.1% |
 | src/zicato/epoch | 13,822 | 13,822 | 7,742 | 44.0% |
 | src/zicato/evolve | 11,262 | 11,262 | 7,185 | 36.2% |
-| src/zicato/tournament | 11,224 | 11,224 | 6,648 | 40.8% |
+| src/zicato/tournament | 11,223 | 11,223 | 6,647 | 40.8% |
 | src/zicato/reflection | 9,843 | 9,843 | 6,578 | 33.2% |
 | crates/supervisor | 15,977 | 13,521 | 6,279 | 53.6% |
 | src/zicato/proposer | 9,521 | 9,521 | 4,772 | 49.9% |
@@ -456,6 +456,6 @@ dropped rows named.
 | Recorded tournament reads and simpler test execution (total) | 473,391 | -1,242 | 472,149 | Issue #526: readers and reports use recorded primary promotions and complete tournament structures; diagrams display framework summaries and recorded explanations. One parity test process covers all eight deterministic configurations. |
 | Recorded tournament reads and simpler test execution (production) | 190,821 | -726 | 190,095 | Issue #526: readers and reports use recorded primary promotions and complete tournament structures; diagrams display framework summaries and recorded explanations. One parity test process covers all eight deterministic configurations. |
 | Recorded tournament reads and simpler test execution (production logic) | 111,170 | -435 | 110,735 | Issue #526: readers and reports use recorded primary promotions and complete tournament structures; diagrams display framework summaries and recorded explanations. One parity test process covers all eight deterministic configurations. |
-| Shared recorded results and worker ownership (total) | 472,149 | -2,379 | 469,770 | Tournament execution publishes diagram analysis; readers share canonical measurements; worker ownership removes circular imports; diagnostics and transcripts share record handling. Browser change detection includes displayed scores. |
-| Shared recorded results and worker ownership (production) | 190,095 | -1,659 | 188,436 | Tournament execution publishes diagram analysis; readers share canonical measurements; worker ownership removes circular imports; diagnostics and transcripts share record handling. Browser change detection includes displayed scores. |
-| Shared recorded results and worker ownership (production logic) | 110,735 | -782 | 109,953 | Tournament execution publishes diagram analysis; readers share canonical measurements; worker ownership removes circular imports; diagnostics and transcripts share record handling. Browser change detection includes displayed scores. |
+| Shared recorded results and worker ownership (total) | 472,149 | -2,218 | 469,931 | Tournament execution publishes diagram analysis; readers share canonical measurements; worker ownership removes circular imports; diagnostics and transcripts share record handling. Browser change detection includes displayed scores. |
+| Shared recorded results and worker ownership (production) | 190,095 | -1,660 | 188,435 | Tournament execution publishes diagram analysis; readers share canonical measurements; worker ownership removes circular imports; diagnostics and transcripts share record handling. Browser change detection includes displayed scores. |
+| Shared recorded results and worker ownership (production logic) | 110,735 | -783 | 109,952 | Tournament execution publishes diagram analysis; readers share canonical measurements; worker ownership removes circular imports; diagnostics and transcripts share record handling. Browser change detection includes displayed scores. |

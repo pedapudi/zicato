@@ -1,23 +1,8 @@
-"""Phase-1 light-up tests for the dashboard service.
+"""Workspace metadata and judge queries preserve their recorded values.
 
-These exercise the readers and endpoints that wire real data into the
-phase-0 stubs:
-
-* ``build_workspace_identity`` — structured workspace identity payload.
-* ``build_per_judge_trend`` — L1 judge × generation heatmap matrix.
-* ``build_per_judge_for_generation`` — L2 per-judge totals.
-* ``build_per_entry_for_generation`` — L2 per-entry via tournament FK.
-* ``build_per_judge_comparison`` — L3 champion vs challenger judge Δ.
-* ``build_per_judge_for_run`` — L4 per-judge totals for a single run.
-* ``build_workspace_view`` — now exposes ``parent_epoch_id`` per row.
-* ``build_epoch_view`` — now exposes the frozen ``goal`` field.
-* Endpoint routes — each new ``/api/...`` path resolves and returns the
-  expected shape against the populated fixture workspace.
-
-The five per-judge readers are held by served-payload pins: each response
-is compared against the exact JSON text an endpoint writes, so a change to
-how a judge row is decoded cannot alter a key name, a key's position, or a
-coerced value without failing here.
+These tests cover lineage, frozen goals, judge aggregates and query routing.
+Canonical candidate measurements and their endpoints are covered by
+test_dashboard_server and test_dashboard_endpoint_table.
 """
 
 from __future__ import annotations
@@ -35,7 +20,6 @@ from zicato.index.schema import apply_schema
 from zicato.query import (
     WorkspacePaths,
     build_epoch_view,
-    build_per_entry_for_generation,
     build_per_judge_comparison,
     build_per_judge_for_entry,
     build_per_judge_for_generation,
@@ -521,29 +505,6 @@ def test_build_per_judge_for_generation_returns_totals(
     ) == ('{"epoch_id":"2026-05-16_e0","generation_id":"v1","judges":[]}')
 
 
-def test_build_per_entry_uses_tournament_id_fk(phase1_workspace: Path) -> None:
-    payload = build_per_entry_for_generation(
-        WorkspacePaths(phase1_workspace), "2026-05-16_e0", "v1"
-    )
-    # FK composed from epoch + parent_generation_id (v0) → child (v1).
-    assert payload["tournament_id"] == "2026-05-16_e0:v0->v1"
-    assert len(payload["entries"]) == 1
-    entry = payload["entries"][0]
-    assert entry["entry_id"] == "entry_alpha"
-    assert entry["drift_loss"] is not None
-
-
-def test_build_per_entry_v0_has_no_tournament_id(phase1_workspace: Path) -> None:
-    # v0 is a root generation with no parent → no tournament round attached.
-    payload = build_per_entry_for_generation(
-        WorkspacePaths(phase1_workspace), "2026-05-16_e0", "v0"
-    )
-    assert payload["tournament_id"] is None
-    # The fallback walks loss_profiles_for_generation, so the row still
-    # surfaces.
-    assert len(payload["entries"]) == 1
-
-
 def test_build_per_judge_comparison_picks_primary_driver(
     phase1_workspace: Path, unindexed_workspace: Path
 ) -> None:
@@ -666,14 +627,6 @@ def test_endpoint_per_judge_for_generation(phase1_client: TestClient) -> None:
     body = r.json()
     assert body["generation_id"] == "v1"
     assert any(j["judge_name"] == "critic_A" for j in body["judges"])
-
-
-def test_endpoint_per_entry_for_generation(phase1_client: TestClient) -> None:
-    r = phase1_client.get("/api/generation/2026-05-16_e0/v1/per-entry")
-    assert r.status_code == 200
-    body = r.json()
-    assert body["tournament_id"] == "2026-05-16_e0:v0->v1"
-    assert any(e["entry_id"] == "entry_alpha" for e in body["entries"])
 
 
 def test_endpoint_per_judge_comparison(phase1_client: TestClient) -> None:

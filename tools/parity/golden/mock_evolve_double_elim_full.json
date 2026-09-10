@@ -376,11 +376,110 @@
           "status": "applied"
         }
       ],
+      "gen_states": [
+        {
+          "advanced_rounds": [
+            0,
+            2
+          ],
+          "eliminated_at_round": null,
+          "generation_id": "v1",
+          "lb_entry_round": null,
+          "lost_rounds": [],
+          "played_rounds": [
+            0,
+            2
+          ],
+          "projected": null,
+          "side_by_round": {
+            "0": "WB",
+            "2": "WB"
+          }
+        },
+        {
+          "advanced_rounds": [
+            1
+          ],
+          "eliminated_at_round": null,
+          "generation_id": "v2",
+          "lb_entry_round": 1,
+          "lost_rounds": [
+            0
+          ],
+          "played_rounds": [
+            0,
+            1
+          ],
+          "projected": null,
+          "side_by_round": {
+            "0": "WB",
+            "1": "LB"
+          }
+        },
+        {
+          "advanced_rounds": [
+            0,
+            1
+          ],
+          "eliminated_at_round": 1,
+          "generation_id": "v3",
+          "lb_entry_round": 1,
+          "lost_rounds": [
+            0,
+            1
+          ],
+          "played_rounds": [
+            0,
+            1
+          ],
+          "projected": null,
+          "side_by_round": {
+            "0": "WB",
+            "1": "LB"
+          }
+        },
+        {
+          "advanced_rounds": [],
+          "eliminated_at_round": 1,
+          "generation_id": "v4",
+          "lb_entry_round": 1,
+          "lost_rounds": [
+            0,
+            1
+          ],
+          "played_rounds": [
+            0,
+            1
+          ],
+          "projected": null,
+          "side_by_round": {
+            "0": "WB",
+            "1": "LB"
+          }
+        },
+        {
+          "advanced_rounds": [],
+          "eliminated_at_round": 2,
+          "generation_id": "v0",
+          "lb_entry_round": null,
+          "lost_rounds": [
+            2
+          ],
+          "played_rounds": [
+            2
+          ],
+          "projected": null,
+          "side_by_round": {
+            "2": "WB"
+          }
+        }
+      ],
       "promoted_generation_id": "v1",
       "ran_at": "<TS>",
       "reason": "",
       "rounds": [
         {
+          "bracket_side": "WB",
           "label": "Winners' bracket",
           "matches": [
             {
@@ -395,6 +494,7 @@
               "decision": "rejected",
               "delta_scalar": 0.4,
               "live_progress": {},
+              "loser": "v2",
               "match_id": "WB-R0-0",
               "pending": false,
               "survivors": [],
@@ -412,6 +512,7 @@
               "decision": "rejected",
               "delta_scalar": 0.40000000000000013,
               "live_progress": {},
+              "loser": "v4",
               "match_id": "WB-R0-1",
               "pending": false,
               "survivors": [],
@@ -429,6 +530,7 @@
               "decision": "rejected",
               "delta_scalar": 0.7999999999999999,
               "live_progress": {},
+              "loser": "v3",
               "match_id": "WB-R0-0",
               "pending": false,
               "survivors": [],
@@ -438,6 +540,7 @@
           "stage_index": 0
         },
         {
+          "bracket_side": "LB",
           "label": "Losers' bracket",
           "matches": [
             {
@@ -451,6 +554,7 @@
               "decision": "",
               "delta_scalar": null,
               "live_progress": {},
+              "loser": null,
               "match_id": "LB-R1-1",
               "pending": false,
               "survivors": [],
@@ -468,6 +572,7 @@
               "decision": "rejected",
               "delta_scalar": 0.8,
               "live_progress": {},
+              "loser": "v4",
               "match_id": "LB-R1-0",
               "pending": false,
               "survivors": [],
@@ -485,6 +590,7 @@
               "decision": "promoted",
               "delta_scalar": -0.3999999999999999,
               "live_progress": {},
+              "loser": "v3",
               "match_id": "LB-R1-0",
               "pending": false,
               "survivors": [],
@@ -494,6 +600,7 @@
           "stage_index": 1
         },
         {
+          "bracket_side": "WB",
           "label": "Grand final",
           "matches": [
             {
@@ -508,6 +615,7 @@
               "decision": "promoted",
               "delta_scalar": -1.6,
               "live_progress": {},
+              "loser": "v0",
               "match_id": "GF",
               "pending": false,
               "survivors": [],
@@ -943,7 +1051,7 @@
     "0/round_log.jsonl": [
       {
         "payload": {
-          "contract_hash": "832ed09519f70985dfd492ab415f2881470efcd76daa1ad3719e877eddb8c1f7"
+          "contract_hash": "2b0b397d90053a3cd33dbf711f0db8019e4c397cad7ff85de813a25f8e2471dd"
         },
         "scope": {},
         "seq": 1,

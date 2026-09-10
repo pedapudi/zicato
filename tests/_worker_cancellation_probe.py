@@ -22,7 +22,7 @@ from zicato.runtime.lock import WorkspaceLockHeld, acquire_workspace_lock, pid_s
 from zicato.runtime.paths import active_run_path
 from zicato.runtime.writer import workspace_writer
 from zicato.storage import atomic_write_json
-from zicato.tournament import runner, worker_transport
+from zicato.tournament import worker_transport
 
 
 class DescendantAdapter(SleepingAdapter):
@@ -117,7 +117,9 @@ async def probe(workspace: Path, *, invocation: bool = False) -> None:
     with ExitStack() as patches:
         patches.enter_context(patch.object(asyncio, "create_subprocess_exec", spawn))
         if invocation:
-            patches.enter_context(patch.object(runner, "_terminate_worker", defer_termination))
+            patches.enter_context(
+                patch.object(_tournament_worker_execution, "_terminate_worker", defer_termination)
+            )
             patches.enter_context(patch.object(round_entry, "_evolve_once", execute_worker))
             patches.enter_context(
                 patch("zicato.check.require_workspace_valid", lambda *a, **k: None)

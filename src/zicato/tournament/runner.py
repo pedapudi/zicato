@@ -41,6 +41,7 @@ from zicato.runtime.lock import WorkspaceLock
 # The HOST-WIDE worker permit (RUNTIME.md §5.5.7): the cross-orchestrator
 # bound ``config.parallelism``'s per-process semaphore cannot provide.
 from zicato.runtime.writer import workspace_writer
+from zicato.tournament import scheduling
 from zicato.tournament.gate import GateOutcome, evaluate_gate
 
 # Governance helpers used by the scheduling boundary.
@@ -52,13 +53,6 @@ from zicato.tournament.governance import (
 )
 from zicato.tournament.ladder import disabled_holdout_record
 from zicato.tournament.regression import run_regression_suite
-from zicato.tournament.scheduling import (
-    _overlap_replicate_slots,
-    _run_board_units_fast,
-    _run_board_units_full,
-    _run_replicate_slots_fast,
-    _run_replicated,
-)
 from zicato.tournament.scoring import aggregate_generation_score
 from zicato.tournament.unit_cache import (
     _average_losses,
@@ -433,7 +427,7 @@ async def run_tournament(
             replicate_runs: list[tuple[dict[str, LossProfile], dict[str, LossProfile]]] = []
             for draw in range(replicate_count):
                 measurement = MeasurementDraw(MeasurementPurpose.TOURNAMENT, draw, config.seed)
-                run_parent, run_child = await _run_board_units_full(
+                run_parent, run_child = await scheduling._run_board_units_full(
                     writer=writer,
                     adapter=adapter,
                     parent_gen=parent_gen,
@@ -775,14 +769,14 @@ async def run_fast_mode(
             # by it); slot 0 is left untouched, byte-identical to before.
             replicate_count = max(1, replicates)
             replicate_runs: list[dict[str, LossProfile]] = []
-            if replicate_count > 1 and _overlap_replicate_slots(config, None):
+            if replicate_count > 1 and scheduling._overlap_replicate_slots(config, None):
                 # No budget knob is engaged, so no decision sits on the boundary
                 # between two slots and they run OVERLAPPED against ONE shared
                 # semaphore — a permit freed by a finished unit is taken by the
                 # next slot's unit instead of idling until the whole slot drains.
                 # The scheduler mints that one semaphore (this round supplies
                 # none), which is what keeps ``parallelism`` the ceiling.
-                replicate_runs = await _run_replicate_slots_fast(
+                replicate_runs = await scheduling._run_replicate_slots_fast(
                     writer=writer,
                     adapter=adapter,
                     child_gen=child_gen,
@@ -799,7 +793,7 @@ async def run_fast_mode(
                     # Budget expiry records an omission for every missing draw,
                     # so the fold cannot present partial execution as complete.
                     replicate_runs.append(
-                        await _run_board_units_fast(
+                        await scheduling._run_board_units_fast(
                             writer=writer,
                             adapter=adapter,
                             child_gen=child_gen,
@@ -959,7 +953,12 @@ async def run_matchup(
             subset = set(board_subset)
             board = [e for e in board if e.id in subset]
 
-        left_losses, right_losses, champion_eval_mode, unit_provenance = await _run_replicated(
+        (
+            left_losses,
+            right_losses,
+            champion_eval_mode,
+            unit_provenance,
+        ) = await scheduling._run_replicated(
             writer=writer,
             adapter=adapter,
             left_gen=left_gen,

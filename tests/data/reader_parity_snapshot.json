@@ -70,15 +70,15 @@
   "candidate_dossier::e1::v0": {
     "champion": "v0",
     "comparison": {
-      "candidate_sigma": null,
+      "candidate_sigma": 0.6,
       "champion_sigma": null,
       "compared_score_count": 0,
       "delta_sigma": null,
-      "drift_present": false,
+      "drift_present": true,
       "entries": {},
-      "entry_count": 0,
+      "entry_count": 2,
       "mean_delta_score": null,
-      "passed_count": 0
+      "passed_count": 2
     },
     "drilldown": null,
     "episode_export": null,
@@ -149,8 +149,43 @@
     "parent_epoch_id": null,
     "parent_inconsistency": null,
     "per_entry": {
-      "drift_present": false,
-      "entries": [],
+      "drift_present": true,
+      "entries": [
+        {
+          "cached": false,
+          "drift_loss": 0.3,
+          "entry_id": "t1",
+          "facets": [],
+          "generation_id": "v0",
+          "match_id": null,
+          "metrics": null,
+          "pass_fail": true,
+          "run_id": "seed-none.tournament.r0.553950ec481fa44971f375209c8296605c9d9182bbcb3bf14254d47439e6a7fc",
+          "rung": null,
+          "runtime_ms": 0,
+          "score": 0.9,
+          "source_epoch": null,
+          "source_run": null,
+          "wall_clock_budget_exceeded": false
+        },
+        {
+          "cached": false,
+          "drift_loss": 0.3,
+          "entry_id": "t2",
+          "facets": [],
+          "generation_id": "v0",
+          "match_id": null,
+          "metrics": null,
+          "pass_fail": true,
+          "run_id": "seed-none.tournament.r0.7d307153f0cab805a6dc375df2d922b5e7d6d5390397558243c5d2d174172f9c",
+          "rung": null,
+          "runtime_ms": 0,
+          "score": 0.9,
+          "source_epoch": null,
+          "source_run": null,
+          "wall_clock_budget_exceeded": false
+        }
+      ],
       "epoch_id": "e1",
       "facet_scores": {
         "facets": {},
@@ -212,9 +247,9 @@
           "score_se": null
         }
       },
-      "entry_count": 0,
+      "entry_count": 2,
       "mean_delta_score": 0.0,
-      "passed_count": 0
+      "passed_count": 2
     },
     "drilldown": {
       "entry_id": "t1",
@@ -469,8 +504,43 @@
     "parent_epoch_id": "e1",
     "parent_inconsistency": null,
     "per_entry": {
-      "drift_present": false,
-      "entries": [],
+      "drift_present": true,
+      "entries": [
+        {
+          "cached": false,
+          "drift_loss": 0.31,
+          "entry_id": "t1",
+          "facets": [],
+          "generation_id": "v1",
+          "match_id": null,
+          "metrics": null,
+          "pass_fail": true,
+          "run_id": "seed-none.tournament.r0.e5f25228adcf931bd7409b8e77719187f99c435009da8ec9883673e9195a6aca",
+          "rung": null,
+          "runtime_ms": 0,
+          "score": 0.9,
+          "source_epoch": null,
+          "source_run": null,
+          "wall_clock_budget_exceeded": false
+        },
+        {
+          "cached": false,
+          "drift_loss": 0.31,
+          "entry_id": "t2",
+          "facets": [],
+          "generation_id": "v1",
+          "match_id": null,
+          "metrics": null,
+          "pass_fail": true,
+          "run_id": "seed-none.tournament.r0.7608adeecc498abb37ff428d62e1555a3aa7400818aad6d1461e1278ad0ded71",
+          "rung": null,
+          "runtime_ms": 0,
+          "score": 0.9,
+          "source_epoch": null,
+          "source_run": null,
+          "wall_clock_budget_exceeded": false
+        }
+      ],
       "epoch_id": "e1",
       "facet_scores": {
         "facets": {},
@@ -1989,8 +2059,43 @@
     ]
   },
   "per_entry_for_generation::e0::v0": {
-    "drift_present": false,
-    "entries": [],
+    "drift_present": true,
+    "entries": [
+      {
+        "cached": false,
+        "drift_loss": 0.3,
+        "entry_id": "t1",
+        "facets": [],
+        "generation_id": "v0",
+        "match_id": null,
+        "metrics": null,
+        "pass_fail": true,
+        "run_id": "seed-none.tournament.r0.6358481892fb9eafc8a11eb4bc685d830896b583382f141baf9ec1c94f7bf0a6",
+        "rung": null,
+        "runtime_ms": 0,
+        "score": 0.9,
+        "source_epoch": null,
+        "source_run": null,
+        "wall_clock_budget_exceeded": false
+      },
+      {
+        "cached": false,
+        "drift_loss": 0.3,
+        "entry_id": "t2",
+        "facets": [],
+        "generation_id": "v0",
+        "match_id": null,
+        "metrics": null,
+        "pass_fail": true,
+        "run_id": "seed-none.tournament.r0.10442e37e44709dbb2d986a9d204bbe8e232d5a4f0195d099419447477faf8a5",
+        "rung": null,
+        "runtime_ms": 0,
+        "score": 0.9,
+        "source_epoch": null,
+        "source_run": null,
+        "wall_clock_budget_exceeded": false
+      }
+    ],
     "epoch_id": "e0",
     "facet_scores": {
       "facets": {},
@@ -2001,8 +2106,43 @@
     "tournament_id": null
   },
   "per_entry_for_generation::e1::v0": {
-    "drift_present": false,
-    "entries": [],
+    "drift_present": true,
+    "entries": [
+      {
+        "cached": false,
+        "drift_loss": 0.3,
+        "entry_id": "t1",
+        "facets": [],
+        "generation_id": "v0",
+        "match_id": null,
+        "metrics": null,
+        "pass_fail": true,
+        "run_id": "seed-none.tournament.r0.553950ec481fa44971f375209c8296605c9d9182bbcb3bf14254d47439e6a7fc",
+        "rung": null,
+        "runtime_ms": 0,
+        "score": 0.9,
+        "source_epoch": null,
+        "source_run": null,
+        "wall_clock_budget_exceeded": false
+      },
+      {
+        "cached": false,
+        "drift_loss": 0.3,
+        "entry_id": "t2",
+        "facets": [],
+        "generation_id": "v0",
+        "match_id": null,
+        "metrics": null,
+        "pass_fail": true,
+        "run_id": "seed-none.tournament.r0.7d307153f0cab805a6dc375df2d922b5e7d6d5390397558243c5d2d174172f9c",
+        "rung": null,
+        "runtime_ms": 0,
+        "score": 0.9,
+        "source_epoch": null,
+        "source_run": null,
+        "wall_clock_budget_exceeded": false
+      }
+    ],
     "epoch_id": "e1",
     "facet_scores": {
       "facets": {},
@@ -2013,8 +2153,43 @@
     "tournament_id": null
   },
   "per_entry_for_generation::e1::v1": {
-    "drift_present": false,
-    "entries": [],
+    "drift_present": true,
+    "entries": [
+      {
+        "cached": false,
+        "drift_loss": 0.31,
+        "entry_id": "t1",
+        "facets": [],
+        "generation_id": "v1",
+        "match_id": null,
+        "metrics": null,
+        "pass_fail": true,
+        "run_id": "seed-none.tournament.r0.e5f25228adcf931bd7409b8e77719187f99c435009da8ec9883673e9195a6aca",
+        "rung": null,
+        "runtime_ms": 0,
+        "score": 0.9,
+        "source_epoch": null,
+        "source_run": null,
+        "wall_clock_budget_exceeded": false
+      },
+      {
+        "cached": false,
+        "drift_loss": 0.31,
+        "entry_id": "t2",
+        "facets": [],
+        "generation_id": "v1",
+        "match_id": null,
+        "metrics": null,
+        "pass_fail": true,
+        "run_id": "seed-none.tournament.r0.7608adeecc498abb37ff428d62e1555a3aa7400818aad6d1461e1278ad0ded71",
+        "rung": null,
+        "runtime_ms": 0,
+        "score": 0.9,
+        "source_epoch": null,
+        "source_run": null,
+        "wall_clock_budget_exceeded": false
+      }
+    ],
     "epoch_id": "e1",
     "facet_scores": {
       "facets": {},

@@ -1642,9 +1642,9 @@ concurrency at the model endpoint.
 
 ## 13. The monkeypatch surface (for test authors)
 
-The suite patches the loop at DOCUMENTED anchors only. Use these; do not
-invent new ones (and if you move one, keep the name importable at its
-old path — chapter 01 §6's late-binding trap):
+Tests replace expensive operations on their owning modules. When an operation
+moves, update its test imports and patches. Production modules do not retain
+private re-exports or reverse imports solely to preserve test patch locations:
 
 | Anchor | What stubbing it gives you | Used by |
 |---|---|---|
