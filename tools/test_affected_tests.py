@@ -124,15 +124,15 @@ def test_a_dynamic_import_the_parser_cannot_evaluate_selects_the_whole_suite(
 # ---------------------------------------------------------------------------
 
 
-def test_the_subprocess_worker_is_an_edge_out_of_the_runner(
+def test_subprocess_dependency_is_recorded_for_worker_execution(
     graph: dict[str, set[str]],
 ) -> None:
-    """`runner` spawns the worker with `-m`, which no import statement shows.
+    """Worker execution launches a subprocess with `-m`, outside Python imports.
 
     Without this edge a change to the worker would leave every test that
     drives a real tournament unselected.
     """
-    assert "zicato._tournament_worker" in graph["zicato.tournament.runner"]
+    assert "zicato._tournament_worker" in graph["zicato.tournament.worker_execution"]
 
 
 def test_the_dashboard_server_is_an_edge_out_of_its_launchers(

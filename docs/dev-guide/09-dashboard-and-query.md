@@ -76,7 +76,7 @@ controls layout and interaction.
 | `src/zicato/query/tournament_view.py` | `build_bracket`, `build_tournament_structure`, `build_matchup_detail`, `build_matchup_grid` | 51 KB |
 | `src/zicato/query/{judge,hypothesis,lineage,events_index,run_log}_view.py` | per-judge matrices, hypothesis/calibration accuracy, lineage feed, `/api/environment` coalescer + meta-loop ledger, the run-log tail. `judge_view.build_per_entry_for_generation` serves the dossier; its `facet_scores` block comes from `eval_view.facet_scores_for_generation` | — |
 | `src/zicato/query/transcript_reconstruction.py` | `reconstruct_transcript` — one goldfive `events.jsonl` or one Foe `episode.jsonl` → an ordered `Transcript` | 38 KB |
-| `src/zicato/query/foe_episode.py` | `is_episode_log`, `read_episode_log`, `derive_messages` — the envelope and the derived-message rule of the Foe episode log | 361 lines |
+| `src/zicato/query/foe_episode.py` | Reads proposal episode events and their conversation contributions; request messages remain recorded facts | — |
 | `src/zicato/board/jsonl.py` | `load_board_document` owns whole-file board acceptance; query projections share its accepted entries and source rows. | — |
 | `src/zicato/mutation/inventory.py` | `read_mutation_inventory` accepts the recorded seven-field enumeration and preserves extensions; malformed present inventories carry a refusal into query views and prevent report publication. | — |
 | `src/zicato/epoch/contract.py` | `read_component_hashes` accepts one string-to-string mapping for checks, epoch rollover and query projections; future component names remain recorded. | — |
@@ -551,44 +551,26 @@ and the loss-floor waterfall. The client performs no decision-bearing join.
 server-side from the heartbeat `phase` string (§9.11), and the JS renders the
 resulting verdict verbatim.
 
-**The elimination gen-states.** The elimination model orders a round's
-columns, de-duplicates repeated matches, and classifies each loss as an
-elimination or as a winners-to-losers drop (the second life). A client that
-derived that model per render would be computing a domain conclusion, which
-server authority forbids. `derive_elim_states(rounds)` is the fold, served as
-a top-level `gen_states` join, and the bracket figure — `svg.js`'s
-`elimRadial`, the concentric-ring bracket every elimination surface draws —
-renders it verbatim:
+**Recorded elimination results.** Tournament execution publishes ordered rounds,
+per-match losers, bracket sides, and each candidate's progression in `gen_states`.
+The publication helper is `tournament/structure.py::attach_elim_states`.
+Both live updates and completed tournament records include its output. The
+Python query service and the Rust supervisor serve those recorded values.
+Neither reader sorts matches, removes duplicates, or infers eliminations.
 
-```python
-def derive_elim_states(rounds: Any) -> dict[str, Any]:
-    """The SERVER-SIDE elim fold — the model the bracket figures render.
+In double elimination, a first loss in the winners' bracket leaves a candidate
+eligible for the losers' bracket, including before that match is scheduled.
+A loss in the losers' bracket ends participation. The final match records its
+loser separately from the champion promotion decision. The radial diagram
+renders these facts directly. Tests exercise publication against the recorded
+brackets in `tests/data/elim_states_cases.json` and `elim_states_served.json`.
 
-    ... this fold is it, moved server-side, so every consumer (Python
-    service, Rust supervisor, the node mock) serves ONE identical model.
-    Ported line-for-line into ``crates/supervisor/src/elim_states.rs`` — the
-    shared fixture ``tests/data/elim_states_fixture.json`` pins the two folds
-    together.
-
-    Output ``{"rounds": [...], "gen_states": [...]}``:
-    * ``rounds`` — PRE-SORTED by round index; every round gains
-      ``bracket_side`` (WB/LB) and its matches are DEDUPED + gain ``loser``.
-    * ``gen_states`` — one record per competitor: ``{generation_id,
-      played_rounds, advanced_rounds, lost_rounds, eliminated_at_round,
-      side_by_round, lb_entry_round, projected}``. The elimination-vs-drop
-      rule is the client's, verbatim.
-    """
-```
-— `src/zicato/query/tournament_view.py`
-
-This is the doctrine in its hardest form: both servers serve the fold, so it
-ships twice — the Python `derive_elim_states` and the Rust `elim_states.rs`
-port — held isomorphic by the shared `tests/data/elim_states_fixture.json`,
-which is a Python-to-Rust parity fixture rather than a client golden. A
-client-side re-derivation fallback is forbidden. A client that derives the
-model itself needs defensive guards against phantom eliminations, because an
-under-specified payload leaves it guessing; serving the model removes the
-reason for the whole guard family at once (12-bug-casebook.md, case 12).
+**Recorded measurements.** Candidate task rows, matchup grids and task views
+share measurement reading and validation. Ordinary task rows use the candidate's
+selected seed. Uncertainty summaries use accepted tournament and confirmation
+draws. Diagnostic probes remain separate. These rows are available before an
+index is built; the index still supplies derived ratings and historical judge
+aggregates whose scope includes more than the selected ordinary measurements.
 
 The candidate page's per-candidate reads are one such join as well:
 `query.build_candidate_dossier` (`src/zicato/query/candidate_view.py`) calls

@@ -1,52 +1,12 @@
-"""Bridge between the ``epoch/`` domain and the record-level storage seam.
+"""Canonical record errors and storage keys for epoch data.
 
-The ``epoch/`` modules that persist *records* — ``journal.py`` (the
-typed :class:`~zicato.core.types.Experiment` and its per-patch files),
-``lineage.py`` (the cross-epoch DAG), and the ``config.json`` /
-``scoring.json`` writes in ``lifecycle.py`` — historically did direct,
-partly non-atomic file I/O: ``path.write_text(json.dumps(...))`` with no
-``.tmp`` + ``fsync`` + :func:`os.replace`. A crash mid-write could leave
-a truncated ``experiment.json`` / ``lineage.json`` / ``config.json``.
-
-As of the storage-roadmap pass those modules route every record
-read/write through :class:`~zicato.storage.StorageBackend` instead —
-this module is the thin adapter that makes that routing ergonomic
-without changing any public ``epoch/`` signature.
-
-What it owns is naming: the ``*_key`` helpers turn an
-``(epoch, generation, …)`` coordinate into the logical storage key for one
-record. ``epoch/`` records live under the ``epochs/`` namespace (per-epoch
-and per-generation records) or directly under the workspace root
-(``lineage.json``, the ``current_epoch`` marker).
-
-The helpers do not re-spell those joins. Each reads its location off
-:data:`~zicato.workspace.layout.WORKSPACE_RELATIVE_LAYOUT`, the workspace
-layout resolved against an empty root, and
-:func:`~zicato.workspace.layout.storage_key` renders the result as a
-``/``-relative key. :class:`~zicato.workspace.layout.WorkspaceLayout` is
-therefore the only place each record's location is declared, whether a
-caller wants that location as a :class:`Path` or as a backend key.
-
-The backend comes from :func:`zicato.storage.workspace_backend`, the one
-construction path in the tree, and ``epoch/`` asks it for an unstarted
-one: ``epoch/`` writers create the directory tree they need (``new_epoch``
-makes the epoch directory, the journal and genstore helpers the generation
-directories), the file backend's :meth:`write_json` creates any missing
-parent on write, and an unstarted backend leaves readers side-effect-free.
-
-The ``epoch/`` *generation source trees* are NOT a record kind and do
-NOT go through this seam — they are directory trees behind the
-:class:`~zicato.epoch.genstore.GenerationStore` protocol. See
-``docs/design/STORAGE.md`` §4 for why the two seams are distinct.
-
-Public ``epoch/`` functions keep their ``workspace_root: Path`` first
-argument; internally they construct a backend and pass it one of the key
-helpers. The on-disk layout is byte-identical to the pre-seam
-implementation — a caller cannot tell the difference. The one
-observable change is that every write is now atomic.
-"""
+WorkspaceLayout owns record paths. These helpers convert its relative paths
+into storage keys and validate record versions and finite JSON values."""
 
 from __future__ import annotations
+
+import json
+from typing import Any
 
 from zicato.workspace.layout import WORKSPACE_RELATIVE_LAYOUT as _LAYOUT
 from zicato.workspace.layout import storage_key
@@ -90,6 +50,17 @@ class RecordError(RuntimeError):
 
 class RecordFormatError(RecordError):
     """A canonical JSON record's ``format_version`` is not readable here."""
+
+
+def copy_json_object(raw: Any, name: str) -> dict[str, Any]:
+    """Validate finite JSON values and detach a record from the caller's mutable data."""
+    if not isinstance(raw, dict):
+        raise RecordError(f"{name}: expected a JSON object")
+    try:
+        result: dict[str, Any] = json.loads(json.dumps(raw, allow_nan=False))
+        return result
+    except (TypeError, ValueError) as exc:
+        raise RecordError(f"{name}: invalid JSON value: {exc}") from exc
 
 
 def check_record_format(

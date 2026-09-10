@@ -1124,13 +1124,12 @@ copies drifted.
 
 ### The fix
 
-`derive_elim_states(rounds)` (09-dashboard-and-query.md §9.2.5) folds the model
-ONCE on the server — pre-sorted rounds, per-match `loser`, per-round
-`bracket_side`, and a top-level `gen_states` map — and both the Python service
-and the Rust supervisor serve it, pinned to each other by
-`tests/data/elim_states_fixture.json`. `elimRadial`, the one elimination
-figure, renders `gen_states` verbatim, and the whole guard family is gone: a served model leaves the client
-nothing to repair.
+Tournament execution publishes each candidate's bracket progression with the
+ordered rounds and per-match losers. Both query services read that analysis
+from the live or completed tournament record. The radial diagram renders the
+recorded `gen_states` values. Publication tests use the same bracket fixtures
+as the browser tests, including a first double-elimination loss before the
+candidate's next match has been scheduled.
 
 ### You are about to reintroduce this if…
 

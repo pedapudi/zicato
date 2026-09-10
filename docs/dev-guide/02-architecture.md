@@ -1203,7 +1203,7 @@ in an isolated subprocess. This is the subprocess worker boundary — the
 robustness layer that contains a wedged or pathological evaluation — and
 the documented monkeypatch anchor the test suite stubs
 (`tests/_subprocess_worker_support.py` swaps exactly
-`runner._run_single`). Its docstring is the sequence contract:
+`worker_execution._run_single`). Its docstring is the sequence contract:
 
 ```python
     1. Make a per-run **ephemeral checkout** of the generation's code
@@ -1295,7 +1295,7 @@ from measurements of the recorded generation's own source.
 > in-process. Everything above — isolation, budgets, kill-ability,
 > telemetry capture, cache coherence, index provenance — exists at this
 > boundary. In-process evaluation is only legitimate inside tests that
-> stub `runner._run_single` and say so (the power oracle is one), and
+> stub `worker_execution._run_single` and say so (the power oracle is one), and
 > for the screen/preflight paths that already route
 > through the same runner machinery.
 
@@ -1642,14 +1642,14 @@ concurrency at the model endpoint.
 
 ## 13. The monkeypatch surface (for test authors)
 
-The suite patches the loop at DOCUMENTED anchors only. Use these; do not
-invent new ones (and if you move one, keep the name importable at its
-old path — chapter 01 §6's late-binding trap):
+Tests replace expensive operations on their owning modules. When an operation
+moves, update its test imports and patches. Production modules do not retain
+private re-exports or reverse imports solely to preserve test patch locations:
 
 | Anchor | What stubbing it gives you | Used by |
 |---|---|---|
 | `orch.evolve_once` / `orch.ensure_epoch_for_contract` / `orch.block_while_paused` / `orch._resolve_or_launch_harmonograf` | loop-level tests with fabricated round outcomes | the evolve-loop tests |
-| `runner._run_single` | in-process evaluation under the REAL scheduling/replicate/cache/gate machinery — "the test suite's documented monkeypatch anchor" | the power oracle, tournament tests, `tests/_subprocess_worker_support.py` |
+| `worker_execution._run_single` | in-process evaluation under the REAL scheduling/replicate/cache/gate machinery — "the test suite's documented monkeypatch anchor" | the power oracle, tournament tests, `tests/_subprocess_worker_support.py` |
 | `zicato.evolve.loop._sleep_for_backoff` | no real sleeps in backoff tests — "a seam so tests can stub it" | infra-circuit tests |
 | `orch.time` | the clock seam kept importable on the orchestrator (`import time  # noqa: F401 — kept as the ``orch.time`` clock seam`) | budget tests |
 | the conftest autouse pair | default-proposer text shim + harmonograf launch stub — the ONLY stubs the convergence oracle allows itself | everything |

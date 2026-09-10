@@ -32,6 +32,7 @@ from typing import Any
 
 import pytest
 
+import zicato.tournament.worker_execution as _tournament_worker_execution
 from tests._runtime_builders import prepare_tournament_epoch, runtime_config
 from zicato.core import (
     BoardEntry,
@@ -303,14 +304,13 @@ def _install_run_single_stub(
     monkeypatch: pytest.MonkeyPatch,
     canned: dict[tuple[str, str], LossProfile],
 ) -> None:
-    """Replace ``runner._run_single`` with a canned-loss lookup.
+    """Replace ``worker_execution._run_single`` with a canned-loss lookup.
 
     Since the L3 subprocess-isolation refactor the per-entry run mechanism
     spawns a worker process; the regression-gate tests only care about the
     *generation-level* gate wiring, so they bypass the subprocess entirely
     by stubbing ``_run_single`` with a deterministic loss lookup.
     """
-    import zicato.tournament.runner as runner_mod  # noqa: PLC0415
 
     async def fake_run_single(
         *,
@@ -328,7 +328,7 @@ def _install_run_single_stub(
         del adapter, weights, config, workspace_root, side, match_id
         return replace(canned[(generation.id, entry.id)], epoch_id=epoch_id)
 
-    monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", fake_run_single)
 
 
 def _set_regression_result(monkeypatch: pytest.MonkeyPatch, regression: RegressionResult) -> None:

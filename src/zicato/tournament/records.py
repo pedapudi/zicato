@@ -246,7 +246,9 @@ def field_tournament_record(
         record["promoted_generation_ids"] = list(promoted_generation_ids)
     if override_status:
         record["override_status"] = {gid: dict(prov) for gid, prov in override_status.items()}
-    return decode_field_tournament_record(record)
+    from zicato.tournament.structure import attach_elim_states
+
+    return decode_field_tournament_record(attach_elim_states(record))
 
 
 def write_field_tournament_record(

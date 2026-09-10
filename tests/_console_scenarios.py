@@ -53,6 +53,7 @@ from zicato.index.ingest import rebuild_index
 from zicato.telemetry.reducer import write_loss_profile
 from zicato.tournament.records import decode_field_tournament_record, write_field_tournament_record
 from zicato.tournament.scoring import write_gen_score
+from zicato.tournament.structure import attach_elim_states
 from zicato.workspace import WorkspaceLayout
 
 #: The epoch id the shared browser fixture map (``fixtures.mjs``) names.
@@ -725,7 +726,7 @@ def _write_epoch_spec(layout: WorkspaceLayout, spec: EpochSpec) -> dict[str, Any
             layout.root,
             epoch_id=spec.id,
             first_challenger_id=field.first_challenger,
-            record=decode_field_tournament_record(record),
+            record=decode_field_tournament_record(attach_elim_states(record)),
         )
     lineage = _lineage_epoch(
         spec.id,
@@ -1391,7 +1392,7 @@ def _swiss_with_field_status(tmp_path: Path, field_status: Sequence[dict[str, An
         root,
         epoch_id=CONSOLE_EPOCH,
         first_challenger_id="v1",
-        record=decode_field_tournament_record(record),
+        record=decode_field_tournament_record(attach_elim_states(record)),
     )
     rebuild_index(root)
     return root

@@ -953,7 +953,7 @@ def test_entry_disable_drift_reads_context() -> None:
 
     ``disable_drift`` is a board-LEVEL setting; the tournament runner
     stamps it onto each entry's ``context['disable_drift']`` (see
-    ``zicato.tournament.runner._stamp_disable_drift``). The adapter reads
+    ``zicato.tournament.worker_execution._stamp_disable_drift``). The adapter reads
     that one channel — a comma / whitespace separated list of drift-kind
     wire strings.
     """
@@ -987,7 +987,7 @@ def testentry_judge_only_reads_context() -> None:
 
     ``judge_only`` is a board-LEVEL setting; the tournament runner stamps
     it onto each entry's ``context['judge_only']`` as the wire string
-    ``"true"`` (see ``zicato.tournament.runner._stamp_judge_only``). The
+    ``"true"`` (see ``zicato.tournament.worker_execution._stamp_judge_only``). The
     adapter reads that one channel.
     """
     from zicato.adapters.adk import _JUDGE_ONLY_CONTEXT_KEY, entry_judge_only

@@ -729,7 +729,7 @@ The direct policy trials are paired with focused execution checks.
 `test_direct_decisions_match_scheduler_at_measurement_boundaries` compares the
 complete production decision and confirmation result against `run_matchup` for
 an improvement, a tie and missing execution. Its scheduler path replaces only
-`runner._run_single` with the example noise model. The missing-execution case
+`worker_execution._run_single` with the example noise model. The missing-execution case
 must remain ineligible and retain the champion.
 
 `test_noisy_adapter_seeded_draws_cross_the_worker_boundary` runs the example
@@ -1303,9 +1303,9 @@ pill's zero-DOM no-op beat).
 
 ### 11.9.3 The recorded fixtures
 
-The server computes the round-timeline, racing-field and matchup-grid joins
-and the elimination fold (09-dashboard-and-query.md §9.2.5), and the node
-suite holds no Python. `static/test/recorded.mjs` therefore serves what the
+Tournament execution records bracket progression. Query readers serve those
+facts with timeline and measurement views (09-dashboard-and-query.md §9.2.5).
+The browser suite reads recorded endpoint responses. `static/test/recorded.mjs` therefore serves what the
 Python endpoints answered: `tests/data/endpoint_route_snapshot.json` records
 every probed route over the workspaces `tests/_console_scenarios.py` writes
 (one per browser scenario — the shared console epoch, the racing ladder, the
@@ -1314,8 +1314,8 @@ cross-epoch pair, the structure records, the round-model cases), and
 `recordedRoutes('single_elim')` is a fixture map keyed the way the views
 fetch. The elimination round lists the suite draws are declared once in
 `tests/data/elim_states_cases.json`, and `tests/data/elim_states_served.json`
-is `derive_elim_states` over each of them, so `elimCase(name)` hands a test
-the server's model of its bracket.
+records the expected published results, so `elimCase(name)` supplies the same
+bracket facts that the diagram receives during execution.
 
 Both recordings are pinned by Python: `tests/test_dashboard_endpoint_table.py`
 serves every workspace through the real application and compares each body

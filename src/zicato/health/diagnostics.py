@@ -67,49 +67,10 @@ from zicato.config import HealthConfig, load_config
 from zicato.core.experiment import PLACEBO_HYPOTHESIS_MARKER
 from zicato.core.runtime import PREFLIGHT_GATE_DEFAULT
 from zicato.core.types import BoardEntry, LossProfile
-from zicato.epoch._storage import RecordError
+from zicato.epoch._storage import RecordError, copy_json_object
 from zicato.storage import atomic_write_text
 from zicato.util.iso_time import now_iso as _utcnow_iso
 from zicato.workspace import WorkspaceLayout
-
-# ---------------------------------------------------------------------------
-# Tunable thresholds
-# ---------------------------------------------------------------------------
-#
-# The detector thresholds now live as typed fields on
-# :class:`zicato.config.HealthConfig`. The module-level constants below
-# are kept as named defaults — they mirror that dataclass's field
-# defaults and remain importable for the tests and call sites that
-# reference them by name.
-
-#: Number of most-recent tournaments :func:`detect_degenerate_scoring`
-#: inspects. See :attr:`zicato.config.HealthConfig.scoring_window`.
-DEGENERATE_SCORING_WINDOW: int = HealthConfig().scoring_window
-
-#: Absolute ``scalar_score_delta`` below which a tournament counts as
-#: producing no optimization signal. See
-#: :attr:`zicato.config.HealthConfig.scoring_epsilon`.
-DEGENERATE_SCORING_EPSILON: float = HealthConfig().scoring_epsilon
-
-#: Fraction-of-board-entries-without-an-expectation threshold for
-#: :func:`detect_no_expectations`. See
-#: :attr:`zicato.config.HealthConfig.no_expectations_fraction`.
-NO_EXPECTATIONS_FRACTION: float = HealthConfig().no_expectations_fraction
-
-#: Consecutive ``rejected`` generations :func:`detect_stalled_loop`
-#: treats as a stall. See
-#: :attr:`zicato.config.HealthConfig.stalled_rejects`.
-STALLED_LOOP_REJECTS: int = HealthConfig().stalled_rejects
-
-#: Generalization gap (``holdout_loss - train_loss``) at/above which
-#: :func:`detect_generalization_gap` fires ``warning``. See
-#: :attr:`zicato.config.HealthConfig.generalization_gap_warn`.
-GENERALIZATION_GAP_WARN: float = HealthConfig().generalization_gap_warn
-
-#: Generalization gap at/above which :func:`detect_generalization_gap`
-#: fires ``critical`` (and recommends a board refresh). See
-#: :attr:`zicato.config.HealthConfig.generalization_gap_crit`.
-GENERALIZATION_GAP_CRIT: float = HealthConfig().generalization_gap_crit
 
 #: Namespace prefix of drift-derived metrics in the unified metric view.
 _DRIFT_NAMESPACE = "drift:"
@@ -137,13 +98,7 @@ def _resolve_health_config(config: HealthConfig | None) -> HealthConfig:
 
 
 def _report_object(raw: Any, name: str) -> dict[str, Any]:
-    if not isinstance(raw, dict):
-        raise RecordError(f"loop health {name} must be an object")
-    try:
-        result: dict[str, Any] = json.loads(json.dumps(raw, allow_nan=False))
-        return result
-    except (TypeError, ValueError) as exc:
-        raise RecordError(f"loop health {name} must contain JSON values") from exc
+    return copy_json_object(raw, f"loop health {name}")
 
 
 def _report_string(raw: Any, name: str, *, empty: bool = False) -> str:
@@ -2256,12 +2211,6 @@ def assess_loop_health(
 
 
 __all__ = [
-    "DEGENERATE_SCORING_WINDOW",
-    "DEGENERATE_SCORING_EPSILON",
-    "NO_EXPECTATIONS_FRACTION",
-    "STALLED_LOOP_REJECTS",
-    "GENERALIZATION_GAP_WARN",
-    "GENERALIZATION_GAP_CRIT",
     "HealthFinding",
     "LoopHealth",
     "SettlementReceiptAttention",

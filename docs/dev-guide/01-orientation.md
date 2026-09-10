@@ -1266,7 +1266,7 @@ scoring under defaults while the orchestrator believes otherwise — the
 §"Serializer completeness" and 07-runtime-and-durability.md).
 
 **Verify:** tests that stub the worker use the documented anchor
-`runner._run_single` (see `tests/_subprocess_worker_support.py`), and at
+`worker_execution._run_single` (see `tests/_subprocess_worker_support.py`), and at
 least one test in your change exercises the REAL subprocess path if you
 touched anything on the wire.
 

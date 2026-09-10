@@ -29,7 +29,7 @@ from typing import Any
 
 import pytest
 
-import zicato.tournament.runner as runner_mod
+import zicato.tournament.worker_execution as _tournament_worker_execution
 from tests._runtime_builders import prepare_tournament_epoch, runtime_config
 from zicato.core import (
     BoardEntry,
@@ -107,7 +107,7 @@ def _stub_run_single(monkeypatch, canned, *, log: list):
         log.append((generation.id, entry.id))
         return replace(canned[(generation.id, entry.id)], epoch_id=epoch_id)
 
-    monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", fake_run_single)
 
 
 def _seed_champion_cache(
@@ -368,7 +368,7 @@ def _stub_run_single_persisting(monkeypatch, canned, *, log: list):
         )
         return profile
 
-    monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", fake_run_single)
 
 
 def test_swiss_runs_each_gen_entry_at_most_once(monkeypatch, tmp_path):
@@ -508,7 +508,7 @@ def test_replicates_incremental_runs_only_missing(monkeypatch, tmp_path):
         )
         return profile
 
-    monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", fake_run_single)
 
     # First duel asks for 2 replicates: both sides run replicate 0 + 1 =
     # 2 units per side = 4 runs (every slot a miss).

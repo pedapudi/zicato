@@ -833,17 +833,14 @@ function projStat(value, key, proj) {
   ].filter(Boolean));
 }
 
+// Include displayed values at their display precision; omit request timestamps.
 function candidateDigest(s) {
   return {
     gen: s.node.id, parent: s.node.parent, decision: s.decision, championId: s.championId,
     parentInconsistency: s.parentInconsistency,
-    // the visibility rating stat (int register) — a reindex that moves the
-    // rating repaints the dossier; unrated folds null (pre-rating shape).
     rating: ratingTripleDigest(s.rating),
     champScalar: svg.isNum(s.championScalar) ? s.championScalar.toFixed(3) : null,
     delta: svg.isNum(s.primaryDelta) ? s.primaryDelta.toFixed(3) : null,
-    // the live PROJECTED standing — ROUNDED scalar/Δ + integer board counts so a
-    // no-op heartbeat is byte-identical, a board landing repaints (anti-flash).
     projected: s.projected ? [
       svg.isNum(s.projected.scalar) ? s.projected.scalar.toFixed(3) : null,
       svg.isNum(s.projected.delta) ? s.projected.delta.toFixed(3) : null,
@@ -851,20 +848,9 @@ function candidateDigest(s) {
       s.projected.boards_total == null ? '?' : s.projected.boards_total,
     ] : null,
     mpts: s.mpts,
-    // the PROPOSAL header (§4) — the idea/why/claims/sites that lead the
-    // dossier. null (the seed) contributes nothing → pre-feature digest.
     proposal: proposalDigest(s.proposal),
-    // the episode row under it: an export appearing when a round settles has
-    // to repaint, and a beat that changes nothing must not.
     episode: episodeDigest(s.episode),
-    // the VERDICT SENTENCE assembled from the structured gate fields — folded
-    // so a settling gate rewrites the line and a no-op beat does not.
     verdict: verdictSentence(s.gateExplain),
-    // the candidate-vs-champion comparison + gate-rule explanation surfaced on
-    // the lifecycle DAG — part of the digest so a change repaints (no flashing).
-    // Every per-entry field the lifecycle figure paints, in one stable-ordered
-    // list: a settling replicate or a newly-scored entry repaints, a no-op
-    // heartbeat re-emits the identical list and the DOM survives.
     compare: s.compare ? Object.keys(s.compare).sort().map((k) => {
       const c = s.compare[k];
       return [k, c.decidedBy,
@@ -883,38 +869,16 @@ function candidateDigest(s) {
       svg.isNum(s.gateExplain.deltaScalar) ? s.gateExplain.deltaScalar.toFixed(3) : null,
       svg.isNum(s.gateExplain.margin) ? s.gateExplain.margin.toFixed(3) : null, s.gateExplain.regressed,
       s.gateExplain.detail, s.gateExplain.reason, s.gateExplain.decidingLabel] : null,
-    // the RADAR silhouette model — folded in so a change to any axis (scalar,
-    // pass-rate, per-judge) or its live/projected state repaints, but a no-op
-    // heartbeat stays byte-identical. Delegates to svg.radarSilhouetteDigest.
     radar: s.radar ? svg.radarSilhouetteDigest({ axes: s.radar.axes, live: s.radar.live }) + (s.radar.projectedOnly ? '·proj-only' : '') : null,
-    // the train→holdout generalization triplet (rounded) so a change repaints
-    // and a no-op beat stays equal.
     generalization: s.generalization ? [
       svg.isNum(s.generalization.train) ? s.generalization.train.toFixed(3) : null,
       svg.isNum(s.generalization.holdout) ? s.generalization.holdout.toFixed(3) : null,
       svg.isNum(s.generalization.gap) ? s.generalization.gap.toFixed(3) : null,
       svg.isNum(s.generalization.tolerance) ? s.generalization.tolerance.toFixed(3) : null,
     ] : null,
-    // the proposer PREDICTION-ACCURACY scorecard (DIAGNOSTIC) — the calibration
-    // fraction + each claim's predicted/observed direction + its hit/miss/band/
-    // unpredicted verdict, folded in so a claim resolving (a movement landing,
-    // the fraction moving) repaints, but a no-op heartbeat stays byte-identical.
-    // null (seed / no experiment / no claims) → contributes NOTHING → the dossier
-    // digest is byte-identical to the pre-feature path (back-compat clean).
     scorecard: scorecardDigest(s.scorecard),
-    // entries fold the continuous score + its precision/recall metrics (#18)
-    // so a scored board repaints when its score/metrics move, but stays
-    // byte-identical on a no-op heartbeat. A bool-only entry contributes
-    // null for both (back-compat: unchanged digest vs the pre-score path).
     entries: s.entries.map((e) => [e.entry_id, svg.isNum(e.drift_loss) ? e.drift_loss.toFixed(3) : null, e.pass_fail, !!e.wall_clock_budget_exceeded, e.rung || null, e.match_id || null, !!e.cached, svg.isNum(e.score) ? e.score.toFixed(3) : null, metricsDigest(e.metrics)]),
-    // per-generation mean continuous outcome (#18); null on the pre-score path.
     meanScore: svg.isNum(s.meanScore) ? s.meanScore.toFixed(3) : null,
-    // Facet numbers fold at their RENDERED precision so a no-op heartbeat
-    // leaves the digest byte-identical and the table's DOM nodes survive
-    // (G10). A board with no facet tag contributes empty — unchanged digest
-    // vs the pre-facet path. Every count the cell can print folds too: `ran`
-    // reaches the DOM through facetCount, so a digest blind to it would pin
-    // a stale denominator in place.
     facets: [...s.facetScores.rows, s.facetScores.overall].filter(Boolean).map((f) => [
       f.name,
       svg.isNum(f.scalar) ? f.scalar.toFixed(2) : null,
@@ -924,66 +888,27 @@ function candidateDigest(s) {
     cached: s.cached ? [s.cachedProvenance && s.cachedProvenance.sourceEpoch, s.cachedProvenance && s.cachedProvenance.sourceRun] : null,
     progression: s.progression && Array.isArray(s.progression.stages)
       ? s.progression.stages.map((st) => [st.label, st.kind, svg.isNum(st.delta) ? st.delta.toFixed(2) : null, st.verdict]) : null,
-    // WHO the candidate met at the champion gate — printed on the tournament-path
-    // strip, so a re-resolved final that changes the opponent must repaint. null
-    // (gauntlet / never reached the final) → pre-feature digest (back-compat).
     finalOpponent: s.finalOpponent || null,
     matchups: s.mine.map((m) => [m.champion, m.challenger, m.decision, svg.isNum(m.delta_scalar) ? m.delta_scalar.toFixed(2) : null]),
     gates: s.gates.map((g, i) => g && Array.isArray(g.rules)
       ? [s.gateSpecs[i].champ, s.gateSpecs[i].chall, s.gateSpecs[i].role, g.decision, svg.isNum(g.delta_scalar) ? g.delta_scalar.toFixed(3) : null, g.rules.map((r) => [r.id, r.status, r.fired]),
-        // scalar-provenance decomposition folded in so a change to which
-        // transform/plugin shaped a side — or a fail-open event firing —
-        // repaints the gate, while a no-op heartbeat stays byte-identical. A
-        // null decomposition (a built-in scalar) contributes nothing.
         decompDigest(g.scalar_decomposition),
-        // operator-override provenance folded in (kind+action+state+reason, NO
-        // timestamp) so an override appearing/changing repaints the gate while a
-        // no-op beat stays byte-identical. A null override contributes nothing.
         overrideDigest(g.override),
-        // the ABSOLUTE-scalar endpoints (champion/challenger scalar + the live
-        // projected challenger + integer board counts) folded in so a board
-        // landing or a settle repaints the gate head, but a no-op heartbeat
-        // stays byte-identical. null (neither side resolves) → pre-feature
-        // digest (back-compat clean).
         absoluteScalarsDigest(g),
-        // the BRADLEY–TERRY uncertainty pre-gate (rounded θ̂/CI/P + the duel
-        // counts + the next_duel pair + the ci_history P-trace, NO timestamps)
-        // folded in so a duel resolving / a CI tightening / P moving repaints the
-        // gate, but a no-op heartbeat stays byte-identical. null (no rating /
-        // present:false) contributes nothing → pre-feature digest (back-compat).
         ratingDigest(g.rating),
-        // the DIFF-COMPLEXITY parsimony line item (the two rounded per-side
-        // diff-complexity costs, NO timestamp) folded in so the patch being
-        // re-scored — or the term appearing (weight turned on) — repaints the
-        // gate ladder, but a no-op heartbeat stays byte-identical. null (weight 0
-        // / pre-feature) contributes nothing → pre-feature digest (back-compat).
         diffComplexityDigest(g)]
       : null),
-    // the PER-JUDGE COMPARISON ledger rendered beside each gate — every judge's
-    // champion / challenger weighted loss + Δ, plus the server's primary_driver.
-    // Folded at the RENDERED precision so a no-op beat stays byte-identical; a
-    // judge's side resolving (or the driver changing hands) repaints. null
-    // (unserved / no judges) contributes nothing → pre-feature digest.
     judgeCmp: (s.judgeComparisons || []).map((c) => judgeComparisonDigest(c)),
     drill: s.entryParam || null,
     drillExp: s.exps && Array.isArray(s.exps.outcomes) ? s.exps.outcomes.map((o) => [o.kind, o.passed, o.judge_name, o.detail]) : null,
-    // the per-judge drill folds RAW loss + WEIGHT beside the weighted value —
-    // all three are rendered, so all three must gate the swap (a re-weighted
-    // judge moves `weight` + `weighted_loss` while `raw_loss` holds still).
     drillJudge: s.judges && Array.isArray(s.judges.judges) ? s.judges.judges.map((j) => [
       j.judge_name,
       svg.isNum(j.weighted_loss) ? j.weighted_loss.toFixed(3) : null,
       svg.isNum(j.raw_loss) ? j.raw_loss.toFixed(3) : null,
       svg.isNum(j.weight) ? j.weight.toFixed(3) : null,
     ]) : null,
-    // harmonograf deep-link state — folded in so the link appears/disappears
-    // when liveness flips (server up ⇄ run ended) without a no-op-beat repaint.
     hgLive: harmonografIsLive(),
     hgSession: (s.drillHeader && s.drillHeader.adk_session_id) || null,
-    // LIVE in-flight board runs for this candidate — folded into the digest so a
-    // beat that advances progress repaints, but a no-op heartbeat stays equal.
-    // the tri-state + the interrupted tally: the panel says something
-    // different in each state, so a state flip must repaint.
     liveness: (s.endedAt || '') + '|' + (s.interruptedBoards || 0) + '|' + (s.live ? 1 : 0),
     inflight: Array.isArray(s.inflight) ? s.inflight.map((r) => {
       const pr = runProgressRatio(r);

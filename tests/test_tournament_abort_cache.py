@@ -28,7 +28,7 @@ from typing import Any
 
 import pytest
 
-import zicato.tournament.runner as runner_mod
+import zicato.tournament.worker_execution as _tournament_worker_execution
 from tests._runtime_builders import prepare_tournament_epoch, runtime_config
 from zicato.core import (
     BUDGET_ABORT_CAUSE,
@@ -44,12 +44,10 @@ from zicato.core.workspace import loss_profile_path, run_id_for_unit
 from zicato.runtime.lock import acquire_workspace_lock
 from zicato.telemetry.reducer import read_loss_profile, write_loss_profile
 from zicato.testing.fixtures import make_loss_profile
-from zicato.tournament.runner import (
-    _aborted_loss_profile,
-    _resolve_cached_unit,
-    _run_unit_cache_first,
-    run_tournament,
-)
+from zicato.tournament.runner import run_tournament
+from zicato.tournament.scheduling import _run_unit_cache_first
+from zicato.tournament.unit_cache import _resolve_cached_unit
+from zicato.tournament.worker_execution import _aborted_loss_profile
 from zicato.tournament.worker_transport import _entry_measurement
 
 # ---------------------------------------------------------------------------
@@ -208,7 +206,7 @@ def _stub_run_single_returning(monkeypatch: pytest.MonkeyPatch, profile: LossPro
             ),
         )
 
-    monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", fake_run_single)
     return call_log
 
 
@@ -431,7 +429,7 @@ def _stub_run_single_logging(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str,
             pass_fail=True,
         )
 
-    monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", fake_run_single)
     return call_log
 
 

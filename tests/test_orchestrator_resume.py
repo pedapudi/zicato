@@ -29,7 +29,7 @@ from typing import Any
 
 import pytest
 
-import zicato.tournament.runner as _runner_mod
+import zicato.tournament.worker_execution as _tournament_worker_execution
 
 # Capture the GENUINE loss serde at import time, before any test installs the
 # orchestrator telemetry stubs (which shadow zicato.telemetry.reducer in
@@ -76,14 +76,14 @@ def _run_single_counter(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
     the loss-profile shape is unchanged — only the call is counted.
     """
     counts: dict[str, int] = {}
-    inner = _runner_mod._run_single
+    inner = _tournament_worker_execution._run_single
 
     async def _counting_run_single(*, generation: Any, entry: Any, **kwargs: Any) -> Any:
         key = f"{generation.id}/{entry.id}"
         counts[key] = counts.get(key, 0) + 1
         return await inner(generation=generation, entry=entry, **kwargs)
 
-    monkeypatch.setattr(_runner_mod, "_run_single", _counting_run_single)
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", _counting_run_single)
     return counts
 
 

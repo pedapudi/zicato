@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+import zicato.tournament.worker_execution as _tournament_worker_execution
 from tests._runtime_builders import (
     make_generation,
     prepare_tournament_epoch,
@@ -45,7 +46,7 @@ async def _caller_writer(root: Path, nested: bool):
         root,
         writer=None,
         instance_id="enclosing-invocation",
-        cleanup=lambda: runner.drain_worker_cleanup(root),
+        cleanup=lambda: _tournament_worker_execution.drain_worker_cleanup(root),
     ) as writer:
         yield writer
 
@@ -108,7 +109,7 @@ async def test_tournament_retains_writer_through_repeated_cancellation(
     root = tmp_path / "workspace"
     parent, child = make_generation(root), make_generation(root, "v1")
     cleanup_entered, allow_cleanup = asyncio.Event(), asyncio.Event()
-    real_terminate = runner._terminate_worker
+    real_terminate = _tournament_worker_execution._terminate_worker
     observed_pids: list[int] = []
     termination_attempts = 0
 
@@ -121,7 +122,7 @@ async def test_tournament_retains_writer_through_repeated_cancellation(
         await allow_cleanup.wait()
         return await real_terminate(*args, **kwargs)
 
-    monkeypatch.setattr(runner, "_terminate_worker", pause_cleanup)
+    monkeypatch.setattr(_tournament_worker_execution, "_terminate_worker", pause_cleanup)
     config = _config(root, supervisor_kill_wait_s=0.01)
     config = replace(config, parallelism=1, host_worker_permits=1)
     board, weights = [_entry()], ScoringWeights()
@@ -171,7 +172,10 @@ async def test_tournament_retains_writer_through_repeated_cancellation(
         assert owner is not None
         task.cancel("original cancellation")
         await asyncio.wait_for(cleanup_entered.wait(), 3)
-        assert any(key[0] == root.resolve() for key in runner._retained_worker_resources)
+        assert any(
+            key[0] == root.resolve()
+            for key in _tournament_worker_execution._retained_worker_resources
+        )
         task.cancel("repeated cancellation")
         await asyncio.sleep(0)
         assert not task.done()
@@ -181,7 +185,10 @@ async def test_tournament_retains_writer_through_repeated_cancellation(
         with pytest.raises(asyncio.CancelledError, match="original cancellation"):
             await task
         assert list_active_runs(root) == []
-        assert not any(key[0] == root.resolve() for key in runner._retained_worker_resources)
+        assert not any(
+            key[0] == root.resolve()
+            for key in _tournament_worker_execution._retained_worker_resources
+        )
         for pid in observed_pids:
             with pytest.raises(ProcessLookupError):
                 os.kill(pid, 0)
@@ -192,7 +199,7 @@ async def test_tournament_retains_writer_through_repeated_cancellation(
         if not task.done():
             task.cancel()
         await asyncio.gather(task, return_exceptions=True)
-        await runner.drain_worker_cleanup(root)
+        await _tournament_worker_execution.drain_worker_cleanup(root)
 
 
 @pytest.mark.asyncio
@@ -209,7 +216,7 @@ async def test_proposal_retains_writer_through_validation_and_cancelled_drain(
     validation, drain_entered, allow_drain = asyncio.Event(), asyncio.Event(), asyncio.Event()
     pids: list[int] = []
     real_register = foe_agent._register_active_run
-    real_drain = runner.drain_worker_cleanup
+    real_drain = _tournament_worker_execution.drain_worker_cleanup
 
     def observe_registration(*args: Any, **kwargs: Any) -> Any:
         _assert_excluded(workspace.root)
@@ -232,7 +239,7 @@ async def test_proposal_retains_writer_through_validation_and_cancelled_drain(
         await real_drain(root)
 
     monkeypatch.setattr(foe_agent, "_register_active_run", observe_registration)
-    monkeypatch.setattr(runner, "drain_worker_cleanup", drain)
+    monkeypatch.setattr(_tournament_worker_execution, "drain_worker_cleanup", drain)
 
     async def execute() -> None:
         async with _caller_writer(workspace.root, nested) as writer:

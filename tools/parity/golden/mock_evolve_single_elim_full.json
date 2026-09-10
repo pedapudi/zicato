@@ -352,11 +352,104 @@
           "status": "applied"
         }
       ],
+      "gen_states": [
+        {
+          "advanced_rounds": [
+            0,
+            1,
+            2
+          ],
+          "eliminated_at_round": null,
+          "generation_id": "v1",
+          "lb_entry_round": null,
+          "lost_rounds": [],
+          "played_rounds": [
+            0,
+            1,
+            2
+          ],
+          "projected": null,
+          "side_by_round": {
+            "0": "WB",
+            "1": "WB",
+            "2": "WB"
+          }
+        },
+        {
+          "advanced_rounds": [],
+          "eliminated_at_round": 0,
+          "generation_id": "v2",
+          "lb_entry_round": null,
+          "lost_rounds": [
+            0
+          ],
+          "played_rounds": [
+            0
+          ],
+          "projected": null,
+          "side_by_round": {
+            "0": "WB"
+          }
+        },
+        {
+          "advanced_rounds": [
+            0
+          ],
+          "eliminated_at_round": 1,
+          "generation_id": "v3",
+          "lb_entry_round": null,
+          "lost_rounds": [
+            1
+          ],
+          "played_rounds": [
+            0,
+            1
+          ],
+          "projected": null,
+          "side_by_round": {
+            "0": "WB",
+            "1": "WB"
+          }
+        },
+        {
+          "advanced_rounds": [],
+          "eliminated_at_round": 0,
+          "generation_id": "v4",
+          "lb_entry_round": null,
+          "lost_rounds": [
+            0
+          ],
+          "played_rounds": [
+            0
+          ],
+          "projected": null,
+          "side_by_round": {
+            "0": "WB"
+          }
+        },
+        {
+          "advanced_rounds": [],
+          "eliminated_at_round": 2,
+          "generation_id": "v0",
+          "lb_entry_round": null,
+          "lost_rounds": [
+            2
+          ],
+          "played_rounds": [
+            2
+          ],
+          "projected": null,
+          "side_by_round": {
+            "2": "WB"
+          }
+        }
+      ],
       "promoted_generation_id": "v1",
       "ran_at": "<TS>",
       "reason": "",
       "rounds": [
         {
+          "bracket_side": "WB",
           "label": "Bracket round 1",
           "matches": [
             {
@@ -371,6 +464,7 @@
               "decision": "rejected",
               "delta_scalar": 0.4,
               "live_progress": {},
+              "loser": "v2",
               "match_id": "WB-R0-0",
               "pending": false,
               "survivors": [],
@@ -388,6 +482,7 @@
               "decision": "rejected",
               "delta_scalar": 0.40000000000000013,
               "live_progress": {},
+              "loser": "v4",
               "match_id": "WB-R0-1",
               "pending": false,
               "survivors": [],
@@ -397,6 +492,7 @@
           "stage_index": 0
         },
         {
+          "bracket_side": "WB",
           "label": "Bracket round 2",
           "matches": [
             {
@@ -411,6 +507,7 @@
               "decision": "rejected",
               "delta_scalar": 0.7999999999999999,
               "live_progress": {},
+              "loser": "v3",
               "match_id": "WB-R1-0",
               "pending": false,
               "survivors": [],
@@ -420,6 +517,7 @@
           "stage_index": 1
         },
         {
+          "bracket_side": "WB",
           "label": "Final",
           "matches": [
             {
@@ -434,6 +532,7 @@
               "decision": "promoted",
               "delta_scalar": -1.6,
               "live_progress": {},
+              "loser": "v0",
               "match_id": "final",
               "pending": false,
               "survivors": [],
@@ -899,7 +998,7 @@
     "0/round_log.jsonl": [
       {
         "payload": {
-          "contract_hash": "bb4a245a839d5b110eb6d5a8aada77f27f081fbdc20cf8e1f93e3cd71f669614"
+          "contract_hash": "c40043cc028b5ea27e1e3eef0588fe25086fef996028f7e1521741ea70c13a51"
         },
         "scope": {},
         "seq": 1,

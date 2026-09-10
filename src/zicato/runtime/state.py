@@ -771,6 +771,7 @@ class ActiveTournament:
     structure_params: dict[str, Any] = field(default_factory=dict)
     competitors: list[dict[str, Any]] = field(default_factory=list)
     rounds: list[dict[str, Any]] = field(default_factory=list)
+    gen_states: list[dict[str, Any]] | None = None
     standings: list[dict[str, Any]] = field(default_factory=list)
     # The minting outcome for every challenger the proposer attempted this
     # round: ``{generation_id, status: "applied"|"rejected", reason, seed?}``.
@@ -802,6 +803,7 @@ class ActiveTournament:
             "structure_params": dict(self.structure_params),
             "competitors": [dict(c) for c in self.competitors],
             "rounds": [dict(r) for r in self.rounds],
+            **({"gen_states": self.gen_states} if self.gen_states is not None else {}),
             "standings": [dict(s) for s in self.standings],
             "field_status": [dict(f) for f in self.field_status],
             "projected": {str(k): dict(v) for k, v in self.projected.items()},
@@ -832,6 +834,7 @@ class ActiveTournament:
             ),
             competitors=[dict(c) for c in d.get("competitors", []) if isinstance(c, dict)],
             rounds=[dict(r) for r in d.get("rounds", []) if isinstance(r, dict)],
+            gen_states=d.get("gen_states"),
             standings=[dict(s) for s in d.get("standings", []) if isinstance(s, dict)],
             field_status=[dict(f) for f in d.get("field_status", []) if isinstance(f, dict)],
             projected={
@@ -1084,7 +1087,16 @@ def _complete_tournament_progress(current: ActiveTournament) -> ActiveTournament
             standings.sort(key=scalar_key)
         for rank, row in enumerate(standings, 1):
             row["rank"] = rank
-    return replace(current, rounds=rounds, standings=standings, partial_champion_agg=champion_agg)
+    from zicato.tournament.structure import attach_elim_states
+
+    diagram = attach_elim_states({"structure": current.structure, "rounds": rounds})
+    return replace(
+        current,
+        rounds=diagram["rounds"],
+        gen_states=diagram.get("gen_states"),
+        standings=standings,
+        partial_champion_agg=champion_agg,
+    )
 
 
 def clear_active_tournament(writer: WorkspaceLock) -> None:

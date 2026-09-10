@@ -43,28 +43,9 @@ from zicato.core.measurement import (
 from zicato.core.workspace import run_coordinates_from_dir
 from zicato.epoch._storage import RecordError, check_record_format
 from zicato.tournament.scoring import average_replicate_losses as _average_losses
-from zicato.tournament.worker_transport import _run_id_for
+from zicato.tournament.worker_transport import _run_id_for, _telemetry_helpers
 
 log = logging.getLogger("zicato.tournament.runner")
-
-
-def _telemetry_helpers() -> tuple[Any, Any]:
-    """Resolve the telemetry sink/reducer pair via the runner module.
-
-    The cache read/write path reads the reducer through
-    ``zicato.tournament.runner._telemetry_helpers`` — an attribute access on
-    the runner module object (NOT a bound import) so the test suite, which
-    monkeypatches ``runner._telemetry_helpers`` to swap in a stub reducer,
-    still drives this cache layer. The runner re-exports the canonical
-    :func:`zicato.tournament.worker_transport._telemetry_helpers`, so an
-    unpatched call returns that canonical pair. The import is function-local
-    so there is no import-time cycle: the runner imports this module rather
-    than the other way round at load time.
-    """
-    from zicato.tournament import runner  # noqa: PLC0415
-
-    pair: tuple[Any, Any] = runner._telemetry_helpers()  # type: ignore[attr-defined]
-    return pair
 
 
 def _skipped_unit_loss(

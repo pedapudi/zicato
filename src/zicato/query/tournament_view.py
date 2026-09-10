@@ -1,4 +1,4 @@
-"""tournament_view — extracted from the former dashboard state_reader monolith (pure move)."""
+"""Serve recorded tournament results and comparisons for dashboard diagrams."""
 
 from __future__ import annotations
 
@@ -31,10 +31,9 @@ from zicato.query.paths import (
 )
 from zicato.query.promoted_head import champion_history
 from zicato.query.ratings import RATING_FIELDS, rating_by_generation
-from zicato.query.replicate_scores import replicate_scores, standard_error
+from zicato.query.replicate_scores import replicate_scores, selected_measurements, standard_error
 from zicato.query.runtime_view import read_active_tournament_dict
 from zicato.tournament.scoring import read_gen_score
-from zicato.workspace.reads import read_generation_losses
 
 
 def build_bracket(
@@ -132,7 +131,7 @@ def _bracket_from_conn(
             "eval_mode": candidate.outcome.champion_eval_mode if candidate is not None else None,
             "run_ref": f"epochs/{epoch_id}/generations/{champion_id}" if candidate else None,
         }
-        tournaments.append(attach_elim_states(body))
+        tournaments.append(body)
         epoch_structure = body["structure"]
         epoch_structure_params = body["structure_params"]
 
@@ -365,81 +364,6 @@ def build_matchup_detail(paths: WorkspacePaths, generation_id: str) -> dict[str,
 # files so a completed tournament's outcomes survive without the index.
 
 
-def _opt_metrics(value: Any) -> dict[str, float] | None:
-    """Coerce a raw ``metrics`` field into ``{name: finite float}`` or ``None``.
-
-    The optional precision/recall (etc.) decomposition (#18). Non-finite
-    or non-numeric values are dropped; an empty result collapses to
-    ``None`` so a missing decomposition reads identically to the
-    pre-score path.
-    """
-    if not isinstance(value, dict):
-        return None
-    out: dict[str, float] = {}
-    for k, v in value.items():
-        if isinstance(v, bool) or not isinstance(v, int | float):
-            continue
-        f = float(v)
-        if f != f or f in (float("inf"), float("-inf")):
-            continue
-        out[str(k)] = f
-    return out or None
-
-
-def _read_run_loss_files(
-    paths: WorkspacePaths, epoch_id: str, generation_id: str
-) -> dict[str, dict[str, Any]]:
-    """Read every ``runs/{entry}/loss.json`` under one generation.
-
-    Returns ``{entry_id: {drift_loss, pass_fail, score, metrics,
-    adk_session_id, run_id}}``. The entry id keys on the run directory
-    name (the canonical board-run layout) and is overridden by the
-    ``entry_id`` field inside the ``loss.json`` payload when present.
-    ``score`` (continuous outcome in ``[0, 1]``) and ``metrics`` (e.g.
-    precision/recall) are carried through when present and ``None``
-    otherwise: a loss.json written before the ``score`` field existed carries
-    both as ``None``. Missing /
-    malformed files are skipped silently — a generation with no telemetry
-    yet yields ``{}``.
-    """
-    out: dict[str, dict[str, Any]] = {}
-    for run_entry_id, loss in read_generation_losses(
-        layout_of(paths), epoch_id, generation_id
-    ).items():
-        entry_id = loss["entry_id"]
-        drift = loss.get("drift_loss")
-        prov = loss.get("scoring_provenance")
-        cell: dict[str, Any] = {
-            "entry_id": entry_id,
-            "drift_loss": coerce_float(drift),
-            "pass_fail": _opt_bool(loss.get("pass_fail")),
-            # Continuous per-entry outcome + its optional precision/recall
-            # decomposition (#18). ``None`` for a loss.json written before
-            # the ``score`` field existed.
-            "score": finite_float(loss.get("score")),
-            "metrics": _opt_metrics(loss.get("metrics")),
-            "run_id": (loss.get("run_id") if isinstance(loss.get("run_id"), str) else run_entry_id),
-            # Seam-1 drift-reduction provenance (#19). ``None`` on a
-            # loss.json that recorded none — surfaced so the gate
-            # breakdown can show which transform / plugin shaped drift_loss.
-            "scoring_provenance": str(prov) if isinstance(prov, str) and prov else None,
-            # Did this run OBSERVE drift at all? An adapter that emits no drift
-            # stream still writes a structural ``drift_loss`` of 0.0 with an
-            # empty measured drift metrics, which is indistinguishable on the wire
-            # from a run that watched for drift and saw none. Either a recorded
-            # drift event or a non-zero loss proves the channel carries signal;
-            # nothing else does. Internal to this module — the endpoint serves
-            # the matchup-wide ``drift_present`` derived from it.
-            "drift_observed": any(m["name"].startswith("drift:") for m in loss["metric_counts"])
-            or bool(coerce_float(drift) not in (None, 0.0)),
-        }
-        sid = loss.get("adk_session_id")
-        if isinstance(sid, str) and sid:
-            cell["adk_session_id"] = sid
-        out[entry_id] = cell
-    return out
-
-
 def _gen_score_view(paths: WorkspacePaths, epoch_id: str, generation_id: str) -> dict[str, Any]:
     """Project the accepted aggregate for query responses."""
     score = read_gen_score(layout_of(paths), epoch_id, generation_id)
@@ -571,8 +495,8 @@ def build_matchup_grid(
     if not epoch_id or not challenger_id:
         return base
 
-    parent_losses = _read_run_loss_files(paths, epoch_id, champion_id) if champion_id else {}
-    child_losses = _read_run_loss_files(paths, epoch_id, challenger_id)
+    parent_losses = selected_measurements(paths, epoch_id, champion_id) if champion_id else {}
+    child_losses = selected_measurements(paths, epoch_id, challenger_id)
 
     entry_grid: list[dict[str, Any]] = []
     for entry_id in sorted(set(parent_losses) | set(child_losses)):
@@ -726,28 +650,23 @@ def _structure_envelope(
     rounds: Any = None,
     standings: Any = None,
     field_status: Any = None,
+    gen_states: Any = None,
 ) -> dict[str, Any]:
-    """THE one tournament-structure envelope builder.
-
-    Every resolver (index / active / loss-files) projects its raw fields
-    through here so the payload shape — and the type-guarded degrades —
-    live in exactly one place. An elim envelope is enriched with the
-    served elim model (:func:`attach_elim_states` — sorted rounds +
-    ``bracket_side``/``loser`` + top-level ``gen_states``).
-    """
-    return attach_elim_states(
-        {
-            "epoch_id": epoch_id,
-            "tournament_id": tournament_id,
-            "structure": _normalize_structure(structure),
-            "structure_params": structure_params if isinstance(structure_params, dict) else {},
-            "competitors": competitors if isinstance(competitors, list) else [],
-            "rounds": rounds if isinstance(rounds, list) else [],
-            "standings": standings if isinstance(standings, list) else [],
-            "field_status": field_status if isinstance(field_status, list) else [],
-            "source": source,
-        }
-    )
+    """Select recorded structure fields for a response."""
+    result = {
+        "epoch_id": epoch_id,
+        "tournament_id": tournament_id,
+        "structure": _normalize_structure(structure),
+        "structure_params": structure_params if isinstance(structure_params, dict) else {},
+        "competitors": competitors if isinstance(competitors, list) else [],
+        "rounds": rounds if isinstance(rounds, list) else [],
+        "standings": standings if isinstance(standings, list) else [],
+        "field_status": field_status if isinstance(field_status, list) else [],
+        "source": source,
+    }
+    if gen_states is not None:
+        result["gen_states"] = gen_states
+    return result
 
 
 def _empty_tournament_structure(epoch_id: str, tournament_id: str, source: str) -> dict[str, Any]:
@@ -757,246 +676,6 @@ def _empty_tournament_structure(epoch_id: str, tournament_id: str, source: str) 
 # ---------------------------------------------------------------------------
 # The served ELIM MODEL — rounds canonicalized + per-generation states
 # ---------------------------------------------------------------------------
-
-_ELIM_STRUCTURES = frozenset({"single_elim", "double_elim"})
-
-
-def _round_sort_key(r: dict[str, Any], position: int) -> tuple[Any, int]:
-    """The temporal sort key: ``stage_index``, or ``round_index``.
-
-    The persisted within-tournament stage key is ``stage_index``
-    (selection/strategy.py); ``round_index`` is accepted for records
-    written before the rename. A round with neither sorts stably by its
-    original position.
-    """
-    for key in ("round_index", "stage_index"):
-        v = r.get(key)
-        if isinstance(v, bool):  # bool is an int subclass — never a round index
-            continue
-        if isinstance(v, int | float):
-            return (v, position)
-    return (position, position)
-
-
-def _scalar_id(v: Any) -> str | None:
-    """A competitor/winner id as the scalar the client renders, or ``None``.
-
-    Only a string or a real number is an id: a ``bool`` (an ``int``
-    subclass — dropped explicitly), ``dict``/``list``/``None``/other type
-    is NOT a scalar and reads as absent. Twinned line-for-line by the Rust
-    (``str|number``-only) and node folds so all three drop the same values.
-    """
-    if isinstance(v, str):
-        return v
-    if isinstance(v, int | float) and not isinstance(v, bool):
-        return str(v)
-    return None
-
-
-def _match_competitors(m: dict[str, Any]) -> list[str]:
-    comps = m.get("competitors")
-    if not isinstance(comps, list):
-        return []
-    out: list[str] = []
-    for c in comps:
-        s = _scalar_id(c)
-        if s and s != "tbd":
-            out.append(s)
-    return out
-
-
-def _match_winner(m: dict[str, Any]) -> str | None:
-    """The decided winner id, or ``None`` (undecided / non-scalar).
-
-    A falsy id (``""``, ``0``) reads as undecided, matching the Rust
-    ``truthy`` gate and the node ``m.winner ? …`` guard.
-    """
-    s = _scalar_id(m.get("winner"))
-    return s or None
-
-
-def _match_pending(m: dict[str, Any], winner: str | None) -> bool:
-    if m.get("pending"):
-        return True
-    return not winner and not m.get("bye") and not m.get("decision")
-
-
-def derive_elim_states(rounds: Any) -> dict[str, Any]:
-    """The SERVER-SIDE elim fold — the model the bracket figures render.
-
-    This fold owns the whole derivation: it re-sorts mis-ordered caller
-    columns, de-duplicates backend-duplicated matches, classifies each loss as
-    an elimination or a winners→losers drop, and guards against phantom
-    eliminations. Doing it server-side is what lets every consumer (Python
-    service, Rust supervisor, the node mock) serve ONE identical model; a
-    client (``svg.js`` elimRadial) that derived it per render
-    would be re-deriving what the server already owns. Ported line-for-line
-    into ``crates/supervisor/src/elim_states.rs`` — the shared fixture
-    ``tests/data/elim_states_fixture.json`` pins the two folds together.
-
-    Input: the raw ``rounds[]`` blob (each round ``{round_index? /
-    stage_index?, label?, matches: [{competitors, winner?, bye?,
-    decision?, pending?, bracket_slot?, projected?, ...}]}``).
-
-    Output ``{"rounds": [...], "gen_states": [...]}``:
-
-    * ``rounds`` — PRE-SORTED by round index (temporal WB → LB → GF; a
-      round without an index keeps its position). Every round gains
-      ``bracket_side`` (``"WB"``/``"LB"`` — LB when any match's
-      ``bracket_slot`` starts with ``LB``); its matches are DEDUPED (key =
-      ``bracket_slot`` + sorted competitors, keeping the MOST-DECIDED
-      duplicate) and each match gains ``loser`` (the non-winner of a
-      decided two-sided match; ``null`` = undecided / bye). Round
-      references below are COLUMN indices into this sorted array.
-    * ``gen_states`` — one record per competitor, first-seen order:
-      ``{generation_id, played_rounds, advanced_rounds, lost_rounds,
-      eliminated_at_round, side_by_round, lb_entry_round, projected}``. The
-      elimination-vs-drop rule is the client's, verbatim: a loss with NO later
-      appearance is an elimination there; a loss followed by a later appearance
-      is a winners→losers drop (the second life). ``null`` = undecided;
-      ``side_by_round`` keys are stringified column indices (JSON object keys).
-
-    Pure + best-effort: a malformed blob degrades to empty lists and never
-    raises.
-    """
-    raw = [r for r in (rounds if isinstance(rounds, list) else []) if isinstance(r, dict)]
-    ordered = sorted(range(len(raw)), key=lambda i: _round_sort_key(raw[i], i))
-
-    played: dict[str, set[int]] = {}
-    advanced: dict[str, set[int]] = {}
-    lost_at: dict[str, set[int]] = {}
-    side_of: dict[str, dict[int, str]] = {}
-    lb_entry: dict[str, int | None] = {}
-    projected: dict[str, Any] = {}
-    order: list[str] = []
-
-    def _ensure(gid: str) -> None:
-        if gid not in played:
-            played[gid] = set()
-            advanced[gid] = set()
-            lost_at[gid] = set()
-            side_of[gid] = {}
-            lb_entry[gid] = None
-            order.append(gid)
-
-    out_rounds: list[dict[str, Any]] = []
-    for ci, ri in enumerate(ordered):
-        r = raw[ri]
-        matches_in = [m for m in r.get("matches") or [] if isinstance(m, dict)]
-
-        # ── DEDUPE (ex-client): a published round can carry the SAME match
-        # twice (identical bracket_slot + competitor pair). Key on the slot +
-        # the sorted competitor set; keep the MOST-DECIDED instance (a settled
-        # winner beats a still-pending duplicate). Distinct matches sharing a
-        # column keep distinct keys, so normal data passes through untouched.
-        by_key: dict[str, dict[str, Any]] = {}
-        key_order: list[str] = []
-        for m in matches_in:
-            comps = _match_competitors(m)
-            winner = _match_winner(m)
-            key = str(m.get("bracket_slot") or "") + "|" + "/".join(sorted(comps))
-            prev = by_key.get(key)
-            if prev is None:
-                by_key[key] = m
-                key_order.append(key)
-            else:
-                # Only a still-pending first-seen yields to a decided
-                # duplicate. Two DIFFERENT decided winners for the same slot
-                # is corrupt data — the first-seen (most-decided) one wins
-                # deterministically rather than flapping by iteration order.
-                prev_winner = _match_winner(prev)
-                if _match_pending(prev, prev_winner) and not _match_pending(m, winner):
-                    by_key[key] = m
-        deduped = [by_key[k] for k in key_order]
-
-        any_lb = False
-        out_matches: list[dict[str, Any]] = []
-        for m in deduped:
-            comps = _match_competitors(m)
-            winner = _match_winner(m)
-            pending = _match_pending(m, winner)
-            is_lb = str(m.get("bracket_slot") or "").startswith("LB")
-            if is_lb:
-                any_lb = True
-            bye = bool(m.get("bye"))
-            loser: str | None = None
-            if winner and not bye and len(comps) >= 2:
-                loser = next((c for c in comps if c != winner), None)
-
-            proj_map = m.get("projected") if isinstance(m.get("projected"), dict) else None
-            for c in comps:
-                _ensure(c)
-                played[c].add(ci)
-                side_of[c][ci] = "LB" if is_lb else "WB"
-                if is_lb and lb_entry[c] is None:
-                    lb_entry[c] = ci
-                if proj_map and pending:
-                    p = proj_map.get(c)
-                    if (
-                        isinstance(p, dict)
-                        and isinstance(p.get("scalar"), int | float)
-                        and not isinstance(p.get("scalar"), bool)
-                    ):
-                        projected[c] = p
-                if pending:
-                    continue
-                if bye or (winner and c == winner):
-                    advanced[c].add(ci)
-                elif winner:
-                    lost_at[c].add(ci)
-
-            out_m = dict(m)
-            out_m["loser"] = loser
-            out_matches.append(out_m)
-
-        out_r = dict(r)
-        out_r["matches"] = out_matches
-        out_r["bracket_side"] = "LB" if any_lb else "WB"
-        out_rounds.append(out_r)
-
-    # ── ELIMINATION vs DROP (ex-client): eliminated at the first loss with
-    # no LATER appearance; an earlier loss followed by a later column is a
-    # winners→losers drop, never a termination (no phantom ✕ in the WB).
-    gen_states: list[dict[str, Any]] = []
-    for gid in order:
-        lost_sorted = sorted(lost_at[gid])
-        last_played = max(played[gid]) if played[gid] else -1
-        eliminated_at: int | None = None
-        for ci in lost_sorted:
-            if ci >= last_played:
-                eliminated_at = ci
-                break
-        gen_states.append(
-            {
-                "generation_id": gid,
-                "played_rounds": sorted(played[gid]),
-                "advanced_rounds": sorted(advanced[gid]),
-                "lost_rounds": lost_sorted,
-                "eliminated_at_round": eliminated_at,
-                "side_by_round": {str(ci): side for ci, side in sorted(side_of[gid].items())},
-                "lb_entry_round": lb_entry[gid],
-                "projected": projected.get(gid),
-            }
-        )
-
-    return {"rounds": out_rounds, "gen_states": gen_states}
-
-
-def attach_elim_states(payload: dict[str, Any]) -> dict[str, Any]:
-    """Enrich an elim payload with the served elim model, in place.
-
-    For a ``single_elim`` / ``double_elim`` payload carrying a ``rounds``
-    list: replaces ``rounds`` with the canonicalized (sorted / deduped /
-    ``loser``+``bracket_side``-stamped) copy and attaches the top-level
-    ``gen_states`` fold. Any other payload passes through untouched —
-    the enrichment is KEY-ABSENT for non-elim structures (additive).
-    """
-    structure = _normalize_structure(payload.get("structure"))
-    if structure in _ELIM_STRUCTURES and isinstance(payload.get("rounds"), list):
-        derived = derive_elim_states(payload["rounds"])
-        payload["rounds"] = derived["rounds"]
-        payload["gen_states"] = derived["gen_states"]
-    return payload
 
 
 def _scalar_pair(
@@ -1037,6 +716,7 @@ def _structure_from_active(
         rounds=active.get("rounds"),
         standings=active.get("standings"),
         field_status=active.get("field_status"),
+        gen_states=active.get("gen_states"),
     )
 
 
@@ -1059,21 +739,38 @@ def _structure_from_records(
         if record.tournament_id != tournament_id:
             if not pair:
                 continue
-            rounds = [
-                {**stage, "matches": matches}
-                for stage in body["rounds"]
-                if (
-                    matches := [
-                        match for match in stage["matches"] if set(match["competitors"]) == pair
-                    ]
-                )
-            ]
+            columns = {}
+            rounds: list[dict[str, Any]] = []
+            for column, stage in enumerate(body["rounds"]):
+                matches = [match for match in stage["matches"] if set(match["competitors"]) == pair]
+                if matches:
+                    columns[column] = len(rounds)
+                    rounds.append({**stage, "matches": matches})
             if not rounds:
                 continue
             body["rounds"] = rounds
             for key in ("competitors", "standings", "field_status"):
                 body[key] = [row for row in body[key] if row["generation_id"] in pair]
-        return attach_elim_states({**body, "tournament_id": tournament_id, "source": "record"})
+            if "gen_states" in body:
+                body["gen_states"] = [
+                    {
+                        **state,
+                        **{
+                            key: [columns[index] for index in state[key] if index in columns]
+                            for key in ("played_rounds", "advanced_rounds", "lost_rounds")
+                        },
+                        "eliminated_at_round": columns.get(state["eliminated_at_round"]),
+                        "lb_entry_round": columns.get(state["lb_entry_round"]),
+                        "side_by_round": {
+                            str(columns[int(index)]): side
+                            for index, side in state["side_by_round"].items()
+                            if int(index) in columns
+                        },
+                    }
+                    for state in body["gen_states"]
+                    if state["generation_id"] in pair
+                ]
+        return {**body, "tournament_id": tournament_id, "source": "record"}
     return None
 
 

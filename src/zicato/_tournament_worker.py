@@ -6,7 +6,7 @@ would make killing the whole ``evolve`` invocation the only way to stop it.
 Isolating each run as its own subprocess is what lets a per-run wall-clock
 budget be hard-enforced:
 
-* the parent (:func:`zicato.tournament.runner._run_single`) wraps the
+* the parent (:func:`zicato.tournament.worker_execution._run_single`) wraps the
   worker in :func:`asyncio.wait_for` and escalates SIGTERM -> SIGKILL,
 * an independent supervisor watchdog can SIGKILL a worker whose
   :attr:`zicato.runtime.state.ActiveRun.deadline` has passed — keyed on

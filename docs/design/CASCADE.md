@@ -279,7 +279,7 @@ because the generation id is in the seed" serve as the A/A premise. The
 planted-effect vocabulary is the existing `DELTA_CASES` (0.5×, 1× and 3×
 the **full-board** floor) with one added requirement: effects sized
 against **each stage's slice floor** (§4.2). Drive the real machinery, monkeypatch only
-`runner._run_single` (`§13.2`).
+`worker_execution._run_single` (`§13.2`).
 
 ### 4.2 Experiment A — per-stage false-cut rate vs the slice floor
 
@@ -380,7 +380,7 @@ machine-readable JSON report and a printed summary) and
 `cascade_oc` pytest marker, **excluded from the default run**; one cheap
 unmarked smoke test keeps the harness from rotting). The cascade under
 measurement is a *simulated* composition of the shipped stages. The draws
-flow through `runner._run_single` (the documented monkeypatch anchor) on the
+flow through `worker_execution._run_single` (the documented monkeypatch anchor) on the
 seeded convergence-example noise model. Every **decision**, however, is the
 shipped code: the real `measure_noise_floor` (per-slice floors), the real
 `RacingStrategy._apply_cut` rung, the real `evaluate_gate` /
@@ -396,7 +396,7 @@ interval** (the count and interval travel with each rate in the tables). The
 per-slice A/A **floors** (Experiment A) and the **board-unit budgets**
 (Experiment C's `board-units` columns) are the exception. A floor is a measured
 standard deviation. A budget is an **exact count**, a deterministic function of
-the seeds, counted once per `runner._run_single` call and carrying **no**
+the seeds, counted once per `worker_execution._run_single` call and carrying **no**
 sampling error. So in every table below the *rates* carry intervals and
 the *budgets* do not.
 
@@ -501,7 +501,7 @@ Reading:
 ### 5.4 Experiment C — the budget-savings-vs-power curve (the build artifact)
 
 Margin terminal, `field=6`, `margin = 0.55×floor = 0.352`, terminal
-replicates 16, board-units counted exactly (one per `runner._run_single`
+replicates 16, board-units counted exactly (one per `worker_execution._run_single`
 call). x = mean total board-units spent per promotion; y = `P(promote|true)`:
 
 Power is `k/16` with its 95% Wilson interval; board-units are exact counts

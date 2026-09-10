@@ -1236,7 +1236,7 @@ def regenerate_epoch_report_deterministic(
         assert recorded_experiments is not None
         records, _unreadable = recorded_experiments
         experiments = [experiment for _, experiment in records]
-        generations = _generations_for(workspace_root, epoch_id, experiments)
+        generations = _generations_for(workspace_root, epoch_id)
         deterministic += "\n\n" + render_tournament_outcomes_section(generations, experiments)
     report_md = assemble_report_markdown(data, prose, deterministic)
     existing = md_path.read_text(encoding="utf-8") if md_path.exists() else ""

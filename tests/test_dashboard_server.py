@@ -1812,113 +1812,47 @@ def test_matchup_grid_no_mean_score_when_absent(workspace: Path) -> None:
         assert row["child_metrics"] is None
 
 
-def _build_per_entry_index(db: Path, loss_json_by_run: dict[str, str]) -> None:
-    """Build a loss_profiles index with the full column set the per-entry
-    reader queries, one v1 row per ``loss_json_by_run`` entry."""
-    conn = sqlite3.connect(db)
-    apply_schema(conn)
-    conn.executemany(
-        (
-            "INSERT INTO loss_profiles(run_id, epoch_id, generation_id, entry_id, "
-            "drift_loss, pass_fail, runtime_ms, wall_clock_budget_exceeded, "
-            "loss_json, tournament_id) VALUES(?,?,?,?,?,?,?,?,?,?)"
-        ),
-        [
-            (
-                run,
-                "2026-05-16_e0",
-                "v1",
-                "waffles_single",
-                0.2,
-                "pass",
-                100,
-                0,
-                json.dumps(
-                    loss_profile_to_dict(
-                        make_loss_profile(
-                            run_id=run,
-                            epoch_id="2026-05-16_e0",
-                            generation_id="v1",
-                            entry_id="waffles_single",
-                            drift_loss=0.2,
-                            pass_fail=True,
-                            runtime_ms=100,
-                            **json.loads(lj),
-                        )
-                    )
-                ),
-                None,
-            )
-            for run, lj in loss_json_by_run.items()
-        ],
-    )
-    conn.commit()
-    conn.close()
+@pytest.mark.parametrize("score,metrics", [(0.77, {"precision": 0.9, "recall": 0.6}), (None, None)])
+def test_per_entry_reads_candidate_measurements_without_index(
+    tmp_path: Path, score, metrics
+) -> None:
+    """Candidate scores and metrics come from that candidate's recorded execution."""
+    from tests._workspace_support import write_run
+    from zicato.query import WorkspacePaths, build_per_entry_for_generation
+    from zicato.tournament.scoring import aggregate_generation_score
 
-
-def test_per_entry_for_generation_carries_score_from_loss_json(tmp_path: Path) -> None:
-    """``build_per_entry_for_generation`` parses the continuous ``score`` +
-    ``metrics`` out of the index's ``loss_json`` blob (no schema change),
-    and surfaces a per-generation ``mean_score`` from gen_score.json."""
-    import json as _json
-
-    from zicato.core import LossProfile, ScoringWeights
-    from zicato.query import (
-        WorkspacePaths,
-        build_per_entry_for_generation,
-    )
-    from zicato.tournament.scoring import aggregate_generation_score, write_gen_score
-
-    ws = tmp_path / ".zicato"
-    ws.mkdir()
-    _build_per_entry_index(
-        ws / "index.db",
-        {"r1": _json.dumps({"score": 0.77, "metrics": {"precision": 0.9, "recall": 0.6}})},
-    )
-    loss = LossProfile(
-        run_id="r1",
-        entry_id="waffles_single",
-        generation_id="v1",
-        epoch_id="2026-05-16_e0",
-        metric_counts=(),
-        plan_revisions=0,
-        task_failure_ratio=0.0,
-        runtime_ms=100,
-        wall_clock_budget_exceeded=False,
-        expectation_result=None,
-        drift_loss=0.2,
-        pass_fail=True,
-        score=0.77,
-        metrics={"precision": 0.9, "recall": 0.6},
-    )
-    write_gen_score(ws, "2026-05-16_e0", "v1", aggregate_generation_score([loss], ScoringWeights()))
-
-    paths = WorkspacePaths(ws)
-    pe = build_per_entry_for_generation(paths, "2026-05-16_e0", "v1")
-    assert pe["mean_score"] == pytest.approx(0.77)
-    entry = next(e for e in pe["entries"] if e["entry_id"] == "waffles_single")
-    assert entry["score"] == pytest.approx(0.77)
-    assert entry["metrics"] == {"precision": 0.9, "recall": 0.6}
-
-
-def test_per_entry_for_generation_without_score(tmp_path: Path) -> None:
-    """An indexed measurement with no continuous score
-    yields ``score`` / ``metrics`` == None and ``mean_score`` == None."""
-    from zicato.query import (
-        WorkspacePaths,
-        build_per_entry_for_generation,
-    )
-
-    ws = tmp_path / ".zicato"
-    ws.mkdir()
-    _build_per_entry_index(ws / "index.db", {"r1": "{}"})
-
-    paths = WorkspacePaths(ws)
-    pe = build_per_entry_for_generation(paths, "2026-05-16_e0", "v1")
-    assert pe["mean_score"] is None
-    entry = next(e for e in pe["entries"] if e["entry_id"] == "waffles_single")
-    assert entry["score"] is None
-    assert entry["metrics"] is None
+    epoch_id = "2026-05-16_e0"
+    layout = WorkspaceLayout(tmp_path / ".zicato")
+    for generation_id, value in (("v0", 0.1), ("v1", score)):
+        loss = make_loss_profile(
+            epoch_id=epoch_id,
+            generation_id=generation_id,
+            entry_id="waffles_single",
+            run_id=run_id_for_unit(generation_id, "waffles_single", epoch_id=epoch_id),
+            measurement=TOURNAMENT_DRAW,
+            score=value,
+            metrics=metrics or {},
+            drift_loss=0.2,
+            runtime_ms=100,
+            pass_fail=True,
+        )
+        write_run(
+            layout, epoch_id, generation_id, "waffles_single", loss=loss_profile_to_dict(loss)
+        )
+        write_gen_score(
+            layout.root,
+            epoch_id,
+            generation_id,
+            aggregate_generation_score([loss], ScoringWeights()),
+        )
+    result = build_per_entry_for_generation(WorkspacePaths(layout.root), epoch_id, "v1")
+    assert result["mean_score"] == pytest.approx(score if score is not None else 1.0)
+    assert len(result["entries"]) == 1
+    entry = result["entries"][0]
+    assert entry["generation_id"] == "v1"
+    assert entry["score"] == (pytest.approx(score) if score is not None else None)
+    assert entry["metrics"] == metrics
+    assert not layout.index_db_path.exists()
 
 
 def _build_facet_workspace(
@@ -1986,45 +1920,6 @@ def _build_facet_workspace(
         ws / "epochs" / epoch_id / "scoring.json",
         weights if weights is not None else {"pass_weight": 1.0},
     )
-
-    # The per-entry ROWS come from the index (the facet aggregate reads the run
-    # files); build it too so `entries` is populated for tests that read it.
-    conn = sqlite3.connect(ws / "index.db")
-    apply_schema(conn)
-    conn.executemany(
-        (
-            "INSERT INTO loss_profiles(run_id, epoch_id, generation_id, entry_id, "
-            "drift_loss, pass_fail, runtime_ms, wall_clock_budget_exceeded, "
-            "loss_json, tournament_id) VALUES(?,?,?,?,?,?,?,?,?,?)"
-        ),
-        [
-            (
-                f"run_v1_{entry_id}",
-                epoch_id,
-                "v1",
-                entry_id,
-                drift_loss,
-                None if pass_fail is None else ("pass" if pass_fail else "fail"),
-                1000,
-                0,
-                (
-                    ws
-                    / "epochs"
-                    / epoch_id
-                    / "generations"
-                    / "v1"
-                    / "runs"
-                    / entry_id
-                    / "seed-none"
-                    / "loss.tournament.r0.json"
-                ).read_text(),
-                None,
-            )
-            for entry_id, pass_fail, score, drift_loss in runs
-        ],
-    )
-    conn.commit()
-    conn.close()
 
 
 def _facets(ws: Path) -> dict[str, object]:

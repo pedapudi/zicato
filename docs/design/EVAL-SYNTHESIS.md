@@ -337,7 +337,7 @@ discrimination probes spend real champion budget and are gated the same way
 `reflect run`'s adjudication is: never without an explicit operator go-ahead
 and a live endpoint. The pipeline is **fully testable against fixtures and
 mocks** — the
-probes monkeypatch `runner._run_single` on a seeded noise model (the
+probes monkeypatch `worker_execution._run_single` on a seeded noise model (the
 cascade-OC / power-harness precedent), so every admission statistic has a
 known-answer test with zero live spend.
 

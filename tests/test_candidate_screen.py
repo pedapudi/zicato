@@ -25,8 +25,8 @@ from typing import Any
 
 import pytest
 
-import zicato.tournament.runner as runner_mod
 import zicato.tournament.scheduling as scheduling_mod
+import zicato.tournament.worker_execution as _tournament_worker_execution
 from zicato.core import BoardEntry, Generation, LossProfile, RuntimeConfig, ScoringWeights
 from zicato.core.loss import BUDGET_ABORT_CAUSE
 from zicato.core.measurement import MeasurementDraw, MeasurementPurpose
@@ -130,7 +130,7 @@ class _ScreenWorld:
         self.calls: list[tuple[str, str, int, str]] = []
 
     def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(runner_mod, "_run_single", self._fake_run_single)
+        monkeypatch.setattr(_tournament_worker_execution, "_run_single", self._fake_run_single)
         monkeypatch.setattr(scheduling_mod, "_runtime_state", lambda: None)
 
     async def _fake_run_single(

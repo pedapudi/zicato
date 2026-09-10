@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 
+import zicato.tournament.worker_execution as _tournament_worker_execution
 from tests._runtime_builders import make_generation, runtime_config
 from zicato.core import BoardEntry, ScoringWeights
 from zicato.core.measurement import MeasurementDraw, MeasurementPurpose
@@ -22,7 +23,7 @@ from zicato.core.types import LossProfile
 from zicato.core.workspace import run_id_for_unit
 from zicato.runtime.lock import acquire_workspace_lock
 from zicato.telemetry.reducer import write_loss_profile
-from zicato.tournament import runner, unit_cache
+from zicato.tournament import unit_cache
 from zicato.tournament.scheduling import _run_unit_cache_first
 from zicato.tournament.scoring import read_gen_score, write_gen_score
 from zicato.workspace import WorkspaceLayout, read_loss
@@ -170,7 +171,7 @@ def test_executed_measurements_preserve_ordered_loss_history(
                 write_loss_profile(profile, path)
             return profile
 
-        monkeypatch.setattr(runner, "_run_single", measured)
+        monkeypatch.setattr(_tournament_worker_execution, "_run_single", measured)
         with acquire_workspace_lock(workspace, "loss-history-test") as writer:
             asyncio.run(
                 _run_unit_cache_first(

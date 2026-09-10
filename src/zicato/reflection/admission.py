@@ -268,7 +268,7 @@ async def admit_suggestion(
             spent=False,
         )
 
-    from zicato.tournament.runner import drain_worker_cleanup  # noqa: PLC0415
+    from zicato.tournament.worker_execution import drain_worker_cleanup  # noqa: PLC0415
 
     async with workspace_writer(
         workspace_root,

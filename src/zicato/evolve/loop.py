@@ -239,7 +239,7 @@ async def _apply_rubric_replacement(
     from zicato.contract_draft import operations  # noqa: PLC0415
     from zicato.contract_draft.draft import TournamentDraft  # noqa: PLC0415
     from zicato.evolve.epoching import ensure_epoch_for_contract  # noqa: PLC0415
-    from zicato.tournament.runner import drain_worker_cleanup  # noqa: PLC0415
+    from zicato.tournament.worker_execution import drain_worker_cleanup  # noqa: PLC0415
 
     await drain_worker_cleanup(workspace_root)
     draft = TournamentDraft.from_workspace(workspace_root)

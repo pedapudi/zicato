@@ -32,6 +32,7 @@ from typing import Any
 
 import pytest
 
+import zicato.tournament.worker_execution as _tournament_worker_execution
 from tests._contract_pins import experimental_for, pin_deterministic
 from tests._foe_support import stand_in_proposer_block
 from tests._orchestrator_harness import (
@@ -81,8 +82,6 @@ def _install_per_entry_telemetry_stubs(
     """
     install_telemetry_stubs(monkeypatch, canned_loss_by_gen={}, canned_pass_by_gen=pass_by_gen)
 
-    import zicato.tournament.runner as _runner_mod
-
     async def _fake_run_single(
         *,
         adapter: object,
@@ -103,7 +102,7 @@ def _install_per_entry_telemetry_stubs(
             if entry.expectation is not None
             else None
         )
-        _runner_mod._ingest_run_into_index(workspace_root, epoch_id, gid, entry.id)
+        _tournament_worker_execution._ingest_run_into_index(workspace_root, epoch_id, gid, entry.id)
         return LossProfile(
             run_id=f"r-{gid}-{entry.id}",
             entry_id=entry.id,
@@ -119,7 +118,7 @@ def _install_per_entry_telemetry_stubs(
             pass_fail=pass_by_gen.get(gid),
         )
 
-    monkeypatch.setattr(_runner_mod, "_run_single", _fake_run_single)
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", _fake_run_single)
 
 
 def _bootstrap(

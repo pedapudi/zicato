@@ -47,7 +47,7 @@ from typing import Any
 
 from zicato.board.budgets import BUDGET_OUTLIER_FACTOR, assess_budget_outliers
 from zicato.core.workspace import reflection_practices_path
-from zicato.epoch._storage import RecordError
+from zicato.epoch._storage import RecordError, copy_json_object
 from zicato.storage import atomic_write_json
 
 # ---------------------------------------------------------------------------
@@ -191,10 +191,7 @@ class PracticeCheck:
             or not isinstance(operation.get("args"), dict)
         ):
             raise RecordError("practice check: proposed_op requires a name and argument object")
-        try:
-            encoded = json.dumps(body, allow_nan=False)
-        except (TypeError, ValueError) as exc:
-            raise RecordError(f"practice check: invalid JSON value: {exc}") from exc
+        encoded = json.dumps(copy_json_object(body, "practice check"))
         fields = json.loads(encoded)
         return cls(
             **{
@@ -256,10 +253,7 @@ class PracticeReview:
             raise RecordError("practice review: verdict_counts must contain nonnegative integers")
         if counts != cls(checks).verdict_counts():
             raise RecordError("practice review: verdict_counts disagree with checks")
-        try:
-            encoded = json.dumps(body, allow_nan=False)
-        except (TypeError, ValueError) as exc:
-            raise RecordError(f"practice review: invalid JSON value: {exc}") from exc
+        encoded = json.dumps(copy_json_object(body, "practice review"))
         return cls(checks, encoded)
 
 

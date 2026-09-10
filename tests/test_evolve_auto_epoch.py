@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 
+import zicato.tournament.worker_execution as _tournament_worker_execution
 from tests._foe_support import stand_in_proposer_block
 from tests._orchestrator_harness import target_call_llm
 from tests._stub_adapter import make_stub_adapter
@@ -244,9 +245,8 @@ def _install_telemetry_stubs(
     # The L3 subprocess-isolation refactor moved per-run execution into a
     # worker subprocess that cannot see these sys.modules stubs. These
     # auto-epoch tests exercise the evolve loop above the per-run
-    # mechanism, so we stub ``runner._run_single`` directly with the same
+    # mechanism, so we stub ``worker_execution._run_single`` directly with the same
     # canned LossProfile the in-process reduce_loss stub would produce.
-    import zicato.tournament.runner as _runner_mod
 
     async def _fake_run_single(
         *,
@@ -282,7 +282,7 @@ def _install_telemetry_stubs(
             pass_fail=canned_pass_by_gen.get(generation.id),
         )
 
-    monkeypatch.setattr(_runner_mod, "_run_single", _fake_run_single)
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", _fake_run_single)
 
 
 # ---------------------------------------------------------------------------

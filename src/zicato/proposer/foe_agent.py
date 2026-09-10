@@ -259,7 +259,7 @@ class FoeProposerAgent:
 
     async def propose(self, ctx: ProposerContext) -> Experiment:
         from zicato.runtime.writer import workspace_writer  # noqa: PLC0415
-        from zicato.tournament.runner import drain_worker_cleanup  # noqa: PLC0415
+        from zicato.tournament.worker_execution import drain_worker_cleanup  # noqa: PLC0415
 
         config = resolve_foe_config(self.config)
         generation_root = _require_generation_root(ctx)

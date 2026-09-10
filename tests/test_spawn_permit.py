@@ -23,6 +23,7 @@ from pathlib import Path
 
 import pytest
 
+import zicato.tournament.worker_execution as _tournament_worker_execution
 from zicato.runtime.lock import acquire_workspace_lock
 from zicato.runtime.spawn_permit import (
     MIN_AUTO_PERMITS,
@@ -334,19 +335,6 @@ async def test_killed_holder_leaks_no_permit(permit_root: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_runner_resolves_the_permit_helpers_on_its_own_namespace() -> None:
-    """``_run_single`` calls these as module globals, so tests can patch them.
-
-    Pins the seam the runner integration tests below rely on: the helper
-    names live on the runner module, not behind a function-local import.
-    """
-    from zicato.tournament import runner
-
-    assert runner.acquire_worker_permit is acquire_worker_permit
-    assert runner.OPEN_PERMIT is OPEN_PERMIT
-    assert runner.WorkerPermit is WorkerPermit
-
-
 def _stub_run_inputs(tmp_path: Path) -> tuple[Path, object, object, object]:
     """A workspace + generation + entry + config for a stub-adapter run."""
     from tests._subprocess_worker_support import evaluation_call_llm, target_call_llm
@@ -384,7 +372,7 @@ async def test_runner_asks_for_a_permit_and_always_releases_it(
     does not depend on a real worker spawn (which the next test covers).
     """
     from zicato.core import ScoringWeights
-    from zicato.tournament import runner as runner_mod
+    from zicato.tournament import worker_execution as runner_mod
 
     asked: list[tuple[int | None, Path | str | None]] = []
     released: list[bool] = []
@@ -404,7 +392,7 @@ async def test_runner_asks_for_a_permit_and_always_releases_it(
     # ``prepare_failed`` early-return, the path most likely to skip the
     # release if the ``finally`` were placed wrongly. No worker is spawned.
     with acquire_workspace_lock(workspace, "test-worker") as writer:
-        loss = await runner_mod._run_single(
+        loss = await _tournament_worker_execution._run_single(
             writer=writer,
             adapter=object(),
             generation=generation,
@@ -427,7 +415,6 @@ async def test_worker_spawn_failure_returns_an_aborted_loss(
 ) -> None:
     from tests._subprocess_worker_support import StubAdapter
     from zicato.core import ScoringWeights
-    from zicato.tournament import runner as runner_mod
 
     async def _fail_spawn(*args: object, **kwargs: object) -> object:
         raise OSError("process table unavailable")
@@ -435,7 +422,7 @@ async def test_worker_spawn_failure_returns_an_aborted_loss(
     monkeypatch.setattr(asyncio, "create_subprocess_exec", _fail_spawn)
     workspace, generation, entry, config = _stub_run_inputs(tmp_path)
     with acquire_workspace_lock(workspace, "test-worker") as writer:
-        loss = await runner_mod._run_single(
+        loss = await _tournament_worker_execution._run_single(
             writer=writer,
             adapter=StubAdapter(),
             generation=generation,
@@ -463,7 +450,7 @@ async def test_two_concurrent_runs_serialise_under_a_one_permit_cap(
 
     from tests._subprocess_worker_support import StubAdapter
     from zicato.core import LossProfile, ScoringWeights
-    from zicato.tournament.runner import _run_single
+    from zicato.tournament.worker_execution import _run_single
 
     isolated = tmp_path / "ztw-tmp"
     isolated.mkdir()

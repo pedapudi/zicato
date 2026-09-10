@@ -217,7 +217,7 @@ def test_runner_threads_configuration_into_worker_args_file(
 ) -> None:
     """``_run_single`` writes the current configuration into the worker args file."""
     from tests._subprocess_worker_support import StubAdapter
-    from zicato.tournament.runner import _run_single
+    from zicato.tournament.worker_execution import _run_single
 
     configuration = resolve_configuration(
         {}, overlay=InvocationOverlay.from_mapping({"aux": {"call_timeout_s": 7.5}})

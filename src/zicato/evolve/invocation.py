@@ -75,7 +75,7 @@ class InvocationContext:
 
     async def _close(self) -> BaseException | None:
         """Finish worker ownership before releasing services and the writer."""
-        from zicato.tournament.runner import drain_worker_cleanup  # noqa: PLC0415
+        from zicato.tournament.worker_execution import drain_worker_cleanup  # noqa: PLC0415
 
         failure: BaseException | None = None
         try:

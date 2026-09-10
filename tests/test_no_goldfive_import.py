@@ -304,7 +304,8 @@ def test_generic_tournament_runs_without_goldfive() -> None:
                     evaluation_call_llm=evaluation_call_llm,
                 )
                 epoch_id = prepare_tournament_epoch(root, config, board, weights)
-                runner._run_single = run_single
+                from zicato.tournament import worker_execution
+                worker_execution._run_single = run_single
                 result = asyncio.run(runner.run_tournament(
                     adapter=object(),
                     parent_gen=Generation(

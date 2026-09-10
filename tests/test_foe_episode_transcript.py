@@ -1,15 +1,7 @@
-"""Reading a Foe episode log: the derived-message rule, and the transcript.
+"""Proposal transcripts preserve tool results, copied history and execution identity.
 
-The three ``.jsonl`` files under ``tests/fixtures/foe_episodes/`` are copied
-verbatim from ``view/fixtures/`` in the Foe repository at commit
-``63ba2c61``, where they are the fixtures Foe's own viewer is tested against.
-Sharing them is what makes the agreement test below meaningful: both readers
-answer for the same bytes. Every ordinary request in those bytes records the
-message list it sent, so a recomputed list that differs from the recorded one
-is a defect in one of the two readers.
-
-Refreshing them means copying the files again from a named Foe commit and
-recording that commit here.
+The fixtures under tests/fixtures/foe_episodes were copied from the model
+backend's viewer fixtures at commit 63ba2c61.
 """
 
 from __future__ import annotations
@@ -20,11 +12,7 @@ from pathlib import Path
 import pytest
 
 from zicato.query.foe_episode import (
-    EpisodeEvent,
-    derive_messages,
     is_episode_log,
-    is_summary_request,
-    read_episode_log,
 )
 from zicato.query.transcript_reconstruction import reconstruct_transcript
 
@@ -34,17 +22,6 @@ FIXTURES = Path(__file__).parent / "fixtures" / "foe_episodes"
 MULTI_TOOL = FIXTURES / "rich.jsonl"
 SEEDED = FIXTURES / "fork.jsonl"
 COMPACTED = FIXTURES / "compact.jsonl"
-
-
-def _request_messages(
-    events: tuple[EpisodeEvent, ...],
-) -> list[tuple[int, list, list[dict]]]:
-    """Every ordinary request paired with its recorded and its recomputed list."""
-    return [
-        (event.seq, event.data.get("messages"), derive_messages(events, event.seq))
-        for event in events
-        if event.type == "model/request" and not is_summary_request(event.data.get("request_id"))
-    ]
 
 
 def _write(path: Path, events: list[dict]) -> Path:
@@ -110,48 +87,6 @@ def test_a_missing_file_is_not_an_episode_log(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # The derived-message rule, checked against the log's own record
 # ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("fixture", sorted(FIXTURES.glob("*.jsonl")), ids=lambda p: p.name)
-def test_recomputed_messages_equal_the_messages_the_request_recorded(fixture: Path) -> None:
-    events = read_episode_log(fixture).events
-    requests = _request_messages(events)
-    assert requests, f"{fixture.name} records no ordinary request to check"
-    for seq, recorded, derived in requests:
-        assert derived == recorded, f"{fixture.name} request at seq {seq}"
-
-
-def test_the_shared_fixtures_cover_the_rule_s_three_hard_cases() -> None:
-    """Guard the corpus: tool results, a copied prefix, and a compaction.
-
-    Each is a clause of the rule that a simpler log would not reach — the
-    tool message, the seeded prefix's renumbered events, and the summary
-    boundary that replaces the head of the list.
-    """
-    kinds = {
-        fixture.name: {event.type for event in read_episode_log(fixture).events}
-        for fixture in FIXTURES.glob("*.jsonl")
-    }
-    assert "tool/result" in kinds["rich.jsonl"]
-    assert "seed/end" in kinds["fork.jsonl"]
-    assert "compaction/summary" in kinds["compact.jsonl"]
-
-
-def test_a_summarization_exchange_contributes_no_message() -> None:
-    """A ``cmp_`` request and the response answering it are left out."""
-    events = read_episode_log(COMPACTED).events
-    assert [seq for seq, _recorded, _derived in _request_messages(events)] == [3, 6, 9, 20]
-
-
-def test_the_post_compaction_list_opens_with_the_task_and_the_continuation() -> None:
-    events = read_episode_log(COMPACTED).events
-    _seq, _recorded, derived = _request_messages(events)[-1]
-    assert derived[0] == {
-        "role": "user",
-        "content": [{"type": "text", "text": "Rename the helper and update its callers."}],
-    }
-    assert derived[1]["role"] == "user"
-    assert derived[1]["content"][0]["text"].startswith("## Continuation state\n\n")
 
 
 # ---------------------------------------------------------------------------

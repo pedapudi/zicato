@@ -1,25 +1,9 @@
-"""Pure, tolerant conversation reconstruction from one run's event file.
+"""Read conversation turns and execution relationships from recorded events.
 
-Two source formats reach this module, and :func:`reconstruct_transcript`
-tells them apart by the first line of the file.
-
-A **Goldfive/ADK ``events.jsonl``** is what a system under test emits. Both
-wire shapes of such an event are accepted. The payload case, its field names
-and the emission timestamp all come from :mod:`zicato.telemetry.event_log`, so
-a turn is built from the same reading of a line that every other consumer of
-the file gets. The conversation is inferred from surrounding observability
-events, and its execution fidelity is whatever those events state.
-
-A **Foe ``episode.jsonl``** is what a proposal episode writes, and it is the
-only source a proposer transcript is served from. :mod:`zicato.query.foe_episode`
-reads it and states the derived-message rule that turns its events into the
-message list each request carried. Every tool call in such a log has exactly
-one result matched by ``call_id``, and every request records the messages it
-sent, so a Foe log always reconstructs at ``fidelity: exact``. The guarantee is
-a property of the format rather than a judgement about one file.
-
-Malformed lines are skipped in both formats so growing runs remain readable.
-"""
+Target logs use the normalized telemetry reader; proposal logs use the episode
+reader. Both skip malformed lines and retain the cursor of each accepted event.
+Invocation and tool identifiers establish execution relationships. Transcript
+fidelity records which relationships the source actually supplies."""
 
 from __future__ import annotations
 
@@ -592,25 +576,11 @@ def _seed_summary(origin: Any, source_id: str) -> str:
 
 
 def _reconstruct_episode(log: EpisodeLog) -> Transcript:
-    """Project one Foe episode log onto the shared :class:`Transcript` shape.
+    """Read proposal conversation turns and pair tool results by call identifier.
 
-    Turns follow the derived-message rule
-    (:func:`zicato.query.foe_episode.message_from`). A request contributes the
-    user turn built from the inbox items it consumed. An assistant response
-    contributes an agent turn carrying its text and its tool calls. Each tool
-    result lands on the turn that issued the call it answers, and the episode
-    outcome closes the transcript as a system turn.
-
-    A log seeded from another episode — a fork or a replay — carries the
-    copied prefix before its ``seed/end`` event. Those turns are attributed to
-    the episode they were copied from, in their own run group, and the
-    boundary itself becomes a margin annotation naming the source and the
-    ``seq`` the copy stopped at. What follows is the live episode's own work.
-
-    Every node is ``exact``: the format gives each tool call exactly one
-    ``call_id``-matched result and makes each request record the messages it
-    sent, so nothing here is inferred and nothing is left unresolved.
-    """
+    Copied history remains attributed to its source episode. The copy boundary is
+    an annotation, and subsequent turns belong to the active episode. Request
+    messages, assistant responses and tool results remain recorded evidence."""
     events = log.events
     start = next((event for event in events if event.type == "episode/start"), None)
     episode_id = str(start.data.get("id") or "") if start is not None else ""
@@ -726,46 +696,12 @@ def _content_text(blocks: Any) -> str:
 
 
 def _reconstruct_event_stream(events_path: Path, *, partial_ok: bool = True) -> Transcript:
-    """Reconstruct an ordered conversation transcript from an ADK event stream.
+    """Group target events by run, then sequence, and attach conversation annotations.
 
-    ``events_path`` is a goldfive ``JSONLPersistenceSink`` file (one
-    ``goldfive.v1.Event`` per line). The result groups raw events into
-    conversational :class:`Turn` objects and surfaces drift / steering /
-    judge events as margin :class:`Annotation` objects.
-
-    Parameters
-    ----------
-    events_path:
-        Path to the ``events.jsonl`` file. A missing file yields an empty
-        :class:`Transcript` (never raises).
-    partial_ok:
-        When ``True`` (default) a growing / in-progress file is fine: a
-        truncated final line is skipped rather than treated as an error,
-        and :attr:`Transcript.complete` reports whether a terminal event
-        was seen. When ``False`` the same parsing happens but a truncated
-        final line additionally forces ``complete = False``.
-
-    Notes
-    -----
-    The function never raises on malformed input — a bad line is skipped.
-
-    Multi-run files (``multi_turn_emulated`` board entries spawn N
-    goldfive runs into one events stream) are grouped by ``runId``
-    BEFORE the within-run sort. The groups are ordered by the minimum
-    ``emittedAt`` across each group — earliest run first, chronologically
-    — and then within each group events without ``sequence`` (the
-    sink-emitted ``conversation_started`` lifecycle frame) sort FIRST in
-    timestamp order, with the sequenced events following in ``sequence``
-    order. ``emitted_at`` breaks ties among same-sequence events;
-    insertion order is the final fallback for events missing both
-    fields. Every emitted :class:`Turn` carries the 1-based ``run_index``
-    of its group, which lets the renderer paint a visible boundary
-    between runs in a multi-run transcript.
-
-    Single-run files (the common case) collapse to a single group with
-    ``run_index == 1`` on every turn; the per-run-id grouping is a no-op
-    relative to the prior single-stream behaviour.
-    """
+    Runs are ordered by their earliest timestamp. Within a run, lifecycle events
+    without a sequence precede sequenced events. Tool results are paired only within
+    their run. Original event indices remain the live update cursor. A malformed
+    final line leaves the transcript incomplete."""
 
     log = read_event_log(Path(events_path))
     events, last_line_ok = log.records, log.last_line_ok

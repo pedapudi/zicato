@@ -52,8 +52,7 @@ from zicato.tournament.detectable_effect import (
     minimum_detectable_effect,
     students_t_upper_quantile,
 )
-from zicato.workspace import read_board_entries, read_loss, run_entry_ids
-from zicato.workspace.reads import generation_base_seed
+from zicato.workspace import read_board_entries, run_entry_ids
 
 # The minimum-comparisons honesty threshold for the DEAD-eval finding
 # (EVAL-VIEW.md §5): an entry needs at least this many both-sides
@@ -232,25 +231,6 @@ def _opt_int(value: Any) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int | float):
         return None
     return int(value)
-
-
-def _score_from_loss_json(row: Any) -> float | None:
-    """Lift the continuous ``score`` out of the row's ``loss_json`` blob.
-
-    The continuous per-entry outcome lives in the verbatim ``loss_json`` blob,
-    not a dedicated column (mirrors ``judge_view.build_per_entry_for_generation``).
-    A missing / malformed blob degrades to ``None``.
-    """
-    raw = _row_get(row, "loss_json")
-    if not isinstance(raw, str) or not raw:
-        return None
-    try:
-        blob = json.loads(raw)
-    except (ValueError, json.JSONDecodeError):
-        return None
-    if not isinstance(blob, dict):
-        return None
-    return coerce_float(blob.get("score"))
 
 
 # ---------------------------------------------------------------------------
@@ -451,52 +431,14 @@ def _candidate_axis(paths: WorkspacePaths, epoch_id: str) -> list[dict[str, Any]
 
 
 def _rows_for_candidate(paths: WorkspacePaths, epoch_id: str, gen: str) -> list[Any]:
-    from zicato.index.query import loss_profiles_for_generation  # noqa: PLC0415
+    from zicato.query.replicate_scores import selected_measurements
 
-    try:
-        return list(loss_profiles_for_generation(paths.index_db, epoch_id, gen))
-    except Exception:  # noqa: BLE001 — best-effort
-        return []
+    return list(selected_measurements(paths, epoch_id, gen).values())
 
 
-def _aggregate_cell(rows: list[Any], draws: list[Any] | None = None) -> dict[str, Any] | None:
-    """Fold ONE (entry, candidate) cell (§3.1 aggregation).
-
-    EVIDENCE + replicate count come from the DURABLE replicate FILES
-    (:func:`zicato.query.replicate_scores.cell_replicate_draws`, EVAL-VIEW.md
-    §4.1) — the ``loss.json`` +
-    ``loss.r<N>.json`` that actually exist — NOT the ``loss_profiles`` row count,
-    which is always 1 (the table's PK is ``run_id`` = one row per (gen, entry)).
-    ``pass_ratio`` / ``pass_fail`` / ``drift_loss`` / ``score`` are averaged over
-    those same replicate draws. When no replicate file is on disk (a pruned
-    ``runs/`` dir), the cell falls back to the single index row so an index-only
-    read still renders. ``cached`` / ``latest_run_id`` stay index-derived.
-    """
-    draws = draws or []
-    # The evidence samples: prefer the on-disk replicate files; fall back to the
-    # index row(s) when the run dir was pruned. Each sample is
-    # (pass_fail, drift_loss, score, runtime_ms).
-    samples: list[tuple[bool | None, float | None, float | None, Any]] = []
-    if draws:
-        for d in draws:
-            samples.append(
-                (
-                    _opt_bool(getattr(d, "pass_fail", None)),
-                    coerce_float(getattr(d, "drift_loss", None)),
-                    finite_float(getattr(d, "score", None)),
-                    getattr(d, "runtime_ms", None),
-                )
-            )
-    else:
-        for r in rows:
-            samples.append(
-                (
-                    _opt_bool(_row_get(r, "pass_fail")),
-                    coerce_float(_row_get(r, "drift_loss")),
-                    _score_from_loss_json(r),
-                    _row_get(r, "runtime_ms"),
-                )
-            )
+def _aggregate_cell(draws: list[Any]) -> dict[str, Any] | None:
+    """Summarize accepted tournament and confirmation draws for one candidate and task."""
+    samples = [(draw.pass_fail, draw.drift_loss, draw.score, draw.runtime_ms) for draw in draws]
     if not samples:
         return None
     bits = [s[0] for s in samples]
@@ -505,10 +447,8 @@ def _aggregate_cell(rows: list[Any], draws: list[Any] | None = None) -> dict[str
     runtimes = [s[3] for s in samples]
     n = len(samples)
     # latest_run_id: the last run id in the index' (entry_id, run_id) order.
-    run_ids = [_row_get(r, "run_id") for r in rows if isinstance(_row_get(r, "run_id"), str)]
-    cached_any = any(bool(_row_get(r, "cached")) for r in rows) or any(
-        bool(getattr(d, "cached", False)) for d in draws
-    )
+    run_ids = [draw.run_id for draw in draws if draw.run_id]
+    cached_any = any(draw.cached for draw in draws)
     return {
         "drift_loss": (sum(drift_vals) / len(drift_vals)) if drift_vals else None,
         "pass_ratio": pass_ratio(bits),
@@ -637,14 +577,10 @@ def build_eval_matrix(paths: WorkspacePaths, epoch_id: str | None = None) -> dic
     seen_set: set[str] = set()
     for cand in candidates:
         gen = cand["generation_id"]
-        by_entry: dict[str, list[Any]] = {}
-        for r in _rows_for_candidate(paths, resolved, gen):
-            eid = _row_get(r, "entry_id")
-            if not isinstance(eid, str) or not eid:
-                continue
-            by_entry.setdefault(eid, []).append(r)
-        for eid, rows in by_entry.items():
-            cell = _aggregate_cell(rows, cell_replicate_draws(paths, resolved, gen, eid))
+        from zicato.workspace.reads import run_entry_ids
+
+        for eid in run_entry_ids(layout_of(paths), resolved, gen):
+            cell = _aggregate_cell(cell_replicate_draws(paths, resolved, gen, eid))
             if cell is not None:
                 cell_by[(eid, gen)] = cell
             if eid not in seen_set:
@@ -921,7 +857,7 @@ def build_eval_dossier(
     for cand in candidates:
         gen = cand["generation_id"]
         rows = per_candidate_rows.get(gen, [])
-        cell = _aggregate_cell(rows, cell_replicate_draws(paths, resolved, gen, entry_id))
+        cell = _aggregate_cell(cell_replicate_draws(paths, resolved, gen, entry_id))
         bits = [_opt_bool(_row_get(r, "pass_fail")) for r in rows]
         verdict = majority_verdict(bits)
         trajectory.append(
@@ -1370,37 +1306,17 @@ def facets_by_entry(board: BoardDocument | None) -> dict[str, tuple[str, ...]]:
 def _generation_loss_profiles(
     paths: WorkspacePaths, epoch_id: str, generation_id: str
 ) -> list[Any]:
-    """Hydrate one generation's persisted ``loss.json`` files, best-effort.
+    """Decode the same selected measurements used by candidate comparisons."""
+    from zicato.telemetry.reducer import loss_profile_from_dict
+    from zicato.workspace.reads import read_generation_losses
 
-    Reads the run directories rather than the index, for the same reason
-    :func:`zicato.query.tournament_view.build_matchup_grid` does: the files
-    are canonical, so a completed generation's per-entry losses are
-    recoverable even when the index was never built. A missing or malformed
-    profile is skipped; nothing raises.
-    """
-    from zicato.telemetry.reducer import loss_profile_from_dict  # noqa: PLC0415
-
-    layout = layout_of(paths)
-    out: list[Any] = []
-    try:
-        selected_seed = generation_base_seed(layout, epoch_id, generation_id)
-    except ValueError:
-        return []
-    for entry_id in run_entry_ids(layout, epoch_id, generation_id):
-        raw = read_loss(
-            layout,
-            epoch_id,
-            generation_id,
-            entry_id,
-            base_seed=selected_seed,
-        )
-        if raw is None:
-            continue
+    profiles = []
+    for raw in read_generation_losses(layout_of(paths), epoch_id, generation_id).values():
         try:
-            out.append(loss_profile_from_dict(raw))
-        except Exception:  # noqa: BLE001 — best-effort; a torn profile is skipped
+            profiles.append(loss_profile_from_dict(raw))
+        except (ValueError, TypeError, KeyError):
             continue
-    return out
+    return profiles
 
 
 def _epoch_scoring_weights(

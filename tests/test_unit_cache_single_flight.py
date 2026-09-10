@@ -17,13 +17,13 @@ from typing import Any
 
 import pytest
 
-import zicato.tournament.runner as runner_mod
+import zicato.tournament.worker_execution as _tournament_worker_execution
 from zicato.core import BoardEntry, Generation, LossProfile, RuntimeConfig, ScoringWeights
 from zicato.core.measurement import TOURNAMENT_DRAW, MeasurementDraw, MeasurementPurpose
 from zicato.core.workspace import run_id_for_unit
 from zicato.runtime.lock import WorkspaceLock, acquire_workspace_lock
 from zicato.testing.fixtures import make_loss_profile
-from zicato.tournament.runner import _run_unit_cache_first
+from zicato.tournament.scheduling import _run_unit_cache_first
 from zicato.tournament.unit_cache import _UnitProvenance
 
 
@@ -131,7 +131,7 @@ def _stub_run_single(
             overrides["abort_cause"] = abort_cause
         return make_loss_profile(**overrides)
 
-    monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", fake_run_single)
 
 
 def test_concurrent_matchups_run_one_cold_unit_once(
@@ -348,7 +348,7 @@ def test_a_failed_evaluation_is_never_shared(
             raise RuntimeError("worker transport blew up")
         return make_loss_profile(generation_id="v0", entry_id=entry.id, epoch_id="e0")
 
-    monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", fake_run_single)
 
     with acquire_workspace_lock(workspace, "test") as writer:
 
