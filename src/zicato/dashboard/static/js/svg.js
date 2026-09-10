@@ -2451,7 +2451,7 @@ export function gauntletFieldBarsDigest(opts) {
 // renders. Rounds arrive PRE-SORTED with a per-round
 // `bracket_side`; the per-generation states (played / advanced / lost /
 // eliminated-vs-dropped / side / LB entry / projected) arrive as the top-level
-// `gen_states` fold (`derive_elim_states`). NO client-side elimination
+// `gen_states` fold (`attach_elim_states`). NO client-side elimination
 // derivation — this figure is polar GEOMETRY only.
 // opts: {
 //   rounds:[{label, round_index, bracket_side, matches:[{competitors, winner,
@@ -2476,7 +2476,7 @@ export function elimRadial(opts) {
   const nCols = rounds.length;
 
   // ── the per-generation states, read VERBATIM from the served fold ──
-  // (the server's derive_elim_states owns the elimination-vs-drop classification
+  // (the server's attach_elim_states owns the elimination-vs-drop classification
   // + bracket side; this figure is polar GEOMETRY only — no client re-derive).
   // gen id → { played, advanced, lostAt (Sets of column indices), pendingAt,
   // eliminatedAt, side (overall arc side), proj }.

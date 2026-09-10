@@ -2334,12 +2334,47 @@
         "generation_id": "v1",
         "tournament_id": "e1:v0->v1",
         "mean_score": null,
-        "drift_present": false,
+        "drift_present": true,
         "facet_scores": {
           "facets": {},
           "overall": null
         },
-        "entries": []
+        "entries": [
+          {
+            "entry_id": "t1",
+            "run_id": "seed-none.tournament.r0.e5f25228adcf931bd7409b8e77719187f99c435009da8ec9883673e9195a6aca",
+            "generation_id": "v1",
+            "drift_loss": 0.31,
+            "pass_fail": true,
+            "score": 0.9,
+            "metrics": null,
+            "runtime_ms": 0,
+            "wall_clock_budget_exceeded": false,
+            "match_id": null,
+            "rung": null,
+            "cached": false,
+            "source_epoch": null,
+            "source_run": null,
+            "facets": []
+          },
+          {
+            "entry_id": "t2",
+            "run_id": "seed-none.tournament.r0.7608adeecc498abb37ff428d62e1555a3aa7400818aad6d1461e1278ad0ded71",
+            "generation_id": "v1",
+            "drift_loss": 0.31,
+            "pass_fail": true,
+            "score": 0.9,
+            "metrics": null,
+            "runtime_ms": 0,
+            "wall_clock_budget_exceeded": false,
+            "match_id": null,
+            "rung": null,
+            "cached": false,
+            "source_epoch": null,
+            "source_run": null,
+            "facets": []
+          }
+        ]
       },
       "hypothesis_accuracy": {
         "epoch_id": "e1",
@@ -2441,8 +2476,8 @@
         "drift_present": true,
         "mean_delta_score": 0.0,
         "compared_score_count": 2,
-        "passed_count": 0,
-        "entry_count": 0
+        "passed_count": 2,
+        "entry_count": 2
       },
       "gates": [
         {
@@ -2825,12 +2860,47 @@
       "generation_id": "v0",
       "tournament_id": null,
       "mean_score": null,
-      "drift_present": false,
+      "drift_present": true,
       "facet_scores": {
         "facets": {},
         "overall": null
       },
-      "entries": []
+      "entries": [
+        {
+          "entry_id": "t1",
+          "run_id": "seed-none.tournament.r0.553950ec481fa44971f375209c8296605c9d9182bbcb3bf14254d47439e6a7fc",
+          "generation_id": "v0",
+          "drift_loss": 0.3,
+          "pass_fail": true,
+          "score": 0.9,
+          "metrics": null,
+          "runtime_ms": 0,
+          "wall_clock_budget_exceeded": false,
+          "match_id": null,
+          "rung": null,
+          "cached": false,
+          "source_epoch": null,
+          "source_run": null,
+          "facets": []
+        },
+        {
+          "entry_id": "t2",
+          "run_id": "seed-none.tournament.r0.7d307153f0cab805a6dc375df2d922b5e7d6d5390397558243c5d2d174172f9c",
+          "generation_id": "v0",
+          "drift_loss": 0.3,
+          "pass_fail": true,
+          "score": 0.9,
+          "metrics": null,
+          "runtime_ms": 0,
+          "wall_clock_budget_exceeded": false,
+          "match_id": null,
+          "rung": null,
+          "cached": false,
+          "source_epoch": null,
+          "source_run": null,
+          "facets": []
+        }
+      ]
     }
   },
   "per_entry_for_generation/rejected": {
@@ -10108,13 +10178,7 @@
   "racing_ladder/racing_field": {
     "status": 200,
     "body": {
-      "epoch_id": "2026-06-01_e0",
-      "present": true,
-      "structure": "racing",
-      "structure_params": {
-        "board_fraction": 0.25,
-        "eta": 2
-      },
+      "champion_generation_id": "v0",
       "competitors": [
         {
           "generation_id": "v0",
@@ -10142,6 +10206,13 @@
           "seed": 5
         }
       ],
+      "decision": "promoted",
+      "delta_scalar": null,
+      "epoch_id": "2026-06-01_e0",
+      "field_status": [],
+      "promoted_generation_id": "v3",
+      "ran_at": "2026-06-01T01:00:00Z",
+      "reason": "",
       "rounds": [
         {
           "label": "Rung 0",
@@ -10216,11 +10287,19 @@
         }
       ],
       "standings": [],
+      "state": "settled",
+      "structure": "racing",
+      "structure_params": {
+        "board_fraction": 0.25,
+        "eta": 2
+      },
+      "tournament_id": "2026-06-01_e0:field:v1",
+      "present": true,
       "champion_lineage": [
         "v0",
         "v3"
       ],
-      "source": "reconstructed"
+      "source": "record"
     }
   },
   "racing_ladder/per_entry/v0": {
@@ -10634,13 +10713,7 @@
       ],
       "drilldown": null,
       "racing_field": {
-        "epoch_id": "2026-06-01_e0",
-        "present": true,
-        "structure": "racing",
-        "structure_params": {
-          "board_fraction": 0.25,
-          "eta": 2
-        },
+        "champion_generation_id": "v0",
         "competitors": [
           {
             "generation_id": "v0",
@@ -10668,6 +10741,13 @@
             "seed": 5
           }
         ],
+        "decision": "promoted",
+        "delta_scalar": null,
+        "epoch_id": "2026-06-01_e0",
+        "field_status": [],
+        "promoted_generation_id": "v3",
+        "ran_at": "2026-06-01T01:00:00Z",
+        "reason": "",
         "rounds": [
           {
             "label": "Rung 0",
@@ -10742,11 +10822,19 @@
           }
         ],
         "standings": [],
+        "state": "settled",
+        "structure": "racing",
+        "structure_params": {
+          "board_fraction": 0.25,
+          "eta": 2
+        },
+        "tournament_id": "2026-06-01_e0:field:v1",
+        "present": true,
         "champion_lineage": [
           "v0",
           "v3"
         ],
-        "source": "reconstructed"
+        "source": "record"
       }
     }
   },
@@ -13689,13 +13777,7 @@
   "two_epochs/older/racing_field": {
     "status": 200,
     "body": {
-      "epoch_id": "2026-06-01_e0",
-      "present": true,
-      "structure": "racing",
-      "structure_params": {
-        "board_fraction": 0.25,
-        "eta": 2
-      },
+      "champion_generation_id": "v0",
       "competitors": [
         {
           "generation_id": "v0",
@@ -13723,6 +13805,13 @@
           "seed": 5
         }
       ],
+      "decision": "promoted",
+      "delta_scalar": null,
+      "epoch_id": "2026-06-01_e0",
+      "field_status": [],
+      "promoted_generation_id": "v4",
+      "ran_at": "2026-06-01T01:00:00Z",
+      "reason": "",
       "rounds": [
         {
           "label": "Rung 0",
@@ -13773,11 +13862,19 @@
         }
       ],
       "standings": [],
+      "state": "settled",
+      "structure": "racing",
+      "structure_params": {
+        "board_fraction": 0.25,
+        "eta": 2
+      },
+      "tournament_id": "2026-06-01_e0:field:v1",
+      "present": true,
       "champion_lineage": [
         "v0",
         "v4"
       ],
-      "source": "reconstructed"
+      "source": "record"
     }
   },
   "two_epochs/newer/epoch": {
@@ -14817,14 +14914,7 @@
   "racing_round_settled/racing_field": {
     "status": 200,
     "body": {
-      "epoch_id": "2026-05-30_e0",
-      "present": true,
-      "structure": "racing",
-      "structure_params": {
-        "board_fraction": 0.5,
-        "eta": 2,
-        "field_size": 4
-      },
+      "champion_generation_id": "v0",
       "competitors": [
         {
           "generation_id": "v0",
@@ -14847,6 +14937,13 @@
           "seed": 4
         }
       ],
+      "decision": "promoted",
+      "delta_scalar": null,
+      "epoch_id": "2026-05-30_e0",
+      "field_status": [],
+      "promoted_generation_id": "v1",
+      "ran_at": "2026-05-30T03:00:00Z",
+      "reason": "",
       "rounds": [
         {
           "label": "Rung 0",
@@ -14890,22 +14987,6 @@
             }
           ],
           "stage_index": 1
-        },
-        {
-          "stage_index": 2,
-          "label": "Champion gate",
-          "matches": [
-            {
-              "match_id": "racing-final",
-              "competitors": [
-                "v0",
-                "v1"
-              ],
-              "winner": "v1",
-              "decision": "promoted",
-              "board_fraction": 1.0
-            }
-          ]
         }
       ],
       "standings": [
@@ -14923,11 +15004,20 @@
           "status": "alive"
         }
       ],
+      "state": "settled",
+      "structure": "racing",
+      "structure_params": {
+        "board_fraction": 0.5,
+        "eta": 2,
+        "field_size": 4
+      },
+      "tournament_id": "2026-05-30_e0:field:v1",
+      "present": true,
       "champion_lineage": [
         "v0",
         "v1"
       ],
-      "source": "reconstructed"
+      "source": "record"
     }
   },
   "racing_round_settled/tournament_structure/v1": {
@@ -15565,14 +15655,7 @@
       ],
       "drilldown": null,
       "racing_field": {
-        "epoch_id": "2026-05-30_e0",
-        "present": true,
-        "structure": "racing",
-        "structure_params": {
-          "board_fraction": 0.5,
-          "eta": 2,
-          "field_size": 4
-        },
+        "champion_generation_id": "v0",
         "competitors": [
           {
             "generation_id": "v0",
@@ -15595,6 +15678,13 @@
             "seed": 4
           }
         ],
+        "decision": "promoted",
+        "delta_scalar": null,
+        "epoch_id": "2026-05-30_e0",
+        "field_status": [],
+        "promoted_generation_id": "v1",
+        "ran_at": "2026-05-30T03:00:00Z",
+        "reason": "",
         "rounds": [
           {
             "label": "Rung 0",
@@ -15638,22 +15728,6 @@
               }
             ],
             "stage_index": 1
-          },
-          {
-            "stage_index": 2,
-            "label": "Champion gate",
-            "matches": [
-              {
-                "match_id": "racing-final",
-                "competitors": [
-                  "v0",
-                  "v1"
-                ],
-                "winner": "v1",
-                "decision": "promoted",
-                "board_fraction": 1.0
-              }
-            ]
           }
         ],
         "standings": [
@@ -15671,11 +15745,20 @@
             "status": "alive"
           }
         ],
+        "state": "settled",
+        "structure": "racing",
+        "structure_params": {
+          "board_fraction": 0.5,
+          "eta": 2,
+          "field_size": 4
+        },
+        "tournament_id": "2026-05-30_e0:field:v1",
+        "present": true,
         "champion_lineage": [
           "v0",
           "v1"
         ],
-        "source": "reconstructed"
+        "source": "record"
       }
     }
   },
@@ -16854,11 +16937,85 @@
           "delta_scalar": null,
           "epoch_id": "2026-05-30_e0",
           "field_status": [],
+          "gen_states": [
+            {
+              "advanced_rounds": [
+                0
+              ],
+              "eliminated_at_round": 1,
+              "generation_id": "v0",
+              "lb_entry_round": null,
+              "lost_rounds": [
+                1
+              ],
+              "played_rounds": [
+                0,
+                1
+              ],
+              "projected": null,
+              "side_by_round": {
+                "0": "WB",
+                "1": "WB"
+              }
+            },
+            {
+              "advanced_rounds": [],
+              "eliminated_at_round": 0,
+              "generation_id": "v3",
+              "lb_entry_round": null,
+              "lost_rounds": [
+                0
+              ],
+              "played_rounds": [
+                0
+              ],
+              "projected": null,
+              "side_by_round": {
+                "0": "WB"
+              }
+            },
+            {
+              "advanced_rounds": [
+                0,
+                1
+              ],
+              "eliminated_at_round": null,
+              "generation_id": "v1",
+              "lb_entry_round": null,
+              "lost_rounds": [],
+              "played_rounds": [
+                0,
+                1
+              ],
+              "projected": null,
+              "side_by_round": {
+                "0": "WB",
+                "1": "WB"
+              }
+            },
+            {
+              "advanced_rounds": [],
+              "eliminated_at_round": 0,
+              "generation_id": "v2",
+              "lb_entry_round": null,
+              "lost_rounds": [
+                0
+              ],
+              "played_rounds": [
+                0
+              ],
+              "projected": null,
+              "side_by_round": {
+                "0": "WB"
+              }
+            }
+          ],
           "promoted_generation_id": "v1",
           "ran_at": "2026-05-30T03:00:00Z",
           "reason": "",
           "rounds": [
             {
+              "bracket_side": "WB",
               "label": "Semifinal",
               "matches": [
                 {
@@ -16870,9 +17027,9 @@
                   ],
                   "decision": "rejected",
                   "delta_scalar": 0.05,
+                  "loser": "v3",
                   "match_id": "WB-R0-0",
-                  "winner": "v0",
-                  "loser": "v3"
+                  "winner": "v0"
                 },
                 {
                   "bracket_slot": "WB-R0-1",
@@ -16883,15 +17040,15 @@
                   ],
                   "decision": "promoted",
                   "delta_scalar": -0.12,
+                  "loser": "v2",
                   "match_id": "WB-R0-1",
-                  "winner": "v1",
-                  "loser": "v2"
+                  "winner": "v1"
                 }
               ],
-              "round_index": 0,
-              "bracket_side": "WB"
+              "round_index": 0
             },
             {
+              "bracket_side": "WB",
               "label": "Final",
               "matches": [
                 {
@@ -16903,13 +17060,12 @@
                   ],
                   "decision": "promoted",
                   "delta_scalar": -0.08,
+                  "loser": "v0",
                   "match_id": "WB-R1-0",
-                  "winner": "v1",
-                  "loser": "v0"
+                  "winner": "v1"
                 }
               ],
-              "round_index": 1,
-              "bracket_side": "WB"
+              "round_index": 1
             }
           ],
           "standings": [
@@ -16943,80 +17099,7 @@
             "scalar": 70.0,
             "eval_mode": "full",
             "run_ref": "epochs/2026-05-30_e0/generations/v0"
-          },
-          "gen_states": [
-            {
-              "generation_id": "v0",
-              "played_rounds": [
-                0,
-                1
-              ],
-              "advanced_rounds": [
-                0
-              ],
-              "lost_rounds": [
-                1
-              ],
-              "eliminated_at_round": 1,
-              "side_by_round": {
-                "0": "WB",
-                "1": "WB"
-              },
-              "lb_entry_round": null,
-              "projected": null
-            },
-            {
-              "generation_id": "v3",
-              "played_rounds": [
-                0
-              ],
-              "advanced_rounds": [],
-              "lost_rounds": [
-                0
-              ],
-              "eliminated_at_round": 0,
-              "side_by_round": {
-                "0": "WB"
-              },
-              "lb_entry_round": null,
-              "projected": null
-            },
-            {
-              "generation_id": "v1",
-              "played_rounds": [
-                0,
-                1
-              ],
-              "advanced_rounds": [
-                0,
-                1
-              ],
-              "lost_rounds": [],
-              "eliminated_at_round": null,
-              "side_by_round": {
-                "0": "WB",
-                "1": "WB"
-              },
-              "lb_entry_round": null,
-              "projected": null
-            },
-            {
-              "generation_id": "v2",
-              "played_rounds": [
-                0
-              ],
-              "advanced_rounds": [],
-              "lost_rounds": [
-                0
-              ],
-              "eliminated_at_round": 0,
-              "side_by_round": {
-                "0": "WB"
-              },
-              "lb_entry_round": null,
-              "projected": null
-            }
-          ]
+          }
         }
       ]
     }
@@ -17088,11 +17171,85 @@
             "delta_scalar": null,
             "epoch_id": "2026-05-30_e0",
             "field_status": [],
+            "gen_states": [
+              {
+                "advanced_rounds": [
+                  0
+                ],
+                "eliminated_at_round": 1,
+                "generation_id": "v0",
+                "lb_entry_round": null,
+                "lost_rounds": [
+                  1
+                ],
+                "played_rounds": [
+                  0,
+                  1
+                ],
+                "projected": null,
+                "side_by_round": {
+                  "0": "WB",
+                  "1": "WB"
+                }
+              },
+              {
+                "advanced_rounds": [],
+                "eliminated_at_round": 0,
+                "generation_id": "v3",
+                "lb_entry_round": null,
+                "lost_rounds": [
+                  0
+                ],
+                "played_rounds": [
+                  0
+                ],
+                "projected": null,
+                "side_by_round": {
+                  "0": "WB"
+                }
+              },
+              {
+                "advanced_rounds": [
+                  0,
+                  1
+                ],
+                "eliminated_at_round": null,
+                "generation_id": "v1",
+                "lb_entry_round": null,
+                "lost_rounds": [],
+                "played_rounds": [
+                  0,
+                  1
+                ],
+                "projected": null,
+                "side_by_round": {
+                  "0": "WB",
+                  "1": "WB"
+                }
+              },
+              {
+                "advanced_rounds": [],
+                "eliminated_at_round": 0,
+                "generation_id": "v2",
+                "lb_entry_round": null,
+                "lost_rounds": [
+                  0
+                ],
+                "played_rounds": [
+                  0
+                ],
+                "projected": null,
+                "side_by_round": {
+                  "0": "WB"
+                }
+              }
+            ],
             "promoted_generation_id": "v1",
             "ran_at": "2026-05-30T03:00:00Z",
             "reason": "",
             "rounds": [
               {
+                "bracket_side": "WB",
                 "label": "Semifinal",
                 "matches": [
                   {
@@ -17104,9 +17261,9 @@
                     ],
                     "decision": "rejected",
                     "delta_scalar": 0.05,
+                    "loser": "v3",
                     "match_id": "WB-R0-0",
-                    "winner": "v0",
-                    "loser": "v3"
+                    "winner": "v0"
                   },
                   {
                     "bracket_slot": "WB-R0-1",
@@ -17117,15 +17274,15 @@
                     ],
                     "decision": "promoted",
                     "delta_scalar": -0.12,
+                    "loser": "v2",
                     "match_id": "WB-R0-1",
-                    "winner": "v1",
-                    "loser": "v2"
+                    "winner": "v1"
                   }
                 ],
-                "round_index": 0,
-                "bracket_side": "WB"
+                "round_index": 0
               },
               {
+                "bracket_side": "WB",
                 "label": "Final",
                 "matches": [
                   {
@@ -17137,13 +17294,12 @@
                     ],
                     "decision": "promoted",
                     "delta_scalar": -0.08,
+                    "loser": "v0",
                     "match_id": "WB-R1-0",
-                    "winner": "v1",
-                    "loser": "v0"
+                    "winner": "v1"
                   }
                 ],
-                "round_index": 1,
-                "bracket_side": "WB"
+                "round_index": 1
               }
             ],
             "standings": [
@@ -17177,80 +17333,7 @@
               "scalar": 70.0,
               "eval_mode": "full",
               "run_ref": "epochs/2026-05-30_e0/generations/v0"
-            },
-            "gen_states": [
-              {
-                "generation_id": "v0",
-                "played_rounds": [
-                  0,
-                  1
-                ],
-                "advanced_rounds": [
-                  0
-                ],
-                "lost_rounds": [
-                  1
-                ],
-                "eliminated_at_round": 1,
-                "side_by_round": {
-                  "0": "WB",
-                  "1": "WB"
-                },
-                "lb_entry_round": null,
-                "projected": null
-              },
-              {
-                "generation_id": "v3",
-                "played_rounds": [
-                  0
-                ],
-                "advanced_rounds": [],
-                "lost_rounds": [
-                  0
-                ],
-                "eliminated_at_round": 0,
-                "side_by_round": {
-                  "0": "WB"
-                },
-                "lb_entry_round": null,
-                "projected": null
-              },
-              {
-                "generation_id": "v1",
-                "played_rounds": [
-                  0,
-                  1
-                ],
-                "advanced_rounds": [
-                  0,
-                  1
-                ],
-                "lost_rounds": [],
-                "eliminated_at_round": null,
-                "side_by_round": {
-                  "0": "WB",
-                  "1": "WB"
-                },
-                "lb_entry_round": null,
-                "projected": null
-              },
-              {
-                "generation_id": "v2",
-                "played_rounds": [
-                  0
-                ],
-                "advanced_rounds": [],
-                "lost_rounds": [
-                  0
-                ],
-                "eliminated_at_round": 0,
-                "side_by_round": {
-                  "0": "WB"
-                },
-                "lb_entry_round": null,
-                "projected": null
-              }
-            ]
+            }
           },
           "source": "round_index"
         }
@@ -17304,11 +17387,85 @@
       "delta_scalar": null,
       "epoch_id": "2026-05-30_e0",
       "field_status": [],
+      "gen_states": [
+        {
+          "advanced_rounds": [
+            0
+          ],
+          "eliminated_at_round": 1,
+          "generation_id": "v0",
+          "lb_entry_round": null,
+          "lost_rounds": [
+            1
+          ],
+          "played_rounds": [
+            0,
+            1
+          ],
+          "projected": null,
+          "side_by_round": {
+            "0": "WB",
+            "1": "WB"
+          }
+        },
+        {
+          "advanced_rounds": [],
+          "eliminated_at_round": 0,
+          "generation_id": "v3",
+          "lb_entry_round": null,
+          "lost_rounds": [
+            0
+          ],
+          "played_rounds": [
+            0
+          ],
+          "projected": null,
+          "side_by_round": {
+            "0": "WB"
+          }
+        },
+        {
+          "advanced_rounds": [
+            0,
+            1
+          ],
+          "eliminated_at_round": null,
+          "generation_id": "v1",
+          "lb_entry_round": null,
+          "lost_rounds": [],
+          "played_rounds": [
+            0,
+            1
+          ],
+          "projected": null,
+          "side_by_round": {
+            "0": "WB",
+            "1": "WB"
+          }
+        },
+        {
+          "advanced_rounds": [],
+          "eliminated_at_round": 0,
+          "generation_id": "v2",
+          "lb_entry_round": null,
+          "lost_rounds": [
+            0
+          ],
+          "played_rounds": [
+            0
+          ],
+          "projected": null,
+          "side_by_round": {
+            "0": "WB"
+          }
+        }
+      ],
       "promoted_generation_id": "v1",
       "ran_at": "2026-05-30T03:00:00Z",
       "reason": "",
       "rounds": [
         {
+          "bracket_side": "WB",
           "label": "Semifinal",
           "matches": [
             {
@@ -17320,9 +17477,9 @@
               ],
               "decision": "rejected",
               "delta_scalar": 0.05,
+              "loser": "v3",
               "match_id": "WB-R0-0",
-              "winner": "v0",
-              "loser": "v3"
+              "winner": "v0"
             },
             {
               "bracket_slot": "WB-R0-1",
@@ -17333,15 +17490,15 @@
               ],
               "decision": "promoted",
               "delta_scalar": -0.12,
+              "loser": "v2",
               "match_id": "WB-R0-1",
-              "winner": "v1",
-              "loser": "v2"
+              "winner": "v1"
             }
           ],
-          "round_index": 0,
-          "bracket_side": "WB"
+          "round_index": 0
         },
         {
+          "bracket_side": "WB",
           "label": "Final",
           "matches": [
             {
@@ -17353,13 +17510,12 @@
               ],
               "decision": "promoted",
               "delta_scalar": -0.08,
+              "loser": "v0",
               "match_id": "WB-R1-0",
-              "winner": "v1",
-              "loser": "v0"
+              "winner": "v1"
             }
           ],
-          "round_index": 1,
-          "bracket_side": "WB"
+          "round_index": 1
         }
       ],
       "standings": [
@@ -17395,79 +17551,6 @@
       },
       "tournament_id": "2026-05-30_e0:field:v1",
       "source": "record",
-      "gen_states": [
-        {
-          "generation_id": "v0",
-          "played_rounds": [
-            0,
-            1
-          ],
-          "advanced_rounds": [
-            0
-          ],
-          "lost_rounds": [
-            1
-          ],
-          "eliminated_at_round": 1,
-          "side_by_round": {
-            "0": "WB",
-            "1": "WB"
-          },
-          "lb_entry_round": null,
-          "projected": null
-        },
-        {
-          "generation_id": "v3",
-          "played_rounds": [
-            0
-          ],
-          "advanced_rounds": [],
-          "lost_rounds": [
-            0
-          ],
-          "eliminated_at_round": 0,
-          "side_by_round": {
-            "0": "WB"
-          },
-          "lb_entry_round": null,
-          "projected": null
-        },
-        {
-          "generation_id": "v1",
-          "played_rounds": [
-            0,
-            1
-          ],
-          "advanced_rounds": [
-            0,
-            1
-          ],
-          "lost_rounds": [],
-          "eliminated_at_round": null,
-          "side_by_round": {
-            "0": "WB",
-            "1": "WB"
-          },
-          "lb_entry_round": null,
-          "projected": null
-        },
-        {
-          "generation_id": "v2",
-          "played_rounds": [
-            0
-          ],
-          "advanced_rounds": [],
-          "lost_rounds": [
-            0
-          ],
-          "eliminated_at_round": 0,
-          "side_by_round": {
-            "0": "WB"
-          },
-          "lb_entry_round": null,
-          "projected": null
-        }
-      ],
       "diversity": {
         "field_size": 3,
         "distinct_ideas": 1,
@@ -19660,11 +19743,91 @@
           "delta_scalar": null,
           "epoch_id": "2026-05-30_e0",
           "field_status": [],
+          "gen_states": [
+            {
+              "advanced_rounds": [
+                0,
+                2
+              ],
+              "eliminated_at_round": null,
+              "generation_id": "v0",
+              "lb_entry_round": 2,
+              "lost_rounds": [
+                1
+              ],
+              "played_rounds": [
+                0,
+                1,
+                2
+              ],
+              "projected": null,
+              "side_by_round": {
+                "0": "WB",
+                "1": "WB",
+                "2": "LB"
+              }
+            },
+            {
+              "advanced_rounds": [],
+              "eliminated_at_round": null,
+              "generation_id": "v3",
+              "lb_entry_round": null,
+              "lost_rounds": [
+                0
+              ],
+              "played_rounds": [
+                0
+              ],
+              "projected": null,
+              "side_by_round": {
+                "0": "WB"
+              }
+            },
+            {
+              "advanced_rounds": [
+                0,
+                1
+              ],
+              "eliminated_at_round": null,
+              "generation_id": "v1",
+              "lb_entry_round": null,
+              "lost_rounds": [],
+              "played_rounds": [
+                0,
+                1
+              ],
+              "projected": null,
+              "side_by_round": {
+                "0": "WB",
+                "1": "WB"
+              }
+            },
+            {
+              "advanced_rounds": [],
+              "eliminated_at_round": 2,
+              "generation_id": "v2",
+              "lb_entry_round": 2,
+              "lost_rounds": [
+                0,
+                2
+              ],
+              "played_rounds": [
+                0,
+                2
+              ],
+              "projected": null,
+              "side_by_round": {
+                "0": "WB",
+                "2": "LB"
+              }
+            }
+          ],
           "promoted_generation_id": "v1",
           "ran_at": "2026-05-30T03:00:00Z",
           "reason": "",
           "rounds": [
             {
+              "bracket_side": "WB",
               "label": "Semifinal",
               "matches": [
                 {
@@ -19676,9 +19839,9 @@
                   ],
                   "decision": "rejected",
                   "delta_scalar": 0.05,
+                  "loser": "v3",
                   "match_id": "WB-R0-0",
-                  "winner": "v0",
-                  "loser": "v3"
+                  "winner": "v0"
                 },
                 {
                   "bracket_slot": "WB-R0-1",
@@ -19689,15 +19852,15 @@
                   ],
                   "decision": "promoted",
                   "delta_scalar": -0.12,
+                  "loser": "v2",
                   "match_id": "WB-R0-1",
-                  "winner": "v1",
-                  "loser": "v2"
+                  "winner": "v1"
                 }
               ],
-              "round_index": 0,
-              "bracket_side": "WB"
+              "round_index": 0
             },
             {
+              "bracket_side": "WB",
               "label": "Final",
               "matches": [
                 {
@@ -19709,15 +19872,15 @@
                   ],
                   "decision": "promoted",
                   "delta_scalar": -0.08,
+                  "loser": "v0",
                   "match_id": "WB-R1-0",
-                  "winner": "v1",
-                  "loser": "v0"
+                  "winner": "v1"
                 }
               ],
-              "round_index": 1,
-              "bracket_side": "WB"
+              "round_index": 1
             },
             {
+              "bracket_side": "LB",
               "label": "LB Round 1",
               "matches": [
                 {
@@ -19729,13 +19892,12 @@
                   ],
                   "decision": "rejected",
                   "delta_scalar": 0.02,
+                  "loser": "v2",
                   "match_id": "LB-R0-0",
-                  "winner": "v0",
-                  "loser": "v2"
+                  "winner": "v0"
                 }
               ],
-              "round_index": 2,
-              "bracket_side": "LB"
+              "round_index": 2
             }
           ],
           "standings": [
@@ -19769,86 +19931,7 @@
             "scalar": 70.0,
             "eval_mode": "full",
             "run_ref": "epochs/2026-05-30_e0/generations/v0"
-          },
-          "gen_states": [
-            {
-              "generation_id": "v0",
-              "played_rounds": [
-                0,
-                1,
-                2
-              ],
-              "advanced_rounds": [
-                0,
-                2
-              ],
-              "lost_rounds": [
-                1
-              ],
-              "eliminated_at_round": null,
-              "side_by_round": {
-                "0": "WB",
-                "1": "WB",
-                "2": "LB"
-              },
-              "lb_entry_round": 2,
-              "projected": null
-            },
-            {
-              "generation_id": "v3",
-              "played_rounds": [
-                0
-              ],
-              "advanced_rounds": [],
-              "lost_rounds": [
-                0
-              ],
-              "eliminated_at_round": 0,
-              "side_by_round": {
-                "0": "WB"
-              },
-              "lb_entry_round": null,
-              "projected": null
-            },
-            {
-              "generation_id": "v1",
-              "played_rounds": [
-                0,
-                1
-              ],
-              "advanced_rounds": [
-                0,
-                1
-              ],
-              "lost_rounds": [],
-              "eliminated_at_round": null,
-              "side_by_round": {
-                "0": "WB",
-                "1": "WB"
-              },
-              "lb_entry_round": null,
-              "projected": null
-            },
-            {
-              "generation_id": "v2",
-              "played_rounds": [
-                0,
-                2
-              ],
-              "advanced_rounds": [],
-              "lost_rounds": [
-                0,
-                2
-              ],
-              "eliminated_at_round": 2,
-              "side_by_round": {
-                "0": "WB",
-                "2": "LB"
-              },
-              "lb_entry_round": 2,
-              "projected": null
-            }
-          ]
+          }
         }
       ]
     }
@@ -19920,11 +20003,91 @@
             "delta_scalar": null,
             "epoch_id": "2026-05-30_e0",
             "field_status": [],
+            "gen_states": [
+              {
+                "advanced_rounds": [
+                  0,
+                  2
+                ],
+                "eliminated_at_round": null,
+                "generation_id": "v0",
+                "lb_entry_round": 2,
+                "lost_rounds": [
+                  1
+                ],
+                "played_rounds": [
+                  0,
+                  1,
+                  2
+                ],
+                "projected": null,
+                "side_by_round": {
+                  "0": "WB",
+                  "1": "WB",
+                  "2": "LB"
+                }
+              },
+              {
+                "advanced_rounds": [],
+                "eliminated_at_round": null,
+                "generation_id": "v3",
+                "lb_entry_round": null,
+                "lost_rounds": [
+                  0
+                ],
+                "played_rounds": [
+                  0
+                ],
+                "projected": null,
+                "side_by_round": {
+                  "0": "WB"
+                }
+              },
+              {
+                "advanced_rounds": [
+                  0,
+                  1
+                ],
+                "eliminated_at_round": null,
+                "generation_id": "v1",
+                "lb_entry_round": null,
+                "lost_rounds": [],
+                "played_rounds": [
+                  0,
+                  1
+                ],
+                "projected": null,
+                "side_by_round": {
+                  "0": "WB",
+                  "1": "WB"
+                }
+              },
+              {
+                "advanced_rounds": [],
+                "eliminated_at_round": 2,
+                "generation_id": "v2",
+                "lb_entry_round": 2,
+                "lost_rounds": [
+                  0,
+                  2
+                ],
+                "played_rounds": [
+                  0,
+                  2
+                ],
+                "projected": null,
+                "side_by_round": {
+                  "0": "WB",
+                  "2": "LB"
+                }
+              }
+            ],
             "promoted_generation_id": "v1",
             "ran_at": "2026-05-30T03:00:00Z",
             "reason": "",
             "rounds": [
               {
+                "bracket_side": "WB",
                 "label": "Semifinal",
                 "matches": [
                   {
@@ -19936,9 +20099,9 @@
                     ],
                     "decision": "rejected",
                     "delta_scalar": 0.05,
+                    "loser": "v3",
                     "match_id": "WB-R0-0",
-                    "winner": "v0",
-                    "loser": "v3"
+                    "winner": "v0"
                   },
                   {
                     "bracket_slot": "WB-R0-1",
@@ -19949,15 +20112,15 @@
                     ],
                     "decision": "promoted",
                     "delta_scalar": -0.12,
+                    "loser": "v2",
                     "match_id": "WB-R0-1",
-                    "winner": "v1",
-                    "loser": "v2"
+                    "winner": "v1"
                   }
                 ],
-                "round_index": 0,
-                "bracket_side": "WB"
+                "round_index": 0
               },
               {
+                "bracket_side": "WB",
                 "label": "Final",
                 "matches": [
                   {
@@ -19969,15 +20132,15 @@
                     ],
                     "decision": "promoted",
                     "delta_scalar": -0.08,
+                    "loser": "v0",
                     "match_id": "WB-R1-0",
-                    "winner": "v1",
-                    "loser": "v0"
+                    "winner": "v1"
                   }
                 ],
-                "round_index": 1,
-                "bracket_side": "WB"
+                "round_index": 1
               },
               {
+                "bracket_side": "LB",
                 "label": "LB Round 1",
                 "matches": [
                   {
@@ -19989,13 +20152,12 @@
                     ],
                     "decision": "rejected",
                     "delta_scalar": 0.02,
+                    "loser": "v2",
                     "match_id": "LB-R0-0",
-                    "winner": "v0",
-                    "loser": "v2"
+                    "winner": "v0"
                   }
                 ],
-                "round_index": 2,
-                "bracket_side": "LB"
+                "round_index": 2
               }
             ],
             "standings": [
@@ -20029,86 +20191,7 @@
               "scalar": 70.0,
               "eval_mode": "full",
               "run_ref": "epochs/2026-05-30_e0/generations/v0"
-            },
-            "gen_states": [
-              {
-                "generation_id": "v0",
-                "played_rounds": [
-                  0,
-                  1,
-                  2
-                ],
-                "advanced_rounds": [
-                  0,
-                  2
-                ],
-                "lost_rounds": [
-                  1
-                ],
-                "eliminated_at_round": null,
-                "side_by_round": {
-                  "0": "WB",
-                  "1": "WB",
-                  "2": "LB"
-                },
-                "lb_entry_round": 2,
-                "projected": null
-              },
-              {
-                "generation_id": "v3",
-                "played_rounds": [
-                  0
-                ],
-                "advanced_rounds": [],
-                "lost_rounds": [
-                  0
-                ],
-                "eliminated_at_round": 0,
-                "side_by_round": {
-                  "0": "WB"
-                },
-                "lb_entry_round": null,
-                "projected": null
-              },
-              {
-                "generation_id": "v1",
-                "played_rounds": [
-                  0,
-                  1
-                ],
-                "advanced_rounds": [
-                  0,
-                  1
-                ],
-                "lost_rounds": [],
-                "eliminated_at_round": null,
-                "side_by_round": {
-                  "0": "WB",
-                  "1": "WB"
-                },
-                "lb_entry_round": null,
-                "projected": null
-              },
-              {
-                "generation_id": "v2",
-                "played_rounds": [
-                  0,
-                  2
-                ],
-                "advanced_rounds": [],
-                "lost_rounds": [
-                  0,
-                  2
-                ],
-                "eliminated_at_round": 2,
-                "side_by_round": {
-                  "0": "WB",
-                  "2": "LB"
-                },
-                "lb_entry_round": 2,
-                "projected": null
-              }
-            ]
+            }
           },
           "source": "round_index"
         }
@@ -20162,11 +20245,91 @@
       "delta_scalar": null,
       "epoch_id": "2026-05-30_e0",
       "field_status": [],
+      "gen_states": [
+        {
+          "advanced_rounds": [
+            0,
+            2
+          ],
+          "eliminated_at_round": null,
+          "generation_id": "v0",
+          "lb_entry_round": 2,
+          "lost_rounds": [
+            1
+          ],
+          "played_rounds": [
+            0,
+            1,
+            2
+          ],
+          "projected": null,
+          "side_by_round": {
+            "0": "WB",
+            "1": "WB",
+            "2": "LB"
+          }
+        },
+        {
+          "advanced_rounds": [],
+          "eliminated_at_round": null,
+          "generation_id": "v3",
+          "lb_entry_round": null,
+          "lost_rounds": [
+            0
+          ],
+          "played_rounds": [
+            0
+          ],
+          "projected": null,
+          "side_by_round": {
+            "0": "WB"
+          }
+        },
+        {
+          "advanced_rounds": [
+            0,
+            1
+          ],
+          "eliminated_at_round": null,
+          "generation_id": "v1",
+          "lb_entry_round": null,
+          "lost_rounds": [],
+          "played_rounds": [
+            0,
+            1
+          ],
+          "projected": null,
+          "side_by_round": {
+            "0": "WB",
+            "1": "WB"
+          }
+        },
+        {
+          "advanced_rounds": [],
+          "eliminated_at_round": 2,
+          "generation_id": "v2",
+          "lb_entry_round": 2,
+          "lost_rounds": [
+            0,
+            2
+          ],
+          "played_rounds": [
+            0,
+            2
+          ],
+          "projected": null,
+          "side_by_round": {
+            "0": "WB",
+            "2": "LB"
+          }
+        }
+      ],
       "promoted_generation_id": "v1",
       "ran_at": "2026-05-30T03:00:00Z",
       "reason": "",
       "rounds": [
         {
+          "bracket_side": "WB",
           "label": "Semifinal",
           "matches": [
             {
@@ -20178,9 +20341,9 @@
               ],
               "decision": "rejected",
               "delta_scalar": 0.05,
+              "loser": "v3",
               "match_id": "WB-R0-0",
-              "winner": "v0",
-              "loser": "v3"
+              "winner": "v0"
             },
             {
               "bracket_slot": "WB-R0-1",
@@ -20191,15 +20354,15 @@
               ],
               "decision": "promoted",
               "delta_scalar": -0.12,
+              "loser": "v2",
               "match_id": "WB-R0-1",
-              "winner": "v1",
-              "loser": "v2"
+              "winner": "v1"
             }
           ],
-          "round_index": 0,
-          "bracket_side": "WB"
+          "round_index": 0
         },
         {
+          "bracket_side": "WB",
           "label": "Final",
           "matches": [
             {
@@ -20211,15 +20374,15 @@
               ],
               "decision": "promoted",
               "delta_scalar": -0.08,
+              "loser": "v0",
               "match_id": "WB-R1-0",
-              "winner": "v1",
-              "loser": "v0"
+              "winner": "v1"
             }
           ],
-          "round_index": 1,
-          "bracket_side": "WB"
+          "round_index": 1
         },
         {
+          "bracket_side": "LB",
           "label": "LB Round 1",
           "matches": [
             {
@@ -20231,13 +20394,12 @@
               ],
               "decision": "rejected",
               "delta_scalar": 0.02,
+              "loser": "v2",
               "match_id": "LB-R0-0",
-              "winner": "v0",
-              "loser": "v2"
+              "winner": "v0"
             }
           ],
-          "round_index": 2,
-          "bracket_side": "LB"
+          "round_index": 2
         }
       ],
       "standings": [
@@ -20273,85 +20435,6 @@
       },
       "tournament_id": "2026-05-30_e0:field:v1",
       "source": "record",
-      "gen_states": [
-        {
-          "generation_id": "v0",
-          "played_rounds": [
-            0,
-            1,
-            2
-          ],
-          "advanced_rounds": [
-            0,
-            2
-          ],
-          "lost_rounds": [
-            1
-          ],
-          "eliminated_at_round": null,
-          "side_by_round": {
-            "0": "WB",
-            "1": "WB",
-            "2": "LB"
-          },
-          "lb_entry_round": 2,
-          "projected": null
-        },
-        {
-          "generation_id": "v3",
-          "played_rounds": [
-            0
-          ],
-          "advanced_rounds": [],
-          "lost_rounds": [
-            0
-          ],
-          "eliminated_at_round": 0,
-          "side_by_round": {
-            "0": "WB"
-          },
-          "lb_entry_round": null,
-          "projected": null
-        },
-        {
-          "generation_id": "v1",
-          "played_rounds": [
-            0,
-            1
-          ],
-          "advanced_rounds": [
-            0,
-            1
-          ],
-          "lost_rounds": [],
-          "eliminated_at_round": null,
-          "side_by_round": {
-            "0": "WB",
-            "1": "WB"
-          },
-          "lb_entry_round": null,
-          "projected": null
-        },
-        {
-          "generation_id": "v2",
-          "played_rounds": [
-            0,
-            2
-          ],
-          "advanced_rounds": [],
-          "lost_rounds": [
-            0,
-            2
-          ],
-          "eliminated_at_round": 2,
-          "side_by_round": {
-            "0": "WB",
-            "2": "LB"
-          },
-          "lb_entry_round": 2,
-          "projected": null
-        }
-      ],
       "diversity": {
         "field_size": 3,
         "distinct_ideas": 1,
@@ -24692,21 +24775,7 @@
   "racing_field/racing_field": {
     "status": 200,
     "body": {
-      "epoch_id": "2026-05-30_e0",
-      "present": true,
-      "structure": "racing",
-      "structure_params": {
-        "rungs": [
-          {
-            "fraction": 0.5,
-            "keep": 0.5
-          },
-          {
-            "fraction": 1.0,
-            "keep": 0.5
-          }
-        ]
-      },
+      "champion_generation_id": "v0",
       "competitors": [
         {
           "generation_id": "v0",
@@ -24729,6 +24798,13 @@
           "seed": 4
         }
       ],
+      "decision": "promoted",
+      "delta_scalar": null,
+      "epoch_id": "2026-05-30_e0",
+      "field_status": [],
+      "promoted_generation_id": "v1",
+      "ran_at": "2026-05-30T03:00:00Z",
+      "reason": "",
       "rounds": [
         {
           "label": "Rung 1",
@@ -24773,22 +24849,6 @@
             }
           ],
           "round_index": 1
-        },
-        {
-          "stage_index": 2,
-          "label": "Champion gate",
-          "matches": [
-            {
-              "match_id": "racing-final",
-              "competitors": [
-                "v0",
-                "v1"
-              ],
-              "winner": "v1",
-              "decision": "promoted",
-              "board_fraction": 1.0
-            }
-          ]
         }
       ],
       "standings": [
@@ -24799,11 +24859,27 @@
           "status": "champion"
         }
       ],
+      "state": "settled",
+      "structure": "racing",
+      "structure_params": {
+        "rungs": [
+          {
+            "fraction": 0.5,
+            "keep": 0.5
+          },
+          {
+            "fraction": 1.0,
+            "keep": 0.5
+          }
+        ]
+      },
+      "tournament_id": "2026-05-30_e0:field:v1",
+      "present": true,
       "champion_lineage": [
         "v0",
         "v1"
       ],
-      "source": "reconstructed"
+      "source": "record"
     }
   },
   "racing_field/tournament_structure/v1": {
@@ -25439,21 +25515,7 @@
       ],
       "drilldown": null,
       "racing_field": {
-        "epoch_id": "2026-05-30_e0",
-        "present": true,
-        "structure": "racing",
-        "structure_params": {
-          "rungs": [
-            {
-              "fraction": 0.5,
-              "keep": 0.5
-            },
-            {
-              "fraction": 1.0,
-              "keep": 0.5
-            }
-          ]
-        },
+        "champion_generation_id": "v0",
         "competitors": [
           {
             "generation_id": "v0",
@@ -25476,6 +25538,13 @@
             "seed": 4
           }
         ],
+        "decision": "promoted",
+        "delta_scalar": null,
+        "epoch_id": "2026-05-30_e0",
+        "field_status": [],
+        "promoted_generation_id": "v1",
+        "ran_at": "2026-05-30T03:00:00Z",
+        "reason": "",
         "rounds": [
           {
             "label": "Rung 1",
@@ -25520,22 +25589,6 @@
               }
             ],
             "round_index": 1
-          },
-          {
-            "stage_index": 2,
-            "label": "Champion gate",
-            "matches": [
-              {
-                "match_id": "racing-final",
-                "competitors": [
-                  "v0",
-                  "v1"
-                ],
-                "winner": "v1",
-                "decision": "promoted",
-                "board_fraction": 1.0
-              }
-            ]
           }
         ],
         "standings": [
@@ -25546,11 +25599,27 @@
             "status": "champion"
           }
         ],
+        "state": "settled",
+        "structure": "racing",
+        "structure_params": {
+          "rungs": [
+            {
+              "fraction": 0.5,
+              "keep": 0.5
+            },
+            {
+              "fraction": 1.0,
+              "keep": 0.5
+            }
+          ]
+        },
+        "tournament_id": "2026-05-30_e0:field:v1",
+        "present": true,
         "champion_lineage": [
           "v0",
           "v1"
         ],
-        "source": "reconstructed"
+        "source": "record"
       }
     }
   },

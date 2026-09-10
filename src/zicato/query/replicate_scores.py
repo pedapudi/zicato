@@ -296,3 +296,30 @@ def standard_error(values: Sequence[float]) -> float | None:
     if sd != sd or sd in (float("inf"), float("-inf")):
         return None
     return sd / math.sqrt(len(values))
+
+
+def selected_measurements(
+    paths: WorkspacePaths, epoch_id: str, generation_id: str
+) -> dict[str, dict[str, Any]]:
+    """Read selected measurements once for candidate and task comparisons."""
+    from zicato.query.paths import coerce_float, finite_float, layout_of
+    from zicato.workspace.reads import read_generation_losses
+
+    rows = {}
+    for entry_id, loss in read_generation_losses(layout_of(paths), epoch_id, generation_id).items():
+        drift = coerce_float(loss.get("drift_loss"))
+        raw_metrics = loss.get("metrics")
+        metrics = {
+            str(name): value
+            for name, raw in (raw_metrics.items() if isinstance(raw_metrics, dict) else ())
+            if (value := finite_float(raw)) is not None
+        }
+        rows[entry_id] = {
+            **loss,
+            "drift_loss": drift,
+            "score": finite_float(loss.get("score")),
+            "metrics": metrics or None,
+            "drift_observed": drift not in (None, 0.0)
+            or any(metric["name"].startswith("drift:") for metric in loss.get("metric_counts", [])),
+        }
+    return rows

@@ -46,7 +46,7 @@ async def test_cache_reuse_requires_the_requested_execution_seed(
             entry_id="entry",
         )
 
-    monkeypatch.setattr(scheduling, "_run_single", measured)
+    monkeypatch.setattr(scheduling.worker_execution, "_run_single", measured)
 
     with acquire_workspace_lock(tmp_path, "test") as writer:
 

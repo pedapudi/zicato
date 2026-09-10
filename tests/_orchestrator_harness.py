@@ -34,6 +34,7 @@ from typing import Any
 
 import pytest
 
+import zicato.tournament.worker_execution as _tournament_worker_execution
 from tests._contract_pins import deterministic_weights
 from tests._foe_support import stand_in_proposer_block
 from zicato.core.types import (
@@ -333,9 +334,8 @@ def install_telemetry_stubs(
     # spawns a worker subprocess, which cannot see these sys.modules
     # stubs (it runs in a separate interpreter). The orchestrator tests
     # only care about the *evolve-loop* logic above the per-run mechanism,
-    # so we stub ``runner._run_single`` to return the same canned
+    # so we stub ``worker_execution._run_single`` to return the same canned
     # LossProfile the in-process reduce_loss stub would have produced.
-    import zicato.tournament.runner as _runner_mod
 
     async def _fake_run_single(
         *,
@@ -360,7 +360,9 @@ def install_telemetry_stubs(
         # finished run into the live SQLite index. The index-wiring tests
         # assert on this; the real subprocess _run_single does it after
         # reading the worker's loss.json.
-        _runner_mod._ingest_run_into_index(workspace_root, epoch_id, generation.id, entry.id)
+        _tournament_worker_execution._ingest_run_into_index(
+            workspace_root, epoch_id, generation.id, entry.id
+        )
         return LossProfile(
             run_id=run_id_for_unit(
                 generation.id,
@@ -382,7 +384,7 @@ def install_telemetry_stubs(
             pass_fail=canned_pass_by_gen.get(generation.id),
         )
 
-    monkeypatch.setattr(_runner_mod, "_run_single", _fake_run_single)
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", _fake_run_single)
 
 
 def run_evolve_once(

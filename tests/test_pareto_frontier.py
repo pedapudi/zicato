@@ -29,6 +29,7 @@ from typing import Any
 
 import pytest
 
+import zicato.tournament.worker_execution as _tournament_worker_execution
 from tests._contract_pins import deterministic_weights
 from tests._orchestrator_harness import (
     bootstrap_workspace,
@@ -1081,14 +1082,13 @@ def _install_costed_run_single(
     drift_by_gen: dict[str, float],
     tokens_by_gen: dict[str, int],
 ) -> None:
-    """Re-stub ``runner._run_single`` with a per-generation COST signal.
+    """Re-stub ``worker_execution._run_single`` with a per-generation COST signal.
 
     The orchestrator suite's stub varies only ``drift_loss``, which moves one
     axis. The frontier is about candidates that trade one axis for another, so
     this records the matching ``tokens_spent`` display value and
     ``cost:tokens_spent`` measurement, as the real reducer does.
     """
-    import zicato.tournament.runner as _runner_mod
 
     async def _fake_run_single(
         *,
@@ -1131,7 +1131,7 @@ def _install_costed_run_single(
             tokens_spent=tokens_by_gen.get(generation.id, 0),
         )
 
-    monkeypatch.setattr(_runner_mod, "_run_single", _fake_run_single)
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", _fake_run_single)
 
 
 def _drive_round(

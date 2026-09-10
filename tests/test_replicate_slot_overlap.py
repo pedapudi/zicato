@@ -36,6 +36,7 @@ from typing import Any
 
 import pytest
 
+import zicato.tournament.scheduling as _tournament_scheduling
 from tests._contract_pins import deterministic_weights
 from tests._runtime_builders import (
     empty_evaluation_call,
@@ -493,8 +494,8 @@ async def _run_fast_mode(
             for entry in board
         }
 
-    monkeypatch.setattr(runner, "_run_replicate_slots_fast", _fake_overlapped)
-    monkeypatch.setattr(runner, "_run_board_units_fast", _fake_sequential)
+    monkeypatch.setattr(_tournament_scheduling, "_run_replicate_slots_fast", _fake_overlapped)
+    monkeypatch.setattr(_tournament_scheduling, "_run_board_units_fast", _fake_sequential)
 
     config = replace(_config(parallelism=2, token_ledger=token_ledger), workspace_root=tmp_path)
     weights = deterministic_weights()

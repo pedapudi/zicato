@@ -50,9 +50,9 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 472,149 | +63,488 |
-| Production | 197,702 | 190,095 | -7,607 |
-| Production logic | 110,276 | 110,735 | +459 |
+| Total | 408,661 | 469,770 | +61,109 |
+| Production | 197,702 | 188,436 | -9,266 |
+| Production logic | 110,276 | 109,953 | -323 |
 
 The baseline row is the reference `f9052dd` measured by the classification the
 checker holds, which counts the console's hand-written entry point
@@ -84,23 +84,23 @@ production-logic series per subsystem along a branch's first-parent commits.
 
 | Subsystem | Total | Production | Production logic | Prose share |
 |---|---:|---:|---:|---:|
-| src/zicato/dashboard | 61,997 | 32,136 | 22,125 | 31.2% |
-| src/zicato/query | 18,740 | 18,740 | 11,696 | 37.6% |
-| src/zicato/epoch | 13,896 | 13,896 | 7,759 | 44.2% |
+| src/zicato/dashboard | 61,932 | 32,056 | 22,123 | 31.0% |
+| src/zicato/query | 17,742 | 17,742 | 11,166 | 37.1% |
+| src/zicato/epoch | 13,822 | 13,822 | 7,742 | 44.0% |
 | src/zicato/evolve | 11,262 | 11,262 | 7,185 | 36.2% |
-| src/zicato/tournament | 11,254 | 11,254 | 6,604 | 41.3% |
-| src/zicato/reflection | 9,855 | 9,855 | 6,590 | 33.1% |
-| crates/supervisor | 16,401 | 13,945 | 6,536 | 53.1% |
+| src/zicato/tournament | 11,224 | 11,224 | 6,648 | 40.8% |
+| src/zicato/reflection | 9,843 | 9,843 | 6,578 | 33.2% |
+| crates/supervisor | 15,977 | 13,521 | 6,279 | 53.6% |
 | src/zicato/proposer | 9,521 | 9,521 | 4,772 | 49.9% |
 | src/zicato/cli | 7,088 | 7,088 | 4,697 | 33.7% |
 | src/zicato/analyzer | 7,165 | 7,165 | 4,591 | 35.9% |
 | src/zicato/selection | 5,278 | 5,278 | 3,060 | 42.0% |
 | src/zicato/core | 6,393 | 6,393 | 2,808 | 56.1% |
-| src/zicato/runtime | 5,186 | 5,186 | 2,524 | 51.3% |
+| src/zicato/runtime | 5,198 | 5,198 | 2,535 | 51.2% |
 | src/zicato/index | 4,392 | 4,392 | 2,390 | 45.6% |
-| src/zicato/telemetry | 4,505 | 4,505 | 2,198 | 51.2% |
+| src/zicato/telemetry | 4,503 | 4,503 | 2,197 | 51.2% |
 | src/zicato/contract_draft | 2,468 | 2,468 | 1,622 | 34.3% |
-| src/zicato/health | 2,608 | 2,608 | 1,519 | 41.8% |
+| src/zicato/health | 2,557 | 2,557 | 1,501 | 41.3% |
 | src/zicato/mutation | 2,954 | 2,954 | 1,405 | 52.4% |
 | src/zicato/check | 1,769 | 1,769 | 1,144 | 35.3% |
 | src/zicato/board | 2,412 | 2,412 | 1,097 | 54.5% |
@@ -456,3 +456,6 @@ dropped rows named.
 | Recorded tournament reads and simpler test execution (total) | 473,391 | -1,242 | 472,149 | Issue #526: readers and reports use recorded primary promotions and complete tournament structures; diagrams display framework summaries and recorded explanations. One parity test process covers all eight deterministic configurations. |
 | Recorded tournament reads and simpler test execution (production) | 190,821 | -726 | 190,095 | Issue #526: readers and reports use recorded primary promotions and complete tournament structures; diagrams display framework summaries and recorded explanations. One parity test process covers all eight deterministic configurations. |
 | Recorded tournament reads and simpler test execution (production logic) | 111,170 | -435 | 110,735 | Issue #526: readers and reports use recorded primary promotions and complete tournament structures; diagrams display framework summaries and recorded explanations. One parity test process covers all eight deterministic configurations. |
+| Shared recorded results and worker ownership (total) | 472,149 | -2,379 | 469,770 | Tournament execution publishes diagram analysis; readers share canonical measurements; worker ownership removes circular imports; diagnostics and transcripts share record handling. Browser change detection includes displayed scores. |
+| Shared recorded results and worker ownership (production) | 190,095 | -1,659 | 188,436 | Tournament execution publishes diagram analysis; readers share canonical measurements; worker ownership removes circular imports; diagnostics and transcripts share record handling. Browser change detection includes displayed scores. |
+| Shared recorded results and worker ownership (production logic) | 110,735 | -782 | 109,953 | Tournament execution publishes diagram analysis; readers share canonical measurements; worker ownership removes circular imports; diagnostics and transcripts share record handling. Browser change detection includes displayed scores. |

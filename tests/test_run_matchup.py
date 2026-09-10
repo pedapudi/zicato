@@ -16,7 +16,7 @@ from typing import Any
 
 import pytest
 
-import zicato.tournament.runner as runner_mod
+import zicato.tournament.worker_execution as _tournament_worker_execution
 from tests._runtime_builders import prepare_tournament_epoch, runtime_config
 from zicato.core import (
     BoardEntry,
@@ -91,7 +91,7 @@ def _stub_run_single(monkeypatch, canned, *, log: list | None = None):
             log.append((generation.id, entry.id))
         return replace(canned[(generation.id, entry.id)], epoch_id=epoch_id)
 
-    monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", fake_run_single)
 
 
 def test_run_matchup_matches_run_tournament_gauntlet(monkeypatch, tmp_path):
@@ -218,7 +218,7 @@ def test_run_matchup_replicates_average_losses(monkeypatch, tmp_path):
             epoch_id=epoch_id,
         )
 
-    monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", fake_run_single)
 
     board = [BoardEntry(id="entry_a", kind="single_turn", wall_clock_budget_seconds=60, input="x")]
     weights = ScoringWeights()
@@ -336,7 +336,7 @@ def test_run_matchup_budget_returns_partial_aggregate(monkeypatch, tmp_path):
             epoch_id=epoch_id,
         )
 
-    monkeypatch.setattr(runner_mod, "_run_single", slow_run_single)
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", slow_run_single)
 
     weights = ScoringWeights()
     config = _config_seq(tmp_path)
@@ -419,7 +419,7 @@ def test_run_matchup_unset_budget_runs_every_unit(monkeypatch, tmp_path):
             epoch_id=epoch_id,
         )
 
-    monkeypatch.setattr(runner_mod, "_run_single", fast_run_single)
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", fast_run_single)
 
     weights = ScoringWeights()
     config = _config_seq(tmp_path)
@@ -499,7 +499,7 @@ class _PeakConcurrencyProbe:
                 epoch_id=epoch_id,
             )
 
-        monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
+        monkeypatch.setattr(_tournament_worker_execution, "_run_single", fake_run_single)
 
 
 def _run_two_concurrent_matchups(
@@ -578,7 +578,7 @@ def test_unshared_semaphore_each_matchup_caps_itself(monkeypatch, tmp_path):
 
 def test_average_losses_majority_pass_vote():
     """_average_losses takes a strict-majority vote for pass_fail."""
-    from zicato.tournament.runner import _average_losses
+    from zicato.tournament.unit_cache import _average_losses
 
     runs = [
         {"e": _loss(generation_id="v1", entry_id="e", drift_loss=1.0, pass_fail=True)},

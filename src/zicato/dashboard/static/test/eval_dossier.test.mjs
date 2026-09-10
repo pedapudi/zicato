@@ -401,6 +401,23 @@ test('teardown: reset shared AppState + data cache for the next file', () => {
   assert(true, 'shared singletons reset');
 });
 
+test('displayed scores and finding titles invalidate the board dossier', () => {
+  const original = board.evalDossierDigest(DOSSIER_FULL, 'e3', 'task_login');
+  const changedScore = structuredClone(DOSSIER_FULL);
+  changedScore.trajectory[0].score = 0.812;
+  assert(board.evalDossierDigest(changedScore, 'e3', 'task_login') !== original);
+  const changedTitle = structuredClone(DOSSIER_FULL);
+  changedTitle.reflection_findings = [{reflection_id: 'review', finding: {finding_id: 'finding', title: 'Changed evidence'}}];
+  const before = board.evalDossierDigest(changedTitle, 'e3', 'task_login');
+  changedTitle.reflection_findings[0].finding.title = 'Revised evidence';
+  assert(board.evalDossierDigest(changedTitle, 'e3', 'task_login') !== before);
+  changedTitle.checked_at = 'later';
+  const timestampOnly = structuredClone(changedTitle);
+  timestampOnly.checked_at = 'later still';
+  assertEqual(board.evalDossierDigest(changedTitle, 'e3', 'task_login'),
+    board.evalDossierDigest(timestampOnly, 'e3', 'task_login'));
+});
+
 await run();
 
 // ---- the FACET panel on the per-board drill-down --------------------------

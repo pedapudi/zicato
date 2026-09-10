@@ -146,14 +146,7 @@ pub fn read_active_tournament_with_stats(
     paths: &WorkspacePaths,
 ) -> (Option<ActiveTournament>, crate::fold_stats::FoldStats) {
     let (value, stats) = fold_active_tournament_value_with_stats(&paths.active_tournament_log());
-    let mut tournament = value.and_then(|value| serde_json::from_value(value).ok());
-    // The served ELIM MODEL rides the live payload (the Rust half of the
-    // Python `attach_elim_states` wiring): an elim tournament's rounds are
-    // canonicalized and the `gen_states` fold attached, so the dashboard
-    // renders the SAME model under either server (DQ1/DQ8).
-    if let Some(ref mut at) = tournament {
-        crate::elim_states::enrich_active_tournament(at);
-    }
+    let tournament = value.and_then(|value| serde_json::from_value(value).ok());
     (tournament, stats)
 }
 
@@ -736,7 +729,7 @@ mod tests {
         let log = [
             r#"{"seq":1,"ts":"t","type":"Snapshot","payload":{"tournament_id":"t1","entries":[{"entry_id":"b0","side":"child","status":"queued"},{"entry_id":"b0","side":"parent","status":"queued"}]}}"#,
             r#"{"seq":2,"ts":"t","type":"Update","payload":{"fields":{},"entries":{"0":{"entry_id":"b0","side":"child","status":"running"},"1":{"entry_id":"b0","side":"parent","status":"queued"}}}}"#,
-            r#"{"seq":3,"ts":"t","type":"Update","payload":{"fields":{"partial_challenger_agg":{"scalar":0.5},"standings":[{"generation_id":"v1","rank":1}],"projected":{"v1":{"scalar":0.25}}},"entries":{}}}"#,
+            r#"{"seq":3,"ts":"t","type":"Update","payload":{"fields":{"partial_challenger_agg":{"scalar":0.5},"standings":[{"generation_id":"v1","rank":1}],"projected":{"v1":{"scalar":0.25}},"gen_states":[{"generation_id":"v1","eliminated_at_round":null,"lost_rounds":[0]}]},"entries":{}}}"#,
         ]
         .join("\n");
         std::fs::write(p.active_tournament_log(), log).unwrap();
@@ -748,6 +741,11 @@ mod tests {
         let published = serde_json::to_value(&at).unwrap();
         assert_eq!(published["standings"][0]["generation_id"], "v1");
         assert_eq!(published["projected"]["v1"]["scalar"], 0.25);
+        assert_eq!(
+            published["gen_states"][0]["lost_rounds"],
+            serde_json::json!([0])
+        );
+        assert!(published["gen_states"][0]["eliminated_at_round"].is_null());
     }
 
     #[test]

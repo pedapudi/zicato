@@ -454,6 +454,7 @@ def write_tournament_structure(
         decode_field_tournament_record,
         write_field_tournament_record,
     )
+    from zicato.tournament.structure import attach_elim_states
 
     challenger = next(row["generation_id"] for row in competitors if row["role"] == "challenger")
     champion = next(row["generation_id"] for row in competitors if row["role"] == "champion")
@@ -462,21 +463,23 @@ def write_tournament_structure(
         epoch_id=epoch_id,
         first_challenger_id=challenger,
         record=decode_field_tournament_record(
-            {
-                "tournament_id": f"{epoch_id}:field:{challenger}",
-                "epoch_id": epoch_id,
-                "structure": structure,
-                "structure_params": dict(structure_params or {}),
-                "competitors": list(competitors),
-                "rounds": list(rounds),
-                "standings": list(standings),
-                "field_status": list(field_status),
-                "champion_generation_id": champion,
-                "promoted_generation_id": challenger,
-                "decision": "promoted",
-                "state": "settled",
-                "ran_at": DEFAULT_CREATED_AT,
-                "reason": "",
-            }
+            attach_elim_states(
+                {
+                    "tournament_id": f"{epoch_id}:field:{challenger}",
+                    "epoch_id": epoch_id,
+                    "structure": structure,
+                    "structure_params": dict(structure_params or {}),
+                    "competitors": list(competitors),
+                    "rounds": list(rounds),
+                    "standings": list(standings),
+                    "field_status": list(field_status),
+                    "champion_generation_id": champion,
+                    "promoted_generation_id": challenger,
+                    "decision": "promoted",
+                    "state": "settled",
+                    "ran_at": DEFAULT_CREATED_AT,
+                    "reason": "",
+                }
+            )
         ),
     )

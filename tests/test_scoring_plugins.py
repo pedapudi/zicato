@@ -454,7 +454,7 @@ def test_drift_reducer_survives_worker_transport_and_drives_compute_drift_loss(
     in the worker's compute_drift_loss path."""
     from zicato._tournament_worker import _weights_from_args
     from zicato.telemetry.reducer import compute_drift_loss
-    from zicato.tournament.runner import _weights_spec
+    from zicato.tournament.worker_execution import _weights_spec
 
     name = _install_plugin_module(
         tmp_path,
@@ -487,7 +487,7 @@ def test_drift_reducer_survives_worker_transport_and_drives_compute_drift_loss(
 
 def test_scalar_fn_survives_worker_transport(tmp_path: Path) -> None:
     from zicato._tournament_worker import _weights_from_args
-    from zicato.tournament.runner import _weights_spec
+    from zicato.tournament.worker_execution import _weights_spec
 
     weights = ScoringWeights(scalar_fn="some.pkg:my_scalar")
     spec = _weights_spec(weights)

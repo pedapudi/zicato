@@ -1856,7 +1856,7 @@ no global RNG, no process ids, no tempdir names. Consequences:
 The statistical trials drive the real `run_matchup` (board-unit scheduling,
 replicate averaging, and promotion gate) and the real
 `evaluate_tournament`/`confirm_promotion_with_evidence` strategy and evidence
-loop. They replace one seam, `runner._run_single`, with `_NoisyWorld`. The
+loop. They replace one seam, `worker_execution._run_single`, with `_NoisyWorld`. The
 replacement is an in-process evaluator that uses the same noise model, output
 synthesis, and board predicates:
 

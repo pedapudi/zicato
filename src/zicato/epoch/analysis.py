@@ -788,70 +788,25 @@ def _render_non_drift_metric_table(
 # ---------------------------------------------------------------------------
 
 
-def _hydrate_generations(
-    workspace_root: Path,
-    epoch_id: str,
-    fallback_ids: Sequence[str],
-) -> list[Generation]:
-    """Reconstruct :class:`Generation` instances for ``epoch_id``.
-
-    Prefers the recorded ``lineage.json`` entry for accuracy; falls back
-    to the experiment-id ordering when lineage has not been populated
-    (the common case in unit tests that bypass the lifecycle helpers).
-    """
-    epoch = load_lineage(workspace_root).epoch(epoch_id)
-    if epoch is not None and epoch.generations:
-        return [
-            Generation(
-                id=generation.id,
-                epoch_id=epoch_id,
-                parent_id=generation.parent_id,
-                snapshot_root=Path("/"),
-                created_at=generation.created_at,
-                promoted=generation.promoted is True,
-            )
-            for generation in epoch.generations
-        ]
-
-    if not fallback_ids:
-        return []
-    fallback_out: list[Generation] = []
-    prev: str | None = None
-    # Ensure v0 (or the earliest id) is treated as the root.
-    ordered = list(fallback_ids)
-    for gid in ordered:
-        fallback_out.append(
-            Generation(
-                id=gid,
-                epoch_id=epoch_id,
-                parent_id=prev,
-                snapshot_root=Path("/"),
-                created_at="",
-                promoted=False,
-            )
-        )
-        prev = gid
-    return fallback_out
-
-
 def _generations_for(
     workspace_root: Path,
     epoch_id: str,
-    experiments: Sequence[Experiment],
 ) -> list[Generation]:
-    """The :class:`Generation` list the renderers pair with ``experiments``.
-
-    Returns a possibly-empty list. The renderer functions tolerate an empty
-    input and emit graceful placeholders, so callers do not need to
-    special-case the result.
-    """
-    # Lineage may not list v0 explicitly if the lifecycle helpers were
-    # bypassed; derive a parent-chain fallback from the experiment ids
-    # plus any parent ids they reference.
-    parents = {e.parent_generation_id for e in experiments if e.parent_generation_id}
-    children = {e.generation_id for e in experiments}
-    fallback_ids = sorted(parents | children)
-    return _hydrate_generations(workspace_root, epoch_id, fallback_ids)
+    """Read recorded ancestry for the report's diagrams."""
+    epoch = load_lineage(workspace_root).epoch(epoch_id)
+    if epoch is None:
+        return []
+    return [
+        Generation(
+            id=generation.id,
+            epoch_id=epoch_id,
+            parent_id=generation.parent_id,
+            snapshot_root=Path("/"),
+            created_at=generation.created_at,
+            promoted=generation.promoted is True,
+        )
+        for generation in epoch.generations
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -957,7 +912,7 @@ async def generate_analysis(
     journal_text = render_journal(experiments)
     patterns_text = _collect_patterns_snapshot(workspace_root, epoch_id)
 
-    typed_gens = _generations_for(workspace_root, epoch_id, experiments)
+    typed_gens = _generations_for(workspace_root, epoch_id)
     tournament_outcomes_md = render_tournament_outcomes_section(typed_gens, experiments)
 
     user_prompt = _compose_user_prompt(

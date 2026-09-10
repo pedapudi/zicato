@@ -160,7 +160,7 @@ export function normalizeStructure(st, live) {
       (r && typeof r === 'object' && r.round_index == null && r.stage_index != null)
         ? { ...r, round_index: r.stage_index }
         : r),
-    // the SERVED per-generation elim states (derive_elim_states — sorted
+    // the SERVED per-generation elim states (attach_elim_states — sorted
     // rounds + bracket_side/loser ride on `rounds` above). Carried through
     // VERBATIM so the elim figures render the server's model and never
     // re-derive eliminations client-side: the server computes and the client

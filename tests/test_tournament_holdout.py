@@ -25,6 +25,7 @@ from typing import Any
 import pytest
 
 import zicato.tournament.runner as runner_mod
+import zicato.tournament.worker_execution as _tournament_worker_execution
 from tests._runtime_builders import prepare_tournament_epoch, runtime_config
 from zicato.board.split import HOLDOUT_TAG
 from zicato.core import (
@@ -76,7 +77,7 @@ def _stub_run_single(
         del adapter, weights, config, workspace_root, side, match_id
         return replace(canned[(generation.id, entry.id)], epoch_id=epoch_id)
 
-    monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", fake_run_single)
 
 
 def _board() -> list[BoardEntry]:
@@ -186,7 +187,7 @@ def _run_full_with_call_log(
             epoch_id=epoch_id,
         )
 
-    monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", fake_run_single)
     board = _board()
     config = runtime_config(tmp_path)
     epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
@@ -275,7 +276,7 @@ def test_full_tournament_reservation_failure_never_launches_holdout_units(
             epoch_id=generation.epoch_id,
         )
 
-    monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", fake_run_single)
     board = _board()
     weights = ScoringWeights(promote_margin=0.1)
     config = runtime_config(tmp_path)

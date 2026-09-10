@@ -1,7 +1,7 @@
 """Tests for ``zicato.tournament.runner`` generation-level orchestration.
 
 Since the L3 subprocess-isolation refactor, the per-entry run mechanism
-(:func:`zicato.tournament.runner._run_single`) spawns a worker
+(:func:`zicato.tournament.worker_execution._run_single`) spawns a worker
 subprocess. The end-to-end subprocess behaviour — args-file shape,
 result-file shape, parent-side budget escalation, supervisor-kill
 handling — is covered by :mod:`tests.test_subprocess_workers`.
@@ -28,7 +28,8 @@ from typing import Any
 
 import pytest
 
-import zicato.tournament.runner as runner_mod
+import zicato.tournament.governance as _tournament_governance
+import zicato.tournament.worker_execution as _tournament_worker_execution
 from tests._runtime_builders import (
     prepare_tournament_epoch,
     record_tournament_score,
@@ -48,18 +49,14 @@ from zicato.core.measurement import MeasurementDraw, MeasurementPurpose
 from zicato.core.types import OverfittingConfig
 from zicato.core.workspace import run_id_for_unit
 from zicato.tournament.gate import GateOutcome
-from zicato.tournament.runner import (
-    TournamentResult,
-    _stamp_judge_only,
-    _unit_loss_path,
-    run_fast_mode,
-    run_tournament,
-)
+from zicato.tournament.runner import TournamentResult, run_fast_mode, run_tournament
+from zicato.tournament.worker_execution import _unit_loss_path
+from zicato.tournament.worker_transport import _stamp_judge_only
 
 
 def test_stamp_judge_only_sets_context_key() -> None:
     """``_stamp_judge_only`` stamps ``context['judge_only']='true'`` per entry."""
-    from zicato.tournament.runner import _JUDGE_ONLY_CONTEXT_KEY
+    from zicato.tournament.worker_transport import _JUDGE_ONLY_CONTEXT_KEY
 
     entries = [
         _BoardEntry(id="a", kind="single_turn", wall_clock_budget_seconds=5, input="x"),
@@ -142,7 +139,7 @@ def _stub_run_single(
         call_log.append((generation.id, entry.id))
         return dataclasses.replace(canned[(generation.id, entry.id)], epoch_id=epoch_id)
 
-    monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", fake_run_single)
     return call_log
 
 
@@ -383,12 +380,12 @@ def test_run_tournament_stamps_each_entry_on_the_correct_side(
         update_tournament_entry(writer, entry.id, side, status="completed")
         return dataclasses.replace(canned[(generation.id, entry.id)], epoch_id=epoch_id)
 
-    monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", fake_run_single)
 
     # Inspect the ActiveTournament grid right before run_tournament clears
     # it: monkeypatch clear_active_tournament to snapshot the final state.
     captured: dict[str, Any] = {}
-    real_clear = runner_mod._runtime_state()[0].clear_active_tournament
+    real_clear = _tournament_worker_execution._runtime_state()[0].clear_active_tournament
 
     def capturing_clear(writer: Any) -> None:
         snap = read_active_tournament(writer.workspace_root)
@@ -607,7 +604,7 @@ def test_run_fast_mode_honours_replicates(monkeypatch: pytest.MonkeyPatch, tmp_p
             epoch_id=epoch_id,
         )
 
-    monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", fake_run_single)
 
     parent_historical = {
         "base_seed": None,
@@ -696,7 +693,7 @@ def test_run_fast_mode_replicate_slots_reuse_the_unit_cache(
             epoch_id=epoch_id,
         )
 
-    monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", fake_run_single)
 
     parent_historical = {
         "base_seed": None,
@@ -789,7 +786,7 @@ def test_run_fast_mode_stops_scheduling_slots_on_a_spent_token_budget(
             epoch_id=epoch_id,
         )
 
-    monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", fake_run_single)
 
     parent_historical = {
         "base_seed": None,
@@ -948,7 +945,7 @@ def test_run_fast_mode_respects_parallelism_bound(
         for e in board
     }
     stub = _ConcurrencyStub(canned)
-    monkeypatch.setattr(runner_mod, "_run_single", stub.run_single)
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", stub.run_single)
 
     parent_historical = {
         "base_seed": None,
@@ -1126,7 +1123,7 @@ def test_run_generation_respects_parallelism_bound(
         for e in board
     }
     stub = _ConcurrencyStub(canned)
-    monkeypatch.setattr(runner_mod, "_run_single", stub.run_single)
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", stub.run_single)
 
     config = dataclasses.replace(runtime_config(tmp_path), parallelism=3)
     weights = ScoringWeights(overfitting=OverfittingConfig(enabled=False))
@@ -1210,7 +1207,7 @@ def test_run_tournament_runs_champion_and_challenger_concurrently(
                 live.discard(generation.id)
 
     stub = _SideOverlapStub()
-    monkeypatch.setattr(runner_mod, "_run_single", stub.run_single)
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", stub.run_single)
 
     config = dataclasses.replace(runtime_config(tmp_path), parallelism=1)
     weights = ScoringWeights()
@@ -1261,7 +1258,7 @@ def test_run_generation_result_matches_sequential_under_parallelism(
 
     def _run(parallelism: int) -> dict[str, tuple[float, float]]:
         stub = _ConcurrencyStub(canned)
-        monkeypatch.setattr(runner_mod, "_run_single", stub.run_single)
+        monkeypatch.setattr(_tournament_worker_execution, "_run_single", stub.run_single)
         selected_config = dataclasses.replace(config, parallelism=parallelism)
         result = asyncio.run(
             run_tournament(
@@ -1308,7 +1305,7 @@ def test_run_generation_parallelism_one_runs_one_board_unit_at_a_time(
         for e in board
     }
     stub = _ConcurrencyStub(canned)
-    monkeypatch.setattr(runner_mod, "_run_single", stub.run_single)
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", stub.run_single)
 
     config = dataclasses.replace(runtime_config(tmp_path), parallelism=1)
     weights = ScoringWeights()
@@ -1388,7 +1385,7 @@ def test_run_generation_surfaces_failure_under_concurrency(
             # Mirrors _run_single's own finally cleanup block.
             finished.append(entry.id)
 
-    monkeypatch.setattr(runner_mod, "_run_single", failing_run_single)
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", failing_run_single)
 
     config = dataclasses.replace(runtime_config(tmp_path), parallelism=4)
     weights = ScoringWeights()
@@ -1461,7 +1458,7 @@ def _capture_run_single(monkeypatch: pytest.MonkeyPatch) -> list[BoardEntry]:
             epoch_id=epoch_id,
         )
 
-    monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", fake_run_single)
     return seen
 
 
@@ -1567,7 +1564,7 @@ def test_board_disable_drift_excludes_suppressed_builtin_judge_end_to_end(
     2. :func:`run_tournament` threading that board-level ``disable_drift``
        onto each dispatched entry's ``context``;
     3. the runner's subprocess-worker entry (de)serialisation round-trip
-       (:func:`zicato.tournament.runner._entry_to_dict` ->
+       (:func:`zicato.tournament.worker_execution._entry_to_dict` ->
        :func:`zicato.core.validate_board_entry`) — proving the
        suppression set survives the OS-process boundary;
     4. the adapter's read side
@@ -1631,7 +1628,7 @@ def test_board_disable_drift_excludes_suppressed_builtin_judge_end_to_end(
     # --- 3. Subprocess-worker round-trip: the runner serialises the
     # entry to the worker args file and the worker re-parses it. The
     # suppression set rides on ``context``, which survives intact. ---
-    reparsed = validate_board_entry(runner_mod._entry_to_dict(dispatched))
+    reparsed = validate_board_entry(_tournament_worker_execution._entry_to_dict(dispatched))
     assert reparsed.context.get("disable_drift") == "tool_error"
 
     # --- 4 + 5. The adapter reads disable_drift off the re-parsed entry
@@ -1826,7 +1823,7 @@ def test_partial_aggregate_is_visible_before_all_boards_finish(
         await gates[entry.id].wait()
         return dataclasses.replace(canned[(generation.id, entry.id)], epoch_id=epoch_id)
 
-    monkeypatch.setattr(runner_mod, "_run_single", gated_run_single)
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", gated_run_single)
 
     observed: list[int] = []
 
@@ -2020,7 +2017,7 @@ def test_run_fast_mode_publishes_active_tournament(
         update_tournament_entry(writer, entry.id, side, status="completed")
         return dataclasses.replace(canned[(generation.id, entry.id)], epoch_id=epoch_id)
 
-    monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", fake_run_single)
 
     parent_historical = {
         "base_seed": None,
@@ -2126,7 +2123,7 @@ def test_run_fast_mode_challenger_progresses_through_running_then_completed(
         update_tournament_entry(writer, entry.id, side, status="completed")
         return dataclasses.replace(canned[(generation.id, entry.id)], epoch_id=epoch_id)
 
-    monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", fake_run_single)
 
     # Snapshot the tournament right before clear runs.
     captured: dict[str, Any] = {}
@@ -2214,7 +2211,7 @@ def _reject_outcome() -> GateOutcome:
 
 
 def _reserve_ladder(tmp_path: Path, weights: ScoringWeights):
-    _state, reservation = runner_mod._reserve_ladder_query(
+    _state, reservation = _tournament_governance._reserve_ladder_query(
         tmp_path, "e0", weights.overfitting.ladder
     )
     assert reservation is not None
@@ -2226,7 +2223,7 @@ def test_ladder_no_holdout_is_explicitly_disabled(tmp_path: Path) -> None:
     train = _promote_outcome()
     parent = _ladder_agg(1.0)
     child = _ladder_agg(0.5)
-    outcome, block = runner_mod._ladder_mediated_outcome(
+    outcome, block = _tournament_governance._ladder_mediated_outcome(
         train_outcome=train,
         parent_agg=parent,
         child_agg=child,
@@ -2246,7 +2243,7 @@ def test_ladder_released_confirmation_keeps_promote(tmp_path: Path) -> None:
     # promoted and populates the block with the shape the dashboard reads.
     train = _promote_outcome()  # train improvement 0.5 >> 0.1 threshold
     weights = ScoringWeights(promote_margin=0.1)
-    outcome, block = runner_mod._ladder_mediated_outcome(
+    outcome, block = _tournament_governance._ladder_mediated_outcome(
         train_outcome=train,
         parent_agg=_ladder_agg(1.0),
         child_agg=_ladder_agg(0.5),
@@ -2285,7 +2282,7 @@ def test_ladder_released_nonconfirmation_flips_to_reject(tmp_path: Path) -> None
     # holdout reject. The champion stands on reject.
     train = _promote_outcome()
     weights = ScoringWeights(promote_margin=0.1)
-    outcome, block = runner_mod._ladder_mediated_outcome(
+    outcome, block = _tournament_governance._ladder_mediated_outcome(
         train_outcome=train,
         parent_agg=_ladder_agg(1.0),
         child_agg=_ladder_agg(0.5),
@@ -2312,7 +2309,7 @@ def test_ladder_refuses_holdout_evidence_after_train_reject(
 
     train = _reject_outcome()
     with pytest.raises(LadderStateError, match="training gate rejected"):
-        runner_mod._ladder_mediated_outcome(
+        _tournament_governance._ladder_mediated_outcome(
             train_outcome=train,
             parent_agg=_ladder_agg(1.0),
             child_agg=_ladder_agg(0.999),
@@ -2337,7 +2334,7 @@ def test_ladder_budget_exhaustion_defers_confirmation(
     )
     train = _promote_outcome()
 
-    out1, _ = runner_mod._ladder_mediated_outcome(
+    out1, _ = _tournament_governance._ladder_mediated_outcome(
         train_outcome=train,
         parent_agg=_ladder_agg(1.0),
         child_agg=_ladder_agg(0.5),
@@ -2351,11 +2348,11 @@ def test_ladder_budget_exhaustion_defers_confirmation(
     assert out1.decision == "promoted"
 
     # No remaining allowance means no holdout observation or promotion.
-    state, reservation = runner_mod._reserve_ladder_query(
+    state, reservation = _tournament_governance._reserve_ladder_query(
         tmp_path, "e0", weights.overfitting.ladder
     )
     assert reservation is None
-    out2, block2 = runner_mod._ladder_exhausted_outcome(
+    out2, block2 = _tournament_governance._ladder_exhausted_outcome(
         train_outcome=train,
         train_child_agg=_ladder_agg(0.5),
         state=state,
@@ -2380,7 +2377,7 @@ def test_disabled_governor_still_requires_holdout_confirmation(tmp_path: Path) -
         promote_margin=0.1,
         overfitting=OverfittingConfig(ladder=LadderConfig(enabled=False)),
     )
-    outcome, block = runner_mod._ladder_mediated_outcome(
+    outcome, block = _tournament_governance._ladder_mediated_outcome(
         train_outcome=_promote_outcome(),
         parent_agg=_ladder_agg(1.0),
         child_agg=_ladder_agg(0.5),
@@ -2402,7 +2399,7 @@ def test_ladder_withhold_within_band_defers_confirmation(tmp_path: Path) -> None
     # positive bit must not be mistaken for satisfaction of this requirement.
     weights = ScoringWeights(promote_margin=0.5)
     # First, a clear release establishes a confirming best.
-    out1, _ = runner_mod._ladder_mediated_outcome(
+    out1, _ = _tournament_governance._ladder_mediated_outcome(
         train_outcome=_promote_outcome(delta_scalar=-0.9),
         parent_agg=_ladder_agg(1.0),
         child_agg=_ladder_agg(0.1),  # improvement 0.9 >= 0.5 → released
@@ -2417,7 +2414,7 @@ def test_ladder_withhold_within_band_defers_confirmation(tmp_path: Path) -> None
 
     # Now a tiny train-win (improvement 0.1 < 0.5 band) with a bad holdout:
     # Withholding defers without revealing the negative result.
-    out2, block2 = runner_mod._ladder_mediated_outcome(
+    out2, block2 = _tournament_governance._ladder_mediated_outcome(
         train_outcome=_promote_outcome(delta_scalar=-0.1),
         parent_agg=_ladder_agg(1.0),
         child_agg=_ladder_agg(0.9),
@@ -2457,7 +2454,7 @@ def test_incomplete_holdout_never_confirms_or_updates_released_best(
         child = {"scalar": 0.0, "incomplete_entries": ["task"]}
     elif missing == "nonfinite":
         child = _ladder_agg(float("nan"))
-    outcome, block = runner_mod._ladder_mediated_outcome(
+    outcome, block = _tournament_governance._ladder_mediated_outcome(
         train_outcome=_promote_outcome(),
         parent_agg=_ladder_agg(1.0),
         child_agg=_ladder_agg(0.5),

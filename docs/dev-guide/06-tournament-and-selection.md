@@ -51,7 +51,9 @@ owns it, and the selection layer only *reads* its verdict.
 
 | File | What lives there | Approx. size |
 |---|---|---|
-| `src/zicato/tournament/runner.py` | The four public entry points (`run_tournament` full A/B, `run_fast_mode`, `run_matchup`, `confirm_crowning_holdout`), `_run_single` (the run lifecycle — the test suite's monkeypatch anchor), `_gate_with_regression`, `TournamentResult`, the progress-bumping sink | 1636 lines |
+| `src/zicato/tournament/runner.py` | Tournament entry points, regression gate orchestration and `TournamentResult` | — |
+| `src/zicato/tournament/worker_execution.py` | Isolated evaluation workers, permits, progress and cleanup | — |
+| `src/zicato/tournament/structure.py` | Published elimination results for tournament diagrams | — |
 | `src/zicato/tournament/scheduling.py` | The board-unit schedulers: `_run_replicated`, `_schedule_board_units`, `_run_board_units_full` / `_run_board_units_fast`, `_run_unit_cache_first` (the cache-first choke point), `_run_full_board_unit`, `_IncrementalScorer`, `_effective_unit_semaphore`, `_token_budget_spent` | 1196 lines |
 | `src/zicato/tournament/unit_cache.py` | The per-unit loss cache + provenance: `_unit_loss_path`, `_resolve_cached_unit`, `_persist_unit_loss`, `_skipped_unit_loss`, `_average_losses`, `_UnitProvenance` | 288 lines |
 | `src/zicato/tournament/worker_transport.py` | The process boundary: `adapter_worker_spec`, `_role_worker_spec` + `_callable_dotted_path`, `scrubbed_worker_env` + `_api_key_env_names`, `_configuration_spec`, `_checkout_run_snapshot`, `_aborted_loss_profile`, `_weights_spec`, `_entry_to_dict`, the `_stamp_*` context threaders, `_terminate_worker` | 923 lines |
@@ -76,21 +78,12 @@ owns it, and the selection layer only *reads* its verdict.
 
 Two facts about the file layout matter before you edit anything:
 
-> ⚠️ TRAP — `runner.py` re-exports the entire public surface of
-> `scheduling.py`, `unit_cache.py`, and `worker_transport.py` (three big
-> `from … import …  # noqa: F401` blocks). The re-export is intentional: the
-> test suite reaches `_unit_loss_path`, `_average_losses`, `adapter_worker_spec`,
-> `_terminate_worker`, the timeout constants — everything — through
-> `zicato.tournament.runner`, and it **monkeypatches them there**. `_run_single`
-> stays in `runner.py` for that reason: it is the one anchor the whole
-> suite swaps. The schedulers resolve `_run_single` by *attribute access on the
-> runner module object* (`runner._run_single`) rather than a bound import, so a
-> `monkeypatch.setattr(runner, "_run_single", …)` reaches them. If you move a
-> helper, re-export it from `runner.py` or you silently break dozens of tests.
-
-> ✅ ALWAYS keep new tournament helpers importable from `zicato.tournament.runner`.
-> The stable import path IS the contract with the test suite; the physical file
-> split is a readability choice and is invisible to callers by design.
+The runner owns tournament entry points and gate orchestration. The scheduler
+owns cache lookup and concurrency. A cache miss calls
+`worker_execution._run_single`, which owns process startup, progress recording,
+permits and cleanup. Dependencies flow in that order; the scheduler does not
+import the runner. Tests replace the operation on its owning module. Private
+helpers are not re-exported through the runner for test convenience.
 
 ### 6.0.1 Call topology, per round
 
@@ -820,11 +813,9 @@ the result.
 
 ## 6.4 `_run_single` — the run lifecycle
 
-`_run_single` (`runner.py`) is the one function that spawns a worker and turns
-its exit into a `LossProfile`. It is the test suite's monkeypatch anchor
-(§6.0), so it stays in `runner.py` while the rest of the tournament code lives
-in sibling modules. Its seven-step sequence, and where each abort cause is
-stamped:
+`worker_execution._run_single` spawns a worker and reads its `LossProfile`.
+It owns permits, progress, cancellation and cleanup. Its execution sequence
+records abort causes at these boundaries:
 
 1. **Ephemeral checkout** of the generation's snapshot (§6.3.6); a failure here
    → `prepare_failed`.
@@ -869,7 +860,7 @@ parent↔supervisor race over the same pid:
                     "parent escalating as a last resort", ...)
                 await _terminate_worker(proc)
 ```
-— `src/zicato/tournament/runner.py`, `_run_single`
+— `src/zicato/tournament/worker_execution.py`, `_run_single`
 
 The three lines of defence, in order:
 
@@ -896,7 +887,7 @@ other half.
                 abort_cause = f"nonzero_exit:{proc.returncode}"
                 log.info("run %s: worker exited %s ...", run_id, proc.returncode)
 ```
-— `src/zicato/tournament/runner.py`, `_run_single`
+— `src/zicato/tournament/worker_execution.py`, `_run_single`
 
 `killed_by_parent` is checked FIRST because a parent kill can also leave a
 non-zero returncode — the parent-kill provenance is the more specific and the

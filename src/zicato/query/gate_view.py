@@ -27,10 +27,8 @@ from zicato.query.paths import (
     layout_of,
     read_current_epoch,
 )
-from zicato.query.tournament_view import (
-    _gen_score_view,
-    _read_run_loss_files,
-)
+from zicato.query.replicate_scores import selected_measurements
+from zicato.query.tournament_view import _gen_score_view
 
 # ---------------------------------------------------------------------------
 # Score trajectory — the environment-wide evolution curve
@@ -604,7 +602,7 @@ def _representative_drift_provenance(
     ``(fallback: …)`` form) over a clean one; otherwise return the first
     non-``"builtin"`` token, else the first token, else ``None``.
     """
-    cells = _read_run_loss_files(paths, epoch_id, generation_id)
+    cells = selected_measurements(paths, epoch_id, generation_id)
     tokens: list[str] = [
         c["scoring_provenance"]
         for c in cells.values()

@@ -10,10 +10,8 @@
 // Python endpoint produced. Re-record both files with
 // ZICATO_ENDPOINT_SNAPSHOT_UPDATE=1 when a reader's response is meant to change.
 //
-// tests/data/elim_states_cases.json declares the elimination round lists the
-// suite draws, and tests/data/elim_states_served.json is what the server's
-// fold (query.tournament_view.derive_elim_states) serves for each of them,
-// recorded by tests/test_tournament_view_elim_states.py.
+// Elimination fixtures record the bracket progression published by execution.
+// Python publication tests and browser rendering tests use the same cases.
 
 import { readFileSync } from 'node:fs';
 

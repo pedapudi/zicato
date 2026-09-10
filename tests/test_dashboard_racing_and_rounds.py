@@ -198,6 +198,49 @@ def test_racing_field_joins_rungs_and_gate(tmp_path: Path) -> None:
     assert gm["board_fraction"] == pytest.approx(1.0)
 
 
+def test_racing_reader_serves_latest_record_without_inventing_a_final(tmp_path: Path) -> None:
+    from zicato.tournament.records import (
+        decode_field_tournament_record,
+        write_field_tournament_record,
+    )
+
+    ws = _base_workspace(tmp_path)
+    for challenger, timestamp in (("v9", "2026-06-01T01:00:00Z"), ("v10", "2026-06-01T02:00:00Z")):
+        body = {
+            "tournament_id": f"{EPOCH}:field:{challenger}",
+            "epoch_id": EPOCH,
+            "structure": "racing",
+            "structure_params": {},
+            "competitors": [
+                {"generation_id": "v0", "role": "champion"},
+                {"generation_id": challenger, "role": "challenger"},
+            ],
+            "rounds": [
+                {"stage_index": 0, "matches": [{"match_id": "rung0", "competitors": [challenger]}]}
+            ],
+            "standings": [],
+            "field_status": [],
+            "champion_generation_id": "v0",
+            "promoted_generation_id": "",
+            "decision": "",
+            "state": "in_progress",
+            "ran_at": timestamp,
+            "reason": "interrupted",
+        }
+        write_field_tournament_record(
+            ws,
+            epoch_id=EPOCH,
+            first_challenger_id=challenger,
+            record=decode_field_tournament_record(body),
+        )
+    field = build_racing_field(WorkspacePaths(ws), EPOCH)
+    assert field["tournament_id"] == f"{EPOCH}:field:v10"
+    assert [match["match_id"] for stage in field["rounds"] for match in stage["matches"]] == [
+        "rung0"
+    ]
+    assert not (ws / "index.db").exists()
+
+
 def test_racing_field_absent_without_records(tmp_path: Path) -> None:
     ws = _base_workspace(tmp_path)
     field = build_racing_field(WorkspacePaths(ws), EPOCH)
@@ -445,16 +488,7 @@ def test_round_timeline_endpoint_and_empty_degrade(tmp_path: Path, static_dir: P
 
 # ---------------------------------------------------------------------------
 # The served ELIM MODEL (U3) — the third served join the node mock mirrors.
-# ---------------------------------------------------------------------------
-#
-# The client's elimFlow/elimRadial used to derive the whole elim model per
-# render; ``derive_elim_states`` is that fold moved server-side, attached to
-# every payload the figures read: the /api/tournament-structure record, the
-# /api/tournaments entries (the per-round minis' tournamentRef), and the live
-# /api/active-tournament envelope. test/mock_server.mjs mirrors the fold
-# (``deriveElimStates``) exactly as it mirrors the racing-field/round-timeline
-# joins; the shared fixture tests/data/elim_states_fixture.json pins the
-# Python + Rust + mock folds byte-for-byte.
+# Tournament publication supplies bracket progression to every diagram reader.
 
 
 def _elim_workspace(tmp_path: Path) -> Path:
@@ -487,6 +521,7 @@ def _elim_workspace(tmp_path: Path) -> Path:
             ],
         },
     ]
+    rounds.sort(key=lambda stage: stage["round_index"])
     field = _field(
         "v0", ["v1", "v2", "v3"], primary="v1", rounds=tuple(rounds), structure="single_elim"
     )

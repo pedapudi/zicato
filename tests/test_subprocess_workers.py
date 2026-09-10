@@ -9,7 +9,7 @@ Every tournament run executes in its own OS process — a
   its ``active_runs`` file;
 * the PARENT-side budget: a worker that blocks past
   ``wall_clock_budget_seconds + GRACE`` is SIGTERM'd then SIGKILL'd by
-  :func:`zicato.tournament.runner._run_single`, which returns an aborted
+  :func:`zicato.tournament.worker_execution._run_single`, which returns an aborted
   :class:`LossProfile` so the tournament continues;
 * the SUPERVISOR-kill path: a worker killed externally mid-run leaves no
   result file; ``_run_single`` records an aborted run with no exception;
@@ -38,7 +38,8 @@ from pathlib import Path
 
 import pytest
 
-import zicato.tournament.runner as runner_mod
+import zicato.tournament.worker_execution as _tournament_worker_execution
+import zicato.tournament.worker_transport as _tournament_worker_transport
 from tests._runtime_builders import make_generation, prepare_tournament_epoch
 from tests._subprocess_worker_support import (
     CompletingAdapter,
@@ -81,7 +82,8 @@ from zicato.core.workspace import (
 from zicato.runtime.lock import acquire_workspace_lock, pid_start_time
 from zicato.runtime.paths import active_run_path
 from zicato.runtime.state import ActiveRun
-from zicato.tournament.runner import _run_single, run_tournament
+from zicato.tournament.runner import run_tournament
+from zicato.tournament.worker_execution import _run_single
 from zicato.tournament.worker_transport import _stamp_measurement
 
 # Every test here spawns (or deliberately kills) real worker subprocesses —
@@ -500,7 +502,7 @@ def test_per_judge_weights_survive_worker_serialize_deserialize() -> None:
     were carried, masking the bug for non-judge drift.
 
     This walks the exact transport the worker uses: the serialise side
-    (:func:`zicato.tournament.runner._weights_spec`) → a JSON round-trip
+    (:func:`zicato.tournament.worker_execution._weights_spec`) → a JSON round-trip
     (the args file is JSON) → the deserialise side
     (:func:`zicato._tournament_worker._weights_from_args`), then feeds the
     reconstructed weights into the same drift-loss consumer the worker
@@ -513,7 +515,7 @@ def test_per_judge_weights_survive_worker_serialize_deserialize() -> None:
     from zicato._tournament_worker import _weights_from_args
     from zicato.core import MetricCount
     from zicato.telemetry.reducer import compute_per_judge_loss
-    from zicato.tournament.runner import _weights_spec
+    from zicato.tournament.worker_execution import _weights_spec
 
     weights = ScoringWeights(
         severity_weights={"info": 1.0, "warning": 3.0, "critical": 10.0},
@@ -556,7 +558,7 @@ def test_pass_rate_monotonicity_scope_survives_worker_serialize_deserialize() ->
     be (wrongly) rejected by the worker-side gate-view.
 
     This walks the exact transport the worker uses — the serialise side
-    (:func:`zicato.tournament.runner._weights_spec`) → a JSON round-trip
+    (:func:`zicato.tournament.worker_execution._weights_spec`) → a JSON round-trip
     (the args file is JSON) → the deserialise side
     (:func:`zicato._tournament_worker._weights_from_args`) — then proves the
     reconstructed scope DRIVES the gate decision: the same parent/child pair
@@ -564,7 +566,7 @@ def test_pass_rate_monotonicity_scope_survives_worker_serialize_deserialize() ->
     """
     from zicato._tournament_worker import _weights_from_args
     from zicato.tournament.gate import evaluate_gate
-    from zicato.tournament.runner import _weights_spec
+    from zicato.tournament.worker_execution import _weights_spec
 
     weights = ScoringWeights(
         promote_margin=0.02,
@@ -633,7 +635,7 @@ def test_drift_kind_aggregation_survives_worker_serialize_deserialize() -> None:
     from zicato._tournament_worker import _weights_from_args
     from zicato.core import MetricCount
     from zicato.telemetry.reducer import compute_drift_loss
-    from zicato.tournament.runner import _weights_spec
+    from zicato.tournament.worker_execution import _weights_spec
 
     weights = ScoringWeights(
         severity_weights={"info": 1.0, "warning": 3.0, "critical": 10.0},
@@ -684,7 +686,7 @@ def test_scoring_weights_unified_serde_round_trips_every_field() -> None:
 
     from tests.test_contract_serializer_completeness import _all_fields_nondefault
     from zicato._tournament_worker import _weights_from_args
-    from zicato.tournament.runner import _weights_spec
+    from zicato.tournament.worker_execution import _weights_spec
 
     weights = _all_fields_nondefault(ScoringWeights)
     # No field on the instance equals its default — a genuine non-default value
@@ -1009,7 +1011,7 @@ def test_parent_kills_worker_that_blocks_past_budget_plus_grace(
     # Shrink the parent's grace margins so the test is fast. With no
     # supervisor present, the parent waits supervisor_kill_wait_s before its
     # last-resort escalation — shrink that too so the fallback fires quickly.
-    monkeypatch.setattr(runner_mod, "_PARENT_BUDGET_GRACE_S", 0.3)
+    monkeypatch.setattr(_tournament_worker_execution, "_PARENT_BUDGET_GRACE_S", 0.3)
     monkeypatch.setattr("zicato.tournament.worker_transport._SIGTERM_TO_SIGKILL_GRACE_S", 0.3)
 
     started = time.monotonic()
@@ -1060,7 +1062,9 @@ def test_parent_kills_worker_that_blocks_past_budget_plus_grace(
     # the abort path — _run_single's finally block runs unconditionally.
     run_id = run_id_for_unit(generation.id, entry.id, base_seed=None, epoch_id=generation.epoch_id)
     leaked = list(
-        Path(tempfile.gettempdir()).glob(f"{runner_mod._EPHEMERAL_SNAPSHOT_PREFIX}{run_id}-*")
+        Path(tempfile.gettempdir()).glob(
+            f"{_tournament_worker_transport._EPHEMERAL_SNAPSHOT_PREFIX}{run_id}-*"
+        )
     )
     assert not leaked, f"ephemeral snapshot not cleaned up after abort: {leaked}"
 
@@ -1080,7 +1084,7 @@ def test_tournament_continues_after_a_budget_killed_run(
     workspace.mkdir()
     generation = make_generation(workspace)
 
-    monkeypatch.setattr(runner_mod, "_PARENT_BUDGET_GRACE_S", 0.3)
+    monkeypatch.setattr(_tournament_worker_execution, "_PARENT_BUDGET_GRACE_S", 0.3)
     monkeypatch.setattr("zicato.tournament.worker_transport._SIGTERM_TO_SIGKILL_GRACE_S", 0.3)
 
     losses: dict[str, LossProfile] = {}
@@ -1127,17 +1131,17 @@ def test_parent_delegates_kill_to_supervisor_via_request_marker(
     entry = _entry(budget_s=1)
     run_id = run_id_for_unit(generation.id, entry.id, base_seed=None, epoch_id=generation.epoch_id)
 
-    monkeypatch.setattr(runner_mod, "_PARENT_BUDGET_GRACE_S", 0.3)
+    monkeypatch.setattr(_tournament_worker_execution, "_PARENT_BUDGET_GRACE_S", 0.3)
 
     # Trip a flag if the parent's last-resort escalation ever fires.
     fallback_fired = {"value": False}
-    real_terminate = runner_mod._terminate_worker
+    real_terminate = _tournament_worker_execution._terminate_worker
 
     async def _spy_terminate(proc: object, **identity: object) -> bool:
         fallback_fired["value"] = True
         return await real_terminate(proc, **identity)
 
-    monkeypatch.setattr(runner_mod, "_terminate_worker", _spy_terminate)
+    monkeypatch.setattr(_tournament_worker_execution, "_terminate_worker", _spy_terminate)
 
     from zicato.runtime.paths import kill_request_path
     from zicato.runtime.state import list_active_runs
@@ -1228,7 +1232,7 @@ def test_cancellation_keeps_worker_resources_until_supervisor_reaps(
     record_path = active_run_path(workspace, run_id)
     kill_path = kill_request_path(workspace, run_id)
     if cancel_during == "delegation":
-        monkeypatch.setattr(runner_mod, "_PARENT_BUDGET_GRACE_S", -59.0)
+        monkeypatch.setattr(_tournament_worker_execution, "_PARENT_BUDGET_GRACE_S", -59.0)
     monkeypatch.setattr("zicato.tournament.worker_transport._SIGTERM_TO_SIGKILL_GRACE_S", 0.05)
 
     async def drive() -> None:
@@ -1236,14 +1240,14 @@ def test_cancellation_keeps_worker_resources_until_supervisor_reaps(
         allow_spawn_return = asyncio.Event()
         captured: dict[str, object] = {}
         real_create = asyncio.create_subprocess_exec
-        real_acquire = runner_mod.acquire_worker_permit
-        real_terminate = runner_mod._terminate_worker
+        real_acquire = _tournament_worker_execution.acquire_worker_permit
+        real_terminate = _tournament_worker_execution._terminate_worker
 
         async def cannot_confirm(*args: object, **kwargs: object) -> bool:
             return False
 
         if cancel_during == "unconfirmed":
-            monkeypatch.setattr(runner_mod, "_terminate_worker", cannot_confirm)
+            monkeypatch.setattr(_tournament_worker_execution, "_terminate_worker", cannot_confirm)
 
         async def create(*args: object, **kwargs: object) -> asyncio.subprocess.Process:
             proc = await real_create(*args, **kwargs)
@@ -1262,7 +1266,7 @@ def test_cancellation_keeps_worker_resources_until_supervisor_reaps(
             return permit
 
         monkeypatch.setattr(asyncio, "create_subprocess_exec", create)
-        monkeypatch.setattr(runner_mod, "acquire_worker_permit", acquire)
+        monkeypatch.setattr(_tournament_worker_execution, "acquire_worker_permit", acquire)
         task = asyncio.create_task(
             _run_single(
                 writer=writer,
@@ -1337,12 +1341,17 @@ def test_cancellation_keeps_worker_resources_until_supervisor_reaps(
                 await asyncio.wait_for(task, timeout=5)
             if cancel_during == "unconfirmed":
                 key = (workspace.resolve(), proc.pid, captured["start_time"])
-                owner = runner_mod._retained_worker_resources[key]
+                owner = _tournament_worker_execution._retained_worker_resources[key]
                 assert owner.proc is proc
                 assert owner.permit is captured["permit"]
                 assert owner.permit.held
                 assert snapshot.exists() and args_path.exists() and record_path.exists()
-                assert await runner_mod.retry_worker_cleanup(tmp_path / "other-workspace") == 0
+                assert (
+                    await _tournament_worker_execution.retry_worker_cleanup(
+                        tmp_path / "other-workspace"
+                    )
+                    == 0
+                )
                 contender = asyncio.create_task(
                     real_acquire(1, workspace.parent / "worker-permits")
                 )
@@ -1352,11 +1361,13 @@ def test_cancellation_keeps_worker_resources_until_supervisor_reaps(
                 finally:
                     contender.cancel()
                     await asyncio.gather(contender, return_exceptions=True)
-                monkeypatch.setattr(runner_mod, "_terminate_worker", real_terminate)
-                assert await runner_mod.retry_worker_cleanup(workspace) == 1
+                monkeypatch.setattr(
+                    _tournament_worker_execution, "_terminate_worker", real_terminate
+                )
+                assert await _tournament_worker_execution.retry_worker_cleanup(workspace) == 1
                 assert owner.released
-                assert key not in runner_mod._retained_worker_resources
-                assert await runner_mod.retry_worker_cleanup(workspace) == 0
+                assert key not in _tournament_worker_execution._retained_worker_resources
+                assert await _tournament_worker_execution.retry_worker_cleanup(workspace) == 0
             assert proc.returncode is not None
             if cancel_during == "fallback":
                 assert proc.returncode == -signal.SIGKILL
@@ -1365,7 +1376,7 @@ def test_cancellation_keeps_worker_resources_until_supervisor_reaps(
             assert not snapshot.exists()
             assert not args_path.exists()
             assert not kill_path.exists()
-            loss_path = runner_mod._unit_loss_path(
+            loss_path = _tournament_worker_execution._unit_loss_path(
                 workspace,
                 "e0",
                 generation.id,
@@ -1385,8 +1396,8 @@ def test_cancellation_keeps_worker_resources_until_supervisor_reaps(
             if not task.done():
                 task.cancel()
             await asyncio.gather(task, return_exceptions=True)
-            monkeypatch.setattr(runner_mod, "_terminate_worker", real_terminate)
-            await runner_mod.retry_worker_cleanup(workspace)
+            monkeypatch.setattr(_tournament_worker_execution, "_terminate_worker", real_terminate)
+            await _tournament_worker_execution.retry_worker_cleanup(workspace)
 
     with acquire_workspace_lock(workspace, "test-worker") as writer:
         asyncio.run(drive())
@@ -1462,7 +1473,7 @@ def test_invocation_cancellation_reaps_all_active_workers(
             assert all(proc.returncode is not None for proc, _, _ in captured)
             assert all(not snapshot.exists() for _, _, snapshot in captured)
             assert not list(records.glob("*.json"))
-            assert not runner_mod._retained_worker_resources
+            assert not _tournament_worker_execution._retained_worker_resources
         finally:
             for proc, start_time, _ in captured:
                 if proc.returncode is None:
@@ -1474,7 +1485,7 @@ def test_invocation_cancellation_reaps_all_active_workers(
                 if not task.done():
                     task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
-            await runner_mod.retry_worker_cleanup(workspace)
+            await _tournament_worker_execution.retry_worker_cleanup(workspace)
 
     with acquire_workspace_lock(workspace, "test-worker") as writer:
         asyncio.run(drive())
@@ -1564,7 +1575,7 @@ def test_parent_escalates_to_sigkill_when_worker_ignores_sigterm(
     generation = make_generation(workspace)
     entry = _entry(budget_s=1)
 
-    monkeypatch.setattr(runner_mod, "_PARENT_BUDGET_GRACE_S", 0.3)
+    monkeypatch.setattr(_tournament_worker_execution, "_PARENT_BUDGET_GRACE_S", 0.3)
     monkeypatch.setattr("zicato.tournament.worker_transport._SIGTERM_TO_SIGKILL_GRACE_S", 0.3)
 
     started = time.monotonic()
@@ -1761,7 +1772,9 @@ def test_run_does_not_pollute_canonical_generation_snapshot(tmp_path: Path) -> N
     # dir cannot cause a false failure.
     run_id = run_id_for_unit(generation.id, entry.id, base_seed=None, epoch_id=generation.epoch_id)
     leaked = list(
-        Path(tempfile.gettempdir()).glob(f"{runner_mod._EPHEMERAL_SNAPSHOT_PREFIX}{run_id}-*")
+        Path(tempfile.gettempdir()).glob(
+            f"{_tournament_worker_transport._EPHEMERAL_SNAPSHOT_PREFIX}{run_id}-*"
+        )
     )
     assert not leaked, f"ephemeral snapshot working copies were not cleaned up: {leaked}"
 

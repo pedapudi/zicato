@@ -39,10 +39,11 @@ aborts on a bad line biases every count taken from the lines after it.
 from __future__ import annotations
 
 import datetime as _dt
-import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from zicato.telemetry.json_lines import read_json_lines
 
 __all__ = [
     "ENVELOPE_KEYS",
@@ -289,44 +290,6 @@ class EventLog:
 
 
 def read_event_log(path: Path) -> EventLog:
-    """Read one ``events.jsonl`` into an :class:`EventLog`.
-
-    A missing or unreadable file yields an empty log rather than raising:
-    every caller has a "no telemetry yet" path, and a run whose events file
-    has not been opened is the ordinary case at the start of a run.
-    """
-    try:
-        text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return EventLog()
-
-    lines = text.splitlines()
-    while lines and not lines[-1].strip():
-        lines.pop()
-
-    records: list[EventRecord] = []
-    malformed = 0
-    last_line_ok = True
-    for index, line in enumerate(lines):
-        stripped = line.strip()
-        if not stripped:
-            continue
-        try:
-            obj = json.loads(stripped)
-        except json.JSONDecodeError:
-            malformed += 1
-            if index == len(lines) - 1:
-                last_line_ok = False
-            continue
-        if not isinstance(obj, dict):
-            malformed += 1
-            if index == len(lines) - 1:
-                last_line_ok = False
-            continue
-        records.append(parse_event(obj))
-
-    return EventLog(
-        records=tuple(records),
-        malformed_line_count=malformed,
-        last_line_ok=last_line_ok,
-    )
+    """Read accepted events and report malformed or incomplete log lines."""
+    records, malformed, last_line_ok = read_json_lines(path, parse_event)
+    return EventLog(records=records, malformed_line_count=malformed, last_line_ok=last_line_ok)

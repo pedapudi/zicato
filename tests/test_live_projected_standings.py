@@ -37,7 +37,7 @@ from zicato.runtime.state import (
     write_active_tournament,
 )
 from zicato.testing.fixtures import make_loss_profile
-from zicato.tournament.runner import _IncrementalScorer
+from zicato.tournament.scheduling import _IncrementalScorer
 from zicato.tournament.scoring import ScoringWeights
 
 # ---------------------------------------------------------------------------

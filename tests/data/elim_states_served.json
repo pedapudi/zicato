@@ -513,7 +513,7 @@
         "lost_rounds": [
           0
         ],
-        "eliminated_at_round": 0,
+        "eliminated_at_round": null,
         "side_by_round": {
           "0": "WB"
         },
@@ -669,7 +669,7 @@
         "lost_rounds": [
           0
         ],
-        "eliminated_at_round": 0,
+        "eliminated_at_round": null,
         "side_by_round": {
           "0": "WB"
         },

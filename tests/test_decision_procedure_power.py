@@ -41,8 +41,8 @@ from typing import Any
 
 import pytest
 
-import zicato.tournament.runner as runner_mod
 import zicato.tournament.scheduling as scheduling_mod
+import zicato.tournament.worker_execution as _tournament_worker_execution
 import zicato_examples.target_0_convergence as _t0_pkg
 from tests._decision_report import (
     DecisionObservation,
@@ -212,7 +212,7 @@ def _measured_epoch(workspace: Path) -> str:
 class _NoisyWorld:
     """In-process stand-in for the subprocess worker, on the SAME noise model.
 
-    Replaces ``runner._run_single`` (the suite's documented monkeypatch
+    Replaces ``worker_execution._run_single`` (the suite's documented monkeypatch
     anchor) with an evaluator that reproduces exactly what a noisy-adapter
     worker run reduces to: draw the measured tokens with
     :func:`draw_measured_tokens` seeded from ``(config.seed, generation id,
@@ -229,7 +229,7 @@ class _NoisyWorld:
         self.sigma = float(sigma)
 
     def install(self, monkeypatch: pytest.MonkeyPatch, *, persist: bool = False) -> None:
-        monkeypatch.setattr(runner_mod, "_run_single", self._fake_run_single)
+        monkeypatch.setattr(_tournament_worker_execution, "_run_single", self._fake_run_single)
         # The dashboard-facing live-state appends and the per-unit cache
         # persist are best-effort side channels orthogonal to the decision
         # procedure; silencing them keeps thousands of seeded trials lean.

@@ -1,35 +1,4 @@
-"""Board-unit schedulers for the tournament runner.
-
-The unit of scheduling is a **board unit**: one per board entry. This
-module owns the concurrency fan-out over board units — the "tournament
-hall" — and the cache-first evaluation of each unit:
-
-* :class:`_IncrementalScorer` — folds a settled board unit's losses into
-  a running partial aggregate so the live dashboard climbs as a round
-  runs;
-* :func:`_run_full_board_unit` / :func:`_run_fast_board_unit` — run one
-  entry as a board unit (champion + challenger concurrently in full mode,
-  challenger alone in fast mode);
-* :func:`_run_board_units_full` / :func:`_run_board_units_fast` share
-  :func:`_schedule_board_units` for concurrency and budget enforcement;
-* :func:`_run_unit_cache_first` — the single cache-first choke point
-  through which EVERY board unit is evaluated;
-* :func:`_run_replicate_slots_full` / :func:`_run_replicate_slots_fast` —
-  the overlapped replicate-slot schedulers, which run every slot of a
-  matchup against ONE semaphore rather than one slot at a time;
-* :func:`_run_replicated` — the replication loop that averages N paired
-  runs.
-
-Extracted verbatim from :mod:`zicato.tournament.runner`. The board-unit
-evaluator runs through ``_run_single``, which stays in the runner and is
-the in-place monkeypatch anchor the whole test suite swaps. So
-:func:`_run_unit_cache_first` resolves it through the runner module's
-namespace (a late attribute access, lazily imported to avoid a cycle)
-rather than a bound import — patching ``runner._run_single`` therefore
-still drives this scheduler unchanged. runner.py re-exports this module's
-public surface so existing ``from zicato.tournament.runner import ...``
-imports keep working.
-"""
+"""Schedule candidate measurements with shared concurrency and budget limits."""
 
 from __future__ import annotations
 
@@ -59,6 +28,7 @@ from zicato.core.measurement import (
     validate_measurement_count,
 )
 from zicato.runtime.lock import WorkspaceLock
+from zicato.tournament import worker_execution
 from zicato.tournament.scoring import aggregate_generation_score
 from zicato.tournament.scoring import (
     fold_matchup_replicates as _fold_replicate_runs,
@@ -115,48 +85,6 @@ def _cacheable_unit_key(
         measurement,
         base_seed,
     )
-
-
-async def _run_single(
-    *,
-    writer: WorkspaceLock,
-    adapter: Any,
-    generation: Generation,
-    entry: BoardEntry,
-    weights: ScoringWeights,
-    config: RuntimeConfig,
-    workspace_root: Path,
-    epoch_id: str,
-    side: str,
-    match_id: str = "",
-) -> LossProfile:
-    """Evaluate ONE board unit through the runner's ``_run_single``.
-
-    The actual run driver lives in :mod:`zicato.tournament.runner` and is
-    the single in-place monkeypatch anchor the test suite swaps via
-    ``runner._run_single``. This thin delegator resolves it by ATTRIBUTE
-    ACCESS on the runner module object (not a bound import) so a
-    ``monkeypatch.setattr(runner, "_run_single", ...)`` still reaches the
-    scheduler. The import is function-local so there is no import-time
-    cycle — the runner imports this module at load, this module reaches
-    back into the runner only when a unit actually runs.
-    """
-    from zicato.tournament import runner  # noqa: PLC0415
-
-    run_single: Any = runner._run_single
-    loss: LossProfile = await run_single(
-        writer=writer,
-        adapter=adapter,
-        generation=generation,
-        entry=entry,
-        weights=weights,
-        config=config,
-        workspace_root=workspace_root,
-        epoch_id=epoch_id,
-        side=side,
-        match_id=match_id,
-    )
-    return loss
 
 
 class _IncrementalScorer:
@@ -950,7 +878,7 @@ async def _run_unit_after_cache_miss(
         kind=SPAN_WORKER,
         meta={"run_id": run_id, "side": side, "entry_id": entry.id},
     ) as _worker_span:
-        loss = await _run_single(
+        loss = await worker_execution._run_single(
             writer=writer,
             adapter=adapter,
             generation=generation,

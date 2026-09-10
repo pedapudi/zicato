@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+import zicato.tournament.worker_execution as _tournament_worker_execution
 from tests._contract_pins import deterministic_weights
 from tests._runtime_builders import make_generation, runtime_config
 from zicato.core import BoardEntry
@@ -23,7 +24,7 @@ from zicato.selection.standings_ext import audit_duels, audit_matrix
 from zicato.selection.strategy import MatchupResult
 from zicato.telemetry.reducer import read_loss_profile, write_loss_profile
 from zicato.testing.fixtures import make_loss_profile
-from zicato.tournament import runner, scheduling
+from zicato.tournament import scheduling
 from zicato.tournament.gate import evaluate_gate, holdout_confirms
 from zicato.tournament.scoring import aggregate_generation_score
 from zicato.tournament.unit_cache import _resolve_cached_unit, _unit_loss_path
@@ -73,7 +74,7 @@ async def test_budget_skip_retries_in_fresh_round_and_coalesces_requests(
             tokens_spent=100,
         )
 
-    monkeypatch.setattr(runner, "_run_single", measured)
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", measured)
 
     with acquire_workspace_lock(workspace, "test") as writer:
 

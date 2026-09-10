@@ -940,7 +940,7 @@ async def run_contract_preflight(
     to a refusal under ``preflight_gate="refuse"``. All four are raised
     before any draw is spent.
     """
-    from zicato.tournament.runner import drain_worker_cleanup  # noqa: PLC0415
+    from zicato.tournament.worker_execution import drain_worker_cleanup  # noqa: PLC0415
 
     async with workspace_writer(
         workspace_root,

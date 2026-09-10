@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-import zicato.tournament.runner as runner_mod
+import zicato.tournament.worker_execution as _tournament_worker_execution
 from zicato.core import (
     BoardEntry,
     Generation,
@@ -212,7 +212,7 @@ def test_oc_proof_live_entry_discriminates_dead_entry_does_not(tmp_path: Path, m
     workspace = tmp_path / ".zicato"
     _materialize_snapshots(workspace)
     stub = _ScriptedRunner()
-    monkeypatch.setattr(runner_mod, "_run_single", stub)
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", stub)
 
     live = _admit(
         AdmissionRequest(
@@ -257,7 +257,7 @@ def test_oc_proof_noise_draws_land_at_base_6000_and_never_touch_r0(
     workspace = tmp_path / ".zicato"
     _materialize_snapshots(workspace)
     stub = _ScriptedRunner()
-    monkeypatch.setattr(runner_mod, "_run_single", stub)
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", stub)
 
     _admit(
         AdmissionRequest(
@@ -286,7 +286,7 @@ def test_oc_proof_noise_draws_land_at_base_6000_and_never_touch_r0(
 def test_oc_proof_noisy_entry_has_nonzero_measured_flip_rate(tmp_path: Path, monkeypatch) -> None:
     workspace = tmp_path / ".zicato"
     _materialize_snapshots(workspace)
-    monkeypatch.setattr(runner_mod, "_run_single", _ScriptedRunner())
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", _ScriptedRunner())
 
     record = _admit(
         AdmissionRequest(
@@ -310,7 +310,7 @@ def test_plan_mode_runs_nothing(tmp_path: Path, monkeypatch) -> None:
     workspace = tmp_path / ".zicato"
     _materialize_snapshots(workspace)
     stub = _ScriptedRunner()
-    monkeypatch.setattr(runner_mod, "_run_single", stub)
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", stub)
 
     record = _admit(
         AdmissionRequest(
@@ -356,7 +356,7 @@ def test_discrimination_unmeasured_on_cold_workspace(tmp_path: Path, monkeypatch
     workspace = tmp_path / ".zicato"
     generation_dir(workspace, EPOCH, CHAMPION).mkdir(parents=True, exist_ok=True)
     stub = _ScriptedRunner()
-    monkeypatch.setattr(runner_mod, "_run_single", stub)
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", stub)
 
     record = _run(
         admit_suggestion(
@@ -392,7 +392,7 @@ def test_discrimination_unmeasured_when_trees_unreconstructable(
     workspace = tmp_path / ".zicato"
     # Champion snapshot only; the settled candidates have NO snapshot tree.
     (generation_dir(workspace, EPOCH, CHAMPION) / "snapshot").mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr(runner_mod, "_run_single", _ScriptedRunner())
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", _ScriptedRunner())
 
     record = _admit(
         AdmissionRequest(
@@ -409,7 +409,7 @@ def test_invalid_draft_marks_execution_not_ran(tmp_path: Path, monkeypatch) -> N
     workspace = tmp_path / ".zicato"
     _materialize_snapshots(workspace)
     stub = _ScriptedRunner()
-    monkeypatch.setattr(runner_mod, "_run_single", stub)
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", stub)
 
     # A single_turn entry with no ``input`` fails BoardEntry.validate().
     bad = BoardEntry(
@@ -432,7 +432,7 @@ def test_aborted_draw_marks_execution_aborted_and_noise_unmeasured(
 ) -> None:
     workspace = tmp_path / ".zicato"
     _materialize_snapshots(workspace)
-    monkeypatch.setattr(runner_mod, "_run_single", _ScriptedRunner())
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", _ScriptedRunner())
 
     record = _admit(
         AdmissionRequest(

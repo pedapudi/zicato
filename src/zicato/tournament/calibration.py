@@ -217,7 +217,7 @@ async def measure_noise_floor(
     so it must be cheap and must not raise.
     """
     validate_measurement_count(runs)
-    from zicato.tournament.runner import drain_worker_cleanup  # noqa: PLC0415
+    from zicato.tournament.worker_execution import drain_worker_cleanup  # noqa: PLC0415
 
     if runs < 2:
         raise ValueError(f"noise-floor calibration needs at least 2 runs, got {runs!r}")

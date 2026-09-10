@@ -28,6 +28,7 @@ from typing import Any
 
 import pytest
 
+import zicato.tournament.worker_execution as _tournament_worker_execution
 from tests._contract_pins import deterministic_weights
 from tests._foe_support import stand_in_proposer_block
 from tests._orchestrator_harness import (
@@ -143,7 +144,6 @@ def _install_token_heavy_run_single(
     monkeypatch: pytest.MonkeyPatch, calls: list[tuple[str, str]], *, tokens_per_run: int = 1000
 ) -> None:
     """Every live board unit run reports ``tokens_per_run`` tokens spent."""
-    import zicato.tournament.runner as _runner_mod
 
     async def _token_heavy_run_single(
         *,
@@ -182,7 +182,7 @@ def _install_token_heavy_run_single(
             tokens_spent=tokens_per_run,
         )
 
-    monkeypatch.setattr(_runner_mod, "_run_single", _token_heavy_run_single)
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", _token_heavy_run_single)
 
 
 def _run_one_round(

@@ -1,7 +1,7 @@
 """Tests for the per-run progress-bump sink wrapper in the runner.
 
 The dashboard renders a run as static because :class:`ActiveRun.last_progress`
-was written once at run start. :class:`zicato.tournament.runner._ProgressBumpingSink`
+was written once at run start. :class:`zicato.tournament.worker_execution._ProgressBumpingSink`
 fixes that: it wraps the canonical per-run goldfive sink so every event
 ``emit`` also bumps ``last_progress`` — throttled so a chatty run cannot
 turn into a write storm on the runtime directory.
@@ -27,7 +27,7 @@ from zicato.runtime.state import (
     list_active_runs,
     write_active_run,
 )
-from zicato.tournament.runner import (
+from zicato.tournament.worker_execution import (
     _PROGRESS_BUMP_MIN_INTERVAL_S,
     _ProgressBumpingSink,
     _wrap_sinks_with_progress,
@@ -157,7 +157,7 @@ def test_progress_bump_is_throttled(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     # Drive a controllable monotonic clock.
     fake_now = {"t": 1000.0}
     monkeypatch.setattr(
-        "zicato.tournament.runner.time.monotonic",
+        "zicato.tournament.worker_execution.time.monotonic",
         lambda: fake_now["t"],
     )
 

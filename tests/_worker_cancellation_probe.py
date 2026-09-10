@@ -13,6 +13,7 @@ from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import patch
 
+import zicato.tournament.worker_execution as _tournament_worker_execution
 from tests._runtime_builders import make_generation
 from tests._subprocess_worker_support import SleepingAdapter, evaluation_call_llm, target_call_llm
 from zicato.core import BoardEntry, RuntimeConfig, ScoringWeights
@@ -74,7 +75,7 @@ async def probe(workspace: Path, *, invocation: bool = False) -> None:
     child_pid = None
     child_start_time = None
     retry_entered, allow_retry = asyncio.Event(), asyncio.Event()
-    real_terminate = runner._terminate_worker
+    real_terminate = _tournament_worker_execution._terminate_worker
     attempts = 0
 
     async def defer_termination(*args, **kwargs):
@@ -97,9 +98,9 @@ async def probe(workspace: Path, *, invocation: bool = False) -> None:
             workspace,
             writer=invocation_context.writer if invocation_context is not None else None,
             instance_id=config.instance_id,
-            cleanup=lambda: runner.drain_worker_cleanup(workspace),
+            cleanup=lambda: _tournament_worker_execution.drain_worker_cleanup(workspace),
         ) as writer:
-            return await runner._run_single(
+            return await _tournament_worker_execution._run_single(
                 writer=writer,
                 adapter=DescendantAdapter(),
                 generation=generation,
@@ -141,7 +142,10 @@ async def probe(workspace: Path, *, invocation: bool = False) -> None:
             task.cancel("cancel descendant group")
             if invocation:
                 async with asyncio.timeout(5):
-                    while not runner._retained_worker_resources and not task.done():
+                    while (
+                        not _tournament_worker_execution._retained_worker_resources
+                        and not task.done()
+                    ):
                         await asyncio.sleep(0.01)
                 assert not task.done(), "invocation returned with a retained worker"
                 await asyncio.wait_for(retry_entered.wait(), timeout=5)
@@ -152,7 +156,8 @@ async def probe(workspace: Path, *, invocation: bool = False) -> None:
                 assert not task.done(), "cancellation abandoned worker ownership"
                 assert proc.returncode is None and snapshot.exists()
                 assert all(
-                    owner.permit.held for owner in runner._retained_worker_resources.values()
+                    owner.permit.held
+                    for owner in _tournament_worker_execution._retained_worker_resources.values()
                 )
                 try:
                     await round_entry.evolve_once(workspace_root=workspace)
@@ -175,7 +180,7 @@ async def probe(workspace: Path, *, invocation: bool = False) -> None:
             assert os.waitstatus_to_exitcode(status) == -signal.SIGKILL
             assert not snapshot.exists()
             assert not active_run_path(workspace, f"{generation.id}--descendant").exists()
-            assert not runner._retained_worker_resources
+            assert not _tournament_worker_execution._retained_worker_resources
             if invocation:
                 with acquire_workspace_lock(workspace, "following-invocation"):
                     pass
@@ -195,7 +200,7 @@ async def probe(workspace: Path, *, invocation: bool = False) -> None:
             if not task.done():
                 task.cancel()
             await asyncio.gather(task, return_exceptions=True)
-            await runner.retry_worker_cleanup(workspace)
+            await _tournament_worker_execution.retry_worker_cleanup(workspace)
 
 
 if __name__ == "__main__":

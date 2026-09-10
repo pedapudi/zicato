@@ -374,7 +374,7 @@ async def _propose(
     workspace: str, epoch: str | None, patterns_from: str | None, max_retries: int
 ) -> None:
     from zicato.runtime.writer import workspace_writer  # noqa: PLC0415
-    from zicato.tournament.runner import drain_worker_cleanup  # noqa: PLC0415
+    from zicato.tournament.worker_execution import drain_worker_cleanup  # noqa: PLC0415
 
     workspace_dir = Path(workspace)
     async with workspace_writer(

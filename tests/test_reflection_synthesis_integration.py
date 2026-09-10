@@ -18,7 +18,7 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
-import zicato.tournament.runner as runner_mod
+import zicato.tournament.worker_execution as _tournament_worker_execution
 from tests._stub_adapter import STUB_ADAPTER_FACTORY
 from zicato.board.jsonl import save_board
 from zicato.cli.discovery import build_cli_root
@@ -188,7 +188,7 @@ def test_unmocked_probe_measures_against_the_fixture_runner(tmp_path: Path, monk
             )
 
     stub = _Runner()
-    monkeypatch.setattr(runner_mod, "_run_single", stub)
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", stub)
 
     result = _run(
         [
@@ -236,7 +236,7 @@ def test_admit_seam_plan_mode_runs_nothing(tmp_path: Path, monkeypatch) -> None:
         calls["n"] += 1
         raise AssertionError("plan mode must not spend a board run")
 
-    monkeypatch.setattr(runner_mod, "_run_single", _forbidden)
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", _forbidden)
 
     sug = Suggestion(
         suggestion_id="sug-plan01",

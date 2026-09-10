@@ -310,9 +310,7 @@ def test_worker_args_use_auto_launched_url(tmp_path: Path, monkeypatch: pytest.M
         # The tournament runner has its own _resolve_harmonograf_url
         # that builds the worker args file's harmonograf_url field. It
         # MUST resolve to the same URL the orchestrator just established.
-        from zicato.tournament.runner import (  # noqa: PLC0415
-            _resolve_harmonograf_url as runner_resolve,
-        )
+        from zicato.tournament.worker_execution import _resolve_harmonograf_url as runner_resolve
 
         assert runner_resolve(tmp_path) == url
     finally:

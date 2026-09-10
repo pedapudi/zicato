@@ -22,6 +22,7 @@ from dataclasses import replace as _replace
 from pathlib import Path
 from typing import Any
 
+import zicato.tournament.worker_execution as _tournament_worker_execution
 import zicato_examples.target_0_convergence as _t0_pkg
 from tests._contract_pins import resolved_contract_with_proposer
 from tests._foe_support import stand_in_proposer_block
@@ -813,7 +814,6 @@ def test_preflight_voids_on_infra_abort_instead_of_persisting_a_poisoned_floor(
     """
     import pytest
 
-    import zicato.tournament.runner as _runner_mod
     from zicato.core.types import LossProfile, MetricCount
     from zicato.tournament.calibration import NoiseFloorInconclusive, measure_noise_floor
 
@@ -847,7 +847,7 @@ def test_preflight_voids_on_infra_abort_instead_of_persisting_a_poisoned_floor(
             abort_cause="nonzero_exit:1",  # an is_infra_abort_cause class
         )
 
-    monkeypatch.setattr(_runner_mod, "_run_single", _infra_abort_run_single)
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", _infra_abort_run_single)
 
     # The strict pre-flight consumer VOIDS the measurement rather than persist
     # an outage-derived floor.

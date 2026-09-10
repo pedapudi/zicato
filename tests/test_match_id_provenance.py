@@ -21,6 +21,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import zicato.tournament.runner as runner_mod
+import zicato.tournament.worker_execution as _tournament_worker_execution
 from tests._runtime_builders import prepare_tournament_epoch, seed_promoted_lineage
 from zicato.core import (
     BoardEntry,
@@ -137,7 +138,7 @@ def test_run_matchup_threads_match_id_to_each_run(monkeypatch, tmp_path) -> None
             epoch_id=epoch_id,
         )
 
-    monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", fake_run_single)
     board = _board()
     weights = ScoringWeights()
     config = _config(tmp_path)
@@ -207,7 +208,7 @@ def test_run_matchup_stamps_judge_only_onto_each_entry(monkeypatch, tmp_path) ->
             epoch_id=epoch_id,
         )
 
-    monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", fake_run_single)
     board = _board()
     weights = ScoringWeights()
     config = _config(tmp_path)
@@ -268,7 +269,7 @@ def test_run_matchup_default_leaves_judge_only_unset(monkeypatch, tmp_path) -> N
             epoch_id=epoch_id,
         )
 
-    monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", fake_run_single)
     board = _board()
     weights = ScoringWeights()
     config = _config(tmp_path)
@@ -333,7 +334,7 @@ def test_run_single_stamps_match_id_onto_loss_json(monkeypatch, tmp_path) -> Non
     from zicato.epoch.genstore import EphemeralCheckout
 
     monkeypatch.setattr(
-        runner_mod,
+        _tournament_worker_execution,
         "_checkout_run_snapshot",
         lambda **kwargs: EphemeralCheckout(
             working_dir=tmp_path / "snap",
@@ -341,8 +342,10 @@ def test_run_single_stamps_match_id_onto_loss_json(monkeypatch, tmp_path) -> Non
             cleanup=lambda: None,
         ),
     )
-    monkeypatch.setattr(runner_mod, "_discard_run_snapshot", lambda c: None)
-    monkeypatch.setattr(runner_mod, "_ingest_run_into_index", lambda *a, **k: None)
+    monkeypatch.setattr(_tournament_worker_execution, "_discard_run_snapshot", lambda c: None)
+    monkeypatch.setattr(
+        _tournament_worker_execution, "_ingest_run_into_index", lambda *a, **k: None
+    )
 
     class _Proc:
         pid = -1
@@ -356,11 +359,13 @@ def test_run_single_stamps_match_id_onto_loss_json(monkeypatch, tmp_path) -> Non
         return _Proc()
 
     monkeypatch.setattr(runner_mod.asyncio, "create_subprocess_exec", fake_spawn)
-    monkeypatch.setattr(runner_mod, "_worker_processes_gone", lambda *args, **kwargs: True)
+    monkeypatch.setattr(
+        _tournament_worker_execution, "_worker_processes_gone", lambda *args, **kwargs: True
+    )
     # The worker result file is read via _load_worker_result; point it at
     # the loss.json we pre-wrote.
     monkeypatch.setattr(
-        runner_mod,
+        _tournament_worker_execution,
         "_load_worker_result",
         lambda result_path: {"loss_profile_path": str(lpath)},
     )
@@ -379,7 +384,7 @@ def test_run_single_stamps_match_id_onto_loss_json(monkeypatch, tmp_path) -> Non
 
     with acquire_workspace_lock(ws, "test-worker") as writer:
         result = asyncio.run(
-            runner_mod._run_single(
+            _tournament_worker_execution._run_single(
                 writer=writer,
                 adapter=_Adapter(),
                 generation=gen,

@@ -1156,6 +1156,7 @@ function reflectionLinks(dossier, ctx, epochId) {
 // The four dossier sections, in reading order: trajectory → instrument stats →
 // attribution → reflection links. Exported for the render + the tests.
 export function evalDossierSections(dossier, ctx, epochId, entryId) {
+  dossier = evalDossierModel(dossier);
   return [
     section('Trajectory · outcome along the champion spine', trajectoryFigure(dossier)),
     section('Instrument stats · is this eval a good measurement channel', instrumentStats(dossier)),
@@ -1164,42 +1165,36 @@ export function evalDossierSections(dossier, ctx, epochId, entryId) {
   ];
 }
 
-// The dossier digest — folds only the served, view-visible fields so a no-op SSE
-// beat (identical payload) produces a byte-identical string and the gate does
-// ZERO DOM. Volatile object identity never enters it (value-only).
-export function evalDossierDigest(dossier, epochId, entryId) {
+// Rendering and change detection consume the same data. Request metadata and
+// timestamps cannot cause a repaint; all displayed scores and labels can.
+function evalDossierModel(dossier) {
   const d = dossier || {};
   const ins = d.instrument || {};
-  const round = (v) => (svg.isNum(v) ? Number(v.toFixed(3)) : null);
-  return JSON.stringify({
+  const attr = d.attribution || {};
+  const pick = (source, keys) => Object.fromEntries(keys.map((key) => [key, source[key] ?? null]));
+  return {
+    found: d.found ?? null,
+    slice: d.slice || 'train',
+    instrument: pick(ins, [
+      'flip_rate_measured', 'flip_rate', 'calibration_runs', 'discrimination',
+      'discrimination_pairs', 'runtime_ms_mean', 'runtime_ms_p50', 'runtime_ms_max',
+      'replicate_total', 'cached_share',
+    ]),
+    trajectory: (Array.isArray(d.trajectory) ? d.trajectory : []).filter(Boolean).map((t) =>
+      pick(t, ['generation_id', 'champion_spine', 'score', 'drift_loss', 'pass_ratio', 'replicates', 'cached'])),
+    trajectory_reason: d.trajectory_reason || null,
+    attribution: pick(attr, ['first_passed_by', 'first_passed_reason', 'regressed_by', 'regressed_reason']),
+    reflection_findings: (Array.isArray(d.reflection_findings) ? d.reflection_findings : []).map((item) => ({
+      reflection_id: item && item.reflection_id || null,
+      finding: { title: item && item.finding && (item.finding.title || item.finding.finding_id) || 'finding' },
+    })),
+  };
+}
+
+export function evalDossierDigest(dossier, epochId, entryId) {
+  return svg.digestOpts({
     epochId: epochId == null ? null : String(epochId),
     entryId: entryId == null ? null : String(entryId),
-    found: d.found == null ? null : !!d.found,
-    slice: d.slice == null ? null : String(d.slice),
-    instrument: [
-      !!ins.flip_rate_measured, round(ins.flip_rate), ins.calibration_runs || 0,
-      round(ins.discrimination), ins.discrimination_pairs || 0,
-      round(ins.runtime_ms_mean), round(ins.runtime_ms_p50), round(ins.runtime_ms_max),
-      ins.replicate_total || 0, round(ins.cached_share),
-    ],
-    trajectory: (Array.isArray(d.trajectory) ? d.trajectory : []).map((t) => [
-      t && t.generation_id, !!(t && t.champion_spine), round(t && t.drift_loss),
-      round(t && t.pass_ratio), (t && t.replicates) || 0, !!(t && t.cached),
-    ]),
-    // the empty-state REASONS are rendered text, so they belong in the digest —
-    // a spine that goes from "never ran this entry" to "no drift loss recorded"
-    // is a visible change even though every number stayed null.
-    reasons: [
-      d.trajectory_reason || null,
-      (d.attribution && d.attribution.first_passed_reason) || null,
-      (d.attribution && d.attribution.regressed_reason) || null,
-    ],
-    attribution: [
-      (d.attribution && d.attribution.first_passed_by) || null,
-      (d.attribution && Array.isArray(d.attribution.regressed_by)) ? d.attribution.regressed_by.slice() : [],
-    ],
-    reflection: (Array.isArray(d.reflection_findings) ? d.reflection_findings : []).map((r) => [
-      r && r.reflection_id, r && r.finding && (r.finding.finding_id || r.finding.title || null),
-    ]),
+    dossier: evalDossierModel(dossier),
   });
 }

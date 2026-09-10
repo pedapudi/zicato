@@ -1,4 +1,4 @@
-"""judge_view — extracted from the former dashboard state_reader monolith (pure move)."""
+"""Serve task measurements, judge aggregates and workspace status."""
 
 from __future__ import annotations
 
@@ -17,8 +17,6 @@ from zicato.core.measurement import (
 from zicato.core.workspace import measurement_from_run_id
 from zicato.epoch._storage import RecordError
 from zicato.query._sqlite import (
-    _opt_json,
-    _opt_str,
     open_index_ro,
     open_index_ro_or_none,
     with_index_not_built_note,
@@ -53,7 +51,6 @@ from zicato.query.runtime_view import (
 )
 from zicato.query.tournament_view import (
     _gen_score_view,
-    _opt_metrics,
     _tournament_id_for,
 )
 from zicato.workspace import judge_loss_rows
@@ -229,195 +226,64 @@ def build_per_entry_for_generation(
     *,
     inputs: EpochInputs | None = None,
 ) -> dict[str, Any]:
-    """Per-entry breakdown of one generation, scoped via tournament_id FK.
+    """Present this candidate's selected measurements and recorded aggregate."""
+    from zicato.epoch.journal import read_experiment_body
+    from zicato.query.replicate_scores import selected_measurements
+    from zicato.selection.strategy import rung_for_match_id
 
-    Returns ``{epoch_id, generation_id, tournament_id, mean_score,
-    drift_present, facet_scores, entries: [{entry_id, run_id, drift_loss,
-    pass_fail, runtime_ms, wall_clock_budget_exceeded, match_id, rung}]}``.
-
-    ``mean_score`` is the generation's cached board-level mean, read off
-    ``gen_score.json``. ``drift_present`` says whether the drift channel
-    carries information for this generation at all, so a client hides the
-    drift readouts instead of rendering a column of structural zeroes.
-
-    ``facet_scores`` is ``{facets: {name: {scalar, mean_score,
-    scored_count, entry_count}}, overall: {...} | None}`` — this candidate
-    re-aggregated over each ``facet:`` board tag at the epoch's frozen
-    weights, so a facet's ``scalar`` is directly comparable to the
-    ``overall`` row beside it (see
-    :func:`zicato.query.eval_view.facet_scores_for_generation`). Empty
-    facets when the board declares no facet tag. The candidate dossier
-    reads both from here.
-
-    The tournament id is
-    composed via :func:`_tournament_id_for` from the child generation's
-    ``parent_generation_id`` field (its ``experiment.json``); a v0 seed
-    with no parent yields ``tournament_id: None`` and the fallback walks
-    :func:`zicato.index.query.loss_profiles_for_generation` directly.
-
-    ``match_id`` is the per-board-run tournament-provenance tag — the
-    matchup id this run executed within (e.g. ``"rung0_m2"``,
-    ``"racing-final"``) — and ``rung`` is the coarser label derived from
-    it (e.g. ``"rung 0"``, ``"final"``) via
-    :func:`zicato.selection.strategy.rung_for_match_id`. Both are ``None``
-    for an untagged run: a gauntlet duel (which never carries a
-    ``match_id``) or a run persisted before the tag existed — additive,
-    never an error.
-
-    A never-indexed workspace yields empty ``entries`` with a ``note``.
-    """
-    from zicato.index.query import (  # noqa: PLC0415
-        loss_profiles_for_generation,
-        loss_profiles_for_tournament,
-    )
-
-    # Resolve the parent_generation_id from the child's experiment.json
-    # so we can compose the FK. The reader is best-effort: a missing
-    # / malformed file falls back to the generation-scoped query.
-    parent_gen_id: str | None = None
     if inputs is not None:
         inputs.check(paths, epoch_id)
-    from zicato.epoch.journal import read_experiment_body
-
-    raw_exp = (
+    experiment = (
         inputs.experiment(generation_id)
         if inputs is not None
         else read_experiment_body(paths.root, epoch_id, generation_id)
     )
-    if isinstance(raw_exp, dict):
-        raw_parent = raw_exp.get("parent_generation_id")
-        if isinstance(raw_parent, str) and raw_parent:
-            parent_gen_id = raw_parent
-
-    tournament_id: str | None = None
-    rows: list[Any] = []
-    if parent_gen_id is not None:
-        tournament_id = _tournament_id_for(epoch_id, parent_gen_id, generation_id)
-        try:
-            rows = loss_profiles_for_tournament(paths.index_db, tournament_id)
-        except Exception:  # noqa: BLE001
-            rows = []
-    if not rows:
-        # A seed has no parent matchup. Its generation-scoped measurements
-        # remain available independently of tournament membership.
-        try:
-            rows = loss_profiles_for_generation(paths.index_db, epoch_id, generation_id)
-        except Exception:  # noqa: BLE001
-            rows = []
-
-    from zicato.selection.strategy import rung_for_match_id  # noqa: PLC0415
-
-    def _drift_observed(row: Any, drift_loss: float | None) -> bool:
-        # Did this run OBSERVE drift at all? An adapter that emits no drift
-        # stream still records a structural 0.0 with an empty measured drift metrics,
-        # which is indistinguishable on the wire from a run that watched for
-        # drift and saw none. Either a recorded drift event or a non-zero loss
-        # proves the channel carries signal; nothing else does. Mirrors the
-        # matchup grid's predicate, sourced from the same persisted field —
-        # here off the index's verbatim ``loss_json`` blob, with the row's
-        # ``drift_loss`` column as the fallback for a blob-less stale index.
-        lj = _opt_json(row["loss_json"])
-        if isinstance(lj, dict) and any(
-            m["name"].startswith("drift:") for m in lj["metric_counts"]
-        ):
-            return True
-        return drift_loss not in (None, 0.0)
-
-    def _score_metrics_of(row: Any) -> tuple[float | None, dict[str, float] | None]:
-        # The continuous per-entry outcome + its precision/recall
-        # decomposition (#18) live in the raw ``loss_json`` blob the index
-        # stores verbatim, NOT in a dedicated column — so a stale index
-        # without new columns still surfaces the score. Absent / malformed
-        # blob -> (None, None), which renders by the bool pass bit alone.
-        lj = _opt_json(row["loss_json"])
-        if not isinstance(lj, dict):
-            return None, None
-        return finite_float(lj.get("score")), _opt_metrics(lj.get("metrics"))
-
-    unreadable: dict[str, str] = {}
+    parent = experiment.get("parent_generation_id") if experiment else None
+    unreadable = {}
     try:
         board = load_board_document(layout_of(paths).board(epoch_id))
-        entry_facets = facets_by_entry(board)
     except RecordError as exc:
         board = None
-        entry_facets = {}
         unreadable["unreadable"] = str(exc)
-    entries = []
-    drift_present = False
-    for r in rows:
-        match_id = _opt_str(r, "match_id")
-        entry_score, entry_metrics = _score_metrics_of(r)
-        entry_drift = coerce_float(r["drift_loss"])
-        drift_present = drift_present or _drift_observed(r, entry_drift)
-        entries.append(
-            {
-                "entry_id": r["entry_id"],
-                "run_id": r["run_id"],
-                "generation_id": r["generation_id"],
-                "drift_loss": entry_drift,
-                "pass_fail": _opt_bool(r["pass_fail"]),
-                # Continuous per-entry outcome + precision/recall (#18),
-                # parsed from the row's loss_json blob. ``None`` for a
-                # entry recorded before the continuous score existed, which
-                # renders by pass_fail alone.
-                "score": entry_score,
-                "metrics": entry_metrics,
-                "runtime_ms": (int(r["runtime_ms"]) if isinstance(r["runtime_ms"], int) else None),
-                "wall_clock_budget_exceeded": bool(r["wall_clock_budget_exceeded"])
-                if r["wall_clock_budget_exceeded"] is not None
-                else None,
-                # Per-board-run tournament provenance (additive). ``None``
-                # for an untagged run (a gauntlet duel, or a run persisted
-                # before the tag existed).
-                "match_id": match_id,
-                "rung": rung_for_match_id(match_id),
-                # Cached-champion provenance (additive). When the champion was
-                # reused in fast mode this row's scalar comes from a PRIOR
-                # epoch/run rather than a re-execution this round; the epoch's
-                # OWN measurement loss file / index materializes the provenance so this read
-                # stays epoch-local. ``cached`` False / ``source_*`` None for a
-                # freshly-executed run.
-                "cached": bool(r["cached"]),
-                "source_epoch": _opt_str(r, "source_epoch"),
-                "source_run": _opt_str(r, "source_run"),
-                # The ``facet:`` slices this entry belongs to (BOARD-FORMAT.md
-                # §1.4), sorted. Carried on the ROW because it is a property of
-                # the entry rather than of the run: the per-board drill-down reads it
-                # to name the slices the entry feeds without re-reading the
-                # board. ``[]`` for an untagged entry.
-                "facets": list(entry_facets.get(r["entry_id"], ())),
-            }
-        )
-
-    # Per-generation mean continuous outcome (#18), read from the cached
-    # gen_score.json — never recomputed. ``None`` when the aggregate
-    # predates the field, so the candidate view degrades to its pass-rate
-    # summary. Folded alongside the per-entry scores so the dossier can
-    # show a single board-level score number.
+    facets = facets_by_entry(board)
+    measurements = selected_measurements(paths, epoch_id, generation_id)
+    entries = [
+        {
+            **{
+                key: loss.get(key)
+                for key in (
+                    "entry_id",
+                    "run_id",
+                    "generation_id",
+                    "drift_loss",
+                    "pass_fail",
+                    "score",
+                    "metrics",
+                    "runtime_ms",
+                    "wall_clock_budget_exceeded",
+                )
+            },
+            "match_id": loss.get("match_id") or None,
+            "rung": rung_for_match_id(loss.get("match_id")),
+            "cached": bool(loss.get("cached")),
+            "source_epoch": loss.get("source_epoch") or None,
+            "source_run": loss.get("source_run") or None,
+            "facets": list(facets.get(entry_id, ())),
+        }
+        for entry_id, loss in measurements.items()
+    ]
     try:
-        gen_mean_score = finite_float(
-            _gen_score_view(paths, epoch_id, generation_id).get("mean_score")
-        )
+        mean_score = finite_float(_gen_score_view(paths, epoch_id, generation_id).get("mean_score"))
     except RecordError as exc:
-        gen_mean_score = None
+        mean_score = None
         unreadable["unreadable"] = str(exc)
-
     return {
         **unreadable,
         "epoch_id": epoch_id,
         "generation_id": generation_id,
-        "tournament_id": tournament_id,
-        "mean_score": gen_mean_score,
-        # Does the drift channel carry information for this generation? False
-        # when every run recorded a structural zero with no drift events — the
-        # adapter emits no drift stream, so the per-entry ``drift_loss`` column
-        # means nothing and a client hides it rather than painting zeroes.
-        "drift_present": drift_present,
-        # This candidate re-aggregated per ``facet:`` board tag, plus the
-        # same aggregate over every entry as the ``overall`` row to compare
-        # against (BOARD-FORMAT.md §1.4). Computed server-side, which keeps
-        # the group-by off the client. Empty facets ⇒ the table does not
-        # paint. Diagnostic: nothing downstream of this key feeds a decision.
+        "tournament_id": _tournament_id_for(epoch_id, parent, generation_id) if parent else None,
+        "mean_score": mean_score,
+        "drift_present": any(loss["drift_observed"] for loss in measurements.values()),
         "facet_scores": facet_scores_for_generation(
             paths, epoch_id, generation_id, board, inputs=inputs
         ),

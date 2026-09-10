@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-import zicato.tournament.runner as runner_mod
+import zicato.tournament.worker_execution as _tournament_worker_execution
 from zicato.core import (
     BoardEntry,
     Generation,
@@ -399,7 +399,7 @@ def _run(coro):  # pragma: no cover - trivial helper
 def test_active_corpus_lands_draws_at_reserved_base(tmp_path: Path, monkeypatch) -> None:
     workspace = tmp_path / ".zicato"
     stub = _CountingRunSingle()
-    monkeypatch.setattr(runner_mod, "_run_single", stub)
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", stub)
 
     plan = new_plan(
         epoch_id=EPOCH,
@@ -452,7 +452,7 @@ def test_active_corpus_lands_draws_at_reserved_base(tmp_path: Path, monkeypatch)
 def test_active_corpus_second_run_is_all_cache_hits(tmp_path: Path, monkeypatch) -> None:
     workspace = tmp_path / ".zicato"
     stub = _CountingRunSingle()
-    monkeypatch.setattr(runner_mod, "_run_single", stub)
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", stub)
 
     plan = new_plan(
         epoch_id=EPOCH,
@@ -485,7 +485,7 @@ def test_active_corpus_infra_abort_voids_the_draw(tmp_path: Path, monkeypatch) -
     workspace = tmp_path / ".zicato"
     # An infra abort cause (not a budget exhaustion) on every unit.
     stub = _CountingRunSingle(abort_cause="nonzero_exit:1")
-    monkeypatch.setattr(runner_mod, "_run_single", stub)
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", stub)
 
     plan = new_plan(
         epoch_id=EPOCH,

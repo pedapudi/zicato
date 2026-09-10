@@ -383,15 +383,6 @@
             "v5",
             "v6"
           ],
-          "winner": null,
-          "pending": true,
-          "bracket_slot": "WB-R0-0"
-        },
-        {
-          "competitors": [
-            "v5",
-            "v6"
-          ],
           "winner": "v5",
           "decision": "win",
           "bracket_slot": "WB-R0-0"

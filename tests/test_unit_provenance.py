@@ -31,7 +31,7 @@ from typing import Any
 
 import pytest
 
-import zicato.tournament.runner as runner_mod
+import zicato.tournament.worker_execution as _tournament_worker_execution
 from zicato.core import (
     BUDGET_ABORT_CAUSE,
     BoardEntry,
@@ -49,7 +49,7 @@ from zicato.telemetry.reducer import (
     write_loss_profile,
 )
 from zicato.testing.fixtures import make_loss_profile
-from zicato.tournament.runner import _run_unit_cache_first
+from zicato.tournament.scheduling import _run_unit_cache_first
 from zicato.tournament.unit_cache import (
     _average_losses,
     _persist_unit_loss,
@@ -117,7 +117,7 @@ def _stub_run_single(monkeypatch: pytest.MonkeyPatch, profiles: list[LossProfile
         calls.append(generation.id)
         return queue.pop(0)
 
-    monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", fake_run_single)
     return calls
 
 

@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from zicato.core.workspace import reflection_findings_path
-from zicato.epoch._storage import RecordError
+from zicato.epoch._storage import RecordError, copy_json_object
 from zicato.reflection.adjudication import VERDICT_FN, VERDICT_FP, JudgeAdjudication
 from zicato.reflection.corpus import ObservationRun, judge_answered
 from zicato.reflection.scorecards import JudgeScorecard
@@ -88,10 +88,7 @@ class Finding:
             or not isinstance(operation.get("args"), dict)
         ):
             raise RecordError("finding: proposed_op requires an operation name and argument object")
-        try:
-            encoded = json.dumps(body, allow_nan=False)
-        except (TypeError, ValueError) as exc:
-            raise RecordError(f"finding: invalid JSON value: {exc}") from exc
+        encoded = json.dumps(copy_json_object(body, "finding"))
         fields = json.loads(encoded)
         return cls(
             **{
@@ -135,10 +132,7 @@ class Findings:
         items = tuple(Finding.from_json(item) for item in body["findings"])
         if len({item.finding_id for item in items}) != len(items):
             raise RecordError("findings: duplicate finding identity")
-        try:
-            encoded = json.dumps(body, allow_nan=False)
-        except (TypeError, ValueError) as exc:
-            raise RecordError(f"findings: invalid JSON value: {exc}") from exc
+        encoded = json.dumps(copy_json_object(body, "findings"))
         return cls(body["reflection_id"], items, encoded)
 
 

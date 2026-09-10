@@ -47,6 +47,8 @@ from pathlib import Path
 
 import pytest
 
+import zicato.tournament.worker_execution as _tournament_worker_execution
+
 # Reuse the fully-mocked harness from the gauntlet orchestrator tests.
 # ``zicato_examples`` is resolved through the installed examples package so
 # the test is independent of where the examples distribution lives on disk.
@@ -92,7 +94,7 @@ def _preseed_champion_cache(
     from zicato.core.types import LossProfile
     from zicato.core.workspace import board_path, run_id_for_unit
     from zicato.telemetry.reducer import write_loss_profile
-    from zicato.tournament.runner import _unit_loss_path
+    from zicato.tournament.worker_execution import _unit_loss_path
 
     for entry in _load_board_file(board_path(workspace, epoch_id)):
         for draw in range(max(1, replicates)):
@@ -142,7 +144,6 @@ def _install_caching_telemetry_stubs(
     """
     import sys
 
-    import zicato.tournament.runner as _runner_mod
     from zicato.core.types import ExpectationResult, LossProfile, MetricCount
     from zicato.core.workspace import run_id_for_unit
     from zicato.telemetry.reducer import read_loss_profile, write_loss_profile
@@ -209,7 +210,7 @@ def _install_caching_telemetry_stubs(
         )
         return profile
 
-    monkeypatch.setattr(_runner_mod, "_run_single", _fake_run_single)
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", _fake_run_single)
 
     # Cache reuse and index repair must read the same persisted measurements.
     monkeypatch.setattr(

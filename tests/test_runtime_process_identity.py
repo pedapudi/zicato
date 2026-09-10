@@ -10,9 +10,9 @@ from pathlib import Path
 
 import pytest
 
+import zicato.tournament.worker_execution as _tournament_worker_execution
 from zicato.runtime import lock
 from zicato.runtime.process import processes_gone, terminate_process
-from zicato.tournament import runner
 
 
 class PendingProcess:
@@ -74,22 +74,26 @@ async def test_worker_keeps_resources_when_spawn_identity_is_missing(
     tmp_path: Path,
     missing: str,
 ) -> None:
-    resources = runner._WorkerResources(tmp_path, "unit", tmp_path / "args", tmp_path / "result")
+    resources = _tournament_worker_execution._WorkerResources(
+        tmp_path, "unit", tmp_path / "args", tmp_path / "result"
+    )
     resources.proc = PendingProcess()
     resources.pgid = resources.proc.pid if missing == "token" else None
     resources.start_time = None if missing == "token" else 123.0
     resources.args_path.write_text("arguments")
     resources.result_path.write_text("result")
-    monkeypatch.setattr(runner, "_runtime_state", lambda: None)
+    monkeypatch.setattr(_tournament_worker_execution, "_runtime_state", lambda: None)
 
     async def unexpected_cleanup(*_args, **_kwargs):
         pytest.fail("missing spawn identity must not reach signal fallback")
 
-    monkeypatch.setattr(runner, "_terminate_worker", unexpected_cleanup)
+    monkeypatch.setattr(_tournament_worker_execution, "_terminate_worker", unexpected_cleanup)
     key = (tmp_path.resolve(), resources.proc.pid, resources.start_time)
-    monkeypatch.setattr(runner, "_retained_worker_resources", {key: resources})
-    assert await runner.retry_worker_cleanup(tmp_path) == 0
-    assert runner._retained_worker_resources == {key: resources}
+    monkeypatch.setattr(
+        _tournament_worker_execution, "_retained_worker_resources", {key: resources}
+    )
+    assert await _tournament_worker_execution.retry_worker_cleanup(tmp_path) == 0
+    assert _tournament_worker_execution._retained_worker_resources == {key: resources}
     assert not resources.released
     assert resources.args_path.read_text() == "arguments"
     assert resources.result_path.read_text() == "result"
@@ -110,7 +114,9 @@ async def test_reaped_worker_completion_requires_its_captured_group(
         sys.executable, "-c", "pass", start_new_session=True
     )
     await proc.wait()
-    resources = runner._WorkerResources(tmp_path, "unit", tmp_path / "args", tmp_path / "result")
+    resources = _tournament_worker_execution._WorkerResources(
+        tmp_path, "unit", tmp_path / "args", tmp_path / "result"
+    )
     resources.proc = proc
     resources.pgid = proc.pid if captured_group else None
     resources.start_time = token

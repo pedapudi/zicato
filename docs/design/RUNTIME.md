@@ -904,7 +904,7 @@ Therefore:
   else, sparing both the pool parent and every sibling unit.
 
 The supervisor's contract is untouched. The orchestrator-side change
-is confined to the transport: `runner._run_single` sends a request on
+is confined to the transport: `worker_execution._run_single` sends a request on
 the pool socket and awaits a completion notification instead of
 calling `create_subprocess_exec`, and the pool parent (not the
 orchestrator's event loop) reaps the child. The args-file payload,

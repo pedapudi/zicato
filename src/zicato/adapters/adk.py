@@ -997,7 +997,7 @@ def _entry_judge_specs(entry: BoardEntry) -> tuple[Any, ...]:
 
 #: ``BoardEntry.context`` key the tournament runner stamps the
 #: board-level ``disable_drift`` suppression set under. Kept in sync with
-#: ``zicato.tournament.runner._DISABLE_DRIFT_CONTEXT_KEY`` — the two ends
+#: ``zicato.tournament.worker_transport._DISABLE_DRIFT_CONTEXT_KEY`` — the two ends
 #: meet on this single string.
 _DISABLE_DRIFT_CONTEXT_KEY = "disable_drift"
 
@@ -1011,7 +1011,7 @@ def entry_disable_drift(entry: BoardEntry) -> tuple[Any, ...]:
     tournament runner therefore stamps the board-level suppression set
     onto every entry's :attr:`~zicato.core.BoardEntry.context` mapping
     under :data:`_DISABLE_DRIFT_CONTEXT_KEY` (see
-    ``zicato.tournament.runner._stamp_disable_drift``) — ``context`` is
+    ``zicato.tournament.worker_transport._stamp_disable_drift``) — ``context`` is
     the one per-entry channel that survives the runner -> subprocess
     worker -> :func:`zicato.core.validate_board_entry` round-trip.
 
@@ -1030,7 +1030,7 @@ def entry_disable_drift(entry: BoardEntry) -> tuple[Any, ...]:
 
 #: ``BoardEntry.context`` key the tournament runner stamps the
 #: board-level ``judge_only`` flag under. Kept in sync with
-#: ``zicato.tournament.runner._JUDGE_ONLY_CONTEXT_KEY`` — the two ends
+#: ``zicato.tournament.worker_transport._JUDGE_ONLY_CONTEXT_KEY`` — the two ends
 #: meet on this single string.
 _JUDGE_ONLY_CONTEXT_KEY = "judge_only"
 
@@ -1044,7 +1044,7 @@ def entry_judge_only(entry: BoardEntry) -> bool:
     tournament runner therefore stamps the flag onto every entry's
     :attr:`~zicato.core.BoardEntry.context` mapping under
     :data:`_JUDGE_ONLY_CONTEXT_KEY` (see
-    ``zicato.tournament.runner._stamp_judge_only``) — ``context`` is the
+    ``zicato.tournament.worker_transport._stamp_judge_only``) — ``context`` is the
     one per-entry channel that survives the runner -> subprocess worker
     -> :func:`zicato.core.validate_board_entry` round-trip.
 

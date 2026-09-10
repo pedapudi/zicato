@@ -419,7 +419,7 @@ async def test_forced_reruns_serialize_the_same_physical_slot(tmp_path: Path, mo
         active -= 1
         return make_loss_profile(drift_loss=float(calls))
 
-    monkeypatch.setattr(scheduling, "_run_single", measured)
+    monkeypatch.setattr(scheduling.worker_execution, "_run_single", measured)
     generation = make_generation(tmp_path, "v0")
     entry = BoardEntry(id="entry", kind="single_turn", input="x", wall_clock_budget_seconds=1)
 
