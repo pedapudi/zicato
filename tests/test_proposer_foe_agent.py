@@ -167,9 +167,11 @@ def test_a_projected_patch_carries_the_episodes_core_idea_as_its_rationale(
         ({"core_idea": "  two\n\nlines  "}, "two lines"),
         # capped: untrusted model text is bounded before the canonical log.
         ({"core_idea": "x" * 5_000}, "x" * foe_agent.PATCH_RATIONALE_CAP),
-        # a hypothesis missing its own required field should fail as that,
-        # not as an empty patch rationale the schema would reject first.
+        # blank but schema-valid: the placeholder stands as the recorded
+        # reason, since an empty rationale is what the patch schema rejects.
         ({"core_idea": "   "}, None),
+        # malformed: the experiment parse refuses these as hypothesis errors,
+        # so the placeholder never reaches a record.
         ({"core_idea": 7}, None),
         ({}, None),
         ("not a hypothesis", None),
