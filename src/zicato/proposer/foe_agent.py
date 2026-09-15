@@ -186,13 +186,38 @@ def build_episode_tools(
     )
 
 
-def _patch_to_dict(patch: Any) -> dict[str, Any]:
-    """One projected patch in the shape the linter reads."""
+#: Bound on the episode rationale stamped onto a patch. The core idea is
+#: untrusted model output bound for the journal and for table cells, so it is
+#: capped like every other persisted model rationale
+#: (:func:`zicato.proposer.best_of_n.normalize_selection_rationale`).
+PATCH_RATIONALE_CAP = 240
+
+
+def _episode_rationale(hypothesis: Any) -> str | None:
+    """The episode's core idea, as the rationale its patches carry.
+
+    ``None`` when the episode returned no usable core idea, leaving
+    :data:`~zicato.proposer.foe_scratch.PROJECTED_RATIONALE` in place: a
+    hypothesis missing its own required field should fail as the hypothesis
+    error it is, not as an empty patch field the schema rejects.
+    """
+    idea = hypothesis.get("core_idea") if isinstance(hypothesis, dict) else None
+    if not isinstance(idea, str):
+        return None
+    return " ".join(idea.split())[:PATCH_RATIONALE_CAP] or None
+
+
+def _patch_to_dict(patch: Any, rationale: str | None = None) -> dict[str, Any]:
+    """One projected patch in the shape the linter reads.
+
+    ``rationale`` overrides the projection's placeholder once the episode has
+    returned a hypothesis to attribute the change to.
+    """
     return {
         "mutation_id": patch.mutation_id,
         "op": patch.op,
         "new_content": patch.new_content,
-        "rationale": patch.rationale,
+        "rationale": rationale or patch.rationale,
     }
 
 
@@ -477,8 +502,13 @@ class FoeProposerAgent:
                 "the episode completed without changing any declared mutation point",
             )
 
+        # The episode argued for its change once, in the hypothesis; the patches
+        # were read off a diff and carry no reason of their own. Stamp the core
+        # idea on each so a patch read alone — in the epoch report, in a diff
+        # label — names its change instead of how it was recovered.
+        reason = _episode_rationale(hypothesis)
         payload = json.dumps(
-            {"hypothesis": hypothesis, "patches": [_patch_to_dict(p) for p in patches]}
+            {"hypothesis": hypothesis, "patches": [_patch_to_dict(p, reason) for p in patches]}
         )
         try:
             return parse_experiment_json(

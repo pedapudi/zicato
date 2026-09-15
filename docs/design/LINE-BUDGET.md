@@ -50,9 +50,9 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 469,931 | +61,270 |
-| Production | 197,702 | 188,435 | -9,267 |
-| Production logic | 110,276 | 109,952 | -324 |
+| Total | 408,661 | 470,003 | +61,342 |
+| Production | 197,702 | 188,474 | -9,228 |
+| Production logic | 110,276 | 109,961 | -315 |
 
 The baseline row is the reference `f9052dd` measured by the classification the
 checker holds, which counts the console's hand-written entry point
@@ -91,11 +91,11 @@ production-logic series per subsystem along a branch's first-parent commits.
 | src/zicato/tournament | 11,223 | 11,223 | 6,647 | 40.8% |
 | src/zicato/reflection | 9,843 | 9,843 | 6,578 | 33.2% |
 | crates/supervisor | 15,977 | 13,521 | 6,279 | 53.6% |
-| src/zicato/proposer | 9,521 | 9,521 | 4,772 | 49.9% |
+| src/zicato/proposer | 9,558 | 9,558 | 4,781 | 50.0% |
 | src/zicato/cli | 7,088 | 7,088 | 4,697 | 33.7% |
 | src/zicato/analyzer | 7,165 | 7,165 | 4,591 | 35.9% |
 | src/zicato/selection | 5,278 | 5,278 | 3,060 | 42.0% |
-| src/zicato/core | 6,393 | 6,393 | 2,808 | 56.1% |
+| src/zicato/core | 6,395 | 6,395 | 2,808 | 56.1% |
 | src/zicato/runtime | 5,198 | 5,198 | 2,535 | 51.2% |
 | src/zicato/index | 4,392 | 4,392 | 2,390 | 45.6% |
 | src/zicato/telemetry | 4,503 | 4,503 | 2,197 | 51.2% |
@@ -459,3 +459,6 @@ dropped rows named.
 | Shared recorded results and worker ownership (total) | 472,149 | -2,218 | 469,931 | Tournament execution publishes diagram analysis; readers share canonical measurements; worker ownership removes circular imports; diagnostics and transcripts share record handling. Browser change detection includes displayed scores. |
 | Shared recorded results and worker ownership (production) | 190,095 | -1,660 | 188,435 | Tournament execution publishes diagram analysis; readers share canonical measurements; worker ownership removes circular imports; diagnostics and transcripts share record handling. Browser change detection includes displayed scores. |
 | Shared recorded results and worker ownership (production logic) | 110,735 | -783 | 109,952 | Tournament execution publishes diagram analysis; readers share canonical measurements; worker ownership removes circular imports; diagnostics and transcripts share record handling. Browser change detection includes displayed scores. |
+| Projected patches carry the episode hypothesis (total) | 469,931 | +72 | 470,003 | Issue #529: a proposal episode edits a working copy, so its patches are read off a diff and every one recorded the same placeholder. Parametrized rationale cases and one end-to-end assertion account for the test increase. |
+| Projected patches carry the episode hypothesis (production) | 188,435 | +39 | 188,474 | Issue #529: the completion path stamps the episode's core idea onto each projected patch. The placeholder is named where it is produced and survives only the mid-episode shape lint, which runs before any hypothesis exists. |
+| Projected patches carry the episode hypothesis (production logic) | 109,952 | +9 | 109,961 | Issue #529: one collapse-and-cap reader of the hypothesis core idea, bounded like every other persisted model rationale, and its override in the existing patch serializer. |
