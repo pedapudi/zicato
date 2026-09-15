@@ -197,9 +197,11 @@ def _episode_rationale(hypothesis: Any) -> str | None:
     """The episode's core idea, as the rationale its patches carry.
 
     ``None`` when the episode returned no usable core idea, leaving
-    :data:`~zicato.proposer.foe_scratch.PROJECTED_RATIONALE` in place: a
-    hypothesis missing its own required field should fail as the hypothesis
-    error it is, not as an empty patch field the schema rejects.
+    :data:`~zicato.proposer.foe_scratch.PROJECTED_RATIONALE` in place rather
+    than an empty string the patch schema rejects. A missing or non-string
+    ``core_idea`` then fails at the experiment parse, as the hypothesis error
+    it is; a whitespace-only one passes ``minLength`` and is recorded, so that
+    episode's patches keep the placeholder.
     """
     idea = hypothesis.get("core_idea") if isinstance(hypothesis, dict) else None
     if not isinstance(idea, str):

@@ -30,8 +30,10 @@ SCRATCH_PREFIX = "ztw-pscratch-"
 
 #: What a projected patch carries until the episode returns its hypothesis: a
 #: diff has no prose to read a reason off. ``_episode_rationale`` replaces it
-#: with the ``core_idea`` on completion, so it survives only in the mid-episode
-#: ``validate_patches`` lint, which reads shape rather than prose.
+#: with the ``core_idea`` on completion, so it usually survives only in the
+#: mid-episode ``validate_patches`` lint, which reads shape rather than prose.
+#: It does stand as the recorded reason in one case: a ``core_idea`` of pure
+#: whitespace, which the hypothesis schema's ``minLength`` admits.
 PROJECTED_RATIONALE = "Read back from the proposer's working copy."
 
 
