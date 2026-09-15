@@ -125,10 +125,10 @@ CREATE TABLE patches (
       op TEXT,
       rationale TEXT
     );
-INSERT INTO "patches" VALUES('<HEX32>','<DATE>_t1_racing','v1','topic_slugify_logic','replace','Read back from the proposer''s working copy.');
-INSERT INTO "patches" VALUES('<HEX32>','<DATE>_t1_racing','v2','topic_slugify_logic','replace','Read back from the proposer''s working copy.');
-INSERT INTO "patches" VALUES('<HEX32>','<DATE>_t1_racing','v3','topic_slugify_logic','replace','Read back from the proposer''s working copy.');
-INSERT INTO "patches" VALUES('<HEX32>','<DATE>_t1_racing','v4','topic_slugify_logic','replace','Read back from the proposer''s working copy.');
+INSERT INTO "patches" VALUES('<HEX32>','<DATE>_t1_racing','v1','topic_slugify_logic','replace','Tag the topic_slugify_logic literal for candidate v1.');
+INSERT INTO "patches" VALUES('<HEX32>','<DATE>_t1_racing','v2','topic_slugify_logic','replace','Tag the topic_slugify_logic literal for candidate v2.');
+INSERT INTO "patches" VALUES('<HEX32>','<DATE>_t1_racing','v3','topic_slugify_logic','replace','Tag the topic_slugify_logic literal for candidate v3.');
+INSERT INTO "patches" VALUES('<HEX32>','<DATE>_t1_racing','v4','topic_slugify_logic','replace','Tag the topic_slugify_logic literal for candidate v4.');
 CREATE TABLE reflections (
       reflection_id TEXT PRIMARY KEY,
       epoch_id TEXT,

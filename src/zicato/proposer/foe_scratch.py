@@ -28,6 +28,14 @@ from zicato.mutation.validator import duplicate_mutation_ids
 
 SCRATCH_PREFIX = "ztw-pscratch-"
 
+#: What a projected patch carries until the episode returns its hypothesis: a
+#: diff has no prose to read a reason off. ``_episode_rationale`` replaces it
+#: with the ``core_idea`` on completion, so it usually survives only in the
+#: mid-episode ``validate_patches`` lint, which reads shape rather than prose.
+#: It does stand as the recorded reason in one case: a ``core_idea`` of pure
+#: whitespace, which the hypothesis schema's ``minLength`` admits.
+PROJECTED_RATIONALE = "Read back from the proposer's working copy."
+
 
 class EditOutsideMutationPointError(Exception):
     """Working source cannot be reproduced under the captured mutation policy."""
@@ -103,7 +111,7 @@ def _project(policy: MutationPolicy, scratch_root: Path) -> list[Patch]:
             new_content=replacements[point.id],
             new_numeric=None,
             new_enum=None,
-            rationale="Read back from the proposer's working copy.",
+            rationale=PROJECTED_RATIONALE,
         )
         for point in sorted(policy.points, key=lambda p: p.id)
         if point.id in replacements and (point.kind == "file" or point.file not in replaced_files)
@@ -138,6 +146,7 @@ def _require_same_files(expected: tuple[SourceFile, ...], actual: tuple[SourceFi
 
 
 __all__ = [
+    "PROJECTED_RATIONALE",
     "SCRATCH_PREFIX",
     "EditOutsideMutationPointError",
     "project_working_copy",
