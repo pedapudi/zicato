@@ -254,10 +254,14 @@ def _emit_harness_loaded(
         if gen_id and gen_id not in generation_ids:
             generation_ids.append(gen_id)
     for gen_id in generation_ids:
+        # Hoisted out of the try: the handler below CALLS it, so importing it
+        # inside would make an import failure raise NameError out of the very
+        # except clause that exists to keep emission from failing a round.
+        from zicato.util.best_effort import report_optional_failure  # noqa: PLC0415
+
         try:
             from zicato.core.workspace import harness_load_path  # noqa: PLC0415
             from zicato.tournament.records import read_harness_load  # noqa: PLC0415
-            from zicato.util.best_effort import report_optional_failure  # noqa: PLC0415
 
             record = read_harness_load(
                 harness_load_path(workspace_root, epoch_id, gen_id), generation_id=gen_id
