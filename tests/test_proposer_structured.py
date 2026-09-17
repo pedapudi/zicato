@@ -201,7 +201,11 @@ def test_parse_rejects_missing_patches() -> None:
 def test_parse_rejects_empty_patches_array() -> None:
     p = _valid_payload()
     p["patches"] = []
-    _expect_parse_error(p, "non-empty")
+    # Pinned on WHERE the violation is, not on the prose. "non-empty" is
+    # jsonschema's wording for a `minItems` failure, and the dependency is
+    # unbounded above (`jsonschema >= 4.20`); older releases say "is too
+    # short". The location prefix is zicato's own.
+    _expect_parse_error(p, "patches")
 
 
 def test_parse_rejects_invalid_op() -> None:
@@ -313,7 +317,9 @@ def test_parse_rejects_set_numeric_with_string_value() -> None:
 def test_parse_rejects_empty_modulating() -> None:
     p = _valid_payload()
     p["hypothesis"]["modulating"] = []
-    _expect_parse_error(p, "non-empty")
+    # See the note on the empty-patches case: the location is ours, the
+    # "non-empty" phrasing is the schema library's.
+    _expect_parse_error(p, "hypothesis/modulating")
 
 
 # ---------------------------------------------------------------------------
