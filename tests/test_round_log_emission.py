@@ -868,3 +868,54 @@ def test_the_duel_call_site_names_the_generations_it_gates() -> None:
     for name, keywords in sorted(seen.items()):
         missing = required[name] - keywords
         assert not missing, f"field_execution.py: {name} does not name {sorted(missing)}"
+
+
+def test_an_unreadable_record_is_reported_rather_than_raising_nameerror(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The optional-failure reporter must be bound when the handler runs.
+
+    ``_emit_harness_loaded`` promises that a record it cannot read costs the
+    round nothing. The handler that keeps that promise calls
+    ``report_optional_failure``; importing it inside the guarded block makes
+    the promise conditional on the import itself succeeding, and an import
+    error there leaves the name unbound so the handler raises ``NameError``
+    out of the round instead of reporting.
+
+    Simulated by failing the first import in the block, which is what a
+    partially installed tree does for real.
+    """
+    import builtins
+    import importlib
+    from types import SimpleNamespace
+
+    from zicato.evolve.round_reporting import _emit_harness_loaded
+
+    real_import = builtins.__import__
+
+    def refuse_workspace_module(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == "zicato.core.workspace":
+            raise ImportError("simulated: zicato.core.workspace is unavailable")
+        return real_import(name, *args, **kwargs)
+
+    reported: list[str] = []
+    # Patched BEFORE __import__ is: resolving a patch target imports it,
+    # which the refusing hook below would be in the way of. Bound to the
+    # MODULE rather than by dotted string: the package re-exports a
+    # function of the same name, so the string form resolves to that.
+    best_effort_mod = importlib.import_module("zicato.util.best_effort")
+
+    monkeypatch.setattr(
+        best_effort_mod, "report_optional_failure", lambda label, exc: reported.append(label)
+    )
+    monkeypatch.setattr(builtins, "__import__", refuse_workspace_module)
+
+    emitter = _RoundLogEmitter(tmp_path, "e0", 0)
+    result = SimpleNamespace(parent_generation_id="v0", child_generation_id="v1")
+
+    # Must not raise: the whole point of the handler.
+    _emit_harness_loaded(emitter, tmp_path, "e0", result)
+
+    assert reported == ["round-log source record"] * 2, (
+        "each generation's unreadable record should be reported once"
+    )
