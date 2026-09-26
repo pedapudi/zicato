@@ -44,15 +44,14 @@ tournament
 inspect
   config | environment | logs | mutations | reflection | setup | telemetry
 repair
-  epoch-goals | generation-source-backend | generations | index |
-  judge-losses | report | tournament-fk | v0-baseline
+  generation-source-backend | generations | index | report | v0-baseline
 ```
 
 `inspect reflection` provides `run`, `practices`, `suggest`, and `report`.
 Suggestions are reports for operator review. See the generated help record
 for the full flags.
 
-## Moved commands
+## Command locations for common tasks
 
 | Capability | Command |
 |---|---|
@@ -68,18 +67,20 @@ for the full flags.
 | Rebuild the analytical index | `zicato repair index` |
 | Reconcile generation rows | `zicato repair generations` |
 | Regenerate an epoch report | `zicato repair report` |
-| Run targeted migrations | `zicato repair epoch-goals`, `judge-losses`, `tournament-fk`, or `v0-baseline` |
+| Backfill the synthetic `v0` experiment marker | `zicato repair v0-baseline` |
 | Set the generation source backend on an existing workspace | `zicato repair generation-source-backend --backend <git\|directory>` |
 
 ## Design rules
 
-- `evolve` remains self-orchestrating; advanced commands are debugging and
-  recovery tools, not required setup steps.
+- `evolve` remains self-orchestrating. The advanced commands are debugging
+  and recovery tools, and no setup step requires them.
 - Every `evolve` invocation runs the workspace validators at the public spend
   boundary before auto-epoching or model spend, and refuses to start on any
   finding that would make the round unmeasurable. `--dry-run` runs the same
-  validators, reports board and mutation-surface sizes, and exits without
-  starting the loop.
+  validators, reports board and mutation-surface sizes, sends one short
+  reachability request per configured model role once the validators pass,
+  and exits without starting the loop. A role that does not answer makes the
+  dry run exit nonzero.
 - Canonical artifact formats and command behavior stay unchanged when a command
   moves.
 - The root is explicitly assembled. Adding a module under `cli/commands` does

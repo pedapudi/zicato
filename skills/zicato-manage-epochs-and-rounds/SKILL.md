@@ -29,7 +29,7 @@ epoch                      a sealed evaluation CONTRACT + a goal
 - **Epoch** — the unit of evaluation **contract**: a frozen board + proposer
   brief + scoring (weights + gate + tournament structure) + the registered
   target-adapter *identity* (the declared adapter block, the worker document
-  that rebuilds it, and the mutable trees), plus an operator
+  that rebuilds it, and the mutable trees) + the proposer, plus an operator
   **goal**. Generations *within* an epoch are directly comparable; *across*
   epochs they are not. Generations are linearly ordered `v0 → v1 → … → vN`;
   `v0` is the baseline (a fresh epoch's `v0` is the promoted head of the
@@ -38,10 +38,13 @@ epoch                      a sealed evaluation CONTRACT + a goal
   orchestrator proposes a challenger field, runs ONE tournament over it, and
   crowns. Round numbers are global within the epoch and independent of
   promotion: the 17th round is round 17 even if only 12 promoted.
-- **Generation** — a candidate child snapshot (`vN/`) the proposer produced in
-  a round, carrying its `experiment.json` (hypothesis + patches, then outcome).
-- **Run** — a single board-entry execution under one generation, persisted at
-  `generations/{id}/runs/{entry_id}/` (`events.jsonl` + `loss.json`).
+- **Generation** — a candidate child snapshot (`vN`) the proposer produced in
+  a round, carrying its `experiment.json` (hypothesis + patch ids); its
+  outcome is recorded with the round in `rounds/{round}/field_settlement.json`.
+- **Run** — a single board-entry execution under one generation, persisted
+  under `generations/{id}/runs/{entry_id}/seed-<seed>/` as
+  `loss.<purpose>.r<draw>.json` (plus `result.…json`, and `events.…jsonl` for
+  an instrumented adapter).
 
 ## 2. The TWO senses of "round" (load-bearing — commonly confused)
 
@@ -52,14 +55,15 @@ When someone says "round", disambiguate FIRST. They mean one of two things:
 | What it is | One meta-loop step (`--rounds N`) | One scheduling step *inside* a single tournament |
 | Count | One tournament per outer round | Many, only for non-gauntlet structures |
 | Examples | round 0, round 1, … | swiss rounds, single/double-elim **bracket** rounds, racing **rungs** |
-| Code | the round loop in `zicato/evolve/loop.py::evolve_n_rounds` | `Matchup.stage_index` / `RoundRecord` in `zicato/selection/strategy.py` (the field was once *also* called `round_index`, which is exactly why this table exists; readers still accept the legacy key) |
-| Stamped where | `Generation.round_index` / `Experiment.round_index` (§3) | the selection strategy's bracket state + the settled `tournaments` index row |
+| Code | the round loop in `zicato/evolve/loop.py::evolve_n_rounds` | `Matchup.stage_index` / `RoundRecord.stage_index` in `zicato/selection/strategy.py` |
+| Stamped where | `Generation.round_index` / `Experiment.round_index` (§3) | the `stage_index` of each entry in a tournament record's `rounds[]` |
 
-- A **gauntlet** (the default) tournament has exactly one inner round: champion
+- A **gauntlet** tournament has exactly one inner round: champion
   vs one challenger. So in the gauntlet, outer-round and the (single) inner
   round coincide — which is why the two senses are easy to conflate.
-- A **swiss / single_elim / double_elim / racing** tournament plays *several*
-  inner rounds within ONE outer evolve round, over a multi-challenger field.
+- A **racing** tournament (the recommended default) or an experimental
+  **swiss / single_elim / double_elim** one plays *several* inner rounds within
+  ONE outer evolve round, over a multi-challenger field.
   "swiss round 3" or "racing rung 2" is an **inner** round; it does not advance
   the outer `--rounds` counter. See `skills/zicato-design-tournament-structure`.
 
@@ -74,8 +78,8 @@ that minted it. It is persisted into `experiment.json` (`Experiment.round_index`
 mirrored from `Generation.round_index`) so the dashboard's round-timeline /
 champion-spine views can attribute each generation to its birth round.
 
-- Defaults to `0` for the seed `v0` and for pre-feature records that predate
-  the stamp.
+- It is `0` for the seed `v0` and for every candidate minted in the first
+  round; an experiment record without an integer `round_index` is refused.
 - It is the OUTER round, never an inner bracket round.
 - Read it straight from `experiment.json`:
   `grep round_index .zicato/epochs/<id>/generations/v3/experiment.json`.
@@ -85,7 +89,7 @@ champion-spine views can attribute each generation to its birth round.
 Operators should rarely think about epoch management. They edit the board /
 brief / scoring, run `zicato evolve`, and the right thing happens.
 
-### 4.1 What is in the contract (exactly five things)
+### 4.1 What is in the contract
 
 1. **board** — entries + `expectations` + `judges` + the board-level
    `disable_drift` set (`board.jsonl`).
@@ -106,8 +110,15 @@ brief / scoring, run `zicato evolve`, and the right thing happens.
    the proposer is the agent (plus its skills) that consumes it. See
    `skills/zicato-design-proposer` and
    [PROPOSER.md](../../docs/design/PROPOSER.md).
+6. **evaluator revision** — zicato's own evaluator protocol revision
+   (`ZICATO_EVALUATOR_REVISION` in `zicato/epoch/contract.py`), bumped only when
+   a zicato change alters what a run, loss or decision means. Upgrading zicato
+   across such a bump rolls the epoch.
 
-`evolve` reduces these to one `sha256` **contract hash**
+The per-component hashes are stored in the epoch's `contract_components.json`
+(keys `board`, `brief`, `scoring`, `adapter`, `mutable_trees`, `proposer`,
+`evaluator_revision`), which is how a roll names the changed component.
+`evolve` reduces them to one `sha256` **contract hash**
 (`zicato/epoch/contract.py`), stored on the `EpochConfig.contract_hash` at
 creation. The hash is over a **canonicalized** form, so spurious edits do not
 roll: board row order, brief line endings, equivalent typed numeric spellings,
@@ -132,13 +143,13 @@ captured contract before execution.
 
 ### 4.3 What forces a roll (any contract change)
 
-Any change to the five components above. Concretely, each of these rolls the
+Any change to the components above. Concretely, each of these rolls the
 epoch:
 
 - a changed, added or removed board entry;
 - an added or retuned judge;
 - toggling `disable_drift`;
-- editing the brief's `## Forbidden` list, or any brief text that survives
+- editing the brief's `## Forbidden edits` list, or any brief text that survives
   canonicalization;
 - retuning a weight, a `per_judge_weight`, or `promote_margin`;
 - a different entrypoint;
@@ -149,7 +160,7 @@ epoch:
   one of its `skills/*.md` modules** — the roll message names the changed
   component as `proposer`;
 - **changing the scoring `tournament` block**, whether that means switching
-  `gauntlet → swiss` or bumping a param such as `swiss.rounds`. The tournament structure lives inside `scoring.json` and rides
+  `gauntlet → racing` or bumping a param such as racing's `eta`. The tournament structure lives inside `scoring.json` and rides
 the existing scoring canonicalizer, so a structure change rolls the epoch
 exactly as a `promote_margin` retune does (the roll message names the changed
 component as `scoring` — the structure *is* scoring). The `evolve
@@ -167,15 +178,15 @@ never a contract input.
 ### 4.4 Roll mechanics
 
 On a roll, `evolve`:
-1. closes the current epoch (runs the analysis pass → `analysis.md`, restamps
-   the persisted report's masthead to the final closed state),
-2. opens a fresh epoch auto-named `e{N}` (N = count of existing epochs;
-   override with `--epoch-name`),
-3. baselines the new epoch's `v0` from the **promoted head of the closed
-   epoch** (recorded as the new epoch's `v0_parent` in `lineage.json`); if the
-   closed epoch promoted nothing past its own `v0`, the new epoch seeds from
-   the registered mutable trees,
-4. prints `contract changed (<component>) — rolled <old> -> <new>` and warns
+1. opens a fresh epoch auto-named `e{N}` (N = count of existing epochs;
+   override with `--epoch-name`), baselining its `v0` from the **promoted head
+   of the previous epoch** (recorded as the new epoch's `v0_parent` in
+   `lineage.json`); if the previous epoch promoted nothing past its own `v0`,
+   the new epoch seeds from the registered mutable trees,
+2. closes the previous epoch and renders its report (the full prose pass when
+   an evaluation callable is available, otherwise a deterministic masthead
+   restamp to the closed state),
+3. prints `contract changed (<component>) — rolled <old> -> <new>` and warns
    that the auto-rolled epoch has **no goal recorded** — nudging you to run
    `zicato epoch set-goal` (§7).
 
@@ -214,28 +225,30 @@ What this means for you:
 
 ## 6. Journaling + the MANDATORY pre-run hypothesis
 
-Every experiment carries a structured **hypothesis written BEFORE the run**,
-completed with an **outcome** appended to the same `experiment.json` AFTER the
-run. The hypothesis is mandatory — a schema-invalid proposer response is
-rejected and re-prompted.
+Every experiment carries a structured **hypothesis written BEFORE the run**
+in its `experiment.json`, completed by an **outcome** recorded AFTER the run in
+the round's `rounds/{round}/field_settlement.json` and joined to the
+experiment by every reader. The hypothesis is mandatory — a schema-invalid
+proposer response is rejected and re-prompted.
 
 - The hypothesis (`HypothesisSpec`): `core_idea`, `modulating` (mutation-point
-  ids), `why` (the pattern observation), `expected_metric_movements` /
-  `expected_metric_movements`, `expected_pass_rate_delta`, `risks`.
-- The outcome (`OutcomeRecord`): realized `metric_movements` (each with a
-  per-kind `hypothesis_match` — the load-bearing signal: did the proposer
-  *reason* or *guess*?), `scalar_score_delta`, `tournament_decision`, and the
-  additive structure fields (`structure`, `final_rank`, `match_record`,
-  `champion_eval_mode`).
+  ids), `why` (the pattern observation), `expected_metric_movements` (metric
+  name, direction, magnitude), `expected_pass_rate_delta`, `risks`.
+- The outcome (`OutcomeRecord`): `scalar_score_delta`, `drift_loss_delta`,
+  `pass_rate_delta`, `tournament_decision`, `rejection_reason`, the structure
+  fields (`structure`, `final_rank`, `match_record`, `champion_eval_mode`),
+  and the holdout and evidence records. Each prediction is graded against the
+  realised movement on sign and magnitude — the signal that says whether the
+  proposer *reasoned* or *guessed*.
 - The **epoch** carries a **goal** (the operator's intent) + the proposer
-  **brief**. The running per-round `journal.md` and the at-close `analysis.md`
-  read this ledger. To compose a good hypothesis up front, see
+  **brief**. The journal (rendered from these records) and the `analysis.md`
+  report read this ledger. To compose a good hypothesis up front, see
   `skills/zicato-design-experiment` and `skills/zicato-write-brief`; to read the
   ledger after, see `skills/zicato-analyze-epoch`.
 
 ### The per-round event log (the round's store-of-record)
 
-Alongside the journal, every settled round writes an append-only typed event
+Alongside those records, every round writes an append-only typed event
 log at `epochs/{epoch}/rounds/{round}/round_log.jsonl`, sequenced (`seq` starts
 at 1, +1 per append) and durable under `epochs/` rather than `runtime/`. It
 covers the round's whole arc — open (contract hash) → proposal session → apply /
@@ -247,11 +260,12 @@ fields worth knowing:
 - **`gate_evaluated`** carries `champion_scalar` / `challenger_scalar` /
   `margin_required` on **both** decisions, so a duel's effect size is
   reconstructable from the log alone. They default to `None` (not `0.0`) on logs
-  that predate them. `rule_fired` is presentation — it names which rule decided
+  that lack them. `rule_fired` is presentation — it names which rule decided
   and is *empty on a clean promote*; never regex numbers out of it.
 - **`harness_loaded`** records which module inside a generation's snapshot was
-  actually imported (`harness_entrypoint_files`) and which declared mutable trees
-  **no** unit imported (`harness_never_imported_trees`). A non-empty entry there
+  actually imported (`entrypoint_file`) and which declared mutable trees were
+  (`trees_verified`) and were **not** (`trees_never_imported`) imported by any
+  unit. A non-empty `trees_never_imported`
   means that generation's mutations to those trees could not have been under
   test — loop health turns it into a warning. Both are additive and normally
   empty (also empty for a fully cache-served round).
@@ -275,15 +289,16 @@ hand, or to reclaim disk. Confirmed via `--help`, which is always canonical
                                  (--keep-last N | --keep-promoted-only) [--apply]
 ```
 
-- **`list`** — every epoch as a markdown table (rendered from `lineage.json`:
+- **`list`** — every epoch as a markdown table (rendered from the resolved lineage:
   started/closed, promoted/rejected counts, parent). The first thing to run
   when reasoning about lineage. Read-only.
 - **`new NAME`** — create an epoch and make it current. The supplied contract
   files are both frozen into `epochs/{id}/` AND published as the workspace's
   *live* contract (so a later `evolve` resolves the same contract and continues
   this epoch rather than spuriously rolling). Auto-closes a still-open previous
-  epoch first (stub `analysis.md` — no evaluation LLM is wired through the CLI
-  yet). When stdin is a TTY and `--goal` is omitted you are prompted for one.
+  epoch first; the CLI passes no evaluation callable, so that close writes a
+  stub `analysis.md` when none exists. When stdin is a TTY and `--goal` is
+  omitted you are prompted for one.
 - **`close [EPOCH_ID]`** — mark closed and (best-effort) write `analysis.md`
   (current epoch when omitted). The analysis pass runs only when an evaluation
   LLM is configured; otherwise a stub is written for later regeneration. A
@@ -291,7 +306,7 @@ hand, or to reclaim disk. Confirmed via `--help`, which is always canonical
 - **`switch EPOCH_ID`** — re-point the `current_epoch` marker (target must
   exist).
 - **`gc [EPOCH_ID]`** — reclaim the disk held by settled-**rejected**
-  generations' SOURCE TREES. Records survive: `lineage.json`, the journal,
+  generations' SOURCE TREES. Records survive: `lineage.json`, round results,
   experiment/score records, and run telemetry are never touched, so a pruned
   generation stays fully analysable and only loses its browsable tree. The
   promoted chain, in-flight generations, and the seed `v0` are never pruned.
@@ -337,7 +352,7 @@ challenger's snapshot provenance.
 - venv-only (`.venv/bin/zicato`); install with `uv sync --all-extras`.
 - Do **not** launch a live `evolve` to demonstrate a roll — that spends budget
   and trips the live-run gate. Verify wiring with the test suite / the
-  deterministic mock target (`skills/zicato-bootstrap`).
+  deterministic `zicato init --example` project (`skills/zicato-bootstrap`).
 - Derive the CLI from `--help` — it is canonical; `docs/design/CLI.md` is a
   generated mirror, so trust `--help` whenever the two disagree.
 - A closed epoch is frozen / read-only; never re-open or re-run one.

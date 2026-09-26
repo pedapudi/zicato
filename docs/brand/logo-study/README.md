@@ -1,5 +1,9 @@
 # zicato logo / branding study
 
+> **Status:** historical record of the branding study archived on
+> 2026-06-06. The current brand assets and their rules are in
+> [`docs/brand/README.md`](../README.md).
+
 A standalone study page (`index.html` — open it in a browser) that compared
 options for the brand mark and wordmark. This is a historical record of how the
 values in `docs/brand/` were chosen.
@@ -24,6 +28,7 @@ corner, so every mark and figure recolours live, and it parameterizes the real
 These values are in `docs/brand/*.svg` and in the dashboard mark; the dashboard
 top bar renders the full spiral at 26px, above the legibility floor.
 
-> Two further studies from the same effort — one on typefaces and one on
-> tournament and evolution visualizations — were served standalone during
-> development and are not in this repository.
+> Two further studies from the same effort are archived beside the design
+> documents: typefaces in [`docs/design/typeface-study/`](../../design/typeface-study/)
+> and tournament and evolution visualizations in
+> [`docs/design/tournament-viz-study/`](../../design/tournament-viz-study/).

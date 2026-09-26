@@ -32,9 +32,9 @@ three of the five.
 | # | Data kind | What it is |
 |---|---|---|
 | 1 | **Runtime state** | The orchestrator's live state, read by the supervisor and the dashboard: `heartbeat.json`, `lock.json`, `active_tournament.events.jsonl`, the per-run `active_runs/*.json`, and the control-protocol flag files. |
-| 2 | **Telemetry** | The `goldfive.v1.Event` stream of each tournament run — one `events.jsonl` per run. |
+| 2 | **Telemetry** | The event stream of each tournament run — one events JSONL file per measurement (`events.<purpose>.r<draw>.jsonl`). |
 | 3 | **Generation source trees** | The post-apply system-under-test source at each generation: a tagged commit under Git or `generations/vN/snapshot/` under the directory backend. |
-| 4 | **Lineage / experiments / journals** | The typed evolutionary record: `experiment.json` + per-patch files, `journal.md`, `lineage.json`, per-epoch `config.json` / `board.jsonl` / `scoring.json` / `brief.md`, cached `gen_score.json`. |
+| 4 | **Lineage / experiments / round results** | The typed evolutionary record: `experiment.json` + per-patch files, `lineage.json`, each round's `rounds/<n>/field_settlement.json`, per-epoch `config.json` / `board.jsonl` / `scoring.json` / `brief.md`, cached `gen_score.json`. The journal is rendered from these records rather than written. |
 | 5 | **The analytical index** | The relational projection answering cross-run `GROUP BY` / `JOIN` questions: `.zicato/index.db`. |
 
 ## 2. The settled mechanism for each kind
@@ -50,10 +50,10 @@ three of the five.
 | Data kind | Mechanism | Why this mechanism |
 |---|---|---|
 | **1. Runtime state** | **Files** — one JSON record per file, through `StorageBackend` (the file backend). | Each record is written independently by a different process: the orchestrator, or a per-run worker. One file per record is the lock-free, crash-isolated shape. A database here would serialise independent writers behind one lock for no query benefit, because runtime state is read by key and never joined. |
-| **2. Telemetry** | **JSONL** — `events.jsonl`, one append-only file per run, written by goldfive's `JSONLPersistenceSink`. | The access pattern is append while running, tail for the log panel, stream over server-sent events, and replay once in the reducer. JSONL suits all four. Events are never queried across runs; the reduced `LossProfile` is, and that goes in the index. A row-per-event table would add write contention during the run for no query benefit. The format is goldfive's; zicato consumes it and does not re-schematize it. |
+| **2. Telemetry** | **JSONL** — one append-only events file per measurement, written by the run's telemetry sink (goldfive's `JSONLPersistenceSink` under the goldfive dialect). | The access pattern is append while running, tail for the log panel, stream over server-sent events, and replay once in the reducer. JSONL suits all four. Events are never queried across runs; the reduced `LossProfile` is, and that goes in the index. A row-per-event table would add write contention during the run for no query benefit. zicato consumes the producer's event format and does not re-schematize it. |
 | **3. Generation source trees** | **Git or directory snapshots, selected explicitly by config.** Behind the `GenerationStore` protocol (§5) either way. | The data is intrinsically file-shaped. `zicato init` selects git, whose object store deduplicates unchanged blobs. The directory backend remains a supported full-`copytree` implementation. Both keep the source tree code-only via the shared artifact-exclusion policy (`snapshot_scope`, §5.2.1). |
-| **4. Lineage / experiments / journals** | **Files** — JSON records + per-patch JSON files + markdown, through `StorageBackend` (the file backend). | These are the typed canonical record. They are small, human-readable in a pager, diffable, and edited at generation granularity by a single writer (the orchestrator) per epoch. Files keep them inspectable and keep the store of record uniform with runtime state. They are *projected* into the index (kind 5) for cross-run queries. |
-| **5. The analytical index** | **A real database — SQLite today, DuckDB an evaluated option (§6).** Derived, disposable, rebuilt from kinds 1-4. | A relational index is the right shape for cross-run aggregates ("loss across runs × generations × epochs"). This is the one place a database fits. It is **never canonical** — `zicato repair index` reconstructs it from the files, so it holds no information that is not already on disk. |
+| **4. Lineage / experiments / round results** | **Files** — JSON records + per-patch JSON files + markdown, through `StorageBackend` (the file backend). | These are the typed canonical record. They are small, human-readable in a pager, diffable, and edited at generation granularity by a single writer (the orchestrator) per epoch. Files keep them inspectable and keep the store of record uniform with runtime state. They are *projected* into the index (kind 5) for cross-run queries. |
+| **5. The analytical index** | **A real database — SQLite, with DuckDB an evaluated option (§6).** Derived, disposable, rebuilt from kinds 1-4. | A relational index is the right shape for cross-run aggregates ("loss across runs × generations × epochs"). This is the one place a database fits. It is **never canonical** — `zicato repair index` reconstructs it from the files, so it holds no information that is not already on disk. |
 
 The principle behind the table: a database only for the derived
 cross-run index; files for every canonical record; JSONL for the
@@ -86,9 +86,9 @@ knows nothing about epochs or generations. §4 explains why.
 
 The runtime domain (`zicato.runtime`) routes every state read and write
 through `StorageBackend` via the `zicato.runtime._storage` adapter. The
-lineage, experiment, and journal domain (`zicato.epoch.journal`,
-`zicato.epoch.lineage`, `zicato.epoch.lifecycle`) routes through it too
-(§5.1).
+lineage, experiment, and round-result domain (`zicato.epoch.journal`,
+`zicato.epoch.lineage`, `zicato.epoch.settlement_receipt`,
+`zicato.epoch.lifecycle`) routes through it too (§5.1).
 
 ## 4. The resolved fork: record-level seam vs generation-level seam
 
@@ -159,7 +159,8 @@ available when Git is unwanted.
 
 ### 5.1 `epoch/` records on `StorageBackend`
 
-`zicato.epoch.journal`, `zicato.epoch.lineage`, and the config writes in
+`zicato.epoch.journal`, `zicato.epoch.lineage`,
+`zicato.epoch.settlement_receipt`, and the config writes in
 `zicato.epoch.lifecycle` route every record read and write through
 `StorageBackend`, via a `zicato.epoch._storage` adapter that mirrors
 `zicato.runtime._storage`. Each adapter owns `*_key` helpers turning a
@@ -187,8 +188,8 @@ key already has on disk.
 Every public `epoch/` function takes `workspace_root: Path` as its
 first argument, so the routing is invisible to callers. What the
 routing buys is uniform atomicity. `experiment.json`, `lineage.json`,
-`config.json`, `scoring.json`, the journal, and the per-patch files all
-go through the same `.tmp`, `fsync`, and rename discipline the runtime
+`config.json`, `scoring.json`, `field_settlement.json`, and the per-patch
+files all go through the same `.tmp`, `fsync`, and rename discipline the runtime
 layer uses, so a crash mid-write cannot leave any of them truncated.
 The on-disk layout is byte-identical to a direct write.
 
@@ -219,32 +220,36 @@ The baseline is exempt from the comparison. It is seeded before either
 register names it, and a workspace whose baseline record was lost keeps a
 valid tree that `zicato repair v0-baseline` rewrites the record for.
 
-A resolved field round spans several atomic records. Before updating the first
-experiment outcome, zicato writes
-`epochs/{epoch}/rounds/{round}/field_settlement.json`. The pending receipt
-contains the final candidate outcomes and the complete settled bracket. Replay
-derives lineage facts from the candidate experiments and outcomes; it derives
-structure, decision, and reason from the bracket. The receipt separately stores
-the primary promoted generation and requires exact agreement with the bracket,
-because several candidates may have promoted outcomes while exactly one may
-advance the champion marker.
-Startup can replay the fixed commit order without running a matchup or gate
-again. Replay writes outcomes, settled lineage, the champion marker, journal
-entries, and the canonical bracket before refreshing the derived index as one
-reported operation. Journal sections carry a stable settlement identity, so
-replay does not duplicate them. Completion changes the same full record to
-`state="committed"`; zicato retains it instead of replacing it with a
-tombstone or deleting it.
+A resolved round is recorded in one atomic record,
+`epochs/{epoch}/rounds/{round}/field_settlement.json` (the settlement
+receipt, format version 3). It holds every candidate's final outcome
+(with its parent and child scalars), the primary promoted generation, the
+complete settled tournament structure (`field_tournament_record`), and
+the gate explanations (`gate_results`). The receipt names the primary
+promotion separately and requires exact agreement with the bracket,
+because several candidates may have promoted outcomes while exactly one
+advances the champion.
+
+The receipt is written with `state="pending"` and then rewritten with
+`state="committed"`; readers apply only committed receipts. Candidate
+disposition in lineage, the reigning champion, the journal, and the
+round's tournament structure are all derived from committed receipts, so
+committing the receipt publishes every outcome of the round at once, and
+no other canonical file is rewritten. After the commit, zicato refreshes
+the derived index, then retains the full record rather than replacing it
+with a tombstone or deleting it. Startup completes any receipt left
+pending by a crash, without running a matchup or gate again.
 
 The retained receipt reports the derived-index result as `succeeded`,
-`repair_required`, or `repaired`. A failed grouped projection leaves every
+`repair_required`, or `repaired`. A failed projection leaves the
 canonical record committed and instructs a full `zicato repair index`; a
-successful rebuild changes `repair_required` to `repaired` while preserving
-the original exception type. The receipt reports the post-promotion hook as
-`not_applicable`, `pending`, `succeeded`, `failed`, or `delivery_unknown`.
-The live caller writes `delivery_unknown` before invoking an external hook.
-Recovery never retries an unknown delivery, which preserves the hook's
-at-most-once contract.
+successful rebuild changes `repair_required` to `repaired` while
+preserving the original exception type. The receipt reports the
+post-promotion hook as `not_applicable`, `pending`, `succeeded`,
+`failed`, or `delivery_unknown`. The live caller writes
+`delivery_unknown` before invoking an external hook. Recovery never
+retries an unknown delivery, which preserves the hook's at-most-once
+contract.
 
 ### 5.2 `GenerationStore` protocol; both backends behind it
 
@@ -264,7 +269,12 @@ class GenerationStore(Protocol):
     def list_generations(self, epoch_id) -> list[str]: ...
     def seed_generation(self, epoch_id, generation_id, sources) -> Path: ...
     def derive_generation(self, epoch_id, parent_generation_id,
-                          child_generation_id, patches) -> Path: ...
+                          child_generation_id, patches,
+                          *, enumeration_roots=None) -> Path: ...
+    def derive_scratch(self, epoch_id, parent_generation_id, patches,
+                       scratch_root, *, enumeration_roots=None) -> Path: ...
+    def checkout_ephemeral(self, epoch_id, generation_id,
+                           run_id) -> EphemeralCheckout: ...
     # read surface — the dashboard file-tree / file-browser API
     def list_tree(self, epoch_id, generation_id,
                   *, include_bookkeeping=False) -> list[TreeEntry]: ...
@@ -293,6 +303,10 @@ those records. `diff_generations` is one shared rendering over every backend
 (§7.4), so the diff text a reader receives is a function of the two trees
 alone. Source mutation goes through `seed_generation`,
 `derive_generation`, and the retention-controlled `prune_generations` method.
+`derive_scratch` applies a patch set into a caller-owned temporary
+directory without touching the generation namespace, so concurrent
+proposal slots can be validated before any generation is named, and `checkout_ephemeral` gives each tournament run an
+isolated working copy plus a sibling scratch directory.
 Pruning accepts the complete selected batch so the Git implementation can
 remove every tag and worktree under one administration lock and run repository
 maintenance once.
@@ -306,8 +320,8 @@ Missing, blank, malformed, and unknown values raise. The resolver does not
 scan `repo/.git`, generation records, or snapshot directories for evidence.
 
 `zicato init` writes `generation_source_backend` into a new workspace's
-`config.json`, so a workspace created today is decided by rule 1 forever
-and a later change of default cannot re-interpret it.
+`config.json`, so each workspace's backend is fixed at creation and a
+later change of default cannot re-interpret it.
 
 #### 5.2.1 The mutable surface is code-only — artifact exclusion
 
@@ -329,9 +343,10 @@ the generation repo so the same names never enter a commit.
 
 Run output is routed elsewhere rather than only excluded from the copy.
 The tournament runner creates a per-run scratch directory outside every
-snapshot and exports it to the system under test through the
-`ZICATO_RUN_SCRATCH_DIR` environment variable, and a target writes its
-run output there. After the harness returns and before outcome grading,
+snapshot and passes it to the system under test as
+`RunContext.scratch_dir` (`zicato.core.run_context`), reachable from the
+runtime configuration the adapter's `run` receives, and a target writes
+its run output there. After the harness returns and before outcome grading,
 the worker deterministically inventories every regular file beneath
 that directory, copies it into the canonical run directory, and
 attaches the typed inventory to `RunResult.artifacts`. The contract is
@@ -340,8 +355,10 @@ on the board. Symlinks are never followed, and file-count and byte
 bounds are recorded as truncation rather than silently changing the
 inventory.
 
-Replicate zero persists `artifacts/` plus `artifacts.json` beside `loss.json`;
-replicate `rN` uses `artifacts.rN/` plus `artifacts.rN.json`. The manifest has
+Each measurement persists an `artifacts.<purpose>.r<draw>/` tree plus an
+`artifacts.<purpose>.r<draw>.json` manifest beside its
+`loss.<purpose>.r<draw>.json` (for example `artifacts.tournament.r0.json`
+for replicate zero of a tournament measurement). The manifest has
 sorted relative paths, sizes, media types, and content hashes, with no absolute
 scratch paths or timestamps. It therefore survives scratch cleanup and is both
 grader-readable and reproducible from the filesystem source of truth.
@@ -366,9 +383,9 @@ surface.
 ### 5.3 The analytical index: continuous indexing
 
 The index supports both `rebuild_index`, the batch path behind `zicato
-reindex`, and the incremental `ingest_run` and `ingest_experiment`. The
-orchestrator calls the incremental path live as a best-effort
-dual-write. Continuous indexing is the design rather than an add-on:
+repair index`, and the incremental `ingest_run` and `ingest_experiment`.
+The runner and the orchestrator call the incremental path live as a
+best-effort dual-write. Continuous indexing is the design rather than an add-on:
 
 - The orchestrator's dual-write maintains the index continuously as the
   loop runs, so the dashboard never shows stale analytics mid-epoch.
@@ -379,11 +396,13 @@ dual-write. Continuous indexing is the design rather than an add-on:
 - One ordering rule makes the non-transactional dual-write safe, and it
   is load-bearing: **the canonical file is written first, the index row
   second.** A crash between the two leaves the index behind the files,
-  which self-heals when the next `ingest_*` or `reindex` catches up.
+  which self-heals when the next `ingest_*` or `zicato repair index`
+  catches up.
   The ordering makes the opposite state, a phantom index row ahead of
   the files, impossible.
 
-Continuous indexing requires no schema change. §6 records the SQLite
+An index whose schema version differs from the running build is
+refused until `zicato repair index` rebuilds it. §6 records the SQLite
 versus DuckDB evaluation and why SQLite stays.
 
 ### 5.4 The generalized tournament record (configurable structures)
@@ -391,58 +410,54 @@ versus DuckDB evaluation and why SQLite stays.
 > **Status.** Shipped. Full spec:
 > [TOURNAMENT-DATA-MODEL.md](TOURNAMENT-DATA-MODEL.md) §2.
 
-Tournament persistence supports the king-of-the-hill gauntlet and the
-configurable field structures `single_elim`, `double_elim`, `swiss`,
-and `racing`. Every persisted field is additive, so the gauntlet shape
-stays compact. The generalization touches three records and adds no new
-storage mechanism; it rides on the seams described in §5.1 and §5.2.
+Tournament persistence supports every structure: the gauntlet, racing,
+and the experimental `single_elim`, `double_elim`, and `swiss`. The
+generalization touches four records and adds no new storage mechanism;
+it rides on the seams described in §5.1 and §5.2.
 
 **(a) The live runtime record** — `runtime/active_tournament.events.jsonl`
-folds into `ActiveTournament`. The event log carries a
-**structure envelope** alongside the existing two-side fields:
+folds into `ActiveTournament`. Beside the two-side fields it carries a
+**structure envelope**:
 
 - `structure` / `structure_params` — copied from the epoch contract at
-  tournament start (default `"gauntlet"` / `{}`).
+  tournament start (`"gauntlet"` / `{}` when a payload omits them).
 - `competitors` — the full candidate field (generation id + seed +
-  role), the generalization of "two generations". A gauntlet's two
-  competitors stay derivable from `parent_generation_id` /
-  `child_generation_id`.
-- `rounds` — a tagged-union list of per-round / per-rung / per-bracket
-  match state (one shape per structure; the gauntlet degenerates to one
-  round, one match).
+  role).
+- `rounds` — a list of per-stage match state (one shape per structure;
+  the gauntlet degenerates to one round, one match), and, for the
+  elimination structures, `gen_states`.
 - `standings` — a flat live ranking (`generation_id`, `rank`, `scalar`,
-  `wins`/`losses`, `status`).
+  `wins`/`losses`, `status`, `role`).
+- `field_status` and `projected` — the minting outcome per attempted
+  challenger and the live projected standing per in-flight competitor.
 
 The per-entry rows (`ActiveTournamentEntry`) keep their `(entry_id,
-side)` key. `side` accepts an opaque competitor key (a generation id)
-for non-gauntlet structures as well as `"parent"` and `"child"`, and
-each row carries a `match_id` (default `""`). One
+side)` key, and each carries a `match_id` (default `""`). One
 `update_tournament_entry` signature serves every structure. `base.py`,
 `files.py`, and `memory.py` need no structure-specific behavior,
 because the fields are ordinary JSON on the same `to_dict` and
 `from_dict` path.
 
-**(b) The settled per-generation outcome** — `experiment.json`'s
-`outcome` block (`OutcomeRecord`), persisted via `epoch/_storage.py`. It
-carries `structure`, `final_rank`, `eliminated_in_round`, and a
-per-generation `match_record`. `write_experiment` /
-`_outcome_from_dict` read/write them; no new key helper, no new file.
+**(b) The in-progress structure record** —
+`epochs/{epoch}/tournaments/field-{first_challenger}.json`, written while
+the round runs with `state="in_progress"`.
 
-**(c) The settled index row** — the SQLite `tournaments` table. It carries
-five additive `TEXT` columns — `structure`, `structure_params_json`,
-`competitors_json`, `rounds_json`, and `standings_json` — as a version
-3 column add, following the same pattern as the version 2 column add
-(`_V2_ADDED_COLUMNS`). The per-matchup columns remain and describe the
-crowning match for every structure, so a reader that understands only
-gauntlets still gets a coherent answer. The index is derived and
-rebuildable, so the schema move is a drop and re-derive on the
-`reindex` path and an incremental column add otherwise, under the same
-self-healing dual-write ordering rule (§5.3).
+**(c) The settled round record** — `rounds/{round}/field_settlement.json`
+(§5.1). Its `field_tournament_record` is the settled structure, and each
+candidate's `outcome` (`OutcomeRecord`) carries `structure`,
+`final_rank`, `eliminated_in_round`, and a per-generation `match_record`.
+The experiment reader joins that outcome to `experiment.json`.
 
-**Compatibility.** Every added field defaults to the gauntlet
-interpretation, and the index, the only stateful store involved, is
-rebuildable. No migration tool is needed: a workspace holding only
-gauntlet tournaments loads and renders correctly.
+**(d) The settled index row** — the SQLite `tournaments` table. Beside
+the per-matchup columns, which describe the crowning match for every
+structure, it carries `structure`, `structure_params_json`,
+`competitors_json`, `rounds_json`, `standings_json`, and
+`field_status_json`, so a reader that understands only gauntlets still
+gets a coherent answer. The index is derived and rebuildable, so a schema
+change is a drop and re-derive through `zicato repair index`.
+
+**Absent fields.** Every structure field of the runtime record and the
+outcome decodes to a gauntlet default when a payload omits it.
 
 ## 6. The analytical index database: SQLite vs DuckDB
 
@@ -473,7 +488,7 @@ native list and struct columns.
    re-validating that contract. That is real work, justified only by a
    real bottleneck — and there is none (point 1).
 
-3. **A `reindex` takes seconds.** The recovery path's cost is
+3. **A rebuild takes seconds.** The recovery path's cost is
    `O(total artifacts)` file reads, paid once. The file reads, rather
    than the engine, are the bottleneck in a rebuild.
 
@@ -484,7 +499,7 @@ native list and struct columns.
    dual-write path.
 
 **The trigger to revisit.** If cross-run analytics grows until an
-operator feels the scan latency — concretely, if a `reindex` or a
+operator feels the scan latency — concretely, if a `zicato repair index` or a
 dashboard analytics query crosses about one second on a real workspace
 — DuckDB becomes the right move. Because `index.db` is derived and
 disposable, the migration is to change `zicato.index`, re-tool the Rust
@@ -635,9 +650,9 @@ canonical record path. The generation source-backend key is a
 workspace-format break, made on purpose:
 
 - Routing `epoch/` records through `StorageBackend` (§5.1) is internal.
-  `experiment.json`, `lineage.json`, `config.json`, the journal, and
-  the per-patch files land at the same paths with the same content, and
-  every write is atomic.
+  `experiment.json`, `lineage.json`, `config.json`,
+  `field_settlement.json`, and the per-patch files land at the same paths
+  with the same content, and every write is atomic.
 - A new workspace carries an explicit `generation_source_backend` value.
 - A workspace missing that key is refused. zicato neither infers a
   source backend nor migrates a directory-backed workspace to git.
@@ -661,8 +676,8 @@ a version from a record's shape nor rewrite unsupported canonical records.
 |---|---|
 | `experiment.json`, per-generation directories, journals, epochs | [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) |
 | The `.zicato/runtime/` layer — runtime state, the other `StorageBackend` consumer | [RUNTIME.md](RUNTIME.md) |
-| Per-run event capture — `events.jsonl`, goldfive's `JSONLPersistenceSink` | [TELEMETRY.md](TELEMETRY.md) |
-| The `.zicato/index.db` analytical index — schema, dual-write discipline, `reindex` | [ANALYTICAL-INDEX.md](ANALYTICAL-INDEX.md) |
+| Per-run event capture and the telemetry sink | [TELEMETRY.md](TELEMETRY.md) |
+| The `.zicato/index.db` analytical index — schema, dual-write discipline, `zicato repair index` | [ANALYTICAL-INDEX.md](ANALYTICAL-INDEX.md) |
 | Subprocess-isolated tournament runs (why the store of record is files-canonical) | [ROBUSTNESS.md](ROBUSTNESS.md) |
 | `MutationPoint.id` references that patches carry | [MUTATION-SURFACE.md](MUTATION-SURFACE.md) |
 | CLI surface, including `zicato repair index` | [CLI.md](CLI.md) |

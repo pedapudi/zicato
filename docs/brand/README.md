@@ -37,7 +37,8 @@ and Tufte's data-ink ethic — every pixel of the mark is the line itself.
 
 The line-art mark is drawn with **`stroke-width: 5.0`** (round caps and joins),
 and the green plucked-note accent dot has **radius `5.5`** in the mark's
-coordinate space — the same `viewBox="71 35 229 75"` the lockup uses. At that
+coordinate space (`viewBox="71 35 229 75"` in `zicato-mark.svg`; the lockup
+places the same geometry inside its wider `viewBox="71 30 470 90"`). At that
 weight the stroke reads as kin to the `zicato` wordmark beside it, and the dot
 stays above one pixel wherever the full spiral is used. A hairline stroke near
 `2.4` with a `3.2` dot reads visibly thinner than the wordmark and collapses to
@@ -91,7 +92,8 @@ fixed-color twins, which carry the identical `5.0` stroke + `5.5` dot geometry.)
 | `zicato-lockup-dark.svg` | fixed-color lockup, light ink `#EDEFEA` | the dark half of a `<picture>` |
 | `zicato-tile.svg` | rounded-square app tile, dark `#0E1116` ground | the **full mark** at app-icon scale (180px / large) |
 | `zicato-favicon.svg` | **tab favicon** — a bold `z` + green plucked-note on the dark tile | legible at 16px (the full mark muddies that small) |
-| `wordmark.svg` | `zıcato` wordmark alone | `currentColor` + `var(--zicato-accent)` — adaptive |
+| `wordmark.svg` | `zıcato` wordmark alone, outlined to paths | `currentColor` + `var(--zicato-accent)` — adaptive |
+| `wordmark-outlined.svg` | a byte-identical copy of `wordmark.svg` | same as `wordmark.svg` |
 | `favicon-16.png` / `favicon-32.png` | rasterized tab favicons | from `zicato-favicon.svg` |
 | `apple-touch-icon-180.png` | iOS home-screen icon | from `zicato-tile.svg` (full mark) |
 | `favicon.ico` | multi-res icon (16/32/48) | from `zicato-favicon.svg` |
@@ -139,17 +141,10 @@ rule:
 
 ### The wordmark
 
-The wordmark is `zıcato` set in a monospace stack
-(`ui-monospace, SFMono-Regular, Menlo, Consolas, monospace`) with a **dotless ı**
-(U+0131) — the green accent circle *is* the i's dot, tying the wordmark back to
-the plucked note.
-
-> **TODO: a font-independent wordmark.** `wordmark.svg` is text-based, so it
-> depends on a monospace font being present on the host. There is no
-> `wordmark-outlined.svg` with the text converted to paths, because producing one
-> requires a text-to-path tool (`inkscape` or `picosvg`) that this repository does
-> not depend on. Remove this note once such a file exists; generate it with
-> `inkscape --export-type=svg --export-text-to-path wordmark.svg`.
+The wordmark is `zıcato` in `DejaVu Sans Mono` with a **dotless ı** (U+0131) —
+the green accent circle *is* the i's dot, tying the wordmark back to the plucked
+note. `wordmark.svg` and the lockups carry the glyphs as outlined vector paths
+rather than text, so they render the same whether or not the host has the font.
 
 ## Usage
 

@@ -106,8 +106,8 @@ such input that affects evaluation behavior.
 For a remote endpoint, use an absolute `http` or `https` URL without embedded
 credentials, a query string, or a fragment. Set `revision` to a stable provider
 revision or artifact digest when a URL and model name could resolve to
-different weights over time. `zicato check` reports an unset revision as an
-advisory because an unpinned endpoint weakens reproducibility.
+different weights over time. `zicato inspect setup` reports an unset revision
+as an advisory because an unpinned endpoint weakens reproducibility.
 
 ## Install the capabilities a contract uses
 
@@ -121,7 +121,8 @@ uv add 'zicato[adk]'                       # Google ADK adapter plus Goldfive su
 ```
 
 Goldfive determines which optional runtime capabilities a document requires.
-`zicato check` reports a missing capability before a tournament starts. The
+`zicato inspect setup`, and the same checks that gate `zicato evolve`, report a
+missing capability before a tournament starts. The
 `adk` extra is one adapter composition; Goldfive remains available to non-ADK
 adapters.
 

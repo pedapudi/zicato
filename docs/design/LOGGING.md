@@ -72,7 +72,8 @@ verbatim, with `component` set to `zicato.orchestrator`. The handler
 structures whatever the stdlib hands it.
 
 The optional `epoch_id` / `generation_id` / `run_id` come from a
-process-local `contextvars` binding (`bind_log_context(...)`) rather than
+process-local `contextvars` binding (`set_log_context(...)`, and
+`round_log_context(...)` for a round's scope) rather than
 from a per-call `extra=`, which would require editing every call site. A
 `logging.Filter` copies the currently-bound context onto every record as it
 is emitted. Two bind points know the full context and set it without
@@ -103,9 +104,12 @@ complete failure count or a prerequisite for accepting a measurement.
 
 ### Orchestrator process
 
-The evolve entrypoint (`evolve_n_rounds`) calls
-`install_log_stream(workspace_root)` before it does any work and removes
-the handler in its `finally`. Installation:
+The evolve loop (`zicato.evolve.loop`, behind `evolve_n_rounds`) calls
+`install_log_stream(workspace_root, level=...)` before it runs a round, and
+invocation cleanup removes the handler after the final index repair. Then
+`set_log_context(epoch_id=...)` tags every orchestrator record with the
+invocation's epoch. `zicato inspect reflection run` installs its stream the
+same way. Installation:
 
 1. resolves the stream path (§1),
 2. prunes old streams (§4),
@@ -136,9 +140,9 @@ worker's `main()` installs the same `JsonlStreamHandler` pointed at that
 path in append (`"a"`) mode and binds its run context.
 
 The parent does not pipe each worker's stderr and re-emit its lines as
-records. The transport spawns workers with inherited stdio
-(`create_subprocess_exec(..., env=worker_env)`, with no `stdout=` or
-`stderr=` redirection), and the parent already runs a budget-bounded
+records. The worker executor spawns workers with inherited stdio
+(`create_subprocess_exec(..., start_new_session=True, env=worker_env)`, with
+no `stdout=` or `stderr=` redirection), and the parent already runs a budget-bounded
 `wait_for` per worker. A per-worker pipe-drain task would add concurrency
 surface, and it would re-encode already-structured records as opaque text.
 
@@ -202,7 +206,7 @@ shape of `build_run_log`:
 
 An absent `logs/` directory, an empty directory, and an unreadable file
 all degrade to an empty view (`records: []`, `cursor: null`) — never an
-error. `WorkspacePaths` grows one property, `logs`, for the directory.
+error. `WorkspacePaths.logs` names the directory.
 
 ## 4. Retention
 
@@ -226,12 +230,14 @@ can ever race a live worker writing a sibling file (there are none).
 
 ```
 zicato inspect logs [--workspace .zicato] [--invocation latest|<id>]
-            [--level INFO] [--limit 200] [--follow]
+            [--level DEBUG|INFO|WARNING|ERROR|CRITICAL] [--limit 200]
+            [-f/--follow] [--list]
 ```
 
 Reads the query-layer reader and prints one formatted line per record
 (`<ts> <LEVEL> <component> <context> <message>`). `--follow` poll-tails
-the selected stream, advancing the line cursor. A workspace with no logs
+the selected stream, advancing the byte-offset cursor. `--list` prints the
+invocation roster, newest first, and exits. A workspace with no logs
 prints nothing and exits 0; silence is the honest report of an empty
 stream.
 

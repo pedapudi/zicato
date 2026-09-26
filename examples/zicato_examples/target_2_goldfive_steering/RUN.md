@@ -25,8 +25,14 @@ end to end.
   ```
 * The mock callables in
   `examples/zicato_examples/target_2_goldfive_steering/mocks.py` are
-  byte-deterministic, so no LLM credentials are required for the smoke
-  run.
+  byte-deterministic stand-ins for the `target` and `evaluation` model
+  roles.
+* A proposal runtime. `zicato init` writes a `proposer` block whose
+  `binary` is the placeholder `/path/to/foe`, which `evolve` refuses. §4
+  replaces it with the test suite's Foe stand-in, which edits the tree
+  mechanically with no model and imports from a repository checkout; a
+  real `proposer` block names a Foe binary and a model
+  ([`docs/design/PROPOSER.md`](../../../docs/design/PROPOSER.md)).
 
 Sanity check:
 ```
@@ -36,8 +42,9 @@ python -c "from goldfive.optimization import manifest; print(len(manifest.Manife
 ```
 
 You should see the goldfive package path, the `LoopingAgent` class
-name, and 31 mutations (the prompts + threshold knobs declared in
-`goldfive/optimization/manifest.toml`).
+name, and the number of mutations (the prompts + threshold knobs)
+declared in `goldfive/optimization/manifest.toml` — 61 at the goldfive
+revision `pyproject.toml` pins.
 
 ## 1. Workspace setup
 
@@ -93,32 +100,60 @@ no separate registration is needed.
 
 ## 2. Enumerate the goldfive optimization surface
 
-`inspect mutations` runs the same enumeration the orchestrator runs, and
-is the simplest way to confirm the manifest bridge is wired:
+goldfive carries no `# zicato:mutable` markers; its surface is the
+manifest. The bridge in `zicato/synthetic/manifest_bridge.py`, invoked
+from `zicato.mutation.enumerator.enumerate_mutations`, turns each
+manifest entry into one span mutation point. Prompt mutations point at
+the `.md` body under `goldfive/optimization/prompts/`; threshold
+mutations point at the `.py` files the manifest's `source` field names.
+
+The manifest's `source` fields are relative to the directory that
+*contains* the `goldfive` package. The orchestrator enumerates a
+generation's snapshot root, which holds the tree under its basename
+(`goldfive/`), so every entry resolves there. `inspect mutations`
+enumerates the registered package directory itself, where those paths
+do not resolve, so it reports no mutation points for this target:
 
 ```
 python -m zicato.cli inspect mutations --workspace .zicato
 ```
 
-You should see 31 mutation points — all `kind="span"`, sourced from
-`goldfive/optimization/manifest.toml`. Prompt mutations point at the
-`.md` body under `goldfive/optimization/prompts/`; threshold mutations
-point at the `.py` files the manifest's `source` field names. The
-bridge that does this lives in `zicato/synthetic/manifest_bridge.py`
-and is invoked from `zicato.mutation.enumerator.enumerate_mutations`.
+To list the manifest-derived points, call the bridge on the directory
+that contains the package:
+
+```
+python -c "
+import pathlib, goldfive
+from zicato.synthetic.manifest_bridge import enumerate_manifest_points
+root = pathlib.Path(goldfive.__file__).resolve().parents[1]
+print(len(enumerate_manifest_points([root])))
+"
+```
 
 ## 3. Create the epoch
 
 The board, brief and scoring files live next to this file, under
-`examples/zicato_examples/target_2_goldfive_steering/` in a checkout:
+`examples/zicato_examples/target_2_goldfive_steering/` in a checkout.
+The ADK adapter runs under Goldfive, and `evolve` refuses a
+Goldfive-enabled contract whose `scoring.json` has no `goldfive` object
+(`goldfive_config_missing`). The example's `scoring.json` has none, so
+the epoch opens from a copy that adds an empty one, which selects the
+fixed defaults
+([`docs/design/GOLDFIVE-CONFIG.md`](../../../docs/design/GOLDFIVE-CONFIG.md)):
 
 ```
 ZICATO=${ZICATO:?set ZICATO to your zicato checkout}
 EX=$ZICATO/examples/zicato_examples/target_2_goldfive_steering
+python - "$EX/scoring.json" ./scoring.t2.json <<'PYEOF'
+import json, sys
+scoring = json.load(open(sys.argv[1]))
+scoring.setdefault("goldfive", {})
+json.dump(scoring, open(sys.argv[2], "w"), indent=2)
+PYEOF
 python -m zicato.cli epoch new t2_smoke --workspace .zicato \
     --board   $EX/board.jsonl \
-    --brief  $EX/rubric.md \
-    --scoring $EX/scoring.json
+    --brief   $EX/rubric.md \
+    --scoring ./scoring.t2.json
 ```
 
 The board ships 10 entries:
@@ -131,11 +166,10 @@ The board ships 10 entries:
 * 3 `single_turn` correctness entries. The non-interference target: the
   steerer must not degrade a well-behaved workload.
 
-The proposer brief's preferred-edits section steers the proposer at the
-`refine_system_prompt`, `reasoning_judge_system_prompt`,
-`goal_drift_judge_prompt`, and the reasoning-judge threshold knobs.
-The forbidden-edits section blocks anything under
-`intervention_ladder/*`.
+The proposer brief's preferred-edits section steers the proposer at
+goldfive's refine prompt, its reasoning-judge and goal-drift judge
+prompts, and the reasoning-judge threshold knobs. The forbidden-edits
+section blocks anything under `intervention_ladder/*`.
 
 `scoring.json` weighs **pass rate far above drift count**, because the
 loss on this target is pass/fail correctness against synthetic ground
@@ -143,15 +177,23 @@ truth rather than drift volume. A child generation that lowers its drift
 count by silencing the steerer collapses its pass rate on the
 adversarial board and is rejected.
 
+`scoring.json` carries no `tournament` block, so the epoch runs the
+default **racing** structure: each round proposes a field of
+challengers and races them on board slices before the survivor meets
+the champion.
+
 ## 4. Run the evolve loop
 
 Two rounds against the seeded baseline:
 
 ```
 # `evolve` takes no model options: an engine naming a `call_llm` dotted
-# path is how these deterministic mocks reach the two roles.
-python - <<'PYEOF'
+# path is how these deterministic mocks reach the two roles. The
+# `proposer` block is the test suite's Foe stand-in (PYTHONPATH makes
+# the checkout's `tests` package importable).
+PYTHONPATH=$ZICATO python - <<'PYEOF'
 import json, pathlib
+from tests._foe_support import stand_in_proposer_block
 mocks = "zicato_examples.target_2_goldfive_steering.mocks"
 cfg_path = pathlib.Path(".zicato/config.json")
 cfg = json.loads(cfg_path.read_text())
@@ -162,6 +204,7 @@ cfg["models"] = {
     },
     "roles": {},
 }
+cfg["proposer"] = stand_in_proposer_block(pathlib.Path("foe").resolve())
 cfg_path.write_text(json.dumps(cfg, indent=2) + "\n")
 PYEOF
 
@@ -173,88 +216,79 @@ python -m zicato.cli evolve --workspace .zicato \
 What happens, step by step:
 
 1. **Seed v0**: the orchestrator's `_ensure_baseline_snapshot` notices
-   there are no generations yet and copies the registered mutable
-   tree into `epochs/{epoch}/generations/v0/snapshot/<tree_name>/`.
-2. **Enumerate**: the orchestrator walks `v0/snapshot/` for mutation
-   points. The native marker pass finds nothing (goldfive carries no
-   `# zicato:mutable` comments); the manifest bridge finds the 31
-   manifest-declared points.
-3. **Propose**: the evaluation mock returns a structured `{hypothesis,
-   patches}` payload targeting one of the preferred-edits mutation
-   ids (`refine_system_prompt` for v1, `reasoning_judge_system_prompt`
-   for v2).
-4. **Apply**: `zicato.mutation.applier.apply_patches` copies
-   `v0/snapshot/` to `v1/snapshot/` and rewrites the targeted prompt
-   markdown body verbatim. A file that is not `.py` takes the verbatim
-   path, because wrapping its content as a Python string would corrupt
-   the markdown.
-5. **Validate**: `zicato.mutation.validator.validate_post_apply`
+   there are no generations yet and records the registered mutable tree
+   as generation `v0` in the workspace's private git repository
+   (`.zicato/repo/`, one `epoch/<epoch_id>/<generation_id>` tag per
+   generation), with the tree under its basename.
+2. **Enumerate**: the orchestrator walks the generation's source tree
+   for mutation points. The native marker pass finds nothing (goldfive
+   carries no `# zicato:mutable` comments); the manifest bridge finds
+   the manifest-declared points.
+3. **Propose**: one proposal episode per challenger edits a working
+   copy of the parent's tree; zicato reads the edit back as patch
+   records addressed to mutation ids. A non-`.py` target such as a
+   prompt markdown body is rewritten verbatim, because wrapping its
+   content as a Python string would corrupt the markdown.
+4. **Validate**: `zicato.mutation.validator.validate_post_apply`
    re-enumerates, checks the post-apply mutation point still
    resolves, and confirms `.py` files still parse. Non-`.py` files
    skip the ast.parse and import-survival checks.
-6. **Run the tournament**: every board entry executes under both
-   `v0/snapshot/` and `v1/snapshot/`. Synthetic kinds route through
+5. **Run the tournament**: every board entry executes under the
+   champion and the challengers. Synthetic kinds route through
    `zicato.synthetic.run_adversarial_entry` /
    `run_clean_entry`; single_turn entries route through the ADK
-   adapter. Both paths drop events.jsonl under
+   adapter. Both paths write their telemetry under
    `epochs/{epoch}/generations/{vN}/runs/{entry_id}/`.
-7. **Gate**: `aggregate_generation_score` rolls per-run loss profiles
-   into a generation-level scalar, and `evaluate_gate` compares
-   `child_scalar` against `parent_scalar + promote_margin`. The mock
-   patches change the score by nothing measurable, so v1 and v2 are both
-   **rejected** for "insufficient margin".
+6. **Gate**: `aggregate_generation_score` rolls per-run loss profiles
+   into a generation-level scalar, and `evaluate_gate` requires the
+   challenger's scalar to fall by at least `promote_margin` below the
+   champion's, with no pass-rate regression.
 
-Expected output:
-```
-[
-  {"parent_generation_id": "v0", "proposed_generation_id": "v1",
-   "tournament_decision": "rejected", "rejection_reason": "insufficient margin: ...",
-   "parent_scalar": 1.05..., "child_scalar": 1.05..., "delta_scalar": ~0},
-  {"parent_generation_id": "v0", "proposed_generation_id": "v2",
-   "tournament_decision": "rejected", ...}
-]
-```
+`evolve` prints one JSON object per round with `parent_generation_id`,
+`proposed_generation_id`, `tournament_decision`, `rejection_reason`,
+`parent_scalar`, `child_scalar`, and `delta_scalar`.
 
-Rejection is the **expected** outcome here, because the mocks do not
-write a substantively better prompt. What the run proves is that the
-wiring works end to end: the manifest bridge produces real mutation ids,
-the proposer's patches address those ids, the applier rewrites the
-markdown bodies in the snapshot, the validator accepts the snapshot, and
-the tournament scores both generations without crashing.
+Rejection is the expected outcome here, because neither the stand-in
+proposer nor the mocks write a substantively better prompt. What the
+run shows is that the wiring works end to end: the manifest bridge
+produces real mutation ids, the proposal edits address those ids, the
+validator accepts the child, and the tournament scores every generation
+without crashing.
 
 ## 5. Verify artifacts
 
-After the run, you should see (per generation):
+After the run, you should see (per challenger generation):
 
 ```
 .zicato/epochs/{epoch}/generations/v1/
-├── experiment.json       # hypothesis + outcome record
+├── experiment.json       # hypothesis, patch ids, and outcome record
 ├── patches/
-│   └── <patch-id>.json   # the single patch the proposer emitted
+│   └── <patch-id>.json   # one record per edit the episode made
 ├── gen_score.json        # cached aggregate for fast-mode rounds
-├── runs/
-│   ├── looping_research_2_turn/events.jsonl
-│   ├── hallucinating_fact_fetch/events.jsonl
-│   ├── ...
-│   └── normal_summary_print_press/events.jsonl
-└── snapshot/             # goldfive copy with the patched prompt
+├── harness_load.json     # which mutable trees each unit imported
+└── runs/
+    ├── looping_research_2_turn/seed-none/events.<purpose>.r<n>.jsonl
+    ├── ...
+    └── normal_summary_print_press/seed-none/events.<purpose>.r<n>.jsonl
 ```
+
+`<purpose>` names why a measurement ran (`tournament`, `calibration`,
+or `contract_preflight`). The generation's source tree is the
+`epoch/<epoch_id>/v1` tag in `.zicato/repo/`.
 
 Confirm that:
 
-* `experiment.json` carries a `patches` array with at least one entry
-  whose `mutation_id` matches a real goldfive manifest entry
-  (`refine_system_prompt` for v1, `reasoning_judge_system_prompt` for
-  v2).
-* `patches/*.json` rationale references the manifest-bridged surface.
-* `events.jsonl` exists for every board entry — synthetic kinds and
+* `experiment.json` lists at least one patch id, and the matching
+  `patches/*.json` record's `mutation_id` names a real goldfive
+  manifest entry.
+* An events file exists for every board entry — synthetic kinds and
   single_turn kinds alike.
-* The `refusing_research` events.jsonl contains a `DRIFT_KIND_AGENT_REFUSAL`
+* The `refusing_research` events carry a `DRIFT_KIND_AGENT_REFUSAL`
   drift at `DRIFT_SEVERITY_WARNING`. This is the steerer's recall
   signal firing on the RefusingAgent (one of the few adversarial
   patterns that goldfive's lightweight detectors catch without an
-  embedding model). `grep DRIFT_KIND refusing_research/events.jsonl`
-  to see it.
+  embedding model). `grep -r DRIFT_KIND .../refusing_research/` to see
+  it.
 
 ## 6. Close the epoch
 
@@ -265,17 +299,17 @@ python -m zicato.cli epoch close --workspace .zicato
 This writes:
 
 * `.zicato/epochs/{epoch}/analysis.md` — a markdown narrative of the
-  epoch. Without an `aux_call_llm` argument the close step writes a
-  short stub, which is what an operator usually sees; this walkthrough's
-  mock produces a placeholder instead.
+  epoch. When no evaluation model runs the analysis pass, the close
+  step writes a short stub that can be regenerated later.
 * `.zicato/epochs/{epoch}/analysis.html` — self-contained HTML report
   with a lineage SVG (v0 -> v1 -> v2 boxes connected by colored
   edges), a score-trajectory chart, and per-experiment cards.
 
 ## 7. Running against real models
 
-The mocks cover the wiring contract. Running against real models means
-replacing two callables.
+The mocks and the stand-in proposer cover the wiring contract. Running
+against real models means replacing the target callable and the
+proposer.
 
 1. **target_llm**: route goldfive's planner, goal-deriver, and
    reasoning-judge calls to a real model instead of returning canned
@@ -286,11 +320,11 @@ replacing two callables.
    `LOOPING_REASONING` detectors need an embedding model, which the
    mocks do not supply; with one, they land on the WanderingAgent and
    LoopingAgent runs.
-2. **aux_llm**: instead of rotating between two canned patches, the
-   proposer reads the parent generation's pattern-detector output — for
-   example "hot drift kind: hallucination_suspected" — and proposes a
-   substantive rewrite of the relevant prompt or threshold. With a real
-   proposer driving, `pass_rate_delta` decides the round: `scoring.json`
+2. **The proposer**: a `proposer` block naming a Foe binary and a real
+   model replaces the stand-in. The episode reads the parent
+   generation's pattern-detector output — for example "hot drift kind:
+   hallucination_suspected" — and proposes a substantive rewrite of the
+   relevant prompt or threshold. With a real proposer driving, `pass_rate_delta` decides the round: `scoring.json`
    sets `pass_rate_monotonicity: true`, so a proposer that lowers
    adversarial recall to suppress drift loses at the gate however much
    `drift_loss_delta` improves.
@@ -302,8 +336,8 @@ replacing two callables.
   comment near the constant, and the manifest bridge synthesizes no such
   marker, so the lookup fails. Closing this means teaching the applier to
   honour `MutationPoint.metadata["python_attr"]` and to walk the AST for
-  the named module-level attribute. Until then the mock proposer uses
-  `replace` operations against prompt bodies only.
+  the named module-level attribute. Until then only prompt-body
+  mutations apply end to end.
 * **The event log carries two shapes.** Goldfive's persistence sink
   emits some events as proto-JSON (camelCase keys, ISO-string
   timestamps) and others as snake_case with a nested timestamp object.

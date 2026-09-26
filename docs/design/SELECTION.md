@@ -1,21 +1,35 @@
 # Candidate selection — the tournament, and the theory under it
 
-> **Status.** This document describes the *shipped* selection mechanism
-> (the king-of-the-hill gauntlet and the three-rule promote gate) and
-> the *design direction* for evolving it (replication-based iterated
-> racing). The "Today" sections are reconciled against the code in
-> `src/zicato/tournament/` and `src/zicato/orchestrator.py`; the
-> "Proposed" sections are unbuilt and are marked as such.
+> **Status.** This document gives the decision theory behind zicato's
+> selection mechanism and records which of its recommendations are built.
+> Shipped, and reconciled against `src/zicato/selection/`,
+> `src/zicato/tournament/`, and `src/zicato/evolve/`:
 >
-> One recommendation in this document has since been adopted: replication
-> is a per-structure contract default. The gauntlet, Swiss and both
-> elimination structures default `tournament.params["replicates"]` to 2,
-> and racing pins it to 1 because escalating board slices replicate
-> intrinsically (`src/zicato/selection/strategies/` and
-> `src/zicato/selection/experimental/`). Passages below that
-> reason from a single unreplicated duel describe the cheapest
-> configuration, which an operator can still pin, rather than the
-> default.
+> - **Racing is the default structure.** A `scoring.json` without a
+>   `tournament` block, and the contract `zicato init` scaffolds, race a
+>   field of four challengers (`field_size` 4, `eta` 2, `board_fraction`
+>   0.4, `replicates` 2) on escalating board slices and send the survivor
+>   to a full-board duel against the champion.
+> - **The gauntlet** (one challenger per round) is the other structure in
+>   the default choice. Single elimination, double elimination and Swiss
+>   resolve only under the `experimental.tournament_structures` opt-in
+>   (§8).
+> - **Every crowning duel passes the same promote gate** (§3.2), then the
+>   hidden-holdout confirmation, then, when
+>   `params["promote_confidence_threshold"]` is set (it is `0.8` in the
+>   recommended contract), the evidence gate: a Bradley–Terry fit over
+>   fresh confirmation duels of the crowning pair must support the
+>   promotion (`src/zicato/selection/evidence_gate.py`).
+> - **Replication** is a per-structure default (`2` per duel; racing
+>   declares `1` because its escalating slices are the added sample), and
+>   the epoch's measured noise floor sizes the count when the contract
+>   pins none (§9.1).
+>
+> Not built: the paired Wilcoxon significance gate (§9), the posterior
+> stop rule (§5.4), and a trust-region step bound beyond the experimental
+> edit-complexity ceiling (§9). Passages that reason from a single
+> unreplicated duel describe the cheapest gauntlet configuration, which an
+> operator can still pin, rather than the default.
 
 Selection is the most consequential part of zicato. Everything else —
 mutation enumeration, the proposer, telemetry, the dashboard — exists
@@ -73,8 +87,8 @@ is a response to one of them:
    contestants. Each challenger is *synthesized conditioned on the
    current champion* (patches applied to the champion's source tree). A
    classic tournament bracket assumes N independent entrants exist up
-   front; zicato has a generator that emits them on demand, one (today)
-   per round.
+   front; zicato has a generator that emits them on demand: one per
+   round under the gauntlet, `field_size` per round under racing.
 
    > **Orthogonal to this document: what the generator *knows*.** The
    > proposer that synthesizes each challenger can be fed a digest of
@@ -208,7 +222,8 @@ available).
 **Verdict for zicato.** This is zicato's family. The promote gate is an
 AlphaGo-Zero-style margin test. Replication is the second half of the
 family, and it is a contract knob whose default is 2 per duel for every
-structure except racing. §3 and §7 make the argument precise.
+structure except racing, whose escalating board slices replicate
+intrinsically. §3 and §7 make the argument precise.
 
 ### Family ③ — Single-elimination bracket (triage by resource)
 
@@ -263,14 +278,17 @@ the upgrade in §9 is to make it elitism-with-replication.
 
 ---
 
-## 3. Where zicato sits today: the king-of-the-hill gauntlet
+## 3. The champion-gate duel, shown through the gauntlet
 
-The shipped mechanism is a **king-of-the-hill gauntlet**, an instance of
-the statistical-gate family (§2) that degenerates to a single duel per
+The **king-of-the-hill gauntlet** is the simplest structure: an instance
+of the statistical-gate family (§2) that degenerates to a single duel per
 round and, at `replicates = 1`, to a single unreplicated
-measurement. There is one reigning champion
-per epoch (the generation named by the per-epoch `current_generation`
-marker). Each round mounts exactly one challenger against it.
+measurement. There is one reigning champion per epoch: the baseline `v0`
+until a promotion, then the primary promotion of the latest committed
+round settlement. Each gauntlet round mounts exactly one challenger
+against it. Every other structure ends its round with the same
+champion-versus-leader duel and the same gate, so this section's
+mechanics apply to the default racing structure's crowning duel too.
 
 ```mermaid
 sequenceDiagram
@@ -279,7 +297,7 @@ sequenceDiagram
     participant Pr as Proposer
     participant R as Tournament runner
     participant G as Promote gate
-    Note over O: champion = current_generation marker
+    Note over O: champion = last committed promotion
     O->>O: enumerate mutation points on champion snapshot
     O->>O: detect patterns over champion's loss profiles
     O->>Pr: propose(brief, patterns)
@@ -311,8 +329,8 @@ flowchart TB
     SEM --> Uk["Board unit: entry_k"]
     subgraph one["one board unit (full mode)"]
         direction LR
-        G1["gather"] --> CW["champion run<br/>subprocess worker<br/>run_id = vN--entry"]
-        G1 --> HW["challenger run<br/>subprocess worker<br/>run_id = vN+1--entry"]
+        G1["gather"] --> CW["champion run<br/>subprocess worker<br/>vN/runs/entry"]
+        G1 --> HW["challenger run<br/>subprocess worker<br/>vN+1/runs/entry"]
         CW --> J["events.jsonl + loss.json"]
         HW --> J2["events.jsonl + loss.json"]
     end
@@ -324,18 +342,20 @@ flowchart TB
   `asyncio.gather`. Both sides see the *same task* — that is the paired
   comparison (common random numbers) that cancels per-entry difficulty.
   Each run is a fully isolated subprocess worker pointed at its own
-  ephemeral snapshot copy, writing `events.jsonl` + `loss.json` keyed on
-  `run_id = {generation_id}--{entry_id}`.
-- **Fast mode** (`--mode fast`, the `evolve` default): the board unit
-  runs **only the challenger**; the champion's cached aggregate
-  (`gen_score.json`) is reused. This halves the compute per round but
-  *re-uses* a champion score from an earlier draw — a subtle break in
-  the pairing that matters under noise (see §7).
+  ephemeral snapshot copy, writing its events and loss files under
+  `generations/<gen>/runs/<entry_id>/`, named by measurement purpose and
+  replicate draw.
+- **Fast mode** (`--mode fast`, the `evolve` default): every board unit
+  is evaluated at most once and reused, so on the gauntlet the unit runs
+  **only the challenger** and the champion's cached measurement is
+  reused. This halves the compute per round but *re-uses* a champion
+  score from an earlier draw — a subtle break in the pairing that
+  matters under noise (see §7).
 
 Board units run concurrently — the "tournament hall," many boards in
 flight at once — bounded by a single semaphore sized from
 `RuntimeConfig.parallelism`. Each generation's per-entry losses are then
-aggregated (an *unweighted* mean across the board in v0) into the
+aggregated (an *unweighted* mean across the board) into the
 generation's scalar and pass-rate.
 
 ### 3.2 The promote gate — three rules, in order
@@ -387,7 +407,15 @@ flowchart TB
 An optional **regression gate** (`regression_gate_enabled`) runs the
 snapshot's own test suite *before* scoring; a failing suite is a hard
 reject. It is the coarsest, cheapest non-regression guard — "did we
-break the build" — sitting in front of the statistical rules.
+break the build" — sitting in front of the statistical rules. The gate
+also defers a duel with unstarted board units, rejects non-finite
+evidence, and, under the experimental edit-complexity ceiling, rejects an
+over-size edit; [`SCORING.md`](SCORING.md) §5 lists every check.
+
+A training-slice promotion is still provisional. The crowning duel must
+also confirm on the hidden holdout slice, and, when the contract sets
+`params["promote_confidence_threshold"]`, pass the evidence gate over
+fresh confirmation duels (§9).
 
 ### 3.3 The loop's stopping behavior
 
@@ -416,7 +444,7 @@ flowchart LR
         I5["Return MOST-REPLICATED survivor"]
         I1-->I2-->I3-->I4-->I5
     end
-    subgraph ZG["zicato gauntlet (today)"]
+    subgraph ZG["zicato gauntlet"]
         Z1["Propose 1 challenger off the champion"]
         Z2["Run champion+challenger on shared board"]
         Z3["Margin + monotonicity gate"]
@@ -438,16 +466,18 @@ over time. zicato's "propose a patch off the champion" is the same
 move in a different representation. **zicato is one batch and one
 significance test away from being elitist irace over agent harnesses.**
 
-zicato is weaker than irace in two places:
+The bare gauntlet, at `replicates = 1` and without the holdout or the
+evidence gate, is weaker than irace in two places:
 
 - **No replication.** irace's confidence in a survivor comes from
-  evaluating it on *more and more* instances; zicato evaluates each
-  generation on the board *once*. The fixed `promote_margin` is a
-  stand-in for a confidence interval it never actually measures.
+  evaluating it on *more and more* instances; the bare gauntlet
+  evaluates each generation on the board *once*. The fixed
+  `promote_margin` is a stand-in for a confidence interval it never
+  actually measures.
 - **No most-replicated guarantee / no winner's-curse defense.** irace
   returns the candidate evaluated on the most instances, which is the
-  most precisely estimated one. zicato promotes on a single draw, so
-  the promoted challenger's loss is an *optimistically biased* estimate:
+  most precisely estimated one. A single-draw gauntlet promotes on one
+  draw, so the promoted challenger's loss is an *optimistically biased* estimate:
   it was selected *because* it looked good, and optimizing over noisy
   estimates systematically overshoots. This is the
   **optimizer's curse** (Smith & Winkler 2006): even with *unbiased*
@@ -457,13 +487,17 @@ zicato is weaker than irace in two places:
   the winner's estimate back toward the prior before acting — is the
   motivation for the winner's-curse confirmation re-run in §9.
 
+The shipped defaults close part of both gaps: per-duel replicates,
+racing's escalating slices, the holdout confirmation, and the evidence
+gate's fresh confirmation duels (§9).
+
 ---
 
 ## 5. Selection as an optimal-stopping problem
 
 §4 framed the *crowning* decision as elitist racing. The loop makes a
 second decision the gate never touches: **when to stop spawning
-challengers at all.** Today that answer is crude (§3.3): a preset
+challengers at all.** The shipped answer is crude (§3.3): a preset
 `--rounds`, plus `--max-consecutive-rejections` (default 3) as an early
 bail-out, plus the loop-health degeneracy stop. None of them reasons
 about the value of continuing; each is a fixed threshold. Treated as an
@@ -567,6 +601,9 @@ rewards, and two well-matched lenses apply:
 
 ### 5.4 What this changes for zicato (refines §3.3)
 
+> **Status.** Proposed; not built. The shipped stop rules are the ones §3.3
+> lists.
+
 This section *refines, and does not contradict,* §3.3. The shipped stop
 rules stay as safe defaults; the proposal is to make them the crude
 limits of a posterior rule:
@@ -578,10 +615,10 @@ limits of a posterior rule:
   round cost. This subsumes the counter (a run of `k` rejections is one
   observable that lowers the posterior) while also catching the
   "improving, but not worth the compute" regime.
-- **Tie the stop to the epoch wall-clock budget.** The project already
-  carries an autoresearch-style **per-epoch wall-clock budget** (see
-  [`EPOCHS-AND-JOURNALING.md`](EPOCHS-AND-JOURNALING.md)). That budget is
-  the `c`-denominated horizon: the stop rule should compare *expected
+- **Tie the stop to the wall-clock budget.** `evolve` already accepts a
+  wall-clock budget for the whole invocation
+  (`--max-wall-clock-seconds`), on top of each board entry's own budget.
+  That budget is the `c`-denominated horizon: the stop rule should compare *expected
   gated improvement per round* against *remaining budget*, so the loop
   spends its last rounds only if they still pay for themselves.
 - **Treat contract-hash auto-epoching as a horizon reset.** When the
@@ -595,7 +632,7 @@ limits of a posterior rule:
 
 The open calibration questions (how to estimate `c` in board-units, how
 much prior to put on proposer productivity, whether to stop *per
-champion* or *per epoch*) are collected in §10.
+champion* or *per epoch*) are collected in §11.
 
 ---
 
@@ -708,7 +745,7 @@ confidence.
 
 The correspondence is exact:
 
-| Dueling-bandit concept | zicato today |
+| Dueling-bandit concept | zicato |
 |---|---|
 | Arm | A candidate generation |
 | A duel | One paired board run, champion vs challenger, common random numbers (§3.1, already implemented) |
@@ -717,14 +754,16 @@ The correspondence is exact:
 | Relative-preference acceptance test with a margin | The promote gate's scalar-margin rule (§3.2, the AlphaGo-Zero-style threshold) |
 | Condorcet test against one opponent | "Beat the champion" |
 
-zicato has already built the duel; what it lacks is the dueling-bandit
-**confidence discipline**. A dueling-bandit acceptance rule would add
-three things, each of them a change §9 already proposes, stated here in
-the bandit idiom:
+zicato has built the duel. The dueling-bandit **confidence discipline**
+adds three things, each of them a change §9 proposes, stated here in the
+bandit idiom. The first two are shipped in the evidence gate and
+replication; the third is shipped as racing plus the experimental
+Copeland and Ranked Pairs leader resolvers
+([`SELECTION-THEORY.md`](SELECTION-THEORY.md)):
 
 1. **A confidence-bounded relative comparison rather than a one-shot
    delta.**
-   The gate today reads a *single* duel and applies a fixed margin.
+   The bare gate reads a *single* duel and applies a fixed margin.
    RUCB-style acceptance keeps a confidence bound on `P(challenger ≻
    champion)` and promotes only when that bound clears a target. The
    duel is replicated until the *relative* confidence, rather than the
@@ -748,11 +787,11 @@ the bandit idiom:
    iterated racing in §9, which races the `K`-field and crowns the
    most-replicated survivor.
 
-**The size of the gap.** A gauntlet round is a **degenerate dueling
-bandit**: one challenger, one duel, a fixed margin, and no confidence
-bound. At `replicates = 1` it also carries no replication, which is the
-cheapest legitimate instance of the framework; the shipped default of 2
-buys one repeat of each measurement. The bandit view's recommendation
+**The size of the gap.** A gauntlet round without the evidence gate is a
+**degenerate dueling bandit**: one challenger, one duel, a fixed margin,
+and no confidence bound. At `replicates = 1` it also carries no
+replication, which is the cheapest legitimate instance of the framework;
+the default of 2 buys one repeat of each measurement. The bandit view's recommendation
 is the one §9 reaches from racing: add replication, turn the fixed
 margin into a confidence-bounded relative test, and generalise "beat the
 champion" to Condorcet or Copeland identification once a field exists. Both derivations reach the same design: optimal stopping
@@ -777,7 +816,7 @@ quadrantChart
     quadrant-3 "Fragile & cheap"
     quadrant-4 "Fragile & costly (avoid)"
     "Leaderboard (1 run each, sort)": [0.18, 0.22]
-    "Gauntlet today (1 challenger, 1 run)": [0.22, 0.34]
+    "Gauntlet (1 challenger, 1 run)": [0.22, 0.34]
     "Single-elim / Successive Halving": [0.33, 0.20]
     "Double-elim bracket": [0.55, 0.40]
     "Round-robin vs champion": [0.62, 0.55]
@@ -838,9 +877,13 @@ both.
 
 ## 9. The recommended design
 
-A phased path from today's gauntlet to elitist iterated racing. Each
+A phased path from the bare gauntlet to elitist iterated racing. Each
 lever is independently shippable and independently valuable; they are
-ordered by leverage-per-effort.
+ordered by leverage-per-effort. Built: the multi-candidate field,
+replication, the winner's-curse confirmation, and elitist iterated racing.
+Not built: the paired Wilcoxon gate. The trust-region step bound exists
+only as the experimental edit-complexity ceiling
+(`experimental.diff_complexity_ceiling`).
 
 ```mermaid
 flowchart TB
@@ -857,20 +900,20 @@ flowchart TB
     L2 --> L5
 ```
 
-**A multi-candidate field.** Have the proposer emit *K*
+**A multi-candidate field** (built: `field_size`). Have the proposer emit *K*
 diverse experiments per round (different mutation targets / hypotheses
 off the same champion). Without a field there is no race; with one,
 every richer policy becomes possible. Independently valuable: it widens
 exploration.
 
-**Replication (highest leverage).** Run each (generation,
+**Replication (highest leverage; built).** Run each (generation,
 entry) more than once and aggregate (mean, or better, keep the samples).
 This is the single change the entire literature points at: under noisy
 absolute evaluation, *more samples per candidate* — not bracket shape —
 is what makes a winner trustworthy. It also fixes the most dangerous
 fragility in the current gate, described next.
 
-**A paired significance gate.** Today the scalar-margin rule compares two
+**A paired significance gate** (not built). The scalar-margin rule compares two
 scalars against a fixed margin, and the pass-rate monotonicity rule
 rejects on a *single* per-task pass→fail flip. Both are noise-fragile: a
 better challenger can be rejected because one entry the champion passed
@@ -885,7 +928,7 @@ promotes trivial wins.*
 
 ```mermaid
 flowchart LR
-    subgraph now["gate today"]
+    subgraph now["gate as built"]
         N1["mean(child) vs mean(parent)<br/>− fixed margin"]
         N2["any single pass→fail flip → reject"]
     end
@@ -903,19 +946,27 @@ curse, Smith & Winkler 2006). Before committing the crown,
 never used for proposal/selection — the epoch is a natural home for such
 a confirmation set). Promote only if it holds up. A fresh-draw estimate
 is unconditioned on the selection, so it is the cheap, model-free
-version of the paper's Bayesian de-biasing. zicato applies it as
-holdout confirmation of the crowned challenger
-(`confirm_crowning_holdout` in `src/zicato/tournament/runner.py`, and
-`_holdout_confirms` in `src/zicato/tournament/gate.py`).
+version of the paper's Bayesian de-biasing. zicato applies it twice.
+Holdout confirmation re-scores the crowned challenger on the hidden
+holdout slice (`_confirm_crowning_on_holdout` in
+`src/zicato/evolve/gate.py`, and `_holdout_confirms` in
+`src/zicato/tournament/gate.py`). The evidence gate
+(`src/zicato/selection/evidence_gate.py`) fits Bradley–Terry strengths
+over fresh confirmation duels of the fixed crowning pair, which never
+include the selection duels, and holds the promotion until the lower
+bound of the strength difference is positive or its duel budget
+(`params["promote_confidence_replicates"]`, default 32) is spent.
 
-**A trust-region step bound (complementary).** Borrow Family
+**A trust-region step bound (complementary; not built beyond the
+experimental edit-complexity ceiling).** Borrow Family
 ①: cap how far one experiment may move the champion (patch size,
 mutation-point count). Smaller, safer steps tighten the comparison
 variance and reduce catastrophic regressions. The proposer brief's
 mutation budget is the natural home. It does *not* replace the gate (it
 cannot enforce per-task feasibility), it makes the gate's job easier.
 
-**Elitist iterated racing (the synthesis).** With the multi-candidate
+**Elitist iterated racing (the synthesis; built as the `racing`
+structure, without the significance test).** With the multi-candidate
 field, replication, and the paired significance gate in place, the whole
 loop becomes irace over harnesses:
 
@@ -992,17 +1043,18 @@ The instrument-health panel serves the same ladder over the same
 
 ## 10. Configurable per-epoch tournament structures
 
-> **Status.** SHIPPED. The `SelectionStrategy` interface, the five
-> structures (gauntlet and racing in the default choice; single_elim,
-> double_elim and swiss under the `experimental.tournament_structures`
-> opt-in), the `tournament` contract block, and the CLI surface are in the tree; the
+> **Status.** Built. The `SelectionStrategy` interface, the five
+> structures (gauntlet and racing in the default choice, racing the
+> default; single_elim, double_elim and swiss under the
+> `experimental.tournament_structures` opt-in), the `tournament` contract
+> block, and the CLI surface are in the tree; the
 > full interface spec and reference live in
 > [`TOURNAMENT-STRUCTURES.md`](TOURNAMENT-STRUCTURES.md). This section is
 > the *decision-theory* placement of that work into the rest of this
 > document — which structure approximates which §2/§5/§6 mechanism, and
 > the honesty about noise each one demands.
 
-§3–§9 describe *one* selection structure — the king-of-the-hill gauntlet
+§3–§9 reason mostly from *one* selection structure — the king-of-the-hill gauntlet
 (§3), shown to be the degenerate single-replicate instance of the
 statistical-gate family (§2②) / the dueling-bandit framework (§6.3) /
 elitist iterated racing (§4). The recommended path (§9) keeps the
@@ -1010,9 +1062,10 @@ gauntlet's shape and adds replication and a confidence-bounded test
 *inside* it.
 
 An orthogonal axis is exposed as well: **which competition the field
-runs, chosen per epoch.** The gauntlet stays the default and racing is
-the scaffold's recommendation; an epoch may instead elect
-single-elimination, double-elimination or Swiss pairing under the
+runs, chosen per epoch.** Racing is the default and the scaffold's
+recommendation, and the gauntlet is the one-challenger alternative; an
+epoch may instead elect single-elimination, double-elimination or Swiss
+pairing under the
 `experimental.tournament_structures` opt-in. Each structure below is
 stated in the language of §2, §5 and §6. §2 and §8 give the reason the
 three are experimental: at zicato's field size a bracket is unnecessary,
@@ -1038,11 +1091,11 @@ interface, per-structure design, and backend plan are in
 
 | Structure (`tournament.structure`) | What it is here | §-mapping | Selection / advance | Stopping rule | Replication stance |
 |---|---|---|---|---|---|
-| **`gauntlet`** *(default)* | Today's king-of-the-hill (§3) | Degenerate single-replicate dueling bandit (§6.3); `(μ+λ)` elitism (§2 elitism note) | One duel/round: champion vs the round's one challenger; promote on gate `promoted` | §3.3 / §5 — `rounds`, `max_consecutive_rejections`, posterior stop (§5.4) | None today; §9 adds replication, a paired significance gate, and winner's-curse confirmation in place |
+| **`gauntlet`** | The king-of-the-hill (§3) | Degenerate single-replicate dueling bandit (§6.3); `(μ+λ)` elitism (§2 elitism note) | One duel/round: champion vs the round's one challenger; promote on gate `promoted` | §3.3 — `rounds`, `max_consecutive_rejections`; the posterior stop (§5.4) is not built | Per-duel `replicates` (default 2), holdout confirmation, and the optional evidence gate |
 | **`single_elim`** | Bracket of *K* challengers; winners advance; champion is a seed/bye | Condorcet identification (§6.2) over a one-shot field; **experimental** (§8; opt-in `experimental.tournament_structures`) | Each bracket node is a duel; node winner = the side the gate prefers; champion enters as a bye and meets the bracket survivor in the final | Tournament resolves when one finalist remains; champion promoted only if it clears the gate as the final duel's challenger | **Mandatory** ≥ r duels/node, or a strong candidate dies to one unlucky run (§2, §8) |
 | **`double_elim`** | Winners' + losers' brackets; one loss is survivable | Condorcet ID with a second life (§6.2); **experimental** (§8; the same opt-in) | Two brackets; a node-loser drops to the losers' bracket; grand final is winners'-survivor vs losers'-survivor | Resolves when the losers' bracket is exhausted; champion-gate applied to the grand-final survivor | §8: the second-life benefit is **delivered more cheaply by replication** — prefer raising `replicates` over building the losers' bracket |
 | **`swiss`** | Fixed `rounds_n` rounds, pair by running standing | Copeland identification (§6.2); Swiss-as-non-adaptive-racing (§7); **experimental** (§8; the same opt-in) | Each round pairs near-standing generations into duels; standing = Copeland score (duels won) tie-broken by mean scalar | Resolves after `rounds_n` Swiss rounds; champion = top of final standing if it clears the gate vs the incumbent | Pairings repeat opponents rarely; **per-pairing replication** is how Swiss earns noise robustness (§6.2's "duels tighten the relative bound") |
-| **`racing`** | All challengers on a board *subset*, cut the worst, escalate budget | **Successive Halving / best-arm identification** (§2); the *adaptive* form of Swiss/round-robin (§7) and the structure §9's elitist-iterated-racing synthesis converges on | Rung 0: every challenger duels the champion on a board slice; eliminate the worst `1−1/eta`; survivors re-duel on a larger slice; repeat | Resolves when one survivor remains or the board is fully consumed; that survivor faces the full-board gate (plus the optional winner's-curse confirmation of §9) | **Built-in** — racing *is* escalating replication; this is the structure §7–§9 actually recommend, and the only bracket-shaped option this document endorses |
+| **`racing`** *(default)* | All challengers on a board *subset*, cut the worst, escalate budget | **Successive Halving / best-arm identification** (§2); the *adaptive* form of Swiss/round-robin (§7) and the structure §9's elitist-iterated-racing synthesis converges on | Rung 0: every challenger duels the champion on a board slice; eliminate the worst `1−1/eta`; survivors re-duel on a larger slice; repeat | Resolves when one survivor remains or the board is fully consumed; that survivor faces the full-board gate (plus the optional winner's-curse confirmation of §9) | **Built-in** — racing *is* escalating replication; this is the structure §7–§9 actually recommend, and the only bracket-shaped option this document endorses |
 
 §7's conclusion holds here: every non-gauntlet structure spends more
 duels, and the lever that buys confidence is **how many times each
@@ -1054,7 +1107,11 @@ naming that key. They serve an operator who wants to try a cheap-field
 regime, such as a large proposer fan-out under a generous budget.
 `racing` is the one structure whose noise handling the literature
 endorses for zicato's regime, because its replication is intrinsic
-rather than added on top. The default stays `gauntlet`.
+rather than added on top, and it is the default. The two bracket
+structures and Swiss also accept the experimental standings rating
+(`experimental.standing_rating`, Bradley–Terry) and leader resolver
+(`experimental.resolver`, Copeland or Ranked Pairs); see
+[`SELECTION-THEORY.md`](SELECTION-THEORY.md).
 
 ### 10.3 The prerequisite: a multi-candidate field
 
@@ -1062,11 +1119,12 @@ Every structure except `gauntlet` needs *K > 1* challengers per round —
 the **multi-candidate field of §9**. The gauntlet asks the proposer for one
 `Experiment`; a bracketed/racing epoch asks for `field_size` diverse
 experiments off the same champion. This is the shared unlock: without a
-field there is no bracket to schedule. The `tournament` config block
-therefore carries `field_size` (1 for `gauntlet`), and a non-gauntlet
+field there is no bracket to schedule. Every non-gauntlet structure
+therefore reads `params["field_size"]` (default 2; the recommended racing
+contract sets 4); the gauntlet accepts no `field_size`. A non-gauntlet
 structure with `field_size = 1` degrades to the gauntlet (one challenger,
 one duel) rather than erroring — the same graceful degeneracy fast mode
-already uses when no champion cache exists (§3.1).
+uses when no champion cache exists (§3.1).
 
 ### 10.4 The stopping rule composes with §5
 
@@ -1078,9 +1136,9 @@ the §5 posterior stop still governs whether the *next* round's fresh
 field is worth the cost `c` (inter). For `gauntlet` the two collapse into
 one decision (one duel per round, so "resolve the tournament" and
 "finish the round" coincide) — which is why §3.3 / §5 read as a single
-stopping story today. The implementation must keep the §5 stop *outside*
+stopping story for the gauntlet. A §5 stop, if built, belongs *outside*
 the strategy, at the `evolve_n_rounds` level, so it applies uniformly
-across structures.
+across structures; the shipped round-level stops already live there.
 
 ---
 
@@ -1125,8 +1183,8 @@ across structures.
    proposer fan-out with a generous budget, or never? What
    `field_size` / `eta` / board-subset schedule does `racing` need to
    beat the replicated gauntlet on simple regret per unit compute, and
-   should the structure default to `racing` rather than `gauntlet` once
-   the multi-candidate field of §9 exists?
+   do the recommended values (`field_size` 4, `eta` 2, `board_fraction`
+   0.4) hold up under measurement?
 
 ---
 

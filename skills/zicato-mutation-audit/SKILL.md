@@ -1,6 +1,6 @@
 ---
 name: zicato-mutation-audit
-description: Tier 2 run — audit the mutable surface of a registered target with `zicato inspect mutations` (per-id span/file/code points, --id glob, --kind, --show full, --format json, [forbidden] annotations) to decide and verify what the proposer may change before an evolve run. Use this when reviewing the mutation surface, confirming markers resolve, or checking which ids are off-limits.
+description: Audit the mutable surface of a registered target with `zicato inspect mutations` (per-id span/file/code points, --id glob, --kind, --show full, --format json) and copy exact ids into the brief's `Forbidden edits` list, to decide and verify what the proposer may change before an evolve run. Use this when reviewing the mutation surface, confirming markers resolve, or checking which ids are off-limits.
 ---
 
 # zicato mutation audit — what the proposer may change
@@ -41,7 +41,11 @@ slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
   block (e.g. a tool's slugify / path logic) as mutable without handing the
   proposer the whole module. The `:end` sentinel carries no id/metadata.
 
-A point's `id` is its stable handle; `kind` is `span`, `file`, or `code`. See
+A point's `id` is its stable handle; `kind` is `span`, `file`, or `code`. The
+same marker token also works in text files — `.md`, `.markdown`, `.txt`,
+`.yaml`, `.yml` and `.toml` — under each format's own comment lead-in, and
+`scoring.json`'s `mutation_surface` table declares further suffixes (a
+contract edit that rolls the epoch). See
 [docs/design/MUTATION-SURFACE.md](../../docs/design/MUTATION-SURFACE.md).
 
 The optional `role="…"` metadata is **load-bearing beyond documentation**: the
@@ -52,12 +56,12 @@ roles is how you get a representative pre-flight verdict — see
 `skills/zicato-evolve`.
 
 > **Not a mutation point: the proposer's failure-mode feedback channel.** The
-> proposer now receives a board-anonymized, train-slice-only *outcome-marginal
+> proposer receives a board-anonymized, train-slice-only *outcome-marginal
 > failure profile*, optionally extended by a `scoring.json`
 > `outcome_summarizer_spec` hook. That hook is a **scoring contract field** (an
 > operator input to the *evaluation*, hashed into the contract — changing it
 > rolls the epoch), NOT a mutable harness span. It never appears in `zicato
-> mutations`, and the proposer cannot edit it — it only *reads* the profile it
+> inspect mutations`, and the proposer cannot edit it — it only *reads* the profile it
 > produces. Do not look for it in the mutation surface.
 
 ## The audit commands
@@ -69,7 +73,7 @@ List the whole surface (human-readable table):
 ```
 
 Each row is `id  kind  lines  file  preview`, with a footer like
-`Total: 9 mutation point(s)  [span=9]  ~119 mutable line(s)`. Confirm: no
+`Total: 15 mutation point(s)  [code=3, span=12]  ~142 mutable line(s)`. Confirm: no
 warnings, no duplicate ids, the count matches what you expect.
 
 | Flag | Use |
@@ -103,7 +107,9 @@ want a subset.
 
 ## Forbidden ids
 
-An operator marks ids off-limits in the proposer brief's `## Forbidden` list.
+An operator marks ids off-limits in the proposer brief's `## Forbidden edits`
+section: one bullet per id, the id in backticks (the exact heading and bullet
+rule is in `skills/zicato-write-brief`; a `## Forbidden` heading is ignored).
 Enforcement is mechanical and lives on the patch path rather than in this listing:
 `check_forbidden_ids` (`mutation/validator.py`) / `enforce_forbidden`
 (`proposer/brief.py`) reject any patch whose `mutation_id` is in the set, matching
@@ -115,7 +121,7 @@ good for is getting the id spellings exactly right:
 
 1. Run `zicato inspect mutations` (or `--id '<glob>'`) and copy the id verbatim out of
    the listing.
-2. Paste it into the brief's `## Forbidden` list — a typo'd id silently forbids
+2. Paste it into the brief's `## Forbidden edits` list — a typo'd id silently forbids
    nothing, and nothing in the listing will tell you.
 3. Editing the brief rolls the epoch (the brief is a contract component).
 
@@ -124,7 +130,7 @@ good for is getting the id spellings exactly right:
 - Every marker resolves: the table prints with no warnings and no duplicate-id
   errors.
 - The exposed ids are exactly the surface you intend the proposer to touch.
-- Every id you put in the brief's `## Forbidden` list appears — spelled
+- Every id you put in the brief's `## Forbidden edits` list appears — spelled
   identically — in this listing.
 
 With the surface confirmed, hand off to `skills/zicato-evolve` to run the loop —
@@ -132,5 +138,5 @@ the proposer addresses patches only against the points you just verified.
 
 ## Reference
 
-- [docs/design/MUTATION-SURFACE.md](../../docs/design/MUTATION-SURFACE.md) — marker syntax, AST resolution, the `MutationPoint` shape, validator constraints (incl. V5 / `## Forbidden`), the audit CLI.
+- [docs/design/MUTATION-SURFACE.md](../../docs/design/MUTATION-SURFACE.md) — marker syntax, AST resolution, the `MutationPoint` shape, validator constraints (incl. V5 / `## Forbidden edits`), the audit CLI.
 - [docs/design/CLI.md](../../docs/design/CLI.md) — full CLI reference.

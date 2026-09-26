@@ -22,11 +22,11 @@ static/
       bus.js            — a small publish/subscribe event bus
       harmonograf.js    — harmonograf URL builders
       prefs.js          — the persisted per-viewer preference store
-      admission_viz.js  — the suggestion-admission figures
     router.js           — hash routing + deep links
     shell.js            — chrome, sidebar-to-detail host, page-scale pill
     ui.js               — gatedSwap, pills, tables, themes, typefaces
     svg.js, dag.js      — the figure builders
+    tournament_model.js — the tournament-structure models the figures draw
     matrix.js           — the dn-mtx table-grid primitives
     data.js             — the per-epoch read accessors
     views/              — one module per routed detail pane
@@ -59,6 +59,8 @@ when it renders. Shape (as produced by `query.judge_view.build_environment`):
   "heartbeat": { generation_id, round_index, last_heartbeat,
         round_started_at, started_at, harmonograf_url?,
         harmonograf_persistent? } | null,
+  "liveness": { "state": "live"|"settled"|"interrupted",
+        last_heartbeat?, ended_at?, epoch_id? },  // runtime_view.derive_liveness
   "lock": { ... } | null,
   "run_log": { "events":[{seq,kind,ts,summary}], "cursor":int, "events_path":str },
   "generated_at": "ISO-8601 Z"
@@ -73,16 +75,21 @@ carries no goal. It lets the home view's epochs table annotate each row
 with what the epoch is trying to accomplish without a per-epoch
 `/api/epoch` fetch. Folded into AppState as `state.epochs`.
 
+`liveness` is the server's one answer to "is anything running?"; the SSE
+snapshot carries the same block, so the two cannot disagree. The client
+folds it into `state.liveness` and reads it through
+`livestatus.deriveLiveness`.
+
 `GET /api/health` (separate, fetched ONCE) is the dashboard *service*
 identity: `{ status, version, port, build, uptime_seconds, read_only,
 workspace }`. It is NOT in the environment payload.
 
-The drill-down / lazy endpoints (unchanged):
+The drill-down / lazy endpoints:
 - `GET /api/run-log?after=<cursor>` — append-only tail batch.
 - `GET /api/tournaments/{gen}` — per-matchup detail. **No client reads
   it**; it is an operator surface for direct HTTP requests. The match-up
   surfaces read `/api/tournaments` (the bracket) and
-  `/api/matchup-grid/...` instead (§3).
+  `/api/matchup-grid/...` instead.
 - `GET /api/drift-movements/{gen}` — drift-kind movements. **No client
   reads it**; operator surface only.
 - `GET /api/score-trajectory` — `{ epoch_id, points:[{generation_id,
@@ -102,9 +109,11 @@ The drill-down / lazy endpoints (unchanged):
   settled conversation:
 
   ```jsonc
-  { "found": true, "cursor": int,            // feed back as the next `after`
+  { "epoch_id", "generation_id", "entry_id", "run_id",
+    "found": true, "cursor": int,            // feed back as the next `after`
     "turns": [ { ...turn, "turn_index": int } ],   // only new/changed turns
     "annotations": [ { ...annotation } ],
+    "execution": { ... },                    // the run's execution record
     "turn_total": int, "event_count": int,
     "complete": bool,                        // a terminal event was seen
     "truncated": bool,                       // delta exceeded `limit` — the
@@ -139,7 +148,9 @@ The drill-down / lazy endpoints (unchanged):
   console has neither.
 - `GET /api/epoch/{epoch}/candidate/{gen}[?entry=<id>]` — one candidate's
   dossier (`D.candidateDossier()`), the one read the candidate page makes
-  per candidate shown: `per_entry`, `hypothesis_accuracy`, `episode_export`,
+  per candidate shown: the candidate's `generation`, `experiment`,
+  `relatives`, `per_judge`, `champion`, `parent` and `structure`, plus
+  `per_entry`, `hypothesis_accuracy`, `episode_export`,
   `matchup_grid` against the reigning champion, the `comparison` projected
   from it (per-entry champion figures and the like-for-like drift sums),
   `gates` (each `{champion, challenger, role, gate, judge_comparison}` — the
@@ -164,7 +175,7 @@ The drill-down / lazy endpoints (unchanged):
     "entry_grid": [ { "entry_id",
         "parent_drift_loss":num|null, "child_drift_loss":num|null,
         "parent_pass":bool|null, "child_pass":bool|null,
-        "parent_score":num|null, "child_score":num|null,   // continuous (#18)
+        "parent_score":num|null, "child_score":num|null,   // continuous outcome
         "parent_metrics":obj|null, "child_metrics":obj|null, // precision/recall
         "delta":num|null,                       // child − champion drift loss
                                                 //   POSITIVE = worse
@@ -177,8 +188,9 @@ The drill-down / lazy endpoints (unchanged):
         "decided_by": "score"|"pass"|"drift"|null,
         "parent_session_id"?, "child_session_id"? } ],
     "scalar": { "parent":num|null, "child":num|null, "delta":num|null,
-        "components": { <component>: num } } | null,  // delta of each
-                                                      // scalar_components term
+        "mean_score"?: { parent, child, delta },       // gen_score.json means
+        "components"?: { <component>: num } } | null,  // delta of each
+                                                       // scalar_components term
     "source": "loss_files"
   }
   ```
@@ -250,8 +262,11 @@ The file and mutation endpoints in full:
   tests, but no client reads it: the console offers the changed-files
   diff and the mutation-site browser instead of a per-generation file
   browser. Reserved for external callers.
-- `GET /api/files/{epoch}/{gen}/content?path=` — one file's content.
-  Reserved for external callers in the same way as `/tree`.
+- `GET /api/files/{epoch}/{gen}/content?path=` — one file's content
+  (`D.fileContent()`). The patch diff reads it to expand the context
+  around a patched span, because the patch record holds only the span; a
+  generation whose tree was pruned answers with an `error` field and the
+  diff hides the expansion control.
 - `GET /api/files/{epoch}/{gen}/patches` — the applied patch set for a
   SINGLE generation (parent -> selected).
 - `GET /api/files/{epoch}/{gen}/diff` — the files the generation
@@ -307,9 +322,16 @@ share a parent edge are NOT walked.
 - `: ping` — keepalive comment, ignored.
 
 **The structural rule:** a frame NEVER rebuilds a panel's `innerHTML`.
-After `applyEnvironment` the render layer diffs state and writes only the
-affected DOM node, keyed by a stable `data-*` id (§4). The run-log tail
-is strictly append-only.
+After `applyEnvironment` every pane re-renders through its digest gate
+(§4), so a pane whose content digest is unchanged writes nothing. The
+run-log tail is strictly append-only.
+
+`seq` and `terminal` are the orchestrator's progress cursor
+(`state.noteProgress`): `seq` advances only on a real transition, never
+on the heartbeat timer, and a `seq` that goes backwards means a fresh
+`evolve` restarted the log. `content_revision` counts content changes
+and ignores heartbeat and progress writes, so a frame that advances
+neither leaves the environment read unrequested.
 
 ## 3. The client state object — `AppState` (core/state.js)
 
@@ -317,8 +339,11 @@ AppState is the single source of truth. A pane's `render` reads it and
 never mutates it. Fields:
 
 ```
-state.connected / connecting / mock     — connection status
+state.connected / connecting           — connection status
 state.heartbeat                         — merged heartbeat record
+state.liveness        { state, last_heartbeat?, ended_at?, epoch_id? } | null
+state.lastSeq / terminal / lastSeqAdvanceAt — the progress cursor
+state.contentRevision                   — bumped on each snapshot
 state.activeRuns []                     — active run records
 state.activeTournament | null
 state.pastTournaments []
@@ -333,7 +358,8 @@ state.files / state.mutations         — file + mutation pane scratch state
 ```
 
 Mutation methods: `applySnapshot(snap)`, `applyEnvironment(env)`,
-`setHeartbeat(hb)` (merge, never replace — keeps `harmonograf_url`),
+`setHeartbeat(hb)` (merge, never replace — keeps `harmonograf_url` and
+`harmonograf_meta_session`), `noteProgress(seq, terminal)`,
 `setHealth(h)`, `setLogTail(t)`, `mergeLogTail(batch)`. State changes
 publish on the bus (§5).
 
@@ -341,7 +367,7 @@ publish on the bus (§5).
 `driftMovements` or `selectedMatchup` fields and no `loadMatchupDetail()`
 loader: caching `/api/tournaments/{gen}` and `/api/drift-movements/{gen}`
 on every change signal would cost two round-trips per beat that no view
-reads. The beat path makes exactly ONE consolidated `/api/environment`
+reads. The beat path makes ONE consolidated `/api/environment`
 read, and per-matchup detail is an on-demand drill-down through
 `js/data.js`.
 
@@ -358,7 +384,7 @@ changed, the panel's subtree is rebuilt and swapped in whole.
 - `patchText(node, text)` — sets textContent only if changed.
 - `patchClass(node, name, on)` — toggles a class only if changed.
 
-Each pane exports `render(host, ctx, params)`. It is re-run after every
+Each pane exports `render(host, ctx, params[, route])`. It is re-run after every
 state change and MUST gate all DOM writes on a digest (`gatedSwap`) or
 use the `patch*` helpers, so unchanged nodes are untouched. A pane never
 sets `host.innerHTML`.
@@ -366,12 +392,12 @@ sets `host.innerHTML`.
 ### 4a. Figure width — intrinsic, capped
 
 A figure's width is its **intrinsic content width**, capped; full width is
-reserved for tables and timelines, whose rows genuinely use it. An SVG at
+reserved for tables and timelines, whose rows use it. An SVG at
 `width:100%` scales its own coordinate system, so every mark, radius and
 especially every `<text>` magnifies with the pane — a 340×64 trend rendered
 across 1000px draws its captions at 3× the size CSS asked for. Two builders in
 `svg.js` encode the choice. `applyIntrinsic` pins the viewBox width in CSS
-pixels (scale exactly 1) with `max-width:100%` and `xMinYMid meet`, so a
+pixels (scale 1) with `max-width:100%` and `xMinYMid meet`, so a
 narrow pane shrinks the whole figure uniformly. `applyResponsive` opts into
 the aspect-locked full-width hero mode, and is legitimate only for a builder
 that also ships a matched `svg.dn-*-hero` max-width cap in `console.css`. A
@@ -383,10 +409,19 @@ a full-width panel; each card keeps its own collapsed `figCaption` "?".
 
 ## 5. The event bus — `core/bus.js`
 
-`bus.on(topic, fn)` / `bus.emit(topic, payload)`. Topics:
-- `state:changed` — AppState mutated; the active view re-renders.
-- `route:changed` — `{ view, params }` — router resolved a new route.
-- `log:appended` — `{ events:[...] }` — new run-log rows to append.
+`bus.on(topic, fn)` returns an unsubscribe function; `bus.off(topic,
+fn)` and `bus.emit(topic, payload)` complete the interface. Topics:
+- `state:changed` — AppState mutated; the shell re-renders the active
+  view.
+- `log:appended` — `{ events:[...] }` — new run-log rows appended by
+  `mergeLogTail`.
+- `run_log:grew` — the raw `run_log` frame (§2), re-emitted by `sse.js`
+  so a live conversation pane (`convo.js`) pulls its transcript delta
+  only when its own run's `events.jsonl` grew.
+
+Route changes do not travel on the bus: the shell listens for the
+browser's `hashchange` event, and `router.navigate()` dispatches one when
+the target hash equals the current one.
 
 ## 6. Shared builders (`js/ui.js`, `js/svg.js`)
 
@@ -438,14 +473,15 @@ owns the single hover-for-detail card every `moreMark` attaches to.
 
 The shell hosts one detail pane at a time, chosen by the route (§8).
 The view registry (`VIEWS` in `router.js`, `RENDERERS` in `shell.js`)
-names fifteen views, and each has a module under `js/views/` that exports
-`render(host, ctx, params)`. A page section that another view composes,
+names fourteen views, and each has a module under `js/views/` that exports
+`render(host, ctx, params[, route])`. A page section that another view composes,
 with no route of its own, is a panel. `js/panels/evals_health.js` is one:
 the evals page imports it and mounts it into two hosts it owns. Three
 panels still sit under `js/views/` beside the views that mount them:
-`structure.js` (the tournament model builders and figures the epoch page,
-the rounds page and the live band draw), `boardstatus.js` and `ledger.js`
-(both mounted by the epoch page).
+`structure.js` (the per-structure sections the epoch and rounds pages
+mount, drawn from the models in `js/tournament_model.js`, which the live
+band in `live.js` also reads), `boardstatus.js` and `ledger.js` (both
+mounted by the epoch page).
 
 - **home** — the workspace as a fleet: a cross-epoch overview strip, one
   compact card per epoch carrying its loss trendline, the composed
@@ -498,7 +534,7 @@ from `GET /api/epoch` (`D.epoch`, cached per epoch), built by
 `build_epoch_view`. It exposes `experiments` (per-generation
 records carrying the raw `hypothesis`, `outcome`, and `patches` keyed by
 mutation id), `brief`, `journal`, `analysis_md`, and the contract
-blocks. One experiment record's shape:
+blocks. One experiment record's shape (abridged):
 
 ```jsonc
 { "generation_id", "parent_generation_id",
@@ -507,12 +543,17 @@ blocks. One experiment record's shape:
   "patches": { "<mutId>": { "mutation_id", "op", "rationale",
       "new_content" | "new_numeric" | "new_enum" } },
   "outcome": { "ran_at", "tournament_decision", "scalar_score_delta",
-      "pass_rate_delta", "drift_loss_delta", "rejection_reason" } | null }
+      "pass_rate_delta", "drift_loss_delta", "rejection_reason" } | null,
+  "decision": "promoted"|"rejected"|"deferred"|null,
+  "promoted": true|false|null }
 ```
 
-An experiment whose tournament never reached a verdict is `incomplete`
-and still appears; the raw journal drops it. The patch diff reuses the
-lazy `/api/mutations/{epoch}/{site}` baseline read.
+`decision` and the tri-state `promoted` are stamped by the shared
+classifier in `zicato.query.decisions`, so the client renders them
+verbatim and never re-classifies the nested `outcome`. An experiment
+whose tournament has not reached a verdict still appears, with
+`decision: null`. The patch diff reuses the lazy
+`/api/mutations/{epoch}/{site}` baseline read.
 
 ## 8. Routes (`js/router.js`)
 
@@ -549,10 +590,12 @@ whole pane state and a cold load hydrates it:
 - `~follow=1` — on a board route, open the selected candidate's
   conversation in the live follow pane.
 
-`parseRoute(hash)` → `{ view, params, cmp }`. `href(view, params, opts)`
-builds a hash from a params object plus an optional `{ cmp }`, so the
-tree, the breadcrumb, the back button and every view share one
-signature. The router emits `route:changed` on the bus.
+`parseRoute(hash)` → `{ view, params, cmp }`, plus `follow` on a board
+route. `href(view, params, opts)` builds a hash from a params object plus
+an optional `{ cmp, follow }`, so the tree, the breadcrumb, the back
+button and every view share one signature. `#/e/<epochId>/publication`
+and `#/e/<epochId>/report` resolve to the same publication view as
+`paper`.
 
 ## 9. Harmonograf (core/harmonograf.js)
 
@@ -564,7 +607,8 @@ Built from the invocation's selected service URL, recorded on the heartbeat as
 `harmonograf_url`. Exports `harmonografBase()`, `harmonografRunUrl(rec)`,
 `harmonografLink(run, label)`, `harmonografMini(target, label, aria)`,
 `harmonografGenLink(genId)`, `harmonografSessionId(rec)`,
-and the **zicato-level** builders `harmonografMetaSession()`,
+`harmonografFilterUrl(metadata)`, `harmonografTournamentLink(id)`,
+`harmonografUiAvailable()`, and the **zicato-level** builders `harmonografMetaSession()`,
 `harmonografMetaUrl()`, `harmonografMetaLink(label, aria)`.
 
 **Liveness gate.** Links resolve only against a REACHABLE server.
@@ -574,7 +618,7 @@ only then — OR (b) the heartbeat carries `harmonograf_persistent: true`.
 The latter is set by the standalone dashboard, which reuses-or-
 launches ONE persistent per-workspace harmonograf bound to the workspace's
 `.harmonograf/harmonograf.db` (`ensure_workspace_harmonograf`) and injects
-its `web_url` into the heartbeat payload (`state_reader.read_heartbeat_dict`)
+its `web_url` into the heartbeat payload (`query.runtime_view.read_heartbeat_dict`)
 so the post-mortem deep-links into PERSISTED sessions light up with no live
 run. Precedence: a live evolve's own heartbeat `harmonograf_url` always
 wins; the injected url only fills the field when the heartbeat has none.
@@ -591,9 +635,8 @@ surfaces this as `adk_session_id` on run-like records:
   the Epoch publication's per-match-up tables;
 - `ab_grid` cells from `/api/tournaments/{gen}` (`parent_adk_session_id`
   / `child_adk_session_id`) carry the ids too, but **no client fetches that
-  endpoint** (§ drill-down list above), so that path is reachable code over
-  unreachable data — it deep-links nothing today. `harmonografSessionId()`
-  still accepts those key names;
+  endpoint** (§1 drill-down list), so that path deep-links nothing.
+  `harmonografSessionId()` still accepts those key names;
 - `active_tournament.entries[]` rows — the runner stamps the run's
   `adk_session_id` onto the per-(entry × side) row the instant the run
   finishes (read from the run's `LossProfile`, never from `events.jsonl`
@@ -607,7 +650,7 @@ what a tournament or board means.
 **Zicato-level (meta-loop) surface.** Beyond the per-run links, the top
 bar (`js/shell.js`) carries a single liveness-gated `execution ↗`
 deep-link into the **meta-loop** session — zicato's own proposer + judge
-timeline (the operator's "Gantt view of zicato itself"). The backend
+timeline, drawn as a Gantt chart of zicato's own work. The backend
 surfaces its session id on the heartbeat as `harmonograf_meta_session`
 (a live evolve writes it from the `MetaLoopEmitter`; the standalone
 dashboard recovers it off `runtime/meta_loop_events.jsonl` for

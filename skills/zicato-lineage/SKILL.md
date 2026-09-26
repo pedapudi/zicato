@@ -28,11 +28,12 @@ The same pair of generations gets named two ways depending on framing
   (`generations[].parent_id`).
 - **champion / challenger** — the **tournament** axis. The champion is the
   reigning best, the challenger the candidate trying to unseat it. In the
-  **gauntlet** (the default) every matchup is champion-vs-challenger = parent-vs-child,
-  which is why the two axes collapse there. The non-gauntlet structures also
-  play **challenger-vs-challenger** nodes (elim brackets, swiss pairings, racing
-  rungs) — those have no incumbent, so the winner is just the better side and
-  the pair is *not* a lineage edge.
+  **gauntlet** every matchup is champion-vs-challenger = parent-vs-child,
+  which is why the two axes collapse there. The field structures (racing, the
+  recommended default, and the experimental elim brackets and swiss) also play
+  **challenger-vs-challenger** comparisons (racing rungs, bracket nodes, swiss
+  pairings) — those have no incumbent, so the winner is just the better side
+  and the pair is *not* a lineage edge.
 
 So on a gauntlet crowning, "champion = parent" and "challenger = child" name the
 *same pair* from two angles. Standardize **champion/challenger** for tournament
@@ -45,15 +46,28 @@ challenger-vs-challenger match as a lineage relation.
 .venv/bin/zicato epoch list --workspace .zicato
 ```
 
-Renders `lineage.json` as a markdown table: one row per epoch with
+Renders the resolved lineage (section 2) as a markdown table: one row per epoch with
 `started_at`, `closed_at` (`(open)` if still running), the count of `promoted`
 and `rejected` generations, and the `parent` (the epoch it baselined off, or
 `(root)`). This is the fastest cross-epoch overview.
 
-## 2. Read lineage.json directly
+## 2. Read the resolved lineage
 
-`.zicato/lineage.json` is the canonical cross-epoch DAG — one file, all epochs
-([EPOCHS-AND-JOURNALING.md §6](../../docs/design/EPOCHS-AND-JOURNALING.md#6-lineage)):
+`.zicato/lineage.json` is the canonical cross-epoch ancestry — one file, all
+epochs ([EPOCHS-AND-JOURNALING.md §6](../../docs/design/EPOCHS-AND-JOURNALING.md#6-lineage)).
+It owns each generation's parent, birth round and creation time. A settled
+round's outcome is owned by that round's `rounds/<round>/field_settlement.json`;
+the lineage reader (`zicato.epoch.lineage.load_lineage`) applies every
+committed round result onto the ancestry, setting `promoted`,
+`rejection_reason` and the three scalars. The raw file therefore shows
+`promoted: null` and null scalars for a generation whose round has already
+settled; read the resolved form instead:
+
+```sh
+.venv/bin/python -c "import json; from pathlib import Path; from zicato.epoch.lineage import load_lineage; print(json.dumps(load_lineage(Path('.zicato')).to_dict(), indent=2))"
+```
+
+The resolved document looks like this:
 
 ```json
 {
@@ -79,12 +93,6 @@ and `rejected` generations, and the `parent` (the epoch it baselined off, or
 }
 ```
 
-Read it:
-
-```sh
-.venv/bin/python -c "import json; print(json.dumps(json.load(open('.zicato/lineage.json')), indent=2))"
-```
-
 Key fields:
 
 - `v0_parent` — the cross-epoch baselining edge. A fresh epoch's `v0` is the
@@ -108,13 +116,13 @@ Key fields:
   duel's two scalars and their difference (`child - parent`). `null` when
   unrecorded — never `0.0`, which is a legal measurement, so absent and
   zero-scoring are distinguishable.
-- `format_version` — the record-format stamp (currently `1`). A record stamped
-  HIGHER than this build understands is refused loudly rather than misread; a
-  record with no stamp is read as version 1.
+- `format_version` — the record-format stamp (`1`). A record carrying any
+  other stamp, or none, is refused loudly rather than misread.
 
 There is **no `zicato lineage` subcommand** in the shipped CLI (nor in
-[CLI.md](../../docs/design/CLI.md)); `epoch list` is the rendered view and
-`lineage.json` is the structured source.
+[CLI.md](../../docs/design/CLI.md)); `epoch list` is the rendered view, the
+reader above is the structured one, and the dashboard's `/api/lineage`
+generations feed is built from the same resolved lineage.
 
 ### Recombined children have provenance the DAG does not carry
 
@@ -130,8 +138,9 @@ alongside the lineage edge.
 
 ## 3. Bracket vs tree — what is scoped to what
 
-- **Within an epoch**: the **bracket** — a king-of-the-hill gauntlet, the
-  winners' spine `v0 → v1 → v2 → ...`, comparable matchups, the §4 analytics.
+- **Within an epoch**: the **bracket** — one tournament per round, the
+  winners' spine `v0 → v1 → v2 → ...`, comparable matchups, the per-round
+  analytics.
   Scoped to one epoch because the board / brief / scoring are frozen there.
 - **Across epochs**: the **tree** — each epoch's spine joined to the next by a
   dashed baselining edge (`v0_parent`). A challenger in `e1` and a champion in
@@ -145,7 +154,8 @@ harness get here, across all epochs?"
 ## 4. Side-by-side conversation diff for a board entry
 
 To compare *how two generations actually behaved* on the same board entry, use
-the dashboard's compare picker (an L2/L4 feature; see `skills/zicato-watch-dashboard`).
+the dashboard's compare picker on the Candidate view (see
+`skills/zicato-watch-dashboard`).
 The dashboard is the **competition view**; harmonograf is the **execution
 view**, linked by a per-run drill-down
 ([TOURNAMENT.md §5](../../docs/design/TOURNAMENT.md#5-the-harmonograf-split)):
@@ -176,7 +186,7 @@ viewed as two conversations.
 ## Guardrails
 
 - venv-only (`.venv/bin/zicato`); never bare `uv sync` (use `--all-extras`).
-- `lineage.json` is canonical and reconstructible; never hand-edit it.
+- `lineage.json` is canonical; never hand-edit it.
 - Do NOT start a live `evolve` to populate lineage — read what is already there.
 - Every `evolve` launch reports the dashboard URL; view it from the host, no
   `--dashboard-bind` needed.
@@ -186,5 +196,5 @@ viewed as two conversations.
 - [EPOCHS-AND-JOURNALING.md](../../docs/design/EPOCHS-AND-JOURNALING.md) §6 — lineage; §10.5 — baselining a rolled epoch.
 - [TOURNAMENT.md](../../docs/design/TOURNAMENT.md) §1, §5, §6 — gauntlet, harmonograf split, bracket vs tree.
 - [VOCABULARY.md](../../docs/design/VOCABULARY.md) — generation, lineage, tournament.
-- `skills/zicato-watch-dashboard` — the live UI, the L2/L4 compare picker.
+- `skills/zicato-watch-dashboard` — the live UI and the candidate compare picker.
 - `skills/zicato-tournament-forensics` — explain one matchup's verdict.

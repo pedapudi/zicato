@@ -24,11 +24,11 @@ You almost never read this book front-to-back. Instead:
    subpackage owns what, and what may never import what). You cannot ground a
    change you cannot name.
 3. **Read `02-architecture.md`** to see where your change sits in one round of the
-   loop (the two pipeline walkthroughs).
+   loop (round preparation, then the shared field pipeline).
 4. **Jump to the chapter that owns your surface** (the chapter map is below).
 5. **Before you touch the orchestrator, the contract hash, the worker boundary,
    the evaluation statistics, the overfitting envelope, or the dashboard render
-   path** — read the chapter's *Invariants you must not break* box AND the
+   path** — read the chapter's invariant list or table AND the
    relevant case in `12-bug-casebook.md`. Every documented bug lived on one of
    those surfaces.
 6. **Find your task in `13-recipes.md`.** Most changes are a named recipe with
@@ -41,8 +41,8 @@ You almost never read this book front-to-back. Instead:
 
 > ⛔ **NEVER** treat this guide as authoritative *over the code*. If a symbol,
 > path, or line the guide names is not in the current tree, the code is right and
-> the guide is stale: fix the guide in the same PR (see `13-recipes.md` recipe 14
-> for the docs-land discipline). Never invent a symbol to match the prose.
+> the guide is stale: fix the guide in the same PR (see `14-goals-and-roadmap.md`
+> §5.9, "Docs land with the change"). Never invent a symbol to match the prose.
 
 ---
 
@@ -73,15 +73,15 @@ chapter 01.
 | Ch | File | Covers | Read it when… |
 |---|---|---|---|
 | 01 | `01-orientation.md` | vocabulary, the repo map, the 10 Golden Rules, your-first-hour | first session, always |
-| 02 | `02-architecture.md` | one round twice (gauntlet + multi-challenger), the data-type flow, the extracted-seam inventory | you need to see where a change sits |
+| 02 | `02-architecture.md` | one round end to end (invocation ownership, round preparation, the shared field pipeline every structure runs), the data-type flow, the extracted-seam inventory | you need to see where a change sits |
 | 03 | `03-contract-and-epochs.md` | the contract hash, complete configuration, strict loading, epoch lifecycle, **add-a-contract-field** | you add/change any contract knob or epoch behavior |
 | 04 | `04-evaluation-statistics.md` | the measurement chain, the gate, the **noise doctrine**, the reserved-base ledger, how to prove a statistical change | you touch scoring, the gate, replication, calibration, or the evidence gate |
-| 05 | `05-proposer.md` | the three proposer paths, `ProposerContext`, best-of-N + screen + critique + align-tree, the **restricted-visibility envelope** | you change how candidates are generated or what the proposer sees |
+| 05 | `05-proposer.md` | how a proposal resolves behind `ProposerAgent` (the Foe runtime or an operator class), `ProposerContext`, best-of-N + screen + critique + align-tree, the **restricted-visibility envelope** | you change how candidates are generated or what the proposer sees |
 | 06 | `06-tournament-and-selection.md` | `run_tournament`/`resolve_tournament`, the five structures, the **worker boundary**, the **unit cache** | you touch tournament execution, structures, the worker, or caching |
 | 07 | `07-runtime-and-durability.md` | CQRS persistence, atomic writes, the git generation store, GC, crash-resume, the control protocol, RoundLog | you touch state files, storage, resume, or the round log |
 | 08 | `08-supervisor.md` | the Rust watchdog/notary — heartbeat, reaping, the hash-chained ledger, diff-containment, the read-only index | you change the supervisor or a state file it reads |
 | 09 | `09-dashboard-and-query.md` | `zicato/query` (lib) vs `zicato/dashboard` (driver), **server-authority**, **digest gating**, the add-a-panel recipe | you change a reader, an endpoint, or a view |
-| 10 | `10-cli-and-configuration.md` | contract preparation and publication, CLI settings, the library facade and import contracts | you change contract editing, add a CLI flag, or extend the public API |
+| 10 | `10-cli-and-configuration.md` | contract preparation and publication, the command contract, explicit configuration transport, the library facade and import boundaries | you change contract editing, change a command, or extend the public API |
 | 11 | `11-testing.md` | the suites, the two oracles, the parity gates, the import contracts, **complete validation** | before merge; when you add a test |
 | 12 | `12-bug-casebook.md` | the twelve shipped bugs as teaching cases + the meta-lessons | before touching any of the six bug-prone surfaces |
 | 13 | `13-recipes.md` | the cookbook — fourteen self-contained, copy-precise recipes | you are about to make a change (find yours first) |
@@ -105,13 +105,13 @@ citing section states the failure mode.
 | **G1–G10** | `01-orientation.md §4` | the Golden Rules (above) |
 | **numbered in place** | `03-contract-and-epochs.md` | the contract hash and epoch identity: location-independent identity, complete configuration, shared serialization and strict decoding, grading source identity, measurements excluded, required hash and execution bindings, record acceptance, lineage promotion states |
 | **numbered in place** | `04-evaluation-statistics.md` | the noise doctrine: measurements are stochastic, margin is read against the floor, the evidence gate buys soundness rather than power, replicate bases are reserved, and a statistical change is proven by its operating characteristics |
-| **numbered in place** | `05-proposer.md` | the proposer contract: the restricted-visibility envelope, mounted-tree-matches-chosen, screen-vetoes-never-ranks, pure-prompt-assembler, `ProposerError`-only, byte-identical-at-default |
-| **T** | `06-tournament-and-selection.md` | tournament execution and the unit cache: evaluate-once, the canonical replicate slot, cache-only-budget-exhaustion, importable worker callables, explicit invocation settings, the gate as the per-duel decider, only-promotion-advances-the-champion, disjoint reserved bases, mounted-tree-matches-the-chosen-candidate, distinct-draws-only, placebo-never-crowns |
-| **D** | `07-runtime-and-durability.md` | persistence and crash-safety: files canonical and the index derived, best-effort index writes, atomic record writes, torn-tail tolerance for append-only logs, transactional derivation, known-shape ephemeral checkouts, prune-trees-never-records, outcome-before-journal-and-lineage, pid-plus-start-time identity, one writer per event log, best-effort round-log emission, supported record formats |
-| **S** | `08-supervisor.md` | the supervisor's out-of-band enforcement: out-of-band supervision, never-kill-the-orchestrator, vetted pid signalling, clamped deadlines, confirmed death before reaping, path-confined snapshot collection, a ledger that records without gating, a read-only version-pinned index, the sole worker signaller, read-only fail-open integrity checks, two loops with a fixed trigger priority, a live surface that never blocks or leaks, no cached state across ticks, an operational rather than analytical HTTP surface |
-| **DQ** | `09-dashboard-and-query.md` | the dashboard and query doctrine: server-computes-client-renders, one spelling per wire field, every reader is best-effort, the query layer is library code, change-signals carry no content, a no-op heartbeat rebuilds zero DOM, verdicts are honest about the noise floor, null-degrade under the Rust supervisor, controls gate on writability, the champion is the reigning spine end, a payload-shape change is a clean break, validate an id before it touches the workspace, every JSON GET has a declared contract, lineage owns topology, composite readers share walks |
-| **L** | `10-cli-and-configuration.md` | contract and library boundaries: typed edits, strict admission, shared cost estimation, recoverable publication, explicit invocation settings, a lazy facade, and driver-independent library code |
-| **V** | `11-testing.md` | the verification discipline: the full suite is the default, a regression test must fail with the fix stashed, never weaken an assertion, pin a knob off and carry the adversarial countermeasure, a worker resolves callables from a dotted path, fixtures clear global state on both sides, the reaper selects by workspace provenance, parity gates stay green on unchanged behaviour, the import contracts are lint, the exit code is the node signal |
+| **numbered in place** | `05-proposer.md` | the proposer contract: the restricted-visibility envelope, mounted-tree-matches-chosen, screen-vetoes-never-ranks, caller-assembled evidence, `ProposerError`-only, byte-identical-at-default |
+| **T** | `06-tournament-and-selection.md` | tournament execution and the unit cache: evaluate-once, measurement-artifact identity, cache-only-budget-exhaustion, importable worker callables, explicit worker inputs, the gate as the per-duel decider, only-promotion-advances-the-champion, separate measurement purposes, mounted-tree-matches-the-chosen-candidate, distinct-draws-only, placebo-never-crowns |
+| **D** | `07-runtime-and-durability.md` | persistence and crash-safety: files canonical and the index derived, index writes that cannot invalidate canonical work, atomic record writes, torn-tail tolerance for append-only logs, transactional derivation, known-shape ephemeral checkouts, prune-trees-never-records, pending lineage before settlement, pid-plus-start-time identity, one writer per event log, best-effort round-log emission, refusal of unreadable record formats |
+| **S** | `08-supervisor.md` | the supervisor's out-of-band enforcement: out-of-band supervision, never-kill-the-orchestrator, vetted pid signalling, clamped deadlines, confirmed death before reaping, path-confined snapshot collection, a ledger that records without gating, a read-only version-pinned index, coordinated worker termination, read-only fail-open integrity checks, independent enforcement with a fixed trigger priority, a live surface that never blocks or leaks, no cached state across ticks, an operational rather than analytical HTTP surface |
+| **DQ** | `09-dashboard-and-query.md` | the dashboard and query doctrine: execution records decisions and the dashboard presents them, one spelling per wire field, every reader is best-effort, the query layer is library code, change-signals carry no content, a no-op heartbeat rebuilds zero DOM, verdicts are honest about the noise floor, null-degrade under the Rust supervisor, controls gate on writability, completed rounds identify the champion, a payload-shape change is a clean break, validate an id before it touches the workspace, every JSON GET has a declared contract, ancestry and round results have separate owners, composite readers share walks |
+| **L** | `10-cli-and-configuration.md` | contract and library boundaries: typed edits, agreement across a field's declaration and consumers, shared cost estimation, advisory warnings versus blocking defects, publication that launches no run, explicit worker configuration, a lazy facade, and driver-independent library code |
+| **V** | `11-testing.md` | the verification discipline: a merge needs both test tiers, a regression test must fail with the fix stashed, never weaken an assertion, pin a knob off and carry the adversarial countermeasure, a worker resolves callables from a dotted path, fixtures clear global state on both sides, the reaper selects by workspace provenance, parity gates stay green on unchanged behaviour, the import contracts are lint, the exit code is the node signal |
 
 > ⚠️ **TRAP** — `05-proposer.md` also cites the process-exemplar redaction rules
 > (`R1`–`R4`): the payload allowlist, identity anonymization, free-text
@@ -174,10 +174,11 @@ safely (the map of module responsibilities) · 10. Run focused checks and requir
 (the forensic file map) · 13. Safely bump a pinned operating-characteristic
 number · 14. Add a `skills/` entry for a new operator workflow.
 
-Cross-cutting recipes also live in their owning chapters: **add a contract knob**
-(`03 §recipe`), **add a tournament structure** / **make a harness adapter**
+Cross-cutting recipes also live in their owning chapters: **add a contract field** /
+**add an operational setting** (`03` §3.11 / §3.12), **add a tournament structure** / **make a harness adapter**
 (`06 §recipes`), **add a proposer tool** / **add a prompt-context channel**
 (`05 §recipes`), **add a runtime state field** / **add a RoundLog event**
 (`07 §recipes`), **add a control route** (`08 §recipe`), **add a reader + endpoint
-+ panel** / **change a payload shape** (`09 §recipes`), **add a contract operation** / **add
-a CLI flag** (`10 §recipes`).
++ panel** / **change a payload shape** (`09 §recipes`), **change a contract field** /
+**change a command** / **add an operational field** / **add a public name**
+(`10` §10.8 / §10.9 / §10.10.4 / §10.11.2).

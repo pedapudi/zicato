@@ -42,23 +42,24 @@ they invent no new persistence.
 
 - **Candidate dossier board-breakdown table** —
   `zicato.query.judge_view.build_per_entry_for_generation`
-  (`src/zicato/query/judge_view.py:180`), rendered by the board dossier in
+  (`src/zicato/query/judge_view.py`), rendered by the board dossier in
   `src/zicato/dashboard/static/js/views/board.js`. That is ONE column of our
   matrix (a single candidate's entries). The per-entry dossier upgrades that
   page.
 - **Per-matchup entry grids** — `build_matchup_grid` /
-  `/api/matchup-grid` (`src/zicato/dashboard/endpoints.py:776`). A single
+  `/api/matchup-grid` (a `READ_ENDPOINTS` row in
+  `src/zicato/dashboard/endpoints.py`). A single
   matchup's two-candidate slice of the matrix.
 - **The passive entry×candidate matrix** —
   `zicato.query.reflection_view.entry_candidate_matrix`
-  (`src/zicato/query/reflection_view.py:508`) already folds mean `drift_loss`
+  (`src/zicato/query/reflection_view.py`) already folds mean `drift_loss`
   per (entry, candidate) straight off the index. `build_eval_matrix` computes
   the same fold and adds evidence, pass-ratio, holdout flagging, and
   calibration (§3). `entry_candidate_matrix` stays in place — the Instrument
   lens' passive tier imports it — and the richer reader sits beside it.
 - **Board-status / rotation surface** —
   `zicato.query.epoch_view.compute_board_split`
-  (`src/zicato/query/epoch_view.py:527`) + the board-status view
+  (`src/zicato/query/epoch_view.py`) + the board-status view
   `src/zicato/dashboard/static/js/views/boardstatus.js`. The
   instrument-quality panel adjudicates against this surface (§5).
 - **Reflection scorecards** — `zicato.query.reflection_view`
@@ -76,7 +77,7 @@ they invent no new persistence.
 ## 2. Data bindings (every binding tree-verified)
 
 The **backbone is the `loss_profiles` index table** — one row per run.
-Verified columns (`src/zicato/index/schema.py:132`):
+Its columns (the `loss_profiles` table in `src/zicato/index/schema.py`):
 
 ```
 run_id · epoch_id · generation_id · entry_id · drift_loss · pass_fail
@@ -100,10 +101,10 @@ records (§2.3), which preserve the comparisons the tournament actually made.
 
 The matrix is an **indexed query** over this table for the axes and cell
 membership; it adds no store. Read helpers already exist
-(`src/zicato/index/query.py`): `loss_profiles_for_generation` (`:228`),
-`loss_profiles_for_tournament` (`:281`), `generations_for_epoch` (`:184`,
-carries `round_index` / `elo` / `elo_se`), `tournaments_for_epoch` (`:909`),
-`elo_for_epoch` (`:940`). All are missing-index-tolerant (return `[]`). The
+(`src/zicato/index/query.py`): `loss_profiles_for_generation`,
+`loss_profiles_for_tournament`, `generations_for_epoch` (carries
+`round_index` / `elo` / `elo_se`), `tournaments_for_epoch`, and
+`elo_for_epoch`. All are missing-index-tolerant (return `[]`). The
 per-cell EVIDENCE and DISCRIMINATION quantities read the durable **files**
 (`generations/<gen>/runs/<entry>/loss*.json`) — index-free by design.
 
@@ -158,9 +159,9 @@ observations. The flip-rate reader therefore reads the measurement files.
 
 
 **The binding.** The persisted `NoiseFloor` (config.json's additive
-`noise_floor` field, written by `set_epoch_noise_floor`,
-`src/zicato/epoch/lifecycle.py:697`; shape `NoiseFloor.to_json`,
-`calibration.py:98`) carries `generation_id` (the champion that duelled
+`noise_floor` field, written by `set_epoch_noise_floor` in
+`src/zicato/epoch/lifecycle.py`; shape `NoiseFloor.to_json` in
+`src/zicato/tournament/calibration.py`) carries `generation_id` (the champion that duelled
 itself) and `runs` (K). The reader:
 1. reads `noise_floor` off `config.json` → `(champion_gen, K)`;
 2. for each board entry, resolves `calibration` draws `0` through `K − 1` through the unit-cache reader, taking each usable draw’s `pass_fail`;
@@ -202,14 +203,15 @@ where the champion faces three challengers yields
 ### 2.4 Holdout membership (the split)
 There is **no persisted split record** — membership is *computed*, and it
 must match the gate's own computation. Bind to `zicato.board.split.split_board`
-(`src/zicato/board/split.py:73`) with `seed = rotation_seed(cfg, epoch_id)`
-(`:123`) — the same call the gate makes
-(`zicato.tournament.governance._holdout_aggs`, `governance.py:77`). Inputs:
-the board (`board.jsonl` via `_parse_board`, `epoch_view.py:56`) and
-`weights.overfitting` (the `overfitting` block on `scoring.json`,
-`_overfitting_block_from_scoring`, `epoch_view.py:469`). Rule: an explicit
-`holdout` tag wins; else a `sha256(seed\x00id)` hash-bucket below
-`holdout_fraction·10⁶`. **Note (verified discrepancy):**
+with `seed = rotation_seed(cfg, epoch_id)` (both in `src/zicato/board/split.py`)
+— the same call the tournament runner makes when it separates the train
+board from the holdout board (`zicato.tournament.runner`). Inputs: the board
+(`board.jsonl` via `zicato.workspace.read_board_entries`) and the
+`overfitting` block of the epoch's `scoring.json`
+(`scoring_weights_from_dict(...).overfitting`); the eval reader's
+`_holdout_ids` makes the call. Rule: an explicit `holdout` tag wins; else a
+`sha256(seed\x00id)` hash-bucket below `holdout_fraction·10⁶`, and a board
+smaller than `min_board_size_for_split` holds nothing out. **Note (verified discrepancy):**
 `epoch_view.compute_board_split` uses a *different, approximate* selection
 (sorted-tail over a distinct hash) — the eval readers bind to the canonical
 `split_board` so the flagged holdout is byte-exact with the gate rather than
@@ -368,8 +370,8 @@ rows are board entries grouped by the operator's ontology, the column is
 one candidate.
 
 **The train slice only.** The scalar the gate compares —
-and the one `gen_score.json` caches — is `governance._train_aggs`, so
-holdout entries are excluded from every block here and `overall` IS the
+and the one `gen_score.json` caches — is the aggregate over the train
+board the tournament runner plays, so holdout entries are excluded from every block here and `overall` IS the
 candidate's headline number. Aggregating the whole board would put a
 second, larger "candidate scalar" beside the gate's, identically
 labelled; it would also make every dossier load an ungoverned holdout
@@ -442,9 +444,9 @@ scheduling, or Pareto admission.
 `/api/epoch/{id}/evals` and `/api/epoch/{id}/eval/{entry_id}`, declared in the
 read-endpoint table (`endpoints.py`, `READ_ENDPOINTS`) and bound from it,
 following the `_is_safe_id` degrade idiom. All three eval readers do blocking
-file I/O (the pooled matchup grids and the per-cell replicate files), so each
-row is declared `off_event_loop=True` and runs in the threadpool, where the
-reads never stall the event loop. The malformed-id degrade returns the reader's own
+file I/O (the pooled matchup grids and the per-cell replicate files); every
+table-driven handler runs its reader in the threadpool, so the reads never
+stall the event loop. The malformed-id degrade returns the reader's own
 `_empty_matrix` / `_empty_dossier` / `_empty_health` shape; those constants
 are single-sourced from the reader, so the endpoint and the reader cannot
 drift apart. Exported from `zicato.query.__init__`.
@@ -486,7 +488,7 @@ A shell view (its own hash route and tree node) rendering `build_eval_matrix`.
 Upgrade `src/zicato/dashboard/static/js/views/board.js` to render
 `build_eval_dossier`:
 - **Trajectory sparkline vs the champion spine** using the shipped
-  `svg.js` `sparkline` grammar (`:408`).
+  `svg.js` `sparkline` grammar.
 - **ATTRIBUTION** — `first_passed_by` / `regressed_by` rendered as the
   quiet verdict-led rows the Instrument lens uses (a tone glyph + headline +
   `dn-faint` rationale, and no chip per row).
@@ -512,7 +514,7 @@ Read-only findings link to reflection reports.
   reflection is already built); else **deferred, with an explicit note** —
   do not run a reflection to fill this panel.
 - **Holdout budget spent** + **rotation cadence** — from the split (§2.4)
-  and the Ladder summary (`_latest_holdout_summary`, `epoch_view.py:625`).
+  and the Ladder summary (`_latest_holdout_summary` in `epoch_view.py`).
 
 **Where the instrument-quality panel lives.** It is a strip and a section
 inside the Evals view rather than a fourth top-level surface. The board-status
@@ -530,7 +532,7 @@ strip. The one overlap, holdout membership, is served by the same canonical
 - **Quiet precision.** No new chip vocabulary; reuse `dn-faint` / `dn-good`
   / `dn-bad` / `dn-stat`. The one new class is the `dn-mtx` grid layout.
 - **Digest-gated.** A no-op server-sent-events heartbeat produces zero DOM (the recurring
-  flashing-render bug class; `digestOpts`, `svg.js:89`). The matrix rebuilds
+  flashing-render bug class; `digestOpts` in `svg.js`). The matrix rebuilds
   only when its digest changes.
 - **Own-container scroll.** The wide matrix scrolls in its own
   `dn-table-scroll`; the body never scrolls horizontally.

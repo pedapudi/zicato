@@ -48,13 +48,17 @@ os.environ["ZICATO_TARGET_4_AGENT_ENV_ZICATO_TARGET_4_STUB_PLAN"] = json.dumps(
     {"final": "renamed nothing", "writes": {"NOTES.md": "hello\n"}}
 )
 
+from types import SimpleNamespace
+
 from zicato.board.jsonl import load_board
 from zicato_examples.target_4_agent_config import predicates
 from zicato_examples.target_4_agent_config.driver import EXAMPLE_DIR, make_adapter
 
 entry = load_board(EXAMPLE_DIR / "board.jsonl")[0]
 session = make_adapter().load(EXAMPLE_DIR)
-result = asyncio.run(session.run(entry, [], None))
+# Outside a tournament worker there is no run context; the driver then
+# writes into a fresh temporary directory.
+result = asyncio.run(session.run(entry, [], SimpleNamespace(run_context=None)))
 
 print("binary version:", session.agent_version)
 print("patched:", sorted(predicates.patched_paths(result)))
@@ -62,16 +66,17 @@ print(result.final_output)
 PYEOF
 ```
 
-You should see the stub's final output, the `config-fingerprint:` line
-it digests from the config package it was pointed at, and a unified diff
-of `NOTES.md` after the sentinel.
+You should see the stub's version (`zicato-target4-stub 0.1.0`),
+`patched: ['NOTES.md']`, the stub's final output, the
+`config-fingerprint:` line it digests from the config package it was
+pointed at, and a unified diff of `NOTES.md` after the
+`===== zicato:target_4:patch =====` sentinel.
 
 ## 2. Wire a workspace and audit the surface
 
-`zicato epoch register`'s `--adk` flag covers only the agent-kit adapter
-kind, so the generic `import`-kind block is written into `config.json`
-directly — the same shape the adapter factory and the subprocess worker
-both reconstruct. The convergence example uses the same pattern.
+`zicato epoch register --factory` records the `import`-kind adapter
+block — the same shape the adapter factory and the subprocess worker
+both reconstruct.
 
 ```bash
 rm -rf /tmp/zicato-smoke-t4
@@ -90,18 +95,9 @@ $PY -m zicato.cli init --workspace .zicato
 #    mutable tree. The entrypoint (driver.py) stays OUTSIDE the tree by
 #    design — that is the dependency shape, and each run is verified to
 #    have mounted the snapshot rather than the checkout.
-$PY - <<PYEOF
-import json, pathlib
-cfg_path = pathlib.Path(".zicato/config.json")
-cfg = json.loads(cfg_path.read_text())
-cfg["adapter"] = {
-    "kind": "import",
-    "factory": "zicato_examples.target_4_agent_config.driver:make_adapter",
-}
-# The shell substitutes \$EX before python runs (unquoted heredoc).
-cfg["adapter"]["mutable_trees"] = ["$EX/config_package"]
-cfg_path.write_text(json.dumps(cfg, indent=2) + "\n")
-PYEOF
+$PY -m zicato.cli epoch register --workspace .zicato \
+    --factory zicato_examples.target_4_agent_config.driver:make_adapter \
+    --mutable-tree $EX/config_package
 
 # 3. Publish the contract at the canonical location next to the
 #    workspace.
@@ -115,7 +111,7 @@ cp $EX/brief.md     ./brief.md
 $PY -m zicato.cli inspect mutations --workspace .zicato
 ```
 
-Expected:
+Expected (the `preview` column is omitted here):
 
 ```
 id                            kind   lines    file
@@ -135,30 +131,30 @@ agent for every board entry, in every generation, at every replicate.
 
 Before a live round is worth running:
 
-1. **Point the target at the pinned install** — the recommended
-   default, and the same binary the proposer resolves:
+1. **Name the agent binary.** `ZICATO_TARGET_4_AGENT_BIN` holds its
+   command line; the driver appends `--mode rpc --no-session`:
 
    ```bash
-   export ZICATO_TARGET_4_AGENT_BIN=$ZICATO/integrations/pi/node_modules/.bin/pi
+   export ZICATO_TARGET_4_AGENT_BIN=/path/to/the/agent/binary
    ```
 
-   `npm install` in `integrations/pi/` materializes that path at the
-   version `integrations/pi/package.json` pins, so the target and the
-   proposer run the same pinned binary without sharing a knob. A bare
-   `pi` on `PATH` is the degraded alternative: it works, but nothing
-   pins what it resolves to.
-2. Record the version. On the pinned route
-   `integrations/pi/package.json` already fixes it; on the `PATH` route,
-   run `pi --version` and record the result by hand. Either way a
-   version change is an **epoch boundary**: rebase the baseline rather
+   Prefer an absolute path to a pinned install over a bare name on
+   `PATH`, which pins nothing.
+2. **Record the version.** The driver probes the binary's `--version`
+   once per load and records it beside each run; note it for the epoch.
+   A version change is an **epoch boundary**: rebase the baseline rather
    than comparing across it.
-3. **Measure the same-versus-same floor.** Run the board with the
+3. **Name the proposal runtime.** `zicato init` writes a `proposer`
+   block whose `binary` is the placeholder `/path/to/foe`; `inspect
+   setup` and `evolve` refuse it until it names a real Foe binary and
+   model ([`docs/design/PROPOSER.md`](../../../docs/design/PROPOSER.md)).
+4. **Measure the same-versus-same floor.** Run the board with the
    champion against itself and look at the spread of the scalar. Until
    that number exists, `promote_margin` in `scoring.json` is the
    framework default rather than a calibrated threshold, and a
    "promotion" is indistinguishable from noise. Size
    `tournament.params.replicates` from the same data.
-4. Only then run the loop, with the dashboard up:
+5. Only then run the loop, with the dashboard up:
 
 ```bash
 $PY -m zicato.cli evolve --workspace .zicato --rounds 1 --mode full
@@ -169,14 +165,15 @@ $PY -m zicato.cli evolve --workspace .zicato --rounds 1 --mode full
 
 ## Known limitations
 
-- **TypeScript files are not part of the surface.** The marker grammar
-  has no `//` comment leader, which is one row in the mutation syntax
-  table. This target evolves markdown only.
+- **TypeScript files are not part of the surface.** The built-in marker
+  syntax table has no `//` comment leader, and this contract declares
+  no `mutation_surface` entry that adds one. This target evolves
+  markdown only.
 - **`settings.json` is permanently immutable.** Strict JSON cannot hold
   a marker without ceasing to be JSON.
 - **The remote-procedure protocol is zicato's own shape rather than a
   published standard.** A binary that speaks a different wire needs a
   shim in `driver.py`.
-- **Cost and noise are the binding constraint here, not mechanism.**
-  Each entry is a full agentic run. See README.md, "Establishing the
-  noise floor".
+- **Cost and noise are the binding constraint here.** Each entry is a
+  full agentic run. See [README.md, "Establishing the noise
+  floor"](./README.md#establishing-the-noise-floor).

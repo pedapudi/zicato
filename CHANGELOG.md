@@ -1,5 +1,15 @@
 # Changelog
 
+> **Status:** historical record. Each entry describes a change as it
+> stood when the entry was written; later entries and later changes may
+> supersede it. The entries above `[Unreleased]` are undated and newest
+> first, and the log ends at the change that served the builder's knob
+> help from the scoring configuration (2026-09-05). Later changes — among
+> them the removal of the tournament builder, the source editors and the
+> terminal UI, and the removal of obsolete record formats — are recorded
+> only in the git history. The design documents under
+> [`docs/design/`](docs/design/) describe the current system.
+
 ### The builder's knob help is the scoring configuration's documentation
 
 Each help popover in the tournament builder shows the docstring of the

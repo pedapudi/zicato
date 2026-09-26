@@ -7,7 +7,7 @@
 > companion to [`OVERFITTING.md`](OVERFITTING.md), [`SCORING.md`](SCORING.md),
 > [`LOOP-HEALTH.md`](LOOP-HEALTH.md), and
 > [`FUNCTIONALITY-RECOMMENDATIONS.md`](FUNCTIONALITY-RECOMMENDATIONS.md). The
-> two lists below state what runs today and what remains designed only.
+> two lists below state what is implemented and what remains designed only.
 
 ## What is implemented
 
@@ -16,9 +16,9 @@
 `Board-reflection v1`) runs default-on with the gate
 `RuntimeConfig.preflight_gate` set to `warn`, `refuse`, or `off`. Beside it run
 the noise floor measured by scoring one unchanged candidate against itself
-repeatedly (`tournament/calibration.py`) and the seventeen
+repeatedly (`tournament/calibration.py`) and the nineteen
 loop-health detectors in `health/diagnostics.py`; `assess_loop_health` composes
-sixteen of them, and the judge-reliability paths call `detect_noisy_judge`
+eighteen of them, and the judge-reliability paths call `detect_noisy_judge`
 separately. Judge test–retest lives in `judge_runtime/reliability.py` and is
 reached from the CLI as `zicato board judges --test-retest`. The placebo arm,
 the per-round `RoundLog`, per-judge loss decomposition on disk
@@ -63,19 +63,19 @@ the per-unit σ the power analysis needs, and the bootstrap seed folds in the
 engine. `observation_to_judge_context` selects the highest available fidelity —
 verbatim judge capture, then the result capture, then an event preview —
 reusing `_freeze_context`. The adjudicator model arrives through the
-`RuntimeConfig.adjudicator_call_llm` seam and
+`RuntimeConfig.adjudicator_call_llm` field and
 `effective_adjudicator_call_llm()`. Collusion is blocked by a hard
 `assert_distinct_callables` check plus a soft warning when the adjudicator's
 model string matches a judge's; the identity guard re-raises an
 adjudication-specific error naming the fix. The strict-JSON protocol is
-versioned by `ADJUDICATOR_PROMPT_VERSION` (currently `2`); a malformed response
+versioned by `ADJUDICATOR_PROMPT_VERSION` (value `2`); a malformed response
 is retried once with a corrective suffix naming the parse failure, and a second
 failure yields `verdict="ambiguous"` rather than raising. The user prompt is
 de-anchored: it carries neither the judge's verdict nor its claimed severity, so
 the meta-judge decides blind. Verdicts persist in an idempotent
 `adjudication/{judge}/{run_ref}.json` cache that is staleness-aware. A persisted
 verdict counts as a hit only when the adjudicator model, the prompt version, the
-requested `k_adj`, and the currently available fidelity tier all still match. A
+requested `k_adj`, and the fidelity tier available at read time all still match. A
 model swap, a prompt bump, a replication change, or a preview-to-verbatim
 upgrade therefore re-adjudicates and overwrites. `from_json` defaults
 the staleness fields to `0` and `""`, so a cache written without them can never
@@ -152,9 +152,9 @@ artifacts. It emits a `PracticeReview` of eleven checks in the four-verdict
 `sound` / `attend` / `unsound` / `unmeasured` vocabulary. Each check composes the
 loop-health detector or analysis function that owns its signal rather than
 re-deriving it, and each `proposed_op` is signature-validated the way the
-findings are. The review persists as `practices.json`, `reflect run` writes it
-on both tiers, `reflect practices` computes the contract-and-history checks
-alone, and `reflect report` renders a Practice-review section.
+findings are. The review persists as `practices.json`, `inspect reflection run` writes it
+on both tiers, `inspect reflection practices` computes the contract-and-history checks
+alone, and `inspect reflection report` renders a Practice-review section.
 
 ## What is designed and unimplemented
 
@@ -198,7 +198,7 @@ for operator confirmation) rather than authored before the run. The candidate
 already produces.
 
 Consequence to state plainly: pure observation detects *inconsistency*; only
-adjudication assigns *direction* of error. So the spine of the design is a
+adjudication assigns *direction* of error. So the core of the design is a
 **meta-evaluation layer** — an independent reader of the actual transcript that
 decides whether each evaluator got it right.
 
@@ -291,7 +291,7 @@ identifies a property worth holding fixed through later contract edits. So
 calls**. It is a pure read over three inputs: the contract (`board` / `scoring`
 / `epoch`), the operating history (`experiments`, the persisted `noise_floor` /
 `preflight`), and the reflection artifacts (`scorecards` / the corpus
-term-contributions) when a `reflect run` produced them.
+term-contributions) when a `inspect reflection run` produced them.
 It therefore rides the same passive, always-free tier
 as continuous reflection — and a dedicated `zicato inspect reflection practices` runs the
 contract+history checks on **any** epoch instantly, with no corpus at all.
@@ -328,7 +328,7 @@ constants in `reflection/practices.py` with rationale comments.
 
 | id | verdict inputs | rationale (one line) | remediation |
 |---|---|---|---|
-| `oracle_mix` | board expectation kinds | a board whose oracles are all `expected_text` or `regex` saturates: every candidate passes and the entries stop discriminating (ch.04 §3; issue #84) | authoring only — rewrite the expectations in the board editor |
+| `oracle_mix` | board expectation kinds | a board whose oracles are all `expected_text` or `regex` saturates: every candidate passes and the entries stop discriminating (ch.04 §3; issue #84) | authoring only — rewrite the expectations in the board file |
 | `judge_criterion_quality` | inline judge bodies; `scorecards` | underspecified criteria breed ambiguous adjudications (ch.04 §10) | authoring only (edit the judge body) |
 | `statistical_power` | `noise_floor`→σ, replicates, train board size, `promote_margin` | when the minimum detectable effect exceeds the margin, the gate cannot resolve a difference the size of its own threshold, so no promotion at this power carries evidence (ch.04 §3, §13) | `set_param` — raise `replicates` until the minimum detectable effect drops below the margin (capped at 8) |
 | `overfitting_posture` | `overfitting`, `proposer_quality`, board size, promotions | memorization defense must scale with a splittable board (OVERFITTING.md §4/§6/§7) | `set_holdout` / `set_screening` |
@@ -349,9 +349,9 @@ operation signature at emission. The report is operator-facing and never
 crosses into the proposer envelope or edits a contract.
 
 The review persists as `practices.json` in the reflection directory; the file is
-canonical and the reader degrades on its absence. `reflect run` writes it on
+canonical and the reader degrades on its absence. `inspect reflection run` writes it on
 both the passive and the full tier, since it costs nothing to compute.
-`reflect report` renders a **Practice review** section in three parts. The
+`inspect reflection report` renders a **Practice review** section in three parts. The
 `sound` verdicts come first, so the deficiencies that follow are read against a
 statement of what the contract already gets right. The `attend` and `unsound`
 deficiencies follow, ranked worst-first. The `unmeasured` checks come last, each
@@ -409,7 +409,7 @@ cannot supply it:
 - **The worker's temp result file does not survive the run.** The worker writes
   `RunResult{final_output, transcript}` into a temp result file, and the parent
   reads it back and unlinks it in its cleanup `finally`
-  (`tournament/runner.py`). Nothing about that path retains the user-facing
+  (`tournament/worker_execution.py`). Nothing about that path retains the user-facing
   conversation the judges graded.
 - **Measurement event JSONL carries previews only.** The transcript reconstruction
   (`query/transcript_reconstruction.py`) reads the `input_preview`,
@@ -462,11 +462,11 @@ a verbatim-tier finding outranks a preview-tier one:
 
 | Tier | Source | What it supplies |
 |---|---|---|
-| `verbatim` | `judge_io.jsonl` | the judge's input bytes and its raw response |
-| `result` | `result.json` | the full user-facing transcript and final output |
+| `verbatim` | `judge_io.{purpose}.r{draw}.jsonl` | the judge's input bytes and its raw response |
+| `result` | `result.{purpose}.r{draw}.json` | the full user-facing transcript and final output |
 | `preview` | measurement event previews | truncated summaries |
 
-A run whose directory carries neither `result.json` nor `judge_io.jsonl` — one
+A run whose directory carries neither `result.{purpose}.r{draw}.json` nor `judge_io.{purpose}.r{draw}.jsonl` — one
 executed with the persistence knobs off, or before the run directory carried
 them — is still analysable at the `preview` tier as long as the tier is
 labelled. Preview fidelity can rank suspects; it cannot ground a verdict.
@@ -478,7 +478,7 @@ guards the **during-run** channel: what a live emulator or judge can see of the
 run it is inside. Persisting the artifacts into the run directory after the run
 does not reopen that channel. The file is written after the run's judgements
 are settled, the worker process then exits, and no later run's judge or
-emulator context reads a prior run's `result.json` or `judge_io.jsonl`. The
+emulator context reads a prior run's `result.{purpose}.r{draw}.json` or `judge_io.{purpose}.r{draw}.jsonl`. The
 readers are the offline reflection engine and the operator, on the far side of
 the process boundary.
 
@@ -496,8 +496,14 @@ epochs/{e}/reflections/{id}/
   adjudication/{judge_name}/{run_ref}.json   # per-decision meta-judge verdict
   scorecards.json        # aggregated per-judge / per-entry / loss-term metrics
   findings.json          # ranked findings + proposed contract edits
-  report.md / report.html
+  practices.json         # the practice review
+  summary.json           # the bill-of-health summary the report renders
+  suggestions.json       # eval-synthesis suggestions, when `suggest` ran
 ```
+
+The report itself is not stored: `zicato inspect reflection run` prints it
+(or writes it to `--output`), and `zicato inspect reflection report`
+re-renders it from the stored files.
 
 **Measurement identity.** Active corpus draw `j` uses
 `MeasurementDraw(MeasurementPurpose.REFLECTION, j)`. The scheduler passes the
@@ -635,7 +641,7 @@ onto the epoch record and surfaces through the loop-health channel.
   states the holdout confirmation's own bounds (`holdout_margin` and
   `holdout_entry_regression_budget`, issue #118) in prose.
 - **Dead judge, dead entry, degenerate scoring, flat drift** — four of the
-  seventeen loop-health detectors in `health/diagnostics.py`
+  nineteen loop-health detectors in `health/diagnostics.py`
   (`detect_dead_judge`, `detect_non_differentiating_entry`,
   `detect_degenerate_scoring`, `detect_flat_drift_signal`).
 - **Noisy judge** — test–retest disagreement above threshold
@@ -679,8 +685,9 @@ surfaces.
   independently.
 - `synthetic/` supplies optional adversarial and clean entries as *additional*
   exercised behavior; they are never the primary ground truth.
-- `index/` stores the corpus and findings as derived rows, and `analyzer/`
-  renders the reflection report at the grain of the epoch report.
+- `index/` stores reflection summaries and judge scorecards as derived rows
+  (the `reflections` and `judge_scorecards` tables), and
+  `cli/commands/reflect.py` renders the reflection report.
 - `health/diagnostics.py` supplies the pre-flight detectors.
 - `epoch/contract.py` computes the identity of evaluation inputs. An accepted
   manual edit follows the ordinary contract-drift and epoch-boundary rules.
@@ -697,8 +704,8 @@ surfaces.
    it in the scorecards. Neither figure is presented as the other.
 3. **Consume the persisted noise floor.** Reflection reads the noise floor and
    pre-flight verdicts already persisted on the epoch record rather than
-   re-measuring; `--fresh` re-measures on request. Calibration budget is never
-   spent twice without the operator asking for it.
+   re-measuring; an operator who wants a fresh floor runs `zicato board audit`.
+   Calibration budget is never spent twice without the operator asking for it.
 4. **`detect_noisy_judge` is wired in unchanged.** Reflection's judge
    self-consistency measurements feed the existing health detector, so there is
    one threshold and one finding shape rather than a parallel taxonomy.
@@ -713,7 +720,7 @@ surfaces.
    `set_weights {per_judge_weights: {judge: 0.0}}` payload. No finding is
    prose-only.
 7. **The `RoundLog` gains no judge events.** Judge input and output belong in
-   the zicato-owned `judge_io.jsonl` sidecar (see the capture section) rather
+   the zicato-owned `judge_io.{purpose}.r{draw}.jsonl` sidecar (see the capture section) rather
    than in a new frame taxonomy that the round log's three parsers would each
    have to learn.
 
@@ -883,5 +890,5 @@ stated goal first:
 - **External validity.** Whether board performance predicts *production* quality
   needs deployment data. Reflection reports *coverage* — whether the board spans
   the failure modes the operator cares about — and claims no external validity.
-- **Replacing the gate or the gauntlet default.** Reflection tunes the inputs to
-  the gate; the gate's decision rules are unchanged.
+- **Replacing the gate or the default tournament structure.** Reflection tunes
+  the inputs to the gate; the gate's decision rules are unchanged.

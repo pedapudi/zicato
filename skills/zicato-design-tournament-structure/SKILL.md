@@ -1,18 +1,18 @@
 ---
 name: zicato-design-tournament-structure
-description: Choose and configure a zicato per-epoch tournament structure — gauntlet (default), swiss, single_elim, double_elim, racing — and its params (field_size, replicates, swiss rounds_n, racing eta/board_fraction/rung0_board_size). Use when an epoch has more than one challenger to select among, when a single-challenger gauntlet is too noisy, or when picking the best of a large candidate field cheaply; explains the decision guide, the noise/incumbent design principles, the scoring.json `tournament` block, and that changing it rolls the epoch.
+description: Choose and configure a zicato per-epoch tournament structure — racing (the recommended default), gauntlet, or the experimental swiss, single_elim and double_elim — and its params (field_size, replicates, the evidence-gate pair, swiss rounds_n, racing eta/board_fraction/rung0_board_size). Use when an epoch has more than one challenger to select among, when a single-challenger gauntlet is too noisy, or when picking the best of a large candidate field cheaply; explains the decision guide, the noise/incumbent design principles, the scoring.json `tournament` block, and that changing it rolls the epoch.
 ---
 
 # Designing a zicato tournament structure
 
 The **tournament** is how zicato turns a field of proposed challengers into
-at most one promotion. The default is the **gauntlet**: one champion, one
-challenger, one full-board duel, promote-on-gate — the historical
-king-of-the-hill loop. When the proposer can emit *several* challengers per
-round, or when a single duel is too noisy to trust, an epoch can select a
-different **structure**: `racing`, or — with `experimental.tournament_structures`
-set to `true` in `scoring.json` — the experimental `swiss`, `single_elim`, or
-`double_elim`.
+at most one promotion. The recommended default — what an empty `scoring.json`
+or one without a `tournament` block resolves to — is **racing** over a field of
+four challengers with the evidence gate on. The **gauntlet** is the
+single-challenger alternative: one champion, one challenger, one full-board
+duel, promote-on-gate. With `experimental.tournament_structures` set to `true`
+in `scoring.json`, an epoch may also select the experimental `swiss`,
+`single_elim`, or `double_elim`.
 
 The structure is part of the **evaluation contract** (it is a field of
 `ScoringWeights`, folded into the contract hash). Changing the structure or
@@ -61,11 +61,11 @@ evaluation with a protected incumbent. Map the situation to a structure:
 
 | Situation | Structure | Why |
 |---|---|---|
-| One challenger per round; cheapest possible 1-vs-1 | **gauntlet** | The default. One full-board duel per replicate, promote-on-gate. Raise `replicates` above its default 2 if the verdict is still too noisy — no structure change needed. |
+| One challenger per round; cheapest possible 1-vs-1 | **gauntlet** | One full-board duel per replicate, promote-on-gate. Raise `replicates` above its default 2 if the verdict is still too noisy — no structure change needed. |
 | A field, and you want a full RANKING in few duels | **swiss** (experimental) | Needs `experimental.tournament_structures = true`. Fixed `rounds_n` Swiss rounds rank the whole field by Copeland (duels won); no elimination, so every candidate is rated. Cheap, non-adaptive. |
 | A field, and you only need the single best (knockout) | **single_elim** (experimental) | Needs the same opt-in. A bracket over the challengers halves the field each round; the survivor faces the champion. Fewer duels than swiss, but loses the full ranking. |
 | Same, but you want a "second chance" against an upset | **double_elim** (experimental) | Needs the same opt-in. Winners' + losers' bracket; eliminated only on the SECOND node loss. Offered for completeness — prefer raising `replicates` on `single_elim` (cheaper, more robust). |
-| A LARGE field, pick the best cheaply, noise-robust | **racing** | Successive halving: cheap rung-0 duels on a board SLICE cut the worst by `eta`; survivors re-duel on larger slices. Trades board coverage for cheapness. The one bracket-shaped structure endorsed for zicato's regime. |
+| A field, pick the best cheaply, noise-robust | **racing** | The recommended default. Successive halving: cheap rung-0 duels on a board SLICE cut the worst by `eta`; survivors re-duel on larger slices. Trades board coverage for cheapness. The one bracket-shaped structure endorsed for zicato's regime. |
 
 Rules of thumb:
 - **More than one challenger but a tight budget** → `racing` (it never wastes
@@ -80,13 +80,20 @@ Rules of thumb:
 
 ## The params (read these off the strategy code rather than docs/design/CLI.md)
 
-`field_size` and `replicates` are universal; the rest are per-structure.
-Defaults below are the strategy constructors' real defaults.
+Every structure accepts `replicates`, `promote_confidence_threshold` and
+`promote_confidence_replicates`; the rest are per-structure, and a key the
+selected structure does not accept is refused with the list of accepted keys.
+Defaults below are the strategy constructors' defaults for a key the params
+omit; the recommended contract an absent `tournament` block resolves to sets
+`field_size 4`, `eta 2`, `board_fraction 0.4`, `replicates 2`,
+`promote_confidence_threshold 0.8` and `promote_confidence_replicates 32`.
 
 | Param | Structures | Default | Meaning |
 |---|---|---|---|
-| `field_size` | all | `1` (gauntlet fixes it), else `2` | How many challengers the proposer must emit this round. `field_size == 1` degrades ANY structure to gauntlet semantics organically. |
+| `field_size` | all but gauntlet | `2` | How many challengers the proposer must emit this round. The gauntlet always fields one and refuses the key. `field_size == 1` degrades any field structure to gauntlet semantics. |
 | `replicates` | all | `2` (the base default; `1` for racing) | Paired board runs averaged before scoring a duel (`>= 1`). The NOISE lever. Also honoured in fast mode, but on the CHALLENGER side only — the champion stays one cached draw, so fast-mode replication halves the noise rather than removing it. |
+| `promote_confidence_threshold` | all | unset (off) | The evidence gate: the probability the challenger is stronger than the champion that a crowning promotion must reach. Absent, `null` or `0` disables confirmation. |
+| `promote_confidence_replicates` | all | `32` | The evidence gate's budget of extra confirmation draws; `0` permits none. |
 | `rounds_n` | swiss | `4` | Number of Swiss rounds (the INNER rounds). Each round re-pairs near-equal standings; the leader then faces the champion gate. |
 | `eta` | racing | `2` (clamped `>= 2`) | Halving factor. Each rung keeps the top `floor(alive / eta)` by scalar and cuts the rest. |
 | `board_fraction` | racing | `0.25` | Rung-0 board slice = `ceil(board_fraction × board size)`; the slice grows by `eta` each rung until it reaches the full board (the final rung). |
@@ -120,7 +127,7 @@ form; the CLI flags below just write into it.
   "tournament": {
     "structure": "racing",      // gauntlet | racing; the experimental three need the opt-in
     "params": {
-      "field_size": 4,          // challengers proposed per round (gauntlet ⇒ 1)
+      "field_size": 4,          // challengers proposed per round (not accepted by gauntlet)
       "replicates": 2,          // paired runs per duel, averaged — the noise lever
       "eta": 2,                 // racing: keep top 1/eta each rung
       "board_fraction": 0.4,    // racing: rung-0 slice = ceil(0.4 · |board|)
@@ -132,13 +139,14 @@ form; the CLI flags below just write into it.
 }
 ```
 
-An absent `tournament` block ⇒ `{structure: "gauntlet", params: {}}` — every
-existing epoch keeps today's behaviour with no migration.
+An absent `tournament` block resolves to the recommended racing
+specification listed above. Print what a workspace resolves to with
+`zicato inspect config --effective --workspace .zicato` (the
+`scoring.tournament.*` rows).
 
 ## Configure it — `zicato evolve` flags (contract-mutating convenience)
 
-Derive the exact surface from `zicato evolve --help` (the design docs are
-stale). As of writing the flags are:
+Derive the exact surface from `zicato evolve --help`:
 
 ```bash
 zicato evolve \
@@ -150,12 +158,19 @@ zicato evolve \
     --rounds 2
 ```
 
-- `--tournament-structure {gauntlet|racing}`
-  writes `{structure, params}` into the live `scoring.json` BEFORE the
-  contract hash is computed, so it participates in the hash like a hand edit.
-- `--tournament-param KEY=VALUE` is repeatable; `VALUE` is parsed as JSON when
-  possible (so `field_size=4` is the integer `4`), else taken as a string.
-  Params are applied ONLY when `--tournament-structure` is also passed.
+- `--tournament-structure {gauntlet|racing}` sets the structure and keeps
+  the existing params. The validated edit is written into the live
+  `scoring.json` BEFORE the contract hash is computed, so it participates in
+  the hash like a hand edit.
+- `--tournament-param KEY=VALUE` is repeatable and works with or without
+  `--tournament-structure`; `VALUE` is parsed as JSON when possible (so
+  `field_size=4` is the integer `4`), else taken as a string, and `KEY=null`
+  removes the key. Switching racing to gauntlet therefore also needs
+  `--tournament-param field_size=null --tournament-param eta=null
+  --tournament-param board_fraction=null`, because the gauntlet refuses those
+  keys.
+- Neither flag combines with `--epoch`. Under `--dry-run` the edit is checked
+  in memory and not saved.
 - There is **no** `--field-size` flag — set it via `--tournament-param
   field_size=N`.
 
@@ -174,26 +189,28 @@ lineage. See `zicato-analyze-epoch` and
 
 By default swiss collapses its duel matrix with **Copeland** (count of duels
 won), which is margin-blind, and a noisy loss can leave the matrix **cyclic**
-(A>B, B>C, C>A). Two **opt-in** `tournament.params` knobs — read by `swiss`,
-`single_elim` and `double_elim` only — now sit over that
-([SELECTION-THEORY.md](../../docs/design/SELECTION-THEORY.md)):
+(A>B, B>C, C>A). Two **opt-in** keys in `scoring.json`'s `experimental` block
+sit over that; they reach `swiss`, `single_elim` and `double_elim` only
+([SELECTION-THEORY.md](../../docs/design/SELECTION-THEORY.md)). Putting either
+under `tournament.params` is refused with a message naming the
+`experimental` key to use instead:
 
-| Param | Values | Effect |
+| Key | Values | Effect |
 |---|---|---|
-| `resolver` | `ranked_pairs` \| `copeland` | Re-picks the INTERNAL leader from the net-margin matrix: Condorcet fast path, then Smith-set prune, then Ranked Pairs (recommended) or Copeland order. |
-| `rating` | `bradley_terry` | Fits BT strengths from the audited duels for standings + the `P(θ_child > θ_parent)` uncertainty it needs. |
+| `experimental.resolver` | `none` (default) \| `ranked_pairs` \| `copeland` | Re-picks the INTERNAL leader from the net-margin matrix: Condorcet fast path, then Smith-set prune, then Ranked Pairs (recommended) or Copeland order. |
+| `experimental.standing_rating` | `none` (default) \| `bradley_terry` | Fits Bradley–Terry strengths from the audited duels for the standings. |
 
 Both are derived from already-measured duel data (the gate's
 `delta_scalar` and the two side scalars), so they cost **zero new board runs**;
 absent or set to `none` they leave each structure's existing pick
-byte-identical. Maximal lotteries remain unimplemented.
+byte-identical. Maximal lotteries are not implemented.
 
 Neither knob holds a promotion. Requiring confidence before a crowning promote
 is the evidence gate's job — `promote_confidence_threshold` plus
 `promote_confidence_replicates`, which apply to every structure and buy the
 confidence with extra replicates rather than only refusing the crown.
 
-The one operating rule to remember now: **replicate first, resolve second.**
+The one operating rule to remember: **replicate first, resolve second.**
 Most cycles zicato sees are noise artifacts that replication dissolves; only
 invoke a cycle-resolver on the residual cycle that survives replication. And
 any such resolver only *proposes* a leader — the champion-gate still owns
@@ -213,7 +230,8 @@ raise it:
 then gate the leader:
 
 ```jsonc
-{"tournament": {"structure": "swiss",
+{"experimental": {"tournament_structures": true},
+ "tournament": {"structure": "swiss",
   "params": {"field_size": 4, "rounds_n": 3, "replicates": 2}}}
 ```
 
@@ -228,8 +246,9 @@ final survivor sees the full board + the gate:
 
 ## A good tournament design
 
-- **Start at gauntlet.** Only adopt a field-structure once the proposer
-  actually emits multiple challengers worth comparing.
+- **Keep the recommended racing contract** unless you have a reason to leave
+  it; switch to `gauntlet` when the proposer can only produce one challenger
+  worth comparing per round.
 - **Reach for `replicates` before bracket shape** when the problem is noise —
   it is the honest, cheaper lever.
 - **Use `racing` for a field.** `swiss`, `single_elim` and `double_elim` are

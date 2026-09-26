@@ -1,10 +1,12 @@
 # zicato — functionality improvement recommendations
 
-> **Status: a set of recommendations, several of which have since been
-> built.** Each numbered recommendation below is still written as a proposal.
-> Where the recommended change now exists in the tree, the section carries an
-> inline note saying so; the summary of what has and has not shipped is
-> immediately below. Read a recommendation without such a note as unbuilt.
+> **Status: a dated recommendations record (written 2026-06-09), several of
+> whose recommendations have since been built.** Each numbered recommendation
+> below is still written as a proposal, and its line references describe the
+> tree as it was reviewed. Where the recommended change now exists in the
+> tree, the section carries an inline note saying so; the summary of what has
+> and has not shipped is immediately below, checked against the code on
+> 2026-09-26. Read a recommendation without such a note as unbuilt.
 >
 > The review covers four areas: running tournaments reliably, running them
 > efficiently, the boundary between the Rust supervisor and the Python loop,
@@ -44,6 +46,18 @@ rating, and how a Bradley–Terry paired-comparison model should be used.
 - **The conservative crash-resume protocol is wired**, through the
   `force_fresh=False` path in `src/zicato/tournament/runner.py`. That is §1's
   seventh recommendation.
+- **The supervisor's kill paths leave the run state file alone.** The Rust
+  watchdog removes an `active_runs/{run_id}.json` record only when it
+  finalizes an orphan whose producing orchestrator is dead
+  (`finalize_orphan` in `crates/supervisor/src/watchdog.rs`). That is §1's
+  eighth recommendation.
+- **The Python parent requests worker kills from the supervisor** by writing
+  a `control/kill_requests/{run_id}` marker (`request_worker_kill` in
+  `src/zicato/runtime/state.py`), and the supervisor verifies the process
+  identity and terminates the worker's process group. This is the first half
+  of §3's kill-protocol consolidation; the parent keeps a bounded,
+  identity-checked fallback escalator (`_terminate_worker` in
+  `src/zicato/tournament/worker_transport.py`).
 - **The git generation store is the default backend**
   ([STORAGE.md](STORAGE.md) §7), which removed both the per-generation copy
   and the per-run copy. That is §2's first recommendation.
@@ -51,14 +65,26 @@ rating, and how a Bradley–Terry paired-comparison model should be used.
   defaults to false in `runner.py`), which is §2's third recommendation, and
   **a round's matchups share one concurrency semaphore**
   (`src/zicato/tournament/scheduling.py`), which is §2's fifth.
+- **One `ScoringWeights` serializer crosses the worker boundary**:
+  `_weights_spec` delegates to `ScoringWeights.to_json` and the worker's
+  `_weights_from_args` to `ScoringWeights.from_json`. That is §2's sixth
+  recommendation.
 - **Best-of-N sampling with a critic pass ships**
   (`src/zicato/proposer/best_of_n.py`), and **hypothesis predictions are
   scored against actuals** (`src/zicato/proposer/calibration.py`). Those are
   §4's first two recommendations.
-- **Diff-complexity regularization ships** (`src/zicato/scoring/diff_complexity.py`)
-  and **the random-baseline placebo arm ships** as the opt-in
-  `experimental.random_baseline_every_n`. Those are two of §6's items, and
+- **Diff-complexity regularization ships** (`src/zicato/scoring/diff_complexity.py`,
+  opt-in through `experimental.diff_complexity_weight`), **the random-baseline
+  placebo arm ships** as the opt-in `experimental.random_baseline_every_n`,
+  and **cross-contract experiment transfer ships** as the opt-in
+  `experimental.cross_epoch_memory`. Those are three of §6's items, and
   every documentation-reconciliation item §6 lists has since been applied.
+- **The Bradley–Terry rating layer, the evidence gate, and the Ranked Pairs
+  resolver ship** (§5). The rating and resolver are opt-in through
+  `experimental.standing_rating` and `experimental.resolver` in
+  `scoring.json`, and the structures that consume them (`single_elim`,
+  `double_elim`, `swiss`) are themselves experimental
+  ([FEATURE-QUALIFICATION.md](FEATURE-QUALIFICATION.md)).
 - **Multi-challenger fields with holdout confirmation ship**
   (`evolve_field_round` and `confirm_crowning_holdout` in
   `src/zicato/evolve/field.py`, with a command-line flag).
@@ -66,11 +92,17 @@ rating, and how a Bradley–Terry paired-comparison model should be used.
 ### What remains unbuilt
 
 - The in-worker hard-stop timer and the `match_id` handoff to the worker
-  (§1, recommendations 5 and 6).
-- The warm interpreter pool and the single `ScoringWeights` serializer
-  (§2, recommendations 2 and 6).
-- Consolidating the kill protocol into Rust (§3).
-- Decoding-parameter diversity across proposer slots (§4, recommendation 4).
+  (§1, recommendations 5 and 6). The parent still stamps `match_id` onto the
+  loss file after the worker exits.
+- The warm interpreter pool and re-enumerating only touched files after a
+  patch (§2, recommendations 2 and 4).
+- The rest of §3: a single Rust kill escalator with no Python fallback, and
+  a Rust per-evolve budget killer. A Rust reader tails a run's events for
+  the dashboard's log panel, but no incremental Rust tailer feeds loop
+  health.
+- Decoding-parameter diversity across proposer slots, structured reflection
+  on rejection patterns, and a `read_parent_diff` tool (§4, recommendations
+  4, 5, and 6).
 - The maximal-lottery resolver (§5).
 
 ---
@@ -111,7 +143,7 @@ ranked:
 | 5 | **In-worker SIGALRM hard stop** (`signal.setitimer(ITIMER_REAL, budget)`) as a true in-process budget floor (`_tournament_worker.py:589-604`) | The worker budget is cooperative `asyncio.wait_for` only; a GIL-holding C-extension or `while True` never yields, so a wedged run depends entirely on two healthy outer processes | M / S |
 | 6 | **Pass `match_id` into the worker** so it writes `loss.json` once, atomically, instead of the parent rewriting it post-exit (`runner.py:1252-1257`) | A parent kill between worker-exit and rewrite leaves a `match_id`-less cached loss → wrong provenance on reindex | L / S |
 | 7 | **Ship the conservative resume protocol** (the markers exist at RUNTIME.md §4; nothing reads them) | A mid-tournament kill loses in-flight work to re-runs; the unit cache already makes resume nearly free (a completed `loss.json` is a cache HIT). **Since built** (`force_fresh=False`). | M / M |
-| 8 | **Single state-file owner on kill.** Make both Rust kill paths leave the run state file for the orchestrator reaper (`watchdog.rs:365-368` vs `398-404` disagree) | A double-trigger can delete the file the reaper needed for finalization | L / S |
+| 8 | **Single state-file owner on kill.** Make both Rust kill paths leave the run state file for the orchestrator reaper (`watchdog.rs:365-368` vs `398-404` disagree) | A double-trigger can delete the file the reaper needed for finalization. **Since built** — only orphan finalization removes the file. | L / S |
 
 ---
 
@@ -124,7 +156,7 @@ ranked:
 | 3 | **Cache-read the immutable champion side** in `run_tournament` instead of `force_fresh=True` for both sides (`runner.py:2419`) | The gauntlet champion is immutable within an epoch yet is re-run every round; fast mode already cache-reads it and the rigorous path re-runs it for no gain. **Since built** — `champion_force_fresh` defaults to false. | M / S |
 | 4 | **Re-enumerate only touched files** after a patch, rather than the whole tree twice (`mutation/validator.py:117,220-223`) | A full AST re-parse of the mutable tree per applied patch | M / S |
 | 5 | **Cross-matchup parallelism** for swiss/elim/racing: lift the semaphore to span concurrent matchups of a round (`orchestrator.py:1737` runs them serially) | Worker-spawn and snapshot overhead is otherwise re-paid serially per matchup. **Since built** — one semaphore spans a round's matchups (`tournament/scheduling.py`). | M / M |
-| 6 | **One `ScoringWeights` JSON serializer** replacing the hand-aligned `_weights_spec`/`_weights_from_args` pair (`runner.py:692-744` ↔ `_tournament_worker.py:685-763`) | The gain is correctness as well as speed: the two must stay byte-aligned or the worker silently scores under defaults, which is the documented `per_judge_weights` desync | M / S |
+| 6 | **One `ScoringWeights` JSON serializer** replacing the hand-aligned `_weights_spec`/`_weights_from_args` pair (`runner.py:692-744` ↔ `_tournament_worker.py:685-763`) | The gain is correctness as well as speed: the two must stay byte-aligned or the worker silently scores under defaults, which is the documented `per_judge_weights` desync. **Since built** — `ScoringWeights.to_json` / `from_json` on both ends. | M / S |
 
 ---
 
@@ -332,16 +364,25 @@ inside the existing overfitting-restricted context channels:
 > 2. The Bradley–Terry rating module
 >    (`src/zicato/selection/rating.py::fit_bradley_terry`), a convex
 >    maximum-likelihood fit with confidence intervals, plus its opt-in θ-rank
->    standings (`params["rating"]`).
+>    standings (`experimental.standing_rating`).
 > 3. The Bradley–Terry **uncertainty pre-gate**, with
 >    confidence-interval-driven "replicate first, resolve second" scheduling
 >    (`src/zicato/selection/evidence_gate.py` plus `selection/driver.py`). It
 >    defers and spends a replicate on the duel whose confidence intervals
 >    overlap most.
 > 4. The `resolver` knob — Ranked Pairs behind a Smith-set prune
->    (`selection/resolve.py` plus `standings_ext.py`, opt-in
->    `params["resolver"]`), wired into single-elimination,
->    double-elimination, and swiss.
+>    (`selection/resolve.py` plus `standings_ext.py`), wired into
+>    single-elimination, double-elimination, and swiss.
+>
+> The rating and resolver knobs are authored as `experimental.standing_rating`
+> and `experimental.resolver` in `scoring.json`; the strategy registry copies
+> them into the structure's parameters, and it refuses a `rating` or
+> `resolver` key written directly under `tournament.params`. The structures
+> that read them are experimental and need
+> `experimental.tournament_structures = true`. The evidence gate is
+> configured by the `promote_confidence_threshold` and
+> `promote_confidence_replicates` tournament parameters, which the default
+> racing structure sets.
 >
 > Still unbuilt: the maximal-lottery resolver, for which
 > `SELECTION-THEORY.md` remains a design. Per-lever status is tagged inline
@@ -439,9 +480,11 @@ lacks. Five rules govern its use in zicato:
   structure's own leader pick) and `rating` (`none|bradley_terry`, default
   `none`).
   Params already fold into the contract hash, so a change rolls the epoch with
-  no new plumbing. Add the additive index columns. **(SHIPPED:** the `rating`
-  knob, the additive columns, and the `resolver` knob for `copeland` and
-  `ranked_pairs`; `maximal_lottery` is unbuilt.)**
+  no new plumbing. Add the additive index columns. **(SHIPPED:** the rating
+  knob, the additive columns, and the resolver knob for `copeland` and
+  `ranked_pairs`, authored as `experimental.standing_rating` and
+  `experimental.resolver` rather than as tournament parameters;
+  `maximal_lottery` is unbuilt.)**
 - **The Elo analytics fold** (above): the highest ratio of impact to effort,
   read-only, with no selection risk. **(SHIPPED, as the Bradley–Terry fit
   mapped onto the Elo scale — see the subsection status note.)**
@@ -449,13 +492,13 @@ lacks. Five rules govern its use in zicato:
   maximum-likelihood fit): replace Copeland and scalar standings with a θ rank
   in swiss and elimination, persist θ and its standard error, and plot the
   confidence intervals. **(SHIPPED:** `fit_bradley_terry` plus opt-in
-  `params["rating"]` θ-rank standings; θ and its standard error persist as
+  θ-rank standings through `experimental.standing_rating`; θ and its standard error persist as
   `elo` and `elo_se` on the Elo scale.)**
 - **The Ranked Pairs resolver behind a Smith-set prune**
   (`selection/resolve.py`, pure functions over the `MatchRecord` matrix; this
   document's leading recommendation): plug it into leader selection alone and
   keep it out of the gate. **(SHIPPED:** `smith_set`, `ranked_pairs`, and
-  `resolve_leader` in `selection/resolve.py`, opt-in via `params["resolver"]`,
+  `resolve_leader` in `selection/resolve.py`, opt-in via `experimental.resolver`,
   wired into single-elimination, double-elimination, and swiss.)**
 - **Confidence-interval-driven replication, the uncertainty pre-gate, and a
   maximal-lottery resolver for cycles that survive the prune**: the largest
@@ -469,9 +512,10 @@ lacks. Five rules govern its use in zicato:
 
 ## 6. Other documented-but-missing capabilities, and documentation reconciliation
 
-> **Partly since built.** Diff-complexity regularization ships as
-> `src/zicato/scoring/diff_complexity.py`, and the random-baseline check ships
-> as the opt-in placebo arm `experimental.random_baseline_every_n`. Every
+> **Since built.** Diff-complexity regularization ships as
+> `src/zicato/scoring/diff_complexity.py`, the random-baseline check ships
+> as the opt-in placebo arm `experimental.random_baseline_every_n`, and
+> cross-contract transfer ships as `experimental.cross_epoch_memory`. Every
 > documentation-reconciliation item listed below has been applied.
 
 - **Diff-complexity regularization** (OVERFITTING.md #4, "BUILD — cheap"): a
@@ -485,7 +529,8 @@ lacks. Five rules govern its use in zicato:
   **Since built** as the placebo arm.
 - **Cross-contract experiment transfer** (`same_contract=False`,
   EXPERIMENT-MEMORY.md §3.4): an explicit extension point (`query.py:518`), to
-  build only if epochs turn over fast under one contract hash.
+  build only if epochs turn over fast under one contract hash. **Since
+  built** as the opt-in `experimental.cross_epoch_memory`.
 - **Documentation reconciliation (cheap, and it restores trust):** several
   documents describe shipped features as future work. Fixing their status
   headers is what lets the harness trust its own documents. Every item below
@@ -504,8 +549,8 @@ lacks. Five rules govern its use in zicato:
 
 ## Recommended sequencing, highest value first
 
-The order below is the one this review recommended. All but the last two items
-have since been built; the two that remain are marked.
+The order below is the one this review recommended. Items 1 to 5 have since
+been built; items 6 and 7 are marked with what remains.
 
 1. **Watchdog warn-only for the orchestrator** (§0) — H/S, and it fixes a
    defect that killed live loops.
@@ -519,7 +564,9 @@ have since been built; the two that remain are marked.
 5. **Git-worktree snapshots by default** (§2, recommendation 1) — the largest
    efficiency win.
 6. **Consolidate the kill protocol into Rust** (§3), which removes the race
-   between the parent and the supervisor. **Still unbuilt.**
+   between the parent and the supervisor. **Partly built:** the parent
+   requests kills through a supervisor marker, and keeps a bounded fallback
+   escalator of its own.
 7. Then the Bradley–Terry rating layer with its uncertainty gate (§5) and
    diff-complexity regularization (§6). **Built, apart from the
    maximal-lottery resolver.**
@@ -531,8 +578,9 @@ have since been built; the two that remain are marked.
   suite. No live evolve run happens without explicit operator go-ahead
   (AGENTS.md rule 1). The watchdog fix needs a Rust unit test asserting that
   `decide_heartbeat` never returns `Kill` for the heartbeat pid.
-- The rating work lands as **additive** index columns plus opt-in `params`, so
-  the gauntlet default and the promote gate stay byte-identical. A rating never
+- The rating work lands as **additive** index columns plus opt-in
+  configuration, so the gauntlet structure and the promote gate stay
+  byte-identical. A rating never
   gates a promotion except through the opt-in uncertainty guard, which can only
   block.
 - These recommendations alter behavior on purpose, which is what distinguishes

@@ -1,8 +1,8 @@
 # Dashboard variant bake-off — the durable record
 
-> **Status: a historical record of a completed design bake-off.** It keeps its
-> chronology on purpose. For what the dashboard does today, read
-> [CONSOLE-DESIGN-LANGUAGE.md](CONSOLE-DESIGN-LANGUAGE.md).
+> **Status: a historical record of a design bake-off completed on
+> 2026-06-01.** It keeps its chronology on purpose. For what the dashboard
+> does, read [CONSOLE-DESIGN-LANGUAGE.md](CONSOLE-DESIGN-LANGUAGE.md).
 >
 > Six rounds of design work produced 23 candidate dashboards, lettered **A**
 > through **W**. **T** won and is the console that ships. This document

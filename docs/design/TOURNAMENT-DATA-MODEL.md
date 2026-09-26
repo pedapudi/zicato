@@ -2,34 +2,26 @@
 
 > **Status.** This document is the as-built reference for the storage
 > and interface half of configurable per-epoch tournament structures.
-> The design was built as specified, and the runtime record
-> (`runtime/state.py::ActiveTournament`) and the index `tournaments`
-> table cite these section numbers from their source comments. Sections
-> written as an implementation plan (§7) record the work that was carried
-> out, and are kept because those section numbers are cited.
-> The pairing, elimination and racing-cut algorithms that drive each
-> structure, and the decision theory under them, are specified in
-> [`SELECTION.md`](SELECTION.md), [`TOURNAMENT.md`](TOURNAMENT.md), and
+> The runtime record (`runtime/state.py::ActiveTournament`), the
+> selection records (`selection/strategy.py`), and the dashboard
+> projection (`evolve/dashboard_projection.py`) cite its section numbers
+> from their source comments, so the numbering is stable. The pairing,
+> elimination and racing-cut algorithms that drive each structure, and the
+> decision theory under them, are specified in [`SELECTION.md`](SELECTION.md),
+> [`TOURNAMENT.md`](TOURNAMENT.md), and
 > [`TOURNAMENT-STRUCTURES.md`](TOURNAMENT-STRUCTURES.md). The
 > `tournament` config block of §1 is the shared contract between the two
 > halves: its field name (`tournament`) and its shape
-> (`{structure, params}`) must stay byte-identical across both
-> specifications.
->
-> The reader module these sections cite as `dashboard/state_reader.py` has
-> since been split into the `zicato.query` package: the epoch view now lives
-> in `query/epoch_view.py` and the bracket reader in `query/tournament_view.py`.
-> Line numbers in the citations below predate that split and are not current.
+> (`{structure, params}`) are the same in both specifications.
 
 The tournament structure is a per-epoch configurable choice —
-`gauntlet` (the default), `single_elim`, `double_elim`, `swiss`,
-`racing`. The gauntlet is a king-of-the-hill contest: one reigning
-champion, one challenger per round, and a three-rule promote gate (see
-[`TOURNAMENT.md`](TOURNAMENT.md) §1 and [`SELECTION.md`](SELECTION.md)
+`racing` (the default), `gauntlet`, and, under the
+`experimental.tournament_structures` opt-in, `single_elim`,
+`double_elim` and `swiss`. The gauntlet is a king-of-the-hill contest:
+one reigning champion, one challenger per round, and the promote gate
+(see [`TOURNAMENT.md`](TOURNAMENT.md) §1 and [`SELECTION.md`](SELECTION.md)
 §3). Its record shape — two sides per board entry, `parent` and `child`
-— is the shape every other structure generalizes, and generalizing it
-had to leave the gauntlet record, the dashboard reads, and the
-contract-hash machinery working unchanged.
+— is the shape every other structure generalizes.
 
 This document specifies the schema, the persistence, the API surface,
 and the console rendering.
@@ -47,87 +39,89 @@ epoch (§4). It is configured as a single block:
 
 ```jsonc
 {
-  "structure": "gauntlet",   // gauntlet|single_elim|double_elim|swiss|racing
+  "structure": "racing",     // gauntlet|racing; single_elim|double_elim|swiss under the opt-in
   "params": { /* structure-specific, see §1.3 */ }
 }
 ```
 
 - `structure` — a closed enum string. The five values are
   `"gauntlet"`, `"single_elim"`, `"double_elim"`, `"swiss"`,
-  `"racing"`. Unknown values are rejected at validation time with a
-  message listing the valid tokens (the same posture
-  `_coerce_enum` takes for board enums in
-  `src/zicato/core/types.py:577`).
+  `"racing"` (`VALID_TOURNAMENT_STRUCTURES` in `core/tournament.py`).
+  `TournamentStructure.__post_init__` rejects an unknown value with a
+  message listing the valid tokens.
 - `params` — a structure-specific JSON object. Absent ⇒ `{}` ⇒ every
-  param defaults. The defaults are chosen so that an operator who writes
-  only `{"structure": "swiss"}` gets a sensible Swiss tournament.
+  param takes its strategy default.
 
 ### 1.2 Where it lives on disk
 
 The block lives in **`scoring.json`** under a top-level `tournament`
 key rather than in a file of its own, for two reasons.
 
-- `scoring.json` is already a frozen contract component (it is one of
-  the four things the contract hash reduces — see
+- `scoring.json` is already a frozen contract component (see
   [`EPOCHS-AND-JOURNALING.md`](EPOCHS-AND-JOURNALING.md) §10.1). The
   selection *gate thresholds* (`promote_margin`,
   `pass_rate_monotonicity`, the `namespace_monotonicity` flags) already
   live there. The tournament *structure* is the same kind of
   thing — "how the crowning decision is made" — so it belongs in the
-  same document. Putting it there means it factors into the contract
-  hash with **zero new plumbing** in `resolve_contract_inputs`.
-- A separate `tournament.json` would need a fifth contract component, a
-  fifth canonicalizer, a fifth `register --tournament PATH` flag, and a
-  fifth frozen-copy path. None of that earns its weight.
+  same document, and it factors into the contract hash with no
+  separate plumbing in `resolve_contract_inputs`.
+- A separate `tournament.json` would need its own contract component,
+  canonicalizer, registration flag, and frozen-copy path.
 
-The new `tournament` block is **modeled in `ScoringWeights`** (see §5,
-data-model plan) as a frozen `TournamentStructure` dataclass field —
-mirroring how `namespace_weights` / `namespace_monotonicity` are modeled
-fields with `_default_*` factories. The frozen copy under
+The `tournament` block is **modeled in `ScoringWeights`** as the
+`tournament_structure` field (persisted under the key `tournament`), a
+frozen `TournamentStructure` dataclass built by the
+`_default_tournament_structure` factory — the same pattern as
+`namespace_weights` / `namespace_monotonicity`. The frozen copy under
 `epochs/{id}/scoring.json` carries it; the live operator-side
 `scoring.json` carries it; both canonicalize identically (§4).
 
 ### 1.3 Per-structure `params`
 
-Each structure interprets `params` differently. The **field names** here
+Each structure interprets `params` differently. The **key names** here
 are the shared contract with the selection-logic design; the **semantics**
 (how a value drives pairing and cuts) are specified in
-[`TOURNAMENT-STRUCTURES.md`](TOURNAMENT-STRUCTURES.md). The
-defaults below are the data-model's responsibility (what a partial
-document fills in).
+[`TOURNAMENT-STRUCTURES.md`](TOURNAMENT-STRUCTURES.md). Each strategy
+class declares the keys it accepts (`parameter_names`) and refuses any
+other key with an `unsupported tournament parameters` error.
 
-| `structure` | `params` keys (with defaults) | Notes |
+| `structure` | `params` keys (with strategy defaults) | Notes |
 |---|---|---|
-| `gauntlet` | `{ "replications": 1 }` | The shipped behaviour. `replications=1` = run the board once per side (today's exact gauntlet). `>1` is the racing-flavoured replication §7 of SELECTION.md proposes; the data model carries it and the selection layer owns whether it is honored. |
-| `single_elim` | `{ "seed_order": "scalar" \| "lineage" \| "as_listed", "bye_policy": "top_seed" \| "none" }` | Bracket over the round's candidate field. `seed_order` picks how candidates are seeded into slots; `bye_policy` says who gets a bye when the field is not a power of two. |
-| `double_elim` | same as `single_elim`, plus `{ "grand_final_reset": true }` | Adds a losers' bracket. `grand_final_reset` = whether a losers'-bracket finalist must beat the winners'-bracket finalist twice. |
-| `swiss` | `{ "rounds": 4, "pairing": "score_then_lineage", "tiebreak": ["buchholz", "scalar"] }` | Fixed number of rounds; each round pairs candidates of similar standing. |
-| `racing` | `{ "rungs": [{ "fraction": 1.0, "keep": 0.5 }, ...], "min_survivors": 1 }` | Successive-halving / ASHA. Each rung evaluates survivors on a `fraction` of the board, keeps the best `keep` fraction; iterate down to `min_survivors`. |
+| every structure | `replicates` (structure default), `promote_confidence_threshold` (unset), `promote_confidence_replicates` (32 when a threshold is set) | `replicates` is the per-duel replicate count: `2` by default, `1` for racing, and derived from the measured noise floor when unset (`selection/replicates.py`). A threshold in `(0, 1)` enables the evidence gate; `promote_confidence_replicates` is its confirmation-duel budget. |
+| `gauntlet` | no further keys | One challenger, one full-board duel. |
+| `racing` | `field_size` (2), `eta` (2), `board_fraction` (0.25), `rung0_board_size` (0 ⇒ use the fraction), `board_ids` (the epoch board), `slice_schedule` (`"prefix"` or `"shuffled_v1"`), `matchup_budget_seconds`, `final_rung_budget_seconds` | Successive halving. Each rung duels every surviving challenger against the champion on a board slice, keeps the best `1/eta`, and grows the slice by `eta`. The loop injects `noise_floor_delta_std` when the epoch has a measured floor. |
+| `single_elim` | `field_size` (2) | Bracket over the round's candidate field; the champion meets the bracket survivor in the final. |
+| `double_elim` | `field_size` (2) | Adds a losers' bracket; the grand final pits the two brackets' survivors. |
+| `swiss` | `field_size` (2), `rounds_n` (4) | Fixed number of rounds; each round pairs candidates of similar standing. |
 
-Every default keeps the structure usable from a bare `{"structure":
-"..."}`. The data model **stores and round-trips** `params` verbatim as
-a JSON object (`Mapping[str, Any]`); it does NOT type each structure's
-params into its own dataclass. Keeping `params` an opaque mapping means
-the selection layer can add a param without a data-model change, which is
-the forward-compatibility posture `BoardEntry.context` and
-`Pattern.detail` already take in `core/types.py`.
+The recommended contract that `zicato init` scaffolds, and a
+`scoring.json` with no `tournament` key, use `racing` with
+`field_size` 4, `eta` 2, `board_fraction` 0.4, `replicates` 2,
+`promote_confidence_threshold` 0.8, and `promote_confidence_replicates`
+32. The three experimental structures also receive `rating` and
+`resolver` from `experimental.standing_rating` and
+`experimental.resolver` (see [`SELECTION-THEORY.md`](SELECTION-THEORY.md));
+writing either key in `tournament.params` directly is refused.
+
+The data model **stores and round-trips** `params` verbatim as a JSON
+object (`Mapping[str, Any]`); it does NOT type each structure's params
+into its own dataclass. Keeping `params` an opaque mapping means the
+selection layer can add a param without a data-model change.
 
 ### 1.4 Validation and defaulting
 
-- **Default.** A `scoring.json` with no `tournament` key ⇒
-  `{"structure": "gauntlet", "params": {}}`. This is the back-compat
-  contract: every epoch on disk today, and every operator who never
-  touches the knob, gets the gauntlet — byte-for-byte the current
-  behaviour.
+- **Default.** A `scoring.json` with no `tournament` key resolves to the
+  recommended racing specification of §1.3.
 - **Structure validation.** `structure` must be one of the five tokens.
-  The loader (`_scoring_weights_from_dict` /
-  `_scoring_from_dict`) rejects an unknown token with a clear error.
-- **Params validation.** The data-model layer validates only that
-  `params` is a JSON object (a `Mapping`). Per-key validation (e.g.
-  `swiss.rounds >= 1`, `racing.rungs` non-empty) belongs to the
-  **selection layer**, which owns the algorithm that reads them. The
-  split mirrors `BoardEntry`: the type layer enforces shape, the
-  consumer enforces semantics.
+  An experimental token is refused at contract load unless
+  `experimental.tournament_structures` is `true`; the refusal names that
+  key.
+- **Params validation.** The data-model layer validates that `params`
+  is a JSON object and that `replicates`, `promote_confidence_threshold`
+  and `promote_confidence_replicates` lie in their declared ranges
+  (`TOURNAMENT_PARAM_CONSTRAINTS`). Every other key is validated by the
+  **selection layer**, which owns the algorithm that reads it: strategy
+  construction refuses an unsupported key and range-checks the rest.
 
 ---
 
@@ -142,45 +136,53 @@ and elimination state.
 
 A completed round publishes its results in
 `epochs/<epoch>/rounds/<round>/field_settlement.json`. The round record contains
-candidate outcomes, the selected champion, the complete tournament structure
-under `field_record`, and explanations of gate results under `gate_results`.
-A two-candidate tournament records its actual match and standings through the
-same path as a larger field.
+candidate outcomes, the primary promoted generation
+(`primary_promoted_generation_id`), the complete tournament structure under
+`field_tournament_record`, and explanations of gate results under
+`gate_results`. A two-candidate tournament records its actual match and
+standings through the same path as a larger field. While a round runs, the
+same structure record is also written to
+`epochs/<epoch>/tournaments/field-<first_challenger>.json` with
+`state: "in_progress"`; once the round is committed, readers take the settled
+copy from the round record.
 
 The SQLite `tournaments` table is a derived projection. Experiment readers
 combine the proposal with its committed round outcome. Dashboard readers use
 those shared readers to present decisions, comparisons, and visualizations.
 
-### 2.2 The live `ActiveTournament` — generalized
+### 2.2 The live `ActiveTournament`
 
-New top-level fields on `ActiveTournament` (all with back-compat
-defaults for `Snapshot` payloads that omit them):
+The structure fields of `ActiveTournament` beside the two-side fields
+(every structure field decodes to a default when a payload omits it):
 
 ```jsonc
 {
-  // ── existing fields, unchanged ──
   "tournament_id": "tourn_e3_v4",
   "epoch_id": "2026-06-01_e3",
-  "parent_generation_id": "v3",   // gauntlet: the champion. other structures: "" (see below)
-  "child_generation_id": "v4",    // gauntlet: the lone challenger. other structures: ""
+  "parent_generation_id": "v3",   // gauntlet: the champion
+  "child_generation_id": "v4",    // gauntlet: the lone challenger
   "started_at": "...",
   "phase": "running",             // running|completed|aborted
   "round_index": 0, "total_rounds": 1,
   "entries": [ /* per-(entry × side) rows, see §2.3 */ ],
   "partial_champion_agg": { ... }, "partial_challenger_agg": { ... },
 
-  // ── NEW: the structure envelope ──
-  "structure": "swiss",           // mirrors the epoch's tournament.structure; "gauntlet" for old files
-  "structure_params": { "rounds": 4 },
+  // ── the structure envelope ──
+  "structure": "swiss",           // the epoch's tournament.structure; "gauntlet" when absent
+  "structure_params": { "rounds_n": 4 },
   "competitors": [                 // the candidate field this tournament ranks
     { "generation_id": "v3", "seed": 1, "role": "champion" },
     { "generation_id": "v4", "seed": 2, "role": "challenger" },
     { "generation_id": "v5", "seed": 3, "role": "challenger" }
   ],
   "rounds": [ /* per-structure round/rung/bracket state, see §2.4 */ ],
+  "gen_states": [ /* elimination structures only, see §2.4 */ ],
   "standings": [ /* current ranking, see §2.5 */ ],
+  "field_status": [                // every challenger the proposer attempted
+    { "generation_id": "v4", "status": "applied", "reason": "", "seed": 2 }
+  ],
 
-  // ── NEW: live projected standing per in-flight competitor, see §2.5.1 ──
+  // ── live projected standing per in-flight competitor, see §2.5.1 ──
   "projected": {
     "v4": { "scalar": 0.42, "boards_done": 3, "boards_total": 8, "pass_rate": 0.9 }
   }
@@ -188,52 +190,51 @@ defaults for `Snapshot` payloads that omit them):
 ```
 
 - `structure` / `structure_params` — copied from the resolved epoch
-  contract at tournament-start so a reader never has to re-resolve
+  contract at tournament start so a reader never has to re-resolve
   `scoring.json`. Default `"gauntlet"` / `{}`.
-- `competitors` — the generalization of "two generations". A gauntlet
-  has exactly two (the champion + the one challenger), so for a gauntlet
-  this is derivable from the existing `parent_generation_id` /
-  `child_generation_id` and a reader MAY ignore it. For every other
-  structure it is the authoritative field — the full candidate field,
-  each with a `seed` (seeding order) and a `role`
-  (`"champion"` is the protected incumbent; `"challenger"` everyone
-  else). Default `[]`.
+- `competitors` — the full candidate field, each with a `seed`
+  (seeding order) and a `role` (`"champion"` is the protected incumbent;
+  `"challenger"` everyone else). Default `[]`.
 - `rounds` — the per-structure progression (§2.4). Default `[]`.
+- `gen_states` — per-generation advancement and elimination for the
+  elimination structures (§2.4). Absent otherwise.
 - `standings` — the live ranking (§2.5). Default `[]`.
+- `field_status` — the minting outcome for every challenger the
+  proposer attempted this round (`status` is `"applied"` or
+  `"rejected"`), so a field where every challenger failed reads as
+  "N proposed · 0 applied". Default `[]`.
 - `projected` — the **live projected standing** per in-flight competitor
   (§2.5.1). Default `{}`.
 
-**Gauntlet back-compat invariant.** For `structure == "gauntlet"`, the
-runner continues to write `parent_generation_id` /
-`child_generation_id` unchanged, and `competitors` /
-`rounds` / `standings` MAY be left empty — the dashboard's existing
-gauntlet code path (`_build_matchup_conversations` in
-`endpoints.py:892`, which reads `parent_generation_id` /
-`child_generation_id`) keeps working untouched. New code paths read
-`competitors` when `structure != "gauntlet"`.
+For `structure == "gauntlet"` the runner writes `parent_generation_id` /
+`child_generation_id`, and those two fields describe the crowning duel
+for every structure.
 
 ### 2.3 The per-entry row — generalized `side`
 
-`ActiveTournamentEntry` (`state.py:305`) is keyed on
-`(entry_id, side)`, with `side ∈ {"parent", "child"}`. The
-generalization **widens `side` to an opaque competitor key** without
-changing its type (it stays `str`):
+`ActiveTournamentEntry` (`runtime/state.py`) is keyed on
+`(entry_id, side)`, and `side` is a `str`. Two kinds of row share the
+list:
 
-- For a **gauntlet**, `side` stays `"parent"` / `"child"` — unchanged.
-- For every other structure, `side` becomes the **competitor's
-  `generation_id`** (e.g. `"v5"`). A row is then "board entry `e` run
-  under competitor `v5`". A bracket match between `v4` and `v5` on entry
-  `e` produces two rows: `(e, "v4")` and `(e, "v5")`.
+- **Board-unit rows.** Every duel runs each board entry under both of
+  its sides, so a duel writes one row per `(entry_id, side)` with `side`
+  `"parent"` (the champion or left competitor) or `"child"` (the
+  challenger or right competitor), and `match_id` naming the duel.
+- **Field rows** (non-gauntlet structures). The live projection adds one
+  row per competitor, with the competitor's `generation_id` as
+  `entry_id` and its role (`"champion"` or `"challenger"`) as `side`.
+  The console's field funnel groups on these rows; their `status` and
+  `loss_summary` follow the competitor's standing.
 
-Two ADDITIVE fields disambiguate which match a row belongs to (a
-candidate may appear in several matches across rounds of a Swiss /
-double-elim run):
+The `match_id` field names the duel a board-unit row belongs to (a
+candidate may appear in several duels across the stages of a Swiss or
+racing tournament):
 
 ```jsonc
 {
   "entry_id": "research_basic",
-  "side": "v5",                  // gauntlet: "parent"|"child"; else: a generation_id
-  "match_id": "r2_m1",           // NEW: which round/match this run is part of; "" for gauntlet
+  "side": "child",               // board-unit row: "parent"|"child"; field row: a role
+  "match_id": "r2_m1",           // the duel's matchup id
   "status": "completed",
   "started_at": "...", "completed_at": "...",
   "loss_summary": { ... }, "drift_count_snapshot": { ... },
@@ -241,14 +242,12 @@ double-elim run):
 }
 ```
 
-- `match_id` — links the row to a `rounds[].matches[]` entry (§2.4).
-  Default `""` (gauntlet has one implicit match, so it needs no id).
+- `match_id` — the scheduling strategy's matchup id: `"gauntlet"` for
+  the gauntlet's one duel, the §2.4 ids for the other structures, and
+  `"holdout-confirm"` for the holdout confirmation. Default `""`.
 
-`update_tournament_entry(workspace_root, entry_id, side, **updates)`
-(`state.py:562`) already keys on `(entry_id, side)` — widening `side`'s
-value domain requires **no signature change**. The runner passes the
-competitor's generation id instead of `"parent"`/`"child"` for
-non-gauntlet structures.
+`update_tournament_entry(writer, entry_id, side, **updates)` keys on
+`(entry_id, side)` for every structure.
 
 ### 2.4 `rounds` — per-structure progression
 
@@ -256,52 +255,73 @@ non-gauntlet structures.
 to read each. The shape is a **tagged union** keyed on the same
 `structure` value:
 
-**Common to all** — one round object:
+**Common to all** — one round object (a `RoundRecord`, serialized by
+`_serialise_rounds` in `evolve/dashboard_projection.py` for the live
+envelope, the settled envelope, and the durable record alike):
 ```jsonc
 {
-  "round_index": 0,
-  "label": "Round 1",          // human label for the UI
+  "stage_index": 0,             // the stage WITHIN one tournament (bracket round, Swiss round, racing rung)
+  "label": "Rung 0",            // human label for the UI
   "matches": [ { /* per-match, below */ } ]
 }
 ```
+
+`stage_index` is a different axis from a generation's `round_index`,
+which is the evolve round the generation was born in. Readers also
+accept `round_index` as the key.
 
 **A match** (the unit a bracket node / Swiss pairing / racing rung
 evaluates) generalizes the single champion-vs-challenger comparison:
 ```jsonc
 {
   "match_id": "r1_m0",
-  "competitors": ["v4", "v5"],     // generation ids in this match (2 for elim/swiss; N for a racing rung)
-  "winner": "v5",                   // generation id, or "" while pending
-  "decision": "promoted",           // reuses TournamentDecision: promoted|rejected|deferred; "" while pending
-  "delta_scalar": -0.12,            // winner-vs-loser scalar delta (2-way); null for an N-way rung
-  "bracket_slot": "WB-R1-0",        // single/double-elim only: winners'/losers' bracket position; "" otherwise
-  "bye": false                      // true when a competitor advanced without playing
+  "competitors": ["v4", "v5"],     // generation ids in this match (2 for a duel; N for a racing rung)
+  "winner": "v5",                   // generation id, or null when the match crowned no side
+  "decision": "promoted",           // TournamentDecision: promoted|rejected|deferred; "" while pending
+  "delta_scalar": -0.12,            // the duel's scalar delta; null for an N-way rung
+  "bracket_slot": "WB-R1-0",        // elimination brackets only; "" otherwise
+  "bye": false,                     // true when a competitor advanced without playing
+  "survivors": [], "cut": [],       // racing rungs only
+  "board_fraction": null,           // racing rungs only
+  "pending": false,                 // true for a scheduled, unresolved match in the live envelope
+  "live_progress": {}               // racing rungs in flight: per-lane board progress
 }
 ```
 
 Per-structure use of `rounds`:
 
-- **gauntlet** — `rounds` MAY be empty (back-compat). When populated,
-  one round, one match: `competitors: [champion, challenger]`. This is
-  the canonical shape every other structure degenerates to.
+- **gauntlet** — one round, one match: `competitors: [champion,
+  challenger]`. This is the canonical shape every other structure
+  degenerates to.
 - **single_elim** — `rounds[k]` is bracket round *k*; `matches[]` are
-  that round's pairings; `bracket_slot` is `"WB-R{k}-{n}"`; a `bye:true`
-  match has a single competitor.
-- **double_elim** — same, with `bracket_slot` prefixes `"WB-"`
-  (winners') and `"LB-"` (losers'); the grand final is
-  `"GF"` (+ `"GF-reset"` when `grand_final_reset` fires).
+  that round's pairings; `match_id` and `bracket_slot` are
+  `"WB-R{k}-{n}"`; a `bye:true` match has a single competitor. The
+  crowning duel against the champion is `"final"`.
+- **double_elim** — same, with `"WB-"` (winners') and `"LB-"` (losers')
+  prefixes; the grand final against the champion is `"GF"`.
 - **swiss** — `rounds[k]` is Swiss round *k*; `matches[]` are that
-  round's pairings (no `bracket_slot`).
-- **racing** — `rounds[k]` is rung *k*; **one match per rung** whose
-  `competitors` is the full surviving field at that rung, `winner` is
-  `""` (a rung does not crown, it cuts), and two ADDITIVE rung fields
-  carry the cut:
+  round's pairings, with `match_id` `"r{k}_m{n}"` and no `bracket_slot`;
+  the crowning duel is `"swiss-final"`.
+- **racing** — `rounds[k]` is rung *k*; **one match per rung**
+  (`match_id` `"rung{k}"`) whose `competitors` is the surviving field
+  at that rung, `winner` is null (a rung does not crown, it cuts), and
+  the rung fields carry the cut:
   ```jsonc
   { "match_id": "rung1", "competitors": ["v4","v5","v6","v7"],
     "survivors": ["v4","v6"],         // who advances to the next rung
     "cut": ["v5","v7"],               // who is eliminated at this rung
     "board_fraction": 0.5 }           // fraction of the board this rung evaluated
   ```
+  The individual rung duels run as `"rung{k}_m{n}"`, and the crowning
+  duel is `"racing-final"`.
+
+For the two elimination structures the durable record also carries
+diagram analysis computed when the record is written
+(`tournament/structure.py::attach_elim_states`): each match gains a
+`loser`, each round a `bracket_side` (`"WB"` or `"LB"`), and the record a
+`gen_states` list with, per generation, `played_rounds`,
+`advanced_rounds`, `lost_rounds`, `eliminated_at_round`,
+`side_by_round`, `lb_entry_round`, and `projected`.
 
 ### 2.5 `standings` — the live ranking
 
@@ -314,7 +334,8 @@ derivable, always present once any run settles:
   { "generation_id": "v4", "rank": 3, "scalar": 0.52, "wins": 0, "losses": 2, "status": "eliminated", "role": "challenger" }
 ]
 ```
-- `status ∈ {"alive", "eliminated", "champion"}`. The strategy records
+- `status ∈ {"alive", "eliminated", "champion"}`; `role ∈
+  {"champion", "challenger"}`. The strategy records
   standings for every tournament, including the two gauntlet competitors.
   Swiss and racing views use the standings alongside recorded matches.
 - `wins` / `losses` are meaningful for bracket / Swiss; for racing they
@@ -335,12 +356,12 @@ rule below. A settled row carries none of these:
 
 `ActiveTournament.projected` is `{generation_id: {scalar, boards_done,
 boards_total, pass_rate}}`, written by the runner's `_IncrementalScorer`
-the instant each board unit settles (alongside `partial_*_agg`), via
-`update_tournament_projected`. The value is the SAME running
-`aggregate_generation_score` over the boards settled so far for that
-competitor, with the boards-so-far / boards-total progress folded in.
-Default `{}` (no projection before the first board settles; old files
-have no key and load empty).
+(`tournament/scheduling.py`) the instant each board unit settles
+(alongside `partial_*_agg`), via `update_tournament_projected`. The value
+is the same running `aggregate_generation_score` over the boards settled
+so far for that competitor, with the boards-so-far / boards-total
+progress folded in. Default `{}` (no projection before the first board
+settles).
 
 **Ranking during execution.** The orchestrator combines partial scores with
 the strategy's standings. It substitutes a partial scalar only for a competitor
@@ -362,52 +383,59 @@ whose evaluation is running. The dashboard displays the published order:
 The index and experiment readers project committed round results into the
 following forms:
 
-**(a) The SQLite `tournaments` table** (`index/schema.py:137`) gains
-ADDITIVE columns (a v3 migration, mirroring the v2 column-add pattern at
-`schema.py:194`):
+**(a) The SQLite `tournaments` table** (`index/schema.py`) holds two
+kinds of row. A **crowning row**, keyed
+`"{epoch}:{parent}->{child}"`, is written per resolved candidate from
+its outcome; a **field row**, keyed `"{epoch}:field:{first_challenger}"`,
+is written per tournament from its structure record. The columns:
 
-| New column | Type | Meaning |
+| Column | Type | Meaning |
 |---|---|---|
-| `structure` | `TEXT` | the epoch's `tournament.structure`; `"gauntlet"` for back-fill |
+| `tournament_id` | `TEXT` | the row key above |
+| `epoch_id` | `TEXT` | the owning epoch |
+| `parent_generation_id`, `child_generation_id` | `TEXT` | the crowning pair |
+| `decision`, `rejection_reason` | `TEXT` | the crowning verdict |
+| `parent_scalar`, `child_scalar`, `delta_scalar` | `REAL` | the crowning scalars |
+| `ran_at` | `TEXT` | when the tournament ran |
+| `structure` | `TEXT` | the epoch's `tournament.structure` |
 | `structure_params_json` | `TEXT` | the verbatim `params` JSON |
-| `competitors_json` | `TEXT` | the full candidate field as a JSON array of generation ids |
-| `rounds_json` | `TEXT` | the settled `rounds` (§2.4) serialized |
-| `standings_json` | `TEXT` | the final `standings` (§2.5) serialized |
+| `competitors_json` | `TEXT` | the candidate field |
+| `rounds_json` | `TEXT` | the settled `rounds` (§2.4) |
+| `standings_json` | `TEXT` | the final `standings` (§2.5) |
+| `field_status_json` | `TEXT` | the minting outcome per attempted challenger |
+| `champion_eval_mode` | `TEXT` | whether the champion side was re-run or read from cache |
+| `champion_run_ref` | `TEXT` | where the champion's measurements live |
 
-The existing per-matchup columns (`parent_generation_id`,
-`child_generation_id`, `decision`, `delta_scalar`, `rejection_reason`)
-**stay** and continue to describe the **crowning** match — for every
-structure, the match that decided who becomes the new champion. So a
-reader that only knows the gauntlet shape (the existing
-`build_bracket` / `build_matchup_detail`) still gets a coherent
-champion-vs-challenger answer from the per-matchup columns; a
-structure-aware reader joins in `rounds_json` / `standings_json` for the
-full bracket.
+The per-matchup columns describe the **crowning** match for every
+structure — the match that decided who becomes the new champion — so a
+reader that only knows the gauntlet shape still gets a coherent
+champion-vs-challenger answer; a structure-aware reader reads
+`rounds_json` / `standings_json` for the full bracket. Per-match detail
+that needs to be queryable is reconstructable from the `runs` /
+`loss_profiles` tables, which carry `tournament_id` and
+`generation_id`, so no per-match table exists.
 
-For a non-2-way structure the **one tournament still has one
-`tournaments` row** (keyed on `tournament_id`), with the bracket/Swiss
-internals living in `rounds_json`. Per-match detail that needs to be
-queryable (not just rendered) is reconstructable from the
-`runs` / `loss_profiles` tables, which already carry `tournament_id`
-(`schema.py:110,124`) and `generation_id`, so no per-match table is
-needed.
-
-**(b) `OutcomeRecord`** (`core/types.py:1334`, persisted in
-`experiment.json`). It describes one generation's *outcome within its
-tournament*. It is generalized with ADDITIVE fields (back-compat
-defaults so existing journals deserialize):
+**(b) `OutcomeRecord`** (`core/experiment.py`, persisted per candidate
+in the round's `field_settlement.json` and joined to `experiment.json`
+by the experiment reader). It describes one generation's *outcome
+within its tournament*: the deltas (`pass_rate_delta`,
+`drift_loss_delta`, `scalar_score_delta`), `tournament_decision`,
+`rejection_reason`, `metric_movements`, and these structure fields:
 
 ```python
-# additive fields on OutcomeRecord (all default so old JSON loads):
 structure: str = "gauntlet"
-final_rank: int | None = None          # the generation's rank in standings; None for a 2-way
-eliminated_in_round: int | None = None  # bracket/racing: the round it was cut; None if it survived/won
-match_record: tuple[MatchOutcome, ...] = ()  # per-match results this gen played (new small dataclass)
+final_rank: int | None = None          # the generation's rank in standings
+eliminated_in_round: int | None = None  # bracket/racing: the stage it was cut; None if it survived
+match_record: tuple[MatchOutcome, ...] = ()  # per-match results this generation played
 ```
-where `MatchOutcome` is a new frozen dataclass `{ match_id: str,
-opponent: str, won: bool, delta_scalar: float }` (gauntlet leaves it
-empty). `tournament_decision` keeps its existing meaning — the
-crowning verdict for THIS generation (did it become / stay champion).
+where `MatchOutcome` is the frozen dataclass `{ match_id: str,
+opponent: str, won: bool, delta_scalar: float }` (a gauntlet leaves it
+empty). The record also carries `champion_eval_mode`, the holdout
+fields (`holdout`, `train_loss`, `holdout_loss`, `generalization_gap`),
+the operator-override fields (`operator_override`,
+`operator_override_reason`), and the evidence-gate block (`evidence`).
+`tournament_decision` is the crowning verdict for THIS generation (did
+it become champion).
 
 ### 2.7 Storage routing — nothing new
 
@@ -415,37 +443,28 @@ All of the above rides on the **existing storage seams**:
 
 - The live `ActiveTournament` is reconstructed from
   `runtime/active_tournament.events.jsonl` via the `StorageBackend`
-  (`runtime/_storage.py`). The new fields are just more keys in the
-  same `to_dict` / `from_dict` — `base.py` / `files.py` /
-  `memory.py` are untouched.
-- The settled `OutcomeRecord` rides in `experiment.json` via the
-  `epoch/_storage.py` keys — `write_experiment` /
-  `_outcome_from_dict` (`journal.py:224`) gain the new fields. No new
-  key helper, no new file.
-- The `tournaments` table change is a schema migration in
-  `index/schema.py` + an ingest change in `index/ingest.py`; the index
-  is fully rebuildable (`zicato repair index`), so the migration is "drop and
-  re-derive" on the rebuild path and an ADDITIVE column-add on the
-  incremental-open path, the same pattern the v2 column-add used.
+  (`runtime/_storage.py`). The structure fields are ordinary keys in
+  the same `to_dict` / `from_dict`.
+- The settled `OutcomeRecord` values and the structure record live in
+  the round's `field_settlement.json`, written through the
+  `StorageBackend` by `epoch/settlement_receipt.py`. The in-progress
+  structure record is written by `tournament/records.py`.
+- The `tournaments` table is derived by `index/ingest.py`. An index
+  whose schema version differs from the build's is refused until
+  `zicato repair index` rebuilds it from the canonical files.
 
-### 2.8 Back-compat summary
+### 2.8 Absent fields
 
-| Reader / data | Old gauntlet workspace behaviour |
+| Reader / data | Behaviour when a field is absent |
 |---|---|
-| `ActiveTournament.from_dict` | missing `structure` ⇒ `"gauntlet"`; missing `competitors`/`rounds`/`standings` ⇒ `[]`; missing `projected` ⇒ `{}`; `parent`/`child_generation_id` still authoritative. |
-| `ActiveTournamentEntry.from_dict` | missing `match_id` ⇒ `""`; `side` stays `"parent"`/`"child"`. |
-| `OutcomeRecord` (journal) | missing `structure` ⇒ `"gauntlet"`; missing rank/round/`match_record` ⇒ `None`/`()`. `tournament_decision` unchanged. |
-| `tournaments` table | incremental open adds the new TEXT columns as `NULL`; a full `reindex` populates them (`"gauntlet"` for runs that predate the feature). |
-| `scoring.json` with no `tournament` key | ⇒ gauntlet (§1.4). |
-| Dashboard gauntlet code paths | read the per-matchup fields only; untouched. |
-
-No migration tool is required: every new field has a default that
-reproduces the gauntlet, and the only stateful store (the SQLite index)
-is rebuildable.
+| `ActiveTournament.from_dict` | `structure` ⇒ `"gauntlet"`; `competitors` / `rounds` / `standings` / `field_status` ⇒ `[]`; `projected` ⇒ `{}`; `gen_states` stays absent. |
+| `ActiveTournamentEntry.from_dict` | `match_id` ⇒ `""`. |
+| `OutcomeRecord` | `structure` ⇒ `"gauntlet"`; rank / stage ⇒ `None`; `match_record` ⇒ `()`. |
+| Epoch `scoring.json` with no `tournament` key | ⇒ the recommended racing specification (§1.4). The Epoch view omits its `tournament` block for such a file (§3.1). |
 
 ---
 
-## 3. The dashboard API additions
+## 3. The dashboard API
 
 The dashboard renders the configured structure rather than an
 illustrative topology (see [`TOURNAMENT.md`](TOURNAMENT.md) §2). Two
@@ -453,42 +472,45 @@ changes carry it: the structure is exposed on the existing
 epoch/tournament endpoints, and one endpoint serves the full structure
 state.
 
-### 3.1 Extended fields on existing endpoints (additive)
+### 3.1 Structure fields on the epoch, bracket, and live endpoints
 
-- **`GET /api/epoch`** (`build_epoch_view`, `query/epoch_view.py`) — add
-  a `tournament` block echoing the epoch's resolved structure:
+- **`GET /api/epoch`** (`build_epoch_view`, `query/epoch_view.py`) —
+  carries a `tournament` block echoing the epoch's structure:
   ```jsonc
-  "tournament": { "structure": "swiss", "params": { "rounds": 4 } }
+  "tournament": { "structure": "swiss", "params": { "rounds_n": 4 } }
   ```
-  Read from the epoch's frozen `scoring.json`. Absent ⇒ omit (the
-  frontend defaults to gauntlet). This lets the Epoch view name the
-  structure without a second fetch.
+  Read from the epoch's frozen `scoring.json`. When the file has no
+  `tournament` key the block is omitted. This lets the Epoch view name
+  the structure without a second fetch.
 
 - **`GET /api/tournaments`** (`build_bracket`, `query/tournament_view.py`) —
-  add top-level `structure` and `structure_params`, and keep `matchups`
-  / `champion_lineage` unchanged (the gauntlet shape).
-  When the structure is non-gauntlet, ADD a `tournaments` field carrying
-  the per-tournament settled `rounds_json` / `standings_json`:
+  carries top-level `structure` and `structure_params`, the
+  `champion_lineage`, the `matchups` ladder read from the index's
+  crowning rows, and a `tournaments` array holding each recorded
+  structure record (§2.1) plus a `champion` object (`id`, `scalar`,
+  `eval_mode`, `run_ref`):
   ```jsonc
   {
-    "epoch_id": "...", "structure": "swiss",
-    "champion_lineage": [ ... ],         // unchanged
-    "matchups": [ ... ],                  // unchanged: crowning match per tournament
-    "tournaments": [                       // NEW: structure-aware per-tournament state
-      { "tournament_id": "tourn_e3_v4", "structure": "swiss",
-        "competitors": ["v3","v4","v5"], "rounds": [ ... ], "standings": [ ... ] }
+    "epoch_id": "...", "structure": "swiss", "structure_params": { "rounds_n": 4 },
+    "champion_lineage": [ ... ],
+    "matchups": [ ... ],                  // crowning match per candidate
+    "tournaments": [                       // structure-aware per-tournament state
+      { "tournament_id": "2026-06-01_e3:field:v4", "structure": "swiss",
+        "competitors": [ ... ], "rounds": [ ... ], "standings": [ ... ],
+        "champion": { "id": "v3", "scalar": 0.44, "eval_mode": "full", "run_ref": "..." } }
     ]
   }
   ```
+  When no record names a structure, `structure` falls back to the
+  epoch's frozen `scoring.json`.
 
 - **`GET /api/active-tournament`** (`read_active_tournament_dict`,
-  `state_reader.py:297`) — already returns the whole
-  `ActiveTournament.to_dict()`, so the §2.2 new fields (`structure`,
-  `competitors`, `rounds`, `standings`) surface **for free** once the
-  runtime record carries them. The only change is in
-  `_normalize_tournament_statuses` (`state_reader.py:245`), which must
-  not assume `side ∈ {"parent","child"}` (§2.3) — it should pass through
-  an unrecognised `side` (a generation id) untouched.
+  `query/runtime_view.py`) — returns the whole
+  `ActiveTournament.to_dict()`, so the §2.2 structure fields surface
+  directly. `_normalize_tournament_statuses` rewrites each entry's
+  status to its canonical bucket (keeping the original in `status_raw`)
+  and passes an opaque competitor `side` (a generation id) through
+  unchanged.
 
 ### 3.2 The endpoint for tournament structure
 
@@ -502,7 +524,7 @@ standings, and racing ladders:
   "epoch_id": "2026-06-01_e3",
   "tournament_id": "tourn_e3_v4",
   "structure": "single_elim",
-  "structure_params": { "seed_order": "scalar" },
+  "structure_params": { "field_size": 2 },
   "competitors": [
     { "generation_id": "v3", "seed": 1, "role": "champion" },
     { "generation_id": "v4", "seed": 2, "role": "challenger" }
@@ -515,18 +537,23 @@ standings, and racing ladders:
       ] }
   ],
   "standings": [ { "generation_id": "v3", "rank": 1, "scalar": 0.41, "status": "champion" } ],
-  "source": "record" | "active" | "index" | "unavailable"
+  "field_status": [ ... ],
+  "source": "record" | "active" | "unavailable"
 }
 ```
 
-The reader consults recorded tournament structures, active progress, and the
-derived SQLite projection. A completed round is authoritative for its actual
-matches and standings. A request for a candidate pair selects that pair's
+The reader consults recorded tournament structures first, then the live
+active tournament. A completed round is authoritative for its actual
+matches and standings; the elimination structures also carry
+`gen_states` (§2.4), and the response is enriched with field-diversity
+and standings-rating data. A request for a candidate pair selects that pair's
 recorded matches from the tournament. Missing structure returns an empty
 response; loss files alone cannot establish a bracket or a winner.
 
 The handler validates epoch and tournament identifiers before reading the
-workspace. Invalid coordinates return the empty response at HTTP 200.
+workspace. Invalid coordinates return the empty response at HTTP 200;
+a reader failure returns the endpoint's degraded envelope, whose
+`source` is `"loss_files"`.
 
 ### 3.3 The `/api/round/.../gate` endpoint
 
@@ -547,14 +574,13 @@ endpoint for each recorded pair.
 ## 4. Contract-hash interaction
 
 The `tournament` block is part of the **scoring** contract component
-(§1.2), so it factors into the contract hash through the **existing**
-`_canon_scoring` canonicalizer (`contract.py:236`) with one change:
-`scoring_to_canon` already serializes *every public field* of
-`ScoringWeights` via `dataclasses.fields`, so once
-`ScoringWeights` carries a `tournament_structure` field (§5), it is
-folded into the canonical form **automatically**. Recursive structural
-normalization plus `json.dumps(sort_keys=True)` handle a nested
-`{structure, params}` dict.
+(§1.2), so it factors into the contract hash through the scoring
+canonicalizer (`_canon_scoring` in `epoch/contract.py`).
+`scoring_to_canon` serializes *every declared field* of `ScoringWeights`
+under its persisted key (`dataclass_to_jsonable`), so the
+`tournament_structure` field is folded into the canonical form with no
+special case, and `json.dumps(sort_keys=True)` orders the nested
+`{structure, params}` object.
 
 The one care point: the `params` mapping must canonicalize
 order-independently. `json.dumps(sort_keys=True)` already sorts the
@@ -566,18 +592,15 @@ selection layer that defines them. This is stated here so the two halves
 agree.
 
 Consequence (the desired behaviour): **changing the structure or any
-param rolls the epoch.** Switching `gauntlet → swiss`, or bumping
-`swiss.rounds` from 4 to 6, changes `_canon_scoring`'s output, changes
-the contract hash, and `evolve`'s auto-roll path
-(`orchestrator.py:258`) closes the current epoch and opens a fresh one —
-as it does for a `promote_margin` retune. The roll message
-(`orchestrator.py:306`) already names the changed component as
-`scoring`; no new component label is needed (the structure *is*
-scoring). This is correct: a gauntlet champion and a Swiss champion are
-not comparable, so they must live in different epochs.
-
-`compute_component_hashes` (`contract.py:351`) needs no change — the
-`scoring` component already covers it.
+param rolls the epoch.** Switching `racing → gauntlet`, or raising
+`field_size` from 4 to 6, changes `_canon_scoring`'s output, changes
+the contract hash, and `evolve`'s auto-roll path closes the current
+epoch and opens a fresh one — as it does for a `promote_margin` retune.
+The roll names the changed component as `scoring`, because
+`compute_component_hashes` (`epoch/contract.py`) hashes the structure
+inside that component. This is correct: a gauntlet champion and a
+racing champion are selected under different rules, so they live in
+different epochs.
 
 ---
 
@@ -593,170 +616,154 @@ set: there is no `--promote-margin` flag either.
 
 ### 5.2 `zicato evolve --tournament-structure` (convenience, contract-affecting)
 
-For ergonomics, add **one advisory flag** to `evolve` that *writes the
-structure into the contract before the hash is computed*:
+For ergonomics, `evolve` has **two flags** that *edit the structure in
+the contract before the hash is computed*:
 
 ```
-zicato evolve --tournament-structure swiss [--tournament-param rounds=6] ...
+zicato evolve --tournament-structure racing [--tournament-param field_size=6] ...
 ```
 
-- `--tournament-structure {gauntlet|single_elim|double_elim|swiss|racing}`
-  — when present, the orchestrator writes `{"structure": <v>, "params":
-  ...}` into the **live** `scoring.json` (the contract source) *before*
-  `resolve_contract_inputs` runs, so it participates in the contract
-  hash and triggers an auto-roll if it differs from the current epoch.
-  Default: unset ⇒ read whatever `scoring.json` says ⇒ gauntlet.
-- `--tournament-param KEY=VALUE` (repeatable) — sets one `params` key.
-  Values are parsed as JSON-if-possible, else string.
+- `--tournament-structure {gauntlet|racing}` — writes the structure
+  into the **live** `scoring.json` (the contract source) before contract
+  resolution, so it participates in the contract hash and rolls the
+  epoch if it differs from the current one. Unset ⇒ read whatever
+  `scoring.json` says (racing when absent). The experimental structures
+  are selected in `scoring.json` alongside
+  `experimental.tournament_structures = true`.
+- `--tournament-param KEY=VALUE` (repeatable) — sets one `params` key and
+  preserves the others. Values are parsed as JSON when possible, else
+  taken as a string.
 
-This flag is a contract-mutating convenience rather than a
-per-invocation runtime toggle; it is equivalent to editing
-`scoring.json` by hand, and the help text says so. `zicato --help` is
-the authoritative description of the flag, and
-[`CLI.md`](CLI.md) is generated from it.
+Both flags are checked in memory under `--dry-run` and cannot be
+combined with `--epoch`. They are contract-mutating conveniences rather
+than per-invocation runtime toggles, equivalent to editing
+`scoring.json` by hand. `zicato evolve --help` is the authoritative
+description, and [`CLI.md`](CLI.md) is generated from it.
 
 ### 5.3 `RuntimeConfig` — no structural change
 
-`RuntimeConfig` (`core/types.py:1775`) is the *runtime-side* binding:
-workspace, the two `call_llm`s, `parallelism`, `seed`. The tournament
+`RuntimeConfig` (`core/runtime.py`) is the *runtime-side* binding:
+workspace, the model callables, `parallelism`, `seed`. The tournament
 structure is a **contract** property rather than a runtime one, and it
-lives on `EpochConfig.scoring` (the frozen `ScoringWeights`), which the
-runner already receives. `RuntimeConfig` therefore gains **nothing**.
-The runner reads `weights.tournament_structure` off the
-`ScoringWeights` it is handed, and `_weights_spec` (`runner.py:581`)
-carries the field so the subprocess worker sees it as well. Selection
-itself happens in the orchestrator rather than the per-run worker.
+lives on the frozen `ScoringWeights`, which the runner receives.
+`RuntimeConfig` carries no structure field. The evolve loop builds the
+strategy from `weights.tournament_structure` (`make_strategy`), and
+`_weights_spec` (`tournament/worker_transport.py`) serializes the
+complete weights so the subprocess worker sees the same contract.
+Selection itself happens in the orchestrator rather than the per-run
+worker.
 
 ---
 
 ## 6. The console rendering
 
-The console is served from `src/zicato/dashboard/static/js/`. Its
-match-ups view (`views/gens.js`) renders a "champion defends" banner and
-a wrapping grid of one-challenger match cards for the gauntlet, and
-branches on the configured structure for the others.
+The console is served from `src/zicato/dashboard/static/js/`. Three
+modules carry the structure views:
 
-### 6.1 Data layer — `data.js`
+- **`data.js`** — `tournamentStructure(epochId, tournamentId)` fetches
+  `/api/tournament-structure/{epoch_id}/{tournament_id}`, and the
+  live-invalidation set includes the `/api/tournament-structure/`
+  prefix so the structure refreshes as a tournament runs. `epoch()`
+  already returns the `tournament` block (§3.1).
+- **`tournament_model.js`** — pure models over the served payloads: the
+  normalized structure, the resolver every page reads a non-gauntlet
+  structure through, the per-structure models the figures draw
+  (elimination bracket, Swiss ladder, racing rungs, gauntlet field), and
+  the digests the gated swaps compare. It builds no DOM.
+- **`views/structure.js`** — renders those models: the structure pill,
+  the bracket, the Swiss ladder, the racing rung ladder, the gauntlet
+  field bars, the standings table, and the field-diversity ribbon.
 
-One client method in `static/js/data.js` (alongside
-`bracket()` / `gate()` at `data.js:77,125`):
-```js
-export function tournamentStructure(epochId, tournamentId) {
-  return cachedJson(`/api/tournament-structure/${enc(epochId)}/${enc(tournamentId)}`);
-}
-// epoch() already returns the new `tournament` block (§3.1) — no new call needed.
-```
-The live-invalidation set in `invalidate()` (`data.js:39`) adds the
-`/api/tournament-structure/` prefix so the structure refreshes as a
-tournament runs.
+### 6.1 The Rounds view — `views/gens.js`
 
-### 6.2 The match-ups view — `views/gens.js`
-
-`render` (`gens.js:28`) reads `ep.tournament.structure` (default
-`"gauntlet"`) and branches:
+The Rounds page reads the epoch's structure (the `tournament` block, or
+the live structure while the epoch runs) and branches:
 
 - **`gauntlet`** — the champion-defends banner, the match-card grid and
-  the roster table. This is the default path and must not regress.
-- **`single_elim` / `double_elim`** — render a **bracket** from
-  `rounds[]`: columns = rounds, nodes = matches (`competitors`, `winner`,
-  `bracket_slot`), connector lines winners→next round. A losers' bracket
-  renders as a second band for `double_elim`. Each match node links to
-  the per-match candidate detail (`ctx.navigate('candidate', ...)`) and
-  shows the gate's decisive driver via the existing per-match
-  `D.gate(epoch, a, b)` call (the gate endpoint is per-match, §3.3).
-- **`swiss`** — render a **standings table** (from `standings[]`) as the
-  hero, plus a per-round pairings list (from `rounds[]`). Reuses the
-  existing roster-table styling (`dn-board-table`).
-- **`racing`** — render a **rung ladder**: one column per rung, each
-  showing the surviving field and the `cut[]` from `rounds[].cut`, with
-  eliminated candidates struck through. `board_fraction` is shown per
-  rung so the operator sees the budget escalation.
+  the roster table.
+- **every other structure** — the structure pill and `renderStructure`
+  from `views/structure.js`: a **bracket** for `single_elim` /
+  `double_elim` (a losers' band for `double_elim`), a **standings
+  ladder** with per-round pairings for `swiss`, and a **rung ladder**
+  for `racing` showing each rung's field, `cut[]`, and
+  `board_fraction`. Match nodes link to the candidate page and read the
+  per-pair gate endpoint (§3.3).
 
-The new render branches reuse `svg.js` primitives
-(`sparkbar`, `genDots`) and the `ui.js` `verdictPill` / `section`
-helpers; no new dependency. The view is gated by the existing
-`gatedSwap(host, digest, ...)` pattern — the `digest` includes
-`structure` + the settled `rounds` so the pane re-renders only on a real
-change.
+Each render is gated by `gatedSwap(host, digest, ...)`, with a digest
+that includes the structure and the settled `rounds`, so the pane
+re-renders only on a real change.
 
-### 6.3 The epoch view — `views/epoch.js`
+### 6.2 The epoch view — `views/epoch.js`
 
-`epoch.js` (`epoch.js:24`) reads the new `ep.tournament` block (§3.1) and
-adds a one-line **structure pill** to the epoch header
-("Structure · Swiss (4 rounds)"). Its "slim reel" of rounds
-(`epoch.js:52`) stays as-is for a gauntlet; for a non-gauntlet structure
-the reel's stations are the structure's rounds (already round-ordered),
-so the existing reel logic needs only to pull `rounds` from the new
-`/api/tournament-structure` response instead of inferring them from
-`matchups`.
+`epoch.js` reads the `tournament` block (§3.1), adds the structure pill
+to the epoch header, and for a non-gauntlet structure draws the round
+reel from the recorded structure (`/api/tournament-structure`) rather
+than from `matchups`.
 
-### 6.4 Boards / candidate views — unchanged
+### 6.3 Boards and candidate views — structure-agnostic
 
-`views/boards.js`, `views/board.js`, `views/candidate.js` are per-entry /
-per-candidate and structure-agnostic — they read `/api/.../per-entry` and
-`/api/.../per-judge`, which do not change. No edits.
+`views/boards.js`, `views/board.js`, and `views/candidate.js` are
+per-entry / per-candidate and read the per-entry and per-judge
+endpoints, which carry no structure fields.
 
 ---
 
-## 7. Implementation plan — the files each part touches
+## 7. Where each part lives
 
 ### 7.1 Data model / config / contract
 
-| File | Change |
+| File | Part |
 |---|---|
-| `src/zicato/core/types.py:1485` (`ScoringWeights`) | Add a `tournament_structure: TournamentStructure` field with a `_default_tournament_structure()` factory ⇒ `{"gauntlet", {}}`. Add a frozen `TournamentStructure` dataclass `{ structure: str, params: Mapping[str, Any] }` and a `MatchOutcome` dataclass (§2.6). Add to `__all__`. |
-| `src/zicato/core/types.py:1334` (`OutcomeRecord`) | Add `structure`, `final_rank`, `eliminated_in_round`, `match_record` fields, all with back-compat defaults (§2.6). |
-| `src/zicato/epoch/lifecycle.py:140` (`_scoring_from_dict`) + the workspace loader `_scoring_weights_from_dict` (referenced at `contract.py:259`) | Parse the `tournament` block into `TournamentStructure`; default to gauntlet; validate the `structure` token. |
-| `src/zicato/epoch/lifecycle.py:183` (`_scoring_to_dict`) | Serialize `tournament_structure` back into the `tournament` key. |
-| `src/zicato/epoch/contract.py:266` (`_scoring_to_canon`) | No change needed if the field is a plain dataclass field (it is folded automatically); add a unit test asserting a structure change moves the hash. |
+| `src/zicato/core/tournament.py` | `TournamentStructure`, `VALID_TOURNAMENT_STRUCTURES`, `EXPERIMENTAL_TOURNAMENT_STRUCTURES`, `TOURNAMENT_PARAM_CONSTRAINTS`, `MatchOutcome`, `TournamentDecision`, and the default racing specification. |
+| `src/zicato/core/scoring_config.py` | The `ScoringWeights.tournament_structure` field (persisted as `tournament`) and the load-time refusal of an experimental structure without the opt-in. |
+| `src/zicato/core/experiment.py` | `OutcomeRecord` with the structure fields (§2.6). |
+| `src/zicato/epoch/contract.py` | The scoring canonicalizer that folds the block into the contract hash (§4). |
 
-### 7.2 Persistence — runtime + settled record
+### 7.2 Persistence — runtime and settled records
 
-| File | Change |
+| File | Part |
 |---|---|
-| `src/zicato/runtime/state.py:450` (`ActiveTournament`) | Add `structure`, `structure_params`, `competitors`, `rounds`, `standings` fields + `to_dict` / `from_dict` with back-compat defaults (§2.2). |
-| `src/zicato/runtime/state.py:305` (`ActiveTournamentEntry`) | Add `match_id` field (default `""`); document the widened `side` domain (§2.3). |
-| `src/zicato/runtime/state.py:562` (`update_tournament_entry`) | No signature change; `side` value domain widens. Add helpers `update_tournament_round` / `update_standings` for the structure fields. |
-| `src/zicato/epoch/journal.py:224` (`_outcome_from_dict`) + `write_experiment` (`journal.py:308`) | Read/write the new `OutcomeRecord` fields. |
-| `src/zicato/index/schema.py:137` (`tournaments` DDL) + `_V2_ADDED_COLUMNS` (`schema.py:194`, becomes a v3 add) | Add the five TEXT columns (§2.6a); bump `PRAGMA user_version` to 3. |
-| `src/zicato/index/ingest.py:107` | Populate the new columns from the resolved `OutcomeRecord` + the tournament record. |
+| `src/zicato/runtime/state.py` | `ActiveTournament`, `ActiveTournamentEntry`, `update_tournament_entry`, `update_tournament_projected` (§2.2–§2.5.1). |
+| `src/zicato/selection/strategy.py` | `RoundRecord`, `MatchRecord`, `Standing` (§2.4, §2.5). |
+| `src/zicato/evolve/dashboard_projection.py` | `_serialise_rounds` / `_serialise_standings` and the in-progress structure record. |
+| `src/zicato/tournament/records.py` | The structure record (`field_tournament_record`), its decoder, and the in-progress file under `tournaments/`. |
+| `src/zicato/tournament/structure.py` | `attach_elim_states`, the elimination diagram analysis (§2.4). |
+| `src/zicato/epoch/settlement_receipt.py` | The round record `field_settlement.json` (§2.1). |
+| `src/zicato/index/schema.py`, `src/zicato/index/ingest.py` | The `tournaments` table and its crowning and field rows (§2.6). |
 
 ### 7.3 Dashboard API
 
-| File | Change |
+| File | Part |
 |---|---|
-| `src/zicato/dashboard/state_reader.py:893` (`build_epoch_view`) | Add the `tournament` block from frozen `scoring.json` (§3.1). |
-| `src/zicato/dashboard/state_reader.py:1400` (`build_bracket`) | Add top-level `structure` / `structure_params` + the `tournaments` array (§3.1). |
-| `src/zicato/dashboard/state_reader.py:245` (`_normalize_tournament_statuses`) | Stop assuming `side ∈ {"parent","child"}`; pass through an opaque competitor `side` (§3.1). |
-| `src/zicato/dashboard/state_reader.py` (new `build_tournament_structure`) | The §3.2 reader, with the index→active→loss-files fallback chain. |
-| `src/zicato/dashboard/endpoints.py:78` (`make_endpoints`) | Add `api_tournament_structure` handler + register it in the returned dict (`endpoints.py:831`). |
-| `src/zicato/dashboard/server.py` | Add the `/api/tournament-structure/{epoch_id}/{tournament_id}` route. |
+| `src/zicato/query/epoch_view.py` | `build_epoch_view` and its `tournament` block (§3.1). |
+| `src/zicato/query/tournament_view.py` | `build_bracket` and `build_tournament_structure` (§3.1, §3.2). |
+| `src/zicato/query/runtime_view.py` | `read_active_tournament_dict` and `_normalize_tournament_statuses` (§3.1). |
+| `src/zicato/query/gate_view.py` | `build_gate_breakdown` (§3.3). |
+| `src/zicato/dashboard/endpoints.py`, `src/zicato/dashboard/server.py` | The endpoint declarations and routes. |
 
 ### 7.4 Console
 
-| File | Change |
+| File | Part |
 |---|---|
-| `src/zicato/dashboard/static/js/data.js` | Add `tournamentStructure()`; add the prefix to `invalidate()`. |
-| `src/zicato/dashboard/static/js/views/gens.js` | Branch on `ep.tournament.structure`; keep gauntlet path unchanged; add bracket / standings / racing-ladder renderers (§6.2). |
-| `src/zicato/dashboard/static/js/views/epoch.js` | Add the structure pill; pull the reel's rounds from the structure response for non-gauntlet (§6.3). |
-| `src/zicato/dashboard/static/js/svg.js` | (Optional) a small `bracketLines` SVG helper for the elim renderers; reuse existing primitives otherwise. |
+| `src/zicato/dashboard/static/js/data.js` | `tournamentStructure()` and its invalidation prefix. |
+| `src/zicato/dashboard/static/js/tournament_model.js` | The structure models. |
+| `src/zicato/dashboard/static/js/views/structure.js` | The structure renderers. |
+| `src/zicato/dashboard/static/js/views/gens.js`, `views/epoch.js` | The Rounds page and the epoch header (§6.1, §6.2). |
 
 ### 7.5 CLI
 
-| File | Change |
+| File | Part |
 |---|---|
-| `src/zicato/cli/commands/evolve.py:408` | Add `--tournament-structure` + repeatable `--tournament-param KEY=VALUE` Click options; write them into the live `scoring.json` before contract resolution (§5.2). |
+| `src/zicato/cli/commands/evolve.py` | `--tournament-structure` and the repeatable `--tournament-param KEY=VALUE` (§5.2). |
 
-### 7.6 What does NOT change
+### 7.6 Structure-agnostic parts
 
-`storage/base.py`, `storage/files.py`, `storage/memory.py`,
-`storage/_atomic.py` — the seam is structure-agnostic; the new fields are
-just more JSON. `RuntimeConfig` — the structure is a contract property
-rather than a runtime one (§5.3). The per-run subprocess worker
-(`_tournament_worker.py`) — it runs ONE board entry under ONE generation;
-which competitors are paired is the orchestrator's job. The gate
-(`tournament/gate.py`) — it is per-match and already
-champion-vs-challenger.
+`storage/base.py`, `storage/files.py`, `storage/memory.py` — the record
+seam carries the structure fields as ordinary JSON. `RuntimeConfig` —
+the structure is a contract property (§5.3). The per-run subprocess
+worker (`_tournament_worker.py`) runs ONE board entry under ONE
+generation; which competitors are paired is the orchestrator's job. The
+gate (`tournament/gate.py`) is per-match and champion-vs-challenger.
 
 ---
 
@@ -767,6 +774,6 @@ champion-vs-challenger.
 | The selection algorithms that drive each structure (pairing, cuts, racing) | [SELECTION.md](SELECTION.md), [TOURNAMENT-STRUCTURES.md](TOURNAMENT-STRUCTURES.md) |
 | The operational gauntlet view, the bracket, per-matchup analytics | [TOURNAMENT.md](TOURNAMENT.md) |
 | The `tournament` config block in the epoch contract + contract-hash roll | [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) §10 |
-| The generalized persisted record + storage seams + back-compat | [STORAGE.md](STORAGE.md) §5 |
+| The generalized persisted record and the storage seams | [STORAGE.md](STORAGE.md) §5 |
 | The `--tournament-structure` flag | `zicato --help`, and [CLI.md](CLI.md), which is generated from it |
 | The scalar each match compares | [SCORING.md](SCORING.md) |

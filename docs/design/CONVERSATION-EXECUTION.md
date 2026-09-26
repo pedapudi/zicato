@@ -3,8 +3,8 @@
 The board comparison and live conversation panes place an execution outline
 beneath the conversation turns that own recorded activity. The outline answers
 which agent or tool was active while reading a champion and challenger side by
-side. The layout stays decision-oriented: the conversation is the spine, and
-execution expands locally beneath it.
+side. The conversation turns stay the primary reading order, and execution
+detail expands beneath the turn it belongs to.
 
 The outline is a compact reconstruction from the record a run left behind.
 Harmonograf holds the full temporal trace for one run. It provides timing,
@@ -102,7 +102,7 @@ collapsible tree. It does not derive edges. The same renderer serves the board
 comparison and live conversation panes, so settled and streaming runs use one
 visual grammar.
 
-Execution state participates in the existing per-turn content digest. A status
+Execution state participates in the per-turn content digest. A status
 change patches the turn that owns the node. Unrelated turns retain their DOM
 nodes, scroll position, selection, and focus. A heartbeat with no content
 change performs no DOM write.
@@ -120,8 +120,10 @@ turn-scoped delegation observations. The generic renderer also understands
 tool and artifact node kinds so richer adapters can use the same visual
 contract when their canonical events provide stable identifiers.
 
-The transcript reader adds the run's durable `artifacts.json` inventory as
-parentless artifact nodes with `fidelity: "run"`. These nodes appear under
+The conversation view (`query/transcript_view.py`) adds the measurement's
+durable artifact manifest (`artifacts.<purpose>.r<draw>.json`, stored beside
+and paired with that measurement's loss file) as parentless artifact nodes
+with `fidelity: "run"`. These nodes appear under
 **Run activity**. They are not children of a turn or invocation because the
 manifest does not record a producer identifier. Filename proximity or creation
 time is insufficient evidence of causality.
@@ -137,8 +139,8 @@ which reader answers for a given file, a multi-tool episode at exact fidelity,
 a seeded prefix, and an inner dispatch nested under its composing call. They
 also check the derived-message rule against the list each request recorded, in
 three fixtures shared with Foe. The ADK reader's payload for three streams is
-compared field for field with what it produced before the episode reader
-existed. Browser tests cover nested rendering,
+compared field for field with a recorded snapshot
+(`tests/data/adk_transcript_reconstruction.json`). Browser tests cover nested rendering,
 absence fallback, node-local live updates, cycles, unattached running roots,
 and unresolved records.
 

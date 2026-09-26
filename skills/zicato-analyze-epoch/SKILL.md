@@ -1,13 +1,13 @@
 ---
 name: zicato-analyze-epoch
-description: Close an epoch and read its retrospective — run the LLM analysis pass, read analysis.md / journal.md, and re-render reports against current on-disk data. Use this when an epoch's rounds are done and you want the hypothesis-vs-outcome ledger and the closing narrative, or when an older epoch's analysis.md needs repairing.
+description: Close an epoch and read its retrospective — run the LLM analysis pass, read analysis.md and the rendered journal, and re-render reports against current on-disk data. Use this when an epoch's rounds are done and you want the hypothesis-vs-outcome ledger and the closing narrative, or when an older epoch's analysis.md needs repairing.
 ---
 
 # zicato analyze-epoch — close an epoch and read its analysis
 
 An **epoch** is the unit of evaluation contract (one frozen board + proposer
-brief + scoring + target-adapter identity). Within it, the gauntlet runs round
-after round, journaling each round. *Closing* an epoch runs the retrospective
+brief + scoring + target-adapter identity + proposer). Within it, the
+tournament runs round after round, recording each round. *Closing* an epoch runs the retrospective
 LLM analysis pass and writes the per-epoch `analysis.md`. This skill is the
 read/close side of an epoch — to drive the loop see `skills/zicato-evolve`; to
 explain a single round's verdict see `skills/zicato-tournament-forensics`; for
@@ -22,13 +22,18 @@ launch a live `evolve` (it spends LLM budget).
 ```
 .zicato/
   epochs/{epoch_id}/
-    journal.md      # appended every round (running, deterministic)
-    analysis.md     # re-rendered after every generation; mid-epoch its masthead
+    analysis.md     # re-rendered after every round; mid-epoch its masthead
                     #   carries `LIVING DRAFT — through round N`
     analysis.html   # the rendered companion, written alongside analysis.md
-    generations/{vN}/experiment.json   # hypothesis + outcome (the ledger row)
-  lineage.json      # cross-epoch DAG (one file, all epochs)
+    generations/{vN}/experiment.json      # the hypothesis, written before the run
+    rounds/{round}/field_settlement.json  # each candidate's recorded outcome
+    rounds/{round}/round_log.jsonl        # the round's typed event log
+  lineage.json      # cross-epoch ancestry (one file, all epochs)
 ```
+
+There is no `journal.md` file on disk. The journal is rendered on demand from
+the experiment records joined to their round outcomes: the dashboard serves it
+at `/api/epoch/<epoch_id>/journal.md` as markdown.
 
 See [EPOCHS-AND-JOURNALING.md](../../docs/design/EPOCHS-AND-JOURNALING.md) §2,
 §4, §5.
@@ -36,17 +41,23 @@ See [EPOCHS-AND-JOURNALING.md](../../docs/design/EPOCHS-AND-JOURNALING.md) §2,
 ## The hypothesis-vs-outcome ledger
 
 Each generation's `experiment.json` carries the proposer's **hypothesis**
-(written *before* the run) and, after the tournament concludes, an **outcome**
-block appended atomically to the same file
+(written *before* the run). After the tournament concludes, the candidate's
+**outcome** is recorded in that round's `rounds/{round}/field_settlement.json`
+under `candidates[]`, and every reader joins it to the experiment by
+`experiment_id`; the `outcome` key inside `experiment.json` itself stays `null`
 ([EPOCHS-AND-JOURNALING.md §3.3](../../docs/design/EPOCHS-AND-JOURNALING.md#33-outcome-written-after-the-run)).
-The load-bearing field is `outcome.hypothesis_match`: for every drift kind the
-hypothesis predicted, did the actual movement match on **sign AND magnitude**?
-Match semantics are strict — "predicted down moderate, observed down minor" is a
-**miss** (no partial credit). This is what distinguishes a proposer that
-*reasons* from one that *guesses*.
+The hypothesis names its predictions in `expected_metric_movements` (metric
+name, direction, and a `small` / `medium` / `large` magnitude). Each prediction
+is graded against the realised movement on **sign AND magnitude** — "predicted
+decrease medium, observed decrease small" is a **miss** (no partial credit).
+This is what distinguishes a proposer that *reasons* from one that *guesses*;
+the Publication's "Hypothesis vs outcome" table and the dashboard's
+hypothesis-accuracy view show the grades.
 
-The running `journal.md` renders one section per round (core_idea, drift/pass
-deltas, hypothesis-match line, modulating mutation points, the decision).
+The rendered journal has one section per experiment, headed `## v{N} — <core
+idea>`: when it was proposed, the modulating mutation points, the `why`, and
+once its round commits the decision with its scalar, drift-loss and pass-rate
+deltas (plus the rejection reason when rejected).
 `analysis.md` aggregates the whole epoch into an academic-paper-style
 publication with fixed sections — the data-bearing ones templated
 deterministically from the workspace, the prose ones written by one bounded
@@ -81,7 +92,7 @@ evaluation-engine call:
   (re-stamped) and writes a *stub* only when none exists yet. It is `evolve`'s
   auto-close — which rolls the contract with the aux callable in hand — that
   runs the full prose render. To get the prose pass by hand after a manual
-  close, use `regenerate-report` with an evaluation callable (step 3)
+  close, run `zicato repair report` without `--no-llm` (step 3)
   ([EPOCHS-AND-JOURNALING.md §5.1](../../docs/design/EPOCHS-AND-JOURNALING.md#51-closing--manual-primary-auto-close-fallback)).
 
 **A closed epoch is read-only.** Its board, brief, scoring, and generation
@@ -93,24 +104,28 @@ re-render its reports (steps 3-4) — that reads the frozen data and only rewrit
 
 ## 2. Read the journal and the analysis
 
-There is **no `zicato journal show` / `zicato analysis show` subcommand** in the
-shipped CLI (the doc reference at [CLI.md §3.14-3.15](../../docs/design/CLI.md)
-is aspirational and not implemented). Read the files directly:
+There is **no `zicato journal` / `zicato analysis` subcommand**. Read the
+report files directly, and the journal through the dashboard:
 
 ```sh
-# the running per-round journal
-$EDITOR .zicato/epochs/<epoch_id>/journal.md
-
 # the retrospective publication (present mid-epoch too, stamped LIVING DRAFT)
 $EDITOR .zicato/epochs/<epoch_id>/analysis.md
 
 # the archival HTML snapshot — openable mid-epoch via file://
 xdg-open .zicato/epochs/<epoch_id>/analysis.html
+
+# the journal, rendered from the records (needs a running `zicato dashboard`)
+curl -s http://127.0.0.1:7892/api/epoch/<epoch_id>/journal.md
 ```
 
-To slice the journal by round, grep it (`grep -A6 '^## Round 4' journal.md`).
-To read one round's full hypothesis+outcome ledger row, open that generation's
-`experiment.json`.
+To read one experiment's full ledger row, pair its `experiment.json`
+(hypothesis) with its candidate entry in the round's `field_settlement.json`
+(outcome):
+
+```sh
+jq '.candidates[] | {generation_id, outcome}' \
+   .zicato/epochs/<epoch_id>/rounds/<round>/field_settlement.json
+```
 
 ## 3. Re-render the report against current data
 
@@ -143,8 +158,8 @@ insight without re-running the loop.
   spends budget. Closing and report regeneration are the read-side tools.
 - Only `analysis.md`'s **prose** sections need the evaluation LLM; its data
   sections and `analysis.html` are deterministic. Prefer `--no-llm` when you
-  only need the figures/tables back — without it, `regenerate-report` resolves
-  the aux callable from config and spends a call.
+  only need the figures/tables back — without it, `zicato repair report`
+  resolves the evaluation callable from config and spends a call.
 - A closed epoch is frozen — treat `epochs/{id}/` as read-only.
 
 ## See also

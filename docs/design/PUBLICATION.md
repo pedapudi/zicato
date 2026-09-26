@@ -77,12 +77,13 @@ what it cost.
 * Scoring — the weighted drift-derived loss + pass/fail predicates, per-judge
   weights, gates, **and** the `telemetry_dialect` (which reducer vocabulary the
   drift is read through).
-* Tournament structure — the structure name (gauntlet by default; single- /
-  double-elim / swiss / racing) and its params, including the winner-resolver
+* Tournament structure — the structure name (racing by default; gauntlet, or
+  the experimental single- / double-elim / swiss) and its params, including the winner-resolver
   and rating knobs when a non-default resolver/rating layer is configured.
 * The full proposer configuration — `best_of_n`, `critique`, `screen`
   (+ veto-only), `process_exemplars`, `genealogy`, `recombine` (+
-  `recombine_merge`), and the breadth/depth ensemble roles.
+  `recombine_merge`), and the breadth/depth ensemble roles
+  (`models.proposer_breadth` / `models.proposer_depth`).
 
 **3. The reign narrative (results).** The champion spine round by round. Each
 promotion carries its evidence: gate margins measured against the A/A noise
@@ -128,7 +129,8 @@ accepted generation scores, `workspace.read_loss` for loss records, the generati
 (`epoch/round_log.py` → `RoundRecord` fold), the frozen scoring config
 (`scoring.json`, which serialises `ScoringWeights` including
 `tournament_structure`, `telemetry_dialect`, and the nested
-`proposer_quality`), and the analytical index over new ad-hoc file-walks.
+`proposer_quality` and `experimental` blocks), and the analytical index over
+new ad-hoc file-walks.
 
 | Section | Binding |
 | --- | --- |
@@ -137,7 +139,7 @@ accepted generation scores, `workspace.read_loss` for loss records, the generati
 | 2 Board | `board.jsonl` via `load_board_with_meta` → `BoardEntryView`; holdout split + rotation from `board_meta` / `board/split.py` when recorded. |
 | 2 Scoring | `scoring.json` weights/gates + `telemetry_dialect`. |
 | 2 Tournament structure | `scoring.json["tournament_structure"]` (name + params + resolver/rating). |
-| 2 Proposer config | `scoring.json["proposer_quality"]` (`best_of_n`, `critique_enabled`, `screen_entries`, `screen_veto_only`, `process_exemplars`, `genealogy`, `recombine`, `recombine_merge`, roles). |
+| 2 Proposer config | `scoring.json["proposer_quality"]` (`best_of_n`, `critique_enabled`, `screen_entries`, `screen_veto_only`) and `scoring.json["experimental"]` (`process_exemplars`, `genealogy`, `recombine`, `recombine_merge`); ensemble roles from the workspace `models` block. |
 | 3 Reign narrative | promoted lineage from `generations/*/experiment.json` outcomes; per-promotion evidence from the round records (`gates`, `holdout`, `evidence_trail`, `decision_provenance`) and `recombined_from`. |
 | 4 Ratings | the standings/rating layer (`selection/standings_ext.py`, `selection/rating.py`) when the contract configures a rating; else "not enabled". |
 | 5 Statistical integrity | `RoundRecord` fold — screen veto/confirm (`CandidateScreened`), evidence replication (`EvidenceReplicated`), holdout (`HoldoutReleased`), gate rule (`GateEvaluated`), placebo/`decision_provenance`; the measured noise floor from the epoch preflight record. |

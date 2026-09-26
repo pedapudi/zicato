@@ -13,7 +13,7 @@
 > reads is defined there: heartbeat, active runs, the tournament event log,
 > control files, `index.db`), 02-architecture.md (the process topology). The
 > Python dashboard service is 09-dashboard-and-query.md; the cargo gates are
-> summarised in 11-testing.md §"The pre-commit checklist".
+> summarised in 11-testing.md §"Complete validation before merge".
 >
 > **Invariants introduced in this chapter.** The ID is the locator that other
 > documents cite; the Name is what prose uses.
@@ -53,7 +53,7 @@ records is not a trustworthy witness to them. So the supervisor is:
   it inspects records, terminates verified groups and finalizes ownership;
 - **never a peer in memory** — no shared queues, no IPC channel, no port the
   orchestrator must answer on. The one "write channel" back toward the loop
-  is the same control-file protocol everyone else uses (§8.5, §8.11).
+  is the same control-file protocol everyone else uses (§8.10, §8.13).
 
 This is what makes its guarantees meaningful: a deadline kill fires even when
 the orchestrator's event loop is parked, because nothing about the supervisor
@@ -90,6 +90,7 @@ producer death, competing writer leases and asynchronous enforcement.
 | `ledger.rs` | The tamper-evident hash-chained audit ledger + `TransitionObserver` (decision/contract-change observation). |
 | `sha256.rs` | Small dependency-free SHA-256 (ledger digests, diff-containment file hashes). |
 | `diff_containment.rs` | Integrity record #2: out-of-bounds mutation scan (parent↔child snapshot diff vs the registered mutable surface). |
+| `range_containment.rs` | Integrity record #2's byte-range attestation: verifies recorded mutation spans against the captured mutation policy and patch records (`attest_generation`). |
 | `promotion_gate.rs` | Integrity record #3: re-derive the gate's scalar rule per recorded promotion (`check_row`). |
 | `divergence.rs` | Integrity record #4: canonical-vs-index join auditor. |
 | `index_db.rs` | Read-only SQLite access; `EXPECTED_SCHEMA_VERSION` pin; best-effort row readers. |
@@ -103,6 +104,7 @@ producer death, competing writer leases and asynchronous enforcement.
 | `static_assets.rs` | Compile-time embedded dashboard assets. |
 | `action_log.rs` | In-memory ring buffer of recent watchdog escalations. |
 | `log.rs` | Tracing subscriber init. |
+| `test_process_group.rs` | Test-only helpers (`#[cfg(test)]`) that spawn real process groups for the signal and reap tests. |
 
 `heartbeat_loop` reports orchestrator liveness. `runs_loop` enforces kill
 requests, confirmed-death reaping, run deadlines, and staleness. Its separate
@@ -404,9 +406,20 @@ diff of the child snapshot against its PARENT snapshot and assert every file
 OUTSIDE the registered mutable surface is byte-identical. A changed / added /
 deleted out-of-bounds file is a mutation that escaped its sandbox
 (`DiffKind::{Changed, Added, Deleted}` in
-`crates/supervisor/src/diff_containment.rs`). v1 is the coarse file-level
+`crates/supervisor/src/diff_containment.rs`). This is the coarse file-level
 check; fail-open-to-alarm — an unreadable snapshot or missing parent yields
 *no violation* ("the attestation cannot be made"), never a false quarantine.
+
+The same scan also runs `range_containment::attest_generation` for every
+child with a parent. That check binds the child to the captured mutation
+policy and the patch records, then verifies byte ranges. A change outside the
+recorded mutation spans, a change to a forbidden point, a metadata change, or
+a changed file set is `violated`; missing or inconsistent evidence is
+`unverified`; otherwise the child is `contained`. The scan writes its results as finding files under
+the epoch's `health/` directory — `diff_containment_{generation}.json` for a
+quarantined generation and `mutation_containment_{generation}.json` for each
+byte-range attestation. These files are the only writes the supervisor makes
+into `epochs/`; no Python reader consumes them.
 
 **The Python blocking-mode mirror.** The supervisor's scan is alarm-only by
 design; the in-band twin on the exact same rule surface is
@@ -478,7 +491,7 @@ layers:
 **Layer 1 — read-only connections.** Every open uses
 `SQLITE_OPEN_READ_ONLY` (there is a unit test, `open_is_read_only`, proving a
 write through the handle fails). The index is Python-built (`zicato
-reindex` + live dual-writes); the supervisor never writes a byte of it.
+repair index` + live dual-writes); the supervisor never writes a byte of it.
 
 **Layer 2 — the pinned schema tripwire.**
 
@@ -491,7 +504,7 @@ reindex` + live dual-writes); the supervisor never writes a byte of it.
 ```
 — `crates/supervisor/src/index_db.rs`
 
-A database whose `user_version` ≠ `EXPECTED_SCHEMA_VERSION` (currently `14`)
+A database whose `user_version` ≠ `EXPECTED_SCHEMA_VERSION` (`15`)
 returns `IndexError::StaleSchema` instead of risking rows decoded against
 the wrong schema generation. The cross-language pin has teeth on both sides:
 a cargo test asserts the constant equals the Python value, and a Python-side
@@ -510,7 +523,9 @@ get. Otherwise the full dashboard surface: the embedded static UI (`/`,
 `/static/*`, fallback asset resolution), the state APIs (`/api/state`,
 `/api/epoch`, `/api/lineage`, `/api/run-log`, `/api/active-runs`,
 `/api/active-tournament`, `/api/heartbeat`, `/api/health`), the SSE stream
-(`/events`, fed by the filesystem watcher), and the control POSTs (§8.11).
+(`/events`, fed by the filesystem watcher), and the control POSTs
+(`/api/control/pause`, `/resume`, `/skip-round`, `/kill/:run_id`,
+`/promote/:generation_id`, `/reject/:generation_id`, `/brief`; §8.13).
 
 **What degrades on the index being absent/stale.** File-backed endpoints
 (heartbeat, active runs, active tournament, run log) keep working. Integrity
@@ -547,17 +562,24 @@ recycled run id must not inherit a stale request.
 **Why a handshake at all:** two escalators racing the same pid can double-
 signal, signal a recycled pid the other side already reaped, or interleave
 SIGTERM/SIGKILL windows unpredictably. One writer of intent, one owner of
-signals — the dashboard's `POST /api/control/kill/:run_id` writes the same
-marker shape, so operator kills flow through the identical vetted path.
+signals during the delegation window.
+
+The dashboard's `POST /api/control/kill/:run_id` (in both the supervisor and
+the Python service) writes a different marker, `control/kill_runs/{run_id}`.
+Nothing reads that directory: `runs_loop` reads only `kill_requests/`, and the
+orchestrator has no consumer for it. An operator kill request is therefore
+recorded but not acted on. Routing it through the vetted path requires a
+consumer (see §8.13, step 4).
 
 ---
 
 ## 8.11 Build, packaging, and binary resolution
 
 **Building.** `make supervisor` → `cargo build --release -p
-zicato-supervisor`. The full local gate is `make supervisor-check` →
-`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo
-test`, which is what CI's Rust job runs.
+zicato-supervisor`. The full local gate is `make supervisor-check`, which runs
+the `rust-format`, `rust-clippy`, and `rust-tests` checks of `tools/verify.py`
+(`cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
+`cargo test`) — the checks CI's Rust job runs.
 
 **Packaging.** A hatchling build hook (`hatch_build.py`, wired via
 `[tool.hatch.build.targets.wheel.hooks.custom]` in `pyproject.toml`)
@@ -622,7 +644,7 @@ cargo clippy --all-targets -- -D warnings
 cargo test -p zicato-supervisor
 ```
 
-(`make supervisor-check` bundles them.) Clippy warnings are errors; do not
+(`make supervisor-check` runs them through `tools/verify.py`.) Clippy warnings are errors; do not
 `#[allow]` your way past one without a comment explaining why the lint is
 wrong here.
 
@@ -635,7 +657,7 @@ wrong here.
   (`producer_death_requires_valid_saved_identity`, `refuses_a_path_outside_the_temp_dir` are
   the tone to match — one named property per test).
 - *Route/end-to-end tests* live in `crates/supervisor/tests/integration_test.rs`
-  (~2,500 lines): build a synthetic workspace with `make_workspace()`
+  (~2,400 lines): build a synthetic workspace with `make_workspace()`
   (tempdir + `runtime/active_runs`, `runtime/control`, `epochs/`),
   construct `ServeOptions` via the `serve_opts(read_only)` helper, bind an
   EPHEMERAL port (`port 0`) through `server::serve`, then drive real HTTP
@@ -665,7 +687,7 @@ work is required when:
 > `SCHEMA_VERSION` / `EXPECTED_SCHEMA_VERSION`, `promote_margin` /
 > `DEFAULT_PROMOTE_MARGIN`, the runtime file field names in `state.py` /
 > `state.rs`, the control-file names (`pause_epoch`, `skip_round`,
-> `kill_runs/`, `promote/`, `reject/`), and the start-time token semantics
+> `kill_runs/`, `kill_requests/`, `promote/`, `reject/`), and the start-time token semantics
 > in `lock.py` / `signal.rs`. Each pair carries a comment pointing at its
 > twin — keep the comments true.
 
@@ -910,16 +932,24 @@ The identity token is the process start time from `/proc/<pid>/stat` field 22,
 and the parsing has a real trap the code calls out:
 
 ```rust
+fn process_fields(pid: i32) -> Option<Vec<String>> {
+    if pid <= 0 {
+        return None;
+    }
     let raw = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-    // Field 2 (comm) is wrapped in parens and may itself contain ')' and
-    // spaces, so tokenize everything after the LAST ')'.
     let rparen = raw.rfind(')')?;
-    let rest: Vec<&str> = raw[rparen + 1..].split_whitespace().collect();
-    // rest[0] is field 3 (state); field 22 (starttime) is rest[19].
-    rest.get(19)
-        .and_then(|s| s.parse::<u64>().ok().map(|t| t as f64))
+    Some(
+        raw[rparen + 1..]
+            .split_whitespace()
+            .map(String::from)
+            .collect(),
+    )
+}
 ```
-— `crates/supervisor/src/signal.rs`, `pid_start_time`
+— `crates/supervisor/src/signal.rs`, `process_fields`
+
+`process_fields` returns the fields after `comm`, so element 0 is field 3
+(state) and `pid_start_time` reads element 19, field 22 (starttime), as `f64`.
 
 The `rfind(')')` is load-bearing: the `comm` field (field 2) is
 parenthesized and can itself contain `)` and spaces (a process named `foo) bar`),
@@ -1118,7 +1148,7 @@ this; it is part of the full-dashboard tier, so it is absent under
 ### 8.18.3 `fold_stats` — the torn-write / seq-gap counters
 
 The active-tournament view is a single-writer append-only JSONL the supervisor
-folds on every read. Two failure modes were historically invisible, and
+folds on every read. The lenient fold hides two failure modes, and
 `fold_stats.rs` makes them countable on `/statusz`:
 
 ```rust
@@ -1155,7 +1185,7 @@ health must be checkable in watchdog-only mode (§8.9). The `StatuszView` payloa
 | `orchestrator_uptime_seconds` | `heartbeat.started_at` | how long the audited loop has run (`None` when no heartbeat) |
 | `watchdog_actions` | the `action_log` ring (`WatchdogLog::snapshot`) | the recent SIGTERM/SIGKILL escalations, per trigger + outcome |
 | `fold_diagnostics` | `FoldDiagnostics::view` (§8.18.3) | cumulative torn-write / seq-gap counts over the tournament fold |
-| ledger chain status | `AuditLedger::verify` → `LedgerStatus` | `configured` + `intact` + `records`, and `first_break_seq` + `break_reason` on a break |
+| ledger chain status | `AuditLedger::verify` → `AuditStatus` | `configured` + `intact` + `records`, and `first_break_seq` + `break_reason` on a break |
 
 The `action_log` (`action_log.rs`) is an in-memory ring buffer of the most recent
 escalations — the fast, always-available operational view that `record_action`
@@ -1178,7 +1208,8 @@ integrity is checkable without the dashboard tier.
 
 §8.8 gave the three scans' contracts; this is the re-derivation code, because a
 notary that re-derives a rule WRONG is worse than no notary. All three read the
-index or the snapshots and never write.
+index or the snapshots. Only the diff-containment scan writes, and only its
+finding files under the epoch's `health/` directory (§8.8.1).
 
 ### 8.20.1 `check_row` — re-applying the gate's scalar rule (record #3)
 
@@ -1228,10 +1259,10 @@ where the read-only version-pinned index rule's three layers live. The schema
 pin, verbatim:
 
 ```rust
-/// Opening a database whose `user_version` does not
+/// ... Opening a database whose `user_version` does not
 /// match this constant returns [`IndexError::StaleSchema`] rather than
 /// risking a row decoded against the wrong schema.
-pub const EXPECTED_SCHEMA_VERSION: i64 = 14;
+pub const EXPECTED_SCHEMA_VERSION: i64 = 15;
 ```
 — `crates/supervisor/src/index_db.rs`
 
@@ -1258,9 +1289,9 @@ check, fail-open":
 This is the read-only version-pinned index rule and the null-degradation
 contract (§8.9) meeting at the scan layer: a
 stale or absent index degrades the notary to "scanned, no contradiction", never a
-false alarm and never a crash. `EXPECTED_SCHEMA_VERSION = 14` is the cross-
-language pin — bump it in lockstep with the Python `SCHEMA_VERSION` (07-runtime-
-and-durability.md §"`zicato repair index`"), and a cargo test in this module reds if
+false alarm and never a crash. `EXPECTED_SCHEMA_VERSION = 15` is the cross-
+language pin — bump it in lockstep with the Python `SCHEMA_VERSION`
+(07-runtime-and-durability.md §7.1.2), and a cargo test in this module reds if
 they drift (§8.12's canonical "Python change requires Rust parity" example).
 
 ### 8.20.3 The diff-containment mutable surface (record #2)
@@ -1284,7 +1315,7 @@ byte-identical parent↔child is a `DiffKind::{Changed, Added, Deleted}`
 `Violation` — a mutation that escaped its sandbox. Every failure mode is
 fail-open-to-alarm: an unreadable file is skipped, a missing parent snapshot
 yields *no* violation ("the attestation cannot be made"), never a false
-quarantine. This is the same coarse file-level v1 rule the Python
+quarantine. This is the same coarse file-level rule the Python
 `check_containment` blocking mirror enforces (§8.8.1) — the two MUST change
 together, because a skew means the alarm and the blocking gate disagree about
 what "escaped" means.
@@ -1298,7 +1329,7 @@ what "escaped" means.
   seq-vs-timestamp liveness design.
 - 09-dashboard-and-query.md — the separate Python dashboard service that
   serves the full UI; the supervisor's embedded UI is the minimal twin.
-- 11-testing.md — `make supervisor-check` in the pre-commit checklist; the
+- 11-testing.md — the Rust checks in complete validation before merge; the
   REINDEX-DUMP gate that pins the shared index schema; route-test patterns.
 - 12-bug-casebook.md — the watchdog-kills-orchestrator finding that
   produced the never-kill-the-orchestrator rule; the heartbeat timestamp

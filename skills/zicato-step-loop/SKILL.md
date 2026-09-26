@@ -1,20 +1,20 @@
 ---
 name: zicato-step-loop
-description: Drive the zicato evolve loop one stage at a time (propose → tournament) for inspecting or debugging a single round. Use only when you need to look inside what `zicato evolve` does internally; for normal operation run `zicato evolve`.
+description: Drive the zicato evolve loop's stages one at a time for inspecting or debugging a round — rebuild the decision-telemetry insight, run one proposal episode without a tournament, and re-score an existing champion/challenger pair. Use only when you need to look inside what `zicato evolve` does internally; for normal operation run `zicato evolve`.
 ---
 
-# zicato step-loop (manual round, for debug only)
+# zicato step-loop (stage by stage, for debug only)
 
 `zicato evolve` is the happy path: it auto-resolves the contract, auto-opens an
-epoch, then runs `analyze-telemetry → propose → (apply) → tournament → promote`
-for `--rounds` rounds. This skill drives those stages **by hand**, one at a
-time, so you can inspect each artifact between stages. Reach for it only when
-debugging a single round — never as the normal way to run zicato.
+epoch, then runs `analyze → propose → apply → tournament → promote` for
+`--rounds` rounds. This skill runs the stages that have their own commands
+**by hand**, one at a time, so you can inspect each artifact between them.
+Reach for it only when debugging — never as the normal way to run zicato.
 
-> Guardrail: `propose` and `tournament` call real LLMs and spend budget. Treat
-> them as live runs — get the operator's explicit go-ahead before invoking them
-> (AGENTS.md rule 1). Everything in the "inspect" steps below is read-only and
-> safe. Use `.venv/bin/zicato`; never `uv sync` mid-task.
+> Guardrail: `proposer propose` and `tournament run` call real LLMs and spend
+> budget. Treat them as live runs — get the operator's explicit go-ahead before
+> invoking them (AGENTS.md rule 1). Everything in the "inspect" steps below is
+> read-only and safe. Use `.venv/bin/zicato`; never `uv sync` mid-task.
 
 ## The real command names (verify before you script)
 
@@ -24,63 +24,75 @@ script or note that uses one of those names translates as follows:
 
 | Name in the script | Real CLI | Notes |
 |---|---|---|
-| `zicato run --generation vN --entry <id> [--tail]` | *(none)* | No standalone runner. Runs happen *inside* `tournament` / `evolve`, which execute every board entry against each generation. |
-| `zicato analyze` | `zicato inspect telemetry` | Decision-telemetry analyzer for the current epoch. |
-| `zicato proposer propose --output <file>` | `zicato proposer propose` | No `--output`; it writes `experiment.json` into the next generation dir itself. |
-| `zicato patch apply --experiment <file> --as vN` | *(none)* | No separate apply step. `propose` creates the candidate generation and writes its experiment in one shot; `tournament` / `evolve` apply patches internally. |
-| `zicato tournament run vN vM` | `zicato tournament run PARENT CHILD` | Positional generation ids. |
+| `zicato run --generation vN --entry <id>` | *(none)* | No standalone runner. Runs happen *inside* `tournament run` / `evolve`, which execute every board entry against each generation. |
+| `zicato analyze` | `zicato inspect telemetry` | Decision-telemetry analyzer for an epoch. |
+| `zicato propose --output <file>` | `zicato proposer propose` | No `--output`; it writes the experiment to `epochs/<epoch>/proposals/<vN>.json`. |
+| `zicato patch apply --experiment <file> --as vN` | *(none)* | Only `evolve` applies patches and mints a generation. A proposal written by `proposer propose` is never applied. |
+| `zicato tournament vN vM` | `zicato tournament run PARENT CHILD` | Positional generation ids of generations that already exist. |
 
 Always confirm with `.venv/bin/zicato <cmd> --help` before relying on a flag.
 
-## The manual round, stage by stage
+## The stages, one at a time
 
 ```sh
 Z=.venv/bin/zicato
 
 # 0. Inspect the surface the proposer may touch (read-only, no LLM).
-$Z mutations --show preview                 # add --format json to script it
+$Z inspect mutations --show preview           # add --format json to script it
 
 # 1. Analyzer: (re)build the decision-telemetry insight for this epoch.
 #    Writes insights/round_{N:04d}.md (round_0007.md for --round 7), or
 #    insights/latest.md when --round is omitted.
-$Z analyze-telemetry --round 7              # spends no proposer budget
+$Z inspect telemetry --round 7                # spends no proposer budget
 
-# 2. Propose: generate ONE Experiment for the next generation. (LLM — gated.)
-#    Writes generations/vN+1/experiment.json + per-patch files. No --output.
-$Z propose                                  # uses freshly-run detectors
-$Z propose --patterns-from path/to/patterns.json   # or pin a patterns file
+# 2. Propose: run ONE proposal episode against the current champion. (LLM — gated.)
+#    Writes epochs/<epoch>/proposals/<vN+1>.json and nothing else: no
+#    generation, no lineage entry, no tournament, no outcome.
+$Z proposer propose                           # uses freshly-run detectors
+$Z proposer propose --patterns-from path/to/patterns.json   # or pin a patterns file
 
-# 3. (No separate apply.) Confirm the candidate generation now exists and read
-#    its hypothesis before scoring it.
-$Z epoch list
-sed -n '1,40p' .zicato/epochs/<epoch>/generations/vN+1/experiment.json
+# 3. Read the proposed hypothesis and patches before deciding anything.
+jq '.hypothesis, .patches' .zicato/epochs/<epoch>/proposals/<vN+1>.json
 
-# 4. Tournament: score PARENT vs CHILD and decide promote/reject. (LLM — gated.)
-$Z tournament v3 v4                         # full: re-runs both generations
-$Z tournament v3 v4 --mode fast             # child vs parent's cached aggregate
-$Z tournament v3 v4 --skip-regression       # bypass the regression gate
+# 4. Tournament: re-score an EXISTING generation pair. (LLM — gated.)
+$Z tournament run v3 v4                       # full (default here): re-runs both sides
+$Z tournament run v3 v4 --mode fast           # child vs the parent's cached aggregate
+$Z tournament run v3 v4 --skip-regression     # bypass the regression-suite gate
+$Z tournament run v3 v4 --replicates 1        # force a replicate count for this call
 ```
 
-**`tournament` does NOT encode the verdict in its exit code.** It prints a JSON
-result payload and exits `0` for both promote and reject; a usage/config problem
-raises a `click.ClickException` (exit `1`). There is no fine-grained verdict
-code (no exit `6`=reject) — read the `decision` in the printed JSON, do not
-branch on the exit code for promote-vs-reject.
+`proposer propose` runs the same episode a round runs, but it assembles only
+part of the round's context: the brief and skills, the mutation manifest, the
+loss patterns and summary, the declared judge names and the experiment-memory
+digest. The per-round derived channels (failure-mode profile, metric
+priorities, process exemplars, genealogy, calibration record) are absent.
 
-## What each stage leaves on disk (the inspection points)
+**`tournament run` does NOT encode the verdict in its exit code.** It prints a
+JSON result — `parent_generation_id`, `child_generation_id`, `parent_agg`,
+`child_agg`, `champion_eval_mode`, `per_entry_losses`, and the gate's
+`outcome` (`decision`, `reason`, `delta_scalar`, `delta_pass_rate`,
+`attributable_regressions`, `explanation`) — and exits `0` for promote,
+reject and defer alike. A usage or configuration problem exits `1`. Read
+`.outcome.decision`; do not branch on the exit code for promote-vs-reject.
+
+## What the loop leaves on disk (the inspection points)
 
 All paths are under `.zicato/epochs/<epoch>/`:
 
-- `insights/round_{N:04d}.md` — analyzer output (stage 1).
-- `generations/vN/experiment.json` — hypothesis (written **before** scoring) +
-  `patch_ids` + the `outcome` block (written **after** the tournament).
+- `insights/round_{N:04d}.md` — analyzer output.
+- `generations/vN/experiment.json` — the hypothesis (written **before**
+  scoring) and `patch_ids`.
 - `generations/vN/patches/*.json` — one file per patch.
-- `generations/vN/runs/<entry>/{events.jsonl,loss.json}` — per-entry telemetry.
-  `loss.json` is replicate 0; further replicates land in sibling
-  `loss.r<N>.json` (the default `replicates` is 2, so expect them).
+- `generations/vN/runs/<entry>/seed-<seed>/` — per-entry measurements:
+  `loss.<purpose>.r<draw>.json`, `result.<purpose>.r<draw>.json`, and, for a
+  goldfive-instrumented adapter, `events.<purpose>.r<draw>.jsonl`. Tournament
+  draws use the purpose `tournament`; with the default `replicates` of 2
+  expect `r0` and `r1`.
 - `rounds/<round>/round_log.jsonl` — the round's durable typed event log
   (contract hash → proposal → apply → units → gate → recorded decision).
-- `journal.md` — appended at each promote/reject.
+- `rounds/<round>/field_settlement.json` — the settled outcome of every
+  candidate in the round.
+- `proposals/<vN>.json` — experiments written by `proposer propose` only.
 
 Read these between stages rather than re-running. After any hand-edit of a
 canonical file, run `zicato repair index` so `index.db` re-derives (see
@@ -95,9 +107,9 @@ canonical file, run `zicato repair index` so `index.db` re-derives (see
 
 ## See also
 
-- `docs/design/CLI.md` — full subcommand reference and exit codes.
+- `docs/design/CLI.md` — full subcommand reference.
 - `docs/design/EPOCHS-AND-JOURNALING.md` — the `Experiment` artifact + journal.
 - `docs/design/SCORING.md` — what the tournament gate decides.
-- `docs/design/MUTATION-SURFACE.md` — what `mutations` enumerates.
+- `docs/design/MUTATION-SURFACE.md` — what `inspect mutations` enumerates.
 - sibling skills: `zicato-index-ops`, `zicato-design-experiment`,
   `zicato-triage-stuck-loop`.

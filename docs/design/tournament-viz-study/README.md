@@ -4,8 +4,16 @@ A set of standalone, self-contained, theme-adaptive study pages (one HTML file
 per visualization **level**) that explored and signed off how the Console
 dashboard draws the evolutionary tournament — from the whole workspace down to a
 single generation. Preserved here for posterity: this is the archived design
-record behind the tournament views, **not** a TODO list. **All of the picks
-below are now implemented in the live Console dashboard.**
+record behind the tournament views, **not** a TODO list.
+
+> **Status: a dated design study (2026-06-07), kept as a record.** The picks
+> below were built into the console at the time. The console has moved on in
+> places: every elimination structure, double elimination included, draws the
+> radial bracket (`elimRadial`); the gauntlet round draws `duelFlow` and
+> `gauntletFieldBars`; the swiss round draws `swissLadder` and
+> `swissOverview`; and the elimination and swiss structures run only for a
+> contract that opts into them. For the figures as they stand, read
+> [CONSOLE-DESIGN-LANGUAGE.md §4.1](../CONSOLE-DESIGN-LANGUAGE.md#41-the-figures).
 
 Open any file in a browser to view it offline. Each page carries the full
 16-theme Console swatch picker (top-right) so every figure recolours live, and a
@@ -22,7 +30,7 @@ candidate-dropdown for switching structure where the level is structure-aware.
   epoch / round / matchup / candidate / custom) by picking a level option each,
   and it records the operator's **LIKED** options — their final picks — per
   level (and per *structure* for the single-round level). Liked options are
-  **marked** (♥), not filtered, so every option stays selectable. See the
+  **marked** (♥) and stay in the list, so every option stays selectable. See the
   `LIKED_OPTS` / `LIKED_SINGLE_ROUND` maps in `compose.html`.
 - **`_embed.js`** is the shared iframe-embed shim the composer uses to inline a
   level page as a live, theme-synced figure.
@@ -177,7 +185,7 @@ read spatially. 8 options.
 | 5 | Bracket-side columns + drop traces | WB and LB get their own column families with life pips + scalar; curved drop-traces link a gen's WB origin to its LB re-entry; champion + GF gate in a far-right gutter |
 | 6 | Survival timeline (life-line DAG) | each gen a horizontal life-line whose colour is its lives state (green undefeated → caution after first loss → red ✕ at second); the dot marks the WB→LB drop |
 | **7** | **Mirror-lane bracket (opt 1 + opt 3 combo) — DEFAULT** | **opt 1's full-width tinted lane bands + lives gutter + true WB→LB drop connectors, fused with opt 3's stacked bracket nodes (both competitors per match, winner emphasised, life pips) and a literal GF crossover box — match-level detail without losing the at-a-glance "which lane, how many lives". Connectors use clean orthogonal-pipe (drop-bus elbow) routing so WB→LB drops don't cross.** |
-| **8** | **Radial bracket (polar progression) — OPTIONAL PROTOTYPE** | **a polar layout: the GF crossover at the CENTRE, rounds fanning OUTWARD as concentric rings (time reads inward); WB owns the upper arc (accent, ●●), LB the lower arc (caution, ●○), split by a dashed equator; a WB loss is a drop-arc crossing the equator. Kept as an optional prototype, not the default.** |
+| **8** | **Radial bracket (polar progression) — OPTIONAL PROTOTYPE** | **a polar layout: the GF crossover at the CENTRE, rounds fanning OUTWARD as concentric rings (time reads inward); WB owns the upper arc (accent, ●●), LB the lower arc (caution, ●○), split by a dashed equator; a WB loss is a drop-arc crossing the equator. Kept as an optional prototype beside the default.** |
 
 ### swiss — swiss round (`swiss.html`)
 
@@ -261,6 +269,7 @@ corrections that moved the picks to their final form:
 
 ## Status
 
-These designs have been **implemented in the live Console dashboard**. This
-directory is the archived design record — the bake-off behind the shipped
-tournament views — not a list of outstanding work.
+These designs were built into the Console dashboard in June 2026; the status
+note at the top lists where the console has since diverged. This directory is
+the archived design record — the bake-off behind the shipped tournament
+views — not a list of outstanding work.

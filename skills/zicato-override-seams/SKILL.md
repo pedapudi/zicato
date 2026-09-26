@@ -19,7 +19,7 @@ that breaks, these seams can help bridge your system to zicato.
 ### When
 
 `--adk my_pkg.agent:root_agent` runs the agent inside `goldfive.run()`, which
-captures model turns, streams tool calls into `events.jsonl`, evaluates in-run
+captures model turns, streams tool calls into the run's event stream, evaluates in-run
 judges, and extracts `final_output`. Override for anything else — a custom
 class, a CLI, a service, a black box — and you owe zicato all of that yourself.
 
@@ -38,8 +38,10 @@ directories of it the proposer may rewrite and the `# zicato:mutable` markers
 inside them pick what is editable. Too wide and the proposer breaks the
 harness; too narrow and it finds nothing to change.
 
-- **`make_adapter() -> HarnessAdapter`** — zero-argument module-level factory.
-  Returns the adapter instance at worker startup.
+- **`make_adapter(*args, **options) -> HarnessAdapter`** — module-level
+  factory. It receives `adapter.args` positionally and `adapter.options` as
+  keyword arguments (both empty unless registered with `--factory-args` /
+  `--factory-options`) and returns the adapter instance at worker startup.
 - **`load(snapshot_root: Path) -> RunnableHarness`** — return a session bound to
   `snapshot_root` so the worker exercises mutated code rather than the baseline.
   Raise if the entrypoint will not resolve, so zicato fails the candidate
@@ -61,9 +63,12 @@ harness; too narrow and it finds nothing to change.
 - **`worker_spec() -> dict[str, Any]`** — entries run in a killable subprocess
   your adapter object cannot cross, so zicato ships a recipe instead:
   `{"kind": "import", "factory": "my_pkg.harness:make_adapter"}` plus an
-  optional JSON-serializable `"args": [...]` replayed positionally. Hence
-  `make_adapter` must be importable and module-level. Omit this method and only
-  the built-in ADK shape is recognised — anything else aborts the run.
+  optional JSON-serializable `"args": [...]` replayed positionally, and an
+  optional `"integrations": [...]` list of unique names (an adapter that
+  declares `"goldfive"` requires a `goldfive` block in `scoring.json`). Hence
+  `make_adapter` must be importable and module-level. Every adapter must
+  implement it: an adapter without `worker_spec()`, or one returning a
+  non-dict, is refused before any entry runs.
 
 The worker `await`s your session once per `BoardEntry`:
 
@@ -80,14 +85,13 @@ included: `RunResult(..., aborted=True, abort_reason="wall_clock_budget")` past
 `entry.wall_clock_budget_seconds`. That string is matched verbatim; any other
 spelling leaves `budget_exceeded` false.
 
-⚠️ **The second parameter's name is load-bearing.** Zicato inspects your `run`
-signature, and if that parameter is called `sink_path` or `events_path` it
-assumes an older adapter API: it calls `run(entry, <path to events file>)`
-instead, so you get a `Path` rather than the sink list, `config` is never
-passed, and your returned `RunResult` is thrown away. Nothing errors — the run
-just scores as though the agent produced nothing. Call it `sinks`.
+⚠️ **The signature is checked.** `run` must be an `async def` that can be called
+with three positional arguments, `(entry, sinks, config)`; a synchronous
+method or one that cannot bind three arguments is refused with `loaded harness must expose async run(entry,
+sinks, config)` when the harness loads, in `zicato inspect setup` as in a
+worker.
 
-**Telemetry is now your job.** Nothing but your adapter writes `events.jsonl`.
+**Telemetry is your job.** Nothing but your adapter writes the event stream.
 Emit nothing and the whole drift half of the score is `0.0` — candidates rank
 on pass/fail alone. Push to every sink in the list, which can be empty, and
 never `close()` one; the worker owns them. Two ways to produce the stream:
@@ -166,9 +170,8 @@ operational locations and do not enter the contract hash. Workers receive the
 resolved roots explicitly, with their candidate snapshot first in the import
 search path. The coordinator restores its import tables when execution ends.
 
-The canonical `adapter` declaration also carries `mutable_trees`. Registration
-writes the compatible `mutable_trees` and `source_roots` aliases used by existing
-commands. Fixed drivers, predicates, and summarizers belong outside those trees.
+The canonical `adapter` declaration also carries `mutable_trees`. Fixed
+drivers, predicates, and summarizers belong outside those trees.
 The contract hashes the declared factory path, constructor configuration, and
 resolved implementation source, even when `worker_spec()` returns a constant
 specification. Changing any of those semantic inputs rolls the epoch; a declared
@@ -322,7 +325,7 @@ returned key survives the sanitization rules above.
 
 **What your hook can read.** `lp.metrics` holds your custom numbers only when a
 §2 predicate returned `(score, metrics)`; on a board of `rubric` / `regex` /
-`json_schema` entries it is empty. `drift_counts` and `output_chars` are always there, but `pass_fail` and
+`json_schema` entries it is empty. `metric_counts` and `output_chars` are always there, but `pass_fail` and
 `score` are `None` on aborted or skipped units — guard before arithmetic. Read
 `LossProfile.metrics`, NOT `LossProfile.expectation_result.metrics`: the former
 is the replicate mean, the latter replicate 0's raw values.
@@ -344,4 +347,5 @@ with `zicato inspect setup` before starting measured rounds.
 
 - [BOARD-FORMAT.md](../../docs/design/BOARD-FORMAT.md) · [SCORING.md](../../docs/design/SCORING.md) · [TELEMETRY-DIALECTS.md](../../docs/design/TELEMETRY-DIALECTS.md) · [TELEMETRY.md](../../docs/design/TELEMETRY.md) — expectation schema, the scalar and gate, dialect shapes, `LossProfile`.
 - `skills/zicato-author-board`, `skills/zicato-tune-scoring` — board JSON, weights and gate knobs.
-- `examples/zicato_examples/target_0_convergence/` — a working import-kind adapter (`harness.py`) and the `config.json` block that wires it (`RUN.md` §2).
+- `examples/zicato_examples/target_0_convergence/` — a working import-kind adapter (`harness.py`) and the `config.json` block that wires it (see its `RUN.md`).
+- `zicato init --example` — scaffolds `example_wiring/adapter.py`, a minimal import-kind adapter with its `worker_spec()`.

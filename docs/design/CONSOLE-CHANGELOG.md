@@ -1,7 +1,12 @@
 # The console — round-by-round changelog
 
-> **Status: a historical record.** This file is the round-by-round changelog
-> of the shipped console, and keeps its chronology on purpose. For the visual design language it settled on — the colour-role
+> **Status: a historical record, written 2026-06-01 to 2026-06-08.** This
+> file is the round-by-round changelog of the shipped console, and keeps its
+> chronology on purpose. A heading or sentence that calls a state "current",
+> "converged" or "the default" describes the console as of that entry. The
+> console has changed since: it has no builder view, and its typeface, text
+> size and page-scale controls live in Settings → Appearance rather than the
+> top bar. For the visual design language it settled on — the colour-role
 > system, typography, the mark grammar, and render discipline — read
 > [CONSOLE-DESIGN-LANGUAGE.md](CONSOLE-DESIGN-LANGUAGE.md), which is the
 > source of truth for the present state.
@@ -51,7 +56,7 @@ The console is self-contained under `js/`, `css/console.css`, and the entry
 point `console.js`; it reuses the shared `js/core/*` data spine and imports from
 no other entry's directory, so everything it took from P, S and Q is ported
 in. It is the interface the dashboard serves: `index.html` boots `console.js`,
-and exactly one interface loads at a time.
+and only one interface loads at a time.
 
 ## Decision-loop wave (current default — meta-loop ledger · settings drawer · racing hero · builder view)
 

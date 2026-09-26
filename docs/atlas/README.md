@@ -5,7 +5,7 @@ does, the vocabulary, one round end to end, what the console draws, and the
 command surface. Open the file in a browser; it has no build step and loads
 nothing but its typefaces.
 
-It centres on an interactive map of 88 concepts and 144 relationships, drawn as
+It centres on an interactive map of 88 concepts and 143 relationships, drawn as
 the five parts of a round. A guided walk steps through the 28 that carry the
 loop, in the order the loop moves through them.
 

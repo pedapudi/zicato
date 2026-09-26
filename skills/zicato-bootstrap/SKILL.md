@@ -1,18 +1,17 @@
 ---
 name: zicato-bootstrap
-description: Tier 0 setup — scaffold a fresh .zicato/ workspace, register a target adapter + mutable trees, configure named model engines and roles, and prove the loop end-to-end against the deterministic mock target before spending any real LLM budget. Use this when starting zicato on a new project, wiring a target, or sanity-checking the plumbing.
+description: Setup — scaffold a fresh .zicato/ workspace, register a target adapter + mutable trees, configure named model engines, roles and the proposal runtime, validate the wiring without model requests, and prove the loop end-to-end on the deterministic example project before spending any real LLM budget. Use this when starting zicato on a new project, wiring a target, or sanity-checking the plumbing.
 ---
 
 # zicato bootstrap — zero to first loop
 
-Get a workspace from nothing to a confirmed artifact tree using deterministic
-mocks. No real model calls, no budget spent. Once this passes, an operator can
-swap in real LLMs with `skills/zicato-evolve`.
+Get a workspace from nothing to a confirmed artifact tree. No real model
+calls, no budget spent. Once this passes, an operator can swap in real LLMs
+with `skills/zicato-evolve`.
 
-This is the path for wiring a system under test the operator already has. To
-see the same seven artifacts already wired and running first, `zicato init
---example` scaffolds a complete project that needs no model and no endpoint;
-the README's quickstart runs it end to end.
+Steps 1–4 wire a system under test the operator already has. Step 5 proves the
+loop itself on `zicato init --example`, a complete project that needs no model
+and no endpoint; the README's quickstart runs the same project.
 
 Always invoke the CLI from the project's `.venv` (`.venv/bin/zicato ...` or
 `.venv/bin/python -m zicato.cli ...`). Use `uv sync --all-extras` to install —
@@ -25,15 +24,18 @@ the repo-root `AGENTS.md`.
 .venv/bin/zicato init --workspace .zicato --instance-id my-project
 ```
 
-Writes `.zicato/config.json` (identity, storage, and a guided empty `models`
-section) and an empty
-`.zicato/lineage.json` (`{"epochs": []}`). Refuses to clobber an
-existing workspace without `--force` (and `--force` only rewrites
-config/lineage — it never deletes epoch artifacts).
+Writes `.zicato/config.json` (identity, `generation_source_backend`, a guided
+empty `models` section, and a `proposer` block whose `binary` is the
+placeholder `/path/to/foe`), an empty `.zicato/lineage.json`
+(`{"epochs": []}`), and — only when absent — an empty `scoring.json` (`{}`)
+next to the workspace, which resolves to the recommended contract. Refuses to
+clobber an existing workspace without `--force`; `--force` rewrites
+config/lineage and never deletes epoch artifacts, and it refuses a lineage that
+already records epochs unless `--reset-lineage` is also passed.
 
 ## 2. Register the adapter + the mutable tree(s)
 
-`register` records the target-adapter identity and the source roots the proposer
+`zicato epoch register` records the target-adapter identity and the source roots the proposer
 is allowed to rewrite. It merges into `config.json` (preserves the keys `init`
 wrote).
 
@@ -43,7 +45,7 @@ wrote).
     --mutable-tree ./my_pkg
 ```
 
-- `--adk module.path:agent_symbol` — the ADK adapter entrypoint (required). Two
+- `--adk module.path:agent_symbol` — the ADK adapter entrypoint. Two
   shapes are supported. **In-tree** (above): the entrypoint's top-level module
   IS the basename of one `--mutable-tree` (`my_pkg` ↔ `./my_pkg`) — verified
   lexically at register time. **Dependency shape**: the entrypoint lives outside
@@ -59,13 +61,21 @@ wrote).
   prepends the snapshot root to `sys.path`, which resolves top-level names only.
   A tree whose basename Python cannot name can never be shown to have run from
   the snapshot — every mutation to it would be a scored no-op — so `register`
-  refuses that up front (issue #110). Point it at the importable PACKAGE dir
-  (`--mutable-tree $EX/agent`, not `$EX`).
+  refuses that up front. Point it at the importable PACKAGE dir
+  (`--mutable-tree ./src/my_pkg`, not `./src`).
 - `--board` / `--brief` / `--scoring` — optional; pin the canonical contract
   paths up front (default: alongside the workspace parent). `evolve` resolves
   these itself, so you usually leave them.
+- A target that is not an ADK agent registers a factory instead of `--adk`:
+  `--factory module:callable` (plus `--factory-args` / `--factory-options` and
+  a fixed `--import-root` for the driver). See `skills/zicato-override-seams`.
 
-## 3. Configure model engines only where the adapter needs them
+`epoch register` prints the next step: `zicato inspect setup --workspace .zicato`
+imports the driver, loads one snapshot in a bounded subprocess, and checks the
+grading hooks and configuration without calling a model or running a board
+entry. Run it after every wiring change.
+
+## 3. Configure the model engines and the proposal runtime
 
 The target is adapter-defined: it may be a deterministic program, external
 service, library, or model-backed agent. Do not configure a target LLM merely
@@ -124,6 +134,13 @@ dotted path instead of a `model`, which is how a deterministic smoke test or
 a library integration supplies its own callable; the `target` and
 `evaluation` engines must then resolve to different Python objects.
 
+The proposal runtime is configured separately, in the `proposer` block `init`
+wrote. Replace the placeholder `binary` with the absolute path of the Foe
+executable and fill in `model.provider` / `model.model`; a round refuses to
+open while the placeholder remains. The block, its budget, and the
+alternative `runtime.proposer_agent` class seam are covered in
+`skills/zicato-design-proposer`.
+
 If a text backend exposes separate private-reasoning and answer channels, its
 module-level callable may opt into `zicato.reasoning.reasoning_aware_call_llm`.
 The backend accepts `ModelRequest`, returns `ModelResponse`, and declares both
@@ -142,84 +159,66 @@ Confirm every marker resolves cleanly before running the loop:
 .venv/bin/zicato inspect mutations --workspace .zicato
 ```
 
-You should see one row per `# zicato:mutable id="..."` marker, no warnings, no
-duplicate ids. For a deeper audit (forbidden ids, `--show full`, JSON), use
-`skills/zicato-mutation-audit`.
+You should see one row per `zicato:mutable id="..."` marker, no warnings, no
+duplicate ids, and a `Total: N mutation point(s)` footer. For a deeper audit
+(forbidden ids, `--show full`, JSON), use `skills/zicato-mutation-audit`.
 
-## 5. Run the deterministic mock target end-to-end
+## 5. Prove the loop on the deterministic example project
 
-The vendored presentation target ships byte-deterministic mock LLMs — they
-exercise the full propose -> apply -> snapshot -> tournament -> persist ->
-journal path without spending budget. Run it from a scratch workspace to prove
-your environment is wired correctly:
+`zicato init --example` writes a complete project next to a fresh workspace: a
+system under test with one mutable span, an import-kind adapter that runs it,
+predicates that grade it, a scripted proposer class bound through
+`runtime.proposer_agent`, deterministic callables for the `target` and
+`evaluation` engines, a four-entry board, a brief, and a scoring contract.
+Nothing in it calls a model. Run it in a scratch directory:
 
 ```sh
-EX=examples/zicato_examples/target_1_presentation
-PY=.venv/bin/python
-
+ZICATO=/path/to/zicato/checkout
 rm -rf /tmp/zicato-smoke && mkdir -p /tmp/zicato-smoke && cd /tmp/zicato-smoke
 
-$PY -m zicato.cli init --workspace .zicato
-$PY -m zicato.cli epoch register --workspace .zicato \
-    --adk agent.agent:root_agent \
-    --mutable-tree "$OLDPWD/$EX/agent"
-$PY -m zicato.cli epoch new t1_smoke --workspace .zicato \
-    --board "$OLDPWD/$EX/board.jsonl" \
-    --brief "$OLDPWD/$EX/rubric.md" \
-    --scoring "$OLDPWD/$EX/scoring.json"
-# `evolve` takes no model options: an engine naming a `call_llm`
-# dotted path is how these deterministic mocks reach the two roles.
-$PY - <<'PYEOF'
-import json, pathlib
-cfg_path = pathlib.Path(".zicato/config.json")
-cfg = json.loads(cfg_path.read_text())
-cfg["models"] = {
-    "engines": {
-        "target": {"call_llm": "zicato_examples.target_1_presentation.mocks:target_llm"},
-        "evaluation": {"call_llm": "zicato_examples.target_1_presentation.mocks:aux_llm"},
-    },
-    "roles": {},
-}
-cfg_path.write_text(json.dumps(cfg, indent=2) + "\n")
-PYEOF
-$PY -m zicato.cli inspect mutations --workspace .zicato   # lists the example's mutable ids
-$PY -m zicato.cli evolve --workspace .zicato \
-    --rounds 1 --mode full --no-dashboard
+$ZICATO/.venv/bin/zicato init --example
+$ZICATO/.venv/bin/zicato inspect setup --workspace .zicato
+$ZICATO/.venv/bin/zicato evolve --workspace .zicato --rounds 1 --no-dashboard
 ```
 
-`epoch new` is shown explicitly here; `evolve` will auto-open/auto-roll epochs
-on its own if you skip it (place `board.jsonl` / `brief.md` / `scoring.json`
-next to the workspace and let `evolve` resolve the contract). The
-`examples/zicato_examples/target_1_presentation/RUN.md` walkthrough is the
-canonical reference.
+No `epoch new` is needed: `evolve` finds no current epoch, resolves the
+contract from `board.jsonl`, `brief.md` and `scoring.json` beside the
+workspace, and opens epoch `e0`.
 
 ## What success looks like
 
-- `evolve` exits 0 and prints a JSON array, one object per round. With the mock,
-  expect `tournament_decision: "rejected"` and `delta_scalar: 0.0` — the
-  deterministic mock makes parent and child byte-equivalent, so the gate fires
-  "insufficient improvement / margin". **This is the correct outcome.**
-- The stderr `goldfive.planner: JSON parse failed` warnings are expected: the
-  mock returns prose rather than planner JSON. The plumbing still records real
-  `events.jsonl` per entry.
-- The artifact tree exists under
-  `.zicato/epochs/<id>/generations/{v0,v1,...}/` — each generation has
-  `snapshot/`, `runs/<entry>/events.jsonl`, and (for non-baseline) `patches/`
-  + `experiment.json`. Spot-check:
+- `evolve` exits 0, prints `evolve: completed all 1 requested rounds.`, and
+  prints a JSON array with one object per round: `parent_generation_id`,
+  `proposed_generation_id`, `parent_scalar`, `child_scalar`, `delta_scalar`,
+  `tournament_decision`, `rejection_reason`. The example's first round
+  promotes `v1` over `v0` (`delta_scalar: -0.25`).
+- The artifact tree exists under `.zicato/epochs/<epoch_id>/`:
+  `generations/{v0,v1}/` each hold `gen_score.json`, `harness_load.json`,
+  `experiment.json` and `runs/<entry_id>/seed-none/` (one
+  `loss.<purpose>.r<draw>.json` and `result.<purpose>.r<draw>.json` per
+  measurement); `v1` also holds `patches/*.json`; `rounds/0/` holds
+  `round_log.jsonl` and `field_settlement.json` (the settled outcome). The
+  source trees live in `.zicato/repo-worktrees/<epoch_id>/<generation>/`
+  under the default git backend, or `generations/<generation>/snapshot/`
+  under the directory backend.
+
+Spot-check:
 
 ```sh
-cat .zicato/lineage.json                                 # epochs + generations DAG
-cat .zicato/epochs/*/generations/v1/patches/*.json       # the lifted Patch
+.venv/bin/zicato epoch list --workspace .zicato             # promoted / rejected counts per epoch
+cat .zicato/epochs/*/generations/v1/patches/*.json          # the lifted Patch
+jq '.candidates[] | {generation_id, decision: .outcome.tournament_decision}' \
+   .zicato/epochs/*/rounds/0/field_settlement.json          # the recorded outcome
 ```
 
 Once this passes the plumbing is proven. Hand off to `skills/zicato-evolve`
-(configure live named engines and roles) — and remember the
-**live-run gate**: never start a real-LLM `evolve` without the user's explicit
-go-ahead.
+(configure live named engines, roles and the proposal runtime) — and remember
+the **live-run gate**: never start a real-LLM `evolve` without the user's
+explicit go-ahead.
 
 ## Reference
 
 - [docs/design/DOGFOOD-TARGETS.md](../../docs/design/DOGFOOD-TARGETS.md) — the three targets.
 - [docs/design/ARCHITECTURE.md](../../docs/design/ARCHITECTURE.md) — read first; the meta-loop.
 - [docs/design/MUTATION-SURFACE.md](../../docs/design/MUTATION-SURFACE.md) — marker syntax.
-- [examples/zicato_examples/target_1_presentation/RUN.md](../../examples/zicato_examples/target_1_presentation/RUN.md) — full worked walkthrough.
+- [examples/zicato_examples/target_0_convergence/RUN.md](../../examples/zicato_examples/target_0_convergence/RUN.md) — a deterministic target with a known answer, driven end to end.

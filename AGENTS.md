@@ -12,7 +12,7 @@ touching the repo or driving a workspace. The human-facing overview is
 > [`docs/dev-guide/00-INDEX.md`](docs/dev-guide/00-INDEX.md), or the
 > [`zicato-dev-guide`](skills/zicato-dev-guide/SKILL.md) skill for the doorway).
 > It carries the 10 Golden Rules, the per-surface chapter map, the pre-commit
-> verification ladder, the master invariant index, and the ten shipped bugs as
+> verification ladder, the master invariant index, and the twelve shipped bugs as
 > teaching cases. The "Hard rules for agents" section below is the short form;
 > the guide is the long form and is kept honest against the code.
 
@@ -38,22 +38,23 @@ zicato init      # scaffold ./.zicato/ once
 zicato evolve    # the single happy-path entry point to the loop
 ```
 
-Everything else (`board`, `propose`, `tournament`, `epoch`, `reindex`,
-`mutations`, `health`, `dashboard`, …) is an advanced / debug
-tool for driving one stage in isolation or opening a view on the
-workspace. `evolve` orchestrates the loop for you.
+Everything else (`board`, `epoch`, `proposer`, `tournament`, `inspect`,
+`repair`, `health`, `dashboard`) is an advanced / debug tool for driving
+one stage in isolation or opening a view on the workspace — for example
+`zicato proposer propose`, `zicato inspect mutations`, or `zicato repair
+index`. `evolve` orchestrates the loop for you.
 
 ## Vocabulary (load-bearing)
 
 - **epoch** — a sealed evaluation contract + a goal; houses many generations.
 - **generation** (`v0`, `v1`, …) — one candidate snapshot of the system under test; houses many board runs.
-- **run** — one board entry executed against one generation; emits `events.jsonl` + `loss.json`.
+- **run** — one board entry executed against one generation; emits an events log and a loss profile (`events.<purpose>.r<n>.jsonl`, `loss.<purpose>.r<n>.json`).
 - **round** — one propose → apply → tournament → promote/reject cycle.
 - **champion / challenger** — the tournament roles (the pair being compared). **parent / child** — the same pair named by lineage. Use champion/challenger for tournament framing, parent/child for lineage.
 - **experiment** — the artifact carrying a mandatory **hypothesis** (written before the run), the patches, and the **outcome** (written after).
 - **mutation point** — a span, bracketed region, or whole file the proposer may edit, marked `zicato:mutable id="..."` in a comment. Markers live in `.py` files and in any allowlisted text file (markdown, YAML, TOML, …). `zicato inspect mutations` audits the surface.
 - **scalar / loss** — lower is better; a weighted drift-derived loss plus per-task pass/fail. Per-judge drift folds in weighted by `judge_name`.
-- **proposer brief** — the operator's brief to the proposer (`brief.md`): the goal, constraints, and `## Forbidden` mutation ids.
+- **proposer brief** — the operator's brief to the proposer (`brief.md`): the goal, constraints, and the mutation ids listed under a `Forbidden edits` heading.
 
 Full glossary: [`docs/design/VOCABULARY.md`](docs/design/VOCABULARY.md).
 
@@ -64,8 +65,8 @@ Agent-driven workflows for operating zicato live under
 They are the recommended way to exercise the self-improvement loop:
 they encode the right command sequence, the artifacts to read, and the
 guardrails. See [`skills/README.md`](skills/README.md) for the catalog.
-To make them available to an agent/coding-assistant session, symlink or copy a
-skill into `.claude/skills/<name>/`.
+To make them available to an agent session, symlink or copy a skill's
+directory into your agent harness's skills directory.
 
 ## Hard rules for agents
 
@@ -74,24 +75,29 @@ These override convenience. Violating them is a defect.
 1. **Gate live evolve runs.** Never start a live `zicato evolve` (one
    that calls real LLMs / spends budget) without the user's explicit
    go-ahead. Verify changes with the test suite and the deterministic
-   mock target (`examples/zicato_examples/target_1_presentation`), not
-   live runs.
+   targets that call no model (the project `zicato init --example`
+   writes, and `examples/zicato_examples/target_0_convergence`), not
+   live runs. A command-line run of
+   `examples/zicato_examples/target_1_presentation` is a live run: its
+   agent tree calls a real model.
 2. **`uv sync --all-extras` — always.** A bare `uv sync` drops the dev
    tooling (pytest, mypy, ruff, even `uv`) from `.venv/`. Use
    `make install` (which wraps it) or `uv sync --all-extras`.
 3. **Report the dashboard URL.** Every `evolve` launch enables the
-   dashboard; surface its URL to the operator (default
+   dashboard unless it is given `--no-dashboard`; surface its URL to the operator (default
    `http://127.0.0.1:7892`, override with `--dashboard-port`). The
-   dashboard binds `127.0.0.1` only — there is no LAN-expose flag in
-   the shipped CLI, so it is local by default.
+   dashboard `evolve` spawns binds `127.0.0.1` only; `evolve` has no
+   bind-address flag. The standalone `zicato dashboard` binds
+   `127.0.0.1` by default and accepts `--host` for another address.
 4. **The filesystem is canonical; the index is derived.** `.zicato/`
    JSONL/JSON files are the source of truth; `index.db` is a
    rebuildable SQLite projection. Never hand-edit the index; after a
    hand-edit of a canonical file, run `zicato repair index`.
 5. **Contract edits roll epochs.** Editing `board.jsonl`, `brief.md`,
-   `scoring.json`, the registered harness, or the proposer (a
-   `proposers/<name>/` dir or one of its skills) changes the evaluation
-   contract — the next `evolve` auto-epochs (use `--no-auto-epoch` to
+   `scoring.json`, the registered harness, or the proposer (the
+   `proposer` block or `runtime.proposer_agent` binding in
+   `config.json`, or a `proposers/<name>/` dir and its skills) changes
+   the evaluation contract — the next `evolve` auto-epochs (use `--no-auto-epoch` to
    make a drifted contract an error instead). Editing a live board mid-
    epoch therefore rolls the epoch and resets pattern history; reach for
    the `board` subcommands only to inspect or hand-edit a frozen board.

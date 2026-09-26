@@ -1,6 +1,6 @@
 ---
 name: zicato-watch-dashboard
-description: Open and read zicato's live "Console" dashboard during (or after) an evolve run — navigate the view hierarchy Environment → Epoch → Generations/round Match-ups → Boards → Evals → Mutation surface → Instrument/Traces → Publication, read the configured tournament structure's match-up figure (racing survival funnel / swiss ladder / elim flow / gauntlet Δ-lanes), tell whether the loop improved, and narrate what is running. Screenshot it with browser-use. Use whenever you need to observe an in-flight or post-mortem epoch.
+description: Open and read zicato's live "Console" dashboard during (or after) an evolve run — navigate the view hierarchy Environment → Epoch → Generations/round Match-ups → Boards → Evals → Mutation surface → Instrument/Traces → Publication, read the configured tournament structure's match-up figure (racing survival funnel / swiss ladder / radial elimination bracket / gauntlet Δ-lanes), tell whether the loop improved, and narrate what is running. Screenshot it with browser-use. Use whenever you need to observe an in-flight or post-mortem epoch.
 ---
 
 # Watch the zicato dashboard (Console)
@@ -28,13 +28,14 @@ To serve the dashboard standalone against an existing workspace (post-mortem of
 a closed epoch, or attach to a workspace another `evolve` is driving):
 
 ```sh
-uv run --project . zicato dashboard --workspace .zicato        # foreground; Ctrl-C to stop
-uv run --project . zicato dashboard --port 7892                # default host 127.0.0.1
+.venv/bin/zicato dashboard --workspace .zicato        # foreground; Ctrl-C to stop
+.venv/bin/zicato dashboard --port 7892                # default host 127.0.0.1
 ```
 
 Real flags only — `zicato dashboard` exposes `--workspace` (default `.zicato`),
 `--host` (default `127.0.0.1`), `--port` (default `7892`), and `--static-dir`
-(unset ⇒ the bundled `zicato/dashboard/static`). That is the whole surface;
+(unset ⇒ `dashboard.static_dir` from the workspace config, and when that is
+empty the bundled `zicato/dashboard/static`). That is the whole surface;
 there is no read-only or daemon mode. In an agent run, prefer reading the URL
 `evolve` already printed over binding a port yourself.
 
@@ -80,10 +81,10 @@ Match-ups detail — so the operator reads one shape rather than three:
 
 | Structure | Match-ups figure | Notes |
 |---|---|---|
-| **racing** (successive halving) | the **survival funnel** — the field flowing `N → N/2 → … → 1 → champion-gate`, each rung a trapezoid sized ∝ surviving field; survivors ride inside the band (`↑`), eliminated competitors peel off as labelled dead-end branches (`✕`). Same funnel on epoch page, live hero, and Match-ups. | the field is raced Δ-vs-champion-v0 on a growing board fraction; v0 defends at the gate, never a rung lane. |
+| **racing** (successive halving; the recommended default) | the **survival funnel** — the field flowing `N → N/2 → … → 1 → champion-gate`, each rung a trapezoid sized ∝ surviving field; survivors ride inside the band (`↑`), eliminated competitors peel off as labelled dead-end branches (`✕`). Same funnel on epoch page, live hero, and Match-ups. | the field is raced Δ-vs-champion-v0 on a growing board fraction; v0 defends at the gate, never a rung lane. |
 | **swiss** | the **swiss ladder** (a column per round, accumulating Copeland points: win 1 / draw ½, leader flowing into the gate) + **Copeland standings**. The epoch hero uses the compact **swiss overview** (a standings bump chart over a ranked Copeland bar). | leader must beat the incumbent at the champion-gate. |
 | **single_elim / double_elim** | the **radial bracket** (`elimRadial`) — rounds are concentric rings narrowing to a centre champion seat, one spoke per competitor; a spoke's surviving segments read green, the ring it was eliminated at ends with `✕`, the champion's spoke dashes into the crowned seat (`♛`). Double-elim puts the winners' bracket on the upper arc and the losers' on the lower, split by a dashed equator, with a rim arc carrying each drop. | there is no seat-and-box bracket tree and no lane-flow bracket. |
-| **gauntlet** (default) | the field as **Δ-vs-champion lanes** — a signed dot-plot: a Δ=0 reference rule is the champion, each challenger a dot **below** the rule when it improved (good) / **above** when it regressed (bad), status as a glyph (`↑`/`✕`/`○`). | per-challenger hypothesis + exact Δ on hover. |
+| **gauntlet** | the field as **Δ-vs-champion lanes** — a signed dot-plot: a Δ=0 reference rule is the champion, each challenger a dot **below** the rule when it improved (good) / **above** when it regressed (bad), status as a glyph (`↑`/`✕`/`○`). | per-challenger hypothesis + exact Δ on hover. |
 
 **Standings are structure-aware.** Racing **drops the W/L columns** (there is no
 head-to-head — each rung ranks by scalar and cuts the worst; the promote/reject
@@ -109,7 +110,7 @@ reference** ("↑ … defends") under each later round it defends — labeled
 header itself reads the gate outcome (e.g. `v3 defends · ▲ v6 promoted` or
 `v3 defends · — held`). This round layer shows ONLY when there is real round
 structure (`>1` round, or a `round_index` stamp on the generations); **without
-`round_index` it degrades to today's flat generation list.** A generation with
+`round_index` it degrades to a flat generation list.** A generation with
 no parent and no resolved outcome is badged `◌ unscored` (an orphan), never a
 misleading "seed" or a default "rejected".
 
@@ -122,8 +123,9 @@ misleading "seed" or a default "rejected".
 - **A tournament reads running ONLY when the heartbeat is FRESH.** The
   supervisor rewrites the heartbeat every few seconds; a frozen heartbeat from a
   torn-down run (older than ~30 s, or with no parseable timestamp) **must not**
-  read "running" — even though `active_tournament.json` lingers on disk with
-  `phase: "running"`. (An in-flight `active-runs` record is the one exception —
+  read "running" — even though the tournament event log
+  (`runtime/active_tournament.events.jsonl`) lingers on disk reading
+  `running`. (An in-flight `active-runs` record is the one exception —
   per-run beaters bump it independently, so a present active-run forces live on
   its own.) This closes the dead-run-shows-LIVE bug class.
 - **Digest-gated rendering — no flashing.** A no-op SSE heartbeat writes **zero
@@ -184,7 +186,7 @@ For a no-browser read, run the loop-health CLI or curl the live server's
 file-backed JSON endpoints:
 
 ```sh
-uv run --project . zicato health --workspace .zicato        # loop-health report (no browser)
+.venv/bin/zicato health --workspace .zicato        # loop-health report (no browser)
 curl -s http://127.0.0.1:7892/api/environment               # consolidated state the UI loads
 curl -s http://127.0.0.1:7892/api/active-tournament         # live topology (null when idle)
 curl -s http://127.0.0.1:7892/api/active-runs               # in-flight board units
@@ -204,8 +206,8 @@ completed record so a mid-run epoch never shows an empty ladder.
 - **Do not start a live `zicato evolve`** to get a dashboard — only the operator
   starts live runs (the live-run gate). *Reading* a running dashboard, attaching
   with `zicato dashboard`, or post-morteming a finished epoch is always fine.
-- Cite only flags that appear in real `uv run --project . zicato dashboard
-  --help` output. `docs/design/CLI.md` is generated from `--help` and reconciled
+- Cite only flags that appear in real `.venv/bin/zicato dashboard --help`
+  output. `docs/design/CLI.md` is generated from `--help` and reconciled
   against it, but `--help` stays canonical when they disagree.
 - Files are canonical; the live panels read JSON/JSONL, the index is derived and
   lags to generation boundaries.

@@ -29,7 +29,7 @@ contract is enforced through `<ws>/.harmonograf/server.json`:
   Otherwise it launches a fresh server (`start_harmonograf`) bound to the
   workspace db, rewrites `server.json`, and returns `launched=True`.
 * Every launcher routes through this helper: `zicato dashboard` (`dashboard/server.py:_ensure_workspace_harmonograf`)
-  AND a live `zicato evolve` (`orchestrator.py:_resolve_or_launch_harmonograf`).
+  AND a live `zicato evolve` (`evolve/lifecycle_services.py:_resolve_or_launch_harmonograf`).
   Because all paths consult `server.json` first, no two processes ever
   open the same sqlite file: whoever wins the race writes the record, the
   loser reuses it.
@@ -44,9 +44,13 @@ The server binds **two** ports: a browser-facing gRPC-Web port (the
 `web_url`, used for dashboard deep-links) and a native gRPC port (the
 `grpc_target`, which the per-run / meta-loop sinks dial). Conflating the
 two — dialing the web port over native gRPC — silently drops all
-telemetry, so the split is load-bearing (see `telemetry/sink.py`
-`resolve_harmonograf_grpc_target` and the internal `ZICATO_HARMONOGRAF_GRPC`
-handoff, which the auto-launch lifecycle sets rather than the operator).
+telemetry, so the sinks must dial the native port (see `telemetry/sink.py`
+`resolve_harmonograf_grpc_target`). An auto-launched server's native
+target reaches each tournament worker in its typed runtime context
+(`zicato.runtime.context`, pointed to by the `ZICATO_RUNTIME_CONTEXT`
+variable the worker sets for itself); the operator never sets it. When the
+inherited web URL matches, the sink dials that native target; otherwise it
+derives the native port from the URL.
 
 Harmonograf owns listener readiness. Its async `start()` returns only after
 native gRPC is listening and `/healthz` answers, and it rolls back partial
@@ -124,7 +128,7 @@ proposer/judge envelope onto that one session. Deep-link route:
 evolve start ISO, which the dashboard does not otherwise know. The
 canonical recovery is to read the `session_id`/`sessionId` off the first
 line of `meta_loop_events.jsonl`
-(`state_reader.py:read_meta_loop_session_id`). That works during a live
+(`query/runtime_view.py:read_meta_loop_session_id`). That works during a live
 evolve and post-mortem off the persisted JSONL.
 
 ## 3. The two dashboard surfaces
@@ -199,8 +203,9 @@ responses, and filesystem paths must not be placed in session metadata.
 
 The live `Heartbeat` (`runtime/state.py`) carries `harmonograf_url` and
 `harmonograf_meta_session`; the standalone dashboard injects both in
-`state_reader.py:_read_heartbeat_with_harmonograf` (post-mortem recovery
-reads the meta session off the JSONL). Precedence mirrors `harmonograf_url`:
+the query layer's heartbeat view (`query/runtime_view.py`, behind
+`read_heartbeat_dict`); post-mortem recovery reads the meta session off
+the JSONL. Precedence mirrors `harmonograf_url`:
 a live evolve's heartbeat value wins; the dashboard only fills when absent.
 
 ## 5. Liveness vs post-mortem
@@ -211,7 +216,7 @@ true` (a standalone dashboard resolved a per-workspace server that does
 NOT die with a run). The evolve-launched server exists only in case (a).
 So a post-mortem dashboard over a finished workspace still lights up both
 surfaces, because `ensure_workspace_harmonograf` relaunched a server over
-the persisted db and `state_reader` injected the URL + meta session id.
+the persisted db and the query layer injected the URL + meta session id.
 
 ## 6. Failure isolation summary
 
@@ -244,10 +249,10 @@ span of a kind shares one lane); `name` is the per-instance label (`task_id`):
 
 | kind | opened at | one span per | children |
 |---|---|---|---|
-| `round` | `evolve/loop.py:_run_round` | evolve round (both pipelines) | phases, matchups |
-| `phase` | the stage seams | `propose` / `apply` / `gate` | slots (propose), the derive (apply) |
-| `matchup` | `tournament/scheduling.py:_bounded` | scheduled board unit | workers |
-| `worker` | `tournament/scheduling.py:_run_unit_cache_first` | subprocess run (cache MISS only) | — |
+| `round` | `evolve/loop.py:_run_round` | evolve round | phases, matchups |
+| `phase` | `evolve/propose_apply.py` (`propose`), `evolve/round.py` (`apply`), `tournament/runner.py` (`gate`) | `propose` / `apply` / `gate` | slots (propose), the derive (apply) |
+| `matchup` | `tournament/scheduling.py` (the bounded unit schedulers) | scheduled board unit | workers |
+| `worker` | `tournament/scheduling.py:_run_unit_after_cache_miss` | subprocess run (cache MISS only) | — |
 | `slot` | `proposer/best_of_n.py:_run_one_slot` | best-of-N slate slot | — |
 
 ### 7b. Nesting is inferred from the ambient context
@@ -275,10 +280,9 @@ Metadata (`meta`) is **ids / phase-names / timings only** — never board conten
 never scores beyond what the §2b judge spans already carry. It rides the
 completed envelope's `summary` (a small JSON blob); a worker stamps the run's
 goldfive `adk_session_id` there so a harmonograf user can cross-jump into the
-board run's own session (§2a). **Deviation — no pid.** No span stamps a
-subprocess pid today; the worker span carries `run_id` / `side` / `entry_id` and
-the run's `adk_session_id` only (an earlier `_SpanHandle` docstring implied a pid
-that was never emitted).
+board run's own session (§2a). No span stamps a subprocess pid; the worker
+span carries `run_id` / `side` / `entry_id` and the run's `adk_session_id`
+only.
 
 ### 7c. Disciplines (all tested)
 
@@ -313,17 +317,11 @@ that was never emitted).
 
 ### 7d. The proposer / judge lifelines are IN the tree
 
-The §2b proposer and judge emits predate the structural spans. Each emits a
-paired `AgentInvocation{Started,Completed}`. Because goldfive ships no
-`ProposerCallStarted` envelope of its own, an early form of these emits
-serialised the payload JSON into the STARTED envelope's
-`parent_invocation_id`, which is the field harmonograf reads as the tree PARENT
-(`ingest.py:_on_agent_invocation_started`). A JSON blob matches no invocation,
-so those lifelines rendered as **detached orphan roots** beside the span tree,
-leaving the proposer — the lifeline an operator watches most — outside the
-unified picture.
-
-They now parent the same way a structural span does. The started envelope's
+The §2b proposer and judge emits each send a paired
+`AgentInvocation{Started,Completed}`. They parent the same way a structural
+span does, because harmonograf reads the STARTED envelope's
+`parent_invocation_id` as the tree parent
+(`ingest.py:_on_agent_invocation_started`). The started envelope's
 `parent_invocation_id` carries the ambient `_current_span_id`, so a proposer
 call nests under its propose or `slot` span and a judge under `gate`. The
 payload rides the COMPLETED envelope's `summary`, which is the same field the
@@ -332,14 +330,13 @@ payload by invocation id, and `_emit_paired_completed` folds it in under the
 completed metrics. With no ambient span — a bare propose in a unit test,
 for instance — the parent is empty and the lifeline renders as a root.
 
-**Back-compat.** Old `meta_loop_events.jsonl` files still carry blob parents on
-their proposer/judge started lines; harmonograf tolerates them (a non-matching
-parent is simply treated as a root). The one zicato-side reader of that JSONL —
-`read_meta_loop_session_id` (§2b) — reads only `session_id` off the first line,
-never the payload or the parent, so it is unaffected by either representation.
+A `parent_invocation_id` that matches no invocation renders as a root.
+The one zicato-side reader of `meta_loop_events.jsonl` —
+`read_meta_loop_session_id` (§2b) — reads only `session_id` off the first
+line, never the payload or the parent.
 
 Coverage is scoped to the seams that carry concurrency. Three seams are not
 instrumented: the sequential `context-build` seam, the sequential `persist`
 seam, and a dedicated `tournament` wrapper phase, without which matchups nest
-directly on the round span. Instrumenting them is follow-up work rather than a
-correctness gap.
+directly on the round span. Their absence leaves those intervals as
+unlabelled time on the round span; it does not affect any recorded result.

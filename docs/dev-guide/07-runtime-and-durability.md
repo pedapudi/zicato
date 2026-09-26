@@ -139,7 +139,7 @@ The run and experiment call sites are:
 
 | Site | Symbol | Fires when | Rows touched |
 |------|--------|-----------|--------------|
-| Run settles | `zicato.tournament.worker_transport._ingest_run_into_index` (called by `zicato.tournament.runner`) | the run's `loss.json` has just been written | `runs`, `loss_profiles`, `metric_counts` |
+| Run settles | `zicato.tournament.worker_transport._ingest_run_into_index` (called by `zicato.tournament.worker_execution._run_single`) | the run's measurement loss file has just been written | `runs`, `loss_profiles`, `metric_counts` |
 | Experiment written / outcome updated | `zicato.evolve.ingest._ingest_experiment_into_index` | `experiment.json` is written, and again when its outcome lands | `experiments`, `patches`, `tournaments` |
 
 Read the except clauses carefully — this is the doctrine's teeth:
@@ -224,9 +224,9 @@ deciding *where a new datum belongs* and *what happens to it in a crash*.
 | Ancestry, proposals, and epoch inputs | `lineage.json`, `epochs/{e}/generations/{g}/experiment.json` + `patches/*.json`, per-epoch `config.json` / `scoring.json` / `board.jsonl` / `brief.md`, cached `gen_score.json` | Canonical inputs | Orchestrator through the owning record APIs and `StorageBackend` | Resume, index ingest, dashboard, analyzer, garbage collection | Atomic per record (D3). Applied challengers have pending ancestry entries. Experiment readers combine proposals with committed round outcomes; lineage readers derive promotion status from those same outcomes. The journal is rendered from accepted experiments. |
 | Committed round record | `epochs/{e}/rounds/{n}/field_settlement.json` | Canonical decisions, tournament details, and external hook status | Round settlement | Resume, experiment and lineage readers, champion selection, index ingest, dashboard | An atomic change to `state=committed` publishes every candidate outcome and the primary promoted generation together. Index refresh follows publication and records success or repair requirements. Hook delivery status is retained separately from the immutable decisions. |
 | Ladder query budget | `epochs/{e}/ladder_state.json` plus `ladder_state.initialized.json` | Canonical statistical state | Tournament governor | Tournament runner and holdout evidence records | Each pending reservation stores an epoch-state-bound identity and its pre-charge budget. The reservation is atomically persisted before holdout work starts and consumed once during settlement. A foreign workspace is rejected before its state is opened. An established state that is missing, malformed, unwritable, or unlocked fails closed; a crash may waste a reservation but cannot restore it. |
-| Per-run records | `epochs/{e}/generations/{g}/runs/{entry}/loss.json` | Canonical — and the board-unit cache: keyed `(generation, entry, replicate)` | The run's worker subprocess | Tournament runner (cache hits), reducer, index ingest, resume (`_has_any_loss`) | Atomic write; a completed unit survives any crash and is a permanent cache HIT for resume. |
-| Telemetry | `epochs/.../runs/{entry}/events.jsonl` (one per BOARD UNIT — replicate `r>0` is the sibling `events.r{r}.jsonl`) | Canonical event capture (goldfive's format) | goldfive `JSONLPersistenceSink` inside the worker | Reducer (once), dashboard log panel, harmonograf — all through `telemetry/event_log.py`, the one reader (TELEMETRY-DIALECTS.md §1) | Append-only; a torn tail costs its own line and is reported as such (D4). |
-| Runtime state | `runtime/heartbeat.json`, `runtime/lock.json`, `runtime/active_runs/*.json`, `runtime/active_tournament.events.jsonl`, `runtime/progress.events.jsonl`, `runtime/dashboard.json`, `runtime/inconclusive/*.json` | Canonical but EPHEMERAL — describes the live process rather than history | Orchestrator + each run's worker (own file each) | Rust supervisor, dashboard, `prepare_resume` (which deletes it) | Discarded wholesale on restart by `clear_runtime_state`; the supervisor treats absence as "never booted". |
+| Per-run records | `epochs/{e}/generations/{g}/runs/{entry}/seed-{seed}/loss.{purpose}.r{draw}.json`, with `result.…json`, `judge_io.…jsonl`, produced-file artifacts, and `.a{n}` attempt siblings | Canonical — and the board-unit cache: keyed `(generation, entry, purpose, draw, seed)` | The run's worker subprocess; the tournament scheduler for attempt records | Tournament runner (cache hits), reducer, index ingest, resume (`_has_any_loss`) | Atomic write; a completed unit survives any crash and is a cache HIT for resume. A rerun archives the prior attempt before it executes. |
+| Telemetry | `epochs/.../runs/{entry}/seed-{seed}/events.{purpose}.r{draw}.jsonl` (one per board unit, beside its loss record) | Canonical event capture (goldfive's format) | goldfive `JSONLPersistenceSink` inside the worker | Reducer (once), dashboard log panel, harmonograf — all through `telemetry/event_log.py`, the one reader (TELEMETRY-DIALECTS.md §1) | Append-only; a torn tail costs its own line and is reported as such (D4). |
+| Runtime state | `runtime/heartbeat.json`, `runtime/lock.json`, `runtime/active_runs/*.json`, `runtime/active_tournament.events.jsonl`, `runtime/progress.events.jsonl`, `runtime/dashboard.json`, `runtime/inconclusive/*.json` | Canonical but EPHEMERAL — describes the live process rather than history | Orchestrator + each run's worker (own file each) | Rust supervisor, dashboard, `prepare_resume` | On restart `clear_runtime_state` removes the heartbeat, the active-run records, and the tournament log; loop startup clears the progress log. The lock is replaced by the next acquisition. The supervisor treats absence as "never booted". |
 | Control protocol | `runtime/control/` (flags, targeted files, payload file), `runtime/control_log/` (audit sidecars) | Canonical commands + canonical audit trail | Dashboard / CLI / operator `touch` write; orchestrator consumes; supervisor writes `kill_requests/` markers on POST | Orchestrator safe-points; supervisor's kill loop | Claim-once move semantics; consume writes the audit log BEFORE deleting the source, so a crash mid-consume duplicates observably rather than losing (D10). |
 | RoundLog | `epochs/{e}/rounds/{n}/round_log.jsonl` | Canonical durable trace of one round's decisions (but emission is best-effort — D11) | Orchestrator's `_RoundLogEmitter` (single writer) | `fold_round_record` consumers: dashboard round timeline, tests, post-hoc analysis | Append-only, torn-tail tolerant (D4); survives resume (it lives under `epochs/`, never under `runtime/`). |
 | SQLite index | `index.db` | Derived | Live projection + `zicato repair index` | Python query layer (`zicato.query`), Rust supervisor (read-only) | Rebuildable from canonical records. Index failure cannot invalidate a committed decision. |
@@ -367,7 +367,7 @@ sloppiness — an interior tear is never tolerated:
 
 ```python
         The newline commits a record. An unterminated byte suffix is ignored
-        before text decoding, even if it contains valid JSON. Every malformed
+        before text decoding, even if it contains valid JSON. Invalid JSON in a
         complete line raises :class:`ValueError`. An absent file is empty.
 ```
 — `src/zicato/epoch/round_log.py`, `RoundLog.read`
@@ -397,8 +397,8 @@ The distinction matters because a generation record is not a file. Its
 directory holds `experiment.json`, `patches/`, `runs/`, a cached
 `gen_score.json` and more, so `list_keys("epochs/{e}/generations")` correctly
 returns nothing at all, and a caller who tried it would conclude the epoch had
-minted no generations. Before `list_namespaces` existed there was no listing
-that could answer, and every caller reached past the seam to `Path.iterdir()`.
+minted no generations. Without `list_namespaces`, a caller would have to
+reach past the seam to `Path.iterdir()`.
 
 `zicato.workspace.reads` is the single caller of that listing and the single
 answer to the question:
@@ -445,7 +445,7 @@ workspace directories named `.epoch-publication-*` and `.baseline-seed-*`,
 which epoch and generation discovery do not enumerate. Stored contract paths
 already name their final epoch locations.
 
-The epoch-owned `epoch_publication.json` record captures the prepared directory,
+The workspace-level `epoch_publication.json` record captures the prepared directory,
 its file-content digest, contract hash, predecessor closure timestamp, and
 recommendation IDs. The caller holds the workspace writer throughout preparation
 and publication. Automatic rollover reconciles in-flight work after preparation
@@ -524,16 +524,16 @@ generation-store conformance suite and its session templates).
 
 ```python
 * **Workspace** → one git repository (``{workspace_root}/repo/``). One
-  repo, not one-per-epoch: cross-epoch ``diff``/``log`` and cross-epoch
+  repo rather than one per epoch: cross-epoch ``diff``/``log`` and cross-epoch
   blob dedup both want a single object store.
 * **Epoch** → a branch, ``epoch/{epoch_id}``. An epoch's generations are
   a commit chain on its branch.
 * **Generation** → a commit, tagged ``epoch/{epoch_id}/{generation_id}``
   (e.g. ``epoch/2026-05-18_e1/v3``). The tag is the stable handle; the
   branch head moves as generations are appended.
-* **Commit context** → the deriving commit's message carries a redundant JSON
-  block for operator-readable `git log` output. Canonical patch reads use
-  `StorageBackend` records.
+* **Commit context** → the deriving commit's message carries a redundant,
+  operator-readable copy of the lineage coordinates and patches. Canonical
+  patch reads always use ``StorageBackend`` records.
 ```
 — `src/zicato/epoch/git_genstore.py` (module docstring)
 
@@ -581,7 +581,7 @@ the **stale-worktree re-derive bug** (see 12-bug-casebook.md):
         # crash-resume re-validate) moves the tag to the fresh commit — but a
         # worktree materialised by an EARLIER attempt stays detached at the
         # old commit, so ``materialize_snapshot`` would hand back a stale tree that
-        # no longer matches the commit just derived (the directory backend
+        # does not match the commit just derived (the directory backend
         # clears + rebuilds the child tree instead, so only this backend
         # needs the refresh). Drop the stale checkout; ``materialize_snapshot``
         # below re-materialises it from the moved tag (its ``worktree add``
@@ -840,7 +840,7 @@ semantics you must not get wrong, `seq`:
 
 ```python
     seq:
-        The orchestrator's TRUE liveness cursor (RUNTIME-V2 Phase 4): the
+        The orchestrator's TRUE liveness cursor: the
         tail ``seq`` of the progress event log
         (:mod:`zicato.runtime.progress_log`) at the last genuine
         transition. Unlike ``last_heartbeat`` — which the beater thread
@@ -889,7 +889,7 @@ run without touching anything else. The schema (`ActiveRun` in
 
 | Field | Meaning | Consumer that depends on it |
 |---|---|---|
-| `run_id` | unique run id — `{generation}--{entry}` for replicate 0, `r{n}.{generation}--{entry}` for `r>0`; a generation id is always `v{n}`, so the two namespaces are disjoint without reserving user entry ids | everything |
+| `run_id` | unique run id from `zicato.core.workspace.run_id_for_unit`: `seed-{seed}.{purpose}.r{draw}.{sha256}`, where the digest covers the epoch, generation, and entry, so long entry names stay within filesystem limits | everything |
 | `pid` | the WORKER's own pid (`os.getpid()` stamped by the worker) | supervisor kill paths |
 | `pid_start_time` | the worker's `/proc` start-time token — pid-reuse immunity (D9) | `signal::verified_process` for supervisor signalling; `fresh_run_count`'s identity gate in the query layer |
 | `pgid` | the worker's own process group (spawned with `start_new_session`, so `pgid == pid`) | group-kill upgrade (`resolve_kill_target`) |
@@ -898,6 +898,7 @@ run without touching anything else. The schema (`ActiveRun` in
 | `events_jsonl_path` | the run's telemetry file | dashboard drill-down |
 | `entry_id`, `generation_id`, `epoch_id` | lineage coordinates | dashboard, reaper |
 | `snapshot_path` | the run's `ztw-snap-*` ephemeral checkout — recorded so the supervisor can GC it if the orchestrator dies mid-run | `reap_orphaned_snapshot` |
+| `producer_pid`, `producer_start_time` | the parent process that spawned the worker, with its start token, captured before the spawn; written only when known | orphan classification: a stale global heartbeat does not make a worker orphaned while its recorded producer is alive |
 
 The lifecycle: worker writes the file on start → beater bumps
 `last_progress` → the file is removed on a clean run-end. If the orchestrator
@@ -1126,31 +1127,30 @@ interrupted prefix because pending lineage remains until every other canonical
 record is gone. The derived index is rebuilt afterward or by the next evolve
 preflight.
 
-**Tournament classification.** Startup classifies the highest un-outcomed
-`vN`:
+**Tournament classification.** `prepare_resume` first completes recorded
+settlements (`recover_field_settlements`), then discards source generations no
+canonical record accounts for, then discards pending fields without a
+settlement record, and then clears runtime state. It classifies the highest
+remaining generation last:
 
-```python
-    ===============================================  ====================
-    On-disk state of the un-outcomed latest gen      Action
-    ===============================================  ====================
-    experiment readable + snapshot/ + >=1 loss.json  resume in place
-    experiment readable + snapshot/ + 0 loss.json    discard (re-run)
-    experiment readable + no snapshot/               discard (re-run)
-    experiment present but unreadable / outcome set  discard (garbled)
-    no experiment.json                               discard (partial)
-    ===============================================  ====================
-```
-— `src/zicato/runtime/resume.py`, `prepare_resume`
+| On-disk state of the latest generation | Action |
+|---|---|
+| no generation beyond `v0`, or the experiment already has an outcome | nothing to resume |
+| `experiment.json` absent or unreadable | discard |
+| experiment readable, no applied source tree | discard |
+| experiment readable, source applied, no loss record | discard |
+| cached loss records, but the experiment does not match exactly one pending lineage node | discard |
+| experiment readable, source applied, at least one loss record, one matching pending lineage node | resume in place |
 
 The `ResumePlan.classification` tokens, exhaustively:
 
 | Classification | Meaning | Disposition |
 |---|---|---|
 | `clean` | no generation beyond `v0`, or the latest already has a committed outcome | next round runs byte-identically to a cold start |
-| `resume_tournament` | readable un-outcomed experiment + applied `snapshot/` + ≥1 `loss.json` | resume in place: reuse the persisted experiment (do NOT re-propose), re-derive the snapshot from the persisted patches (idempotent), let the unit cache HIT |
+| `resume_tournament` | readable un-outcomed experiment + applied source + ≥1 loss record + exactly one matching pending lineage node | resume in place: reuse the persisted experiment (do NOT re-propose), re-derive the snapshot from the persisted patches (idempotent), let the unit cache HIT |
 | `discard_unapplied` | experiment readable but no `snapshot/` | discard, re-run fresh |
 | `discard_no_progress` | applied but zero completed units | discard (byte-identical to starting the tournament from scratch, and keeps the loop free of a zero-cache special case) |
-| `discard_garbled` | `experiment.json` exists but is unreadable / inconsistent | discard, re-propose |
+| `discard_garbled` | `experiment.json` exists but is unreadable, or cached units exist but the experiment does not match exactly one pending lineage node | discard, re-propose |
 | `discard_partial_proposal` | no `experiment.json` at all | discard, re-propose |
 | `discard_unrecorded_field` | a configured wide field has pending entrants but no settlement receipt, including a field where other proposal slots failed | discard the pending entrants, their source and records, the `in_progress` bracket, the complete round namespace, and derived index rows; retain independently resolved soft rejections |
 
@@ -1202,8 +1202,9 @@ operator can `touch .zicato/runtime/control/pause_epoch` in an emergency.
 |---|---|---|---|---|
 | `pause_epoch` | flag file `control/pause_epoch` (optional JSON body `{"reason", "ts"}`) | dashboard POST `/api/control/pause` (Python service and Rust supervisor both), CLI, bare `touch` | `block_while_paused` — between rounds, and polled until cleared | scheduling held; resume = deleting the flag (`/api/control/resume` unlinks it — never a queued command) |
 | `skip_round` | flag file `control/skip_round` | dashboard / CLI | `claim_skip_round` at the top of `evolve_once` | round aborts cleanly, exactly like a wall-clock budget cut; a *between-rounds* stale skip is drained as a no-op |
-| `kill_runs/<run_id>` | one file per target under `control/kill_runs/` | dashboard POST `/api/control/kill/:run_id`; ALSO the Python parent writes here via `request_worker_kill` | the **Rust supervisor's** runs loop — not the orchestrator | the single-escalator kill handshake (see 08-supervisor.md §8.10); the supervisor clears the marker after escalating |
-| `promote/<gen_id>` / `reject/<gen_id>` | one file per target | dashboard / CLI | `claim_gate_override` at the gate (gauntlet) / `claim_field_gate_overrides` (field structures) | overrides the gate's verdict for the *matching* in-flight generation; recorded explicitly as an operator override in the OutcomeRecord/journal, never silently |
+| `kill_runs/<run_id>` | one file per target under `control/kill_runs/` | dashboard POST `/api/control/kill/:run_id` (Python service and Rust supervisor both) | no consumer: neither the orchestrator nor the supervisor reads this directory, so an operator kill request is recorded but not acted on | none |
+| `kill_requests/<run_id>` | one marker per run under `control/kill_requests/` (no `.json` suffix) | the Python parent, through `request_worker_kill`, when a worker overruns its budget or a cancelled run must stop | the **Rust supervisor's** runs loop — not the orchestrator | the single-escalator kill handshake (see 08-supervisor.md §8.10); the supervisor clears the marker once termination is confirmed, and the parent clears it on run cleanup |
+| `promote/<gen_id>` / `reject/<gen_id>` | one file per target | dashboard / CLI | `claim_field_gate_overrides` at the gate, for every structure | overrides the gate's verdict for the *matching* in-flight generation; recorded explicitly as an operator override in the OutcomeRecord/journal, never silently |
 | `rubric_replacement.txt` | one payload file whose body IS the new brief text | dashboard / CLI | `claim_rubric_replacement` between rounds | a contract edit — the payload is written to the live brief and contract-hash auto-epoching rolls the epoch |
 
 Consumption always goes through `consume_command`, whose crash-ordering is
@@ -1225,8 +1226,8 @@ freeform `reason`.
 
 ### 7.9.2 Semantics an agent must not break
 
-- **Target matching is exact.** `claim_gate_override` claims only a command
-  whose `arg` equals the round's in-flight generation id; a stale override
+- **Target matching is exact.** `claim_field_gate_overrides` claims only a command
+  whose `arg` equals one of the round's in-flight generation ids; a stale override
   aimed at a different generation is left pending so it cannot mis-fire.
 - **Promote beats reject, and the loser is drained.** When both target the
   same generation, the promote is honoured and the reject is also consumed
@@ -1249,12 +1250,15 @@ freeform `reason`.
 > gesture removing `pause_epoch` — because the *orchestrator* archives the
 > pause episode itself.
 
-> ⚠️ TRAP: `kill_runs/` has TWO producers (dashboard POST and the Python
-> parent's `request_worker_kill`) but exactly ONE consumer — the Rust
-> supervisor. The orchestrator must never signal a worker pid itself; that
-> is the whole point of the handshake (no parent↔supervisor race over the
-> same pid). If you add a "kill" feature, write the marker; do not import
-> `os.kill`.
+> ⚠️ TRAP: `kill_requests/` has ONE producer (the Python parent's
+> `request_worker_kill`) and ONE consumer (the Rust supervisor). The parent
+> signals a worker itself only after the supervisor window expires, and only
+> through `zicato.runtime.process` with the worker's captured start time and
+> process group; that ordering is the point of the handshake (no
+> parent↔supervisor race over the same pid). If you add a "kill" feature,
+> write the marker or call the shared process owner; do not import `os.kill`.
+> The operator's `kill_runs/` directory is a separate channel with no
+> consumer; a feature that expects it to stop a run must add one.
 
 Also in this package: `zicato.runtime.channel.CommandQueue` — the
 generalised many-writer/claim-once queue built on `atomic_claim`, with
@@ -1296,7 +1300,7 @@ keyed by its `TYPE` wire token:
 | `patches_applied` | `PatchesApplied` | `generation_id` |
 | `harness_loaded` | `HarnessLoaded` | `generation_id`, `entrypoint_file` (snapshot-relative), `trees_verified`, `trees_never_imported` |
 | `validation_failed` | `ValidationFailed` | `findings` tuple |
-| `unit_completed` | `UnitCompleted` | `entry_id`, `replicate`, `side` |
+| `unit_completed` | `UnitCompleted` | `entry_id`, `side` |
 | `gate_evaluated` | `GateEvaluated` | `rule_fired`, `decision`, and the gate's continuous axis — `champion_scalar`, `challenger_scalar`, `margin_required` (each `None` when the caller supplied none), plus `attributable_regressions` when non-empty |
 | `holdout_released` | `HoldoutReleased` | `confirmed` |
 | `evidence_replicated` | `EvidenceReplicated` | `ci_state` trace row |
@@ -1327,8 +1331,8 @@ preserves rather than drops. When a later reader names one of those
 coordinates, `from_payload` promotes it out of `attributes` into the named
 field, so nothing written through the extension point becomes unreachable
 through the name it later acquires. `attributes` holds COORDINATES ONLY,
-never content: a scope is subject to the same redaction denylist as every
-other durable record (`proposer/reflection.py`'s `assert_redacted`).
+never content: board text, prompts, and transcripts must never travel in a
+scope.
 
 `step` is the plan's own vocabulary — `propose`, `apply`, `run`, `gate`,
 `decide`, exactly the keys of `ROUND_STEPS` in `query/execution_plan.py`. A
@@ -1387,17 +1391,18 @@ same. Concurrent readers continue validating the complete history.
 The writer derives the sequence after repair:
 
 ```python
-        ``seq`` is the last PARSEABLE event's ``seq`` plus one (``1`` for
-        an empty/absent log) — a torn tail contributes nothing, so a
-        writer resuming after a crash continues the monotonic sequence.
-        Before appending, a file that does not end in a newline (the torn
-        tail a crash mid-append leaves) is TRUNCATED back to its last
-        complete line: the partial record was never a complete event (its
-        append never finished), so dropping it is the honest repair — and
-        it can never concatenate with this append or read back later as
-        interior corruption.
+        if self._next_seq is None:
+            # Validate complete history before changing any interrupted suffix.
+            tail = self.tail()
+            self._truncate_torn_tail()
+            self._next_seq = 1 if tail is None else tail.seq + 1
 ```
 — `src/zicato/epoch/round_log.py`, `RoundLog.append`
+
+The next `seq` is the last complete event's `seq` plus one, or `1` for an
+empty or absent log. The truncated suffix was never a complete event, so
+dropping it cannot remove a record, and it can never concatenate with the next
+append or read back later as interior corruption.
 
 The round log and file storage backend share compact JSONL byte publication
 in `storage.files.append_jsonl`. Their owners retain sequence and recovery
@@ -1471,9 +1476,10 @@ from canonical workspace records without changing those records.
 ## 7.12 The infra-outage circuit and the round token ledger
 
 Two runtime guards protect a round from burning budget against broken
-infrastructure. Both are knobs on `RuntimeConfig`
-(`src/zicato/core/runtime.py`), both default OFF (`0` = disabled), and both
-are validated non-negative in `__post_init__`.
+infrastructure. Both are knobs declared on `RuntimeSettings`
+(`src/zicato/core/settings.py`, inherited by `RuntimeConfig` in
+`src/zicato/core/runtime.py`), both default OFF (`0` = disabled), and both
+carry a `KnobConstraint(minimum=0)` declaration.
 
 ### 7.12.1 The endpoint-outage circuit (`infra_abort_round_threshold`)
 
@@ -1486,20 +1492,20 @@ a `LossProfile.abort_cause` that is set and is NOT the genuine
 worker crash, a prepare failure, or an unreadable result. A cleanly-reduced
 run (empty/`None` cause) is never one.
 
-**Enforcement point.** After the tournament settles in `evolve_once`
-(`src/zicato/evolve/decision_support.py`):
-`_count_infra_aborted_runs(tournament_result)`
-is compared against the threshold, and on a trip the round is settled by
-`_defer_round_infra_outage` with decision `DEFERRED_INFRA_DECISION`
-(`"deferred_infra"`).
+**Enforcement point.** After each matchup, `run_field_matchup`
+(`src/zicato/evolve/field_execution.py`) adds
+`_count_infra_aborted_runs(result)` to the round's running tally and raises
+`_InfrastructureRoundDeferred` once the tally reaches the threshold.
+`execute_field_tournament` catches it, clears the live tournament, and settles
+the round through `_defer_round_infra_outage`
+(`src/zicato/evolve/decision_support.py`) with decision
+`DEFERRED_INFRA_DECISION` (`"deferred_infra"`).
 
 **Recovery after deferral.** Infrastructure deferral leaves the proposal
 unresolved and does not publish a completed round. It also avoids caching
 aggregates dominated by aborted runs. Resume can reuse individually completed
 measurements when at least one exists; with no completed measurement, it
 discards the interrupted candidate and proposes again.
-
-— `src/zicato/evolve/decision_support.py`, `_defer_round_infra_outage`
 
 So a deferred round costs almost nothing to retry: the next `evolve` start
 (or the loop's own continuation) flows through §7.8's table, cache-hits every

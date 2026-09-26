@@ -4,8 +4,9 @@ For `multi_turn_emulated` board entries, the user side of the
 conversation is played by a `call_llm`-backed agent: the **emulator**.
 The emulator receives a persona and, each turn, sees the agent's
 user-facing output so far. It produces the next user turn. The
-conversation ends when the persona's `stop_when` matches or
-`max_turns` is reached.
+conversation ends when the emulator signals that the persona's
+`stop_when` condition holds, when `max_turns` is reached, or when the
+run aborts.
 
 The emulator carries the loop's largest correctness risk:
 **collusion**. Without the guards below, the same model that played
@@ -26,13 +27,14 @@ plausible-looking results that are worth nothing.
 The emulator IS:
 
 - A peer agent that plays "a user trying to accomplish a goal".
-- Driven by an LLM, called through `evaluation_call_llm`.
-- Bound by a persona shape with three string fields: `goal`,
-  `constraints`, `stop_when` (each a single string — `constraints`
-  is one free-text block rather than a list).
-- Observable as `goldfive.v1.GoldfiveLLMCallStart` /
-  `GoldfiveLLMCallEnd` events on the `zicato:emulator` lane (so
-  harmonograf renders its work).
+- Driven by an LLM, called through the user-emulator callable
+  (`RuntimeConfig.effective_user_emulator_call_llm`): the engine the
+  `user_emulator` model role selects, which defaults to the evaluation
+  engine ([MODEL-CONFIG.md](MODEL-CONFIG.md)).
+- Bound by a persona shape (`UserPersona`) with three string fields:
+  `goal`, `constraints`, `stop_when` (each a single string —
+  `constraints` is one free-text block rather than a list).
+- Audited turn by turn (§8).
 
 The emulator IS NOT:
 
@@ -94,31 +96,29 @@ zicato is configured with **two** distinct `call_llm` callables:
   `goldfive.wrap(...)` plumbing passes this through to the agent's
   LLM calls. Reaches the agent code; the agent talks to the world
   through this callable.
-- `evaluation_call_llm` — used by everything zicato itself drives:
-  the multi-turn user emulator, the patch proposer, the in-run
-  process judges, the analysis pass at epoch close, and the rubric
-  grader.
+- `evaluation_call_llm` — the default for everything zicato itself
+  drives: the multi-turn user emulator, the in-run process judges, the
+  rubric grader, the analysis pass at epoch close, and the proposer's
+  critique and merge calls. Named model roles can assign some of these
+  to other engines ([MODEL-CONFIG.md](MODEL-CONFIG.md)); the proposal
+  episode itself runs on the model its `proposer` block names.
 
 ### 3.1 The hard error
 
 The invariant is enforced by
 `zicato.core.workspace.assert_distinct_callables`, which the runtime
-factory runs at config time and the emulator driver and tournament
-runner re-check defensively before a run. It is a **pure identity
-check**:
+factory runs at config time and the tournament runner re-checks before a
+run. The emulator driver (`EmulatedMultiTurnDriver.drive`) re-checks it
+against the callable the emulator will actually use:
+`target_call_llm` against `effective_user_emulator_call_llm()`. It is a
+**pure identity check**: it raises `RuntimeError` when
+`target_call_llm is evaluation_call_llm`. The emulator driver wraps that
+`RuntimeError` as `EmulationCollusionError` and refuses to start the
+run.
 
-```python
-def assert_distinct_callables(target_call_llm, evaluation_call_llm):
-    if target_call_llm is evaluation_call_llm:
-        raise RuntimeError(
-            "target_call_llm and evaluation_call_llm must be distinct "
-            "callables; shared callables risk collusion in multi-turn "
-            "emulated entries"
-        )
-```
-
-The emulator driver wraps that `RuntimeError` as
-`EmulationCollusionError` and refuses to start the run.
+Named-engine configuration adds a second, name-level check: the model
+configuration refuses a `target` engine that any evaluator-side role
+also selects ([MODEL-CONFIG.md](MODEL-CONFIG.md)).
 
 The check accepts:
 
@@ -155,37 +155,26 @@ wiring would be one callable serving both roles.
 
 ## 4. Context isolation (sealed context construction)
 
-The emulator's input context is constructed by a **sealed function**
-whose signature is explicit, exhaustive, and has no `**kwargs`. Every
-turn:
+The emulator's input is constructed by two **sealed functions** in
+`zicato.emulator.sealed`, whose signatures are explicit, exhaustive, and
+have no `**kwargs`:
 
 ```python
-def build_emulator_context(
-    persona: Persona,
-    user_visible_transcript: list[UserVisibleTurn],
-) -> EmulatorContext:
-    """Construct the emulator's per-turn input.
+def build_emulator_system_prompt(persona: UserPersona) -> str: ...
 
-    Only inputs that change the function's behaviour are arguments.
-    NO **kwargs. NO optional inputs that could leak privileged
-    information through accidental forwarding.
-    """
-    ...
+def build_emulator_user_prompt(transcript: tuple[str, ...]) -> str: ...
 ```
 
-`Persona` is the operator-supplied persona (`goal`, `constraints`,
-`stop_when`). `UserVisibleTurn` is a typed shape:
+`UserPersona` is the operator-supplied persona (`goal`, `constraints`,
+`stop_when`). The system prompt renders the three fields under labelled
+headers and appends the verbatim non-leakage paragraph (§5). The
+transcript is the ordered tuple of the agent's user-facing replies; the
+user prompt renders each as an `AGENT:` block and asks for the next
+`YOU (the user):` turn, or asks the emulator to open the conversation
+when the tuple is empty.
 
-```python
-@dataclass(frozen=True)
-class UserVisibleTurn:
-    turn_index: int
-    user_or_agent: Literal["user", "agent"]
-    text: str    # the text the agent SAID to the user, NOT internal reasoning
-```
-
-The emulator NEVER sees, and the typed context construction physically
-cannot deliver:
+The emulator NEVER sees, and the sealed construction physically cannot
+deliver:
 
 - The agent's **system prompt** — the system under test's instructions
   to its specialists.
@@ -207,14 +196,14 @@ cannot deliver:
 - Any **zicato internal state** — the journal, patterns, rubric,
   generation count.
 
-This list is exhaustive by construction. The context-builder function
-accepts two arguments and produces an `EmulatorContext` built from
-those two arguments alone. There is no escape hatch.
+This list is exhaustive by construction. The two functions accept one
+argument each and build their prompts from those arguments alone. There
+is no escape hatch.
 
-### 4.1 Why this is in a sealed function
+### 4.1 Why this is in sealed functions
 
-Putting the context construction in one function with an explicit
-signature makes the contract enforceable by review. A future
+Putting the context construction in functions with explicit signatures
+makes the contract enforceable by review. A future
 contributor who wants to add information to the emulator must:
 
 1. Update the function's signature (add an argument).
@@ -231,15 +220,11 @@ system rather than in convention.
 The system under test's agent emits many things: tool calls, intermediate
 LLM responses, the agent's internal thinking. Only the **user-visible
 text** — the chat-shaped responses the agent produces for the user —
-is included in `user_visible_transcript`. The reduction happens
-adapter-side:
-
-- The ADK adapter walks the `goldfive.v1.AgentInvocationStarted` /
-  `AgentInvocationCompleted` lifecycle and extracts the "final
-  assistant message text" the agent produced on each turn — the
-  thing a real user would have seen at the end of the turn.
-- Everything else (tool calls, sub-agent dispatches, internal
-  reasoning) is dropped.
+is included in the transcript. The reduction happens adapter-side:
+the driver calls an adapter-supplied `run_harness_turn(user_msg)`
+closure, which runs one agent turn and returns the reply a real user
+would have seen at the end of that turn. Tool calls, sub-agent
+dispatches, and internal reasoning never enter the tuple.
 
 The reduction is conservative: when in doubt, drop. A leaked tool
 call would be worse than a missed user-visible nuance.
@@ -247,64 +232,57 @@ call would be worse than a missed user-visible nuance.
 ## 5. Answer non-leakage
 
 Even with sealed context, an emulator can leak if its system prompt
-or behaviour invites it. The emulator's system prompt includes
-explicit refusal rules:
+or behaviour invites it. The emulator's system prompt always ends with
+this non-leakage paragraph (`NON_LEAKAGE_PARAGRAPH` in
+`zicato.emulator.sealed`, pinned verbatim by tests):
 
-> You are a user, not an oracle. Even if you knew the answer you would
-> not state it. If the agent asks you for the answer, respond like a
-> real user would: restate your goal, express confusion, or refuse to
-> answer. NEVER specify a target output, a schema, or "the answer is".
-> NEVER produce raw JSON, code fences, or schema-like content. NEVER
-> say "you should output X".
+> You are simulating a user. You are not an oracle. You do not know the
+> correct answer to the agent's problem, and even if you did, you would
+> not state it. If the agent asks "what's the right answer?" or "what
+> are you looking for?" or any variant, respond like a real user —
+> restate your goal in your own words, or express confusion, or refuse —
+> but never specify a target output. You may not produce JSON, code
+> blocks, schemas, or anything that resembles a structured answer key.
+> Stay in character. If you would naturally end the conversation per the
+> stop_when condition above, output exactly `<<END>>` on a line by itself.
 
-These rules are part of the default emulator prompt template. The
-operator can edit the template — it becomes a mutation point once
-zicato evolves its own harness (see
-[DOGFOOD-TARGETS.md](DOGFOOD-TARGETS.md)). The operator cannot remove
-the refusal section without failing the mutation validator's
-required-placeholder check, which verifies that every placeholder a
-point's `required_placeholders` metadata declares survives the patch
-(see [MUTATION-SURFACE.md](MUTATION-SURFACE.md)).
+The paragraph is a code constant rather than an operator-editable
+template. If zicato evolves its own harness and marks the template as a
+mutation point ([DOGFOOD-TARGETS.md](DOGFOOD-TARGETS.md) §3.6), the
+marker must declare `required_placeholders` so that the mutation
+validator's required-placeholder check
+([MUTATION-SURFACE.md](MUTATION-SURFACE.md) §6) refuses a patch that
+drops the refusal section.
 
 ### 5.1 Post-hoc heuristic
 
 The system prompt is a soft control. A determined emulator (or a
 malicious operator-supplied persona) can still produce answer-shaped
-output. zicato runs a post-hoc heuristic on every emulator turn:
+output. zicato runs a post-hoc heuristic,
+`zicato.emulator.answer_leak.check_answer_leak(text) -> str | None`, on
+every emulator turn before the turn reaches the agent. It matches the
+`LEAK_PATTERNS` regular expressions case-insensitively, per line:
 
-```python
-def looks_like_answer_leak(emulator_output: str) -> tuple[bool, str | None]:
-    """Return (True, reason) when the emulator's turn structurally
-    looks like an answer it shouldn't be giving."""
-    if "the answer is" in emulator_output.lower():
-        return True, "phrase: 'the answer is'"
-    if "you should output" in emulator_output.lower():
-        return True, "phrase: 'you should output'"
-    if "```" in emulator_output:
-        return True, "code fence in user turn"
-    if _looks_like_json(emulator_output):
-        return True, "raw JSON in user turn"
-    if _looks_like_schema(emulator_output):
-        return True, "schema-shaped content"
-    return False, None
-```
+- a code fence (three backticks, including a fenced JSON block);
+- a raw JSON object or array at the start of a line (an array must
+  open with a JSON value, so a bracketed preface such as
+  `[Looking at your draft]` does not match);
+- the phrases "the answer is", "you should output", "correct output
+  is", "expected output", and "the schema is".
 
-When `looks_like_answer_leak` returns `True`, the run aborts with
-`goldfive.v1.RunAborted(reason="emulator_answer_leak: <reason>")`. The
-entry scores as worst-case. The journal records the abort with the
-leak reason.
+When a pattern matches, the driver stops the conversation and returns a
+`RunResult` with `aborted=True` and `abort_reason="emulator_leak_detected"`,
+and logs a warning naming the pattern. The entry scores as worst-case.
 
 The heuristic is narrow by design, because a false positive aborts a
 real run over a benign string. Its patterns are the cases that most
-often indicate collusion: the explicit phrase "the answer is", code
+often indicate collusion: explicit answer-disclosure phrases, code
 fences (which a real user might paste, and which are also the shape
-of a leaked answer), raw JSON (rare in a real user message), and
-schema-shaped content.
+of a leaked answer), and raw JSON (rare in a real user message).
 
 The heuristic is the place to tune when false positives become an
 operational problem. It is a trip-wire; the durable guards are the
-validator's required-placeholder check on the prompt template (§5)
-and the audit trail (§8).
+fixed non-leakage paragraph (§5) and the audit trail (§8).
 
 ## 6. Persona shape
 
@@ -319,32 +297,18 @@ another. Three fields:
 
 ### 6.1 `stop_when` evaluation
 
-The emulator is asked, on each turn, whether `stop_when` is satisfied.
-The check is a separate, lightweight `evaluation_call_llm` call with a
-narrow prompt:
+The emulator judges `stop_when` itself, in the same call that produces
+its turn. The system prompt instructs it to output `<<END>>` (the
+`END_TOKEN`) on a line by itself when it would naturally end the
+conversation. The driver ends the conversation when any line of the
+emulator's output, stripped of surrounding whitespace, equals
+`<<END>>`; that turn is not forwarded to the agent. There is no
+separate stop-check call.
 
-```
-SYSTEM: You are evaluating whether a conversation has reached its
-stopping condition. Answer only YES or NO.
-
-USER:
-Stopping condition: <persona.stop_when>
-
-Conversation so far:
-<user_visible_transcript joined>
-
-Has the stopping condition been met? Answer YES or NO only.
-```
-
-A `YES` ends the conversation; a `NO` continues. The output is
-parsed with the same conservatism as a judge: first non-whitespace
-token, case-insensitive, anything other than `YES` is treated as
-`NO`.
-
-The `stop_when` check is a separate LLM call per turn, bounded by the
-entry's wall-clock budget. A persona whose stopping condition is
-never satisfied would loop indefinitely; the budget catches that and
-the entry aborts.
+The entry's `max_turns` caps the conversation when the token never
+appears. Each emulator call also runs under the evaluation call timeout
+(`aux.call_timeout_s`); a timed-out call aborts the run with
+`abort_reason="emulator_timeout"`.
 
 ### 6.2 Constraints are advisory
 
@@ -366,52 +330,38 @@ emulator carry conditioning that biases its behaviour in ways a real
 user could not.
 
 Within an entry, the emulator's only state is its conversation
-history (the `user_visible_transcript`), which is rebuilt fresh each
-turn from goldfive's event stream. The emulator itself is stateless
-between turns; it is a pure function of `(persona, transcript) →
-next_user_turn`.
+history, the tuple of the agent's user-facing replies the driver has
+collected so far. The emulator itself is stateless between turns; it
+is a pure function of `(persona, transcript) → next_user_turn`.
 
 ## 8. Audit trail (the `zicato:emulator` lane)
 
-Every emulator turn emits a goldfive-lane span on a dedicated lane:
-`zicato:emulator`. The span uses the existing
-`GoldfiveLLMCallStart` / `GoldfiveLLMCallEnd` proto messages from
-goldfive (see [TELEMETRY.md §4.2](TELEMETRY.md#42-per-turn-llm-calls-on-the-zicatoemulator-lane)).
-
-Span fields:
+Every emulator turn produces an `EmulatorTurnAudit` record
+(`zicato.emulator.audit`):
 
 | Field | Value |
 |---|---|
-| `name` | `"emulator_turn"` |
-| `model` | The emulator's model (from `evaluation_call_llm`). |
-| `input_preview` | `"persona_hash=<sha256 hex prefix>; transcript_chars_in=<int>"`. The persona's contents are NOT in the preview (operator may consider the persona sensitive). |
-| `output_preview` | The emulator's produced user turn, truncated to 512 chars. |
-| `target_agent_id` | `"zicato:emulator"` (the lane identifier). |
-| `target_task_id` | The current goldfive task id, when known; empty otherwise. |
-| `decision_summary` | `"produced user turn N (<count> chars)"` |
+| `persona_hash` | A 16-hex-character SHA-256 prefix of the persona (§9). The persona's contents are not in the record, because the operator may consider the persona sensitive. |
+| `transcript_chars_in` | The total characters of the agent replies the emulator saw on this turn. |
+| `output_chars_out` | The length of the emulator's response. |
+| `output_preview` | The first 200 characters of the response. |
 
-A separate `stop_when` check (§6.1) emits its own span:
-
-| Field | Value |
-|---|---|
-| `name` | `"emulator_stop_check"` |
-| `model` | The emulator's model. |
-| `input_preview` | `"persona_hash=<sha256 hex prefix>; transcript_chars_in=<int>"` |
-| `output_preview` | The raw YES/NO response. |
-| `decision_summary` | `"stop_when matched"` or `"stop_when not matched"` |
-
-Harmonograf renders these spans on a dedicated row keyed by the
-`zicato:emulator` lane identifier. An operator replaying a run can
-see when the emulator spoke, how long each turn took, what it said,
-and when the `stop_when` check fired.
+The driver keeps every turn's record in memory. When it is constructed
+with a sink, it also emits each record as an event on the
+`zicato:emulator` lane (`kind: "zicato.emulator.turn_audit"`); emission
+is best-effort and never fails the run. The ADK adapter reaches the
+driver through `zicato.emulator.run_emulated`, which constructs it
+without a sink, so an ADK run keeps its audit records in memory only and
+writes none to the event stream.
 
 ### 8.1 Why the audit trail matters
 
 When a multi-turn-emulated entry produces a surprising result — a
 strong pass, a strong fail, a fast abort — the operator needs to
 establish whether the emulator played the role the persona described.
-The audit trail supplies that evidence. Without it the operator has
-no way to validate the run.
+The audit trail supplies that evidence where it is emitted; without an
+emitting sink, the operator has only the run's transcript and abort
+reason.
 
 The audit trail also makes a change in the emulator's own behaviour
 visible. Swapping the evaluation model can produce shorter,
@@ -421,8 +371,10 @@ attribute that change to the swap.
 
 ## 9. The persona hash
 
-The emulator's `input_preview` carries a `persona_hash` rather than
-the persona itself. The hash is `sha256(canonical_json(persona))[:16]`.
+The audit record carries a `persona_hash` rather than the persona
+itself. The hash is the first 16 hexadecimal characters of the SHA-256
+of the three fields, each written as its name, a NUL byte, and its
+value, joined in the fixed order `goal`, `constraints`, `stop_when`.
 Carrying the hash instead of the text:
 
 - Lets operators correlate runs with the same persona without
@@ -430,8 +382,8 @@ Carrying the hash instead of the text:
 - Keeps the persona content out of the JSONL when the operator
   considers it sensitive (e.g. a persona built around real user
   research transcripts).
-- Survives canonicalization: two equivalent persona JSONs with
-  different key orders hash the same.
+- Survives reformatting: the hash reads the three field values, so two
+  persona JSONs with different key orders hash the same.
 
 The full persona is on disk at `.zicato/epochs/{epoch}/board.jsonl`;
 the hash is sufficient identifier on the wire.
@@ -447,11 +399,11 @@ prevent:
 | Emulator sees the agent's chain-of-thought and writes a "user" turn that probes the right weak spot. | §4 sealed context construction (CoT is not an argument). |
 | Emulator sees the expectation predicate and gives the agent the user input that makes the predicate fire. | §4 sealed context construction (expectation is not an argument). |
 | Emulator reads the board's other entries and biases its persona toward known-easy / known-hard patterns. | §4 sealed context construction (no other entries are arguments). |
-| Emulator's system prompt invites it to behave as an oracle ("if you know the answer, give it"). | §5 default prompt's refusal section, plus the mutation validator's required-placeholder check on the editable emulator template. |
+| Emulator's system prompt invites it to behave as an oracle ("if you know the answer, give it"). | §5 non-leakage paragraph, a code constant appended to every emulator system prompt. |
 | Emulator generates raw JSON / code fences / schemas as the "user" turn. | §5 post-hoc heuristic. |
 | Emulator remembers prior entries' personas and biases toward them. | §7 fresh instance per entry. |
-| Operator cannot see what the emulator did. | §8 audit trail on the `zicato:emulator` lane. |
-| Operator cannot audit which persona drove a given run. | §9 persona hash on every emulator span. |
+| Operator cannot see what the emulator did. | §8 per-turn audit records, emitted on the `zicato:emulator` lane when a sink is wired. |
+| Operator cannot audit which persona drove a given run. | §9 persona hash on every audit record. |
 
 Each rule closes a channel none of the others closes. Removing any
 one of them reopens the failure mode on its row.
@@ -465,10 +417,14 @@ Honest accounting:
   verbatim", the emulator will do that. The persona is the
   operator's authoring surface; zicato does not validate persona
   contents beyond schema.
-- **Evaluation model swap during an epoch.** Swapping the evaluation
-  callable mid-epoch changes the emulator's behaviour without
-  changing the contract. zicato does not enforce evaluation-model
-  stability; the operator's discipline is the guard.
+- **Evaluation model swap behind an unchanged declaration.** A
+  configured model role is part of the evaluation contract, so
+  changing the emulator's engine, model, or revision rolls the epoch
+  ([EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) §1.1). A
+  deployment changed behind a stable endpoint and model name, or a
+  library caller's callable whose behaviour changes, alters the
+  emulator's behaviour without changing the contract; the operator's
+  revision label is the guard.
 - **Alignment across providers.** If `target_call_llm` and
   `evaluation_call_llm` are different APIs backed by the same
   underlying provider, collusion at the model-family level remains
@@ -481,6 +437,6 @@ Honest accounting:
 | Topic | Document |
 |---|---|
 | Persona schema, `multi_turn_emulated` entry kind | [BOARD-FORMAT.md](BOARD-FORMAT.md) |
-| Emulator spans on the `zicato:emulator` lane | [TELEMETRY.md](TELEMETRY.md) |
+| Emulator audit events on the `zicato:emulator` lane | [TELEMETRY.md](TELEMETRY.md) |
 | Why hard error rather than warning on the two-callable check | [RATIONALE.md](RATIONALE.md) |
 | `evaluation_call_llm` use by proposer, judge, analysis pass | [ARCHITECTURE.md §4.10](ARCHITECTURE.md#410-the-two-call_llm-callables) |

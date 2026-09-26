@@ -1,7 +1,22 @@
 # Exhaustive namespace ownership for import checks
 
-Status: implemented in the accompanying changes for [issue #410](https://github.com/pedapudi/zicato/issues/410), pending integration verification.
-The source observations refer to revision `3bddf6424e5b13287fa9adaee34e73a97cb62457`.
+> **Status:** dated design record for [issue #410](https://github.com/pedapudi/zicato/issues/410),
+> implemented. Its source observations, counts, and role table describe
+> revision `3bddf6424e5b13287fa9adaee34e73a97cb62457`; the tree has moved
+> since. The mechanism is current: `[tool.zicato.namespace_roles]` in
+> `pyproject.toml` is the one namespace-to-role mapping,
+> `tools/check_imports.py` derives the repeated restrictions from it, and
+> `make import-lint` runs the check. `proposer/brief.py` owns `brief_goal`,
+> which both the query layer and reporting import. The role table below
+> differs from the live mapping in these ways: the live mapping has no
+> `builder` or `tui` namespace, so `cli` and `dashboard` are the only drivers
+> and three specialized restrictions remain (dashboard to CLI, the
+> proposer patch validator, and query to dashboard); `aux_timeout` and
+> `config` are execution namespaces; and `driver_imports` is a new
+> execution namespace. The live mapping has 43 namespaces: five
+> primitives, twenty-one execution, eight coordination, seven mixed
+> library, and two drivers. `pyproject.toml` is authoritative.
+
 The intended reader maintains the Python library and its development checks.
 
 The namespace inventory makes import restrictions exhaustive. Reporting consumes

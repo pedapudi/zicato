@@ -1,5 +1,14 @@
 # Historical audit of persisted record ownership
 
+> **Status:** dated historical record, written 2026-09-07 against the
+> source trees listed below. Later changes removed some of the records
+> and modules it names — for example, the journal is rendered rather than
+> stored as `journal.md`, the `current_generation` champion marker is gone
+> (a round's completed settlement receipt is the stored record of its
+> results), and the tree has no `proposer/staging.py`. The development guide's
+> [configuration and epoch records](../dev-guide/03-contract-and-epochs.md)
+> chapter describes the current record set.
+
 This audit records the inspection of 55 stored-file categories for
 [issue #411](https://github.com/pedapudi/zicato/issues/411#issuecomment-5520548953).
 Its statuses describe the inspected source trees, before the shared readers

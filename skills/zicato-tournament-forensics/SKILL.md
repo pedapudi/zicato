@@ -5,10 +5,11 @@ description: Explain a single promote/reject decision — re-score one champion/
 
 # zicato tournament-forensics — read one promote/reject decision
 
-A **tournament** is a king-of-the-hill matchup: the reigning champion (the
+A **tournament** ends in a king-of-the-hill duel: the reigning champion (the
 **parent** generation) versus one **challenger** (the **child** proposed against
-it). Both sides are scored over the frozen board, and the two-sided promotion
-gate decides between them. This
+it). Under a field structure such as racing, the duel's challenger is the
+field's surviving leader. Both sides are scored over the frozen board, and the
+two-sided promotion gate decides between them. This
 skill is for forensics on a *single* matchup — "why did this round promote /
 reject?". For the epoch-wide retrospective see `skills/zicato-analyze-epoch`; for
 cross-epoch lineage see `skills/zicato-lineage`; for the live bracket UI see
@@ -21,7 +22,8 @@ Always call the CLI from the project venv: `.venv/bin/zicato ...`. See
 
 ```sh
 .venv/bin/zicato tournament run PARENT CHILD \
-    --workspace .zicato [--epoch <id>] [--mode full|fast] [--skip-regression]
+    --workspace .zicato [--epoch <id>] [--mode full|fast] [--skip-regression] \
+    [--replicates N]
 ```
 
 - `PARENT` and `CHILD` are **generation ids** under the resolved epoch
@@ -40,23 +42,29 @@ Always call the CLI from the project venv: `.venv/bin/zicato ...`. See
   frozen cached draw. Use `full` when you want independent draws on both sides.
 - `--skip-regression`: skip the regression-suite gate even when scoring enables
   it (a per-invocation override).
-- Output is the `GateOutcome` printed as **JSON** (`decision`, `reason`,
-  `delta_scalar`, `delta_pass_rate`). The `decision` field is the
+- `--replicates N`: force the per-duel replicate count for this call. Unset,
+  it is the count the epoch's tournament structure resolves — what `evolve`
+  uses.
+- Output is **JSON**: `parent_generation_id`, `child_generation_id`,
+  `parent_agg`, `child_agg`, `champion_eval_mode`, `per_entry_losses`, and the
+  gate's `outcome` (`decision`, `reason`, `delta_scalar`, `delta_pass_rate`,
+  `attributable_regressions`, `explanation`). `.outcome.decision` is the
   authoritative verdict — `"promoted"` / `"rejected"` / `"deferred"`
-  (`TournamentDecision`); branch scripts on that JSON rather than on the exit code.
+  (`TournamentDecision`); branch scripts on that field rather than on the exit
+  code.
 
 > **WARNING — this is a live, budget-spending run** in `full` mode (it executes
-> the target over every board entry, twice). Per the project rules, do
+> the target over every board entry on both sides). Per the project rules, do
 > NOT run a live tournament without the user's explicit go-ahead. For *reading*
 > an already-settled decision, inspect the artifacts (below) instead of
-> re-running. There is **no `--no-record-outcome` flag** — a live re-run records
-> its outcome into the workspace. The four flags above are the whole surface.
+> re-running. A re-run writes its measurements into the workspace's run
+> directories. The options above are the whole surface.
 
 ## Reading the verdict (the JSON `decision` rather than an exit code)
 
-The standalone `zicato tournament` command prints the `GateOutcome` as JSON and
-exits `0` on a successful run regardless of the verdict — it does **not** encode
-promote/reject in the exit code. Branch on the JSON `decision` field
+`zicato tournament run` prints its result as JSON and exits `0` on a
+successful run regardless of the verdict — it does **not** encode
+promote/reject in the exit code. Branch on the JSON `.outcome.decision` field
 (`"promoted"` / `"rejected"` / `"deferred"`), which is authoritative. No exit-6
 path exists — if you have inherited a script expecting "`0` = promote, `6` =
 reject", it is wrong. A non-zero exit is a usage/config/runtime error rather than a
@@ -67,16 +75,21 @@ reject verdict.
 A settled round's full forensic record is already on disk:
 
 ```
-.zicato/epochs/{id}/generations/{child}/experiment.json     # hypothesis + outcome
+.zicato/epochs/{id}/generations/{child}/experiment.json     # the hypothesis
 .zicato/epochs/{id}/generations/{child}/patches/*.json      # what it changed
-.zicato/epochs/{id}/generations/{*}/runs/.../loss.json      # per-entry loss profiles
+.zicato/epochs/{id}/generations/{*}/runs/{entry}/seed-*/loss.tournament.r*.json  # per-entry loss profiles
+.zicato/epochs/{id}/generations/{*}/gen_score.json          # the aggregate the gate scored
 .zicato/epochs/{id}/generations/{*}/harness_load.json       # what the run actually loaded
+.zicato/epochs/{id}/rounds/{round}/field_settlement.json    # every candidate's recorded outcome
+.zicato/epochs/{id}/tournaments/field-{first_challenger}.json  # the completed tournament structure
 .zicato/epochs/{id}/rounds/{round}/round_log.jsonl          # the round's typed event log
 ```
 
-The `outcome` block in `experiment.json` carries `tournament_decision`,
-`rejection_reason`, `drift_loss_delta`, `pass_rate_delta`, and the
-`hypothesis_match` array
+Each candidate's `outcome` in `field_settlement.json` carries
+`tournament_decision`, `rejection_reason`, `scalar_score_delta`,
+`drift_loss_delta`, `pass_rate_delta`, the structure fields (`structure`,
+`final_rank`, `match_record`, `champion_eval_mode`), and the `holdout` and
+`evidence` records
 ([EPOCHS-AND-JOURNALING.md §3.3](../../docs/design/EPOCHS-AND-JOURNALING.md#33-outcome-written-after-the-run)).
 
 `round_log.jsonl` is the round's durable, sequenced trace — contract hash,
@@ -99,9 +112,10 @@ tree cannot have been under test*: the run completed, the board scored, the gate
 fired, and the comparison was between two identical unmutated trees. That is a
 verdict-invalidating finding rather than a quality signal.
 
-**Replicated duels fold before scoring.** With `replicates > 1` (the gauntlet's
-default is 2) each replicate caches its own file: `runs/<entry>/loss.json` for
-replicate 0, `loss.r<N>.json` for the rest. The per-entry profiles then fold
+**Replicated duels fold before scoring.** With `replicates > 1` (the default
+is 2) each replicate caches its own file: `loss.tournament.r0.json` for
+replicate 0, `loss.tournament.r<N>.json` for the rest, in the run's seed
+directory. The per-entry profiles then fold
 into ONE profile that the scalar sees. `drift_loss`, `metrics`,
 `per_judge_loss` and the namespaced counters are meaned. `score` is the mean of
 each replicate's *resolved* outcome, so a replicate that aborted without a score
@@ -110,7 +124,7 @@ disagree in sign with the folded `score` (2 of 5 passing is `pass_fail: false`
 and `score: 0.4`); that is the binary and continuous views of one duel rather than an
 inconsistency. Fields the scalar never reads (`run_id`, `runtime_ms`,
 `abort_cause`, `expectation_result`) pass through from replicate 0 only, so do
-not read them as properties of the fold. Fewer `loss.r<N>.json` files than
+not read them as properties of the fold. Fewer replicate files than
 `replicates` is not corruption: a per-round token budget reached mid-slate stops
 scheduling further replicate slots and settles with the completed ones, rather
 than caching synthetic worst-case losses for units nobody attempted.
@@ -121,7 +135,7 @@ The gate applies its rules **in order**, and the first one to fire owns the
 rejection ([SCORING.md §5](../../docs/design/SCORING.md#5-the-tournament-promotion-gate)).
 Match the `rejection_reason` you are holding to the rule that produced it:
 
-0. **Diff-complexity ceiling** (opt-in, `diff_complexity_ceiling > 0`). Checked
+0. **Diff-complexity ceiling** (opt-in, `experimental.diff_complexity_ceiling > 0`). Checked
    *before* the scoring rules, so an over-budget edit is rejected naming the
    ceiling — `diff_complexity_ceiling: diff complexity 14 exceeds ceiling 10` —
    rather than whatever scoring near-miss it may also have tripped.
@@ -149,10 +163,12 @@ Match the `rejection_reason` you are holding to the rule that produced it:
    namespace=rubric:`. This is the reason operators are most often surprised by,
    because they never configured it — it ships on.
 
-A fifth veto sits after the rules: with the default-on train/holdout split, a
-win the train slice measured must also not regress on the holdout, or it flips
-to `holdout_not_confirmed: …`. All the deltas reported alongside it are still
-the train-side deltas.
+Two more checks sit after the rules. With the default-on train/holdout split,
+a win the train slice measured must also not regress on the holdout, or it
+flips to `holdout_not_confirmed: …`; the deltas reported alongside it are
+still the train-side deltas. And when the contract sets
+`promote_confidence_threshold`, the evidence gate must confirm the crowning
+pair with fresh draws; its record is the outcome's `evidence` block.
 
 The matchup detail in the Tournament view
 ([TOURNAMENT.md §3](../../docs/design/TOURNAMENT.md#3-per-matchup-detail)) lays
@@ -172,8 +188,8 @@ this out in five sections; read them in order to localize the verdict:
   **Provenance caveat:** the weights behind a `per_judge_loss` attribution —
   `per_judge_weights`, `default_judge_weight` and
   `pass_rate_monotonicity_scope` — are serialised across the subprocess-worker
-  boundary (`tournament/runner.py:_weights_spec` ↔ `_tournament_worker.py
-  :_weights_from_args`). A weight in a verdict that does not match
+  boundary (`zicato.tournament.worker_transport._weights_spec` ↔
+  `zicato._tournament_worker._weights_from_args`). A weight in a verdict that does not match
   `scoring.json` means the transport dropped a field; a dropped field once
   scored all custom-judge drift at `1.0`. That is a scoring-provenance smell
   rather than a candidate-quality one. The
@@ -203,7 +219,7 @@ all served from the analytical index:
 - **Mutation heat map** (§4.5) — which mutation points correlate with winning
   (touched vs promoted). This is **correlation rather than causation** — a surface touched
   five times and promoted once is *resisting* improvement; consider the proposer
-  brief's `## Forbidden` list.
+  brief's `## Forbidden edits` list.
 - **Tournament cost** (§4.6) — wall-clock, aux-LLM calls, and board runs per
   round and per epoch; fast mode shows up as the challenger's board runs alone,
   with no champion pass beside them.

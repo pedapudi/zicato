@@ -47,11 +47,11 @@ The verification command's pytest cost report supplies fixture setup, call,
 and teardown measurements. The workspace report does not measure teardown or
 claim that process launch duration is worker execution time.
 
-The tests verify that accepted, evaluated, and promoted source code agree (#495).
-They also exercise sufficient evidence before promotion (#486, #487), valid
-results before reuse (#488, #489), and worker termination before releasing
-resources (#476, #477, #484). Changing shared defaults under #395 also requires
-measurements of false promotions, detection of improvements, and cost.
+The tests verify that accepted, evaluated, and promoted source code agree.
+They also exercise sufficient evidence before promotion, valid results before
+reuse, and worker termination before releasing resources. A change to the
+shared scoring defaults also requires measurements of false promotions,
+detection of improvements, and cost; these tests do not supply them.
 
 Existing tests with independently established outcomes still cover convergence,
 statistical decisions, and recorded reference results. Tests of permitted source

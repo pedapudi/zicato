@@ -76,7 +76,7 @@ An operator starts a new epoch when any of the following hold:
 - The board changes (entries added, removed, or edited — including a
   change to the board's `disable_drift` set).
 - The proposer brief changes semantically, including a change to its
-  `## Forbidden` mutation-point list.
+  `## Forbidden edits` mutation-point list.
 - The scoring weights change (e.g. the operator decides pass-rate
   matters more relative to drift, or retunes `per_judge_weights`).
 - The tournament structure changes (e.g. `gauntlet → swiss`, or a
@@ -85,13 +85,17 @@ An operator starts a new epoch when any of the following hold:
 - The declared adapter block or the worker document it produces changes.
   Examples include selecting another factory, changing its construction
   arguments or integrations, or changing an ADK entry point.
+- An effective model role changes: a different engine, model, revision,
+  transport, or `call_llm` implementation for any role in `models`
+  ([MODEL-CONFIG.md](MODEL-CONFIG.md)). The captured roles are part of the
+  adapter component of the contract hash.
 - Adapter implementation source outside the mutable trees changes. The source
   inside the mutable trees remains generation content and does not cause an
   epoch boundary.
 - The registered mutable-tree path set changes.
-- The **proposer** changes — a different proposer dir is registered, its
-  declared implementation identity or tools change,
-  or one of its `skills/*.md` modules is added, removed, or
+- The **proposer** changes — a different proposer dir is registered, the
+  proposal runtime's identity or tools change, its declared static checks
+  change, or one of its `skills/*.md` modules is added, removed, or
   semantically changed. The agent that proposes the mutations is part of
   the contract, so generations proposed under different proposers are not
   comparable. See [PROPOSER.md](PROPOSER.md).
@@ -110,14 +114,12 @@ hash.
 
 - Source edits inside a registered mutable tree. That source is generation
   content, including its mutation markers, and is the material Zicato evolves.
-- An `evaluation_call_llm` model swap. The model identity is
-  configuration rather than contract, though an epoch boundary is a
-  convenient moment to swap.
+- Runtime controls that do not change measurement, such as
+  `runtime.parallelism`, `evolve --mode`, or the dashboard port.
 
-The bias is toward NOT starting a new epoch — the cost of throwing
-away pattern history is significant, and most edits operators want to
-make do not warrant it. The CLI surfaces this in the warnings on
-`board add` and `board remove`.
+The bias is toward NOT starting a new epoch: a roll discards pattern
+history. The CLI surfaces this in the warnings on `board add` and
+`board remove`.
 
 ## 2. Storage layout
 
@@ -131,23 +133,26 @@ directory.
   current_epoch                      # marker: id of the current epoch
   lineage.json                       # cross-epoch generation DAG
   epochs/
-    initial/                         # default first epoch
+    {date}_initial/                  # epoch id: creation date + slugified name
       board.jsonl                    # frozen for this epoch
-      brief.md                       # operator-edited; read fresh each round
-      scoring.json                   # weights + tournament thresholds
+      brief.md                       # frozen proposer brief
+      scoring.json                   # weights + tournament structure and thresholds
       config.json                    # EpochConfig (id, name, contract_hash, closed)
       execution.json                 # retained execution declarations and resolved proposer skills
       mutations.json                 # most-recent mutation-point enumeration
-      proposer_inputs.jsonl          # one line per proposer LLM call: its rendered input
+      proposer_inputs.jsonl          # one line per proposer model call: its rendered input
+      episodes/                      # one directory per proposal episode transcript
       generations/
         v0/
           snapshot/                  # system-under-test source at this generation
-          experiment.json            # synthetic seed marker (the baseline)
+          experiment.json            # synthetic seed record (the baseline)
           gen_score.json
           runs/
             {entry_id}/
-              events.jsonl
-              loss.json
+              seed-{seed}/           # seed-none when the draw has no seed
+                events.{purpose}.r{draw}.jsonl
+                loss.{purpose}.r{draw}.json
+                result.{purpose}.r{draw}.json
         v1/
           snapshot/
           experiment.json            # ancestry + hypothesis + patch references
@@ -156,34 +161,39 @@ directory.
           gen_score.json
           runs/
             {entry_id}/
-              events.jsonl
-              loss.json
+              seed-{seed}/
+                ...
         v2/
           ...
       rounds/
         {round_index}/
           field_settlement.json      # outcomes, tournament details, primary promotion
-      patterns/
-        round_001.json               # detector output, one per round
-        round_002.json
-        ...
-      analysis.md                    # generated at epoch close (or a stub)
-      analysis.html                  # deterministic render, refreshed each round
-    epoch_after_board_edit/
+      health/
+        round_{N}.json               # loop-health report, one per round (LOOP-HEALTH.md)
+      analysis.md                    # epoch report; refreshed each round, prose added at close
+      analysis.prose.json            # model-written report sections, preserved across refreshes
+      analysis.html                  # deterministic render of analysis.md
+    {date}_epoch_after_board_edit/
       board.jsonl
       brief.md
       scoring.json
       config.json
       generations/
         v0/                          # baseline at this epoch's start
-          snapshot/                  # the promoted last vN from `initial`
+          snapshot/                  # the promoted last vN from the previous epoch
           ...
         v1/
           ...
-      patterns/
       analysis.md
       analysis.html
 ```
+
+A run's artifacts are named by measurement purpose and draw index. The
+purpose is `tournament` for an ordinary tournament run; the other purposes
+are `calibration`, `contract_preflight`, `candidate_screen`,
+`evidence_confirmation`, `board_reflection`, and
+`eval_synthesis_admission`. The `seed-{seed}` directory records the base
+seed of the draw.
 
 The proposer brief is stored as `brief.md` within each epoch. Set
 `contract.brief_path` in workspace `config.json` to choose the source file
@@ -195,8 +205,8 @@ A few specifics:
   is the promoted final generation from the previous epoch (or the
   initial-registered source for the first epoch).
 - `v0` carries a **synthetic seed `experiment.json`** (written by
-  `write_seed_experiment`; `zicato repair v0-baseline` backfills it
-  for older workspaces) so every generation directory has a uniform
+  `write_seed_experiment`; `zicato repair v0-baseline` backfills a
+  missing one) so every generation directory has a uniform
   shape. Every subsequent generation carries a real proposer
   `experiment.json`.
 - Patches live in **separate `patches/{patch_id}.json` files** under
@@ -212,12 +222,16 @@ hypothesis and the patches that test it, rather than a bare
 
 ### 3.1 Hypothesis schema (mandatory)
 
-Every field is required. Schema-invalid proposer responses are
-rejected; the proposer is re-prompted.
+Every field except `risks` is required. A proposal whose hypothesis
+fails validation is rejected, and the round retries the proposal up to
+the evolve loop's proposer-retry limit.
 
-The proposer's raw response is a JSON object with two top-level keys,
-`hypothesis` and `patches`; `zicato.proposer.structured` validates it
-and lifts it into a typed `Experiment`. What lands on disk in
+A proposal episode ends with a hypothesis object, and Zicato reads the
+episode's edited working copy back as a list of patches
+([PROPOSER.md](PROPOSER.md#the-edit-loop)). The two are combined into a
+JSON object with the top-level keys `hypothesis` and `patches`, which
+`zicato.proposer.structured.parse_experiment_json` validates and lifts
+into a typed `Experiment`. What lands on disk in
 `experiment.json` is the serialized `Experiment`, whose body carries
 lineage coordinates plus the hypothesis and a `patch_ids` list (see
 §3.2 — the patches live in separate per-patch files). The hypothesis
@@ -225,10 +239,13 @@ sub-object:
 
 ```json
 {
+  "format_version": 1,
+  "id": "3c1f6f0e9a8b4d2c8e7f6a5b4c3d2e1f",
   "epoch_id": "2026-04-08_hardened_research",
   "generation_id": "v1",
   "parent_generation_id": "v0",
   "proposed_at": "2026-04-08T14:32:10Z",
+  "round_index": 1,
   "hypothesis": {
     "core_idea": "Tighten the researcher's system prompt so it stops asserting facts without citing sources.",
 
@@ -273,10 +290,10 @@ The hypothesis fields in detail (the `HypothesisSpec` dataclass):
 | `risks` | `string` (optional) | One-paragraph description of failure modes the proposer anticipates. Defaults to the empty string. |
 | `expected_metric_movements` | `list[{metric_name, direction, magnitude}]` | Predictions keyed by measured metric name, including `drift:<kind>`, `judge:<name>`, and `cost:tokens_spent`. A proposal requires at least one. |
 
-The schema is enforced at proposer-output time (a JSON Schema pass
-plus a cross-check pass in `zicato.proposer.structured`). The proposer
-is given the schema in its system prompt; a malformed response is
-rejected and re-prompted with the parse error appended.
+The schema is enforced when the episode's result is parsed (a JSON
+Schema pass plus a cross-check pass in `zicato.proposer.structured`).
+A recombined candidate's body also carries `recombined_from`, the ids of
+the two rejected parents it combines; the key is absent otherwise.
 
 ### 3.2 Patch storage (per-patch files)
 
@@ -372,7 +389,15 @@ The fields (the `OutcomeRecord` dataclass):
 | `drift_loss_delta` | Change in mean drift loss across the board. Negative = improvement. |
 | `scalar_score_delta` | Change in the combined tournament scalar; its sign gates `tournament_decision`. |
 | `tournament_decision` | `"promoted"`, `"rejected"`, or `"deferred"`. |
-| `rejection_reason` | Symbolic reason when rejected (e.g. `"insufficient margin: ..."`); empty string otherwise. |
+| `rejection_reason` | Symbolic reason when rejected (e.g. `"insufficient improvement: ..."`); empty string otherwise. |
+
+`OutcomeRecord` also carries the tournament provenance described in §9.3
+and §9.4 (`structure`, `final_rank`, `eliminated_in_round`,
+`match_record`, `champion_eval_mode`), the holdout measurement
+(`holdout`, `train_loss`, `holdout_loss`, `generalization_gap`; see
+[OVERFITTING.md](OVERFITTING.md)), the operator override flag and reason
+(`operator_override`, `operator_override_reason`), and the promotion
+`evidence` record.
 
 The per-movement `hypothesis_match` flag is the load-bearing signal.
 Patches that
@@ -396,7 +421,7 @@ record that began as "what the proposer was thinking" closes the loop as
 
 The digest is advisory context rather than a constraint: it never
 enters the hard hypothesis schema, and the only mechanical gate on the
-proposer stays the brief's `## Forbidden` list (§7). It is scoped to the current
+proposer stays the brief's `## Forbidden edits` list (§7). It is scoped to the current
 evaluation contract (one epoch = one contract), because a Δscalar from a
 different board is not comparable. The full design — the two scopes
 (settled cross-round history plus intra-round sibling awareness in a
@@ -433,22 +458,22 @@ change an outcome or replay a round.
 
 ## 5. The analysis (per-epoch)
 
-`analysis.md` is generated by an `evaluation_call_llm` pass at epoch
-close — **only when an evaluation LLM has been configured**. When no
-evaluation callable is available (e.g. `zicato epoch close` run by hand
-without one wired through), the close path writes a deterministic stub
-`analysis.md` — the journal snapshot plus a `_no evaluation LLM was
-supplied_` placeholder — that the operator can later re-render with
-`zicato repair report`. The LLM pass receives:
+The closing retrospective in `analysis.md` is written by an evaluation
+model pass at epoch close — **only when an evaluation model has been
+configured**. When no evaluation callable is available (for example,
+`zicato epoch close` run by hand without one wired through), the close
+path publishes the deterministic report: measured results plus any
+prose already recorded. The operator can later re-render it with
+`zicato repair report`. The model pass
+(`zicato.epoch.analysis.generate_analysis`) receives:
 
-- The full rendered journal for the epoch.
-- The accepted experiments, combining each proposal with its recorded outcome.
-- The `brief.md` for the epoch.
-- The aggregate pattern statistics across the epoch (drift kinds
-  that moved most, kinds that stayed flat, tag slices with notable
-  pass-rate movement).
+- The rendered journal for the epoch.
+- The recorded experiments, combining each proposal with its recorded outcome.
+- The deterministic tournament outcomes: lineage, scalar trajectory, and
+  metric movements.
 
-The pass writes `analysis.md` with these sections:
+The response supplies these sections, stored as the `retrospective`
+block of `analysis.prose.json`:
 
 ```markdown
 # Epoch analysis: <epoch_id>
@@ -461,11 +486,11 @@ The pass writes `analysis.md` with these sections:
 - Round 1: "Tighten researcher prompt for citation." CONFABULATION_RISK moved as predicted; pass-rate up 5 points.
 - ...
 
-## Hypotheses that didn't hold
+## Hypotheses that didn't
 - Round 4: "Soften coordinator routing." Predicted CAPABILITY_MISMATCH down, observed flat; pass-rate flat.
 - ...
 
-## Surface still open
+## Surface still open at epoch close
 - `writer.tools.summarize.description` has not been touched this epoch.
 - ...
 
@@ -473,21 +498,22 @@ The pass writes `analysis.md` with these sections:
 - ...
 ```
 
-The analysis pass is **bounded**. It receives a token budget on its
-input (the journal can be long across many rounds) and produces a
-fixed-section output. The schema is enforced at parse time; a malformed
-analysis pass result triggers a regenerate.
+The analysis pass is **bounded**. Character caps limit the journal
+and each experiment's detail in the prompt, and the call runs under the
+evaluation call timeout. A timed-out call leaves the recorded narrative
+in place.
 
 ### 5.1 Closing — manual primary, auto-close fallback
 
 The operator closes an epoch with `zicato epoch close [EPOCH_ID]`
 (the current epoch when `EPOCH_ID` is omitted). This:
 
-1. Runs the analysis pass (best-effort — only if an evaluation LLM is
-   configured; otherwise writes the stub described in §5 above).
-2. Writes `analysis.md` (and re-renders `analysis.html`).
-3. Stamps the epoch's `config.json` as closed and records the close
+1. Stamps the epoch's `config.json` as closed and records the close
    timestamp in `lineage.json`.
+2. Runs the analysis pass (best-effort — only if an evaluation model is
+   configured; otherwise publishes the deterministic report described in
+   §5 above).
+3. Writes `analysis.md` and re-renders `analysis.html`.
 
 To re-render an existing epoch's report against the current on-disk
 data, use `zicato repair report` (deterministic figures/tables
@@ -495,21 +521,14 @@ always; `--no-llm` skips the prose pass). `zicato inspect telemetry`
 (re)runs the decision-telemetry analyzer for an epoch out of band.
 
 If the operator starts a new epoch (`zicato epoch new`) without
-closing the previous one, the CLI auto-closes the previous epoch with
-a warning:
+closing the previous one, the CLI auto-closes the previous epoch and
+prints a warning to standard error:
 
 ```
-$ zicato epoch new hardened_research
-WARNING: previous epoch `initial` was not closed manually; auto-closing now.
-         analysis.md may be shorter / lower quality than a manual close.
-         To avoid this in the future: zicato epoch close <name> before zicato epoch new.
-Running analysis pass on `initial`...
-Closed `initial`. Created `hardened_research`.
+WARNING: auto-closing previous epoch '2026-04-01_initial'
 ```
 
-The auto-close runs the same analysis pass; the warning exists so
-operators notice they missed the manual step (where they might have
-added a `--focus` flag or otherwise steered the pass).
+The auto-close runs the same close path as `zicato epoch close`.
 
 ### 5.2 The epoch report and its HTML companion
 
@@ -566,20 +585,18 @@ The two coexist intentionally:
   ticket, archiving with the project — `analysis.html` is the
   shareable artifact. The dashboard is local-only by default.
 
-The dashboard reads from `.zicato/runtime/*`; `analysis.html`
-is regenerated from `.zicato/epochs/{id}/`. They consume
-different sources and serve different roles, but the operator
-sees roughly the same lineage and score trajectory in both
-(rendered by the same shared component library).
+The dashboard reads the live runtime state under `.zicato/runtime/`
+together with the epoch records; `analysis.html` is regenerated from
+`.zicato/epochs/{id}/` alone. Both show the same lineage and score
+trajectory.
 
 ### 5.3 Why the LLM analysis runs at close rather than continuously
 
-Generating the LLM analysis pass that lives inside `analysis.md`
-is expensive (a multi-thousand-token LLM call) and the output is
-most useful when the epoch is done. Within an epoch, the
-per-round journal entry, the patterns aggregate, the live
-dashboard, and the deterministically-generated
-`analysis.html` are enough. The LLM pass is the retrospective.
+The model-written retrospective inside `analysis.md` costs a
+multi-thousand-token model call, and its output is most useful when the
+epoch is done. Within an epoch, the journal, the live dashboard, and the
+deterministically generated `analysis.md` and `analysis.html` carry the
+measured results.
 
 ## 6. Lineage
 
@@ -652,21 +669,24 @@ predecessor. Per-epoch promotion/rejection counts are derived from the
 `generations` list's `promoted` flags rather than stored as separate
 fields.
 
-`zicato epoch list` renders the accepted lineage graph as a table:
+`zicato epoch list` renders the accepted lineage graph as a Markdown
+table. The `rejected` column excludes `v0`:
 
 ```
-epoch                started_at           closed_at            promoted  rejected  parent
--------------------  -------------------  -------------------  --------  --------  ----------
-initial              2026-04-01 10:00     2026-04-08 14:30     5         2         (root)
-hardened_research    2026-04-08 14:31     (open)               2         0         initial:v7
+# Lineage
+
+| epoch | started_at | closed_at | promoted | rejected | parent |
+| --- | --- | --- | --- | --- | --- |
+| initial | 2026-04-01T10:00:00Z | 2026-04-08T14:30:00Z | 5 | 2 | (root) |
+| hardened_research | 2026-04-08T14:31:00Z | (open) | 2 | 0 | initial:v7 |
 ```
 
 ## 7. The proposer brief
 
 `brief.md` is the operator's steering document for an epoch
 — the operator's brief *to the proposer* for how to rewrite the
-system under test. It is markdown, no schema enforcement: the proposer
-reads it verbatim into its system prompt each round.
+system under test. It is markdown with no schema enforcement: each
+proposal episode receives it verbatim in its instructions.
 
 > **Naming note.** Two separate objects are easy to confuse. The
 > **proposer brief** is this epoch-wide steering document. A **rubric**
@@ -691,35 +711,34 @@ A typical structure:
 - Prefer terse, imperative instructions.
 - Keep specialist descriptions to one sentence.
 
-## Forbidden
-- coordinator.routing
-- writer.tools.summarize.description
+## Forbidden edits
+- `coordinator.routing`
+- `writer.tools.summarize.description`
 
 ## Notes
 - The previous epoch tried tightening writer prompts and the result
   was flat. Steer away unless drift on writer entries gets worse.
 ```
 
-The `## Forbidden` section — the **forbidden-id list** — is **enforced
-mechanically**: any patch that targets a mutation-point id in this
-list is rejected at validate time by `check_forbidden_ids` (see
-[MUTATION-SURFACE.md](MUTATION-SURFACE.md) §6). Every other section is
-advisory — the proposer reads them as natural language and uses them
-to steer.
+The `## Forbidden edits` section — the **forbidden-id list** — is
+**enforced mechanically**: any patch that targets a mutation-point id in
+this list is rejected at validate time by `check_forbidden_ids` (see
+[MUTATION-SURFACE.md](MUTATION-SURFACE.md) §6). `parse_brief`
+(`zicato.proposer.brief`) recognises the section only under a heading
+whose text is `Forbidden edits`, compared case-insensitively, at any
+heading depth. It reads ids from the section's bullet lines: backticked
+tokens, or single- or double-quoted tokens when a bullet has no
+backticks. A heading spelled any other way, such as `## Forbidden`, is
+ordinary advisory text and forbids nothing, and a bare unquoted id in a
+bullet is not read. A `Preferred edits` heading is parsed the same way
+into the brief's preferred ids. Every other section is advisory — the
+proposer reads them as natural language and uses them to steer.
 
-The proposer brief is **read fresh every round**. There is no
-caching. The operator can edit it between rounds and the next round
-picks up the change.
-
-### 7.1 Why edits mid-epoch are fine
-
-Proposer-brief edits are *steering*, not *contract*. The proposer can
-change focus mid-epoch and the comparability of generations within
-the epoch is preserved (every generation is still measured against
-the same board and the same scoring). The exception is the
-`## Forbidden` list — adding ids to it shrinks the proposer's action
-space and warrants a new epoch by convention; the CLI does not
-enforce this but the convention is documented here so operators know.
+Every round reads the brief frozen into the epoch, never the live
+source file. The brief is a contract input (§10.1): a semantic edit to
+the live `brief.md`, including its `## Forbidden edits` list, rolls the epoch
+on the next `zicato evolve`. Whitespace-only edits leave the contract
+hash unchanged (§10.3).
 
 ## 8. Round mechanics
 
@@ -732,8 +751,10 @@ round.
 
 A single round, in storage terms:
 
-1. Read patterns from `patterns/round_{NNN-1}.json` (if any).
-2. Run the proposer; write `Experiment` to a temporary file.
+1. Run the pattern detectors over the parent generation's loss
+   profiles; the patterns are passed to the proposer in memory and are
+   not written to disk.
+2. Run the proposer to produce an `Experiment`.
 3. Validate the experiment's hypothesis schema and patch ids.
 4. Run the applier; write the candidate snapshot to `vN+1/snapshot/`.
 5. Run the tournament; collect per-entry loss profiles for both
@@ -745,7 +766,8 @@ A single round, in storage terms:
    details, and the primary promoted generation.
 8. Refresh the derived index and record the result of that refresh. Journal and
    lineage readers derive their views from the committed outcomes.
-9. Run the pattern detectors; write `patterns/round_{NNN}.json`.
+9. Assess loop health and write `health/round_{N}.json`
+   ([LOOP-HEALTH.md](LOOP-HEALTH.md)); refresh the epoch report.
 
 Round numbers are global within an epoch (independent of whether the
 round promoted). The 17th round is round 17 even if only 12 of those
@@ -758,18 +780,20 @@ views can attribute a generation to the outer round that minted it. It
 defaults to `0` for the seed `v0` and for records that predate the stamp,
 and it is always the OUTER evolve round — never an inner bracket round.
 
-Round records and pattern detector output live outside individual generation
+Round records and loop-health reports live outside individual generation
 directories because a round can evaluate several candidates. The journal
 aggregates accepted experiments across the epoch when it is requested.
 
 ## 9. Per-epoch tournament structure
 
-> **Status.** SHIPPED. The five structures (`gauntlet` default,
-> `single_elim`, `double_elim`, `swiss`, `racing`) are implemented as
-> pluggable selection strategies under `zicato/selection/`, driven by
-> `zicato/selection/driver.py:resolve_tournament` and selected per-epoch
-> from the scoring `tournament` block. `gauntlet` is the king-of-the-hill
-> default; an epoch with no `tournament` key gets it byte-for-byte. The
+> **Status.** Implemented. The five structures (`racing`, `gauntlet`,
+> `single_elim`, `double_elim`, `swiss`) are selection strategies under
+> `zicato/selection/`, driven by `zicato/selection/driver.py` and selected
+> per epoch from the scoring `tournament` block. `racing` is the default;
+> `gauntlet` is the single-challenger king-of-the-hill structure.
+> `single_elim`, `double_elim`, and `swiss` are experimental and require
+> `experimental.tournament_structures = true`
+> ([FEATURE-QUALIFICATION.md](FEATURE-QUALIFICATION.md)). The
 > full data model (persisted record, dashboard API, CLI) lives in
 > [TOURNAMENT-DATA-MODEL.md](TOURNAMENT-DATA-MODEL.md); the selection
 > algorithms live in [SELECTION.md](SELECTION.md) /
@@ -786,15 +810,18 @@ comparable), so it lives in `scoring.json` under a `tournament` key:
 {
   // ... weights + gate thresholds ...
   "tournament": {
-    "structure": "gauntlet",   // gauntlet|single_elim|double_elim|swiss|racing
+    "structure": "racing",     // racing|gauntlet|single_elim|double_elim|swiss
     "params": { }               // structure-specific; defaults fill in
   }
 }
 ```
 
-- `structure` — one of five closed tokens; `gauntlet` is the default
-  (an epoch with no `tournament` key gets the shipped king-of-the-hill
-  gauntlet, byte-for-byte).
+- `structure` — one of five closed tokens. A `scoring.json` with no
+  `tournament` key gets `racing` with its default parameters (a field of
+  four challengers, two replicates per matchup, and promotion
+  confirmation). A `tournament` block that names a structure without
+  `params` gets that structure's defaults only when it names `racing`;
+  any other structure starts from empty parameters.
 - `params` — a structure-specific JSON object the selection logic reads
   (e.g. `swiss.rounds`, `racing.rungs`). See
   [TOURNAMENT-DATA-MODEL.md](TOURNAMENT-DATA-MODEL.md) §1.3 for the
@@ -903,11 +930,11 @@ The **evaluation contract** has six semantic components:
    measurement and tournament-decision semantics.
 5. **The registered system-under-test identity** — the validated worker
    reconstruction document, the declared adapter block behind it,
-   implementation source outside the mutable surface, and the sorted
-   mutable-tree paths.
-6. **The proposer** — the proposing agent's identity, its tools, and the
-   skill modules under the configured `proposers/<name>/` dir (or the
-   built-in default proposer when none is registered). See
+   implementation source outside the mutable surface, the captured model
+   roles, and the sorted mutable-tree paths.
+6. **The proposer** — the proposal runtime's identity, its tools, its
+   declared static checks, and the skill modules under the configured
+   `proposers/<name>/` dir. See
    [PROPOSER.md](PROPOSER.md). Note the *proposer brief* (item 2) and the
    *proposer* (item 6) are distinct contract inputs: the brief is
    per-epoch operator steering text, the proposer is the agent (plus its
@@ -938,10 +965,12 @@ override the default. These are the operator's *live, editable*
 copies. On epoch creation / roll they are frozen (copied) into
 `epochs/{id}/`.
 
-`register --proposer-path PATH` additionally records
-`contract.proposer_path` — the proposer dir whose skills + optional
-custom `agent.py` are folded into the hash. An absent flag leaves the
-key unset (the built-in default proposer). See [PROPOSER.md](PROPOSER.md).
+`epoch register --proposer-path PATH` additionally records
+`contract.proposer_path` — the proposer dir whose skills are folded into
+the hash. A proposer dir that carries an `agent.py` is refused, because
+custom proposer agents are bound through `runtime.proposer_agent`
+instead. An absent flag leaves the key unset, so no skills are declared.
+See [PROPOSER.md](PROPOSER.md).
 
 ### 10.3 The contract hash
 
@@ -958,9 +987,9 @@ so spurious edits do not roll the epoch:
 | proposer brief | Read text, normalize line endings to `\n`, strip trailing whitespace per line, strip leading/trailing blank lines. CRLF churn and re-indentation are no-ops. |
 | scoring | Parse into a fully-defaulted `ScoringWeights` — **including the `tournament` structure block** (§9) — preserve every parsed runtime numeric value, then `json.dumps(sort_keys=True)`. A sparse authored document and its fully expanded defaults agree, and equivalent JSON spellings of the same typed number are no-ops. Every effective field is serialized and hashed. A distinct numeric value, structure, or parameter rolls the epoch. An enabled integration may add system-owned implementation identity before hashing. |
 | evaluator_revision | Serialize the explicit Zicato evaluator revision. Increment it only when measurement or tournament-decision semantics change. |
-| adapter | Remove `mutable_trees` from the validated worker reconstruction document, recursively normalize its JSON values, sort object keys and integration names, and add source hashes for adapter implementations outside the mutable trees. An ADK entry point is one field in its worker document. Normalize the operator's declared `adapter` block the same way, and hash alongside the worker document every declared field that document does not already state, because an adapter built by operator code decides its own worker document and need not report what it was declared with. A field the worker document repeats verbatim is dropped, so an adapter that reports its declaration faithfully — every ADK registration among them — adds nothing and keeps the component it had. A declared factory whose defining module has no readable source stops the hash with an error rather than hashing as a bare name. |
+| adapter | Remove `mutable_trees` from the validated worker reconstruction document, add the captured model roles and the source hashes of any role implementation outside the mutable trees, recursively normalize its JSON values, sort object keys and integration names, and add source hashes for adapter implementations outside the mutable trees. An ADK entry point is one field in its worker document. Normalize the operator's declared `adapter` block the same way, and hash alongside the worker document every declared field that document does not already state, because an adapter built by operator code decides its own worker document and need not report what it was declared with. A field the worker document repeats verbatim is dropped, so an adapter that reports its declaration faithfully — every ADK registration among them — adds nothing and keeps the component it had. A declared factory whose defining module has no readable source stops the hash with an error rather than hashing as a bare name. |
 | mutable_trees | Sorted tuple of normalized, never filesystem-resolved path strings. Registration order is a no-op. |
-| proposer | Resolve the proposer dir (or the builtin default) to a `ProposerSpec` and serialize sorted-key: `agent_id`, sorted `tools`, per-skill normalized-body hashes sorted by name, and the custom `agent.py` source hash. Each skill body is normalized in the same way as the proposer brief, so a whitespace-only skill edit is a no-op; a semantic skill edit (or adding / removing / renaming a skill, or editing `agent.py`) rolls the epoch. The builtin default canonicalizes to a stable form, so a workspace that never registers a proposer keeps a stable hash. |
+| proposer | Resolve the workspace's proposal runtime binding and proposer dir to a `ProposerSpec` and serialize sorted-key: `agent_id`, sorted `tools`, per-skill normalized-body hashes sorted by name, the runtime's dotted path and identity digest (`external`), and the sorted static-check names when any are declared. Each skill body is normalized in the same way as the proposer brief, so a whitespace-only skill edit is a no-op; a semantic skill edit (or adding / removing / renaming a skill) rolls the epoch. |
 
 The canonical forms are concatenated and hashed. The low-level canonicalizers
 can represent an absent file as an empty component, but that does not authorize
@@ -984,11 +1013,10 @@ invocation, before the round loop starts:
    the registered harness identity.
 2. Look at the current epoch.
    - **No current epoch.** With auto-epoching on, `evolve` creates the
-     first epoch (`e0`) from the contract and runs against it. With
+     first epoch (named `e0`) from the contract and runs against it. With
      `--no-auto-epoch`, it errors and tells the operator to run
      `zicato epoch new`.
-   - **Current epoch's hash matches** (or is unrecorded — see §10.6).
-     No roll; `evolve` runs against the current epoch.
+   - **Current epoch's hash matches.** No roll; `evolve` runs against the current epoch.
    - **Current epoch's hash differs** (the contract drifted). With
      auto-epoching on, `evolve` closes the current epoch (generating
      `analysis.md`), opens a fresh one carrying the new contract, and
@@ -1076,10 +1104,10 @@ unchanged. They are the manual escape hatches:
 | Hypothesis schema, proposer contract | this document §3 |
 | The proposer brief vs the per-entry `Rubric`; authoring boards | [BOARD-AUTHORING.md](BOARD-AUTHORING.md) |
 | Patch shape and validator constraints | [MUTATION-SURFACE.md](MUTATION-SURFACE.md) |
-| Loss profile written into each `runs/{id}/loss.json` | [TELEMETRY.md](TELEMETRY.md) |
+| Loss profile written into each run's `loss.{purpose}.r{draw}.json` | [TELEMETRY.md](TELEMETRY.md) |
 | Drift loss scalar that drives `tournament_decision` | [SCORING.md](SCORING.md) |
 | Per-epoch tournament structure: config block, persisted record, API, UI | [TOURNAMENT-DATA-MODEL.md](TOURNAMENT-DATA-MODEL.md) |
-| The proposer as a contract input: tiers, tools, Design A, epoch-roll | [PROPOSER.md](PROPOSER.md), `skills/zicato-design-proposer/SKILL.md` |
+| The proposer as a contract input: runtime, skills, epoch roll | [PROPOSER.md](PROPOSER.md), `skills/zicato-design-proposer/SKILL.md` |
 | CLI commands for `epoch new` / `close` / `list` | [CLI.md](CLI.md) |
 | Atomic-rename helper used by `analysis.html` writes | [RUNTIME.md](RUNTIME.md) §6 |
 | Live dashboard that supersedes `analysis.html` during an `evolve` | [DASHBOARD.md](DASHBOARD.md) |

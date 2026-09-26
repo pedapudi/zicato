@@ -1,22 +1,25 @@
 # Telemetry
 
-zicato consumes telemetry, it does not produce a new wire format. Every
-run of the system under test emits a `goldfive.v1.Event` stream that
-zicato captures verbatim through goldfive's own
-`JSONLPersistenceSink`, then reduces post-run into a typed
-`LossProfile`. The JSONL file is the canonical record; the
+zicato consumes telemetry, it does not produce a new wire format. Under
+the default `goldfive` telemetry dialect, every run of the system under
+test emits a `goldfive.v1.Event` stream that zicato captures verbatim
+through goldfive's own `JSONLPersistenceSink`, then reduces post-run into
+a typed `LossProfile`. The JSONL file is the canonical record; the
 `LossProfile` is the surface every other component reads.
+[TELEMETRY-DIALECTS.md](TELEMETRY-DIALECTS.md) specifies the other
+producers (`adk_events`, `transcript`), which feed the same
+`LossProfile`.
 
 This document covers:
 
 - How zicato captures the event stream (no custom EventSink).
 - The post-run reducer — its inputs, its output, why it is a function
   and not a sink.
-- The harmonograf session model (one server, many sessions) and
-  the deep-link route.
+- The harmonograf session model (one server per workspace, many
+  sessions) and the deep-link route.
 - The `LossProfile` shape, field by field.
 - Multi-turn aggregation (run-bounded counts + derived signals).
-- The emulator's `zicato:emulator` lane for harmonograf visibility.
+- The emulator's per-turn audits and their `zicato:emulator` lane.
 - What's used as feature vs as loss.
 
 ## 1. No zicato-specific EventSink
@@ -40,7 +43,7 @@ zicato composes goldfive's sink and avoids the dependency.
 
 ### 1.1 Wiring per run
 
-For every run (one entry, one generation), zicato:
+For every measurement (one entry, one generation, one replicate), zicato:
 
 1. Constructs the list of sinks via
    `zicato.telemetry.sink.make_run_sinks(...)`. The list always
@@ -50,13 +53,16 @@ For every run (one entry, one generation), zicato:
    from goldfive.sinks.persistence import JSONLPersistenceSink
 
    sink = JSONLPersistenceSink(
-       path=".zicato/epochs/{epoch}/generations/{generation_id}/runs/{entry_id}/events.jsonl",
+       path=events_jsonl_path(workspace_root, epoch_id, generation_id, entry_id, measurement),
        mode="write",   # NEVER "append" — see §1.2
    )
    ```
 
-   The exact path comes from `zicato.core.workspace.events_jsonl_path`
-   so the layout stays in one place. When a harmonograf URL is
+   The path comes from `zicato.core.workspace.events_jsonl_path`, which
+   resolves through the workspace layout:
+   `.zicato/epochs/{epoch}/generations/{generation_id}/runs/{entry_id}/[seed-{n}/]events.{purpose}.r{draw}.jsonl`
+   (for example `events.tournament.r0.jsonl` for replicate zero of a
+   tournament measurement). When a harmonograf URL is
    resolvable (`resolve_harmonograf_url`), `make_run_sinks` **also**
    appends a `harmonograf_client.HarmonografSink` so the run streams
    live to the harmonograf console. That attachment is strictly
@@ -74,23 +80,24 @@ For every run (one entry, one generation), zicato:
 
 3. Awaits the terminal event (`RunCompleted` or `RunAborted`).
 4. Closes the sinks to flush.
-5. Hands the JSONL path to the post-run reducer (§2), which writes
-   `loss.json` next to `events.jsonl`. Per-run telemetry is therefore
-   exactly two files in the run directory: `events.jsonl` (the
-   canonical event stream) and `loss.json` (the reduced
-   `LossProfile`).
+5. Hands the JSONL path to the post-run reducer (§2), which writes the
+   matching `loss.{purpose}.r{draw}.json` beside the events file. Beside
+   those two files the run directory also holds the captured result and
+   judge input/output (`result.*.json`, `judge_io.*.jsonl`) and any run
+   artifacts ([STORAGE.md §5.2.1](STORAGE.md#521-the-mutable-surface-is-code-only--artifact-exclusion)).
 
 ### 1.2 Why `mode="write"`, never `"append"`
 
 `JSONLPersistenceSink` supports both `"append"` and `"write"`.
-**zicato always uses `"write"`**. Each run gets its own file; appending
-multiple runs to one file would silently corrupt run boundaries and
-the reducer relies on each file being exactly one run.
+**zicato always uses `"write"`**. Each measurement gets its own file;
+appending multiple runs to one file would silently corrupt run
+boundaries and the reducer relies on each file being exactly one run.
 
-The path layout enforces this: every `(epoch, generation, entry_id)`
-triple maps to a distinct path. Reruns of the same `(epoch,
-generation, entry_id)` overwrite — the operator's intent is "redo this
-entry against this generation".
+The path layout enforces this: every `(epoch, generation, entry_id,
+seed, purpose, draw)` coordinate maps to a distinct path. A rerun of the
+same coordinate overwrites, and the file it truncates is first kept as
+`events.{purpose}.r{draw}.prev.jsonl` (`archive_prior_events`), so a
+re-measured unit's previous raw telemetry survives one overwrite.
 
 ### 1.3 The live view is harmonograf
 
@@ -99,7 +106,7 @@ ticking up inside zicato as a run progresses). The live view is
 harmonograf: `make_run_sinks` (§1.1) attaches a `HarmonografSink`
 alongside the canonical JSONL sink whenever a harmonograf URL is in
 scope, so every run streams to the harmonograf console as it unfolds.
-`zicato evolve` resolves that URL, auto-launching an in-process
+`zicato evolve` resolves that URL, launching or reusing the workspace's
 harmonograf server when none is configured (see §1.4), so the live view
 is on by default. A zicato-side accumulator would take the shape of an
 additive in-process sink alongside the JSONL one, with the JSONL sink
@@ -108,15 +115,16 @@ serves the need.
 
 ### 1.4 One harmonograf server, many sessions
 
-There is **one** harmonograf server per `evolve` invocation and
+There is **one** persistent harmonograf server per workspace and
 **many** sessions on it — harmonograf multiplexes sessions, so a
-single console shows every timeline:
+single console shows every timeline. [HARMONOGRAF.md](HARMONOGRAF.md)
+specifies the server lifecycle and the session taxonomy; in brief:
 
 - **Per-board-run sessions.** Each tournament run (one generation ×
-  one board entry) is its own harmonograf session. Its session id is
-  the synthetic run id `{generation_id}--{entry_id}` — the same id the
-  index's `runs` table keys on. The parent and child generations each
-  produce their own run, hence their own session, for the same entry.
+  one board entry × one replicate) is its own harmonograf session.
+  goldfive mints a fresh session id per run and stamps it as
+  `session_id` on every emitted event, so the JSONL file and the
+  harmonograf server see the same id.
 - **The meta-loop session.** The orchestrator's own goldfive
   events — the proposer's evaluation LLM call and the in-process
   process-judge calls (e.g. the decision-telemetry analyzer's insight
@@ -139,14 +147,13 @@ single console shows every timeline:
 
 The dashboard deep-links into harmonograf at
 `<harmonograf_url>/#/session/<adk_session_id>`. The `adk_session_id`
-is the goldfive/ADK session id observed in the run's `events.jsonl`;
-the reducer extracts it and stamps it into `loss.json`
+is the session id observed in the run's events file; the reducer
+extracts it and stamps it into the loss file
 (`LossProfile.adk_session_id`) so the dashboard can build the link
 without re-opening the event stream. The harmonograf URL itself is
-the auto-launched-or-configured one resolved by
-`resolve_harmonograf_url` (`--harmonograf-url` / the `config.json`
-`harmonograf_url` key, or — on the auto-launch path — the internal
-`ZICATO_HARMONOGRAF_URL` handoff).
+resolved by `resolve_harmonograf_url`: the `--harmonograf-url` flag or
+the `integration.harmonograf_url` setting first, then the runtime
+context a worker inherits from its parent.
 
 ## 2. The post-run reducer
 
@@ -166,50 +173,50 @@ derivation work:
 
 ```python
 from pathlib import Path
-from zicato.telemetry import LossProfile
-from zicato.types import BoardEntry, RunResult
+from zicato.core import BoardEntry, LossProfile, ScoringWeights
 
-def reduce_run(
-    events_jsonl: Path,
-    *,
+def reduce_loss(
+    events_jsonl_path: Path,
     entry: BoardEntry,
-    run_result: RunResult,
-    weights: dict[str, float],
+    generation_id: str,
+    epoch_id: str,
+    expectation_result: ExpectationResult | None,
+    runtime_ms: int,
+    wall_clock_budget_exceeded: bool,
+    weights: ScoringWeights,
+    final_output: str | None = None,
+    run_not_completed: bool = False,
 ) -> LossProfile:
-    """Read the JSONL, walk the events, and produce a LossProfile.
-
-    The function does not write the result. The caller (the runner)
-    writes ``loss.json`` next to ``events.jsonl``. Keeping the
-    function pure makes it testable without filesystem fixtures.
-    """
-    ...
+    """Read the events file, reduce it, and return a LossProfile."""
 ```
 
-The reducer accepts the entry and the typed run result because:
+`reduce_loss` lives in `zicato.telemetry.reducer`. It does not write the
+result; the worker writes the loss file next to the events file.
 
-- The entry's `expectation` is matched against the run result here,
-  not anywhere else. Centralising it means the reducer is the single
-  place "did this pass?" is decided.
-- The entry's `tags` are stamped onto the `LossProfile` so the
-  pattern detectors don't need to re-join later.
+The reducer takes the entry and the already-evaluated expectation
+result because:
 
-The `weights` parameter is the per-epoch scoring weights from
-`scoring.json` — see [SCORING.md](SCORING.md). The reducer uses them
-to compute the scalar `drift_loss`.
+- The expectation verdict (`expectation_result`) decides `pass_fail`
+  and the continuous `score`; the worker evaluates the entry's
+  predicates against the run result and hands the verdict in.
+- `entry.kind` decides whether the multi-turn signals (§3.3) are
+  computed.
+
+The `weights` parameter is the epoch's frozen `ScoringWeights` — see
+[SCORING.md](SCORING.md). The reducer uses them to select the telemetry
+dialect and to compute the scalar `drift_loss`.
 
 ### 2.2 Reading the JSONL
 
-The reducer uses goldfive's `replay_from_jsonl`:
-
-```python
-from goldfive.sinks.persistence import replay_from_jsonl
-
-events = replay_from_jsonl(events_jsonl)
-```
-
-This returns a list of parsed proto `Event` messages in emit order.
-The reducer walks them once, dispatching on `evt.WhichOneof("payload")`
-to update its working counters.
+Under the `goldfive` dialect the reducer prefers goldfive's
+`replay_from_jsonl` for strict proto parsing and converts each message
+into an event record. When goldfive is not importable, or its strict
+parser refuses the file (for example a file mixing field-name
+spellings), the reducer reads the file through
+`zicato.telemetry.event_log.read_event_log` instead
+([TELEMETRY-DIALECTS.md §1](TELEMETRY-DIALECTS.md#1-one-reader-under-every-dialect)).
+Either way the records carry one spelling of the payload case and its
+field names, and the reducer walks them once in emit order.
 
 ### 2.3 Handling truncated / malformed JSONL
 
@@ -217,13 +224,16 @@ A run that crashed before the goldfive boundary closed may leave a
 JSONL without a terminal event. The reducer handles this gracefully:
 
 - If the last event is not a `RunCompleted` / `RunAborted`, the
-  reducer computes whatever features it can from the partial stream;
-  a budget-exhaustion abort is recorded via
-  `wall_clock_budget_exceeded`, which scoring then treats as
-  worst-case for the entry.
-- Malformed lines (parse errors) propagate the parser's exception.
-  The runner catches and logs them; the per-run loss profile records
-  the failure.
+  reducer computes whatever features it can from the partial stream.
+  A budget-exhaustion abort (`wall_clock_budget_exceeded`) or any other
+  abnormal termination (`run_not_completed`) floors
+  `task_failure_ratio` to `1.0` and sets `not_completed`, which scoring
+  treats as worst-case for the entry
+  ([SCORING.md §2.3](SCORING.md#23-the-failure-channel)).
+- A line that is not a JSON object is counted malformed and skipped;
+  invalid UTF-8 decodes to replacement characters; a missing file reads
+  as an empty log. The reducer logs the malformed-line count as a
+  warning rather than raising.
 
 Both cases are rare, because goldfive's sink flushes per-line and the
 adapter is responsible for emitting a terminal event. The reducer is
@@ -235,8 +245,8 @@ only against the expected path.
 The reducer's output. The contract every other zicato component reads
 from. Pattern detectors and tournament scoring are blind to JSONL —
 they read `LossProfile`s. The dataclass is defined in
-`zicato.core.types` (not `zicato.telemetry`); the shape below mirrors
-that definition.
+`zicato.core.loss` (re-exported from `zicato.core`); the shape below
+lists its fields in declaration order.
 
 The structure is **flat by design** — every field is a scalar, a
 tuple of scalars, or a tuple of small frozen dataclasses
@@ -253,7 +263,7 @@ from zicato.core.types import (
 @dataclass(frozen=True, slots=True)
 class LossProfile:
     # --- identity ---
-    run_id: str            # the synthetic {generation_id}--{entry_id}
+    run_id: str            # the run id from the events, or {generation_id}:{entry_id}
     entry_id: str
     generation_id: str
     epoch_id: str
@@ -280,11 +290,35 @@ class LossProfile:
     output_chars: int = 0
     schema_failures: int = 0
 
-    # --- harmonograf deep-link ---
+    # --- harmonograf deep-link and matchup ---
     adk_session_id: str = ""               # /#/session/<adk_session_id>
+    match_id: str = ""                     # the matchup this run ran within
 
-    # --- per-judge attribution ---
+    # --- per-judge attribution and judge failures ---
     per_judge_loss: tuple[JudgeLoss, ...] = ()
+    judge_errors: tuple[JudgeError, ...] = ()
+
+    # --- reuse provenance ---
+    cached: bool = False
+    source_epoch: str = ""
+    source_run: str = ""
+
+    # --- continuous outcome ---
+    score: float | None = None             # per-entry quality in [0, 1]
+    metrics: dict[str, float] | None = None
+
+    # --- scoring and abort provenance ---
+    scoring_provenance: str | None = None  # see SCORING.md §10.4
+    abort_cause: str | None = None         # e.g. "budget_exhausted", "parent_kill"
+    not_completed: bool = False
+    not_completed_reason: str | None = None
+
+    # --- execution and measurement identity ---
+    started_at: str | None = None
+    ended_at: str | None = None
+    execution_started: bool | None = None
+    measurement: MeasurementDraw | None = None
+    source_measurements: tuple[MeasurementDraw | None, ...] = ()
 ```
 
 The fields, in groups:
@@ -292,9 +326,11 @@ The fields, in groups:
 ### 3.1 Identity
 
 The quad `(run_id, entry_id, generation_id, epoch_id)` names this
-profile. `run_id` is the synthetic `{generation_id}--{entry_id}` id —
-the same id the analytical index's `runs` table keys on and the same
-id used as the per-board-run harmonograf session (§1.4).
+profile, and `measurement` names the purpose, draw, and seed of the
+measurement. `run_id` is the first `run_id` found in the events; a run
+whose events carry none falls back to `{generation_id}:{entry_id}`.
+The worker's run directory keys the measurement on disk (§1.1); the
+`run_id` plays no part in the path.
 
 ### 3.2 Drift counts and outcome features
 
@@ -304,6 +340,7 @@ id used as the per-board-run harmonograf session (§1.4).
 | `task_failure_ratio` | Fatally-failed tasks / total tasks, in `[0.0, 1.0]`. |
 | `runtime_ms` | Total wall-clock duration in milliseconds. |
 | `wall_clock_budget_exceeded` | `True` iff the run hit `BoardEntry.wall_clock_budget_seconds` and was force-aborted; scoring then treats the run as worst-case for the entry. |
+| `not_completed` / `not_completed_reason` | Set for any non-success terminal state (budget exhausted, crash, harness exception, emulator abort, killed worker); charged in the `failure:` channel ([SCORING.md §2.3](SCORING.md#23-the-failure-channel)). |
 | `expectation_result` | The `ExpectationResult(kind, passed, detail)` of evaluating the entry's expectation, or `None` when the entry had no expectation (or the run aborted before it could fire). |
 
 Named metrics retain each drift kind as a ``drift:<kind>`` name and keep
@@ -340,8 +377,8 @@ the `custom:` prefix.
 
 The drift kinds zicato cares about most are documented in goldfive's
 DRIFT.md; the full taxonomy is `DriftKind` in
-`goldfive/proto/goldfive/v1/types.proto`. Notable kinds for the v0
-dogfood (presentation agent):
+`goldfive/proto/goldfive/v1/types.proto`. Notable kinds for the
+presentation-agent dogfood target:
 
 - `confabulation_risk` — research-shaped task produced output without
   calling a tool. Fires often when a research specialist's prompt
@@ -404,17 +441,15 @@ The reducer extracts it and stamps it onto the profile so the
 dashboard can build the harmonograf deep-link
 `<harmonograf_url>/#/session/<adk_session_id>` (§1.4) without
 re-opening the event stream. It is the empty string when the events
-file is absent or carries no envelope `sessionId`. Back-compat
-default `""` so profiles written before the field was added load
-cleanly.
+file is absent or carries no envelope `sessionId`.
 
 ### 3.7 Per-judge attribution: `per_judge_loss`
 
 `per_judge_loss` is a tuple of `JudgeLoss(judge_name, raw_loss,
 weight, weighted_loss)` rows — one per custom judge that fired
-against the run. The aggregate `drift_loss` already sums in each
-judge's `weighted_loss` (`raw_loss * weight`), but it does not
-preserve which judge drove the loss. `per_judge_loss` carries that
+against the run. Each judge's `weighted_loss` (`raw_loss * weight`)
+enters the scalar through the `judge:` channel as a `judge:<name>`
+metric, and `drift_loss` excludes it. `per_judge_loss` also carries the
 attribution out of the reducer so the analyzer's per-judge
 drift-attribution view and the analytical index's `judge_losses`
 table (see [ANALYTICAL-INDEX.md §3.9](ANALYTICAL-INDEX.md#39-judge_losses))
@@ -443,52 +478,49 @@ earlier") are instead surfaced as the derived multi-turn signals
 the reducer from goldfive's events plus the transcript. These are
 zicato-level computations rather than new goldfive drift kinds.
 
-### 4.1 Turn boundaries
+### 4.1 Where the multi-turn signals come from
 
-The reducer identifies turn boundaries by looking for the agent's
-top-level `AgentInvocationStarted` events on the system-under-test lane.
-Each pair `(AgentInvocationStarted, AgentInvocationCompleted)` brackets
-one agent turn; events emitted between them are bucketed to that turn.
+goldfive's event stream carries no first-class user or assistant
+messages, so the reducer reconstructs a best-effort transcript from the
+payloads that carry short text: `AgentInvocationCompleted.summary`,
+`TaskCompleted.summary`, and `RunCompleted.outcome_summary` stand in
+for agent turns, and `RunStarted.goal_summary` for the user's request
+(`_agent_and_user_turns_from_events` in `zicato.telemetry.reducer`).
+`turns_completed` counts the reconstructed agent turns, and the
+memory-failure and context-loss heuristics run over them. The
+`adk_events` and `transcript` dialects supply real message turns
+instead ([TELEMETRY-DIALECTS.md](TELEMETRY-DIALECTS.md)).
 
-A nuance: sub-agent invocations (AgentTool nesting) emit their own
-`AgentInvocationStarted/Completed` pairs. The reducer attributes
-nested events to the **outermost** ongoing invocation — which is the
-turn boundary the operator cares about. Sub-agent dispatch is
-internal to one turn.
+### 4.2 The emulator's `zicato:emulator` audit lane
 
-### 4.2 Per-turn LLM calls on the `zicato:emulator` lane
+The multi-turn user emulator records one audit per turn
+(`EmulatorTurnAudit`, `zicato.emulator.audit`). Each audit carries:
 
-The multi-turn emulator's per-turn LLM call emits
-`GoldfiveLLMCallStart` / `GoldfiveLLMCallEnd` events on a dedicated
-lane name: `zicato:emulator`. These events:
+- `persona_hash` — a short SHA-256 fingerprint of the persona, so audits
+  correlate across runs without revealing the persona body;
+- `transcript_chars_in` — the size of the prompt fed to the emulator,
+  a cost proxy;
+- `output_chars_out` and `output_preview` — the size and the first 200
+  characters of the emulator's reply.
 
-- Are bracketed by `name="emulator_turn"`.
-- Carry `model` (the emulator's model).
-- Carry an `input_preview` that includes the persona's `goal` (hashed,
-  for privacy) and the count of transcript chars passed in.
-- Carry an `output_preview` with the emulator's produced user turn.
-
-The lane name `zicato:emulator` is convention. Harmonograf renders
-events keyed by their `target_agent_id` or by the lane convention
-established for goldfive's internal-LLM spans, so the emulator's
-work shows up as its own row on the Gantt.
+A driver constructed with a sink (`EmulatedMultiTurnDriver(sink_emit_fn=...)`)
+also emits each audit as a plain event on the lane `zicato:emulator`
+with kind `zicato.emulator.turn_audit`; emission is best-effort, and an
+audit failure is logged and never fails the run. The tournament path
+does not wire a sink: `run_emulated` accepts the run's sinks but does not
+pass them to the emulator, so audits stay in memory and no
+`zicato:emulator` events reach the events file or harmonograf.
 
 ### 4.3 What the emulator lane is for
 
-Operators replaying a run in harmonograf see what the
-emulator produced and what it cost. The emulator's LLM time
-contributes to the entry's `wall_clock_budget_seconds`, so visibility
-on that lane explains "why did this multi-turn entry take 8 minutes
-when the agent only spent 4 minutes thinking?".
-
-The emulator lane is **not** a new wire format. It uses goldfive's
-existing `GoldfiveLLMCallStart` / `GoldfiveLLMCallEnd` proto messages.
-The convention is that the lane name is the discriminator: anything
-emitted on `zicato:emulator` is the emulator's work, anything emitted
-on the system-under-test lane is the agent's work.
-
-The audit-trail span shape is specified in
-[EMULATOR.md](EMULATOR.md).
+The lane would let an operator replaying a run see what the emulator
+produced on each turn and roughly what it cost. The emulator's model
+time counts against the entry's `wall_clock_budget_seconds`, so the lane
+would explain "why did this multi-turn entry take 8 minutes when the
+agent only spent 4 minutes thinking?". The lane name is the
+discriminator: anything emitted on `zicato:emulator` is the emulator's
+work, anything emitted on the system-under-test lane is the agent's
+work. The audit record is specified in [EMULATOR.md](EMULATOR.md).
 
 ## 5. What's a feature, what's a loss
 
@@ -499,41 +531,47 @@ for scoring. Some are both. The split:
 | Field | Feature? | Loss? |
 |---|---|---|
 | `metric_counts` | yes (per-(kind, severity) movement is hypothesis-shaped) | yes (severity-weighted into `drift_loss`) |
-| `per_judge_loss` | yes (per-custom-judge movement is hypothesis-shaped) | yes (each judge's `weighted_loss` is already summed into `drift_loss` via `per_judge_weights`) |
+| `per_judge_loss` | yes (per-custom-judge movement is hypothesis-shaped) | yes (each judge's `weighted_loss` enters the `judge:` channel) |
 | `plan_revisions` | yes | yes |
 | `task_failure_ratio` | yes | yes |
 | `turns_completed` | yes (efficiency signal) | no |
 | `memory_failure_count` | yes (multi-turn pattern) | no (run-bounded drift counts dominate the score) |
 | `context_loss_count` | yes (multi-turn pattern) | no |
-| `tokens_spent` / `output_chars` / `schema_failures` | yes (cost/output signals) | no by default (available to the scorer via `metric_counts` if an epoch weights them) |
-| `runtime_ms` | yes | partial (only the budget-exhaustion case adds a loss term) |
-| `wall_clock_budget_exceeded` | yes | yes (worst-case loss term for the entry) |
+| `tokens_spent` / `output_chars` / `schema_failures` | yes (cost/output signals) | through the `cost:`, `output:`, and `schema:` channels, at the contract's coefficients (defaults `0.001`, `0.0`, `5.0`) |
+| `runtime_ms` | yes | through the `runtime:` channel (default coefficient `0.0`) |
+| `wall_clock_budget_exceeded` / `not_completed` | yes | yes (the `failure:` channel's worst-case charge) |
 | `pass_fail` | yes | yes (the pass-rate side of the score) |
 | `expectation_result` | yes (journal-only — the matcher detail) | no (`pass_fail` already carries the verdict) |
 
-The proposer sees aggregated patterns (§4.6 of the architecture doc),
-not raw loss profiles. The tournament sees `drift_loss` and `pass_fail`
-from the loss profiles rather than the raw counts. This keeps the two views
+The proposer sees aggregated patterns
+([ARCHITECTURE.md §4.6](ARCHITECTURE.md#46-pattern-detectors)) rather
+than raw loss profiles. The tournament sees the per-channel aggregates, the
+`pass_fail` and `score` outcomes, and the scalar built from them rather
+than the raw counts. This keeps the two views
 clean: the proposer reasons in patterns; the tournament reasons in
 scalars.
 
 ## 6. Patterns: what aggregates across runs
 
-Pattern detectors read every `LossProfile` written so far in the
-epoch and emit typed `Pattern` objects. The detectors are
-out-of-scope for this document (full taxonomy is on the roadmap once
-the v0 dogfood produces real signal), but a few canonical kinds:
+Pattern detectors (`ALL_DETECTORS` in `zicato.patterns.detectors`)
+read the champion's loss profiles and events on the training slice of
+the board at the start of each round and emit typed `Pattern` objects.
+The shipped kinds:
 
 | Pattern kind | What it surfaces |
 |---|---|
-| `drift_concentration_by_kind` | One drift kind dominating loss across many entries. |
-| `tag_slice_regression` | Pass-rate dropped between generations on entries tagged X. |
-| `drift_persistence` | The same drift kind on the same entry across generations. |
-| `multi_turn_memory_failure` | Agent forgot facts established earlier (cross-turn detection). |
-| `unmoved_surface` | Mutation-point ids that have not been touched this epoch. |
+| `drift_metric_frequency` | A drift kind firing on at least a fifth of the runs. |
+| `cost_metric_frequency` | A cost metric recurring across runs. |
+| `rubric_metric_frequency` | A rubric score recurring across runs. |
+| `hot_task` | A task whose failed-or-blocked rate stands well above the median. |
+| `hot_agent` | An agent drawing far more drift events than the mean agent. |
+| `plan_revision_instability` | Runs that revise their plan unusually often. |
+| `multi_turn_memory_failure` | The agent re-asked something already answered. |
+| `multi_turn_context_loss` | The agent forgot a fact established earlier in the conversation. |
 
-Patterns reset on epoch boundaries (the contract changed). Within an
-epoch they accumulate.
+Patterns are recomputed each round from the current champion's
+measurements, so they never carry across an epoch boundary (the
+contract changed).
 
 ## 7. Determinism and reproducibility
 
@@ -546,14 +584,17 @@ The JSONL file is the canonical record. Given the same:
 
 … two runs *should* produce similar JSONL. They won't be byte-equal —
 LLM calls are usually non-deterministic — but the drift counts should
-cluster. Run-to-run noise is a known issue; the right response is
-multi-trial scoring per entry (each entry run N times against each
-generation), which v0 does not ship but the scoring infrastructure
-admits.
+cluster. The tournament answers run-to-run noise with replication: each
+entry runs once per replicate (two by default) and the per-entry losses
+are averaged, and the replicate count can be sized from the epoch's
+measured noise floor ([SELECTION.md §9.1](SELECTION.md#91-the-measured-noise-floor-sizes-the-replicate-count-and-the-racing-cuts)).
+The reduction itself is deterministic: re-reducing the same events file
+under the same contract yields the same `LossProfile`.
 
-Tournaments are vulnerable to this noise. The default tournament
-margin (see [SCORING.md](SCORING.md)) is set conservatively to avoid
-promoting candidates that beat the parent by noise alone.
+Tournaments remain vulnerable to noise the replicates do not average
+out. The promote margin (see [SCORING.md](SCORING.md)) and the optional
+evidence gate guard against promoting candidates that beat the parent by
+noise alone.
 
 ## 8. Telemetry path in detail
 
@@ -567,7 +608,7 @@ Putting it all together, the full per-run telemetry path:
                                                    ▼
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ JSONLPersistenceSink(                                                        │
-│     path=".zicato/epochs/{epoch}/generations/{generation_id}/runs/{entry_id}/events.jsonl",
+│     path=".../runs/{entry_id}/[seed-{n}/]events.{purpose}.r{draw}.jsonl",    │
 │     mode="write",                                                            │
 │ )                                                                            │
 │                                                                              │
@@ -578,14 +619,15 @@ Putting it all together, the full per-run telemetry path:
                                            │
                                            ▼
                                    ┌───────────────────┐
-                                   │  reduce_run(...)  │  reads JSONL via
-                                   └─────────┬─────────┘  replay_from_jsonl,
-                                             │            walks events,
-                                             │            applies expectation,
-                                             │            computes drift_loss
+                                   │ reduce_loss(...)  │  reads the events
+                                   └─────────┬─────────┘  file, walks events,
+                                             │            takes the expectation
+                                             │            verdict, computes
+                                             │            drift_loss
                                              ▼
                           ┌─────────────────────────────────────┐
-                          │  loss.json (LossProfile)            │
+                          │ loss.{purpose}.r{draw}.json         │
+                          │ (LossProfile)                       │
                           └─────────────────────────────────────┘
                                              │
                                              ▼

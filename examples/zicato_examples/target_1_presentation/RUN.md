@@ -1,23 +1,46 @@
 # target_1_presentation — running the loop end-to-end
 
-This walkthrough takes a fresh checkout and runs `zicato evolve
---rounds 2` against the presentation agent with deterministic mock
-models. It completes in a few seconds and produces the full artifact
-tree: snapshots, `experiment.json`, patches, journal, analysis, and
-lineage.
+This page gives the commands that point `zicato evolve` at the
+presentation agent, the two tournament structures the example ships
+contracts for, and what a run leaves on disk.
 
-The walkthrough gives an operator something concrete to point at when
-wiring real models. The mocks under [`mocks.py`](./mocks.py) are
-byte-deterministic placeholders that exercise the plumbing; they produce
-no meaningful improvement signal.
+**A command-line run of this example is a live run.** The agent tree in
+[`agent/agent.py`](./agent/agent.py) builds every agent on the model id
+named by the `ZICATO_TARGET_1_MODEL` environment variable (its default
+is a hosted model id written in that file). The agents declare tools,
+so the ADK adapter keeps that function-calling model; it does not route
+them through the `target` engine's text-only `call_llm`. A run
+therefore sends the agent tree's requests to that model, needs its
+credential, and spends budget. Without the credential, every run ends
+in an `AuthenticationError` and scores nothing. Start one only with the
+operator's go-ahead.
+
+The mocks in [`mocks.py`](./mocks.py) are byte-deterministic
+placeholders: `aux_llm` answers the evaluation role (the user emulator,
+the inline judges, and the closing analysis). The offline coverage of
+this example is the test suite.
+
+## Offline: the tests
+
+Seven test modules under `tests/` drive this example with no model; the
+[README](./README.md#2-tests) lists what each one pins. Run them with:
+
+```bash
+uv run pytest tests/test_example_target_1_*.py
+```
+
+`tests/test_example_target_1_racing.py` runs the racing contract end to
+end: a stub adapter stands in for the agent tree and returns canned
+per-generation losses, and the test suite's stand-in for the Foe
+proposal runtime writes the challengers.
 
 ## Prerequisites
 
-The walkthrough exercises the full orchestrator path, which imports
-goldfive (for the system-under-test runner) and the agent development kit
-(for the agent tree). Install the repository with its development
-extras, which pulls in goldfive, the kit, and the `zicato-examples`
-package that makes `zicato_examples.*` importable from anywhere:
+The loop imports goldfive (for the system-under-test runner) and the
+agent development kit (for the agent tree). Install the repository with
+its development extras, which pulls in goldfive, the kit, and the
+`zicato-examples` package that makes `zicato_examples.*` importable from
+anywhere:
 
 ```bash
 make install     # uv sync --all-extras, from a repo checkout
@@ -44,9 +67,7 @@ file, under `examples/zicato_examples/target_1_presentation/` in a
 checkout.
 
 ```bash
-# Pick a scratch workspace anywhere off the repo. Because zicato-examples
-# is installed (make install), zicato_examples.* imports resolve with
-# no symlink or PYTHONPATH hacks.
+# Pick a scratch workspace anywhere off the repo.
 rm -rf /tmp/zicato-smoke-t1
 mkdir -p /tmp/zicato-smoke-t1
 cd /tmp/zicato-smoke-t1
@@ -64,11 +85,15 @@ $PY -m zicato.cli epoch register --workspace .zicato \
     --adk agent.agent:root_agent \
     --mutable-tree $EX/agent
 
-# 2b. Name what each model role runs on. `evolve` takes no model
-#     options: an engine naming a `call_llm` dotted path is how these
-#     deterministic mocks reach the target and evaluation roles.
-$PY - <<'PYEOF'
+# 2b. Name what the model roles run on, and declare the proposal
+#     runtime. `zicato init` writes a `proposer` block whose binary is
+#     the placeholder /path/to/foe, which evolve refuses. The block
+#     below is the test suite's Foe stand-in, which edits the tree
+#     mechanically with no model; a real `proposer` block names a Foe
+#     binary and a model (docs/design/PROPOSER.md).
+PYTHONPATH=$ZICATO $PY - <<'PYEOF'
 import json, pathlib
+from tests._foe_support import stand_in_proposer_block
 cfg_path = pathlib.Path(".zicato/config.json")
 cfg = json.loads(cfg_path.read_text())
 cfg["models"] = {
@@ -78,24 +103,36 @@ cfg["models"] = {
     },
     "roles": {},
 }
+cfg["proposer"] = stand_in_proposer_block(pathlib.Path("foe").resolve())
 cfg_path.write_text(json.dumps(cfg, indent=2) + "\n")
 PYEOF
 
-# 3. Open an epoch from the example's board / brief / scoring. epoch new
-#    freezes a per-epoch copy AND publishes these files as the live
-#    contract (here: /tmp/zicato-smoke-t1/board.jsonl, brief.md,
+# 2c. The ADK adapter runs under Goldfive, and a Goldfive-enabled
+#     contract must carry a `goldfive` object in scoring.json; an empty
+#     one selects the fixed defaults (docs/design/GOLDFIVE-CONFIG.md).
+#     Take a copy of the example scoring with that object present.
+$PY - "$EX/scoring.json" ./scoring.t1.json <<'PYEOF'
+import json, sys
+scoring = json.load(open(sys.argv[1]))
+scoring.setdefault("goldfive", {})
+json.dump(scoring, open(sys.argv[2], "w"), indent=2)
+PYEOF
+
+# 3. Open an epoch from the example's board / brief and that scoring.
+#    epoch new freezes a per-epoch copy AND publishes these files as the
+#    live contract (here: /tmp/zicato-smoke-t1/board.jsonl, brief.md,
 #    scoring.json) so the evolve in step 5 resolves the same contract.
 $PY -m zicato.cli epoch new t1_smoke --workspace .zicato \
     --board   $EX/board.jsonl \
     --brief   $EX/rubric.md \
-    --scoring $EX/scoring.json
+    --scoring ./scoring.t1.json
 
 # 4. Inspect the mutation surface the proposer will see (15 ids).
 $PY -m zicato.cli inspect mutations --workspace .zicato
 
-# 5. Run two evolve rounds. evolve resolves the contract published in
-#    step 3, so it continues the t1_smoke epoch rather than rolling a
-#    new one.
+# 5. Run two evolve rounds (live: the agent tree calls its model).
+#    evolve resolves the contract published in step 3, so it continues
+#    the t1_smoke epoch rather than rolling a new one.
 $PY -m zicato.cli evolve --workspace .zicato \
     --rounds 2 --mode full
 
@@ -118,14 +155,15 @@ files at the canonical location yourself and let `evolve` open the
 first epoch:
 
 ```bash
-# After steps 1-2 above, with the contract files written next to the
+# After steps 1-2c above, with the contract files written next to the
 # workspace ($EX as defined earlier):
-cp $EX/board.jsonl  ./board.jsonl
-cp $EX/rubric.md    ./brief.md
-cp $EX/scoring.json ./scoring.json
+cp $EX/board.jsonl    ./board.jsonl
+cp $EX/rubric.md      ./brief.md
+cp ./scoring.t1.json  ./scoring.json
 
 # evolve sees no current epoch, resolves the contract from the three
-# files above, and auto-opens epoch e0 before running the loop.
+# files above, and auto-opens a date-named epoch (for example
+# 2026-09-26_e0) before running the loop.
 $PY -m zicato.cli evolve --workspace .zicato \
     --rounds 2 --mode full
 ```
@@ -134,16 +172,18 @@ Editing any of those three files between `evolve` invocations changes
 the evaluation contract; the next `evolve` detects the drift, closes
 the current epoch, and opens a fresh one automatically.
 
-## Running a non-gauntlet tournament (racing)
+## Running a racing tournament
 
 Everything above runs the **gauntlet** — one challenger per round, one
-full-board duel, king-of-the-hill (the default when `scoring.json`
-carries no `tournament` block). zicato also supports configurable
-per-epoch tournament structures: `gauntlet` (default) and `racing`, plus the
-experimental `single_elim`, `double_elim`, and `swiss` when `scoring.json`
-sets `experimental.tournament_structures` to `true` (the three example
-contracts for them do). This example ships a ready-made
-**racing** contract alongside the gauntlet one:
+full-board duel, king-of-the-hill — because the example's
+`scoring.json` selects it in its `tournament` block. A contract with no
+`tournament` block runs **racing**, the default. zicato supports
+configurable per-epoch tournament structures: `gauntlet` and `racing`,
+plus the experimental `single_elim`, `double_elim`, and `swiss` when
+`scoring.json` sets `experimental.tournament_structures` to `true` (the
+three example contracts for them, `scoring.single_elim.json`,
+`scoring.double_elim.json`, and `scoring.swiss.json`, do). This example
+ships a ready-made **racing** contract alongside the gauntlet one:
 [`scoring.racing.json`](./scoring.racing.json).
 
 **Racing** (successive halving / best-arm identification) is the one
@@ -202,21 +242,15 @@ Identical to the gauntlet recipe above, but resolve the contract from
 `scoring.racing.json` instead of `scoring.json`:
 
 ```bash
-ZICATO=${ZICATO:?set ZICATO to your zicato checkout}
-EX=$ZICATO/examples/zicato_examples/target_1_presentation
-PY=$ZICATO/.venv/bin/python
-
-# Steps 1-2 (init + register) are identical to the gauntlet recipe.
-$PY -m zicato.cli init           --workspace .zicato
-$PY -m zicato.cli epoch register --workspace .zicato \
-    --adk agent.agent:root_agent \
-    --mutable-tree $EX/agent
+# Steps 1-2b (init, register, models + proposer) are identical to the
+# gauntlet recipe. In step 2c, copy $EX/scoring.racing.json instead of
+# $EX/scoring.json into ./scoring.t1.json.
 
 # Open the epoch from the RACING scoring contract.
 $PY -m zicato.cli epoch new t1_racing --workspace .zicato \
     --board   $EX/board.jsonl \
     --brief   $EX/rubric.md \
-    --scoring $EX/scoring.racing.json
+    --scoring ./scoring.t1.json
 
 # Evolve. The frozen contract carries structure=racing, so each round
 # proposes a 4-challenger field and runs the rung ladder.
@@ -244,67 +278,24 @@ $PY -m zicato.cli evolve --workspace .zicato \
 
 Each `--tournament-param KEY=VALUE` is repeatable; `VALUE` is parsed as
 JSON when possible (so `field_size=4` becomes the integer `4`), else
-taken as a string. The flags are only applied when
-`--tournament-structure` is also passed.
+taken as a string. A parameter edit preserves the other params, and
+neither flag can be combined with `--epoch`.
 
 > The flag form needs no `board_ids`: it defaults to the epoch's full
 > board, so the racing rungs slice the board without any ids listed. Pass
 > `--tournament-param board_ids='["waffles_single", ...]'` to race on a
 > *subset*; an explicit list overrides the default.
 
-### The mock-target test that runs this
-
-`tests/test_example_target_1_racing.py` drives this contract end to end
-with **no live model**. It loads `scoring.racing.json`, seeds a `v0`
-snapshot from the `agent/` tree, uses the example's `mocks.aux_llm`
-proposer, and asserts that the racing path executes: four challengers
-proposed and applied, the rung ladder's cuts recorded, a champion
-decision, and the persisted `ActiveTournament` envelope with its
-per-challenger `OutcomeRecord` audit. Run it with `uv run pytest
-tests/test_example_target_1_racing.py`.
-
-## What you should see
+## What a run prints
 
 The `evolve` step emits a JSON array on stdout with one object per
-round:
-
-```json
-[
-  {
-    "child_scalar": 1.0,
-    "delta_scalar": 0.0,
-    "parent_generation_id": "v0",
-    "parent_scalar": 1.0,
-    "proposed_generation_id": "v1",
-    "rejection_reason": "insufficient margin: ...",
-    "tournament_decision": "rejected"
-  },
-  {
-    "child_scalar": 1.0,
-    "delta_scalar": 0.0,
-    "parent_generation_id": "v0",
-    "parent_scalar": 1.0,
-    "proposed_generation_id": "v2",
-    "rejection_reason": "insufficient margin: ...",
-    "tournament_decision": "rejected"
-  }
-]
-```
-
-The end-to-end plumbing — propose, apply, snapshot, tournament, persist,
-journal — is exercised in full. The `delta_scalar: 0.0` seen through the
-live goldfive and agent-kit stack comes from one cause: the `LLMPlanner`
-passthrough gap described under "Limits of the smoke test" below. The
-contract itself separates a challenger from its champion, as the next
-section shows.
-
-The mock `aux_llm` rotates the proposed patch across rounds:
-
-* `v1` patches `researcher_instruction` (compact bullets / citations).
-* `v2` patches `coordinator_instruction` (sharper routing).
-
-Both patches land in distinct generations and survive the post-apply
-validator, so the snapshot diff is real.
+round, carrying `parent_generation_id`, `proposed_generation_id`,
+`tournament_decision`, `rejection_reason`, `parent_scalar`,
+`child_scalar`, and `delta_scalar`. A rejected round names the gate
+condition it failed in `rejection_reason`, for example
+`insufficient improvement: loss fell by only ...; a promotion needs a
+drop of at least 0.010000` when the challenger does not clear
+`promote_margin`.
 
 ## How the contract separates a challenger from its champion
 
@@ -330,14 +321,13 @@ Three properties of this example keep that from happening.
    output, so a declared `no_fabricated_numbers` judge — built through
    the production `judge_spec_to_goldfive` seam — emits a
    `custom:<name>` drift on a real run.
-3. **The contract scores that drift.** `scoring.json` and
-   `scoring.racing.json` carry `per_judge_weights` for the inline
-   judges, so a champion whose output trips `no_fabricated_numbers`
-   scores worse than the citation-demanding challenger by more than
-   `promote_margin`.
+3. **The contract scores that drift.** Every scoring file in this
+   directory carries `per_judge_weights` for the inline judges, so a
+   champion whose output trips `no_fabricated_numbers` scores worse than
+   the citation-demanding challenger by more than `promote_margin`.
 
 `tests/test_example_target_1_discriminates.py` proves this end to end
-with no live model and no agent-kit stack. Its load-bearing case,
+with no live model and no agent-kit stack. Its central case,
 `test_real_judge_runtime_discriminates_and_weight_is_load_bearing`,
 drives the mock output through the inline-judge runtime
 (`judge_spec_to_goldfive` plus `mocks.aux_llm`), then the reducer
@@ -351,7 +341,8 @@ which is expected for an example.
 
 ## Where the artifacts live
 
-After step 6 the scratch directory looks like this:
+After step 6 the scratch directory holds the live contract next to the
+workspace, and the workspace holds one directory per epoch:
 
 ```
 /tmp/zicato-smoke-t1/
@@ -359,93 +350,59 @@ After step 6 the scratch directory looks like this:
   brief.md                          # live contract — published by epoch new
   scoring.json                      # live contract — published by epoch new
   .zicato/
-    config.json                     # adapter entrypoint + mutable trees +
+    config.json                     # adapter, models, proposer, and
                                     #   contract: paths to the three files above
-    current_epoch                   # marker → t1_smoke epoch id
-    lineage.json                    # cross-cutting DAG (1 epoch, 3 gens)
+    current_epoch                   # marker → the t1_smoke epoch id
+    lineage.json                    # cross-cutting DAG of epochs and generations
+    index.db                        # derived SQLite index (rebuildable)
+    repo/                           # private git repository: one tag per
+                                    #   generation source tree
     epochs/
       2026-MM-DD_t1_smoke/
         board.jsonl                 # frozen per-epoch copy of the board
         brief.md                    # frozen per-epoch copy of the brief
         scoring.json                # frozen per-epoch copy of the scoring
-        config.json                 # EpochConfig with closed=true
-        current_generation          # marker → v0 (no promotion happened)
-        journal.md                  # one entry per round (v1, v2)
-        analysis.md                 # stub narrative + journal snapshot
+        config.json                 # the epoch's configuration
+        analysis.md                 # closing analysis
         analysis.html               # self-contained HTML companion
+        rounds/{n}/round_log.jsonl  # one durable event log per round
+        episodes/                   # one directory per proposal episode
+        health/round_{n}.json       # loop-health report per round
         generations/
           v0/
             gen_score.json          # cached aggregate for fast-mode reuse
-            snapshot/agent/agent.py # baseline copy of the registered tree
-            runs/{entry_id}/events.jsonl
-            runs/{entry_id}/artifacts.json # generated inventory
-            runs/{entry_id}/artifacts/     # captured presentation files
+            runs/{entry_id}/seed-none/
+              events.<purpose>.r<n>.jsonl     # telemetry per measurement
+              loss.<purpose>.r<n>.json        # reduced loss profile
+              result.<purpose>.r<n>.json      # the run's result
+              artifacts.<purpose>.r<n>.json   # generated file inventory
+              artifacts.<purpose>.r<n>/       # captured presentation files
           v1/
-            experiment.json
+            experiment.json         # hypothesis, patch ids, and outcome
+            patches/{patch_id}.json # one record per applied patch
             gen_score.json
-            patches/{patch_id}.json
-            snapshot/agent/agent.py # v0 + the researcher_instruction patch
-            runs/{entry_id}/events.jsonl
-            runs/{entry_id}/artifacts.json
-            runs/{entry_id}/artifacts/
+            runs/...
           v2/
-            experiment.json
-            gen_score.json
-            patches/{patch_id}.json
-            snapshot/agent/agent.py # v0 + the coordinator_instruction patch
-            runs/{entry_id}/events.jsonl
-            runs/{entry_id}/artifacts.json
-            runs/{entry_id}/artifacts/
+            ...
 ```
+
+`<purpose>` names why a measurement ran: `tournament` for a duel,
+`calibration` for the noise-floor draws, and `contract_preflight` for
+the check that the board can separate generations.
 
 Useful spot checks:
 
-* `cat .zicato/lineage.json` — three generations (v0 promoted, v1 / v2
-  rejected), one epoch.
-* `cat .zicato/epochs/*/journal.md` — two markdown entries with
-  per-round hypothesis and outcome.
-* `python -c 'import json,sys; [print(json.dumps(json.load(open(p)), indent=2)) for p in sys.argv[1:]]' \
-    .zicato/epochs/*/generations/v1/experiment.json` — the full
-  proposed-experiment record with `outcome.tournament_decision`.
+* `$PY -m zicato.cli epoch list --workspace .zicato` — the lineage
+  table: each epoch with its promoted and rejected counts.
+* `git -C .zicato/repo tag` — one `epoch/<epoch_id>/<generation_id>`
+  tag per generation.
+* `cat .zicato/epochs/*/generations/v1/experiment.json` — the proposed
+  experiment with its `hypothesis` and `outcome.tournament_decision`.
 * `cat .zicato/epochs/*/generations/v1/patches/*.json` — the lifted
-  Patch dataclass; the `mutation_id` is `researcher_instruction` for v1
-  and `coordinator_instruction` for v2.
+  `Patch` record: its `mutation_id`, `op`, and `new_content`.
 * Open `analysis.html` in a browser — the page is self-contained
   (inline CSS, no external requests) and renders the lineage / scalar
   trajectory.
-
-## Limits of the smoke test
-
-Each of these is a known boundary of the mock stack, and each is stated
-so a reader does not mistake it for a fault.
-
-* **A live run still shows `delta_scalar = 0.0`, for one reason.** The
-  deterministic harness, the inline judge runtime, the reducer and the
-  scoring weights together already promote a researcher-instruction
-  challenger — `tests/test_example_target_1_discriminates.py` proves it.
-  The one path still open is the live goldfive and agent-kit stack: the
-  harness's instruction-sensitive output has to reach `final_output`
-  intact for the live planner to score the difference, and the
-  `LLMPlanner` prose passthrough drops it. Closing that gap needs live
-  endpoints and an operator go-ahead.
-* **`target_llm` returns prose rather than JSON.** goldfive's
-  `LLMPlanner` expects a planner-shaped JSON envelope; the mock returns
-  slide-shaped prose. The planner falls back to its passthrough
-  behaviour and emits the `JSON parse failed: ...` warnings visible on
-  stderr. The downstream sinks still record `events.jsonl`, so the
-  reducer produces a `LossProfile` per entry — but the passthrough means
-  the scored `final_output` does not carry the harness's
-  instruction-sensitive text, and the live-stack delta stays zero. A
-  mock harness that returns planner-shaped JSON would close it.
-* **Multi-turn entries abort with `TypeError`.** The scripted and
-  emulated drivers expect a richer harness response than the mock
-  produces, so they record an aborted `RunResult` with the abort reason
-  on the events stream. The reducer treats those as a zero-signal run
-  and the tournament continues.
-* **`analysis.md` is the stub form.** `epoch close` does not thread a
-  real evaluation callable through, so the close path writes the "_no
-  evaluation LLM was supplied_" stub plus the journal snapshot. The HTML
-  companion carries the full report shape and is informative on its own.
 
 ## Swapping in real models
 
@@ -456,7 +413,8 @@ Two extension points:
    conforming to `Callable[[str, str, str], Awaitable[str]]` and name
    them as the `target` and `evaluation` engines' `call_llm` dotted
    paths. Anything that returns the right text — a real model client, a
-   local cache, a replay log — works the same way.
+   local cache, a replay log — works the same way. The agent tree itself
+   runs on `ZICATO_TARGET_1_MODEL`, as the top of this page describes.
 
 2. **Configure the evaluation callable in the workspace.** Edit
    `.zicato/config.json` to declare named engines:

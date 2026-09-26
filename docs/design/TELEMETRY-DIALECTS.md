@@ -99,7 +99,7 @@ generalised metric surface, and `LossProfile` assembly. The dialect
 changes only *how the raw counts are produced*, and not how they are
 scored.
 
-## 3. Dialect 1 — `goldfive` (default)
+## 3. `goldfive` (default)
 
 The default dialect, and the most powerful one: it consumes the full
 drift-instrument stream, so it is the only dialect that can carry
@@ -118,7 +118,7 @@ drift-instrument stream, so it is the only dialect that can carry
 `goldfive` is the default. The effective dialect is included in the sealed
 evaluation configuration.
 
-## 4. Dialect 2 — `adk_events`
+## 4. `adk_events`
 
 An agent-framework event-log JSONL: the kind of structured event trail a
 generic ADK-style agent framework writes — one JSON object per line,
@@ -129,8 +129,9 @@ it directly.
 
 ### 4.1 Accepted event shape (tolerant)
 
-Each line is a JSON object. The event kind is read from `type`
-(fallbacks: `event_type`, `kind`). Recognised kinds and the fields the
+Each line is a JSON object. The shared reader (§1) converts field names
+to snake_case first, so `runId` and `run_id` are the same field. The event
+kind is read from `type` (fallbacks: `event_type`, `kind`). Recognised kinds and the fields the
 reducer reads (each field name accepts a small set of aliases so the
 dialect tolerates dialect-of-a-dialect naming):
 
@@ -140,10 +141,10 @@ dialect tolerates dialect-of-a-dialect naming):
 | `tool_response` | `status`, `error` | `is_error`; a truthy `error` |
 | `agent_transfer` | (counted) | `transfer` |
 | `error` | (counted) | `exception` |
-| `model_usage` | `input_tokens`, `output_tokens` | `total_tokens` / `tokens`; nested `usage` |
+| `model_usage` | `input_tokens`, `output_tokens` | `prompt_tokens` / `completion_tokens`; `total_tokens` / `tokens` when no directional count is present; nested `usage` |
 | `agent_message` | `text` | `content` / `message`; role `assistant` |
 | `user_message` | `text` | `content` / `message`; role `user` |
-| `run_start` / any event | `run_id`, `session_id` | `runId` / `sessionId` / `invocation_id` |
+| any event | `run_id`, `session_id` | `invocation_id` for the run id |
 
 Tolerance rules (honest, never-crash):
 
@@ -202,7 +203,7 @@ Honest tiers matter more than a long signal table. Relative to
   `JudgementEmitted`/`DriftDetected` pairs; an event log carries no
   judgements, so `custom:<judge_name>` drift is never produced and the
   whole `judge:` channel — its coefficient and `per_judge_weights` alike
-  — is inert under this dialect (§4 warns on both).
+  — is inert under this dialect (§5.2 warns on both).
 - **No collusion-guarded emulator introspection.** The emulator lane and
   its answer-leak guard are goldfive-side; `adk_events` has no visibility
   into them.
@@ -215,7 +216,7 @@ nonetheless writes a structured trace: it recovers the failure/cost/loop
 envelope, which is most of what a tournament needs to rank candidates,
 while being explicit that the reasoning-quality signal is missing.
 
-## 5. Tier 3 — `transcript` (the floor)
+## 5. `transcript` (the floor)
 
 No telemetry at all. The input is a bare transcript JSONL (lines of
 `{"role": "user"|"assistant", "content": "…"}`), or nothing. The
@@ -244,7 +245,7 @@ and `output:chars`.
 We take the **explicit zero-drift stance** and do **not** renormalize the
 weights. Justification:
 
-- The dialect is pinned per epoch (§5). Scalars are never compared across
+- The dialect is pinned per epoch (§6). Scalars are never compared across
   dialects — `promote_margin` is applied to scalar *deltas within one
   contract*. A pure pass-term scalar is already a valid, monotone,
   lower-is-better axis; the gate works unchanged.
@@ -264,9 +265,9 @@ rather than a scalar that pretends drift was measured.
 A contract can *ask for* drift it cannot get — e.g. a `transcript`
 dialect with a non-default `namespace_weights["drift:"]`, a populated
 `per_kind_weights` / `per_judge_weights`, a `drift_kind_aggregation`, or
-a `drift_reducer` plugin. Those knobs would silently do nothing. Following the preflight
-house style ([PREFLIGHT / board-reflection](OVERFITTING.md) — default
-*warn*, recommend-only; opt-in *refuse*):
+a `drift_reducer` plugin. Those knobs would silently do nothing. The
+check follows the contract pre-flight's posture (`preflight_gate` in
+`epoch/preflight.py`: default *warn*, recommend-only; opt-in *refuse*):
 
 - **Refuse (fail-fast) only for a genuine config error:** an *unknown*
   dialect name is rejected at contract load in
@@ -278,15 +279,16 @@ house style ([PREFLIGHT / board-reflection](OVERFITTING.md) — default
   under either, since neither carries judgements). The `failure:` and
   `runtime:` channels are never reported inert, because run outcome and
   wall-clock are facts of the harness rather than of the telemetry
-  stream. The reducer logs them at
-  `warning` when it resolves a non-`goldfive` dialect. It does not refuse
-  the run — a drift-weighted transcript contract still scores correctly
+  stream. The evolve loop logs each finding once at `warning` when it
+  loads the contract (`emit_dialect_capability_warnings` in
+  `src/zicato/evolve/loop.py`), and `zicato inspect reflection run` does the
+  same. It does not refuse the run — a drift-weighted transcript contract still scores correctly
   (the drift term is just zero); the warning tells the operator their
   tuning is a no-op.
 
-A hard *refuse* gate on capability mismatch (mirroring the preflight
-`refuse` mode) is a natural follow-up but is intentionally not wired this
-wave — the default posture across zicato is recommend-only.
+There is no hard *refuse* gate on capability mismatch (the counterpart
+of the pre-flight `refuse` mode); the default posture across zicato is
+recommend-only.
 
 ## 6. Contract mechanics
 
@@ -330,11 +332,14 @@ Because dialects are pure re-reductions, a captured event log plus its
 known-answer `LossProfile` is a permanent regression fixture: re-reducing
 the committed fixture must reproduce the committed numbers to the bit.
 
-## 8. Out of scope this wave (follow-ups)
+## 8. Choosing and extending a dialect
 
-- **A hard `refuse` gate** on capability mismatch (§4.2).
+Not built:
+
+- **A hard `refuse` gate** on capability mismatch (§5.2).
 - **Additional dialects.** The registry is open; a new dialect is a new
-  `reduce_<name>` producer plus a registry entry plus a KAT fixture.
+  `reduce_<name>` producer plus a registry entry plus a known-answer
+  fixture.
 
 Choose the dialect through `scoring.json`'s `telemetry_dialect` field.
 The `set_telemetry_dialect` contract operation validates the same declaration.
@@ -347,4 +352,4 @@ A change to the effective dialect changes the evaluation contract.
 | The single-producer telemetry path + `LossProfile` shape | [TELEMETRY.md](TELEMETRY.md) |
 | The drift-loss scalar formula | [SCORING.md](SCORING.md) |
 | Complete evaluation contract hashing | `epoch/contract.py` |
-| Preflight warn/refuse house style | [OVERFITTING.md](OVERFITTING.md) / `epoch/preflight.py` |
+| The contract pre-flight's warn/refuse modes | `epoch/preflight.py` |

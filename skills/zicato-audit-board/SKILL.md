@@ -23,7 +23,7 @@ board. It composes — it does not restate — the sibling skills. Defer:
 - **The board JSON schema, entry kinds, expectations, judges** → [`zicato-author-board`](../zicato-author-board/SKILL.md).
 - **OUTCOME expectations vs PROCESS judges, drift→loss** → [`zicato-design-judges`](../zicato-design-judges/SKILL.md).
 - **The scalar / weights / promote gate** → [`zicato-tune-scoring`](../zicato-tune-scoring/SKILL.md).
-- **The canonical telemetry files (`events.jsonl` / `loss.json`)** → [`zicato-read-telemetry`](../zicato-read-telemetry/SKILL.md).
+- **The canonical telemetry files (the events stream and loss record)** → [`zicato-read-telemetry`](../zicato-read-telemetry/SKILL.md).
 - **The automated degeneracy detectors (`zicato health`)** → [`zicato-diagnose-health`](../zicato-diagnose-health/SKILL.md).
 
 Run-time partner: [`zicato-configure-tournament`](../zicato-configure-tournament/SKILL.md)
@@ -45,12 +45,17 @@ audit the run directories that already exist).
 
 ## The artifacts you audit (zicato's real files)
 
-Every `(epoch, generation, board-entry)` triple maps to one run directory:
+Every `(epoch, generation, board-entry)` triple maps to one run directory,
+with one file set per measurement inside a seed directory (`seed-none` unless
+`runtime.seed` is set). A measurement is named by its purpose (`tournament`
+for duels; also `calibration`, `contract_preflight`, `candidate_screen`,
+`evidence_confirmation`, …) and its draw number:
 
 ```
-.zicato/epochs/{epoch}/generations/v{N}/runs/{entry_id}/
-  ├── events.jsonl   # canonical goldfive event stream (one event per line)
-  └── loss.json      # the reduced LossProfile for this run
+.zicato/epochs/{epoch}/generations/v{N}/runs/{entry_id}/seed-none/
+  ├── events.tournament.r0.jsonl   # the event stream (instrumented adapters only)
+  ├── loss.tournament.r0.json      # the reduced LossProfile for this draw
+  └── result.tournament.r0.json    # the captured transcript + final output
 .zicato/epochs/{epoch}/generations/v{N}/gen_score.json   # the per-generation aggregate
 .zicato/epochs/{epoch}/board.jsonl                       # the frozen board (declares judges)
 ```
@@ -59,12 +64,12 @@ The fields the recipes below key on are the **real** on-disk fields:
 
 | File | Fields the audit reads |
 |---|---|
-| `loss.json` | `entry_id`, `pass_fail`, `expectation_result.{kind,passed,detail,score,metrics}`, top-level `score` (continuous per-entry quality in `[0,1]`; `None` → derived `1.0`/`0.0` from `pass_fail`) + `metrics` (e.g. `{precision,recall}`), `drift_loss`, `drift_counts[].{kind,severity,count}` (a fired custom judge appears as `kind: "custom:<judge_name>"`), `per_judge_loss[].{judge_name,raw_loss,weight,weighted_loss}`, `adk_session_id` |
-| `gen_score.json` | `scalar` (lower=better), `scalar_components` (named contributions that sum to `scalar`: `drift`, `pass`, plus one per non-zero namespace), `pass_rate`, `mean_score` (the uniform continuous-outcome axis — the arithmetic mean of each entry's `[0,1]` score; *equals* `pass_rate` byte-for-byte on an all-bool board), `drift_loss_mean`, `per_entry.{entry_id}.{drift_loss,pass_fail}`, `namespace_aggregates` |
+| `loss.<purpose>.r<draw>.json` | `entry_id`, `measurement.{purpose,draw,base_seed}`, `pass_fail`, `expectation_result.{kind,passed,detail,score,metrics}`, top-level `score` (continuous per-entry quality in `[0,1]`) + `metrics` (e.g. `{precision,recall}`), `drift_loss`, `metric_counts[].{name,severity,count}` (drift appears as `drift:<kind>`, a fired custom judge as `drift:custom:<judge_name>`), `per_judge_loss[].{judge_name,raw_loss,weight,weighted_loss}`, `judge_errors`, `not_completed`, `adk_session_id` |
+| `gen_score.json` | `scalar` (lower=better), `scalar_components` (one contribution per channel plus `pass`, summing to `scalar`: `pass`, `drift`, `judge`, `failure`, `runtime`, `cost`, `latency`, `rubric`, `output`, `schema`), `pass_rate`, `mean_score` (the arithmetic mean of each entry's `[0,1]` score; equal to `pass_rate` on an all-bool board), `drift_loss_mean`, `per_entry.{entry_id}.{drift_loss,failure,pass_fail,score}`, `namespace_aggregates` |
 | `board.jsonl` | per entry: `id`, `expectation.{kind,spec,reads}`, `judges[].name` (the declared judge set), `weight`, `tags` |
 
-> `loss.json` is canonical for one run; `gen_score.json` is the aggregate the
-> tournament gate scores on. The SQLite `index.db` is **derived** — audit the
+> A loss record is canonical for one measurement; `gen_score.json` is the
+> aggregate the tournament gate scores on. The SQLite `index.db` is **derived** — audit the
 > files rather than the index, which lags to generation boundaries. See
 > [`zicato-read-telemetry`](../zicato-read-telemetry/SKILL.md).
 
@@ -74,9 +79,10 @@ The fields the recipes below key on are the **real** on-disk fields:
    `.venv/bin/zicato board list --workspace .zicato`.
 2. **Run a KNOWN baseline.** Wire two stub candidates whose behavior you can
    predict a priori — a **trivially-correct stub** (should pass every entry with
-   an expectation) and a **trivially-wrong stub** (should fail them). Use the
-   deterministic mock-target path (see [`zicato-bootstrap`](../zicato-bootstrap/SKILL.md),
-   the `mocks:target_llm` / `mocks:aux_llm` callables) so no model budget is
+   an expectation) and a **trivially-wrong stub** (should fail them). Wire them
+   as deterministic `call_llm` engines or a deterministic adapter, the way the
+   `zicato init --example` project does (see
+   [`zicato-bootstrap`](../zicato-bootstrap/SKILL.md)), so no model budget is
    spent and the behavior is fixed. The point is that *expected verdicts are
    known before you look*.
 3. **Audit the run for harness mechanics**, explicitly *not* for whether the
@@ -98,7 +104,8 @@ Each item: what to check, why, and the pass/fail bar.
       not zicato's — verify GT ids against *your* corpus index; zicato cannot.)
 - [ ] **Graded-artifact fidelity.** The slice the expectation reads (`reads:
       "final_output"` or `"conversation_end"`) is the agent's *actual* output,
-      confirmed by diffing it against the raw `events.jsonl` transcript. It is
+      confirmed by diffing it against the run's captured `result` record and
+      raw event stream. It is
       NOT a self-summary / proxy (a `report_task_completed` field, a
       "completed_results" summary) unless that field provably equals the real
       output. The same rule binds **process judges**: a `python` judge that
@@ -156,9 +163,9 @@ across every run of the epoch. A judge declared on the board but absent here
 fired 0 times:
 
 ```sh
-jq -r '.drift_counts[] | select(.kind|startswith("custom:"))
-       | "\(.kind|ltrimstr("custom:"))\t\(.count)"' \
-   "$RUNS"/*/runs/*/loss.json \
+jq -r '.metric_counts[] | select(.name|startswith("drift:custom:"))
+       | "\(.name|ltrimstr("drift:custom:"))\t\(.count)"' \
+   "$RUNS"/*/runs/*/seed-*/loss.tournament.r*.json \
  | awk -F'\t' '{c[$1]+=$2} END{for(j in c) printf "%-24s fired=%d\n", j, c[j]}'
 # compare against the DECLARED set:
 jq -r 'select(.board_meta|not) | (.judges // [])[] | .name' \
@@ -179,24 +186,28 @@ generation, dump each entry's pass/fail, the matcher kind, the matcher's detail
 ```sh
 jq -r '[.entry_id, (.pass_fail|tostring), .expectation_result.kind,
         (.expectation_result.detail//""), (.drift_loss|tostring)] | @tsv' \
-   "$RUNS"/v0/runs/*/loss.json | column -t -s $'\t'
+   "$RUNS"/v0/runs/*/seed-*/loss.tournament.r0.json | column -t -s $'\t'
 ```
 
 **3. Confirm the graded field == the agent's real output — catch the proxy
-bug.** The expectation reads `final_output` / `conversation_end`; the raw
-`events.jsonl` carries the agent's actual final reply. Diff them for the same
-entry — divergence means you are grading a summary rather than the work:
+bug.** The expectation reads `final_output` / `conversation_end`; the run's
+`result` record holds the `final_output` and `transcript` the adapter returned,
+and the raw event stream carries the agent's actual turns. Compare them for the
+same entry — divergence means you are grading a summary rather than the work:
 
 ```sh
 ENTRY=recall_q1
-# the agent's real final reply (last text event in the canonical stream):
+D="$RUNS"/v0/runs/$ENTRY/seed-none
+# what the adapter returned as the final output (what `reads: final_output` grades):
+jq -r '.final_output' "$D"/result.tournament.r0.json
+# the agent's last text event in the canonical stream:
 jq -rs 'map(.payload // .) | map(select(.text? // .content?)) | last
         | (.text // .content // empty)' \
-   "$RUNS"/v0/runs/$ENTRY/events.jsonl
-# what the matcher actually graded is what `reads:` points at; if a predicate
-# read a self-summary field instead of this, the two will not match.
+   "$D"/events.tournament.r0.jsonl
+# if a predicate read a self-summary field instead of the real reply, the two
+# will not match.
 ```
-(The exact event shape is goldfive's; `events.jsonl` writes two envelope shapes
+(The exact event shape is goldfive's; the event stream writes two envelope shapes
 — a camelCase `{...DecisionMade}` and a normalized `{kind,payload,...}` — see
 [`zicato-read-telemetry`](../zicato-read-telemetry/SKILL.md). The point is to
 read the *real* transcript rather than trusting a downstream summary the predicate
@@ -216,7 +227,7 @@ ENTRY=recall_q1
 jq -rc 'select((.kind // .payload.kind) == "tool_observed")
         | {tool: (.payload.tool_name // .tool_name),
            err:  (.payload.is_error  // .is_error)}' \
-   "$RUNS"/v0/runs/$ENTRY/events.jsonl
+   "$RUNS"/v0/runs/$ENTRY/seed-none/events.tournament.r0.jsonl
 # a judge that fires on a tool name appearing in reasoning text — but with NO
 # matching tool_observed entry here — is grading narration rather than the ledger.
 ```
@@ -254,15 +265,15 @@ judge swamping the scalar):
 
 ```sh
 jq -r '.per_judge_loss[] | "\(.judge_name)\traw=\(.raw_loss)\tw=\(.weight)\tweighted=\(.weighted_loss)"' \
-   "$RUNS"/v0/runs/*/loss.json
+   "$RUNS"/v0/runs/*/seed-*/loss.tournament.r*.json
 ```
 
 **7. Determinism check — identical behavior → identical verdict.** Re-run the
 same deterministic baseline into a second workspace, then diff the verdicts:
 
 ```sh
-diff <(jq -S '{entry_id,pass_fail,drift_loss,drift_counts}' run_a/loss.json) \
-     <(jq -S '{entry_id,pass_fail,drift_loss,drift_counts}' run_b/loss.json)
+diff <(jq -S '{entry_id,pass_fail,score,drift_loss,metric_counts}' run_a/loss.tournament.r0.json) \
+     <(jq -S '{entry_id,pass_fail,score,drift_loss,metric_counts}' run_b/loss.tournament.r0.json)
 # any diff under identical deterministic behavior means the board is noisy:
 # nondeterministic matcher/judge, or a truncated preview dropping the signal.
 ```
@@ -280,6 +291,7 @@ full list). Run it first; it is cheap and read-only:
 | Drift telemetry not reaching the reducer | `flat_drift_signal` (`[WARNING]`/`[CRITICAL]`) |
 | Scoring not distinguishing candidates | `degenerate_scoring` (`[CRITICAL]`) |
 | Pass/fail side mostly absent | `no_expectations` (`[INFO]`) |
+| A judge whose callable raised | `judge_erroring` (`[WARNING]`) |
 | A judge that disagrees with itself | `zicato board judges --test-retest` (separate command) |
 | The board cannot out-signal its own noise | `zicato board preflight` / `board audit` (separate commands) |
 
@@ -304,7 +316,7 @@ Two more read-only checks automate audit items `health` does not cover:
 # the contract's A/A noise floor + whether a deliberate degradation can
 # out-signal it (verdict ok / warn / inert / refuse; recommend-only):
 .venv/bin/zicato board preflight --workspace .zicato \
-    --harness-call-llm my_pkg.llms:harness --auxiliary-call-llm my_pkg.llms:aux
+    --harness-call-llm my_pkg.llms:target --auxiliary-call-llm my_pkg.llms:aux
 ```
 
 `board preflight` spends a small measurement budget: K same-versus-same draws
@@ -314,7 +326,7 @@ are asking it about": a `warn` verdict means every probe scored identically, so
 the board is saturated, and a `refuse` verdict means the measured signal is at
 or below the noise floor.
 
-What `zicato health` does **not** yet automate — do these by hand (recipes 2,
+What `zicato health` does **not** automate — do these by hand (recipes 2,
 3, 5 above): **graded-artifact fidelity** (is the predicate reading the real
 output or a proxy?), **GT winnability** (is the GT a real, non-arbitrary
 corpus id?), and the **scalar-inversion ranking check**. These need the
@@ -360,9 +372,9 @@ but it is inherently project-specific — see "Recommendations" below.)
   project-supplied corpus index, flagging GT ids absent from the corpus and
   expectations that demand a single one-of-many answer). Not to be confused with
   the shipped `zicato board preflight`, which measures *noise vs achievable
-  signal*, never whether a ground truth exists. Genuinely useful, but
+  signal*, never whether a ground truth exists. Useful, but
   inherently project-specific — the corpus is not zicato's — so it would need a
-  pluggable corpus-resolver hook. Left as a recommendation rather than built.
+  pluggable corpus-resolver hook.
 - A **graded-artifact-fidelity lint** that warns when a `predicate` spec's
   `reads` target is a known summary/proxy field name. Cheap heuristic, but
   false-positive-prone without a per-project allowlist.

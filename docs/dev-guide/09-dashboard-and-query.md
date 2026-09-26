@@ -3,7 +3,7 @@
 > **Covers.** The whole read/serve surface: the `zicato.query` read-model
 > library (every reader module — what it builds, its payload shape, its
 > degrade behaviour), the standalone Starlette dashboard service
-> (`server.py` / `endpoints.py` / `sse.py` / `transcript.py` /
+> (`server.py` / `endpoints.py` / `sse.py` / `settings_api.py` /
 > `static_assets.py`), and the browser bundle under
 > `dashboard/static/js/` (the SSE spine, the router/shell, the views, the
 > `svg.js` figure grammar, `livestatus.js`, the pipeline stepper, controls).
@@ -16,9 +16,10 @@
 > separate OS processes), 07-runtime-and-durability.md §7.1 (files
 > canonical / index derived), §7.6 (the runtime state files this layer
 > reads), §7.10 (the RoundLog whose fold the round timeline renders),
-> 08-supervisor.md §8.9 (the Rust twin of
-> every reader here). 04-evaluation-statistics.md §5
-> and §3 ground the uncertainty-honest verdicts of §9.8.
+> 08-supervisor.md §8.9 and §8.15 (the Rust supervisor's read-only index
+> discipline and its reader). 04-evaluation-statistics.md §3 (the noise
+> doctrine) and §4 (A/A noise-floor calibration) ground the
+> uncertainty-honest verdicts of §9.8.
 >
 > **Invariants introduced in this chapter.** Each is load-bearing: a violation
 > is a correctness or data-integrity bug rather than a style question. The ID is
@@ -57,36 +58,43 @@ score trends and comparisons between judges may run on demand in shared
 framework functions; callers should reuse those functions. Browser code
 controls layout and interaction.
 
-| File | What lives there | Approx. size |
+| File | What lives there | Lines |
 |---|---|---|
-| `src/zicato/query/__init__.py` | the package face — re-exports every reader; the "library, not driver" module docstring | 341 lines |
-| `src/zicato/query/paths.py` | `WorkspacePaths` (the `.zicato/` layout), the coercers `coerce_float` / `_opt_bool`, `_resolve_epoch_id` (the traversal guard), epoch enumeration re-exports | 260 lines |
-| `src/zicato/query/decisions.py` | THE one decision classifier: `canonical_decision`, `promoted_tristate`, `stamp_experiment_decision`, `PROMOTED_DECISIONS` | 94 lines |
-| `src/zicato/query/contracts.py` | typed envelopes and the exhaustive JSON endpoint registry | — |
-| `src/zicato/query/_sqlite.py` | `_open_index` (read-only `mode=ro`), `_query` (swallow-to-`[]`), `_opt_json`, `_IndexAbsent` | 41 lines |
-| `src/zicato/query/runtime_view.py` | `build_snapshot`, `read_heartbeat_dict` (the `ts` int-ms stamp), `read_effective_settings`, `normalize_entry_status` (the four-bucket canon), `read_active_runs_view`, `read_paused` | 438 lines |
-| `src/zicato/query/loop_view.py` | `build_optimization_trajectory` (the uncertainty-honest verdict), `build_tournament_cost`, `build_round_pipeline` + `PIPELINE_STEPS` (the server-owned stepper projection) | 435 lines |
-| `src/zicato/query/racing_view.py` | `build_racing_field` — the racing ladder joined server-side out of the per-challenger records | 301 lines |
-| `src/zicato/query/rounds_view.py` | `build_round_timeline` — the round spine and loss-floor waterfall joined server-side across four endpoints' worth of records | 329 lines |
-| `src/zicato/query/file_view.py` | `build_file_index`, `build_generation_tree`, `read_generation_file`, `build_generation_patches`, `build_generation_diff` — a generation's source tree, one file of it, its patch set, and its diff against its parent, read through the `GenerationStore` protocol; when a tree is gone the diff carries the patched spans reconstructed from records, with `provenance` saying so | 550 lines |
-| `src/zicato/query/mutation_view.py` | `build_mutation_index`, `build_mutation_detail`, `reconstructed_spans` — an epoch's mutation surface from the `v0` tree or, when the tree is gone, from the frozen `mutations.json`, and one site's content in every generation whose patch touched it | 805 lines |
-| `src/zicato/query/reflection_view.py` | `list_reflections`, `build_reflection_summary` (four-pillar bill of health), `build_judge_scorecards`, `build_adjudication_xray` (transcript + judge verdict + meta-judge record), `entry_candidate_matrix` (reflection-independent, off the index loss tables) — the Instrument-lens feed (BOARD-REFLECTION.md R4). Index-first, file-fallback; the x-ray reads `result.json` / `judge_io` rather than re-running the adjudicator's events-preview reconstruction | ~430 lines |
-| `src/zicato/query/epoch_view.py` | `build_epoch_view`, `build_environment`'s epoch slice, `current_champion` in `query/promoted_head.py`, `build_workspace_view`, `compute_board_split` | 35 KB |
-| `src/zicato/query/gate_view.py` | `build_gate_breakdown` (+ `deciding_rule`), `build_score_trajectory`, `build_health_report`, `build_rating_view`, `build_drift_movements` | 56 KB |
-| `src/zicato/query/tournament_view.py` | `build_bracket`, `build_tournament_structure`, `build_matchup_detail`, `build_matchup_grid` | 51 KB |
-| `src/zicato/query/{judge,hypothesis,lineage,events_index,run_log}_view.py` | per-judge matrices, hypothesis/calibration accuracy, lineage feed, `/api/environment` coalescer + meta-loop ledger, the run-log tail. `judge_view.build_per_entry_for_generation` serves the dossier; its `facet_scores` block comes from `eval_view.facet_scores_for_generation` | — |
-| `src/zicato/query/transcript_reconstruction.py` | `reconstruct_transcript` — one goldfive `events.jsonl` or one Foe `episode.jsonl` → an ordered `Transcript` | 38 KB |
-| `src/zicato/query/foe_episode.py` | Reads proposal episode events and their conversation contributions; request messages remain recorded facts | — |
+| `src/zicato/query/__init__.py` | the package face — re-exports the readers production code calls (the endpoint table, the SSE snapshot builder, the `logs` command); `__all__` is the supported surface | 215 |
+| `src/zicato/query/paths.py` | `WorkspacePaths` (the `.zicato/` layout), `read_current_epoch`, `list_epoch_ids`, `layout_of`, the coercers `coerce_float` / `finite_float` / `_opt_bool`, `_resolve_epoch_id` (the traversal guard) | 252 |
+| `src/zicato/query/decisions.py` | the one decision projection: `experiment_decision`, `canonical_decision`, `promoted_tristate`, `decision_surface`, `stamp_experiment_decision`, all validated against `core.tournament.TournamentDecision` | 44 |
+| `src/zicato/query/contracts.py` | typed envelopes and the exhaustive JSON endpoint registry `ENDPOINT_PAYLOADS` | 187 |
+| `src/zicato/query/_sqlite.py` | `open_index_ro` / `open_index_ro_or_none` (read-only `mode=ro` through `index.query.open_index`), `_query` (swallow-to-`[]`), `_opt_json`, `_IndexAbsent`, `INDEX_NOT_BUILT_NOTE` | 107 |
+| `src/zicato/query/inputs.py` | `EpochInputs` / `GenerationInputs` — the per-response captured inputs (§ "Inputs shared within a response") | 97 |
+| `src/zicato/query/runtime_view.py` | `build_snapshot`, `derive_liveness`, `read_heartbeat_dict` (the `ts` int-ms stamp), `read_effective_settings`, `normalize_entry_status` (the four-bucket canon), `read_active_runs_view`, `read_paused` | 831 |
+| `src/zicato/query/loop_view.py` | `build_optimization_trajectory` (the uncertainty-honest verdict), `build_tournament_cost`, `build_round_pipeline` + `PIPELINE_STEPS` (the server-owned stepper projection) | 545 |
+| `src/zicato/query/racing_view.py` | `build_racing_field` — the most recent recorded racing field tournament of an epoch, served from its record | 39 |
+| `src/zicato/query/rounds_view.py` | `build_round_timeline` — the recorded rounds, the in-flight field and the loss-floor waterfall | 356 |
+| `src/zicato/query/promoted_head.py` | `current_champion`, `champion_history`, `read_recorded_heads`, `head_of_round` — the champion each committed round names | 71 |
+| `src/zicato/query/file_view.py` | `build_file_index`, `build_generation_tree`, `read_generation_file`, `build_generation_patches`, `build_generation_diff` — a generation's source tree, one file of it, its patch set, and its diff against its parent, read through the `GenerationStore` protocol; when a tree is gone the diff carries the patched spans reconstructed from records, with `provenance` saying so | 515 |
+| `src/zicato/query/mutation_view.py` | `build_mutation_index`, `build_mutation_detail`, `reconstructed_spans` — an epoch's mutation surface from the `v0` tree or, when the tree is gone, from the frozen `mutations.json`, and one site's content in every generation whose patch touched it | 786 |
+| `src/zicato/query/reflection_view.py` | `list_reflections`, `build_reflection_summary` (four-pillar bill of health), `build_judge_scorecards`, `build_practice_review`, `build_adjudication_xray` (transcript + judge verdict + meta-judge record), `entry_candidate_matrix` (reflection-independent, off the index loss tables) — the Instrument-lens feed. Index-first, file-fallback; the x-ray reads `result.json` / `judge_io` rather than re-running the adjudicator's events-preview reconstruction | 590 |
+| `src/zicato/query/trace_view.py` | the trajectory-bootstrap traces of a reflection: `build_trace_list`, `build_trace_detail`, `build_suggestion_provenance` | 809 |
+| `src/zicato/query/epoch_view.py` | `build_epoch_view`, `build_epochs_summary`, `compute_board_split`, `build_epoch_analysis`, `read_epoch_analysis_html` | 793 |
+| `src/zicato/query/gate_view.py` | `build_gate_breakdown` (+ `deciding_rule`), `build_score_trajectory`, `build_health_report`, `build_rating_view`, `build_drift_movements` | 1052 |
+| `src/zicato/query/tournament_view.py` | `build_bracket`, `build_tournament_structure`, `build_matchup_detail`, `build_matchup_grid` | 991 |
+| `src/zicato/query/candidate_view.py` | `build_candidate_dossier` — the candidate page's one composed read | 457 |
+| `src/zicato/query/eval_view.py` | the board-as-instrument reads: `build_eval_matrix`, `build_eval_dossier`, `build_eval_health`, `facet_scores_for_generation` | 1527 |
+| `src/zicato/query/execution_plan.py` / `live_execution_plan.py` | `build_execution_plan` (the loop as one served tree) and `build_live_execution_plan` / `build_live_pipeline` (the running epoch's plan and stepper) | 1402 / 558 |
+| `src/zicato/query/{judge,hypothesis,lineage,ledger,transcript,conversations,journal,proposer}_view.py`, `events_index.py`, `run_log.py`, `log_stream.py`, `judge_roster.py`, `replicate_scores.py`, `ratings.py`, `board_scan.py` | per-judge matrices and `build_environment` (`judge_view`), hypothesis/calibration accuracy, the lineage feed, the experiments ledger, run transcripts and episode exports, matchup conversations, the served journal, the proposer scorecard, run and events lookup plus `build_workspace_view` / `build_meta_loop_ledger` (`events_index`), the run-log tail, the operator log view, the armed judge roster, replicate measurements, rating triples, and board-row projections. `judge_view.build_per_entry_for_generation` serves the dossier; its `facet_scores` block comes from `eval_view.facet_scores_for_generation` | — |
+| `src/zicato/query/transcript_reconstruction.py` | `reconstruct_transcript` — one goldfive `events.jsonl` or one Foe `episode.jsonl` → an ordered `Transcript` | 921 |
+| `src/zicato/query/foe_episode.py` | Reads proposal episode events and their conversation contributions; request messages remain recorded facts | 192 |
 | `src/zicato/board/jsonl.py` | `load_board_document` owns whole-file board acceptance; query projections share its accepted entries and source rows. | — |
 | `src/zicato/mutation/inventory.py` | `read_mutation_inventory` accepts the recorded seven-field enumeration and preserves extensions; malformed present inventories carry a refusal into query views and prevent report publication. | — |
 | `src/zicato/epoch/contract.py` | `read_component_hashes` accepts one string-to-string mapping for checks, epoch rollover and query projections; future component names remain recorded. | — |
-| `src/zicato/dashboard/server.py` | `create_app` (routes + `read_only`), `run` (port walk + harmonograf), static serving with ETag revalidation | 575 lines |
-| `src/zicato/dashboard/endpoints.py` | `make_endpoints` (the per-surface factories), `_is_safe_id` / `_is_safe_tournament_id`, the control POST handlers | 62 KB |
-| `src/zicato/dashboard/sse.py` | `ChangeBroker` (coalescing file watcher), `sse_event_stream`, `_classify`, `_progress_signal` | 398 lines |
-| `src/zicato/dashboard/static_assets.py` | `resolve_static_dir` — the bundle-resolution seam | 50 lines |
-| `src/zicato/dashboard/static/js/core/` | `sse.js` (the seq gate), `api.js` (`postControl`), `state.js` (`noteProgress`, `AppState`), `dom.js`, `bus.js` | — |
+| `src/zicato/dashboard/server.py` | `create_app` (routes + `read_only`), `run` (port walk + harmonograf + `read_only=False`), static serving with ETag revalidation | 546 |
+| `src/zicato/dashboard/endpoints.py` | `READ_ENDPOINTS` (the read-route table), `make_endpoints` (the table plus the hand-written factories), `_is_safe_id` / `COORDINATE_GUARDS`, the control POST handlers | 1488 |
+| `src/zicato/dashboard/settings_api.py` | `settings_routes` — the secret-safe `GET /settings/models` read of the model-engine configuration | 56 |
+| `src/zicato/dashboard/sse.py` | `ChangeBroker` (coalescing file watcher), `sse_event_stream`, `_classify`, `_progress_signal` | 430 |
+| `src/zicato/dashboard/static_assets.py` | `resolve_static_dir` — the bundle-resolution seam | 50 |
+| `src/zicato/dashboard/static/js/core/` | `sse.js` (the seq gate), `api.js` (`postControl`), `state.js` (`noteProgress`, `AppState`), `prefs.js`, `harmonograf.js`, `dom.js`, `bus.js` | — |
 | `src/zicato/dashboard/static/js/` | `router.js`, `shell.js` (dispatch + chrome + loop controls), `live.js` (the live engine + `pipelineStepper`), `livestatus.js` (the four run-states), `data.js` (null-degrading accessors), `svg.js` (the figure grammar), `ui.js` (`gatedSwap`) | — |
-| `src/zicato/dashboard/static/js/views/` | one module per page: `home.js`, `epoch.js`, `gens.js`, `candidate.js`, `board(s).js`, `mutations.js`, `instrument.js` (the board-reflection lens — landing / bill-of-health / judge-audit / x-ray), `diff.js`, … each an `async render(host, ctx, params)`; `structure.js`, `boardstatus.js` and `ledger.js` are panels the epoch page composes | — |
+| `src/zicato/dashboard/static/js/views/` | one module per page: `home.js`, `epoch.js`, `gens.js`, `candidate.js`, `board(s).js`, `evals.js`, `mutations.js`, `instrument.js` (the board-reflection lens — landing / bill-of-health / judge-audit / x-ray), `traces.js`, `diff.js`, `logs.js`, `publication.js`, `settings.js`, each an `async render(host, ctx, params)`; `structure.js`, `boardstatus.js` and `ledger.js` are panels the epoch page composes | — |
 | `src/zicato/dashboard/static/js/panels/` | page sections a view imports and mounts into hosts it owns, with no route: `evals_health.js` (the evals page's instrument-health strip and section) | — |
 
 
@@ -127,12 +135,13 @@ docstring states it and the import-linter enforces it.
 ```python
 """The workspace query layer: read-only ``.zicato/`` state assembly.
 
-These readers are library code rather than driver code: they turn the on-disk workspace
+Library code: these readers turn the on-disk workspace
 (runtime state files, the SQLite analytical index, epoch records) into
 the JSON view shapes any consumer can render. The dashboard server is
 the primary consumer today, but the layer has no dashboard dependency —
 :mod:`zicato.query` must never import :mod:`zicato.dashboard` (enforced
 by the import-linter contracts).
+...
 """
 ```
 — `src/zicato/query/__init__.py` (module docstring)
@@ -148,21 +157,19 @@ forbidden_modules = ["zicato.dashboard"]
 ```
 — `pyproject.toml`
 
-**Why this matters (the query-layer hoist).** `zicato.query` was once a single
-monolithic `dashboard/state_reader.py` module — a driver-internal helper.
-It was hoisted OUT of the driver and split into per-view submodules so
-that (1) the Rust supervisor's read layer has a Python peer to keep parity
-with, (2) tests can exercise the read model without booting a server, and
-(3) the readers can never accrete an HTTP concern by accident. The
-`__init__.py` re-exports every name the split produced so a consumer still
-writes `from zicato.query import build_epoch_view` — the split is
-invisible at the call site, the boundary is not.
+**Why this matters.** The readers live outside the driver, in per-view
+submodules, so that (1) the Rust supervisor's read layer has a Python peer
+to keep parity with, (2) tests and the CLI can exercise the read model
+without booting a server, and (3) the readers cannot accrete an HTTP concern
+by accident. `__init__.py` re-exports the readers production code calls, so
+the endpoint table writes `query.build_epoch_view`; a name absent from
+`__all__` is imported from the submodule that defines it.
 
 > ⛔ NEVER import `starlette`, `Request`, `JSONResponse`, or anything under
 > `zicato.dashboard` from a `zicato.query` module. A reader returns plain
 > Python (`dict` / `list` / scalars); the endpoint wraps it in a
 > `JSONResponse`. The moment a reader knows about HTTP, the query layer has stopped being library code and
-> `lint-imports` reds — and the Rust supervisor loses the Python peer it
+> `make import-lint` reds — and the Rust supervisor loses the Python peer it
 > keeps parity with.
 
 > ✅ ALWAYS add a new reader to `zicato.query` (a per-view submodule) and
@@ -171,11 +178,10 @@ invisible at the call site, the boundary is not.
 > yourself writing workspace-reading logic inside `endpoints.py`, you have
 > put library code in the driver — move it down.
 
-The dashboard driver itself has exactly two declared driver→driver edges
-(`cli → dashboard` for launch/static-resolution, `dashboard → builder` for
-the mounted builder routes); every other cross-driver import is forbidden
-(§9.4, 11-testing.md §11.8). The endpoints module's own
-docstring restates the split from the top:
+The one declared driver-to-driver edge is `cli → dashboard` (launch and
+static-asset resolution); the dashboard must not import the CLI (§9.4,
+11-testing.md §11.8). The endpoints module's own docstring restates the split
+from the top:
 
 ```python
 """HTTP route handlers for the dashboard service.
@@ -286,82 +292,53 @@ task does not count as another completed board entry.
 > client decision. A multi-epoch fixture is the only thing that catches it:
 > with one epoch the bare read and the scoped read are the same payload.
 
-### 9.2.2 The one decision classifier — `decisions.py`
+### 9.2.2 The one decision projection — `decisions.py`
 
 Every payload that names a tournament decision funnels through ONE module
 so the wire vocabulary is single-valued and the client never re-classifies.
+The vocabulary itself belongs to execution: `core.tournament.TournamentDecision`
+is a `StrEnum` with exactly `promoted`, `rejected` and `deferred`, and a
+recorded token outside it is refused rather than guessed.
 
 ```python
-"""decisions — THE one experiment-decision classifier the dashboard serves.
+def experiment_decision(exp: dict[str, Any]) -> str | None:
+    """Read the recorded outcome decision, or None before an outcome exists."""
+    return recorded_decision_token(exp.get("outcome"))
 
-Every payload that names a tournament decision funnels through here so the
-server ships ONE canonical vocabulary and the frontend never re-classifies:
-"""
-```
-— `src/zicato/query/decisions.py` (module docstring)
 
-The classifier maps every recorded spelling onto the canonical wire token and
-refuses to guess an unknown one:
-
-```python
 def canonical_decision(raw: str | None) -> str | None:
-    """Map a recorded decision token onto the canonical wire vocabulary.
-
-    ``promoted`` / ``rejected`` / ``deferred`` for every known spelling;
-    an unknown token passes through lowercased (never guessed into a
-    verdict); ``None`` / empty stays ``None`` (no decision recorded).
-    """
-    if raw is None:
-        return None
-    tok = raw.strip().lower()
-    if not tok:
-        return None
-    if tok in PROMOTED_DECISIONS:
-        return "promoted"
-    if tok in REJECTED_DECISIONS:
-        return "rejected"
-    if tok in DEFERRED_DECISIONS:
-        return "deferred"
-    return tok
+    """Validate a recorded decision against the tournament's supported tokens."""
+    return TournamentDecision(raw).value if raw is not None else None
 ```
-— `src/zicato/query/decisions.py`, `canonical_decision`
+— `src/zicato/query/decisions.py`
 
-`PROMOTED_DECISIONS = frozenset({"promoted", "promote", "accepted",
-"accept", "win", "won"})` — the spellings older workspaces recorded,
-all collapsed to the one canonical token `"promoted"`. An unknown token is
-lowercased and passed through, never coerced into a verdict — an
-un-recognized string is a data question rather than a decision the classifier is
-allowed to invent.
+`experiment_decision` is the one reader of the raw shape: it delegates to
+`core.tournament.recorded_decision_token`, which reads `outcome` as an object
+carrying `tournament_decision` (or `null` before the outcome exists) and
+raises on any other shape. So "where is the decision written" lives in one
+place, and a malformed record surfaces as an error the reader's best-effort
+degrade handles rather than as an invented verdict.
 
-### 9.2.3 The tri-state `promoted` stamp — and the Class-B bug
+### 9.2.3 The tri-state `promoted` stamp
 
 `promoted` on the wire is a **tri-state**: `true`, `false`, or `null`. The
-`null` case is load-bearing and its own bug class:
+`null` case is its own bug class:
 
 ```python
 def promoted_tristate(raw: str | None) -> bool | None:
-    """The tri-state ``promoted`` stamp for a recorded decision token.
-
-    ``None`` when no decision is recorded (in-flight / never raced) —
-    NEVER a default ``False`` (the Class-B bug); else exactly the boolean
-    the lineage view derives (``token in PROMOTED_DECISIONS``).
-    """
-    if raw is None:
-        return None
-    tok = raw.strip().lower()
-    if not tok:
-        return None
-    return tok in PROMOTED_DECISIONS
+    """Preserve absent decisions and identify a recorded promotion."""
+    decision = canonical_decision(raw)
+    return decision == TournamentDecision.PROMOTED if decision is not None else None
 ```
 — `src/zicato/query/decisions.py`, `promoted_tristate`
 
 > ⛔ NEVER default `promoted` to `False` for a generation with no recorded
 > decision. An in-flight or never-raced challenger is `promoted: null`, not
-> `promoted: false` — the "Class-B bug" is exactly the collapse of "not yet
-> decided" into "rejected". A `false` says the gate ran and said no; a `null`
-> says the gate has not run. The dashboard colours those differently (a
-> pending accent vs a rejection tone), and a placebo/soft-reject audit reads
-> them differently too.
+> `promoted: false` — collapsing "not yet decided" into "rejected" is the
+> defect this stamp exists to prevent. A `false` says the gate ran and said
+> no; a `null` says the gate has not run. The dashboard colours those
+> differently (a pending accent vs a rejection tone), and a placebo or
+> soft-reject audit reads them differently too.
 
 The server stamps both the canonical token and the tri-state onto every
 experiment record it serves, in place, so no consumer re-classifies:
@@ -375,10 +352,9 @@ def stamp_experiment_decision(record: dict[str, Any]) -> None:
 ```
 — `src/zicato/query/decisions.py`, `stamp_experiment_decision`
 
-`experiment_decision` is the one reader of the raw shape (a bare-string
-`outcome` IS the decision; a dict `outcome` carries it under `decision` /
-`tournament_decision` / `verdict`) so the "where is the decision written"
-knowledge lives in one place too.
+`decision_surface(parent, promoted)` gives a lineage node its token and
+renderer label: `baseline` ("seed (v0)") for a parentless node, `promoted`,
+`rejected`, or `pending` ("undecided") for a `null` stamp.
 
 ### 9.2.4 The schema canon — one spelling per field
 
@@ -481,71 +457,57 @@ performs every one of those joins and serves the result as a single payload,
 and the client reads it whole. Holding the join on one side is what removes a
 class of client-versus-server drift.
 
-**The racing field.** A racing tournament persists one record per challenger,
-so the rung ladder has to be joined out of those records. `build_racing_field`
-is that join:
+**The racing field.** Execution records each field tournament, rungs and
+final comparison included, in one field-tournament record.
+`build_racing_field` selects the epoch's most recent racing record (by
+`ran_at`) from `tournament.records.field_tournament_records` and serves it
+whole, adding `present: true`, `source: "record"`, and `champion_lineage`
+from `champion_history`. It infers no winner:
 
 ```python
-"""racing_view — the settled racing-field payload, served (not fabricated).
-
-A racing tournament is persisted as ONE record PER CHALLENGER (the durable
-RoundRecord lands in a later phase); the rung/gate ladder the dashboard
-renders therefore has to be JOINED out of those per-challenger records. The
-frontend used to do that join itself (``reconstructRacing`` parsed
-``{epoch}:{champ}->{chall}`` id strings client-side); this reader is that
-join moved server-side, so the client reads ONE settled racing-field payload
-and never re-derives rungs / survivors / the crowned winner.
-"""
+def build_racing_field(
+    paths: WorkspacePaths, epoch_id: str | None = None, *, inputs: EpochInputs | None = None
+) -> dict[str, Any]:
+    """Serve recorded rungs and the final comparison without inferring a winner."""
 ```
-— `src/zicato/query/racing_view.py` (module docstring)
+— `src/zicato/query/racing_view.py`
 
-**The round timeline.** The round model draws on `/api/epoch`,
-`/api/lineage`, `/api/score-trajectory`, and `/api/tournaments`. The server
-owns that join for both settled and in-flight rounds, and the client only
-renames fields for the renderer:
+An epoch with no racing record serves `{epoch_id, present: false}`; a
+malformed record adds its `unreadable` reason.
+
+**The round timeline.** The round model combines the lineage feed, the
+score trajectory, the bracket's recorded tournaments, the recorded heads and
+the active tournament. `GET /api/epoch/{epoch_id}/round-timeline` serves that
+join for both settled and in-flight rounds, and the client only renames
+fields for the renderer:
 
 ```python
-"""rounds_view — the epoch ROUND TIMELINE, served (not joined client-side).
+"""The epoch's recorded rounds, active proposal status and loss-floor waterfall.
 
-The frontend used to derive this model by JOINING four endpoints
-(``/api/epoch`` + ``/api/lineage`` + ``/api/score-trajectory`` +
-``/api/tournaments``) in ``rounds.js``. This reader is that join moved
-server-side: ``GET /api/epoch/{id}/round-timeline`` serves settled rounds,
-the LIVE in-flight field, embedded tournament records, projected standings,
-and the loss-floor waterfall. The client performs no decision-bearing join.
+An experiment's integer birth-round stamp assigns its generation to a field.
+The seed and each promoted champion carry forward into later fields. Lineage
+supplies parentage and promotion decisions; tournament records identify the
+champion and gate winner within each field.
+...
 """
 ```
 — `src/zicato/query/rounds_view.py` (module docstring)
 
-> ⚠️ TRAP — a FIELD row has no champion of its own. `_upsert_field_tournament`
-> leaves `parent_generation_id` / `child_generation_id` EMPTY on purpose (a
-> field is a round rather than a duel, and a populated child would collide with the
-> per-challenger crowning row), and it writes one for every field of 3+
-> competitors — so every MULTI-CHALLENGER racing / swiss / elim round has one. (A
-> round that fields a single challenger is two competitors: no field row, and its
-> per-challenger row carries the champion directly.) The champion must
-> therefore come from `competitors_json`, and there is exactly one right way to
-> read it: the competitor the record TAGS `role: "champion"` (`competitors_meta`
-> writes the champion first, role-tagged). Borrowing "the first competitor that
-> has a crowning row" instead reads the CHAMPION'S OWN duel, whose parent is the
-> champion it BEAT — which served the previous champion as the defender of every
-> round after a promotion, so a beaten champion appeared to reign for the rest
-> of the epoch. The champion's scalar and eval provenance (cached vs re-run) DO
-> ride on the crowning row of a challenger IN THIS FIELD, whose parent is this
-> round's champion; that borrow is the correct one. It must be keyed to this
-> field: one champion defends several rounds, so an unrestricted search finds its
-> EARLIEST defence and reports that round's scalar and cached-vs-fresh mode.
->
-> When no such row exists yet — the field row is written at OPEN, so mid-round
-> the reader knows WHO defends but not HOW it was evaluated — the mode is
-> genuinely unknown and serves as `eval_mode: None`, which the tree renders as
-> plain "defends". The `NULL ⇒ "full"` rule from the v8 column wave applies to
-> READING A ROW, so it lives on the row reads; defaulting the assembled champion
-> instead would claim "defends · re-run" for a round that has not run.
->
-> A regression test needs a round AFTER the promotion plus a field row: with only
-> per-challenger rows, `_build_rounds` carries the champion forward correctly and
-> the bug is invisible.
+Each round's `champion` is `{id, scalar, eval_mode, run_ref, from_record}`.
+`build_bracket` takes the `id` from the field-tournament record's
+`champion_generation_id`, and the scalar and `eval_mode` (cached or re-run)
+from that round's committed settlement receipt. Before the receipt commits,
+the round's defender is known but its evaluation is not, so `scalar` and
+`eval_mode` are `None` and the tree renders plain "defends". The timeline
+also carries the champion forward from each round's recorded head
+(`head_of_round`); when the record and the carried champion disagree, the
+reader logs the disagreement and serves the record.
+
+> ⚠️ TRAP — one champion defends several rounds, so a reader that searches
+> every round for "a row naming this champion" finds its EARLIEST defence and
+> reports that round's scalar and cached-versus-fresh mode. Key the champion's
+> evaluation to the round being rendered. A regression test for this needs a
+> round AFTER a promotion; with a single round the bug is invisible.
 
 **The pipeline projection.** The propose→apply→run→gate position is inferred
 server-side from the heartbeat `phase` string (§9.11), and the JS renders the
@@ -667,7 +629,7 @@ The loop view also explains unavailable input:
     try:
         traj = optimization_trajectory(paths.index_db, epoch_id)
     except IndexUnavailableError:
-        return _empty_trajectory(paths, epoch_id, "index not built; run zicato repair index")
+        return _empty_trajectory(paths, epoch_id, INDEX_NOT_BUILT_NOTE)
     except Exception:  # noqa: BLE001 — best-effort, mirrors sibling readers
         return _empty_trajectory(paths, epoch_id, "index unreadable")
 ```
@@ -693,8 +655,9 @@ The loop view also explains unavailable input:
 
 Almost every reader in this chapter starts by asking which records to read:
 which generations the epoch minted, which board entries left a run, which
-rounds ran. None of them answers that itself. `zicato.workspace.reads` holds
-the four enumerations and the one order each carries:
+rounds ran. None of them answers that itself. `zicato.workspace.epochs` holds
+the epoch enumeration and `zicato.workspace.reads` the other three, each with
+the one order it carries:
 
 | Reader | Question | Order |
 |---|---|---|
@@ -732,9 +695,10 @@ properties for every file the readers touch (`heartbeat`, `lock`,
 `lineage`, `index_db`, `epochs`). It carries the resolved persistent
 `harmonograf_url` the dashboard process injected at startup (§9.4).
 
-The one security-relevant helper is `_resolve_epoch_id`, which validates a
-`?epoch=<id>` against the on-disk epoch set and rejects a path-unsafe value
-so a `?epoch=../foo` cannot escape the workspace:
+The one security-relevant helper is `_resolve_epoch_id`. `None` resolves to
+the current epoch; a given `?epoch=<id>` must be a single path component
+naming an existing epoch directory, so a `?epoch=../foo` cannot escape the
+workspace:
 
 ```python
     if (
@@ -746,7 +710,7 @@ so a `?epoch=../foo` cannot escape the workspace:
         or "\x00" in epoch_id
     ):
         raise ValueError(f"invalid epoch id: {epoch_id!r}")
-    if epoch_id not in list_epoch_ids(paths):
+    if not layout_of(paths).epoch_dir(epoch_id).is_dir():
         raise ValueError(f"unknown epoch id: {epoch_id!r}")
     return epoch_id
 ```
@@ -758,17 +722,17 @@ reader, and the reader re-validates against the actual epoch set.
 
 ### 9.3.4 The coercer — `coerce_float`
 
-`coerce_float` is THE numeric payload coercer — it replaced dozens of
-inline `float(x) if isinstance(x, int|float) else None` copies, and it
-excludes bools on purpose (a stray `True` is not a scalar):
+`coerce_float` is THE numeric payload coercer, and it excludes bools (a
+stray `True` is not a scalar); `finite_float` additionally drops NaN and
+infinities:
 
 ```python
 def coerce_float(value: Any) -> float | None:
     """``float(value)`` for a real number, else ``None``.
 
-    THE one numeric payload coercer (bools excluded — a stray ``True`` is
-    not a scalar). Replaces the dozens of inline
-    ``float(x) if isinstance(x, int | float) else None`` copies.
+    THE one numeric payload coercer, with bools excluded because a stray
+    ``True`` is not a scalar. Every reader coerces through this function rather
+    than an inline ``float(x) if isinstance(x, int | float) else None``.
     """
     if isinstance(value, bool) or not isinstance(value, int | float):
         return None
@@ -779,16 +743,21 @@ def coerce_float(value: Any) -> float | None:
 The other normalization the readers depend on lives outside this package.
 `zicato.telemetry.event_log.to_snake` folds a `camelCase`/`PascalCase`
 event key to `snake_case`, and it is one half of a two-language contract —
-it **mirrors the Rust `run_log::to_snake`** so event kinds key on ONE
-stable vocabulary across both servers:
+the Rust `run_log::to_snake` implements the same rule, so event kinds key on
+ONE stable vocabulary across both servers:
 
 ```python
 def to_snake(name: str) -> str:
     """Convert a ``camelCase`` / ``PascalCase`` identifier to ``snake_case``.
 
-    Idempotent on input already in snake_case. Mirrors the Rust
-    ``run_log::to_snake`` so event kinds key on one stable vocabulary
-    (the zicato#1 normalization).
+    An underscore goes before each uppercase ASCII letter that follows a
+    lowercase letter or a digit; every other character is copied through with
+    uppercase folded down. Input already in snake_case is unchanged, and the
+    conversion is idempotent, so a file mixing both spellings normalizes to
+    one vocabulary.
+    ...
+    The supervisor's Rust ``run_log::to_snake`` implements the same rule, so
+    an event kind has one spelling whichever of the two services read it.
     """
 ```
 — `src/zicato/telemetry/event_log.py`, `to_snake` (docstring)
@@ -802,19 +771,14 @@ def to_snake(name: str) -> str:
 
 ### 9.3.5 The read-only index open
 
-Every SQLite read opens the index **read-only** and swallows a query error
-to an empty result, so a mid-rebuild or newer-schema database can never
-raise into a reader:
+Every SQLite read goes through `open_index_ro` (or its best-effort variant
+`open_index_ro_or_none`), which opens the index **read-only** through
+`index.query.open_index` — URI `mode=ro`, a schema-version check, the
+`sqlite3.Row` factory and a busy timeout — and guarantees the close. A
+query error folds to an empty result, so a mid-rebuild database cannot raise
+into a reader:
 
 ```python
-def _open_index(path: Path) -> sqlite3.Connection:
-    if not path.exists():
-        raise _IndexAbsent
-    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
 def _query(conn: sqlite3.Connection, sql: str, params: tuple[Any, ...]) -> list[sqlite3.Row]:
     try:
         return list(conn.execute(sql, params))
@@ -823,9 +787,12 @@ def _query(conn: sqlite3.Connection, sql: str, params: tuple[Any, ...]) -> list[
 ```
 — `src/zicato/query/_sqlite.py`
 
-`_IndexAbsent` is raised on a missing file so a reader can distinguish
-"never built" (attach the `run zicato repair index` note) from "unreadable"
-(attach the generic note) — the two degrade notes in §9.3.1.
+A missing index file raises `_IndexAbsent`, so a reader can distinguish
+"never built" (attach `INDEX_NOT_BUILT_NOTE`, "index not built; run zicato
+repair index", through `with_index_not_built_note`) from "unreadable" (attach
+the generic note) — the two degrade notes in §9.3.1. Never
+`sqlite3.connect()` an index path directly in a reader: a bare connect
+defaults to write mode and contends with the ingest writer.
 
 ### 9.3.6 The composite reads
 
@@ -833,21 +800,24 @@ Two readers coalesce the whole environment so the client fetches once, not
 six times:
 
 - **`build_snapshot(paths)`** — the `/api/state` snapshot AND the opening
-  SSE `snapshot` frame. It composes heartbeat + lock + active runs + active
-  tournament + lineage + epoch view + `paused`, each independently
-  best-effort:
+  SSE `snapshot` frame. It captures the runtime inputs once
+  (`RuntimeInputs`) and composes heartbeat + liveness + lock + active runs +
+  active tournament + lineage + epoch view + `paused` from that one capture:
 
 ```python
     return {
-        "heartbeat": read_heartbeat_dict(paths),
-        "lock": read_lock_dict(paths),
-        "active_runs": read_active_runs_view(paths),
-        "active_tournament": read_active_tournament_dict(paths),
-        "lineage": _read_json_value(paths.lineage),
-        "epoch_id": read_current_epoch(paths),
-        "epoch": build_epoch_view(paths),
+        "heartbeat": inputs.heartbeat.copy(),
+        "liveness": derive_liveness(paths, inputs=inputs),
+        "lock": inputs.lock.copy(),
+        "active_runs": inputs.active_runs.copy(),
+        "active_tournament": inputs.tournament.copy(),
+        "lineage": read_lineage_dict(paths),
+        "epoch_id": inputs.epoch_id,
+        "epoch": build_epoch_view(paths, inputs.epoch_id)
+        if inputs.epoch_id is not None
+        else {"epoch_id": None},
         "paused": read_paused(paths),
-        "generated_at": _iso(_utc_now()),
+        "generated_at": _iso(inputs.now),
     }
 ```
 — `src/zicato/query/runtime_view.py`, `build_snapshot`
@@ -874,7 +844,7 @@ chapter leans on:
 | `build_optimization_trajectory` | `/api/epoch/{id}/trajectory` | `{points, promotion_rate, plateaued, verdict, recent_movement, noise_floor}` | empty shape + `note`; floor still attached (§9.8) |
 | `build_tournament_cost` | `/api/epoch/{id}/cost` | `{per_matchup, total_runtime_ms, cost_per_promotion_ms}` | empty shape + `note` |
 | `build_live_pipeline` (`query/live_execution_plan.py`) | `/api/live/pipeline` | `{running, stale, liveness, phase, epoch_id, round_index, steps[], epoch_open_step, active_step, decision, in_flight}` — the verdict `build_round_pipeline` decodes, projected out of the SAME read of the running epoch that serves the live execution plan, so the two surfaces cannot report different phases or different counts of the same records | every input degrades independently (§9.11); an unreadable phase serves `{}`, which the stepper reads as no stepper |
-| `build_racing_field` | `/api/epoch/{id}/racing-field` | `{present, structure, rounds[], standings, champion_lineage}` | `{present: false}` (§9.2.5) |
+| `build_racing_field` | `/api/epoch/{id}/racing-field` | the field-tournament record (`tournament_id`, `state`, `structure`, `structure_params`, `competitors`, `rounds[]`, `standings`, `champion_generation_id`, `promoted_generation_id`, `decision`, …) plus `present`, `source`, `champion_lineage` | `{epoch_id, present: false}`, plus `unreadable` for a malformed record (§9.2.5) |
 | `build_round_timeline` | `/api/epoch/{id}/round-timeline` | `{rounds[], waterfall[]}` | empty rounds list |
 | `build_execution_plan` | library only | `{board:{digest, entry_count}, stages[]}` — the loop as one tree: baseline + per-round propose/apply/run/gate/decide steps from the round log, work units from the per-unit loss files (never from the log's `unit_completed` aggregate), plus one `measurement_band` step per stage for the reserved ranges that are not a cell's evidence (calibration, the pre-flight's deliberately-degraded probes, the candidate screen, reflection, admission, and anything `unclaimed`), each node stating `status` and `exact`/`partial` provenance | empty stages list + `note` |
 | `build_live_execution_plan` | library only | the durable plan for the epoch the heartbeat names, plus `liveness`, an `active` flag on every node, and `overlay: {in_flight, placed, unplaced, other_epoch, active_path, phase, round_index, note}` — the active path is the round plus the step `build_round_pipeline` names (never a second decoding of the phase), and each still-beating `active_runs` record becomes a `running` `board_entry_run` keyed `run:<run_id>` under its candidate's sweep, or under the `run_scope` stage when the plan cannot place it | durable plan + empty overlay when not `live`; empty plan shape + `note` on failure |
@@ -935,7 +905,7 @@ each consumer states in place what it does with the bucket.
 builds the Starlette ASGI app. The whole server is a route table over the
 `make_endpoints` handler dict plus the SSE stream plus static serving. The
 GET routes are always available; the POST control routes answer `403` when
-`read_only=True` (the standalone default).
+`read_only=True`, the `create_app` default that tests and embedders get.
 
 ```python
     paths = _resolve_workspace(workspace_root, harmonograf_url=harmonograf_url)
@@ -947,12 +917,14 @@ GET routes are always available; the POST control routes answer `403` when
 ```
 — `src/zicato/dashboard/server.py`, `create_app`
 
-The `read_only` flag is the single write-gate seam. `create_app(...,
-read_only=True)` (the default, and what `zicato dashboard` uses standalone)
-returns `403` from every control POST; `run(..., read_only=False)` (what a
-live `zicato evolve` spawns) enables them. The GET surface and the SSE
-stream are identical either way — a post-mortem dashboard reads everything,
-it just cannot drive the loop.
+The `read_only` flag is the single write-gate. `create_app(...,
+read_only=True)` returns `403` from every control POST. `run(...)` — the
+entry point of both `zicato dashboard` and the `python -m zicato.dashboard`
+child a live `zicato evolve` spawns — builds the app with `read_only=False`,
+so a launched dashboard serves the controls. A control writes a marker file
+that only a running orchestrator consumes, so over a finished workspace a
+control has nothing to act on. The GET surface and the SSE stream are
+identical either way.
 
 ### 9.4.1 Static serving — the stale-asset guard
 
@@ -976,8 +948,11 @@ load. The server threads the needle with `no-cache` + a cheap ETag:
 ```
 — `src/zicato/dashboard/server.py`, `_serve_static`
 
-Path traversal is rejected before the file is read (`candidate.resolve()`
-must stay under `static_dir.resolve()`), and a missing bundle falls back to
+Path traversal is rejected LEXICALLY before the file is read: the
+requested name is `os.path.normpath`-ed and refused when it is absolute,
+contains a NUL, or climbs out with `..`. The candidate is never resolved
+through symlinks, so a bundle staged as symlinks into another tree still
+serves. A missing bundle falls back to
 a `_PLACEHOLDER_HTML` page that still lists the working JSON endpoints — so
 an operator whose wheel shipped without the JS still sees something useful.
 
@@ -1002,15 +977,6 @@ requested port. It also reuses-or-launches the persistent per-workspace
 harmonograf server so a standalone/post-mortem dashboard can deep-link into
 persisted sessions (§9.14 has the readback side).
 
-The terminal's automatic attachment treats the endpoint record as a discovery
-hint. It accepts the endpoint only when `/api/health` reports `status: ok`
-and the served workspace resolves to the requested canonical path. The health
-response publishes an absolute workspace path, including when the server was
-started with a relative path. Missing, malformed, or different identities
-follow the unavailable-endpoint recovery path. The same check applies while
-waiting for a spawned dashboard. An explicit `zicato tui --url` selects the
-named service directly and does not require a local workspace match.
-
 > ⚠️ TRAP — the definitive dashboard URL is printed by `run()` AFTER the port
 > walk, because `_pick_port` may have walked off the requested port. The CLI
 > command modules deliberately do NOT pre-print the URL. If you add a startup
@@ -1031,8 +997,9 @@ from the table that declares them, keyed by their own path:
 Every other route wires a named `handlers[...]` entry from `make_endpoints`.
 The shape is uniform: coordinate path params (`{epoch_id}`,
 `{generation_id}`, `{entry_id}`, `{run_id}`, `{tournament_id}`), the
-`/events` SSE stream, the control POSTs (`methods=["POST"]`), the builder +
-settings routes spliced in before the catch-all, and a `serve_fallback` last
+`/events` SSE stream, the control POSTs (`methods=["POST"]`), the
+`/settings/models` route (`settings_api.settings_routes`) spliced in before the
+catch-all, and a `serve_fallback` last
 so `index.html`'s root-relative references resolve. The catch-all MUST stay
 last:
 
@@ -1048,7 +1015,8 @@ last:
 > the `routes` list before the settings routes and fallback.
 
 The **client** hash-route grammar (`router.js` `parseRoute`/`href`, one entry
-per `VIEWS` member) mirrors the same coordinate nesting under `#/e/<epochId>/`:
+per `VIEWS` member) mirrors the same coordinate nesting under `#/e/<epochId>/`
+(`home` and `epoch` are the bare `#/` and `#/e/<epochId>`):
 
 | Hash route | View | Renders |
 |---|---|---|
@@ -1056,7 +1024,10 @@ per `VIEWS` member) mirrors the same coordinate nesting under `#/e/<epochId>/`:
 | `#/e/<id>/boards` · `/board/<entry>[/<gen>]` | `boards` / `board` | the board trellis / one board + inline transcript |
 | `#/e/<id>/mutations[/<mutId>[/<gen>]]` | `mutations` | the mutation surface + side-by-side diff |
 | `#/e/<id>/instrument[/<reflectionId>[/<judge>[/<runRef>]]]` | `instrument` | board-reflection: landing → bill of health + judge audit → adjudication x-ray (the `run_ref`'s `:` is `enc()`'d into the last leg) |
-| `#/e/<id>/paper` | `publication` | the ACM publication |
+| `#/e/<id>/evals` | `evals` | the entries × candidates matrix (the board-as-instrument outcomes lens) |
+| `#/e/<id>/traces[/<reflectionId>[/<traceId>]]` | `traces` | a reflection's imported trajectories: landing → trace list → trace detail |
+| `#/e/<id>/paper` (also `publication`, `report`) | `publication` | the epoch's published analysis report |
+| `#/logs` · `#/settings` | `logs` / `settings` | the workspace-level operator-log pane; the Contract / Models / Appearance settings |
 
 A new view registers in FOUR places (the `instrument` lens is the worked
 example): `router.js` (`VIEWS` + `parseRoute`/`href`/`up`/`crumbTrail`),
@@ -1071,10 +1042,9 @@ shows only when `byEpoch[id].hasReflections`, folded from ONE workspace-wide
 
 A dashboard read route is almost always the same handler: reject an unsafe
 coordinate, call one `query` reader, wrap the result in a `JSONResponse`.
-Fifty routes were that handler written out fifty times, differing only in
-their path, their coordinates, the reader, and the canned shape a rejected
-coordinate gets. They are now fifty rows of one table, `READ_ENDPOINTS`,
-built by one factory:
+Such routes differ only in their path, their coordinates, the reader, and
+the canned shape a rejected coordinate gets, so each is one row of one table,
+`READ_ENDPOINTS` (56 rows), built by one factory:
 
 ```python
     ReadEndpoint(
@@ -1104,9 +1074,10 @@ Three of the degrade forms are worth naming. `_echo(...)` repeats the
 route's coordinates under their own names — optionally renamed, as the gate
 does for `champion_id` → `champion` — and then the fixed fields, in the
 order they are written, because key order is part of the shape. `_fixed(...)`
-is the degrade that names no coordinate. Five rows take their degrade from
-the reader's own empty-shape helper (`query._empty_matrix` and its siblings),
-so the route and the reader cannot drift apart.
+is the degrade that names no coordinate. Six rows take their degrade from
+the reader's own empty-shape helper (`eval_view._empty_matrix`,
+`candidate_view._empty_dossier` and their siblings), so the route and the
+reader cannot drift apart.
 
 `make_endpoints(paths, *, read_only, started)` composes the table with the
 five hand-written surfaces — the reads whose query parameters shape the
@@ -1147,31 +1118,31 @@ serves, byte for byte and in key order, what it served before the table
 existed — a recorded response per route over the standard fixture workspace,
 for a coordinate the fixture holds and for a coordinate the guard rejects.
 
-Payload assembly belongs to the readers. The seven endpoint blobs that
-once assembled a payload inline (`_build_matchup_conversations`, the
-`api_conversation` resolver chain, `api_run_transcript`, the journal
-file-reads, …) live in `query` readers — `conversations_view.py`,
-`transcript_view.py`, `journal_view.py` — each with a best-effort
-degrade-and-shape test, and all of them share the ONE `open_index_ro`
-connection discipline (`query/_sqlite.py`; §9.3).
+Payload assembly belongs to the readers, including for the hand-written
+routes: matchup conversations (`build_matchup_conversations`), the
+conversation and run-transcript reads, and the journal documents live in
+`query` readers — `conversations_view.py`, `transcript_view.py`,
+`journal_view.py` — each with a best-effort degrade-and-shape test, and all
+of them share the ONE `open_index_ro` connection discipline
+(`query/_sqlite.py`; §9.3).
 
-Replicated board runs remain one `(epoch, generation, entry)` directory with
-numbered `events.rN.jsonl` / `loss.rN.json` siblings. Transcript and
-per-judge readers therefore accept an optional runtime `run` id (the
-per-judge reader also takes an explicit replicate coordinate), resolve the
-exact sibling from canonical files, and retain replicate 0 as the
-no-selector default. Only the transcript route exposes its selector as a
-query parameter; the per-judge route always asks for replicate 0, so a view
-that wants a sibling's judges must pass the keyword through a new route
-parameter first. The Goldfive `runId` inside an event stream is a separate
-identity and must not be fabricated from the runtime run id in fixtures.
-For older racing workspaces, which stay supported, a `match` selector is a
-nested-rung coordinate and takes precedence over the top-level replicate
-loss's `match_id`; runtime `run` selectors prefer the numbered sibling. The
-global Goldfive-run-id lookup caches each event file independently: pure
-appends reuse an already discovered id without a workspace scan or stream
-reopen, while new, replaced, truncated, and formerly-empty files are
-reparsed.
+A board run's measurements live under one `(epoch, generation, entry)` run
+directory, one artifact per measurement, named
+`<seed qualifier>/<artifact>.<purpose>.r<draw>.<ext>`
+(`core.measurement.measurement_artifact_path`). The transcript reader
+(`events_index.resolve_transcript_events`) resolves one of them: a runtime
+`run` id selects its exact seed and draw, a `match` id selects the capture
+whose paired `loss.json` names that matchup, an unmatched supplied id resolves
+nothing, and with no selector the generation's score selects ordinary draw
+zero. The transcript routes expose `?run=` and `?match=`. The per-judge route
+always reads the entry's ordinary draw zero; `build_per_judge_for_entry`
+accepts a `run_id` or `measurement` keyword that no route passes. The
+Goldfive `runId` inside an event stream is a separate identity and must not
+be fabricated from the runtime run id in fixtures. The workspace-wide
+Goldfive-run-id lookup caches each event file by identity, modification time
+and size: a pure append reuses an already discovered id without a workspace
+scan or stream reopen, while a new, replaced or truncated file, or one
+that held no id when last read, is reparsed.
 
 ### 9.5.1 `_is_safe_id` — the coordinate guard
 
@@ -1316,9 +1287,10 @@ it closes:
 (the orchestrator can touch the runtime tree many times a second) is
 debounced into a single ``state_change`` frame carrying the set of
 changed ``kind`` regions. The dashboard reacts with ONE coalesced
-``/api/environment`` fetch — this is what stops the old flashing /
-self-DoS where every file write fanned out into a fresh wave of
-per-endpoint polls.
+``/api/environment`` fetch. Without the coalescing, every file write fans
+out into a fresh wave of per-endpoint polls, which both floods the server
+and makes the view flash.
+...
 """
 ```
 — `src/zicato/dashboard/sse.py` (module docstring)
@@ -1405,8 +1377,8 @@ layers; a live surface must satisfy ALL of them.
 
 An orchestrator can touch the runtime tree many times a second. Naively,
 each touch → an SSE frame → a re-render → a DOM rebuild → lost click
-handlers, reset scroll, a visible flash, and (historically) a fan-out of
-per-endpoint polls that self-DoSed the server. Every layer below exists to
+handlers, reset scroll, a visible flash, and, without coalescing, a fan-out
+of per-endpoint polls that self-DoSes the server. Every layer below exists to
 turn a stream of beats into ZERO DOM writes unless the CONTENT actually
 changed. This is the no-op-heartbeat-rebuilds-zero-DOM rule.
 
@@ -1473,20 +1445,27 @@ builder digest, and NO timestamp is folded in:
 ```javascript
   const digest = JSON.stringify({
     live, cur: current,
-    rows: rows.map((r) => [r.epoch_id, r.generation_count || 0, r.promoted_count || 0,
+    rows: rows.map((r, i) => [r.epoch_id, r.generation_count || 0, r.promoted_count || 0,
       svg.isNum(r.best_scalar) ? r.best_scalar.toFixed(3) : null, !!r.closed,
-      (trajByEpoch.get(r.epoch_id) || []).map((v) => v.toFixed(3))]),
+      r.best_generation_id == null ? null : String(r.best_generation_id),
+      (trajByEpoch.get(r.epoch_id) || []).map((v) => v.toFixed(3)),
+      goalModelDigest(goals[i])]),
     // the loop-communication stats are content-gated on their own rounded fold
     // so a no-op heartbeat (identical rates/verdicts/costs) churns no DOM.
     loop: rows.map((r) => loopStatsDigest(loopByEpoch.get(r.epoch_id), costByEpoch.get(r.epoch_id))),
     ledger: svg.metaLoopLedgerDigest({ epochs: ledger, currentEpochId: current }),
     calib: calib ? svg.calibrationTrendDigest(calib) : null,
-    health: health ? (Array.isArray(health.findings) ? health.findings.length : 0) : -1,
+    health: health ? {
+      epoch: health.epoch_id, healthy: health.healthy, unreadable: health.unreadable,
+      findings: (Array.isArray(health.findings) ? health.findings : []).map((f) => [
+        f.code, f.severity, f.summary,
+      ]),
+    } : null,
   });
 
   gatedSwap(host, digest, () => {
 ```
-— `src/zicato/dashboard/static/js/views/home.js`, `render`
+— `src/zicato/dashboard/static/js/views/home.js`, `render` (comments trimmed)
 
 The `ui.js` docstring names the exclusion rule outright — the thing a weaker
 agent gets wrong is folding a timestamp into the digest, which makes every
@@ -1510,8 +1489,8 @@ beat flip it:
 
 Publication, patch diff, and mutation views compare their complete persisted
 display inputs. Comparing text lengths or counts misses corrections that retain
-the same size. Their responses contain saved records, not a changing request
-clock. Maps are converted to entries so their contents participate in comparison.
+the same size. Their responses contain saved records and no changing
+request clock. Maps are converted to entries so their contents participate in comparison.
 The browser tests check both visible corrections and unchanged element identity.
 
 Figures that compare selected numeric values round them to their rendered
@@ -1525,7 +1504,7 @@ own `_last*Digest` and returns without touching DOM when it matches:
 ```javascript
   const digest = treeDigest(model, route, _toggles, live);
   if (digest === _lastTreeDigest && _treeHost.firstChild) return;
-  // Build the tree, then acknowledge the successfully painted digest.
+  buildTree(_treeHost, model, route, _toggles, _ctx, (key) => {
 ```
 — `src/zicato/dashboard/static/js/shell.js`, `renderTree`
 
@@ -1571,7 +1550,7 @@ model:
   ctl.updatePipeline(advanced);
   assert(host.firstChild !== first, 'a genuine advance rebuilds the stepper');
 ```
-— `src/zicato/dashboard/static/js/test/pipeline_stepper.test.mjs`
+— `src/zicato/dashboard/static/test/pipeline_stepper.test.mjs`
 
 The companion assertion is on the DIGEST function itself — an identical
 projection folds to a byte-identical digest, an advance flips it:
@@ -1582,7 +1561,7 @@ projection folds to a byte-identical digest, an advance flips it:
   // ...an advance flips the digest...
   assertEqual(live.pipelineStepperDigest(null), 'none', 'a null read folds to the stable none');
 ```
-— `src/zicato/dashboard/static/js/test/pipeline_stepper.test.mjs`
+— `src/zicato/dashboard/static/test/pipeline_stepper.test.mjs`
 
 `seq_render_gate.test.mjs` is the render-discipline BACKBONE suite — it
 pins `state.noteProgress` (advance / repeat-no-op / rollover / absent-seq
@@ -1668,8 +1647,12 @@ plateau flag with the epoch's measured `noise_floor` and picks the honest
 word:
 
 ```python
-    floor = _epoch_noise_floor(paths, epoch_id)
-    if not traj.plateaued:
+    stuck_no_promotions = traj.settled_count >= 1 and traj.promoted_count == 0
+    if stuck_no_promotions:
+        verdict = "no_signal" if floor is not None else "stalled"
+    elif not traj.plateaued and len(traj.points) < 2:
+        verdict = "warming_up"
+    elif not traj.plateaued:
         verdict = "improving"
     elif (
         floor is not None
@@ -1683,15 +1666,21 @@ word:
     else:
         verdict = "plateaued"
 ```
-— `src/zicato/query/loop_view.py`, `build_optimization_trajectory`
+— `src/zicato/query/loop_view.py`, `build_optimization_trajectory` (comments trimmed)
 
-The three verdict words and their meaning:
+The five verdict words and their meaning:
 
 | `verdict` | When | What it tells the operator |
 |---|---|---|
-| `improving` | not plateaued (real movement across the trailing window) | the loop is making measurable progress |
-| `plateaued` | plateaued AND the window's movement is resolvable ABOVE the floor (or no floor was measured) | genuinely flat — the loop found a real local plateau |
-| `no_signal` | plateaued AND the window's whole movement sits at/below the measured floor | the data cannot distinguish this from an A/A re-roll of the same generation |
+| `no_signal` | challengers SETTLED and none promoted with a measured floor, OR plateaued with the window's whole movement at/below the measured floor | the data cannot distinguish this from an A/A re-roll of the same generation |
+| `stalled` | challengers SETTLED and none promoted, with NO floor measured | the loop is not promoting; how far it is from the noise is unmeasured |
+| `warming_up` | nothing settled yet — the promoted spine is the seed alone | too early to judge |
+| `improving` | not plateaued, with at least two points on the promoted spine | the loop is making measurable progress |
+| `plateaued` | plateaued AND the window's movement is resolvable ABOVE the floor (or no floor was measured) | flat — the loop found a real local plateau |
+
+The stall verdicts count `settled_count` (challengers a tournament has
+decided), never `challenger_count`: a challenger still racing has decided
+nothing, and reading it as a stall would alarm on a run's first round.
 
 The reader's docstring is the design source, and it is the thing to protect
 when you touch this code — "claiming 'plateaued' (or 'improving') would
@@ -1739,8 +1728,9 @@ allowed to be cropped out of view.
 
 > ⚠️ TRAP — "no floor measured yet" is NOT "no signal". When `noise_floor` is
 > `None` (an epoch that never ran the A/A calibration), the verdict falls
-> back to `plateaued`/`improving` on the raw flag — the honest thing to say
-> when you have no floor is the raw observation rather than a fabricated "no signal".
+> back to `stalled`/`plateaued`/`improving` on the raw observation — the
+> honest thing to say when you have no floor is the raw observation rather
+> than a fabricated "no signal".
 > Only a MEASURED floor that the movement fits inside earns `no_signal`.
 
 ---
@@ -1748,10 +1738,12 @@ allowed to be cropped out of view.
 ## 9.9 The `svg.js` figure grammar
 
 `svg.js` is a dependency-free SVG data-viz primitive library — one home for
-"size text to its box" and ~50 figure builders, each paired with a `*Digest`
-function so the figure participates in the render discipline (§9.7). It is
-byte-large (4300+ lines) but its public surface is only inline
-`export const` / `export function` (no aggregate export block).
+"size text to its box" and the figure builders. Its 51 exports are inline
+`export const` / `export function` declarations (no aggregate export block)
+across 4,087 lines; the heavy figures (`elimRadial`, `metaLoopLedger`,
+`calibrationTrend`, the racing and gauntlet tracks, among nine) have a
+`*Digest` companion so the figure participates in the render discipline
+(§9.7).
 
 ### 9.9.1 The text-fitting primitives — the ONE clip-fix home
 
@@ -1829,12 +1821,13 @@ the figure swap on a `*Digest` that folds ONLY what the figure draws, so a
 no-op heartbeat diffs a string instead of the SVG. Every figure needs the same
 fold — round to rendered precision, drop timestamps, sort keys — so
 `digestOpts(opts, omit)` holds it once and generically, rather than each figure
-carrying its own copy. The seven remaining `*Digest` exports (`racingScalarTrackDigest`,
-`gauntletFieldBarsDigest`, `radarSilhouetteDigest`, `proposingDigest`,
-`diversityMatrixDigest`,
-`metaLoopLedgerDigest`, `calibrationTrendDigest`) are thin wrappers that add
-only their own load-bearing normalization (a namespace prefix, an
-absent-vs-empty collapse) and an `omit` list.
+carrying its own copy. The nine `*Digest` exports in `svg.js`
+(`trajectoryStripDigest`, `racingScalarTrackDigest`, `gauntletFieldBarsDigest`,
+`elimRadialDigest`, `radarSilhouetteDigest`, `proposingDigest`,
+`diversityMatrixDigest`, `metaLoopLedgerDigest`, `calibrationTrendDigest`) all
+fold through `digestOpts`; each adds only its own normalization (a namespace
+prefix, an absent-vs-empty collapse, the served readouts it paints) and an
+`omit` list.
 
 ```javascript
 // ── digestOpts — the single generic figure-opts digest ─────────────────
@@ -1892,13 +1885,12 @@ review should question.
 > builder that emits the same classes is a drop-in. A genuinely divergent site
 > is extracted with an explicit option/parameter, never by papering over the
 > difference — and if it still resists a faithful extraction it is LEFT and
-> listed, never forced into a subtle render break. The geometry/null-semantics
-> `svg.js` helpers deferred for exactly that reason (`champBench`, `gateOf`,
-> `progressSubBar`, `scalarOf`+padded-extent, the edge-clamp→`edgeText`/`fitInto`
-> migration, `tournament_model.js`'s `gateState` machine) are the standing worked
-> example: `champId` alone is `o.championId ? …` at some sites and
-> `o.championId != null ? …` at others — a single helper would silently
-> mis-handle a `'0'`/`0` id.
+> listed, never forced into a subtle render break. The geometry and
+> null-semantics code that stays site-local for that reason (`scalarOf` with a
+> padded extent, `tournament_model.js`'s `gateState` machine, the champion-id
+> tests) is the standing worked example: a champion id is tested as
+> `model.championId ? …` at some sites and `r.championId != null ? …` at
+> others — a single helper would silently mis-handle a `'0'`/`0` id.
 
 ---
 
@@ -1931,7 +1923,7 @@ heartbeat timestamp — because a wedged loop whose beater keeps stamping
   if (terminal === true) {
     runState = RUN_STATE.SETTLED;
   } else if (!seqKnown) {
-    // legacy degrade — derive from the timestamp verdict (byte-identical).
+    // no seq cursor: derive from the timestamp verdict instead.
     runState = running ? RUN_STATE.LIVE
       : (heartbeatStale ? RUN_STATE.DEAD : RUN_STATE.SETTLED);
   } else if (seqAdvancingFresh) {
@@ -1958,9 +1950,9 @@ this is not fresh) and `SEQ_STALL_BUDGET_MS = 90_000` (a `seq` unchanged
 longer than this reads STALLED). The seq budget is deliberately LONGER than
 the heartbeat window — a frozen-`seq` run whose heartbeat still pulses is
 STALLED (alive, no progress); only once the heartbeat ALSO freezes is it
-DEAD. The mirror of the server-side gate: `loop_view._STALE_HEARTBEAT_S =
-30.0` and `_IDLE_HEADS` mirror `STALE_HEARTBEAT_MS` and `IDLE_PHASES` so the
-two liveness reads agree.
+DEAD. The server-side liveness derivation mirrors the client:
+`runtime_view.STALE_HEARTBEAT_S = 30.0` and `IDLE_PHASE_TOKENS` match
+`STALE_HEARTBEAT_MS` and `IDLE_PHASES`, so the two liveness reads agree.
 
 > ⛔ NEVER key liveness on the heartbeat TIMESTAMP alone. The timestamp
 > ages on a slow LLM call (false stall) and keeps stamping on a wedged loop
@@ -1973,10 +1965,10 @@ The token→CSS mapping lives in the chrome (`shell.js`), which patches one
 token, keeping the colour decision in CSS:
 
 ```javascript
-    patchClass(_runStateEl, 'dt-rs-live', word ? status.runState === 'live' : false);
-    patchClass(_runStateEl, 'dt-rs-stalled', word ? status.runState === 'stalled' : false);
-    patchClass(_runStateEl, 'dt-rs-settled', word ? status.runState === 'settled' : false);
-    patchClass(_runStateEl, 'dt-rs-dead', word ? status.runState === 'dead' : false);
+    patchClass(_runStateEl, 'dt-rs-live', word ? rs === 'live' : false);
+    patchClass(_runStateEl, 'dt-rs-stalled', word ? rs === 'stalled' : false);
+    patchClass(_runStateEl, 'dt-rs-settled', word ? rs === 'settled' : false);
+    patchClass(_runStateEl, 'dt-rs-dead', word ? rs === 'dead' : false);
 ```
 — `src/zicato/dashboard/static/js/shell.js`, `renderStatus`
 
@@ -2029,18 +2021,20 @@ active step's detail beside it, the decision word once the round settles.
 It owns NONE of the vocabulary:
 
 ```javascript
-// A compact propose → apply → run → gate stepper rendering the SERVER's
-// authoritative /api/live/pipeline projection VERBATIM — the reader owns
-// the phase-string inference; this builder never re-derives loop position
-// from phase tokens. ...
+// ... Its label and detail are server-owned,
+// so a further epoch-open step renders here with no change on this side.
+// Pure: builds detached DOM.
 export function pipelineStepper(pipe) {
   const steps = (pipe && Array.isArray(pipe.steps)) ? pipe.steps : [];
+  const open = (pipe && pipe.epoch_open_step) ? pipe.epoch_open_step : null;
   const wrap = el('div', { class: 'dt-pipe', role: 'img', 'aria-label': 'round pipeline' });
-  steps.forEach((s, i) => {
-    if (!s || !s.id) return;
-    const state = (s.state === 'done' || s.state === 'active') ? s.state : 'pending';
+  if (open && open.id) {
     ...
 ```
+
+An epoch-open step (the noise-floor calibration, the contract pre-flight)
+arrives as `epoch_open_step` and leads the strip as the active element while
+the four round steps sit pending.
 — `src/zicato/dashboard/static/js/live.js`, `pipelineStepper`
 
 The node test pins the verbatim rendering and the digest gate — the server
@@ -2090,8 +2084,10 @@ export async function postControl(action, body) {
 ### 9.12.1 Read-only gating
 
 The loop-control cluster renders ONLY when the workspace is writable
-(`state.health.read_only === false`) and the loop is alive-or-paused — it is
-hidden read-only, never a disabled-but-visible control at the loop level:
+(`state.health.read_only === false`) and the loop is live or paused — it is
+hidden read-only, never a disabled-but-visible control at the loop level. A
+paused loop stays reachable because pausing blocks the orchestrator thread,
+its heartbeat ages into `interrupted`, and resume must not disappear with it:
 
 ```javascript
   const canControl = !!(state.health && state.health.read_only === false);
@@ -2099,9 +2095,9 @@ hidden read-only, never a disabled-but-visible control at the loop level:
   // The optimistic override retires the moment the server agrees with it.
   if (_pausedOverride != null && serverPaused === _pausedOverride) _pausedOverride = null;
   const paused = _pausedOverride != null ? _pausedOverride : serverPaused;
-  const show = canControl && (!!(status && status.alive) || paused);
+  const show = canControl && (!!(liveness && liveness.live) || paused);
 ```
-— `src/zicato/dashboard/static/js/shell.js`, `renderLoopControls`
+— `src/zicato/dashboard/static/js/shell.js`, `renderLoopControls` (comments trimmed)
 
 (The per-challenger override cell in `ui.js::overrideControlCell` renders a
 DISABLED, visible control read-only — a field override is a per-row
@@ -2166,7 +2162,7 @@ async function fireLoopControl(action, body, pausedAfter) {
 The `_pausedOverride` is optimistic and self-retiring: `renderLoopControls`
 clears it the moment `serverPaused === _pausedOverride` (the server agreed),
 so a raced or stale override can never stick. The paused state itself rides
-on the heartbeat payload (`readers/runtime_view.py::read_paused` →
+on the heartbeat payload (`query/runtime_view.py::read_paused` →
 `heartbeat.paused`) so every runtime read carries it without a second fetch.
 
 
@@ -2323,7 +2319,7 @@ def build_promotion_cadence(paths: WorkspacePaths, epoch_id: str) -> dict[str, A
     try:
         rows = _cadence_rows(paths.index_db, epoch_id)   # or off the lineage
     except IndexUnavailableError:
-        return {"epoch_id": epoch_id, "cadence": [], "note": "index not built; run zicato repair index"}
+        return {"epoch_id": epoch_id, "cadence": [], "note": INDEX_NOT_BUILT_NOTE}
     except Exception:  # noqa: BLE001 — best-effort, mirrors sibling readers
         return {"epoch_id": epoch_id, "cadence": [], "note": "index unreadable"}
     return {"epoch_id": epoch_id, "cadence": rows}
@@ -2332,13 +2328,12 @@ def build_promotion_cadence(paths: WorkspacePaths, epoch_id: str) -> dict[str, A
 Coerce every numeric with `coerce_float` and every pass flag with
 `_opt_bool`; classify any decision token through `decisions.canonical_decision`
 / `promoted_tristate`. Emit ONE spelling per field. Do NOT re-derive
-"the champion" — read `current_champion` if you need it, because the server
-owns that decision and the champion is the reigning spine end.
+"the champion" — read `current_champion` if you need it, because execution
+records that decision and the query layer serves it.
 
 **Step 2 — Export it from the package face.** Add the name to the import
 block AND `__all__` in `src/zicato/query/__init__.py`. This is what makes
-`query.build_promotion_cadence` resolve in the endpoint and keeps the split
-invisible (§9.1).
+`query.build_promotion_cadence` resolve in the endpoint table (§9.1).
 
 **Step 3 — The table row (§9.5).** Add one `ReadEndpoint` to
 `READ_ENDPOINTS` in `endpoints.py`. The coordinate is validated before the
@@ -2376,8 +2371,9 @@ export async function promotionCadence(epochId) {
 }
 ```
 
-Add its `/api/epoch` prefix to `invalidateLive()`'s bust list if it can
-change while a run is live.
+`invalidateLive()` already drops every cached `/api/epoch…` key when live
+data changes; a route under a prefix that list does not name needs its
+prefix added if it can change while a run is live.
 
 **Step 6 — The view panel with a digest fold (§9.7).** In the owning view's
 `async render(host, ctx, params)`, fetch via the accessor, guard the null,
@@ -2413,8 +2409,9 @@ panel derives from a served join, record the join's response for the suite
 correctly when the endpoint 404s. Either the accessor's `null` path (tested
 in step 7) covers it, or — if the datum should ALSO surface under the
 supervisor — mirror the payload in the Rust route and its `state.rs` serde
-(08-supervisor.md §8.12),
-keeping `EXPECTED_SCHEMA_VERSION` and the field spellings in lock-step.
+(08-supervisor.md §8.12), keeping the field spellings, and
+`index_db::EXPECTED_SCHEMA_VERSION` when the index schema changes, in
+lock-step.
 
 **Step 9 — The reader unit test.** In `tests/` add a Python test that
 builds a fixture workspace, calls `build_promotion_cadence`, and asserts the
@@ -2424,7 +2421,7 @@ malformed epoch ⇒ empty, no raise). This is the best-effort-reader pin.
 **Verify**
 
 ```bash
-uv run pytest tests/test_dashboard_server.py tests/test_promotion_cadence.py -q
+uv run pytest tests/test_dashboard_server.py tests/test_dashboard_endpoint_table.py tests/<your reader test>.py -q
 make import-lint              # the reader must not import the dashboard
 make node-test                   # the no-op / null-degrade node assertions
 uv run mypy src/zicato/
@@ -2519,13 +2516,13 @@ cargo test -p zicato-supervisor                # Rust parity, if applicable
   every reader degrades on a missing/stale index); §7.6 — the runtime state
   files `build_snapshot` reads; §7.9 — the control protocol the POST
   endpoints write into; §7.10 — the RoundLog fold behind the round timeline.
-- 08-supervisor.md §8.9 — the Rust twin of
-  every reader here; §8.12 —
-  the reciprocal of the null-degrade and clean-break rules; §8.3 — the seq-vs-timestamp
-  liveness the four run-states mirror.
-- 04-evaluation-statistics.md §4 — where the measured A/A
-  floor §9.8 reads comes from; §5 — the board-status
-  surface (`compute_board_split` / `boardStatusDigest`).
+- 08-supervisor.md §8.9 and §8.15 — the Rust supervisor's read-only index
+  discipline and its reader; §8.12 — the reciprocal of the null-degrade and
+  clean-break rules. 07-runtime-and-durability.md §7.6.1 — the
+  seq-versus-timestamp liveness the four run-states mirror.
+- 04-evaluation-statistics.md §4 — where the measured A/A floor §9.8 reads
+  comes from. `docs/design/EVAL-VIEW.md` covers the board-status surface
+  (`compute_board_split` / `boardStatusDigest`).
 - 05-proposer.md §5.7 — the round-log vocabulary the proposing tracker
   renders; §5.8.6 — the banding the dashboard must not un-band.
 - 06-tournament-and-selection.md — where gate verdicts, the racing rungs,
@@ -2544,20 +2541,20 @@ Where to add (and what will catch) a regression, by concern:
 
 | Concern | Tests |
 |---|---|
-| decision classifier: canonical token + tri-state + Class-B `null` | `tests/test_dashboard_decision_surface.py` |
+| decision projection: canonical token + tri-state `null` for an undecided candidate | `tests/test_dashboard_decision_surface.py` |
 | reader degrade (missing index ⇒ empty + note; malformed epoch ⇒ empty) | `tests/test_dashboard_loop_view.py`, per-reader `tests/test_*_view*.py` |
 | coercers: `coerce_float` bool-exclusion, `_opt_bool` | no dedicated suite — exercised only INDIRECTLY, through the reader suites that consume them. A direct unit test for `zicato/query/paths.py` is the standing gap here |
-| entry-status four-bucket canon + `status_raw` preservation | `tests/test_dashboard_*runtime*` / the runtime-view suite |
+| entry-status four-bucket canon + `status_raw` preservation | `tests/test_dashboard_server.py` |
 | `_is_safe_id` / degrade-to-200 / `?epoch=` 404 | `tests/test_dashboard_server.py` (+ `tests/test_issue_250_pins.py` for the `_is_safe_id`/Rust mirror) |
 | the served joins (round-timeline / racing-field) reach the node suite as recorded responses | `tests/test_dashboard_endpoint_table.py` + `static/test/recorded.mjs` |
-| a field round names the WINNER after a promotion (by role tag rather than by borrow) | `tests/test_dashboard_racing_and_rounds.py::test_field_round_names_the_new_champion_after_a_promotion` |
-| a field round's champion provenance: current round, and unknown vs `"full"` | `tests/test_dashboard_racing_and_rounds.py` (`…metadata_comes_from_that_round`, `…no_crowning_row_reports_an_unknown_eval_mode`, `…legacy_row_without_the_v8_columns_still_reads_full`) |
-| SSE frame shape (kinds, content revision and progress metadata), coalescing, ordering | `tests/test_dashboard_sse*.py`, node `live_protocol.test.mjs` |
+| a field round names the WINNER after a promotion | `tests/test_dashboard_racing_and_rounds.py::test_field_round_names_the_new_champion_after_a_promotion` |
+| a field round's champion provenance: current round, and an unknown `eval_mode` before the round commits | `tests/test_dashboard_racing_and_rounds.py` (`…metadata_comes_from_that_round`, `…no_crowning_row_reports_an_unknown_eval_mode`) |
+| SSE frame shape (kinds, content revision and progress metadata), coalescing, ordering | `tests/test_dashboard_server.py`, `tests/test_dashboard_refresh.py`, node `live_protocol.test.mjs` |
 | the uncertainty-honest verdict (`no_signal` vs `plateaued`) | `tests/test_dashboard_loop_view.py` |
 | digest-gated render: no-op DOM identity, seq skip gate, four run-states | node `seq_render_gate.test.mjs`, `pipeline_stepper.test.mjs` |
 | the pipeline projection (`_project_pipeline`) | `tests/test_dashboard_loop_view.py` (pure inference) + `pipeline_stepper.test.mjs` |
 | controls: read-only 403, two-step confirm, paused readback | node `loop_controls.test.mjs`, `override_taxonomy.test.mjs`, `tests/test_dashboard_gate_endpoint.py` |
-| `current_champion` reigning-spine (the client champion-scan regression, two-promotion lineage) | `tests/test_dashboard_decision_surface.py::test_current_champion_is_the_spine_end` (+ the seed fallback beside it) |
+| `current_champion` is the last committed round's champion (the client champion-scan regression, two-promotion lineage) | `tests/test_dashboard_decision_surface.py::test_current_champion_is_the_spine_end` (+ the seed fallback beside it) |
 | which member of a promoted SET is the head — `gate.gen`, the round-timeline spine, and `current_champion` on a BRANCHING lineage | `tests/test_dashboard_promoted_head.py` |
 | the tree crown per epoch (the same client champion-scan defect across epochs, multi-epoch fixture) | node `epoch_scoping.test.mjs` |
 | the whole Node behaviour suite (digest / no-op / mock parity) | `src/zicato/dashboard/static/test/run-all.mjs` via `make node-test` |

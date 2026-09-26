@@ -1,14 +1,14 @@
 ---
 name: zicato-read-telemetry
-description: Trace a zicato run through its telemetry — the canonical per-run events.jsonl and loss.json, and the harmonograf session that renders it — and relate zicato's own meta-loop session (the tool itself) to the per-board-run sessions (the system under test). Use when you need to follow what a specific run did, read its drift/loss profile, or deep-link into harmonograf.
+description: Trace a zicato run through its telemetry — the canonical per-measurement event stream and loss record, and the harmonograf session that renders it — and relate zicato's own meta-loop session (the tool itself) to the per-board-run sessions (the system under test). Use when you need to follow what a specific run did, read its drift/loss profile, or deep-link into harmonograf.
 ---
 
 # Read zicato telemetry
 
 zicato **consumes** telemetry, it does not invent a wire format. A run emits a
 JSONL stream, which is reduced post-run into a typed `LossProfile`. **The JSONL
-file is canonical; the `LossProfile` (`loss.json`) is the surface every other
-component reads.** Full spec:
+file is canonical; the `LossProfile` (the loss record) is the surface every
+other component reads.** Full spec:
 [../../docs/design/TELEMETRY.md](../../docs/design/TELEMETRY.md).
 
 **Which producer read that JSONL is a contract knob.** `LossProfile` is the
@@ -34,34 +34,41 @@ reflection) reads `LossProfile` and never knows which dialect produced it. The
 selected dialect is serialized with the complete effective scoring configuration.
 Changing it changes the contract hash and rolls the epoch.
 
-## The two canonical per-run files
+## The canonical per-run files
 
-Each `(epoch, generation, entry_id)` triple maps to exactly one run
-directory:
+Each `(epoch, generation, entry_id)` triple maps to one run directory. Inside
+it, a seed directory (`seed-none` unless `runtime.seed` is set) holds one file
+set per measurement, named by the measurement's purpose (`tournament` for
+duels; also `calibration`, `contract_preflight`, `candidate_screen`,
+`evidence_confirmation`, …) and draw number (`r0`, `r1`, … — one per
+replicate):
 
 ```
-.zicato/epochs/{epoch}/generations/v{N}/runs/{entry_id}/
-  ├── events.jsonl   # canonical: one goldfive event per line, byte-stable, mode="write"
-  └── loss.json      # the reduced LossProfile for this run
+.zicato/epochs/{epoch}/generations/v{N}/runs/{entry_id}/seed-none/
+  ├── events.tournament.r0.jsonl    # canonical: one goldfive event per line (instrumented adapters)
+  ├── loss.tournament.r0.json       # the reduced LossProfile for this draw
+  ├── result.tournament.r0.json     # the captured transcript + final output
+  └── judge_io.tournament.r0.jsonl  # verbatim inline-judge calls, when judges ran
 ```
 
 ```sh
 # walk the runs of a generation
-ls .zicato/epochs/*/generations/*/runs/*/
-# read one run's reduced profile
-cat .zicato/epochs/<epoch>/generations/v3/runs/<entry_id>/loss.json
+ls .zicato/epochs/*/generations/*/runs/*/seed-*/
+# read one draw's reduced profile
+cat .zicato/epochs/<epoch>/generations/v3/runs/<entry_id>/seed-none/loss.tournament.r0.json
 ```
 
-### Reading `events.jsonl`
+### Reading the event stream
 
 One JSON object per line, in emit order (goldfive's `replay_from_jsonl`
 parses it back to proto `Event`s). goldfive writes two envelope shapes — a
 camelCase shape (`steeringDecisionMade`, …) and a normalized `{kind,
 payload, emitted_at, …}` shape. A truncated tail (run crashed before the
-terminal event) is expected and tolerated — the reducer stamps
-`aborted=true`, `abort_reason="no_terminal_event"`.
+terminal event) is tolerated; a run that did not complete is scored
+worst-case through the `failure:` channel and its loss record says why
+(`not_completed`, `not_completed_reason`, `abort_cause`).
 
-### Reading `loss.json` (the `LossProfile`)
+### Reading the loss record (the `LossProfile`)
 
 `write_loss_profile` publishes the fields declared by `LossProfile` through
 the canonical loss codec, with enums rendered as strings and tuples as lists.
@@ -69,17 +76,18 @@ The fields that matter most when tracing a run:
 
 | Field | Meaning |
 |---|---|
-| `entry_id`, `epoch_id`, `generation_id`, `run_id` | identity |
+| `entry_id`, `epoch_id`, `generation_id`, `run_id`, `measurement.{purpose,draw,base_seed}` | identity |
 | `metric_counts[].{name,severity,count}` | named measurements; drift uses `drift:<kind>` with the event severity, including `drift:custom:<judge_name>` for a fired custom judge |
 | `per_judge_loss[].{judge_name,raw_loss,weight,weighted_loss}` | the custom-judge attribution split — what scoring weights via `per_judge_weights`; empty when no custom judge fired |
-| `plan_revisions`, `task_failure_ratio`, `wall_clock_budget_exceeded` | other drift/loss features |
-| `drift_loss` | the weighted scalar the tournament scores on (computed in the reducer — the one place with both counts and weights; already includes the per-judge contributions) |
+| `plan_revisions`, `task_failure_ratio`, `wall_clock_budget_exceeded`, `not_completed`, `not_completed_reason`, `abort_cause` | other drift/failure features |
+| `drift_loss` | the weighted `drift:` channel term (computed in the reducer — the one place with both counts and weights). It EXCLUDES custom-judge drift, which is scored in the `judge:` channel from `per_judge_loss` |
+| `judge_errors` | per-judge call failures; a non-empty list is what the `judge_erroring` health finding reports |
 | `pass_fail` | the entry's expectation verdict; `None` when there is no expectation |
 | `expectation_result.{kind,passed,detail,score,metrics}` | the matcher's record; `None` when no expectation was attached |
 | `score` | continuous per-entry quality in `[0,1]`; if absent as an observation, scoring uses `pass_fail` when available and excludes entries with neither outcome |
 | `metrics` | optional per-entry decomposition a scorer exposed (e.g. `{"precision": .., "recall": ..}`), carried straight through so the proposer's failure-mode profile can read it without re-running the scorer |
 | `turns_completed`, `memory_failure_count`, `context_loss_count` | multi-turn features |
-| `runtime_ms`, `match_id`, `cached`/`source_epoch`/`source_run` | runtime + provenance |
+| `runtime_ms`, `started_at`/`ended_at`, `match_id`, `cached`/`source_epoch`/`source_run`, `scoring_provenance` | runtime + provenance |
 | `adk_session_id` | the harmonograf deep-link key (below) |
 
 Drift counts feed both the proposer (as hypothesis-shaped features) and the
@@ -127,8 +135,8 @@ stream. At most 20 streams are retained, oldest pruned first.
 .venv/bin/zicato inspect logs --workspace .zicato --invocation <stamp>-<pid> --level WARNING
 ```
 
-Capture floor is INFO (override with `ZICATO_LOG_LEVEL`); `--level` re-filters on
-read. **Logs are observability only** — nothing in scoring / gate / journal reads
+Capture floor is INFO (override with the `runtime.log_level` key in
+`.zicato/config.json`); `--level` re-filters on read. **Logs are observability only** — nothing in scoring / gate / journal reads
 them back, so they explain a run but never define it.
 
 ## One harmonograf server, many sessions
@@ -148,7 +156,7 @@ distinction:
 | Session kind | What it traces | `session_id` shape | Telemetry file |
 |---|---|---|---|
 | **meta-loop** (the tool itself) | zicato's *own* proposer + judge LLM calls — the orchestrator deciding what to mutate and how to score | `zicato-meta-loop-<sanitized-evolve-start-iso>` (one stable id per evolve invocation) | `.zicato/runtime/meta_loop_events.jsonl` |
-| **per-board-run** (the system under test) | one target run against one board entry and replicate | event-stream session id (also persisted as `adk_session_id`) | the per-run `events.jsonl` above |
+| **per-board-run** (the system under test) | one target run against one board entry and replicate | event-stream session id (also persisted as `adk_session_id`) | the per-run `events.<purpose>.r<draw>.jsonl` above |
 
 The meta-loop session is "zicato thinking about the system under test"; the
 per-board-run sessions are "the system under test running". They bucket as
@@ -159,13 +167,13 @@ blocks or breaks the evolve loop.
 
 ### Following a run into harmonograf
 
-From the dashboard, each L4 run drill-down renders an **Open in harmonograf**
+From the dashboard, each run drill-down renders an **Open in harmonograf**
 link with exactly the `/#/session/<adk_session_id>` href above — but only while a
 run is **LIVE**. zicato's auto-launched harmonograf dies with the run while the
 heartbeat's `harmonograf_url` lingers, so a link built from a known URL alone
 would point at a dead port; the builders return nothing unless an active
 tournament or active run says otherwise. The `adk_session_id` comes off the run's events
-(`session_id` / `sessionId`) and is carried on its `loss.json`. To go from a
+(`session_id` / `sessionId`) and is carried on its loss record. To go from a
 run directory to its harmonograf view: read `adk_session_id` from the run,
 then open `<harmonograf_url>/#/session/<that_id>`. See
 [zicato-watch-dashboard](../zicato-watch-dashboard/SKILL.md) for driving the
@@ -195,10 +203,10 @@ turns share state only when they are steps of one compound board entry.
 
 ## Guardrails
 
-- **Files are canonical, index is derived.** Trace runs from `events.jsonl` /
-  `loss.json`, not `index.db` (the index lags to generation boundaries and is
-  rebuildable via `zicato repair index`).
-- Cite only flags in real `--help` (`analyze-telemetry`: `--workspace`,
+- **Files are canonical, index is derived.** Trace runs from the event
+  stream and loss records, not `index.db` (the index is a rebuildable
+  projection; `zicato repair index` re-derives it).
+- Cite only flags in real `--help` (`inspect telemetry`: `--workspace`,
   `--epoch`, `--round`).
 - Never start a live `evolve` to produce telemetry — read existing run
   directories.
