@@ -1,10 +1,10 @@
 """Per-turn audit records for the user emulator.
 
-Every emulator turn produces an :class:`EmulatorTurnAudit` that is
-emitted on a ``zicato:emulator`` goldfive-shaped lane (if a sink is
-wired) and otherwise kept in memory by the driver. Operators replay
-these in harmonograf to see exactly what the emulator saw and produced
-on each turn — the same observability posture the system under test gets.
+Every emulator turn produces an :class:`EmulatorTurnAudit`. The driver
+keeps each record in memory and emits it, as a plain event on the
+``zicato:emulator`` lane, to every sink the run was given; under the
+tournament worker that is the run's ``events.jsonl``. Operators read these
+records to see what the emulator saw and produced on each turn.
 
 Audits do NOT carry the full transcript or the full emulator output;
 just sizes, a short preview, and a persona-hash fingerprint. The reducer
@@ -15,9 +15,11 @@ if it needs more detail.
 from __future__ import annotations
 
 import hashlib
+import inspect
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any
 
 from zicato.core.types import UserPersona
 
@@ -51,13 +53,6 @@ class EmulatorTurnAudit:
     transcript_chars_in: int
     output_chars_out: int
     output_preview: str
-
-
-class _SinkLike(Protocol):
-    """Minimum surface a goldfive-shaped sink needs to accept audit spans."""
-
-    def emit(self, event: Any) -> None:  # pragma: no cover - structural
-        ...
 
 
 def _hash_persona(persona: UserPersona) -> str:
@@ -95,32 +90,33 @@ def audit_turn(
     )
 
 
-def emit_audit_span(
-    sink: _SinkLike | None,
+async def emit_audit_span(
+    sinks: Sequence[Any],
     audit: EmulatorTurnAudit,
     lane: str = "zicato:emulator",
 ) -> None:
-    """Best-effort emit of an audit span to a goldfive-shaped sink.
+    """Emit one audit record to every sink in ``sinks``, best-effort.
 
-    The payload is a plain dict — goldfive's ``JSONLPersistenceSink``
-    accepts dicts via its fallback path when proto stubs aren't
-    available. We do not import any goldfive symbols here so the
-    emulator stays decoupled from goldfive internals.
+    The event is a plain dict; goldfive's ``JSONLPersistenceSink`` writes a
+    dict as one JSON line. The module imports no goldfive symbols, so the
+    emulator does not depend on goldfive internals.
 
-    Failures are logged and swallowed. The emulator MUST NOT fail the
-    run on audit problems — audit is observability rather than policy.
+    A sink's ``emit`` may be a plain method or a coroutine function (every
+    goldfive sink declares ``async def emit``); an awaitable result is
+    awaited before the next sink receives the record. A failing sink is
+    logged and skipped, and the remaining sinks still receive the record:
+    the audit is observability, so an audit failure never fails the run.
 
     Parameters
     ----------
-    sink:
-        Optional sink with an ``emit`` method. ``None`` is a no-op.
+    sinks:
+        Sinks exposing an ``emit(event)`` method. An empty sequence emits
+        nothing.
     audit:
         The audit record to emit.
     lane:
-        Goldfive lane string. Defaults to ``"zicato:emulator"``.
+        Lane string stamped on the event. Defaults to ``"zicato:emulator"``.
     """
-    if sink is None:
-        return
     event = {
         "lane": lane,
         "kind": "zicato.emulator.turn_audit",
@@ -129,10 +125,13 @@ def emit_audit_span(
         "output_chars_out": audit.output_chars_out,
         "output_preview": audit.output_preview,
     }
-    try:
-        sink.emit(event)
-    except Exception:  # noqa: BLE001 - best-effort observability path
-        _log.exception("zicato:emulator audit emit failed; continuing")
+    for sink in sinks:
+        try:
+            result = sink.emit(event)
+            if inspect.isawaitable(result):
+                await result
+        except Exception:  # noqa: BLE001 - best-effort observability path
+            _log.exception("zicato:emulator audit emit failed; continuing")
 
 
 __all__ = [

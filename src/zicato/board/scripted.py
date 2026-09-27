@@ -55,7 +55,6 @@ from __future__ import annotations
 import asyncio
 import inspect
 import time
-import uuid
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
@@ -80,6 +79,8 @@ class ScriptedMultiTurnDriver:
         entry: BoardEntry,
         sinks: list[Any],
         config: RuntimeConfig,
+        *,
+        run_id: str,
     ) -> RunResult:
         """Play ``entry.turns`` against ``harness`` and return the accumulated result.
 
@@ -101,6 +102,9 @@ class ScriptedMultiTurnDriver:
             driver inspects the seed only when the harness adapter
             accepts it; the LLM callables are not used by the driver
             itself (the agent's callable is on ``harness``).
+        run_id:
+            The caller's identifier for this run; the returned
+            :attr:`RunResult.run_id` is this value.
 
         Returns
         -------
@@ -121,7 +125,6 @@ class ScriptedMultiTurnDriver:
         if entry.max_turns is None or entry.max_turns <= 0:
             raise ValueError(f"ScriptedMultiTurnDriver: {entry.id!r} has no max_turns")
 
-        run_id = uuid.uuid4().hex
         budget_seconds = entry.wall_clock_budget_seconds
         max_turns = entry.max_turns
         scripted_turns = entry.turns
@@ -269,14 +272,11 @@ async def run_scripted(
     """Free-function entrypoint over :class:`ScriptedMultiTurnDriver`.
 
     Provided for harness adapters that want to call a single function
-    rather than instantiating the driver themselves. The ``run_id``
-    argument is accepted for compatibility with the adapter surface
-    but is currently informational — the driver mints its own
-    correlation id internally.
+    rather than instantiating the driver themselves. The returned
+    :attr:`RunResult.run_id` is ``run_id``.
     """
-    del run_id  # accepted for API parity with run_emulated; not used yet
     driver = ScriptedMultiTurnDriver()
-    return await driver.drive(harness=agent, entry=entry, sinks=sinks, config=config)
+    return await driver.drive(harness=agent, entry=entry, sinks=sinks, config=config, run_id=run_id)
 
 
 __all__ = ["ScriptedMultiTurnDriver", "run_scripted"]

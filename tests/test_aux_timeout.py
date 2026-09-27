@@ -114,7 +114,7 @@ def test_emulator_timeout_aborts_with_emulator_timeout() -> None:
     )
 
     driver = EmulatedMultiTurnDriver()
-    result = asyncio.run(driver.drive(_run_harness_turn, entry, config))
+    result = asyncio.run(driver.drive(_run_harness_turn, entry, config, run_id="run-test"))
 
     assert result.aborted is True
     assert result.abort_reason == "emulator_timeout"

@@ -498,25 +498,40 @@ The multi-turn user emulator records one audit per turn
 
 - `persona_hash` — a short SHA-256 fingerprint of the persona, so audits
   correlate across runs without revealing the persona body;
-- `transcript_chars_in` — the size of the prompt fed to the emulator,
-  a cost proxy;
+- `transcript_chars_in` — the total characters of the agent replies the
+  emulator saw on this turn, a cost proxy;
 - `output_chars_out` and `output_preview` — the size and the first 200
   characters of the emulator's reply.
 
-A driver constructed with a sink (`EmulatedMultiTurnDriver(sink_emit_fn=...)`)
-also emits each audit as a plain event on the lane `zicato:emulator`
-with kind `zicato.emulator.turn_audit`; emission is best-effort, and an
-audit failure is logged and never fails the run. The tournament path
-does not wire a sink: `run_emulated` accepts the run's sinks but does not
-pass them to the emulator, so audits stay in memory and no
-`zicato:emulator` events reach the events file or harmonograf.
+The driver emits each audit as a plain event on the lane
+`zicato:emulator` with kind `zicato.emulator.turn_audit` to every sink it
+holds (`EmulatedMultiTurnDriver(sinks=...)`), awaiting a sink whose
+`emit` is asynchronous. Emission is best-effort: an audit failure is
+logged and never fails the run. The ADK adapter passes the run's sinks
+through `run_emulated`, so a tournament run's `events.jsonl` holds one
+audit line per emulator turn. The line carries no `run_id` or
+`sequence`. The harmonograf sink drops plain-dict events, so the audits
+do not reach harmonograf.
+
+The audit line is not a goldfive `Event`, and every reader of the events
+file skips it:
+
+- The reducer's strict proto replay rejects the file, and the reducer
+  falls back to the plain-JSON reader, which yields the same records. The
+  line's kind matches no case the reducer counts, so the loss is
+  unchanged.
+- Transcript reconstruction adds no turn or annotation for it.
+- The pattern detectors that replay goldfive events skip any line with a
+  string `kind` field, a field `Event` does not have.
+- The `adk_events` and `transcript` dialects treat its kind as an unknown
+  event type and skip it.
 
 ### 4.3 What the emulator lane is for
 
-The lane would let an operator replaying a run see what the emulator
+The lane lets an operator reading a run's events see what the emulator
 produced on each turn and roughly what it cost. The emulator's model
 time counts against the entry's `wall_clock_budget_seconds`, so the lane
-would explain "why did this multi-turn entry take 8 minutes when the
+explains "why did this multi-turn entry take 8 minutes when the
 agent only spent 4 minutes thinking?". The lane name is the
 discriminator: anything emitted on `zicato:emulator` is the emulator's
 work, anything emitted on the system-under-test lane is the agent's

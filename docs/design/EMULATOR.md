@@ -346,22 +346,32 @@ Every emulator turn produces an `EmulatorTurnAudit` record
 | `output_chars_out` | The length of the emulator's response. |
 | `output_preview` | The first 200 characters of the response. |
 
-The driver keeps every turn's record in memory. When it is constructed
-with a sink, it also emits each record as an event on the
-`zicato:emulator` lane (`kind: "zicato.emulator.turn_audit"`); emission
-is best-effort and never fails the run. The ADK adapter reaches the
-driver through `zicato.emulator.run_emulated`, which constructs it
-without a sink, so an ADK run keeps its audit records in memory only and
-writes none to the event stream.
+The driver keeps every turn's record in memory and emits it as a plain
+event on the `zicato:emulator` lane
+(`kind: "zicato.emulator.turn_audit"`) to every sink it was constructed
+with. A sink's `emit` may be synchronous or asynchronous; the driver
+awaits an asynchronous one. Emission is best-effort: a failing sink is
+logged and skipped, and the run continues.
+
+The ADK adapter reaches the driver through `zicato.emulator.run_emulated`,
+which passes the run's sinks and the adapter's run id to the driver. In a
+tournament run the sinks write the run's `events.jsonl`, so that file holds
+one audit line per emulator turn beside the goldfive events. The
+harmonograf sink drops plain-dict events, so the audits do not appear in
+harmonograf. The returned `RunResult.run_id` is the adapter's run id; the
+scripted multi-turn driver follows the same rule.
+
+The audit lines are observability and do not change the loss. The
+reducer, the transcript reconstruction, and the pattern detectors skip
+them; [TELEMETRY.md §4.2](TELEMETRY.md#42-the-emulators-zicatoemulator-audit-lane)
+gives the details.
 
 ### 8.1 Why the audit trail matters
 
 When a multi-turn-emulated entry produces a surprising result — a
 strong pass, a strong fail, a fast abort — the operator needs to
 establish whether the emulator played the role the persona described.
-The audit trail supplies that evidence where it is emitted; without an
-emitting sink, the operator has only the run's transcript and abort
-reason.
+The audit trail in the run's `events.jsonl` supplies that evidence.
 
 The audit trail also makes a change in the emulator's own behaviour
 visible. Swapping the evaluation model can produce shorter,
@@ -402,7 +412,7 @@ prevent:
 | Emulator's system prompt invites it to behave as an oracle ("if you know the answer, give it"). | §5 non-leakage paragraph, a code constant appended to every emulator system prompt. |
 | Emulator generates raw JSON / code fences / schemas as the "user" turn. | §5 post-hoc heuristic. |
 | Emulator remembers prior entries' personas and biases toward them. | §7 fresh instance per entry. |
-| Operator cannot see what the emulator did. | §8 per-turn audit records, emitted on the `zicato:emulator` lane when a sink is wired. |
+| Operator cannot see what the emulator did. | §8 per-turn audit records, emitted on the `zicato:emulator` lane to the run's sinks. |
 | Operator cannot audit which persona drove a given run. | §9 persona hash on every audit record. |
 
 Each rule closes a channel none of the others closes. Removing any

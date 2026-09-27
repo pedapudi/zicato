@@ -112,6 +112,7 @@ async def test_drive_raises_on_shared_callable() -> None:
             run_harness_turn=_make_canned_harness(["ok"]),
             entry=_entry(),
             config=config,
+            run_id="run-test",
         )
 
 
@@ -134,7 +135,7 @@ async def test_drive_alternates_turns_and_stops_on_end_token() -> None:
     harness = _make_canned_harness(harness_outputs)
     driver = EmulatedMultiTurnDriver()
     result = await driver.drive(
-        run_harness_turn=harness, entry=_entry(max_turns=5), config=_config(aux)
+        run_harness_turn=harness, entry=_entry(max_turns=5), config=_config(aux), run_id="run-test"
     )
     # Two emulator turns, one harness turn between them, then END_TOKEN
     # short-circuits the loop before a second harness call.
@@ -160,6 +161,7 @@ async def test_drive_uses_dedicated_user_emulator_callable() -> None:
         run_harness_turn=_make_canned_harness(["dedicated reply"]),
         entry=_entry(),
         config=config,
+        run_id="run-test",
     )
     assert result.transcript == ("dedicated reply",)
 
@@ -182,7 +184,7 @@ async def test_drive_hits_max_turns_cap() -> None:
     )
     driver = EmulatedMultiTurnDriver()
     result = await driver.drive(
-        run_harness_turn=harness, entry=_entry(max_turns=3), config=_config(aux)
+        run_harness_turn=harness, entry=_entry(max_turns=3), config=_config(aux), run_id="run-test"
     )
     assert not result.aborted
     # 3 emulator turns => 3 harness turns => transcript length 3.
@@ -206,7 +208,7 @@ async def test_drive_treats_end_token_only_on_its_own_line() -> None:
     )
     driver = EmulatedMultiTurnDriver()
     result = await driver.drive(
-        run_harness_turn=harness, entry=_entry(max_turns=4), config=_config(aux)
+        run_harness_turn=harness, entry=_entry(max_turns=4), config=_config(aux), run_id="run-test"
     )
     # First emulator turn did NOT terminate (embedded END), second did.
     # So one harness call happened.
@@ -228,7 +230,7 @@ async def test_drive_aborts_on_emulator_leak() -> None:
     harness = _make_canned_harness(["What's your budget?"])
     driver = EmulatedMultiTurnDriver()
     result = await driver.drive(
-        run_harness_turn=harness, entry=_entry(max_turns=4), config=_config(aux)
+        run_harness_turn=harness, entry=_entry(max_turns=4), config=_config(aux), run_id="run-test"
     )
     assert result.aborted
     assert result.abort_reason == "emulator_leak_detected"
@@ -242,7 +244,7 @@ async def test_drive_aborts_on_code_fence_leak() -> None:
     harness = _make_canned_harness([])
     driver = EmulatedMultiTurnDriver()
     result = await driver.drive(
-        run_harness_turn=harness, entry=_entry(max_turns=4), config=_config(aux)
+        run_harness_turn=harness, entry=_entry(max_turns=4), config=_config(aux), run_id="run-test"
     )
     assert result.aborted
     assert result.abort_reason == "emulator_leak_detected"
@@ -266,8 +268,10 @@ async def test_drive_emits_audits_to_sink() -> None:
     sink = _RecordingSink()
     aux = _make_canned_aux(["Hi.", "Done.\n<<END>>"])
     harness = _make_canned_harness(["Sure thing."])
-    driver = EmulatedMultiTurnDriver(sink_emit_fn=sink)
-    await driver.drive(run_harness_turn=harness, entry=_entry(max_turns=4), config=_config(aux))
+    driver = EmulatedMultiTurnDriver(sinks=[sink])
+    await driver.drive(
+        run_harness_turn=harness, entry=_entry(max_turns=4), config=_config(aux), run_id="run-test"
+    )
     # Two emulator turns => two audit events.
     assert len(sink.events) == 2
     for event in sink.events:
@@ -288,10 +292,10 @@ async def test_drive_swallows_sink_failures() -> None:
     sink = _ExplodingSink()
     aux = _make_canned_aux(["Hi.", "Done.\n<<END>>"])
     harness = _make_canned_harness(["Sure thing."])
-    driver = EmulatedMultiTurnDriver(sink_emit_fn=sink)
+    driver = EmulatedMultiTurnDriver(sinks=[sink])
     # MUST NOT raise — audit failures are observability, not policy.
     result = await driver.drive(
-        run_harness_turn=harness, entry=_entry(max_turns=4), config=_config(aux)
+        run_harness_turn=harness, entry=_entry(max_turns=4), config=_config(aux), run_id="run-test"
     )
     assert not result.aborted
 
@@ -315,4 +319,68 @@ async def test_drive_rejects_wrong_entry_kind() -> None:
             run_harness_turn=_make_canned_harness([]),
             entry=bad_entry,
             config=_config(aux),
+            run_id="run-test",
         )
+
+
+class _AsyncRecordingSink:
+    def __init__(self) -> None:
+        self.events: list[dict] = []
+
+    async def emit(self, event: dict) -> None:
+        self.events.append(event)
+
+
+async def test_drive_awaits_async_sinks_past_a_failing_sink() -> None:
+    first, last = _AsyncRecordingSink(), _AsyncRecordingSink()
+    aux = _make_canned_aux(["Hi.", "Done.\n<<END>>"])
+    driver = EmulatedMultiTurnDriver(sinks=[first, _ExplodingSink(), last])
+    result = await driver.drive(
+        run_harness_turn=_make_canned_harness(["Sure thing."]),
+        entry=_entry(max_turns=4),
+        config=_config(aux),
+        run_id="run-test",
+    )
+    assert not result.aborted
+    assert len(first.events) == len(last.events) == 2
+
+
+# ---------------------------------------------------------------------------
+# run_emulated: the adapter-facing entry point
+# ---------------------------------------------------------------------------
+
+
+class _Agent:
+    def __init__(self) -> None:
+        self.received: list[str] = []
+
+    async def run(self, user_msg: str) -> str:
+        self.received.append(user_msg)
+        return f"reply {len(self.received)}"
+
+
+async def test_run_emulated_writes_each_turn_audit_to_a_jsonl_sink(tmp_path: Path) -> None:
+    pytest.importorskip("goldfive")
+    import json
+
+    from goldfive.sinks.persistence import JSONLPersistenceSink
+
+    from zicato.emulator import run_emulated
+
+    events_path = tmp_path / "events.jsonl"
+    sink = JSONLPersistenceSink(path=events_path, mode="write")
+    aux = _make_canned_aux(["Hi.", "Tell me more.", "Done.\n<<END>>"])
+    result = await run_emulated(
+        agent=_Agent(),
+        entry=_entry(max_turns=5),
+        sinks=[sink],
+        config=_config(aux),
+        run_id="run-from-caller",
+    )
+    await sink.close()
+
+    assert result.run_id == "run-from-caller"
+    records = [json.loads(line) for line in events_path.read_text().splitlines()]
+    # Three emulator turns (the third ends the conversation) => three audits.
+    assert [r["kind"] for r in records] == ["zicato.emulator.turn_audit"] * 3
+    assert [r["output_chars_out"] for r in records] == [3, 13, 13]
