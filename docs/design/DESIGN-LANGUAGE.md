@@ -748,7 +748,10 @@ See [docs/brand/README.md](../brand/README.md) for the asset table and usage.
   (`.dn-duelflow-lane:focus-visible`, `.dn-reigngantt-row:focus-visible`).
 - **Skip link.** `index.html` ships `<a class="skip-link" href="#main-content">`
   (visually hidden until focused, then pinned top-left — `.skip-link` in
-  `style.css`).
+  `style.css`). Its target is the shell's view host, the `<main>` element
+  that holds the active view; it carries `id="main-content"` and
+  `tabindex="-1"`, so activating the link moves keyboard focus past the top
+  bar and the navigation panel.
 - **`prefers-reduced-motion: reduce`** — disables every pulse animation, the
   entry fades and the hovercard fade (several `@media` blocks in `console.css`).
 - **`prefers-color-scheme`** — the brand assets adapt automatically: the mark

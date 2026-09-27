@@ -558,4 +558,23 @@ test('layout: the detail pane + compare grid are FLUID — not clamped to a narr
   assertEqual(allByClass(host, 'dt-split-side').length, 2, 'two compare panes share the full width');
 });
 
+// ---- the skip link's target -----------------------------------------
+
+test('skip link: its target is the focusable region that holds the active view', async () => {
+  installFetch();
+  const fs = await import('node:fs');
+  const page = fs.readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  const href = page.match(/<a class="skip-link" href="#([\w-]+)"/);
+  assert(href, 'index.html carries the skip link');
+  const root = mountLiveShell('#/');
+  await new Promise((r) => setTimeout(r, 0));
+  const targets = root.querySelectorAll(`[id="${href[1]}"]`);
+  assertEqual(targets.length, 1, 'exactly one rendered element carries the skip-link target id');
+  const target = targets[0];
+  assertEqual(target.localName, 'main', 'the target is the main landmark');
+  assert((target.getAttribute('class') || '').includes('dt-viewhost'), 'the target hosts the active view');
+  assertEqual(target.getAttribute('tabindex'), '-1', 'the target takes programmatic focus, so the link moves focus there');
+  assertEqual(allByClass(allByClass(root, 'dt-topbar')[0], 'dt-viewhost').length, 0, 'the target is outside the top bar');
+});
+
 await run();
