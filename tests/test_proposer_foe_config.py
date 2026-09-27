@@ -35,7 +35,6 @@ def test_a_minimal_block_takes_the_documented_defaults() -> None:
     config = load_foe_proposer_config(_config())
     assert config.binary == Path("/usr/local/bin/foe")
     assert config.model.provider == "example"
-    assert config.viewer == "off"
     assert config.budget == FoeBudget()
 
 
@@ -90,11 +89,6 @@ def test_a_relative_binary_path_is_refused() -> None:
         load_foe_proposer_config(_config(binary="foe"))
 
 
-def test_a_viewer_policy_outside_the_closed_set_is_refused() -> None:
-    with pytest.raises(ProposerConfigError, match="proposer.viewer: viewer must be one of"):
-        load_foe_proposer_config(_config(viewer="sometimes"))
-
-
 def test_a_budget_below_one_model_call_is_refused() -> None:
     with pytest.raises(ProposerConfigError, match="model_calls must be >= 1"):
         load_foe_proposer_config(_config(budget={"model_calls": 0}))
@@ -134,7 +128,7 @@ def test_a_built_in_proposer_class_other_than_foe_is_refused(dotted: str) -> Non
 def test_the_foe_agent_is_the_one_class_the_namespace_still_admits() -> None:
     workspace = _config()
     workspace["runtime"] = {"proposer_agent": DEFAULT_PROPOSER_AGENT}
-    assert load_foe_proposer_config(workspace).viewer == "off"
+    assert load_foe_proposer_config(workspace).binary == Path("/usr/local/bin/foe")
 
 
 def test_an_operator_supplied_proposer_class_is_still_accepted() -> None:

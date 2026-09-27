@@ -10,8 +10,6 @@ from typing import Any
 from zicato.core.configuration import ConfigurationError
 from zicato.core.constraints import KnobConstraint, validate_knobs
 
-VIEWER_POLICIES: tuple[str, ...] = ("off", "on-failure", "always")
-
 
 @dataclass(frozen=True, slots=True)
 class FoeBudget:
@@ -82,8 +80,6 @@ class ProposerDeclaration:
     budget:
         Limits that bound how much evidence a proposal episode can gather.
         Changing them rolls the epoch.
-    viewer:
-        Serve no trajectories, failed episodes, or every episode.
     guide:
         Explanatory JSON retained from scaffolded configurations; unused by execution.
     """
@@ -92,14 +88,6 @@ class ProposerDeclaration:
     model: FoeModelRole = field(metadata={"scope": "operational", "rolls_epoch": False})
     budget: FoeBudget = field(
         default_factory=FoeBudget, metadata={"scope": "evaluation-contract", "rolls_epoch": True}
-    )
-    viewer: str = field(
-        default="off",
-        metadata={
-            "scope": "operational",
-            "rolls_epoch": False,
-            "constraint": KnobConstraint(choices=VIEWER_POLICIES),
-        },
     )
     guide: Any = field(
         default=None,
