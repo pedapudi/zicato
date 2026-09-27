@@ -15,12 +15,6 @@ from zicato.core.adapter_config import DriverImportContext
 from zicato.core.run_context import RunContext
 from zicato.core.runtime_context import TelemetryEndpoints
 from zicato.core.settings import (
-    INFRA_BACKOFF_BASE_S_DEFAULT as INFRA_BACKOFF_BASE_S_DEFAULT,
-)
-from zicato.core.settings import (
-    INFRA_BACKOFF_CAP_S_DEFAULT as INFRA_BACKOFF_CAP_S_DEFAULT,
-)
-from zicato.core.settings import (
     PREFLIGHT_GATE_DEFAULT as PREFLIGHT_GATE_DEFAULT,
 )
 from zicato.core.settings import (
