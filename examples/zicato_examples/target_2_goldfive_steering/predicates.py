@@ -9,22 +9,25 @@ deliberately-broken testkit agent (LoopingAgent, HallucinatingAgent,
 etc.), and for the "normal" entries it is the tiny LlmAgent shipped in
 this directory's ``agent_under_test.py``.
 
+The tournament worker grades both synthetic kinds against the run's
+event log before any predicate here matters. A ``synthetic_adversarial``
+entry fails unless every kind in its ``required_drift_kinds`` fired at
+warning or critical severity; a ``synthetic_clean`` entry fails if any
+warning or critical drift fired. The worker conjoins that drift verdict
+with the entry's ``expectation``, so a predicate named there is an
+additional check: the entry passes only when both pass.
+
 Three predicates live here:
 
-* :func:`required_drift_fired` — outcome predicate for
-  ``synthetic_adversarial`` entries. The hard check that the run-time
-  required-drift assertion has already been wired through
-  ``zicato.synthetic.expectations`` (added in parallel by R2-L); this
-  Python-side predicate is a permissive placeholder so adversarial
-  entries can additionally opt into custom pass/fail Python logic
-  without re-implementing the required-drift check.
+* :func:`required_drift_fired` — the expectation of the
+  ``synthetic_adversarial`` entries. It always passes, so those entries
+  are graded by their drift requirement alone. Replace it to add a
+  bespoke check on top of that requirement.
 
-* :func:`no_warning_or_critical_drift` — outcome predicate for
-  ``synthetic_clean`` negative-control entries. Passes whenever the
-  clean-agent run completed normally (no abort). The "no
-  warning/critical drift" assertion is enforced by the runtime layer
-  using the same machinery that drives ``required_drift_kinds`` on the
-  adversarial side; this predicate is the per-entry hook.
+* :func:`no_warning_or_critical_drift` — the expectation of the
+  ``synthetic_clean`` negative-control entries. It adds the check that
+  the run finished without aborting; the worker's drift rule supplies
+  the "no warning or critical drift" check its name describes.
 
 * :func:`output_mentions_target_token` — a generic correctness check
   for the "normal" board entries: did the agent's final output mention
@@ -41,35 +44,29 @@ from zicato.core import RunResult
 
 
 def required_drift_fired(result: RunResult) -> bool:
-    """Permissive Python-side hook for ``synthetic_adversarial`` entries.
+    """Always pass; the entry's drift requirement is the check.
 
-    The actual "did the required drift fire?" check is performed by the
-    runtime layer (``zicato.synthetic.expectations``) against the run's
-    goldfive event JSONL; the ``required_drift_kinds`` tuple on the
-    :class:`zicato.core.BoardEntry` is the source of truth. This Python
-    predicate runs ALONGSIDE that runtime check and is intended for
-    entries that want to layer additional bespoke pass/fail logic on
-    top — e.g. "required drifts fired AND the final output mentions
-    the word 'cancelled'". The default behaviour is to pass; entries
-    that don't need extra checks point their ``expectation.spec`` here
-    and rely on the runtime layer for the real gate.
+    The tournament worker applies
+    ``zicato.synthetic.expectations.evaluate_required_drift`` to the run's
+    event log with the entry's ``required_drift_kinds`` and conjoins the
+    result with this predicate. An entry that needs a further condition,
+    such as "the final output mentions the word 'cancelled'", names a
+    predicate that tests it; the drift requirement still applies.
     """
 
-    # The runtime layer handles the required_drift_kinds check; this
-    # Python predicate is a no-op pass.
+    # The worker checks required_drift_kinds; this predicate adds nothing.
     del result
     return True
 
 
 def no_warning_or_critical_drift(result: RunResult) -> bool:
-    """Outcome predicate for ``synthetic_clean`` negative-control entries.
+    """Pass when the run finished without aborting.
 
-    A clean entry passes when the run completed normally — no abort. The
-    "no WARNING or CRITICAL drift" assertion is enforced by the runtime
-    layer using ``zicato.synthetic.expectations`` (the symmetric side of
-    the ``required_drift_kinds`` check on adversarial entries); this
-    Python predicate adds the additional gate that the run actually
-    finished as opposed to being budget-killed mid-conversation.
+    The tournament worker applies
+    ``zicato.synthetic.expectations.evaluate_no_drift`` to the run's event
+    log and conjoins the result with this predicate, so a clean entry
+    passes only when no warning or critical drift fired and the run was
+    not stopped early, for example by its wall-clock budget.
     """
 
     return not result.aborted

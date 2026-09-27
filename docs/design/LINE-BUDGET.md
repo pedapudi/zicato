@@ -50,9 +50,9 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 466,744 | +58,083 |
-| Production | 197,702 | 186,157 | -11,545 |
-| Production logic | 110,276 | 108,590 | -1,686 |
+| Total | 408,661 | 467,040 | +58,379 |
+| Production | 197,702 | 186,234 | -11,468 |
+| Production logic | 110,276 | 108,624 | -1,652 |
 
 The baseline row is the reference `f9052dd` measured by the classification the
 checker holds, which counts the console's hand-written entry point
@@ -86,7 +86,7 @@ production-logic series per subsystem along a branch's first-parent commits.
 |---|---:|---:|---:|---:|
 | src/zicato/dashboard | 61,800 | 31,966 | 22,051 | 31.0% |
 | src/zicato/query | 17,740 | 17,740 | 11,166 | 37.1% |
-| src/zicato/epoch | 13,822 | 13,822 | 7,742 | 44.0% |
+| src/zicato/epoch | 13,832 | 13,832 | 7,745 | 44.0% |
 | src/zicato/evolve | 11,230 | 11,230 | 7,167 | 36.2% |
 | src/zicato/tournament | 11,223 | 11,223 | 6,647 | 40.8% |
 | src/zicato/reflection | 9,843 | 9,843 | 6,578 | 33.2% |
@@ -108,8 +108,8 @@ production-logic series per subsystem along a branch's first-parent commits.
 | src/zicato/adapters | 2,197 | 2,197 | 821 | 62.6% |
 | src/zicato/judge_runtime | 1,778 | 1,778 | 801 | 54.9% |
 | src/zicato/testing | 1,455 | 1,455 | 767 | 47.3% |
-| src/zicato/_tournament_worker.py | 1,186 | 1,186 | 701 | 40.9% |
-| src/zicato/synthetic | 1,139 | 1,139 | 544 | 52.2% |
+| src/zicato/_tournament_worker.py | 1,197 | 1,197 | 704 | 41.2% |
+| src/zicato/synthetic | 1,195 | 1,195 | 572 | 52.1% |
 | src/zicato/models_config.py | 635 | 635 | 490 | 22.8% |
 | src/zicato/scoring | 1,401 | 1,401 | 475 | 66.1% |
 | src/zicato/patterns | 753 | 753 | 410 | 45.6% |
@@ -468,3 +468,6 @@ dropped rows named.
 | Unread backoff reader and proposer viewer setting removed (total) | 466,782 | -38 | 466,744 | Removes the uncalled endpoint-outage backoff reader in the evolve loop and its two re-exports, and the proposer block's viewer setting, which no code read; tests that start a nested pytest drop the outer run's PYTEST_* variables. |
 | Unread backoff reader and proposer viewer setting removed (production) | 186,208 | -51 | 186,157 | Removes the uncalled endpoint-outage backoff reader in the evolve loop and its two re-exports, and the proposer block's viewer setting, which no code read; tests that start a nested pytest drop the outer run's PYTEST_* variables. |
 | Unread backoff reader and proposer viewer setting removed (production logic) | 108,626 | -36 | 108,590 | Removes the uncalled endpoint-outage backoff reader in the evolve loop and its two re-exports, and the proposer block's viewer setting, which no code read; tests that start a nested pytest drop the outer run's PYTEST_* variables. |
+| Synthetic entry drift grading (total) | 466,744 | +296 | 467,040 | Synthetic board entries: the tournament worker grades an adversarial entry by its required drift kinds and a clean entry by the absence of warning or critical drift, conjoined with any declared expectation. A synthetic grading revision in the board hash rolls only epochs whose board holds a synthetic entry. Worker-process and contract-hash tests cover both. |
+| Synthetic entry drift grading (production) | 186,157 | +77 | 186,234 | Synthetic board entries: the tournament worker grades an adversarial entry by its required drift kinds and a clean entry by the absence of warning or critical drift, conjoined with any declared expectation. A synthetic grading revision in the board hash rolls only epochs whose board holds a synthetic entry. Worker-process and contract-hash tests cover both. |
+| Synthetic entry drift grading (production logic) | 108,590 | +34 | 108,624 | Synthetic board entries: the tournament worker grades an adversarial entry by its required drift kinds and a clean entry by the absence of warning or critical drift, conjoined with any declared expectation. A synthetic grading revision in the board hash rolls only epochs whose board holds a synthetic entry. Worker-process and contract-hash tests cover both. |

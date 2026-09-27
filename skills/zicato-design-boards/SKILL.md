@@ -128,10 +128,12 @@ Rules of thumb:
   run variance — set `promote_margin` above that noise floor
   (`zicato-tune-scoring`) so emulator jitter doesn't flip promotions.
 
-(`synthetic_adversarial` / `synthetic_clean` are reserved forward-compat kinds
-for the goldfive-as-target dogfood plan — a known-bad agent the steerer must
-notice via `required_drift_kinds`. They are not part of the everyday authoring
-surface; ignore them unless you are building that target.)
+(`synthetic_adversarial` / `synthetic_clean` grade goldfive's steerer rather
+than an agent: an adversarial entry fails unless every kind in its
+`required_drift_kinds` fires at warning or critical severity, and a clean entry
+fails on any warning or critical drift. An `expectation` on either is an extra
+check the entry must also pass. Ignore them unless you are building a target
+that evaluates goldfive itself; see `docs/design/BOARD-FORMAT.md` §7.)
 
 ## Weighting: spend signal where it matters
 

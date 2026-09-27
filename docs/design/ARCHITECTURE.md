@@ -457,12 +457,12 @@ edited frozen board makes a run on that epoch refuse to start, so
 operators change the board by editing the live file and letting `evolve`
 roll the epoch.
 
-**Produces.** A typed `list[BoardEntry]` for the runner. The runner
-executes three entry kinds (`single_turn`, `multi_turn_scripted`,
-`multi_turn_emulated`). The `kind` type also reserves
-`synthetic_adversarial` and `synthetic_clean` for evolving goldfive's
-steering layer, so those kinds can be brought online without a schema
-break.
+**Produces.** A typed `list[BoardEntry]` for the runner. Three entry
+kinds run the system under test (`single_turn`, `multi_turn_scripted`,
+`multi_turn_emulated`). Two more, `synthetic_adversarial` and
+`synthetic_clean`, grade goldfive's steerer: the worker drives a
+known-bad or well-behaved agent under goldfive and grades the run by
+whether the required drift fired or no spurious drift fired.
 
 The full schema — the `expectations` (outcome) and `judges` (process)
 facets, wall-clock budget semantics, and the emulator contract — is

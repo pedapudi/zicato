@@ -283,12 +283,14 @@ The `synthetic_adversarial` kind, its discriminant fields, and its runner
 `BoardEntry.validate` requires a `synthetic_adversarial` entry to
 carry `input`, a non-empty `adversarial_agent_spec`, and a non-empty
 `required_drift_kinds`, each kind validated against the registered drift
-kind set. The intended rule is that the entry passes when every kind in
-`required_drift_kinds` fires and fails when the steerer missed one.
-`zicato.synthetic.expectations.evaluate_required_drift` implements that
-rule, but no runner, reducer, or grader calls it, and the example's
-adversarial predicate (`required_drift_fired`) always passes. Recall is
-therefore not measured until an expectation applies the rule.
+kind set. The tournament worker grades the entry against the run's
+event log with `zicato.synthetic.expectations.evaluate_required_drift`:
+the entry fails unless every kind in `required_drift_kinds` fired at
+least once with severity WARNING or CRITICAL. An entry's `expectation`,
+if any, is an additional check; the entry passes only when both pass
+([BOARD-FORMAT.md](BOARD-FORMAT.md) §7). The example's adversarial
+predicate (`required_drift_fired`) always passes, so its adversarial
+entries are graded by the drift rule alone.
 
 The synthetic agent's source lives outside zicato.
 `adversarial_agent_spec` is a dotted path resolved at run time by
@@ -303,12 +305,12 @@ The `synthetic_clean` board-entry kind wires a **known-good agent** that
 does its job without misbehaving. Its runner is
 `zicato.synthetic.run_clean_entry`, and `validate` requires only `input`.
 The runner's default agent is `goldfive.testkit.adversarial:CleanAgent`;
-an entry names a different one in `adversarial_agent_spec` or in
-`context["clean_agent_spec"]`. The intended rule is that a clean entry
-passes when no WARNING or CRITICAL drift fired, with INFO drift treated
-as observational. `zicato.synthetic.expectations.evaluate_no_drift`
-implements it, but nothing calls it; the example's clean predicate
-passes whenever the run was not aborted:
+an entry names a different one in `context["clean_agent_spec"]`. The
+tournament worker grades the entry with
+`zicato.synthetic.expectations.evaluate_no_drift`: the entry fails if
+any WARNING or CRITICAL drift fired, and INFO drift is treated as
+observational. The example's clean predicate adds the check that the
+run was not aborted, and the entry passes only when both checks pass:
 
 ```json
 {
@@ -335,9 +337,9 @@ weighted by `namespace_weights` in `scoring.json`.
 
 The example combines the four properties without any steering-specific
 scoring field. Ordinary, adversarial, and clean entries each carry a
-predicate expectation, so each enters the pass/fail term under
-`pass_weight`; recall and specificity carry signal only once their
-predicates apply the drift rules of §2.5.2 and §2.5.3. Its `scoring.json` weights the
+pass/fail verdict, so each enters the pass/fail term under
+`pass_weight`; the adversarial and clean verdicts include the drift
+rules of §2.5.2 and §2.5.3. Its `scoring.json` weights the
 `drift:` channel at 0.3, below `pass_weight`, because on this target a
 drift count is a feature of the run rather than its loss. The operator
 tunes these weights; `scoring.json` rejects keys that `ScoringWeights`
@@ -369,15 +371,16 @@ All five hold in the shipped design:
    [MUTATION-SURFACE.md](MUTATION-SURFACE.md) §5. The same walk also
    runs the manifest bridge that exposes goldfive's declared surface.
 3. **`BoardEntry.kind` carries the synthetic slots.**
-   Pinned in [BOARD-FORMAT.md](BOARD-FORMAT.md) §6. `synthetic_adversarial`
+   Pinned in [BOARD-FORMAT.md](BOARD-FORMAT.md) §7. `synthetic_adversarial`
    and `synthetic_clean` are members of the `BoardEntryKind` literal,
    with their discriminant fields and `validate` rules in `BoardEntry`.
    Their runner is `zicato/synthetic/` (`run_adversarial_entry` and
    `run_clean_entry`), dispatched by `_tournament_worker.py` ahead of the
    adapter session, so the steering target needed no schema change.
-4. **Per-entry expectations grade any run.** Pinned in
-   [BOARD-FORMAT.md](BOARD-FORMAT.md) §3. Recall and specificity are
-   expressible as predicates over the run's drift events.
+4. **Synthetic kinds carry their own drift rules.** Pinned in
+   [BOARD-FORMAT.md](BOARD-FORMAT.md) §7. The worker grades recall and
+   specificity from the run's drift events, and a per-entry expectation
+   ([BOARD-FORMAT.md](BOARD-FORMAT.md) §3) adds further checks.
 5. **Scoring weights are configurable per project.** Pinned
    in [SCORING.md](SCORING.md). Lowering the `drift:` weight below
    `pass_weight` stops the drift count from acting as the loss.
@@ -529,7 +532,7 @@ The following commitments admit the steering target and zicato-on-itself:
 |---|---|
 | Two distinct `call_llm` callables, hard-validated at config time. | [EMULATOR.md](EMULATOR.md) §3 |
 | `HarnessAdapter.mutation_points()` walks a list of source roots rather than a single tree. | [MUTATION-SURFACE.md](MUTATION-SURFACE.md) §5 |
-| `BoardEntry.kind` is string-typed against a registered set. | [BOARD-FORMAT.md](BOARD-FORMAT.md) §6 |
+| `BoardEntry.kind` is string-typed against a registered set. | [BOARD-FORMAT.md](BOARD-FORMAT.md) §7 |
 | `LossProfile` is open-ended on new fields; weights live in per-epoch `scoring.json`. | [TELEMETRY.md](TELEMETRY.md) §3, [SCORING.md](SCORING.md) §2 |
 | Runtime settings carry `instance_id`, recorded in the lock and heartbeat; keying the workspace by it is unbuilt. | this document §3.5 |
 

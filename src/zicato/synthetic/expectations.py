@@ -14,6 +14,10 @@ JSONL event stream and return an
   Pass iff zero drift events with severity in {warning, critical}
   appear. INFO drift is tolerated.
 
+:func:`score_synthetic_entry` is the tournament worker's single entry
+point: it applies the matcher for the entry's kind to the run's closed
+event log and conjoins the result with the entry's explicit expectation.
+
 Both matchers read the file through
 :mod:`zicato.telemetry.event_log`, so either wire shape of a drift event
 resolves to the same payload case. Field VALUES are still normalised
@@ -24,11 +28,19 @@ lowercase strings a hand-written fixture uses.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from zicato.core.types import ExpectationKind, ExpectationResult, RuntimeConfig
+from zicato.core.types import BoardEntry, ExpectationKind, ExpectationResult, RuntimeConfig
 from zicato.telemetry.event_log import read_event_log
+
+#: Revision of the worker's grading of synthetic entries. The epoch contract
+#: folds it into the canonical form of each synthetic board entry, so bumping
+#: it rolls every epoch whose board holds a synthetic entry, and no other.
+#: Bump it whenever :func:`score_synthetic_entry` or a matcher it calls changes
+#: which runs pass.
+SYNTHETIC_GRADING_REVISION = 1
 
 # Severities the matchers treat as "this counts" — warning and critical.
 # INFO is filtered out everywhere because it is observational by design.
@@ -215,3 +227,42 @@ async def evaluate_no_drift(
         passed=True,
         detail="clean run: no drift events",
     )
+
+
+async def score_synthetic_entry(
+    entry: BoardEntry,
+    events_jsonl_path: Path,
+    explicit: ExpectationResult | None,
+    config: RuntimeConfig,
+) -> ExpectationResult | None:
+    """Return a synthetic entry's verdict: its drift requirement AND its expectation.
+
+    A ``synthetic_adversarial`` entry must show every one of its
+    ``required_drift_kinds`` (:func:`evaluate_required_drift`); a
+    ``synthetic_clean`` entry must show no warning or critical drift
+    (:func:`evaluate_no_drift`). ``events_jsonl_path`` must be the run's
+    closed event log. ``explicit`` is the verdict of the entry's own
+    ``expectation`` (``None`` when it declares none); the entry passes only
+    when both parts pass, and ``detail`` names the part that failed. A
+    failed drift requirement scores ``0.0``; otherwise the explicit
+    verdict keeps its kind, score, and metrics. Any other entry kind
+    returns ``explicit`` unchanged.
+    """
+    if entry.kind == "synthetic_adversarial":
+        drift = await evaluate_required_drift(
+            events_jsonl_path, list(entry.required_drift_kinds or ()), config
+        )
+    elif entry.kind == "synthetic_clean":
+        drift = await evaluate_no_drift(events_jsonl_path, config)
+    else:
+        return explicit
+    if explicit is None:
+        return drift
+    verdicts = {True: "passed", False: "failed"}
+    detail = (
+        f"drift requirement {verdicts[drift.passed]}: {drift.detail}; "
+        f"expectation {verdicts[explicit.passed]}: {explicit.detail}"
+    )
+    if not drift.passed:
+        return replace(explicit, passed=False, detail=detail, score=0.0)
+    return replace(explicit, detail=detail)

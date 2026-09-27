@@ -510,18 +510,27 @@ async def _evaluate_expectation(
     entry: BoardEntry,
     run_result: RunResult | None,
     config: RuntimeConfig,
+    events_path: Path,
 ) -> Any:
-    """Evaluate ``entry.expectation`` against ``run_result`` if both present."""
-    if entry.expectation is None or run_result is None:
-        return None
-    from zicato.board.matchers import evaluate_expectation  # noqa: PLC0415
+    """Return the entry's verdict, or ``None`` when nothing grades it.
 
-    return await evaluate_expectation(
-        entry.expectation,
-        run_result,
-        aux_call_llm=config.effective_judge_call_llm(),
-        aux_config=config.operational_configuration().values.aux,
-    )
+    The entry's explicit expectation grades ``run_result`` when both exist.
+    A synthetic entry's kind adds its drift requirement, read from the
+    closed event log at ``events_path`` and conjoined with that verdict.
+    """
+    explicit = None
+    if entry.expectation is not None and run_result is not None:
+        from zicato.board.matchers import evaluate_expectation  # noqa: PLC0415
+
+        explicit = await evaluate_expectation(
+            entry.expectation,
+            run_result,
+            aux_call_llm=config.effective_judge_call_llm(),
+            aux_config=config.operational_configuration().values.aux,
+        )
+    from zicato.synthetic.expectations import score_synthetic_entry  # noqa: PLC0415
+
+    return await score_synthetic_entry(entry, events_path, explicit, config)
 
 
 # ---------------------------------------------------------------------------
@@ -968,7 +977,9 @@ async def _run_with_imports(args: dict[str, Any], runtime_context: WorkerRuntime
         except (OSError, ValueError) as exc:
             log.warning("run %s artifact capture failed: %s", run_id, exc)
 
-    expectation_result = await _evaluate_expectation(entry, run_result, config)
+    # The sinks closed in the ``finally`` above, so a synthetic entry's drift
+    # requirement reads a complete event log.
+    expectation_result = await _evaluate_expectation(entry, run_result, config, events_path)
 
     # A run that did not complete successfully must be scored worst-case,
     # never zero. The worker reaches this point only on a clean worker

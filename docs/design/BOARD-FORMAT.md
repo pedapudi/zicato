@@ -18,7 +18,7 @@ file, so a schema-invalid line fails at load time, before any run.
 This document specifies:
 
 - The common fields every entry carries.
-- The three entry kinds the runner executes (`single_turn`,
+- The three entry kinds that run the system under test (`single_turn`,
   `multi_turn_scripted`, `multi_turn_emulated`) and the per-kind fields.
 - The two evaluation facets an entry carries: an **outcome** check
   (`expectation` — a single `Predicate` / `Rubric`) and **process**
@@ -27,7 +27,8 @@ This document specifies:
   slicing.
 - The board-level `board_meta` header line and its `disable_drift`
   setting.
-- The forward-compatibility story for new entry kinds.
+- The two synthetic kinds that grade a drift detector, and how their
+  drift rules combine with an entry's `expectation`.
 
 This document is the schema reference. For the *practical* side of
 authoring — choosing outcome vs process checks, worked builder
@@ -44,7 +45,7 @@ Every board entry carries the same envelope:
 | Field | Type | Required | Meaning |
 |---|---|---|---|
 | `id` | `string` | yes | Stable identifier; used as a directory name under `runs/`, so it must be filesystem-safe (use `[a-zA-Z0-9_-]+`; the loader does not check the characters). Unique within the board; the loader rejects a duplicate. |
-| `kind` | `string` | yes | Discriminator. The kinds the runner executes are `"single_turn"`, `"multi_turn_scripted"`, and `"multi_turn_emulated"`. The set extends without a schema break — see §7. |
+| `kind` | `string` | yes | Discriminator: `"single_turn"`, `"multi_turn_scripted"`, or `"multi_turn_emulated"` for a run of the system under test (§2), or `"synthetic_adversarial"` or `"synthetic_clean"` for grading a drift detector (§7). |
 | `wall_clock_budget_seconds` | `integer` | yes | Hard ceiling for the WHOLE entry, in whole seconds (the loader truncates a fractional value). Exceeded → run aborts and scores as worst-case. |
 | `weight` | `number` | no (default `1.0`) | Relative importance in scoring aggregation. |
 | `tags` | `list[string]` | no (default `[]`) | Operator labels. Two tags are reserved: `holdout` and `facet:{name}` (§1.4). |
@@ -606,56 +607,46 @@ The detector set is open-ended. Tags are the operator's lever for
 slicing the dashboard's facet views (§1.4) and for naming board slices
 in the proposer brief.
 
-## 7. Forward-compatibility: the `kind` discriminator
+## 7. Synthetic kinds: grading a drift detector
 
-`kind` is a closed `Literal` (`BoardEntryKind`) rather than a bare
-string, and it is designed to extend without a schema break. The
-runner executes three kinds:
-`{"single_turn", "multi_turn_scripted", "multi_turn_emulated"}`.
-Two further tokens — `"synthetic_adversarial"` and `"synthetic_clean"`
-— are **reserved in the type** as forward-compatibility slots, so that
-adding them to the runtime later does not require a schema bump for
-existing operators. Bringing a reserved kind online is a matter of:
+Two kinds, `"synthetic_adversarial"` and `"synthetic_clean"`, evaluate a
+drift detector (goldfive's steerer) rather than the agent it watches. The
+dogfood target that evolves goldfive's steering layer uses them (see
+[DOGFOOD-TARGETS.md](DOGFOOD-TARGETS.md)). The tournament worker runs
+them through `zicato.synthetic.run_adversarial_entry` and
+`zicato.synthetic.run_clean_entry`, which drive the named agent under
+`goldfive.wrap` with the entry's `input`; the harness session does not
+run them.
 
-1. Wiring the kind's discriminant fields into the runner.
-2. Providing the run path that produces its `RunResult`.
-3. Telling the loss reducer how to map it to a `LossProfile`.
+- `synthetic_adversarial` wires in an agent built to misbehave, such as
+  one that loops or fabricates tool output. The entry carries `input`,
+  an `adversarial_agent_spec` (dotted path to that agent), and a
+  non-empty `required_drift_kinds` list of registered drift kinds. The
+  entry fails unless every listed kind appears in the run's event log
+  at least once with severity `warning` or `critical`; `info` drift
+  does not count.
+- `synthetic_clean` wires in a well-behaved agent (by default
+  `goldfive.testkit.adversarial:CleanAgent`; `context["clean_agent_spec"]`
+  names another). The entry carries `input`. It fails if any drift event with severity `warning` or
+  `critical` appears in the run's event log; `info` drift is tolerated.
 
-The two reserved kinds exist for the dogfood target that evolves
-goldfive's own steering layer (see
-[DOGFOOD-TARGETS.md](DOGFOOD-TARGETS.md)). The runner does not execute
-them, and `BoardEntry.validate` already enforces their discriminant
-fields:
+The worker applies these drift rules
+(`zicato.synthetic.expectations.evaluate_required_drift` and
+`evaluate_no_drift`) to the closed event log of every run of these kinds.
+An entry may also declare an `expectation` (§3). The worker conjoins the
+two verdicts: the entry passes only when the drift rule and the
+expectation both pass, and the recorded `expectation_result.detail`
+names each verdict. A failed drift rule records a score of `0.0`; when
+the drift rule passes, the expectation's score and metrics are recorded
+unchanged. Both kinds otherwise use the common envelope (§1), including
+`judges`.
 
-- `synthetic_adversarial` (unimplemented in the runner) — a known-bad
-  system under test wired in, where the contract is "the steerer fires the
-  right drift in time". The entry carries an `adversarial_agent_spec`
-  (dotted path to the known-bad agent) and a non-empty
-  `required_drift_kinds` list. Pass = the required drift detected;
-  fail = drift missed.
-- `synthetic_clean` (unimplemented in the runner) — a known-good system
-  under test wired in, where the contract is "no spurious drift fires".
-  Pass = no false-positive drift; fail = drift fired when none was
-  warranted.
-
-Both kinds use the same envelope (id, wall-clock budget, weight, tags,
-`expectation`, `judges`, context) plus their per-kind discriminant
-fields above.
-
-The forward-compat property holds because:
-
-- The reserved tokens are already in the `BoardEntryKind` `Literal`
-  and validated by `BoardEntry.validate`, so adding them to the
-  runtime is not a schema break.
-- The expectation kinds (`predicate`, `rubric`, …) can express
-  arbitrary matching logic, so a new entry kind does not need a new
-  expectation kind.
-- The single flat `RunResult` carries both `final_output` and the full
-  `transcript`, so the loss reducer can map any kind to a
-  `LossProfile` from one shape.
-
-When the reserved kinds are brought online, this document grows a
-§2.4 / §2.5; the schema does not break.
+The contract hash of a board that contains a synthetic entry includes the
+synthetic grading revision (`SYNTHETIC_GRADING_REVISION` in
+`zicato/synthetic/expectations.py`). A change to these grading rules bumps
+that revision, which rolls the epoch of every such board, so cached results
+graded under earlier rules are not reused. A board without synthetic entries
+keeps its contract hash.
 
 ## 8. Validation
 
@@ -754,4 +745,4 @@ produce a board this shape.
 | How `weight`, the `expectation`, and `judges` enter the score | [SCORING.md](SCORING.md) |
 | Emulator collusion-proofing for multi-turn emulated | [EMULATOR.md](EMULATOR.md) |
 | Why editing entries mid-epoch rolls the epoch | [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) |
-| The goldfive-steering dogfood target the reserved entry kinds serve | [DOGFOOD-TARGETS.md](DOGFOOD-TARGETS.md) |
+| The goldfive-steering dogfood target the synthetic entry kinds serve | [DOGFOOD-TARGETS.md](DOGFOOD-TARGETS.md) |
