@@ -130,6 +130,27 @@ def test_deep_probe_finds_a_snapshot_into_named_subdir_layout(tmp_path: Path) ->
     assert ids == {"refine_prompt", "refine_threshold"}
 
 
+def test_the_package_directory_itself_resolves_sources_against_its_parent(
+    tmp_path: Path,
+) -> None:
+    """A registered ``goldfive`` package directory is a root in its own right.
+
+    ``epoch register --mutable-tree <checkout>/goldfive`` registers the
+    package, and a generation snapshot holds it as ``<snapshot>/goldfive``,
+    which is the root the loop, the setup check, and ``inspect mutations``
+    all enumerate. The manifest sits at ``<root>/optimization/manifest.toml``
+    there, while its ``source`` fields keep the ``goldfive/`` prefix, so they
+    resolve against the directory that contains the package.
+    """
+
+    gf = _goldfive_tree(tmp_path / "snapshot")
+    points = {p.id: p for p in enumerate_mutations([gf])}
+    assert set(points) == {"refine_prompt", "refine_threshold"}
+    assert points["refine_prompt"].file == gf / "optimization" / "prompts" / "refine.md"
+    assert points["refine_threshold"].file == gf / "steering.py"
+    assert points["refine_prompt"].source_root == gf.parent
+
+
 # --------------------------------------------------------------------------
 # Point construction
 # --------------------------------------------------------------------------

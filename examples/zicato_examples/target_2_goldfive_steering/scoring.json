@@ -15,5 +15,6 @@
     "schema:": 5.0
   },
   "promote_margin": 0.02,
-  "pass_rate_monotonicity": true
+  "pass_rate_monotonicity": true,
+  "goldfive": {}
 }

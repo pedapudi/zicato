@@ -9,33 +9,43 @@ edits to it sparse and decisive — diff churn in the rubric is itself a
 signal that the operator is uncertain about what the proposer should
 do, and an uncertain proposer is a noisy proposer.
 
-## Preferred edits (focus the proposer here)
+## Preferred edits
 
-The proposer should prefer mutation points whose ids fall under one of:
+The proposer should prefer these mutation points:
 
-- `refine_steer_prompt` — the prompt template the steerer hands to the
-  planner when it requests a refine. Wording changes here cascade into
-  every drift-triggered replan.
-- `reasoning_judge_prompt` — the iter-10 reasoning-judge classifier
-  prompt. Three-state output (on_topic / off_topic / justified_deviation);
-  small rephrasings move false-positive and false-negative rates.
-- `goal_drift_judge_prompt` — the trajectory-level goal-alignment judge
-  prompt. Fires after a configurable number of agent invocations.
-- `reasoning_judge_threshold_warning`,
-  `reasoning_judge_threshold_critical` — numeric thresholds on the
-  reasoning-judge's confidence score that gate WARNING vs CRITICAL
-  classification. Tighten on false-positive regression, loosen on
-  false-negative regression.
+- `refine_system_prompt` — the system prompt the planner receives when
+  the steerer requests a refine. Wording changes here reach every
+  drift-triggered replan.
+- `reasoning_judge_system_prompt` — the system prompt of the
+  reasoning-drift judge, which classifies each reasoning block as on
+  topic, off topic, or a justified deviation. Small rephrasings move its
+  false-positive and false-negative rates.
+- `goal_drift_system_prompt` — the system prompt of the trajectory-level
+  goal-alignment judge, which runs after a configurable number of agent
+  invocations.
+- `off_topic_distance_threshold` — the embedding distance above which
+  a reasoning block is flagged off topic.
+- `looping_reasoning_similarity_threshold` — the embedding similarity
+  above which a reasoning block is flagged as looping.
+
+Tighten a threshold on false-positive regression and loosen it on
+false-negative regression.
 
 ## Forbidden edits
 
 The proposer MUST NOT touch:
 
-- Any mutation id under `intervention_ladder/*`. The ladder's structural
-  shape (refine -> escalate -> human-pause) is fixed for this epoch.
-  The right way to change the ladder's effect is to change the INPUTS
-  to it (judge prompts, thresholds) — i.e. the preferred-edits surface
-  above — not the ladder's own routing logic.
+- `refine_failure_threshold` — consecutive refine failures before the
+  steerer stops refining.
+- `parallel_executor_refine_failure_threshold` — the same limit for the
+  parallel executor.
+- `planner_default_max_refine_attempts` — the planner's refine retry
+  budget.
+
+These budgets decide when the steerer stops refining and escalates, and
+that escalation path is fixed for this epoch. Change its effect through
+its inputs: the judge prompts and thresholds listed under preferred
+edits.
 
 If a proposer round emits a patch against a forbidden id, the
 generation is rejected without running.

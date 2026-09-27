@@ -13,10 +13,9 @@ clean negative-control agents (CleanAgent), and a tiny ADK
   :data:`zicato_examples.target_2_goldfive_steering.agent_under_test.agent`
   also calls it via the ADK plugin layer.
 
-* :data:`aux_llm` — used by zicato's evaluation path (the proposer,
-  pattern-summary judge, emulator). The proposer call is what
-  produces the structured ``{hypothesis, patches}`` payload that
-  drives a round.
+* :data:`aux_llm` — used by zicato's evaluation path (judges, the user
+  emulator, the closing analysis). Proposals come from the proposal
+  runtime, never from this callable.
 
 Both are async ``(system, user, model) -> str`` shaped — the contract
 fixed by :data:`zicato.core.types.CallLLM`. Both are deterministic;
@@ -178,115 +177,8 @@ async def target_llm(system: str, user: str, model: str, **_kwargs: Any) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Evaluation LLM (proposer / judge / emulator / analysis)
+# Evaluation LLM (judge / emulator / analysis)
 # ---------------------------------------------------------------------------
-
-
-# Preferred goldfive mutation ids the proposer rotates through across
-# rounds. Each is a real id declared in
-# ``goldfive/optimization/manifest.toml``; the bridge in
-# :mod:`zicato.synthetic.manifest_bridge` exposes them as
-# :class:`MutationPoint` records so the proposer's hypothesis + patches
-# land cleanly. Two prompt mutations are listed so the round-rotation
-# produces distinguishable v1 + v2 patches without resorting to
-# numeric ops (which the smoke applier does not wire end-to-end against
-# manifest-bridged points yet).
-_PROPOSER_TARGETS: tuple[tuple[str, str, str, str], ...] = (
-    (
-        "refine_system_prompt",
-        "Tighten the refine system prompt to push the planner toward "
-        "single-task continuations on adversarial entries.",
-        "refine_validation_failed",
-        "decrease_or_neutral",
-    ),
-    (
-        "reasoning_judge_system_prompt",
-        "Sharpen the reasoning-judge system prompt so the off-topic / "
-        "justified-deviation boundary moves toward higher recall.",
-        "off_topic",
-        "increase_or_neutral",
-    ),
-)
-
-
-# Canned replacement bodies. Real-world these would be thoughtful
-# rewrites; for the smoke test they are short variants that still parse
-# as system prompts and are distinguishable from the baseline.
-_REFINE_NEW_CONTENT = (
-    "You are a task-planning assistant maintaining an ACTIVE plan for a "
-    "multi-agent system. Keep refinements minimal: prefer a single-task "
-    "continuation when the drift event is recoverable. Emit the same "
-    "JSON plan shape the upstream prompt declared (tasks array with id "
-    "/ title / description / agent / depends_on)."
-)
-
-_REASONING_JUDGE_NEW_CONTENT = (
-    "You are assessing whether an autonomous agent's chain-of-thought "
-    "is still aligned with the bound task. Return one of {on_topic, "
-    "off_topic, justified_deviation} with a confidence in [0, 1]. "
-    "Default to on_topic when the reasoning continues to reference the "
-    "task title or its sub-goals; flip to off_topic only when the "
-    "reasoning explicitly proposes switching tasks."
-)
-
-
-# Track call count so we can rotate targets across rounds without
-# threading state through the orchestrator. Module-level state is fine
-# here — the mocks are intentionally not re-entrant; tests construct a
-# fresh process per smoke run.
-_PROPOSER_CALL_INDEX = 0
-
-
-def _build_experiment_json(round_index: int) -> str:
-    """Build a structured proposer response targeting goldfive mutation ids.
-
-    The hypothesis JSON shape matches
-    :data:`zicato.proposer.structured.EXPERIMENT_JSON_SCHEMA`. The
-    ``mutation_id`` always names a real entry from goldfive's
-    optimization manifest so the orchestrator's cross-check against the
-    live mutation manifest (`orchestrator.evolve_once` step 7) passes.
-    """
-
-    target_id, core_idea, drift_kind, direction = _PROPOSER_TARGETS[
-        round_index % len(_PROPOSER_TARGETS)
-    ]
-    new_content = (
-        _REFINE_NEW_CONTENT if target_id == "refine_system_prompt" else _REASONING_JUDGE_NEW_CONTENT
-    )
-    payload: dict[str, Any] = {
-        "hypothesis": {
-            "core_idea": core_idea,
-            "modulating": [target_id],
-            ("why"): (
-                "Round-rotation smoke proposer: targeting "
-                f"{target_id}"
-                " so the applier exercises a manifest-bridged prompt rewrite "
-                "end-to-end. Real proposer rounds will read pattern detector "
-                "output and choose a substantive edit."
-            ),
-            "expected_metric_movements": [
-                {"metric_name": "drift:" + drift_kind, "direction": direction, "magnitude": "small"}
-            ],
-            "expected_pass_rate_delta": "+0.00 to +0.05",
-            ("risks"): (
-                "Mock-driven; a real round may regress recall on the "
-                "adversarial board if the rewrite weakens the steerer."
-            ),
-        },
-        "patches": [
-            {
-                "mutation_id": target_id,
-                "op": "replace",
-                "new_content": new_content,
-                ("rationale"): (
-                    "Smoke-test rewrite. Body is bland on purpose — the applier's "
-                    "job here is to land the diff, not to produce a substantively "
-                    "better prompt."
-                ),
-            }
-        ],
-    }
-    return json.dumps(payload)
 
 
 def _build_emulator_json() -> str:
@@ -307,17 +199,14 @@ def _build_emulator_json() -> str:
 
 
 async def aux_llm(system: str, user: str, model: str, **_kwargs: Any) -> str:
-    """Evaluation-LLM mock — proposer first, emulator second, fallback last.
+    """Evaluation-LLM mock — emulator first, judge second, fallback last.
 
     Three dispatch branches:
 
-    * Proposer calls — identified by the structured-proposer system
-      prompt's "hypothesis" / "patches" fingerprints. Returns a
-      schema-valid ``{hypothesis, patches}`` payload with a real
-      goldfive mutation id.
     * Emulator calls — identified by "next_user_message" /
       "should_stop" hints. Returns a one-shot terminating envelope.
-    * Analysis / judge / fallback — short JSON-ish placeholder.
+    * JSON judge calls — a passing ``{"pass": true}`` verdict.
+    * Analysis / fallback — short JSON-ish placeholder.
       Analysis-pass consumers treat the response as commentary, so a
       stable placeholder is enough to keep the evaluation path moving.
 
@@ -325,16 +214,10 @@ async def aux_llm(system: str, user: str, model: str, **_kwargs: Any) -> str:
     compatible kwargs.
     """
 
-    global _PROPOSER_CALL_INDEX
     _ = model, _kwargs
 
     sys_lower = system.lower()
     user_lower = user.lower()
-
-    if "hypothesis" in sys_lower and "patches" in sys_lower:
-        payload = _build_experiment_json(_PROPOSER_CALL_INDEX)
-        _PROPOSER_CALL_INDEX += 1
-        return payload
 
     if "next_user_message" in user_lower or "should_stop" in user_lower:
         return _build_emulator_json()

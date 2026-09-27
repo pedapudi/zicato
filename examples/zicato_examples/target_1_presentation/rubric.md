@@ -26,8 +26,7 @@ agent tree in `agent/`. Specifically:
 The proposer should prefer to touch these mutation points first:
 
 - `researcher_instruction` — research_agent's system prompt
-- `writer_instruction` (alias: `web_developer_instruction`) — the
-  presentation-builder's system prompt
+- `web_developer_instruction` — the presentation builder's system prompt
 - `coordinator_instruction` — coordinator routing logic and stage flow
 
 These three are where the bulk of the routing and content-quality

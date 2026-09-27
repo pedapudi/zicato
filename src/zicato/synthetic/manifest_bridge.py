@@ -73,6 +73,11 @@ def _find_manifest_with_root(source_root: Path) -> tuple[Path, Path] | None:
     layout would then resolve to a non-existent path
     and every entry was dropped. That shape enumerated zero points, so
     correcting it can only add points, never move an existing one.
+
+    The ``goldfive`` package directory itself (a registered mutable tree,
+    or ``<snapshot>/goldfive``) matches the unprefixed candidate while its
+    ``source`` fields keep the ``goldfive/`` prefix, so its effective root
+    is its parent.
     """
 
     root = Path(source_root).resolve()
@@ -82,6 +87,8 @@ def _find_manifest_with_root(source_root: Path) -> tuple[Path, Path] | None:
         for rel in _MANIFEST_CANDIDATES:
             candidate = base / rel
             if candidate.is_file():
+                if rel != _MANIFEST_CANDIDATES[0] and base.name == "goldfive":
+                    return candidate, base.parent
                 return candidate, base
     return None
 

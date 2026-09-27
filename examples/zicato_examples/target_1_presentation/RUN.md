@@ -64,7 +64,11 @@ agreement and `evolve` finds the contract whichever way you reach it.
 
 The board, brief and scoring files referenced below live next to this
 file, under `examples/zicato_examples/target_1_presentation/` in a
-checkout.
+checkout. The ADK adapter runs the agent tree under Goldfive, and the
+workspace check refuses a contract for that adapter whose scoring has no
+`goldfive` object (`goldfive_config_missing`). Every scoring file here
+carries an empty one, which selects Goldfive's fixed defaults
+([`docs/design/GOLDFIVE-CONFIG.md`](../../../docs/design/GOLDFIVE-CONFIG.md)).
 
 ```bash
 # Pick a scratch workspace anywhere off the repo.
@@ -107,36 +111,29 @@ cfg["proposer"] = stand_in_proposer_block(pathlib.Path("foe").resolve())
 cfg_path.write_text(json.dumps(cfg, indent=2) + "\n")
 PYEOF
 
-# 2c. The ADK adapter runs under Goldfive, and a Goldfive-enabled
-#     contract must carry a `goldfive` object in scoring.json; an empty
-#     one selects the fixed defaults (docs/design/GOLDFIVE-CONFIG.md).
-#     Take a copy of the example scoring with that object present.
-$PY - "$EX/scoring.json" ./scoring.t1.json <<'PYEOF'
-import json, sys
-scoring = json.load(open(sys.argv[1]))
-scoring.setdefault("goldfive", {})
-json.dump(scoring, open(sys.argv[2], "w"), indent=2)
-PYEOF
-
-# 3. Open an epoch from the example's board / brief and that scoring.
+# 3. Open an epoch from the example's board, brief and scoring.
 #    epoch new freezes a per-epoch copy AND publishes these files as the
 #    live contract (here: /tmp/zicato-smoke-t1/board.jsonl, brief.md,
-#    scoring.json) so the evolve in step 5 resolves the same contract.
+#    scoring.json) so the evolve in step 6 resolves the same contract.
 $PY -m zicato.cli epoch new t1_smoke --workspace .zicato \
     --board   $EX/board.jsonl \
     --brief   $EX/rubric.md \
-    --scoring ./scoring.t1.json
+    --scoring $EX/scoring.json
 
-# 4. Inspect the mutation surface the proposer will see (15 ids).
+# 4. Check the workspace without calling a model: the same checks that
+#    gate evolve, including the adapter load in a subprocess.
+$PY -m zicato.cli inspect setup --workspace .zicato
+
+# 5. Inspect the mutation surface the proposer will see (15 ids).
 $PY -m zicato.cli inspect mutations --workspace .zicato
 
-# 5. Run two evolve rounds (live: the agent tree calls its model).
+# 6. Run two evolve rounds (live: the agent tree calls its model).
 #    evolve resolves the contract published in step 3, so it continues
 #    the t1_smoke epoch rather than rolling a new one.
 $PY -m zicato.cli evolve --workspace .zicato \
     --rounds 2 --mode full
 
-# 6. Close the epoch to produce analysis.md and analysis.html.
+# 7. Close the epoch to produce analysis.md and analysis.html.
 $PY -m zicato.cli epoch close --workspace .zicato
 ```
 
@@ -155,11 +152,11 @@ files at the canonical location yourself and let `evolve` open the
 first epoch:
 
 ```bash
-# After steps 1-2c above, with the contract files written next to the
+# After steps 1-2b above, with the contract files written next to the
 # workspace ($EX as defined earlier):
-cp $EX/board.jsonl    ./board.jsonl
-cp $EX/rubric.md      ./brief.md
-cp ./scoring.t1.json  ./scoring.json
+cp $EX/board.jsonl   ./board.jsonl
+cp $EX/rubric.md     ./brief.md
+cp $EX/scoring.json  ./scoring.json
 
 # evolve sees no current epoch, resolves the contract from the three
 # files above, and auto-opens a date-named epoch (for example
@@ -243,14 +240,13 @@ Identical to the gauntlet recipe above, but resolve the contract from
 
 ```bash
 # Steps 1-2b (init, register, models + proposer) are identical to the
-# gauntlet recipe. In step 2c, copy $EX/scoring.racing.json instead of
-# $EX/scoring.json into ./scoring.t1.json.
+# gauntlet recipe.
 
 # Open the epoch from the RACING scoring contract.
 $PY -m zicato.cli epoch new t1_racing --workspace .zicato \
     --board   $EX/board.jsonl \
     --brief   $EX/rubric.md \
-    --scoring ./scoring.t1.json
+    --scoring $EX/scoring.racing.json
 
 # Evolve. The frozen contract carries structure=racing, so each round
 # proposes a 4-challenger field and runs the rung ladder.
@@ -341,7 +337,7 @@ which is expected for an example.
 
 ## Where the artifacts live
 
-After step 6 the scratch directory holds the live contract next to the
+After step 7 the scratch directory holds the live contract next to the
 workspace, and the workspace holds one directory per epoch:
 
 ```

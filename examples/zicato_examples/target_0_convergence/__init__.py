@@ -11,9 +11,10 @@ scalar is computable by hand. The target is scripted at every seam:
   reads the policy from its own generation snapshot and synthesises
   output + goldfive drift frames purely from the remaining tokens.
 * ``predicates.py`` — one defensive pass/fail predicate per board entry.
-* ``mocks.py`` — the scripted proposer (``aux_llm``) whose per-round
-  patches drive the loop to a known floor, plus the never-invoked
-  ``target_llm`` placeholder.
+* ``mocks.py`` — the per-candidate policies (``GAUNTLET_POLICIES``,
+  ``RACING_POLICIES``) that the scripted proposal runtime writes to drive
+  the loop to a known floor, the evaluation callable ``aux_llm``, and the
+  never-invoked ``target_llm`` placeholder.
 * ``board.jsonl`` / ``scoring.json`` / ``scoring.effective.json`` — the
   frozen contract, with the ``runtime:`` coefficient at 0 so the floor is an exact
   float.

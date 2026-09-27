@@ -52,7 +52,10 @@ racing, the default. `scoring.racing.json` selects the **racing**
 (successive-halving) structure — a four-challenger field that the
 strategy races on escalating board slices before the survivor faces the
 champion through the unchanged promote gate. The three remaining files
-select the experimental elimination and Swiss structures.
+select the experimental elimination and Swiss structures. Every scoring
+file also carries an empty `goldfive` object: the ADK adapter runs the
+agent tree under Goldfive and requires one, and an empty object selects
+Goldfive's fixed defaults.
 
 **The contract separates a challenger from its champion.** Every scoring
 file carries `per_judge_weights` for the declared judges

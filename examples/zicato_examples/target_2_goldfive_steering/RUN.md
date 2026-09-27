@@ -108,52 +108,34 @@ the `.md` body under `goldfive/optimization/prompts/`; threshold
 mutations point at the `.py` files the manifest's `source` field names.
 
 The manifest's `source` fields are relative to the directory that
-*contains* the `goldfive` package. The orchestrator enumerates a
-generation's snapshot root, which holds the tree under its basename
-(`goldfive/`), so every entry resolves there. `inspect mutations`
-enumerates the registered package directory itself, where those paths
-do not resolve, so it reports no mutation points for this target:
+*contains* the `goldfive` package. When the enumerated root is the
+package directory itself — the registered tree, or its copy
+`<snapshot>/goldfive` in a generation snapshot — the bridge resolves
+those fields against the root's parent. `inspect mutations` therefore
+lists the same manifest-derived points the loop proposes against (61 at
+the pinned goldfive revision):
 
 ```
 python -m zicato.cli inspect mutations --workspace .zicato
-```
-
-To list the manifest-derived points, call the bridge on the directory
-that contains the package:
-
-```
-python -c "
-import pathlib, goldfive
-from zicato.synthetic.manifest_bridge import enumerate_manifest_points
-root = pathlib.Path(goldfive.__file__).resolve().parents[1]
-print(len(enumerate_manifest_points([root])))
-"
 ```
 
 ## 3. Create the epoch
 
 The board, brief and scoring files live next to this file, under
 `examples/zicato_examples/target_2_goldfive_steering/` in a checkout.
-The ADK adapter runs under Goldfive, and `evolve` refuses a
-Goldfive-enabled contract whose `scoring.json` has no `goldfive` object
-(`goldfive_config_missing`). The example's `scoring.json` has none, so
-the epoch opens from a copy that adds an empty one, which selects the
-fixed defaults
+The ADK adapter runs under Goldfive, and `evolve` refuses a contract for
+that adapter whose `scoring.json` has no `goldfive` object
+(`goldfive_config_missing`). The example's `scoring.json` carries an
+empty one, which selects the fixed defaults
 ([`docs/design/GOLDFIVE-CONFIG.md`](../../../docs/design/GOLDFIVE-CONFIG.md)):
 
 ```
 ZICATO=${ZICATO:?set ZICATO to your zicato checkout}
 EX=$ZICATO/examples/zicato_examples/target_2_goldfive_steering
-python - "$EX/scoring.json" ./scoring.t2.json <<'PYEOF'
-import json, sys
-scoring = json.load(open(sys.argv[1]))
-scoring.setdefault("goldfive", {})
-json.dump(scoring, open(sys.argv[2], "w"), indent=2)
-PYEOF
 python -m zicato.cli epoch new t2_smoke --workspace .zicato \
     --board   $EX/board.jsonl \
     --brief   $EX/rubric.md \
-    --scoring ./scoring.t2.json
+    --scoring $EX/scoring.json
 ```
 
 The board ships 10 entries:
@@ -167,9 +149,13 @@ The board ships 10 entries:
   steerer must not degrade a well-behaved workload.
 
 The proposer brief's preferred-edits section steers the proposer at
-goldfive's refine prompt, its reasoning-judge and goal-drift judge
-prompts, and the reasoning-judge threshold knobs. The forbidden-edits
-section blocks anything under `intervention_ladder/*`.
+goldfive's refine prompt (`refine_system_prompt`), its reasoning-drift
+and goal-drift judge prompts (`reasoning_judge_system_prompt`,
+`goal_drift_system_prompt`), and the off-topic and looping-reasoning
+thresholds. The forbidden-edits section blocks the refine retry budgets
+that decide when the steerer escalates (`refine_failure_threshold`,
+`parallel_executor_refine_failure_threshold`,
+`planner_default_max_refine_attempts`).
 
 `scoring.json` weighs **pass rate far above drift count**, because the
 loss on this target is pass/fail correctness against synthetic ground
@@ -207,6 +193,9 @@ cfg["models"] = {
 cfg["proposer"] = stand_in_proposer_block(pathlib.Path("foe").resolve())
 cfg_path.write_text(json.dumps(cfg, indent=2) + "\n")
 PYEOF
+
+# The checks that gate evolve, with no model call and no board entry.
+python -m zicato.cli inspect setup --workspace .zicato
 
 python -m zicato.cli evolve --workspace .zicato \
     --rounds 2 \
