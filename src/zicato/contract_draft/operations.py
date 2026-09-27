@@ -25,7 +25,7 @@ from zicato.core.types import (
     TournamentStructure,
 )
 from zicato.selection.experimental.swiss import SwissStrategy
-from zicato.selection.registry import make_strategy
+from zicato.selection.registry import make_strategy, strategy_class_for
 from zicato.selection.strategies.racing import RacingStrategy
 
 if TYPE_CHECKING:
@@ -204,7 +204,13 @@ def _replace_scoring(draft: TournamentDraft, **changes: Any) -> ScoringWeights:
 
 @authored_edit
 def set_structure(draft: TournamentDraft, structure: str) -> DraftPatch:
-    """Set the tournament structure, preserving the existing params.
+    """Set the tournament structure, keeping the params it accepts.
+
+    The new structure's strategy class declares the accepted names in
+    ``parameter_names``. The draft keeps each existing param in that set
+    and drops the others, and the patch records each dropped param as
+    set to ``None``. A later :func:`set_param` can still add a param the
+    structure refuses; strategy construction reports it.
 
     Raises :class:`ValueError` on an invalid structure token (the
     :class:`TournamentStructure` constructor validates and lists the
@@ -213,11 +219,17 @@ def set_structure(draft: TournamentDraft, structure: str) -> DraftPatch:
     :class:`ScoringWeights` constructor refuses it, naming the flag).
     """
     old = draft.scoring.tournament_structure
-    new_ts = TournamentStructure(structure=structure, params=dict(old.params))
+    strategy = strategy_class_for(structure)
+    accepted = strategy.parameter_names if strategy is not None else frozenset()
+    params = {key: value for key, value in old.params.items() if key in accepted}
+    new_ts = TournamentStructure(structure=structure, params=params)
     draft.scoring = _replace_scoring(draft, tournament_structure=new_ts)
+    dropped = {
+        key: {"from": value, "to": None} for key, value in old.params.items() if key not in params
+    }
     return DraftPatch(
         op="set_structure",
-        changed={"structure": {"from": old.structure, "to": structure}},
+        changed={"structure": {"from": old.structure, "to": structure}, **dropped},
     )
 
 

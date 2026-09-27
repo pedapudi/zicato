@@ -367,6 +367,46 @@ def test_tournament_edit_preserves_partial_scoring_and_unrelated_parameters(
     assert json.loads(scoring.read_text()) == expected
 
 
+def test_switching_racing_to_gauntlet_keeps_only_the_params_gauntlet_accepts(
+    workspace: Path,
+) -> None:
+    from zicato.cli.commands.evolve import _tournament_draft
+
+    scoring = workspace.parent / "scoring.json"
+    racing_params = {
+        "field_size": 4,
+        "eta": 2,
+        "board_fraction": 0.25,
+        "replicates": 1,
+        "promote_confidence_threshold": 0.9,
+        "promote_confidence_replicates": 3,
+    }
+    scoring.write_text(json.dumps({"tournament": {"structure": "racing", "params": racing_params}}))
+    draft = _tournament_draft(workspace, "gauntlet", ("replicates=2",))
+    assert ops.candidate_scoring(draft)["tournament"] == {
+        "structure": "gauntlet",
+        "params": {
+            "replicates": 2,
+            "promote_confidence_threshold": 0.9,
+            "promote_confidence_replicates": 3,
+        },
+    }
+
+
+def test_switching_structure_still_refuses_an_explicit_unsupported_param(
+    workspace: Path,
+) -> None:
+    import click
+
+    from zicato.cli.commands.evolve import _tournament_draft
+
+    scoring = workspace.parent / "scoring.json"
+    scoring.write_text(json.dumps({"tournament": {"structure": "racing", "params": {"eta": 2}}}))
+    refusal = "gauntlet has unsupported tournament parameters: eta"
+    with pytest.raises(click.ClickException, match=refusal):
+        _tournament_draft(workspace, "gauntlet", ("eta=3",))
+
+
 def test_to_dict_is_json_serializable(workspace: Path) -> None:
     draft = TournamentDraft.from_workspace(workspace)
     snapshot = draft.to_dict()
