@@ -93,9 +93,10 @@ single/double-elim and swiss keep W/L. The in-contention status word is also
 structure-correct: elim → "in bracket", swiss → "playing", racing → "racing";
 the terminal verdicts (champion / eliminated) read identically everywhere.
 
-**Shared mark grammar (everywhere):** `↑` survives / lane continues · `✕` cut /
-lane terminates · `○` pending (racing, undecided) · `♛` **current** champion ·
-`♔` **former** champion (displaced incumbent) · a reference rule at Δ=0 where
+**Shared mark grammar (everywhere, each a drawn icon):** an up arrow survives /
+lane continues · a cross cut / lane terminates · an open ring pending (racing,
+undecided) · a solid crown **current** champion · an open crown **former**
+champion (displaced incumbent) · a reference rule at Δ=0 where
 **below = lower loss = good, above = higher loss = bad**. Hover any mark for a
 themed hovercard with the exact numbers.
 
@@ -104,14 +105,14 @@ themed hovercard with the exact numbers.
 Generations group under their **birth round**:
 `Environment > Epoch > Generations > Round 0 / Round 1 / … > {generations}`. A
 champion is a **full node in its birth round** and a dimmed **carried
-reference** ("↑ … defends") under each later round it defends — labeled
+reference** (an up arrow, "… defends") under each later round it defends — labeled
 **defends · cached** (fast eval, the cached result that round reused) vs
 **defends · re-run** (full eval, a fresh re-run that round). The round node
-header itself reads the gate outcome (e.g. `v3 defends · ▲ v6 promoted` or
+header itself reads the gate outcome (e.g. `v3 defends ·` up arrow `v6 promoted` or
 `v3 defends · — held`). This round layer shows ONLY when there is real round
 structure (`>1` round, or a `round_index` stamp on the generations); **without
 `round_index` it degrades to a flat generation list.** A generation with
-no parent and no resolved outcome is badged `◌ unscored` (an orphan), never a
+no parent and no resolved outcome is badged with a dashed ring and `unscored` (an orphan), never a
 misleading "seed" or a default "rejected".
 
 ## 5. Liveness — what "live" means, and the no-flash rule
@@ -146,7 +147,7 @@ misleading "seed" or a default "rejected".
   trajectory** should **descend** (lower scalar = better). A flat champion spine
   is the *stalled loop* signal.
 - **Which round promoted?** Read the round-timeline gate outcomes / the left-nav
-  round headers (`▲ v6 promoted` vs `— held`).
+  round headers (up arrow + `v6 promoted` vs `— held`).
 - **Was the champion cached or re-run that round?** The carried-reference tag in
   the left nav: `defends · cached` (fast mode reused the prior eval) vs
   `defends · re-run` (full mode re-ran it that round).

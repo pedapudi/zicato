@@ -55,10 +55,11 @@ on a wide pane, scaling every glyph and label ~3× with it. Never a `max-height`
   light theme, which is the failure the geometry assertions in
   `traces.test.mjs` pin against.
 - **The signal row** (~24 px) — the trace's adverse signals as **house
-  caution/bad tone ticks**: an error cascade / abort pattern is a `--v2-bad`
-  `✕` tick, a retry loop is a `--v2-caution` `↻` tick, a budget blowout is a
-  `--v2-caution` `⏱` tick (the budget-exceeded glyph, design-language §2.2), a
-  transfer churn is a neutral `--v2-ink-soft` `⇄` tick. **Honesty (load-bearing):
+  caution/bad tone ticks**, each a drawn icon chosen by signal kind
+  (`svg.signalIcon`): an error cascade / abort pattern is a `--v2-bad` fail
+  tick, a retry loop is a `--v2-caution` refresh tick, a budget blowout is a
+  `--v2-caution` timeout tick (the budget-exceeded mark, design-language
+  §2.2), a transfer churn is a neutral `--v2-ink-soft` swap tick. **Honesty (load-bearing):
   the reduced `DialectSignals` carries aggregate counts rather than
   per-event positions** (TELEMETRY-DIALECTS.md — the reducer folds a trace to
   counts).
@@ -76,10 +77,10 @@ on a wide pane, scaling every glyph and label ~3× with it. Never a `max-height`
   ground and flags `over: true`, so the cost budget is read as an area rather
   than a number.
 - **The episode overlay** (~24 px) — each mined episode is a **bracketed span**
-  drawn over the strip with its kind glyph: a **signal** episode anchors to its
+  drawn over the strip with its kind's icon: a **signal** episode anchors to its
   matching signal tick (`anchor: "signal"`); the **behavioral** episode (a
   clean conversation) brackets the whole lane (`anchor: "lane"`, `x0:0 → x1:1`).
-  The bracket carries the episode's tone + glyph. The detail view lists each
+  The bracket carries the episode's tone + icon. The detail view lists each
   episode beside the ids of the suggestions drafted from it, and **clicking an
   episode focuses it on the strip and in the conversation** — the provenance
   chain (trace region → episode → suggestion) made visible. This is the whole
@@ -99,7 +100,7 @@ clipped at the viewBox edge:
 | the word-sized mark-on-a-baseline lane | the `sparkbar` staircase convention |
 | a per-point trend, where a strip degrades to a scalar sparkline | `sparkline` (its `markers` / `minSpan` flags for a few-mark trace) |
 | fit-to-width, no pan/zoom | the `applyResponsive` / `viewBox` contract (design-language §4.2) |
-| the crown / status glyphs, defined ONCE | `CROWN` and the shared `↑ ✕ ○ ⏱` mark table (design-language §4.2) |
+| the crown / status marks, defined ONCE | `CROWN` and the shared up / fail / ring / timeout icons of `js/icons.js` (design-language §4.2) |
 | the transient hovercard for a mark's detail | `hov(node, tip)` → `hovercard.js` (design-language §4.3) — outside the digest-gated render |
 | the stable figure-opts digest for gating | `digestOpts` (`trajectoryStripDigest` folds the strip model through it) |
 
@@ -366,16 +367,21 @@ byte-stable). It is the one place the render math lives. The shape is the
   `suggestions_by_episode`). `focus_episode_id` is `None` here; the provenance
   reader sets it when emitting a mini-strip.
 
-### 3.5 The signal → tone/glyph table (one source, no new colour vocabulary)
+### 3.5 The signal → tone/icon table (one source, no new colour vocabulary)
 
-| signal_kind | tone (→ token) | glyph |
-| --- | --- | --- |
-| `error_cascade` | `bad` (`--v2-bad`) | `✕` |
-| `abort_pattern` | `bad` (`--v2-bad`) | `✕` |
-| `retry_loop` | `caution` (`--v2-caution`) | `↻` |
-| `budget_blowout` | `caution` (`--v2-caution`) | `⏱` |
-| `transfer_churn` | `neutral` (`--v2-ink-soft`) | `⇄` |
-| `behavioral` | `neutral` (`--v2-ink-soft`) | `○` |
+The server's strip model carries each kind's tone and a `glyph` character
+(`query/trace_view.py` `_TONE_GLYPH`). The browser console draws the icon
+named below from the kind (`svg.signalIcon`) and does not draw the served
+character.
+
+| signal_kind | tone (→ token) | served glyph | drawn icon |
+| --- | --- | --- | --- |
+| `error_cascade` | `bad` (`--v2-bad`) | `✕` | `fail` |
+| `abort_pattern` | `bad` (`--v2-bad`) | `✕` | `fail` |
+| `retry_loop` | `caution` (`--v2-caution`) | `↻` | `refresh` |
+| `budget_blowout` | `caution` (`--v2-caution`) | `⏱` | `timeout` |
+| `transfer_churn` | `neutral` (`--v2-ink-soft`) | `⇄` | `swap` |
+| `behavioral` | `neutral` (`--v2-ink-soft`) | `○` | `ring` |
 
 The focused episode/suggestion highlight is `--v2-accent` (the one structural
 highlight). Nothing here is a new token; all six + the secondary set are the

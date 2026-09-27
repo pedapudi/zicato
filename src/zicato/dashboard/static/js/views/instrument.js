@@ -38,6 +38,7 @@
 // and gatedSwap-painted (renderView): two identical fetches rebuild ZERO DOM.
 
 import { el } from '../core/dom.js';
+import { icon } from '../icons.js';
 import * as D from '../data.js';
 import { section, empty, chip, dataTable, renderView, stat, isNum, fmt, fmtPercent, fidelityLabel } from '../ui.js';
 
@@ -65,9 +66,9 @@ function rateKey(r) {
 function caption(text) { return el('p', { class: 'dn-faint dn-instr-cap', text: String(text) }); }
 
 // A small tone-coloured status mark — the loop-health findings panel's
-// verdict-led lead, rendered as a glyph rather than a chip box (the de-tagging).
+// verdict-led lead, rendered as a drawn dot rather than a chip box (the de-tagging).
 function toneMark(tone) {
-  return el('span', { class: 'dn-instr-mark dn-instr-t-' + tone, 'aria-hidden': 'true', text: '●' });
+  return el('span', { class: 'dn-instr-mark dn-instr-t-' + tone, 'aria-hidden': 'true' }, [icon('dot')]);
 }
 
 // The adjudication verdict → tone (TP good · FP bad · FN caution · TN/ambiguous

@@ -4,7 +4,7 @@
 //
 // Shared fixtures and helpers live in ./fixtures.mjs.
 
-import { installDom, test, run, assert, assertEqual, assertDeep, makeEvent } from './harness.mjs';
+import { installDom, test, run, assert, assertEqual, assertDeep, makeEvent, iconNames } from './harness.mjs';
 
 installDom();
 
@@ -337,7 +337,8 @@ test('tree: groups generations by round when round_index is present (Round 0 / R
   assert(host.textContent.includes('Round 0') && host.textContent.includes('Round 1'), 'the rounds are labelled');
   // the DEFENDING champion + gate outcome live in the ROUND HEADER (Task 3).
   assert(host.textContent.includes('v0 defends'), 'round 0 header names the defending champion (v0 defends)');
-  assert(host.textContent.includes('▲ v1 promoted'), 'round 0 header shows its gate outcome (▲ v1 promoted)');
+  assert(host.textContent.includes('v1 promoted'), 'round 0 header shows its gate outcome (v1 promoted)');
+  assert(iconNames(host).includes('up'), 'the promoted gate outcome leads with the up mark');
   assert(host.textContent.includes('v1 defends') && host.textContent.includes('held'), 'round 1 header names v1 defends · — held');
   // Each round shows its FULL field: the champion born THIS round is a full
   // node (v0 under round 0), while a champion CARRIED in to defend a later
@@ -416,7 +417,7 @@ test('duelFlow: the field renders as Δ-vs-champion lanes — good below / bad a
   // the Δ=0 champion reference rule + a crowned champion-gate.
   assert(allByClass(node, 'dn-duelflow-ref').length >= 1, 'the Δ=0 champion reference rule is drawn');
   assert(allByClass(node, 'dn-duelflow-gate').length >= 1, 'a crowned champion-gate node is drawn');
-  assert(node.textContent.includes(svg.CROWN.current), 'the gate carries the current crown ♛');
+  assert(iconNames(allByClass(node, 'dn-duelflow-gate')[0]).includes(svg.CROWN.current), 'the gate carries the current crown');
   // one lane per challenger; the improved one good, the regressed one bad.
   const lanes = allByClass(node, 'dn-duelflow-lane');
   assertEqual(lanes.length, 3, 'one lane per challenger');
@@ -424,8 +425,9 @@ test('duelFlow: the field renders as Δ-vs-champion lanes — good below / bad a
   const badDots = allByClass(node, 'dn-duelflow-dot').filter((d) => (d.getAttribute('class') || '').includes('dn-bad'));
   assert(goodDots.length >= 1, 'the improved challenger reads --v2-good (below the rule)');
   assert(badDots.length >= 1, 'the regressed challenger reads --v2-bad (above the rule)');
-  // status glyphs ↑ / ✕ / ○.
-  assert(node.textContent.includes('↑') && node.textContent.includes('✕') && node.textContent.includes('○'), 'status glyphs ↑ promoted / ✕ cut / ○ pending');
+  // status marks: up (promoted) / fail (cut) / ring (pending).
+  const marks = iconNames(node);
+  assert(marks.includes('up') && marks.includes('fail') && marks.includes('ring'), 'status marks up promoted / fail cut / ring pending');
   // the hypothesis lives ON HOVER (the dot is hovercard-wired) rather than in a box.
   const dots = allByClass(node, 'dn-duelflow-dot');
   assert(dots.every((d) => d.getAttribute('data-hovercard') === '1'), 'each lane dot is hovercard-wired');
@@ -441,12 +443,12 @@ test('elimRadial: the winner\'s spoke continues inward (good), the loser\'s ends
   const spokes = allByClass(node, 'dn-elimradial-spoke');
   assertEqual(spokes.length, 4, 'a spoke per competitor (v0..v3)');
   assertEqual(allByClass(node, 'dn-elimradial-ring').length, 3, 'two rounds draw two rings plus the gate ring');
-  // the winner CONTINUES inward (a good segment), the loser TERMINATES (✕).
+  // the winner CONTINUES inward (a good segment), the loser TERMINATES (fail mark).
   assert(allByClass(node, 'dn-elimradial-seg').some((s) => (s.getAttribute('class') || '').includes('dn-good')), 'a winner\'s spoke continues inward (good)');
-  assert(node.textContent.includes('✕'), 'a losing spoke terminates with ✕');
-  // the champion dashes into the crowned seat ♛.
+  assert(iconNames(node).includes('fail'), 'a losing spoke terminates with the fail mark');
+  // the champion dashes into the crowned seat.
   assert(allByClass(node, 'dn-elimradial-gateline').length === 1, 'exactly one spoke (the champion) dashes into the seat');
-  assert(allByClass(node, 'dn-elimradial-seatlab')[0].textContent === svg.CROWN.current, 'the seat reads the current crown ♛');
+  assertEqual(allByClass(node, 'dn-elimradial-seatmark')[0].getAttribute('data-icon'), svg.CROWN.current, 'the seat carries the current crown');
   // each spoke label is hovercard-wired (the outcome + round on hover).
   assert(allByClass(node, 'dn-elimradial-name').every((c) => c.getAttribute('data-hovercard') === '1'), 'each spoke label is hovercard-wired');
 });
@@ -470,7 +472,7 @@ test('waterfall: rounds as downward steps (good by direction), a held round flat
   assert(allByClass(node, 'dn-waterfall-spine').length >= 1, 'the champion spine baseline is drawn (accent)');
   // the running floor is annotated + the winning mutation glyph (crown) per step.
   assert(allByClass(node, 'dn-waterfall-floor').length >= 1, 'the running floor is annotated at each station');
-  assert(node.textContent.includes(svg.CROWN.current), 'the winning-mutation crown marks a promoting step');
+  assert(iconNames(node).includes(svg.CROWN.current), 'the winning-mutation crown marks a promoting step');
   // the step is hovercard-wired (the winning mutation per step on hover).
   const bars = allByClass(node, 'dn-waterfall-bar');
   assert(bars.length >= 2 && bars.every((b) => b.getAttribute('data-hovercard') === '1'), 'each step bar is hovercard-wired (winning mutation on hover)');
@@ -506,8 +508,8 @@ test('reignGantt: one bar per champion across rounds — current accent + ♛, f
   // one bar per champion; current is accent + ♛, former is dim + ♔.
   assert(allByClass(node, 'dn-reigngantt-bar-current').length === 1, 'the current champion bar reads accent');
   assert(allByClass(node, 'dn-reigngantt-bar-former').length === 1, 'the former champion bar reads dim ink');
-  assert(node.textContent.includes(svg.CROWN.current), 'the current champion carries ♛');
-  assert(node.textContent.includes(svg.CROWN.former), 'the former champion carries ♔');
+  assert(iconNames(node).includes(svg.CROWN.current), 'the current champion carries the solid crown');
+  assert(iconNames(node).includes(svg.CROWN.former), 'the former champion carries the open crown');
   // hovercard-wired bars (the tenure on hover).
   const bars = allByClass(node, 'dn-reigngantt-bar');
   assert(bars.length === 2 && bars.every((b) => b.getAttribute('data-hovercard') === '1'), 'each reign bar is hovercard-wired');
@@ -1204,7 +1206,7 @@ test('H7: swissLadder standings — a crowded double-digit rank (crown + ~proj) 
   assertEqual(labs.length, 10, 'a standings row per competitor');
   const worst = labs[9].textContent;
   // the row still shows its decorations…
-  assert(worst.startsWith('10.') && worst.includes(svg.CROWN.current) && worst.includes('~proj'),
+  assert(worst.startsWith('10.') && worst.includes('~proj') && iconNames(labs[9].parentNode).includes(svg.CROWN.current),
     'the 10th row keeps its rank, crown, and ~proj decorations');
   // …but the 9-char id is SHORTENED (truncation ellipsis) so it cannot reach
   // the points value — pre-fix this rendered the whole "cand-1234" and collided.
@@ -1274,8 +1276,8 @@ test('survival funnel (H9): a long cut id is fit to the bracket-rail gutter — 
   // a SHORT cut id (v2) is untouched — the fit only bites over-long ids.
   const shortLbl = cutNames.find((n) => (n.textContent || '').replace(/[^\w]/g, '').indexOf('v2') === 0);
   assert(shortLbl && (shortLbl.textContent || '').indexOf('…') < 0, 'a short cut id (v2) renders in full (no regression to common-data labels)');
-  // the cut still drops a ✕ mark at its rung dot (the dot-gap cut idiom).
-  assert(node.textContent.includes('✕'), 'the cut competitor drops a ✕ mark');
+  // the cut still drops a fail mark at its rung dot (the dot-gap cut idiom).
+  assert(allByClass(node, 'dn-funnel-cut').length >= 1, 'the cut competitor drops a fail mark');
 });
 
 test('waterfall H10: on an improved step the crown ♛ is lifted clear of the floor label (no overprint at the same cx)', () => {
@@ -1293,10 +1295,13 @@ test('waterfall H10: on an improved step the crown ♛ is lifted clear of the fl
   assert(floors.length >= 2, 'each station annotates the running floor');
   // pair crown↔floor by shared cx (the x attribute), then check the vertical gap.
   crowns.forEach((cr) => {
-    const cx = cr.getAttribute('x');
-    const fl = floors.find((f) => f.getAttribute('x') === cx);
+    // the crown is an icon: its column is its centre, and the text baseline it
+    // stands in for sits 0.35 of its size below its centre (svg.figIcon).
+    const size = parseFloat(cr.getAttribute('width'));
+    const cx = String(+(parseFloat(cr.getAttribute('x')) + size / 2).toFixed(1));
+    const fl = floors.find((f) => String(+parseFloat(f.getAttribute('x')).toFixed(1)) === cx);
     assert(fl, 'a floor label shares the crown column');
-    const crY = parseFloat(cr.getAttribute('y'));
+    const crY = parseFloat(cr.getAttribute('y')) + size / 2 + 0.35 * size;
     const flY = parseFloat(fl.getAttribute('y'));
     // the crown is ABOVE the label (smaller y) by a clear margin so the ♛ does
     // not overprint the floor number (old gap was 2px; this requires ≥ 8px).
@@ -1426,7 +1431,7 @@ test('elimRadial: a DEGENERATE column with a DUPLICATE match (same bracket_slot 
   // duplicate that was listed first: no spoke dashes as pending.
   assertEqual(allByClass(node, 'dn-elimradial-pending').length, 0, 'the kept duplicate is the decided instance — no pending spoke survives');
   // both decided losers (v6, v8) are cut; both winners (v5, v7) are not.
-  assertEqual(allByClass(node, 'dn-elimradial-cut').length, 2, 'the two decided losses (v5 over v6, v7 over v8) read ✕');
+  assertEqual(allByClass(node, 'dn-elimradial-cut').length, 2, 'the two decided losses (v5 over v6, v7 over v8) draw the fail mark');
 });
 
 test('duelFlow: a long (>=9-char) challenger id + status glyph stays INSIDE the left viewBox edge (the name gutter fits shortLabel(id,9)+glyph)', () => {
@@ -1440,9 +1445,9 @@ test('duelFlow: a long (>=9-char) challenger id + status glyph stays INSIDE the 
   const names = allByClass(node, 'dn-duelflow-name');
   assertEqual(names.length, 1, 'one name label per challenger lane');
   const lbl = names[0];
-  // the id is capped to shortLabel(id,9) + ' ' + status glyph: 'proposer… ↑'.
+  // the id is capped to shortLabel(id,9), followed by the status mark: 'proposer…' + up.
   assert(lbl.textContent.includes('…'), 'a >=9-char id is ellipsised by the shortLabel(id,9) cap');
-  assert(lbl.textContent.includes('↑'), 'the promoted lane carries the ↑ status glyph');
+  assert(iconNames(lbl.parentNode).includes('up'), 'the promoted lane carries the up status mark');
   assertEqual(lbl.getAttribute('text-anchor'), 'end', 'the name is right-anchored at the gutter edge');
   // end-anchored at x=nameW: the label spans [x - width, x]. With ~6px/glyph-cell the
   // left edge must not cross the viewBox left edge (x=0) — i.e. nameW >= label width.

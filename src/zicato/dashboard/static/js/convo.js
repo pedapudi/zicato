@@ -32,6 +32,7 @@
 // The pane owns no data cache — js/transcript_stream.js holds the cursor.
 
 import { el, clearChildren } from './core/dom.js';
+import { patchIconLabel } from './icons.js';
 import { bus } from './core/bus.js';
 import { fidelityLabel, pill } from './ui.js';
 import { reconcileTurns, nearBottom } from './turns.js';
@@ -187,9 +188,8 @@ export function mountConversationPane(host, spec, opts) {
 
   function paintPin() {
     const show = pane.unseen > 0;
-    pinBtn.textContent = show
-      ? pane.unseen + ' new turn' + (pane.unseen === 1 ? '' : 's') + ' ↓'
-      : '';
+    patchIconLabel(pinBtn, show ? 'down' : null,
+      show ? pane.unseen + ' new turn' + (pane.unseen === 1 ? '' : 's') : '', { after: true });
     if (show) pinBtn.removeAttribute('hidden');
     else pinBtn.setAttribute('hidden', 'hidden');
   }

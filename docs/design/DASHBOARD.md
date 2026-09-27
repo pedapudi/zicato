@@ -206,7 +206,7 @@ fresh `snapshot` before resuming the live `state_change` stream.
 
 The Python dashboard service serves its HTML, CSS, and JS bundle off
 disk from `src/zicato/dashboard/static/` (`index.html`, `console.js`,
-`style.css`, `icons.svg`, plus `css/`, `js/`, `brand/` and `fonts/`;
+`style.css`, plus `css/`, `js/`, `brand/` and `fonts/`;
 [`static/README.md`](../../src/zicato/dashboard/static/README.md) lists
 them). The launching command resolves the static directory and hands it
 to the server; an unknown asset 404s, and a missing bundle falls back to

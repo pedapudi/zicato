@@ -19,6 +19,7 @@ import { state } from '../core/state.js';
 import { livenessFor } from '../livestatus.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
+import { icon, iconLabel } from '../icons.js';
 import { gatedSwap, section, empty, stat, densityTokens, prText, metricsDigest, scoreFmt, pill, dataTable, deltaCell, fmtDurationMs, ENTRY_KIND_LABEL } from '../ui.js';
 import { splitFrame, captureScroll, restoreScroll } from '../compare.js';
 import * as facets from '../facets.js';
@@ -379,7 +380,7 @@ export async function render(host, ctx, params, route) {
     const items = rows
       .filter((r) => svg.isNum(r.primary))
       .sort(worstFirst)
-      .map((r) => ({ label: r.gen + (r.promoted ? ' ♛' : ''), value: r.primary, id: r.gen, pass: r.pass, timeout: r.timeout }));
+      .map((r) => ({ label: r.gen, mark: r.promoted ? svg.CROWN.current : null, value: r.primary, id: r.gen, pass: r.pass, timeout: r.timeout }));
     if (items.length) {
       const bdt = densityTokens();
       scoreCard.appendChild(svg.valueDotPlot({
@@ -394,7 +395,8 @@ export async function render(host, ctx, params, route) {
         champPrimary != null ? el('span', null, [el('i', { class: 'spine', style: 'border-color:var(--v2-ink-faint);border-top-style:dashed;' }), `champion ${championId} = ${svg.fmt(champPrimary, channel === 'score' ? 2 : 1)}`]) : null,
         el('span', null, [el('i', { class: 'dotact' }), 'pass']),
         el('span', null, [el('i', { class: 'dotpred', style: 'border-color:var(--v2-bad);' }), 'fail']),
-        el('span', { class: 'dn-faint', text: (channel === 'score' ? 'score, higher is better · ' : channel === 'drift' ? 'drift loss, lower is better · ' : '') + '⏱ timeout · click a candidate → its transcript inline (vs champion)' }),
+        el('span', { class: 'dn-faint' }, [(channel === 'score' ? 'score, higher is better · ' : channel === 'drift' ? 'drift loss, lower is better · ' : ''),
+          icon('timeout'), ' timeout · click a candidate → its transcript inline (vs champion)']),
       ].filter(Boolean)));
     } else {
       scoreCard.appendChild(empty(channel === 'pass'
@@ -427,10 +429,10 @@ export async function render(host, ctx, params, route) {
           ...entryFacets.map((f) => ({ label: f, class: 'dn-num' })),
         ],
         rows: ran.map((g) => [
-          // The champion is NAMED here (the `○` this view already uses), never
+          // The champion is NAMED here (the ring mark this view already uses), never
           // marked by weighting its numbers: dimming a column reads as emphasis
           // on the others, which is a verdict this table must not imply.
-          { text: g.id === championId ? g.id + ' ○' : g.id },
+          g.id === championId ? { el: iconLabel('ring', g.id, { after: true }) } : { text: g.id },
           // The scalar carries its coverage when the slice is not whole: this
           // table has no room for a count column, and a scalar resting on one
           // run of a four-entry slice must not print identically to one
@@ -477,7 +479,7 @@ export async function render(host, ctx, params, route) {
           class: (r.promoted ? 'dn-board-champ' : '') + (isSel ? ' dn-board-sel' : '') + (r.running ? ' dn-board-running' : ''),
           cells: [
             { class: 'dn-mono', el: [
-              el('span', { text: r.gen + (r.promoted ? ' ♛' : '') }),
+              el('span', null, r.promoted ? iconLabel(svg.CROWN.current, r.gen, { after: true }) : [r.gen]),
               r.cached ? el('span', { class: 'dn-cached-badge-mark', title: r.sourceEpoch ? 'cached · from ' + r.sourceEpoch : 'cached champion result',
                 text: r.sourceEpoch ? ' cached · ' + r.sourceEpoch : ' cached' }) : null,
             ] },
@@ -509,7 +511,7 @@ export async function render(host, ctx, params, route) {
               // A RUNNING candidate's "watch live →" opens the FOLLOW pane
               // (issue #194 §2) rather than the static side-by-side: the
               // operator asked to watch, so give them the streaming read.
-              ? el('a', { class: 'dn-linkbtn dn-board-run' + (isSel ? ' dn-linkbtn-on' : '') + (r.running ? ' dn-board-run-live' : ''), href: ctx.href('board', isSel ? { epochId, entry: entryId } : { epochId, entry: entryId, gen: r.gen }, isSel ? undefined : { follow: r.running }), text: isSel ? 'showing ↓' : (r.running ? 'watch live →' : 'show inline →') })
+              ? el('a', { class: 'dn-linkbtn dn-board-run' + (isSel ? ' dn-linkbtn-on' : '') + (r.running ? ' dn-board-run-live' : ''), href: ctx.href('board', isSel ? { epochId, entry: entryId } : { epochId, entry: entryId, gen: r.gen }, isSel ? undefined : { follow: r.running }) }, isSel ? iconLabel('down', 'showing', { after: true }) : iconLabel('forward', r.running ? 'watch live' : 'show inline', { after: true }))
               : el('span', { class: 'dn-faint', text: 'no run' }) },
           ],
         };
@@ -684,7 +686,7 @@ function transcriptColumn(sel, conv, championId, side) {
   // challenger reads pending (neutral), never rejected.
   const pillCls = sel.decision || 'pending';
   col.appendChild(el('div', { class: 'dn-xscript-head' }, [
-    el('span', { class: 'dn-mono', text: sel.gen + (sel.promoted ? ' ♛' : '') }),
+    el('span', { class: 'dn-mono' }, sel.promoted ? iconLabel(svg.CROWN.current, sel.gen, { after: true }) : [sel.gen]),
     pill(pillCls, role),
     // A RUNNING candidate gets a live marker so the operator reads the column
     // as a streaming transcript (it appends as new turns land) rather than a final one.
@@ -864,8 +866,8 @@ function scorecardLink(roster, name, ctx, epochId) {
   if (!rid) return el('span', { class: 'dn-faint', text: '—' });
   return el('a', {
     class: 'dn-linkbtn dn-mono', href: ctx.href('instrument', { epochId, reflectionId: rid, judge: name }),
-    title: 'open this judge’s scorecard in the Instrument lens (' + rid + ')', text: 'scorecard →',
-  });
+    title: 'open this judge’s scorecard in the Instrument lens (' + rid + ')',
+  }, iconLabel('forward', 'scorecard', { after: true }));
 }
 
 // One built-in's chip. A suppressed built-in carries the reason IN the chip, not
@@ -1080,15 +1082,15 @@ function interleaveLinks(gens, ctx, epochId) {
   return out;
 }
 
-// One quiet verdict-led attribution row — a tone glyph + headline + the linked
+// One quiet verdict-led attribution row — a tone mark + headline + the linked
 // candidate(s) + a dn-faint rationale (NOT a chip). Mirrors the Instrument lens'
 // loop-health row grammar.
 function attributionRow(tone, label, linkNodes, rationale) {
   const glyphCls = tone === 'good' ? 'dn-good-t' : tone === 'bad' ? 'dn-bad-t' : 'dn-faint';
-  const glyph = tone === 'good' ? '▲' : tone === 'bad' ? '▼' : '·';
+  const mark = tone === 'good' ? 'up' : tone === 'bad' ? 'down' : 'dot';
   return el('div', { class: 'dn-eval-attr-row' }, [
     el('div', { class: 'dn-eval-attr-head' }, [
-      el('span', { class: glyphCls, text: glyph + ' ' }),
+      el('span', { class: glyphCls }, [icon(mark), ' ']),
       el('span', { text: label + ' ' }),
       ...(linkNodes || [el('span', { class: 'dn-faint', text: '—' })]),
     ]),

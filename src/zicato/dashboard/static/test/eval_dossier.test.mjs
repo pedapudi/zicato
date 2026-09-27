@@ -18,7 +18,7 @@
 //   * a PIN that an absent /eval payload (null) mounts NO dossier host, so the
 //     board reads byte-identical to before the feature.
 
-import { installDom, test, run, assert, assertEqual, assertDeep } from './harness.mjs';
+import { installDom, test, run, assert, assertEqual, assertDeep, iconNames } from './harness.mjs';
 
 installDom();
 
@@ -477,7 +477,9 @@ test('board drill-down: the facet panel names the slices this entry feeds, per c
   // the one that scales — an epoch grows candidates rather than facets). The champion
   // is named in its cell, never by weighting its numbers.
   assertDeep(cells[0], ['candidate · scalar ↓', 'auth', 'data_cleaning'], 'the unit + a column per facet');
-  assertDeep(cells[1], ['g0 ○', '1.20', '0.90'], 'the champion row, marked');
+  assertDeep(cells[1], ['g0', '1.20', '0.90'], 'the champion row');
+  const facetTable = host.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').split(/\s+/).includes('dn-facet-table'))[0];
+  assertDeep(iconNames(facetTable), ['ring'], 'the champion row alone is named by the ring mark');
   assertDeep(cells[2], ['g2', '0.40', '0.55'], 'the challenger improved on both slices');
   // The unit header explains itself on hover, keyboard-reachable.
   const tbl = host.querySelectorAll('[class]').filter((n) =>

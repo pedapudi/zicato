@@ -75,7 +75,7 @@ are what make the marks readable no matter which palette is active:
 | `--v2-panel` | the surface of a panel / card / hovercard | one step lifted off the ground |
 | `--v2-ink` | primary text + neutral mark strokes | the highest-contrast foreground |
 | `--v2-good` | **improvement / promotion / survival** | a dot below the reference rule, a survivor `↑`, a crowned gate, a promoted verdict, the lower-loss side of a slopegraph — *always* the better outcome |
-| `--v2-bad` | **regression / rejection / a cut** | a dot above the reference rule, a cut competitor `✕`, a rejected verdict, the worse side of a slopegraph — *always* the worse outcome |
+| `--v2-bad` | **regression / rejection / a cut** | a dot above the reference rule, a cut competitor's fail mark, a rejected verdict, the worse side of a slopegraph — *always* the worse outcome |
 | `--v2-accent` | **the one structural / interactive highlight** | the champion spine, the emphasised current-champion line, an interactive focus — used sparingly so it stays meaningful |
 
 The cardinal rule: **`good` and `bad` are earned by direction, never by
@@ -95,7 +95,7 @@ Each theme also defines a full secondary set, so every state has a token:
 | `--v2-rule` | borders / separators / hovercard outline |
 | `--v2-rule-soft` | a fainter rule / inline-code background |
 | `--v2-good-soft` / `--v2-bad-soft` | tinted fills behind a good / bad state |
-| `--v2-caution` | caution / timeout (e.g. the budget-exceeded `⏱` glyph) |
+| `--v2-caution` | caution / timeout (e.g. the budget-exceeded timeout mark) |
 | `--v2-flat` | unchanged / neutral-flat (a slopegraph that neither improved nor regressed) |
 | `--v2-cell-empty` | an empty heatmap cell |
 
@@ -194,22 +194,22 @@ the same thing everywhere.
 
 | renderer (`svg.*` unless noted) | purpose |
 | --- | --- |
-| `survivalFunnel` | the **racing epoch hero** — a dot ladder of the field flowing `N → N/2 → … → 1 → champion-gate`: each rung is a column of dots, one per competitor entering it, and splines carry each survivor's dot to its next-rung position as the field converges. A cut drops a small `✕` after its last dot and grows no further spline; every competitor is named once at its left-edge entry row (survivors `↑`, cuts dimmed), and the winner's splines carry the accent end to end into the crowned gate. |
+| `survivalFunnel` | the **racing epoch hero** — a dot ladder of the field flowing `N → N/2 → … → 1 → champion-gate`: each rung is a column of dots, one per competitor entering it, and splines carry each survivor's dot to its next-rung position as the field converges. A cut drops a small fail mark after its last dot and grows no further spline; every competitor is named once at its left-edge entry row (survivors carry the up mark, cuts dimmed), and the winner's splines carry the accent end to end into the crowned gate. |
 | `racingScalarTrack` | the racing field on a **shared scalar axis** — one track per rung, each competitor a marker at its scalar, survivors kept and cut candidates drawn hollow, the champion as a dashed accent benchmark line and the cut threshold as a dashed caution tick. Queued, in-flight, projected and settled markers each have their own treatment. |
 | `gauntletFieldBars` | the gauntlet field against the **fixed champion standard** — one bar per challenger from the champion line to its own scalar, coloured by outcome, with the promote gate (champion − margin) as a dashed accent threshold. |
 | `swissLadder` | the swiss **standings ladder** — a column per round, accumulating Copeland points (win 1 / draw ½), the leader flowing into a champion-gate. |
 | `swissOverview` | the swiss epoch-overview centerpiece — a **standings bump chart** (one line per competitor, y = rank, lines cross as the leader emerges) over a **ranked Copeland-point bar**. |
-| `elimRadial` | the elim figure EVERYWHERE (epoch hero, Match-ups, live hero) — the **radial bracket**: rounds are concentric rings narrowing to a centre champion seat, one spoke per competitor; a spoke's surviving segments read good, the ring it was eliminated at ends with `✕` (bad), the champion's spoke dashes into the crowned seat (`♛`). Double-elim puts the winners' bracket on the upper arc and the losers' on the lower, split by a dashed equator; a winners'→losers' drop is a rim-hugging transfer arc. Outcome + round on hover. |
-| `duelFlow` | the **gauntlet** structure-flow — the round's field as Δ-vs-champion lanes: a horizontal Δ=0 reference rule is the champion (the crowned `♛` gate node), each challenger a lane with a dot **below** the rule when it improved (good) / **above** when it regressed (bad), status as a glyph (`↑`/`✕`/`○`). The per-challenger hypothesis and its Δ live on hover. |
+| `elimRadial` | the elim figure EVERYWHERE (epoch hero, Match-ups, live hero) — the **radial bracket**: rounds are concentric rings narrowing to a centre champion seat, one spoke per competitor; a spoke's surviving segments read good, the ring it was eliminated at ends with the fail mark (bad), the champion's spoke dashes into the seat, which carries the solid crown. Double-elim puts the winners' bracket on the upper arc and the losers' on the lower, split by a dashed equator; a winners'→losers' drop is a rim-hugging transfer arc. Outcome + round on hover. |
+| `duelFlow` | the **gauntlet** structure-flow — the round's field as Δ-vs-champion lanes: a horizontal Δ=0 reference rule is the champion (the gate node, crowned), each challenger a lane with a dot **below** the rule when it improved (good) / **above** when it regressed (bad), status as a mark (up / fail / ring). The per-challenger hypothesis and its Δ live on hover. |
 | `waterfall` | the **loss-floor descent across rounds** — one downward step per round sized by its promotion Δ (good by direction; a held round is flat), the running floor annotated, the champion-spine baseline in `accent`, the winning mutation per step on hover. The headline figure of the epoch round-timeline. |
-| `reignGantt` | **champion tenure across rounds** — one bar per champion spanning the rounds it held; the current champion `accent` + `♛`, former champions dim ink + `♔`. The candidate page's **reign ribbon** (shown only for a generation that became champion). |
+| `reignGantt` | **champion tenure across rounds** — one bar per champion spanning the rounds it held; the current champion `accent` + the solid crown, former champions dim ink + the open crown. The candidate page's **reign ribbon** (shown only for a generation that became champion). |
 | `roundTimeline` | the **epoch overview hero** — the epoch's N evolve rounds along a horizontal champion **spine** (one node per round's incoming champion, its loss annotated so the descending floor reads at a glance), each round an episode card (incoming champion + a fan of minted challengers + a compact per-round structure figure + the gate outcome). A single round degrades to one episode. The `waterfall` rides above it as the descent headline. |
 | `metaLoopLedger` | the **cross-epoch home overview** combines a held-floor staircase, effort-proportional epoch bands, and a contract-component heatstrip. The staircase shows the best scalar each contract held. Band width follows the number of generations spent. The heatstrip names the component that caused each reset: board · brief · scoring · evaluator revision · adapter · mutable trees · structure · proposer. A structure roll is a SOFT seam because floors on opposite sides are not comparable; the staircase and structure cell use a dashed boundary. Rendering is digest-gated by `metaLoopLedgerDigest` and degrades on zero or one epoch. |
 | `bumps` | the lineage as ranked lanes — the champion spine on its own lane, rejected challengers branching into a lower lane. |
 | `heatmap` | the **board × generation drift-loss matrix** (epoch overview), a theme-token cool→hot ramp. |
-| `valueDotPlot` | per-board scoring — one row per entry, a dot vs a reference rule, an outcome glyph at the right edge. |
+| `valueDotPlot` | per-board scoring — one row per entry, a dot vs a reference rule, an outcome mark at the right edge. |
 | `sparkbar` | a micro loss-bar strip + a verdict triangle, for trellis cells. |
-| `genDots` | a proportional row of pass/fail/timeout glyphs for a trellis cell. |
+| `genDots` | a proportional row of pass/fail/timeout marks for a trellis cell. |
 | `valueBars` | per-judge losses as horizontal bars. |
 | `pairedSlopegraph` | a per-board **slopegraph** — champion value → challenger value, one line per entry, coloured by improved / regressed / flat. |
 | `radarSilhouette` | the candidate against the champion across the axes the gate weighs — scalar, pass rate, and each per-judge drift — outer is better. |
@@ -217,7 +217,7 @@ the same thing everywhere.
 | `calibrationTrend` | the proposer's prediction calibration across the lineage, reading the served latest fraction. |
 | `trajectoryStrip` | one imported trace as a strip, drawn from the server's precomputed strip model (see [TRAJECTORY-UI.md](TRAJECTORY-UI.md)). |
 | `lifecycleDag` (`dag.js`) | one candidate's life as a cause→effect summary: `parent → patch → board fan → Σ → gate → terminal`. |
-| `proposingTracker` | the field forming — one row per minted challenger (`vN ✓ applied` / `vN ✗ rejected`), the seed of the live hero. |
+| `proposingTracker` | the field forming — one row per minted challenger (`vN` + pass mark + `applied` / `vN` + fail mark + `rejected`), the seed of the live hero. |
 
 > **Two figures the catalogue does not list.** There is no seat/box bracket
 > tree and no lane-flow bracket; `elimRadial` (the radial bracket) is the elim
@@ -231,27 +231,30 @@ Every figure above honours this table:
 
 | convention | meaning | where set |
 | --- | --- | --- |
-| `↑` | this competitor **survives** the rung / round — the winner's lane **continues** | funnel rail names, swiss ladder, elim-radial spokes, duel-flow lanes |
-| `✕` | this competitor was **cut** — the loser's lane **terminates** | funnel cut marks, swiss ladder, elim-radial spokes, duel-flow lanes |
-| `○` | this competitor is **pending** (still racing, undecided) | duel-flow lanes |
-| `♛` | the **current champion** (the crowned survivor of the gate) | gate labels, round-timeline spine, reign-gantt bar, tree badge, candidate / board / publication accents |
-| `♔` | a **former champion** — the displaced incumbent / a transient round-leader before the gate decides | swiss ladder, bump chart, standings |
+| `up` icon | this competitor **survives** the rung / round — the winner's lane **continues** | funnel rail names, swiss ladder, elim-radial spokes, duel-flow lanes |
+| `fail` icon | this competitor was **cut** — the loser's lane **terminates** | funnel cut marks, swiss ladder, elim-radial spokes, duel-flow lanes |
+| `ring` icon | this competitor is **pending** (still racing, undecided) | duel-flow lanes |
+| `crown` icon (solid) | the **current champion** (the crowned survivor of the gate) | gate labels, round-timeline spine, reign-gantt bar, tree badge, candidate / board / publication accents |
+| `crown-former` icon (open) | a **former champion** — the displaced incumbent / a transient round-leader before the gate decides | swiss ladder, bump chart, standings |
+| drawn icons | every mark is an icon from `js/icons.js` (16-unit grid, 1.5-unit round-capped stroke, `currentColor`, `aria-hidden`); a figure places one with `svg.figIcon` / `svg.iconBeside`. No mark is a typed Unicode symbol, because the bundled faces lack them | every module; pinned by `test/icons.test.mjs` |
 | reference rule | a Δ-vs-champion baseline at Δ=0; **good = below / lower loss, bad = above / higher loss** | dot-plot `dn-ref-rule`, the racing track's champion benchmark line |
 | hover-for-detail | a **styled, theme-aware hovercard** (`hovercard.js`) replaces the native SVG `<title>` tooltip — every mark calls `hov(node, tip)` | `svg.js`, `dag.js` |
 | fit-to-width | `width:100%` + a `viewBox` + `preserveAspectRatio`; **no fixed pixel width that exceeds the pane, no pan/zoom** | every figure |
-| proportional 1:1 glyphs | status glyphs (`✓ ✕ ⏱ ○`, verdict triangles) render in a **fixed 1:1-aspect overlay SVG** so a stretched cell never shears them into ovals | `outcomeGlyph`, `genDots`, `sparkbar` |
+| proportional 1:1 marks | status marks (pass, fail, timeout, no run; verdict triangles) render in a **fixed 1:1-aspect overlay SVG** so a stretched cell never shears them into ovals | `outcomeGlyph`, `genDots`, `sparkbar` |
 
 Four further conventions hold within this grammar:
 
-- **`♛` current vs `♔` former, consistently.** The current champion (the last id
-  in `champion_lineage`) is the solid crown `♛`; every former champion — and a
-  transient round-leader *before* the gate decides — is the hollow crown `♔`.
-  Once the gate crowns a winner, `♛` takes over (no double crown). This holds
-  across the funnel, ladders, bump chart, standings, and the tree legend. *(The
-  glyphs have one definition — `svg.js` exports `CROWN = { current: '♛', former:
-  '♔' }` and every emitter imports it, so the rule cannot drift. See §9.)*
+- **Solid crown current vs open crown former, consistently.** The current
+  champion (the last id in `champion_lineage`) takes the solid crown; every
+  former champion — and a transient round-leader *before* the gate decides —
+  takes the open crown. Once the gate crowns a winner, the solid crown takes
+  over (no double crown). This holds across the funnel, ladders, bump chart,
+  standings, and the tree legend. *(The crowns have one definition —
+  `js/icons.js` exports `CROWN = { current: 'crown', former: 'crown-former' }`,
+  `svg.js` re-exports it, and every emitter imports it, so the rule cannot
+  drift. See §9.)*
 - **Survival-funnel names sit on a rail, never on a line.** Each competitor
-  is named once, at its left-edge entry row; a cut is a `✕` in the gap after
+  is named once, at its left-edge entry row; a cut is a fail mark in the gap after
   its last dot, so no spline or connector ever runs through a label (no
   strikethrough).
 - **Match-ups collapse to a single section.** The swiss/racing/elim detail lives
@@ -259,8 +262,8 @@ Four further conventions hold within this grammar:
   shows a compact at-a-glance figure with a *"See Match-ups →"* link into the
   full detail.
 - **"unscored" orphan labeling.** A generation with no parent and no resolved
-  outcome is an *orphan* (`g.orphan` in `shell.js`); the tree badges it `◌
-  unscored` (`gen-orphan`) — never a misleading "seed", never a default
+  outcome is an *orphan* (`g.orphan` in `shell.js`); the tree badges it with
+  the dashed `unscored` ring and the `unscored` tag (`gen-orphan`) — never a misleading "seed", never a default
   rejection.
 
 ### 4.3 The hovercard
@@ -292,7 +295,7 @@ speaks; do not invent chrome beside them.** Three rules:
 
 The Instrument lens (the board-reflection surface) is the worked case.
 Findings and the practice review render as the loop-health findings panel's
-quiet verdict-led rows: a tone glyph, a headline, and a `dn-faint` rationale.
+quiet verdict-led rows: a tone mark, a headline, and a `dn-faint` rationale.
 Scorecard rates use the `dn-stat` idiom, redundancy and conflict read as one
 faint inline sentence, and evidence appears as inline x-ray links. Metadata
 collapses to a caption, the one pill is the adjudication verdict, and
@@ -467,22 +470,24 @@ consumer report.
 
 The decision is a tournament: a reigning **champion** defends its title against
 **challengers** at a **champion-gate**. The visual vocabulary makes the metaphor
-literal — the crowns `♛` (current champion) and `♔` (former champion / displaced
-incumbent), the champion-gate as the terminal confirmation seat, and the
+literal — the solid crown (current champion) and the open crown (former
+champion / displaced incumbent), the champion-gate as the terminal confirmation seat, and the
 ladder / bracket / funnel as the bracket-sheet shapes of the configured
 tournament structure. (The champion/challenger vs parent/child terminology is in
 [VOCABULARY.md](VOCABULARY.md).)
 
 ## 9. Two rules a reader may look for and not find spelled out
 
-- **Which crown glyph a champion takes.** The single rule is `♛` for the
-  current champion and `♔` for a former champion. The crown glyphs have one
-  definition: `svg.js` exports `CROWN = { current: '♛', former: '♔' }`. Every
+- **Which crown a champion takes.** The single rule is the solid `crown` icon
+  for the current champion and the open `crown-former` icon for a former
+  champion. The crowns have one definition: `js/icons.js` exports
+  `CROWN = { current: 'crown', former: 'crown-former' }`, re-exported by
+  `svg.js`. Every
   emitter imports it — the `svg.js` funnel, swiss ladder, elim-radial and
   duel-flow gate labels, the `waterfall` / `reignGantt` / `roundTimeline` crowns,
   `views/structure.js` gate notes, legends and standings, the `live.js`
   activity feed, `tree.js` badges, the `dag.js` terminal, and `views/epoch.js`
-  overview captions. No site emits `♚`.
+  overview captions. No site types a crown character.
 - **Which token names carry the typeface families.** The marks read two tokens,
   `--v2-sans` and `--v2-mono`, which each `[data-t-type]` rule sets to literal
   font stacks alongside `--n-font-head` and `--n-font-paper`. There are no

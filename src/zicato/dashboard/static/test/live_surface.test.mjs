@@ -5,7 +5,7 @@
 //
 // Shared fixtures and helpers live in ./fixtures.mjs.
 
-import { installDom, test, run, assert, assertEqual, assertDeep, makeEvent } from './harness.mjs';
+import { installDom, test, run, assert, assertEqual, assertDeep, makeEvent, iconNames, labelledWith } from './harness.mjs';
 import { elimPayload, recorded } from './recorded.mjs';
 
 installDom();
@@ -562,7 +562,7 @@ test('live racing model: an in-flight rung shows per-lane "k/N boards" progress 
   const ladder = svgsByClass(host, 'dn-funnel')[0];
   assert(/boards/.test(ladder.textContent), 'a live lane reads "k/N boards" (progressive fill, not blank)');
   assert(allByClass(ladder, 'dn-funnel-bar').length >= 1, 'a per-lane in-flight progress bar renders');
-  assert(!/✕/.test(ladder.textContent), 'a mid-run lane is NOT struck through as cut');
+  assert(!iconNames(ladder).includes('fail'), 'a mid-run lane is NOT struck through as cut');
 });
 
 // (c) rung-0 complete (rounds has rung0) → survivors ↑ / cuts ✗; then rung-1
@@ -597,8 +597,8 @@ test('live racing model: a completed rung ACCUMULATES — when rung-1 starts, ru
   const host = document.createElement('div');
   for (const n of nodes) host.appendChild(n);
   const ladder = svgsByClass(host, 'dn-funnel')[0];
-  assert(/✕/.test(ladder.textContent), 'rung-0 cut marks (✕) are STILL present after rung-1 starts (accumulation, no discard)');
-  assert(/↑/.test(ladder.textContent), 'rung-0 survivor marks (↑) persist');
+  assert(iconNames(ladder).includes('fail'), 'rung-0 cut marks are STILL present after rung-1 starts (accumulation, no discard)');
+  assert(iconNames(ladder).includes('up'), 'rung-0 survivor marks persist');
   for (const id of ['v5', 'v6', 'v7', 'v8']) assert(ladder.textContent.includes(id), 'every competitor remains legible across rungs — ' + id);
 });
 
@@ -669,7 +669,7 @@ test('live racing model: a fully-completed race (all rounds, no live) still reco
   for (const n of nodes) host.appendChild(n);
   const ladder = svgsByClass(host, 'dn-funnel')[0];
   assert(ladder, 'the completed funnel still renders');
-  assert(/♛/.test(ladder.textContent), 'the completed gate still crowns the champion ♛');
+  assert(iconNames(ladder).includes('crown'), 'the completed gate still crowns the champion');
   assert(!/queued/.test(ladder.textContent), 'a completed funnel shows NO queued rungs');
 });
 
@@ -868,8 +868,8 @@ test('elim (completed): single-elim → elimModel + the radial bracket with a ch
   assertEqual(node.getAttribute('width'), '100%', 'fit-to-width');
   assertEqual(allByClass(node, 'dn-elimradial-ring').length, 3, 'both rounds render as rings, plus the gate ring');
   // winner continues inward (good), loser terminates (✕), champion → crowned seat.
-  assert(/✕/.test(node.textContent), 'an eliminated spoke terminates with ✕');
-  assertEqual(allByClass(node, 'dn-elimradial-seatlab')[0].textContent, svg.CROWN.current, 'the champion seat reads the crown ♛');
+  assert(iconNames(node).includes('fail'), 'an eliminated spoke terminates with the fail mark');
+  assertEqual(allByClass(node, 'dn-elimradial-seatmark')[0].getAttribute('data-icon'), svg.CROWN.current, 'the champion seat draws the crown');
   assertEqual(allByClass(node, 'dn-elimradial-gateline').length, 1, 'the champion spoke dashes into the seat');
   assertEqual(allByClass(node, 'dn-elimradial-spoke').length, 4, 'one spoke per competitor');
 });
@@ -1142,7 +1142,7 @@ test('racing field (SERVED): the champion-gate names v3 as the promoted champion
   const ladder = svgsByClass(wrap, 'dn-funnel')[0];
   assert(ladder, 'the survival funnel rendered from the reconstruction');
   assert(ladder.textContent.includes('champion-gate'), 'a champion-gate stage rendered');
-  assert(ladder.textContent.includes('♛ v3'), 'the gate crowns v3 as the new champion ♛');
+  assert(labelledWith(ladder, 'v3', 'crown'), 'the gate crowns v3 as the new champion');
   assert(!ladder.textContent.includes('tbd'), 'the gate is NOT the empty "tbd" skeleton');
   assert(wrap.textContent.includes('v3 promoted'), 'the caption states the champion-gate outcome (v3 promoted)');
 });
@@ -1220,9 +1220,9 @@ test('racing reconstruct: the match-ups page rebuilds the full ladder from the p
   assert(host.textContent.includes('Rung 0') && host.textContent.includes('Rung 1'), 'both reconstructed rungs render as stages');
   // the full rung0 field + the cut/survivor marks made it through to the SVG.
   for (const id of ['v1', 'v2', 'v3', 'v4']) assert(ladder.textContent.includes(id), 'rung0 names the full field — ' + id);
-  assert(ladder.textContent.includes('✕'), 'cut runners are struck ✕');
-  assert(ladder.textContent.includes('↑'), 'survivors are marked ↑');
-  assert(ladder.textContent.includes('♛ v3'), 'the champion-gate crowns v3 as the new champion ♛ (not tbd)');
+  assert(iconNames(ladder).includes('fail'), 'cut runners carry the fail mark');
+  assert(iconNames(ladder).includes('up'), 'survivors carry the up mark');
+  assert(labelledWith(ladder, 'v3', 'crown'), 'the champion-gate crowns v3 as the new champion (not tbd)');
   assert(allByClass(host, 'dt-live-pill').length === 0, 'idle reconstruction carries NO live badge');
 });
 

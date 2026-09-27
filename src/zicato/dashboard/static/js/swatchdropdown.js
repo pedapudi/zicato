@@ -18,6 +18,7 @@
 // settings, keyboard, restore). Returns { node, setValue }.
 
 import { el, clearChildren, patchText } from './core/dom.js';
+import { icon } from './icons.js';
 import { COLOR_THEMES, normaliseColor } from './ui.js';
 import { createSyncRegistry, wireListboxDropdown } from './dropdown.js';
 
@@ -44,7 +45,7 @@ export function buildSwatchDropdown(initial, onChoose) {
     class: 'dt-cd-trigger', type: 'button',
     'aria-haspopup': 'listbox', 'aria-expanded': 'false',
     'aria-label': 'Colour theme', title: 'Colour theme',
-  }, [triggerSwatch, triggerName, el('span', { class: 'dt-cd-caret', 'aria-hidden': 'true', text: '▾' })]);
+  }, [triggerSwatch, triggerName, el('span', { class: 'dt-cd-caret', 'aria-hidden': 'true' }, [icon('collapse')])]);
 
   const options = COLOR_THEMES.map(([id, label, swatches]) => el('div', {
     class: 'dt-cd-option', role: 'option', 'data-theme': id,

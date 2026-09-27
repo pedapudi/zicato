@@ -5,7 +5,7 @@
 //
 // Shared fixtures and helpers live in ./fixtures.mjs.
 
-import { installDom, test, run, assert, assertEqual, assertDeep, makeEvent } from './harness.mjs';
+import { installDom, test, run, assert, assertEqual, assertDeep, makeEvent, iconNames, labelledWith } from './harness.mjs';
 
 installDom();
 
@@ -453,14 +453,14 @@ test('survival funnel: the SVG narrows N→…→1, marks cuts ✕ / survivors �
   const txt = node.textContent;
   assert(txt.includes('Rung 0') && txt.includes('Rung 1'), 'each stage is labelled by rung');
   assert(txt.includes('25/100 board') || txt.includes('25'), 'a stage encodes its board fraction (successive halving reads)');
-  assert(txt.includes('✕'), 'eliminated competitors are marked cut (✕)');
-  assert(txt.includes('↑'), 'survivors are marked (↑)');
-  // every cut competitor drops a ✕ at its cut rung (the dead-end branch idiom).
+  assert(iconNames(node).includes('fail'), 'eliminated competitors are marked cut (fail mark)');
+  assert(iconNames(node).includes('up'), 'survivors are marked (up mark)');
+  // every cut competitor drops a fail mark at its cut rung (the dead-end branch idiom).
   const cutMarks = node.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').split(/\s+/).includes('dn-funnel-cut'));
-  assert(cutMarks.length >= 3, 'each eliminated competitor drops a ✕ (v1,v2 at rung0 + v4 at rung1)');
+  assert(cutMarks.length >= 3, 'each eliminated competitor drops a fail mark (v1,v2 at rung0 + v4 at rung1)');
   // the terminal champion-gate crowns the survivor.
   assert(txt.includes('champion-gate'), 'a terminal champion-gate stage rendered');
-  assert(txt.includes('♛ v3'), 'the crowned survivor is shown (♛ v3)');
+  assert(labelledWith(node, 'v3', 'crown'), 'the crowned survivor is shown (crown + v3)');
   assert(!txt.includes('tbd'), 'a settled gate is not the empty tbd skeleton');
 });
 
@@ -500,7 +500,7 @@ test('survival funnel: the WINNER lane is emphasised end-to-end + reaches the ga
   // each cut drops exactly one ✕ (v1,v2 @ rung0 + v4 @ rung1) and NO band polygon
   // is drawn (the redesign removed the trapezoid bands).
   const cutMarks = node.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').split(/\s+/).includes('dn-funnel-cut'));
-  assertEqual(cutMarks.length, 3, 'one ✕ per cut (v1,v2 @ rung0 + v4 @ rung1)');
+  assertEqual(cutMarks.length, 3, 'one fail mark per cut (v1,v2 @ rung0 + v4 @ rung1)');
   const bands = node.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').split(/\s+/).includes('dn-funnel-band'));
   assertEqual(bands.length, 0, 'the dot ladder draws NO band polygons');
 
@@ -535,9 +535,9 @@ test('survival funnel: the racing epoch strip renders the funnel (stages narrow 
   const txt = funnel.textContent;
   assert(txt.includes('Rung 0') && txt.includes('Rung 1'), 'both reconstructed rungs render as stages');
   for (const id of ['v1', 'v2', 'v3', 'v4']) assert(txt.includes(id), 'rung0 names the full field — ' + id);
-  assert(txt.includes('✕'), 'eliminated competitors marked cut (✕) at their rung');
-  assert(txt.includes('↑'), 'survivors marked (↑)');
-  assert(txt.includes('♛ v3'), 'the champion-gate crowns the survivor v3 (♛)');
+  assert(iconNames(funnel).includes('fail'), 'eliminated competitors marked cut (fail mark) at their rung');
+  assert(iconNames(funnel).includes('up'), 'survivors marked (up mark)');
+  assert(labelledWith(funnel, 'v3', 'crown'), 'the champion-gate crowns the survivor v3');
   // the episode drills into the round's full Match-ups (the ladder lives there).
   assert(host.textContent.includes('open round'), 'the episode keeps the "open round →" drill affordance');
   assertEqual(svgsByClass(host, 'dn-funnel').length, 1, 'the epoch hero is a SINGLE survival-funnel figure (the unified racing visual)');
@@ -1359,7 +1359,7 @@ test('up button: the upper-left control reads "up" (not "back"), labels itself "
     'the button no longer reads "back"');
   // the glyph is an up-arrow, and the aria-label/title name "up" / "navigate up".
   const glyph = allByClass(root, 'dt-back-glyph')[0];
-  assert(glyph && glyph.textContent === '↑', 'the glyph is an up arrow (↑)');
+  assertDeep(iconNames(glyph), ['up'], 'the glyph is the drawn up arrow');
   assert((upBtn.getAttribute('aria-label') || '').toLowerCase().includes('up'), 'the aria-label names "up" (navigate up)');
   assert(!(upBtn.getAttribute('aria-label') || '').toLowerCase().includes('back'), 'the aria-label no longer says "back"');
   assert((upBtn.getAttribute('title') || '').toLowerCase().includes('up'), 'the title names "up"');

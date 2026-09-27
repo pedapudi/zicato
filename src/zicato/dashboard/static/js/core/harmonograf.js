@@ -2,6 +2,7 @@
 // serves HTML; session ids and namespaced filter labels come from the backend.
 
 import { el } from './dom.js';
+import { icon, iconLabel } from '../icons.js';
 import { state } from './state.js';
 import { bus } from './bus.js';
 
@@ -103,16 +104,17 @@ export function harmonografTournamentLink(tournamentId) {
   if (!href) return null;
   return el('a', {
     class: 'harmonograf-link', href, target: '_blank', rel: 'noopener',
-  }, ['Open tournament traces ↗']);
+  }, iconLabel('external', 'Open tournament traces', { after: true }));
 }
 
-// The full "Open in harmonograf ↗" link — active-run cards, run drill.
+// The full "Open in harmonograf" link, with the external-link mark — active-run
+// cards, run drill.
 export function harmonografLink(run, label) {
   const href = harmonografRunUrl(run);
   if (!href) return null;
   return el('a', {
     class: 'harmonograf-link', href, target: '_blank', rel: 'noopener',
-  }, [(label || 'Open in harmonograf') + ' ↗']);
+  }, iconLabel('external', label || 'Open in harmonograf', { after: true }));
 }
 
 // A small unobtrusive link for dense contexts — A/B-grid cells.
@@ -123,7 +125,7 @@ export function harmonografMini(target, label, ariaLabel) {
     class: 'harmonograf-link harmonograf-mini', href,
     target: '_blank', rel: 'noopener',
     'aria-label': ariaLabel || 'open harmonograf trace',
-  }, [(label || 'harmonograf') + ' ↗']);
+  }, iconLabel('external', label || 'harmonograf', { after: true }));
 }
 
 export function harmonografMetaSession() {
@@ -150,7 +152,7 @@ export function harmonografMetaLink(label, ariaLabel) {
     class: 'harmonograf-link harmonograf-meta', href,
     target: '_blank', rel: 'noopener',
     'aria-label': ariaLabel || 'open the zicato execution timeline in harmonograf',
-  }, [(label || 'execution') + ' ↗']);
+  }, iconLabel('external', label || 'execution', { after: true }));
 }
 
 export function harmonografGenLink(genId) {
@@ -164,5 +166,5 @@ export function harmonografGenLink(genId) {
     onKeydown: (ev) => {
       if (ev.key === 'Enter' || ev.key === ' ') ev.stopPropagation();
     },
-  }, ['↗']);
+  }, [icon('external')]);
 }

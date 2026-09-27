@@ -13,6 +13,7 @@ import { el } from '../core/dom.js';
 import { state } from '../core/state.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
+import { icon } from '../icons.js';
 import { section, empty, stat, densityTokens, renderView, figCaption, ENTRY_KIND_LABEL } from '../ui.js';
 import { inflightForActiveEpoch, inflightForEntryGen, runProgressRatio } from '../tournament_model.js';
 import { livenessFor } from '../livestatus.js';
@@ -205,7 +206,7 @@ function trellis(board, gens, rowByGenEntry, domain, valueOf, epochId, ctx, infl
     el('span', null, [el('i', { class: 'spine' }), 'one bar per candidate · ' + channelLabel + ' (shared scale)']),
     el('span', null, [el('i', { class: 'dotact' }), 'pass']),
     el('span', null, [el('i', { class: 'dotpred', style: 'border-color:var(--v2-bad);' }), 'fail']),
-    el('span', { class: 'dn-faint', text: '⏱ timeout · click a board → that entry across every candidate' }),
+    el('span', { class: 'dn-faint' }, [icon('timeout'), ' timeout · click a board → that entry across every candidate']),
     inflightByEntry && inflightByEntry.size ? el('span', null, [el('span', { class: 'dn-inflight-pulse', 'aria-hidden': 'true' }), 'in-flight now (live run)']) : null,
   ].filter(Boolean)));
   return card;

@@ -10,7 +10,7 @@
 //   * a records-sourced side (no line numbers) gets no controls at all;
 //   * a tree that answers for the span but not the file says so.
 
-import { installDom, test, run, assert, assertEqual } from './harness.mjs';
+import { installDom, test, run, assert, assertEqual, iconNames } from './harness.mjs';
 
 installDom();
 
@@ -97,6 +97,8 @@ async function renderDiff(opts) {
 const withClass = (host, cls) => host.querySelectorAll('[class]')
   .filter((n) => (n.getAttribute('class') || '').split(/\s+/).includes(cls));
 const buttons = (host) => withClass(host, 'dn-sxs-xbtn');
+// A control's label as its drawn mark and its words: "up:20 lines".
+const labelOf = (b) => iconNames(b).join('+') + ':' + String(b.textContent).trim();
 const rows = (host) => withClass(host, 'dn-sxs-row');
 const gutters = (host) => withClass(host, 'dn-sxs-gutter').map((n) => n.textContent);
 const textOf = (host) => String(host.textContent || '');
@@ -111,8 +113,8 @@ async function click(btn) {
 test('expand: the span renders alone, with the bars offered', async () => {
   const host = await renderDiff({});
   assertEqual(rows(host).length, 2, 'only the span is shown at first');
-  const labels = buttons(host).map((b) => b.textContent);
-  assertEqual(labels.join('|'), '↑ 20 lines|⤒ file start|↓ 20 lines|⤓ file end', 'both bars, both controls');
+  const labels = buttons(host).map(labelOf);
+  assertEqual(labels.join('|'), 'up:20 lines|to-start:file start|down:20 lines|to-end:file end', 'both bars, both controls');
 });
 
 test('expand: one click up reveals 20 more lines above', async () => {
@@ -136,15 +138,15 @@ test('expand: the gutter reads as the FILE line numbers', async () => {
 
 test('expand: the bar disappears once that side is fully expanded', async () => {
   const host = await renderDiff({});
-  await click(buttons(host)[1]);  // ⤒ file start
-  const labels = buttons(host).map((b) => b.textContent);
-  assert(!labels.some((l) => l.includes('↑')), `the up bar is gone: ${labels.join('|')}`);
-  assert(labels.some((l) => l.includes('↓')), 'the down bar remains');
+  await click(buttons(host)[1]);  // file start
+  const labels = buttons(host).map(labelOf);
+  assert(!labels.some((l) => l.startsWith('up:')), `the up bar is gone: ${labels.join('|')}`);
+  assert(labels.some((l) => l.startsWith('down:')), 'the down bar remains');
 });
 
 test('expand: down stops at the end of the file', async () => {
   const host = await renderDiff({});
-  const down = buttons(host).filter((b) => b.textContent.includes('⤓'))[0];
+  const down = buttons(host).filter((b) => iconNames(b).includes('to-end'))[0];
   await click(down);
   assertEqual(rows(host).length, 42, 'the span plus every trailing line');
   assert(textOf(host).includes('tail_40 = 40'), 'the last line is shown');
@@ -187,7 +189,7 @@ test('expand: the shorter column does not retire the bar for the longer one', as
   const text = textOf(host);
   assert(text.includes('head_1 = 1'), 'the right column reached its own file start');
   assert(text.includes('pre_1 = 1'), 'and the left column reached its own');
-  assert(!buttons(host).some((b) => b.textContent.includes('↑')), 'only now is the up bar retired');
+  assert(!buttons(host).some((b) => iconNames(b).includes('up')), 'only now is the up bar retired');
 });
 
 test('expand: a tree that disagrees with the record keeps the record', async () => {

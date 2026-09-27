@@ -30,6 +30,7 @@ import { el } from '../core/dom.js';
 import * as D from '../data.js';
 import * as M from '../matrix.js';
 import * as svg from '../svg.js';
+import { icon } from '../icons.js';
 import { section, empty, stat, renderView } from '../ui.js';
 
 export async function render(host, ctx, params) {
@@ -95,7 +96,7 @@ export async function render(host, ctx, params) {
     const nodes = [];
     nodes.push(el('div', { class: 'dn-pagehead' }, [
       el('h1', { class: 'dn-h1', text: 'Mutation surface · site × generation' }),
-      el('p', { class: 'dn-lede', text: 'Every enumerated mutation point (a `# zicato:mutable` region) and which generation patched it. Click a ▪ CELL for ONE generation’s side-by-side patch diff at that site; click the SITE row label for ALL generations that patched it, stacked — champion baseline against each challenger’s new content.' }),
+      el('p', { class: 'dn-lede' }, ['Every enumerated mutation point (a `# zicato:mutable` region) and which generation patched it. Click a ', icon('cell'), ' CELL for ONE generation’s side-by-side patch diff at that site; click the SITE row label for ALL generations that patched it, stacked — champion baseline against each challenger’s new content.']),
     ]));
     if (note) nodes.push(el('p', { class: 'dn-faint dn-mut-prov', text: note }));
 
@@ -182,7 +183,7 @@ function matrixTable(sites, gens, patchedBySite, pinned, pinnedGen, ctx, epochId
   // the matrix can be very wide (many generations) — give the TABLE its
   // own contained horizontal scroll so it never forces the panel to overflow.
   wrap.appendChild(M.matrixScroll(table));
-  wrap.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:10px 0 0;', text: 'row = mutation site · column = generation · ▪ = patched here · click a ▪ CELL → that ONE generation’s diff · click the SITE label → ALL generations that patched it' }));
+  wrap.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:10px 0 0;' }, ['row = mutation site · column = generation · ', icon('cell'), ' = patched here · click a ', icon('cell'), ' CELL → that ONE generation’s diff · click the SITE label → ALL generations that patched it']));
   return wrap;
 }
 
@@ -192,7 +193,7 @@ function matrixTable(sites, gens, patchedBySite, pinned, pinnedGen, ctx, epochId
 function detailPane(site, pinnedGen, baselineStr, detail, patchesByGen, ctx, epochId, baselineGen) {
   const pane = el('div');
   if (!site) {
-    pane.appendChild(el('p', { class: 'dn-empty', text: 'Click a ▪ cell for ONE generation’s side-by-side diff at that site, or the site row label for ALL generations that patched it.' }));
+    pane.appendChild(el('p', { class: 'dn-empty' }, ['Click a ', icon('cell'), ' cell for ONE generation’s side-by-side diff at that site, or the site row label for ALL generations that patched it.']));
     return pane;
   }
   const single = !!pinnedGen;

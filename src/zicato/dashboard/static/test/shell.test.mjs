@@ -78,7 +78,8 @@ test('contained: the publication view’s wide tables carry their OWN contained 
 
   // and the live figures in the paper are responsive (no fixed-pixel-width SVG
   // that could exceed the paper column).
-  const figSvgs = host.querySelectorAll('[class]').filter((n) => n.localName === 'svg');
+  // (an icon is an <svg> too, sized in its figure's units; only figures count.)
+  const figSvgs = host.querySelectorAll('[class]').filter((n) => n.localName === 'svg' && !n.getAttribute('data-icon'));
   assert(figSvgs.length >= 1, 'the paper spliced at least one live figure');
   for (const s of figSvgs) assertEqual(s.getAttribute('width'), '100%', 'each paper figure SVG is width:100% (contained within the paper column)');
 });

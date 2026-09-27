@@ -11,6 +11,7 @@ import { el } from '../core/dom.js';
 import { state } from '../core/state.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
+import { iconLabel } from '../icons.js';
 import { gatedSwap, section, empty, fmt, chip, truncate,
   loopVerdict, promotionRateLabel, costPerPromotionLabel, fmtDurationMs, noiseBandFor, loopStatsDigest } from '../ui.js';
 import { attachHovercard } from '../hovercard.js';
@@ -192,7 +193,7 @@ function overviewStrip(rows, live, ctx) {
         class: 'dn-tile-foot dn-tile-footlink dn-mono',
         href: ctx.href('candidate', { epochId: bestRow.epoch_id, gen: String(bestRow.best_generation_id) }),
         title: `${bestRow.best_generation_id} set the fleet floor in ${bestRow.epoch_id}`,
-      }, [String(bestRow.best_generation_id) + ' →'])
+      }, iconLabel('forward', String(bestRow.best_generation_id), { after: true }))
     : null;
   return el('div', { class: 'dn-panel dn-row dn-overview' }, [
     statTile(String(rows.length), 'epochs', open + ' open'),
@@ -373,7 +374,7 @@ function healthPanel(hr) {
     body.appendChild(el('div', { class: 'dn-faint', text: 'Health report unreadable: ' + hr.unreadable }));
   }
   if (healthy) {
-    body.appendChild(el('div', { class: 'dn-good-t', text: '✓ loop is healthy — the evaluation distinguishes candidates.' }));
+    body.appendChild(el('div', { class: 'dn-good-t' }, iconLabel('pass', 'loop is healthy — the evaluation distinguishes candidates.')));
   } else {
     for (const f of findings) {
       const sev = String((f && f.severity) || 'info').toLowerCase();

@@ -24,6 +24,7 @@
 // (top bar, settings, keyboard, restore). Returns { node, setValue }.
 
 import { el, clearChildren, patchText } from './core/dom.js';
+import { icon } from './icons.js';
 import {
   TYPE_OPTIONS, TYPE_MODE_ORDER, TYPE_MODE_LABEL, normaliseType, typeOption,
   FONTSIZE_OPTIONS, normaliseFontSize,
@@ -123,7 +124,7 @@ export function buildTypefaceDropdown(initial, onChoose, opts) {
     class: 'dt-cd-trigger dt-tf-trigger', type: 'button',
     'aria-haspopup': 'listbox', 'aria-expanded': 'false',
     'aria-label': 'Typeface', title: 'Typeface',
-  }, [triggerSpec, triggerName, el('span', { class: 'dt-cd-caret', 'aria-hidden': 'true', text: '▾' })]);
+  }, [triggerSpec, triggerName, el('span', { class: 'dt-cd-caret', 'aria-hidden': 'true' }, [icon('collapse')])]);
 
   // Build the GROUPED listbox: a header per mode, then its four option rows.
   // `options` is the FLAT ordered list of selectable option nodes (headers are

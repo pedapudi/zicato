@@ -4,7 +4,7 @@
 //
 // Shared fixtures and helpers live in ./fixtures.mjs.
 
-import { installDom, test, run, assert, assertEqual, assertDeep, makeEvent } from './harness.mjs';
+import { installDom, test, run, assert, assertEqual, assertDeep, makeEvent, iconNames } from './harness.mjs';
 import { elimPayload, recorded } from './recorded.mjs';
 
 installDom();
@@ -302,7 +302,7 @@ test('live hero: a LIVE SINGLE-ELIM tournament renders the RADIAL bracket, NOT t
   assertEqual(svgsByClass(root, 'dn-swissladder').length, 0, 'NO swiss ladder for a LIVE elim tournament');
   assertEqual(allByClass(root, 'dt-live-hero-nofunnel').length, 0, 'no text placeholder once the bracket is live');
   // the eliminated semifinal lane terminates with ✕ (the radial emits a cut glyph).
-  assert(/✕/.test(bracket.textContent), 'a decided semifinal eliminates a lane (✕)');
+  assert(iconNames(bracket).includes('fail'), 'a decided semifinal eliminates a lane (fail mark)');
 
   coreState.state.heartbeat = { phase: 'idle' };
   coreState.state.activeRuns = []; coreState.state.activeTournament = null;

@@ -17,7 +17,7 @@
 //     rides beside the status pill, folds into the digest, and a no-op beat
 //     churns ZERO DOM while a real override flip repaints.
 
-import { installDom, test, run, assert, assertEqual } from './harness.mjs';
+import { installDom, test, run, assert, assertEqual, assertDeep, iconNames } from './harness.mjs';
 
 installDom();
 
@@ -81,14 +81,16 @@ test('overrideChip: a force-promote (gate.override shape) reads forced↑ + earn
   assert(hasClass(chip, 'dn-override-promote'), 'carries the promote (good-direction) class');
   assert(!hasClass(chip, 'dn-promoted') && !hasClass(chip, 'dn-pill'), 'is NOT a verdict pill — a SIBLING primitive');
   assertEqual(chip.getAttribute('data-override'), 'promote', 'data-override marks the kind');
-  assert(/forced↑/.test(chip.textContent), 'reads "forced↑"');
+  assert(/forced/.test(chip.textContent), 'reads "forced"');
+  assertDeep(iconNames(chip), ['refresh', 'up'], 'the override mark, then the up mark for a force-promote');
   assert(/operator/.test(chip.textContent), 'attributes the override to the operator');
 });
 
 test('overrideChip: a force-reject reads forced✕ + earns the BAD direction', () => {
   const chip = ui.overrideChip({ present: true, action: 'reject', reason: 'spurious' });
   assert(hasClass(chip, 'dn-override-reject'), 'carries the reject (bad-direction) class');
-  assert(/forced✕/.test(chip.textContent), 'reads "forced✕"');
+  assert(/forced/.test(chip.textContent), 'reads "forced"');
+  assertDeep(iconNames(chip), ['refresh', 'fail'], 'the override mark, then the fail mark for a force-reject');
 });
 
 test('overrideChip: a queued override (state:"queued") reads caution; a drained one reads faint', () => {

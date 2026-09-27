@@ -1,7 +1,7 @@
 """Resolution of the dashboard's bundled static asset directory.
 
-The dashboard front-end (``index.html`` / ``app.js`` / ``style.css`` /
-``icons.svg``) is the dashboard package's own asset bundle: it lives
+The dashboard front-end (``index.html`` / ``console.js`` / ``style.css``
+and the ``css/`` and ``js/`` trees) is the dashboard package's own asset bundle: it lives
 beside this module at ``zicato/dashboard/static/`` and is served
 straight off disk. The dashboard owns its assets, so it owns their
 resolution. The ``zicato dashboard`` command imports :func:`resolve_static_dir`

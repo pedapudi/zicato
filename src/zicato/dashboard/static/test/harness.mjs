@@ -260,6 +260,22 @@ function findById(node, id) {
 }
 
 // A minimal Event with the methods handlers use.
+// The drawn icons (js/icons.js) in a subtree, in document order, by name — the
+// way a test asks which marks a figure or control drew, since an icon carries
+// no text.
+export function iconNames(node) {
+  if (!node || !node.querySelectorAll) return [];
+  return node.querySelectorAll('[data-icon]').map((n) => n.getAttribute('data-icon'));
+}
+
+// Whether an element whose text is exactly `text` sits beside the icon `name`
+// under one parent — how a figure pairs a label with its mark ("v3" + crown).
+export function labelledWith(root, text, name) {
+  if (!root || !root.querySelectorAll) return false;
+  return root.querySelectorAll('[class]').some((n) => String(n.textContent).trim() === text
+    && !iconNames(n).length && n.parentNode && iconNames(n.parentNode).includes(name));
+}
+
 export function makeEvent(type, props = {}) {
   return {
     type, _stopped: false, _defaultPrevented: false,

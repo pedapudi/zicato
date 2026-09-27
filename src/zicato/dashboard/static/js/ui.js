@@ -7,6 +7,7 @@
 // data fetching, no state mutation.
 
 import { el, clearChildren } from './core/dom.js';
+import { icon } from './icons.js';
 import { readPrefRaw, writePrefRaw } from './core/prefs.js';
 import { attachHovercard } from './hovercard.js';
 import { href } from './router.js';
@@ -528,8 +529,8 @@ export function verdictPill(decision, opts) {
 //   * gate.override        — {present, action: "promote"|"reject", reason}
 //   * override_status[gid] — {action: "promote"|"reject", state, reason, ts}
 // Returns null, so nothing renders, when no override is present. The four
-// operator states: `forced↑` (force-promote applied), `forced✕` (force-reject
-// applied), `queued` (recorded and not yet fired),
+// operator states: `forced` + up mark (force-promote applied), `forced` + fail
+// mark (force-reject applied), `queued` (recorded and not yet fired),
 // `drained` (queued but the round resolved without it — forward-compat).
 // Direction earns the colour (promote good / reject bad / queued caution /
 // drained faint) — never a new hue, never recoloring the verdict beside it.
@@ -543,21 +544,22 @@ export function normaliseOverride(prov) {
   const reason = (typeof prov.reason === 'string' && prov.reason) ? prov.reason : null;
   let kind;
   let label;
-  let glyph;
+  let mark;
   if (state === 'queued' || state === 'pending') {
-    kind = 'queued'; label = 'queued'; glyph = '⋯'; // operator action recorded and not yet fired
+    kind = 'queued'; label = 'queued'; mark = 'more'; // operator action recorded and not yet fired
   } else if (state === 'drained' || state === 'expired') {
-    kind = 'drained'; label = 'drained'; glyph = '∅'; // queued, never fired this round
+    kind = 'drained'; label = 'drained'; mark = 'empty'; // queued, never fired this round
   } else if (action === 'promote') {
-    kind = 'promote'; label = 'forced'; glyph = '↑'; // force-promoted
+    kind = 'promote'; label = 'forced'; mark = 'up'; // force-promoted
   } else {
-    kind = 'reject'; label = 'forced'; glyph = '✕'; // force-rejected
+    kind = 'reject'; label = 'forced'; mark = 'fail'; // force-rejected
   }
-  return { kind, action, state, label, glyph, reason };
+  return { kind, action, state, label, mark, reason };
 }
 
 // Build the override chip — a `dn-chip dn-override dn-override-<kind>` span that
-// reads "⟳ forced↑ · operator" beside the verdict. Returns null when there is
+// reads "forced · operator" beside the verdict, led by the refresh mark and
+// with the direction's icon after the label. Returns null when there is
 // no override (back-compat: absent → byte-identical). The chip's `kind` class
 // earns its tone by DIRECTION (promote good / reject bad / queued caution /
 // drained faint); it never touches the verdict pill's class.
@@ -569,8 +571,8 @@ export function overrideChip(prov) {
     'data-override': o.kind,
     title: o.reason ? ('operator override · ' + o.reason) : 'operator override',
   }, [
-    el('span', { class: 'dn-override-mark', 'aria-hidden': 'true', text: '⟳' }),
-    el('span', { class: 'dn-override-label', text: o.label + o.glyph }),
+    el('span', { class: 'dn-override-mark', 'aria-hidden': 'true' }, [icon('refresh')]),
+    el('span', { class: 'dn-override-label' }, [o.label, icon(o.mark)]),
     el('span', { class: 'dn-override-by dn-faint', text: ' · operator' }),
   ]);
   return chip;
@@ -692,14 +694,14 @@ export function overrideControlCell(opts) {
   function paint() {
     clearChildren(cell);
     if (cell.getAttribute('data-armed') === '1') {
-      // the confirm row: promote ↑ / reject ✕ direction buttons + reason + cancel.
+      // the confirm row: promote / reject direction buttons + reason + cancel.
       const confirmPromote = el('button', { class: 'dn-ovr-confirm dn-ovr-promote', type: 'button',
-        title: 'force-promote this challenger over the gate' }, [el('span', { text: 'promote ↑' })]);
+        title: 'force-promote this challenger over the gate' }, [el('span', { text: 'promote ' }), icon('up')]);
       confirmPromote.addEventListener('click', () => { armedAction = 'promote'; fire('promote'); });
       const confirmReject = el('button', { class: 'dn-ovr-confirm dn-ovr-reject', type: 'button',
-        title: 'force-reject this challenger against the gate' }, [el('span', { text: 'reject ✕' })]);
+        title: 'force-reject this challenger against the gate' }, [el('span', { text: 'reject ' }), icon('fail')]);
       confirmReject.addEventListener('click', () => { armedAction = 'reject'; fire('reject'); });
-      const cancel = el('button', { class: 'dn-ovr-cancel', type: 'button', title: 'cancel' }, [el('span', { text: '×' })]);
+      const cancel = el('button', { class: 'dn-ovr-cancel', type: 'button', title: 'cancel', 'aria-label': 'cancel' }, [icon('close')]);
       cancel.addEventListener('click', disarm);
       cell.appendChild(el('span', { class: 'dn-ovr-confirmrow' }, [reasonInput, confirmPromote, confirmReject, cancel]));
     } else {
