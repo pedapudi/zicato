@@ -524,7 +524,7 @@ get. Otherwise the full dashboard surface: the embedded static UI (`/`,
 `/api/epoch`, `/api/lineage`, `/api/run-log`, `/api/active-runs`,
 `/api/active-tournament`, `/api/heartbeat`, `/api/health`), the SSE stream
 (`/events`, fed by the filesystem watcher), and the control POSTs
-(`/api/control/pause`, `/resume`, `/skip-round`, `/kill/:run_id`,
+(`/api/control/pause`, `/resume`, `/skip-round`,
 `/promote/:generation_id`, `/reject/:generation_id`, `/brief`; §8.13).
 
 **What degrades on the index being absent/stale.** File-backed endpoints
@@ -564,12 +564,10 @@ signal, signal a recycled pid the other side already reaped, or interleave
 SIGTERM/SIGKILL windows unpredictably. One writer of intent, one owner of
 signals during the delegation window.
 
-The dashboard's `POST /api/control/kill/:run_id` (in both the supervisor and
-the Python service) writes a different marker, `control/kill_runs/{run_id}`.
-Nothing reads that directory: `runs_loop` reads only `kill_requests/`, and the
-orchestrator has no consumer for it. An operator kill request is therefore
-recorded but not acted on. Routing it through the vetted path requires a
-consumer (see §8.13, step 4).
+`kill_requests/` has no dashboard route. The operator has no per-run kill
+control: a run killed from outside ends with no result file, which the parent
+records as the infrastructure abort `gone_no_result`, so the round is
+deferred and the run is evaluated again.
 
 ---
 
@@ -687,7 +685,7 @@ work is required when:
 > `SCHEMA_VERSION` / `EXPECTED_SCHEMA_VERSION`, `promote_margin` /
 > `DEFAULT_PROMOTE_MARGIN`, the runtime file field names in `state.py` /
 > `state.rs`, the control-file names (`pause_epoch`, `skip_round`,
-> `kill_runs/`, `kill_requests/`, `promote/`, `reject/`), and the start-time token semantics
+> `kill_requests/`, `promote/`, `reject/`), and the start-time token semantics
 > in `lock.py` / `signal.rs`. Each pair carries a comment pointing at its
 > twin — keep the comments true.
 
@@ -703,7 +701,7 @@ writes the marker. Six steps, two languages, tests on both sides.
 **Step 1 — Python endpoint.** Add the marker constant + write path in
 `zicato.runtime.control` (a flag file `control/rotate_board`, or a targeted
 `control/rotate_board/<arg>` — copy the `CMD_SKIP_ROUND` /
-`CMD_KILL_RUN_PREFIX` patterns, including `write_command`'s shape
+`CMD_PROMOTE_PREFIX` patterns, including `write_command`'s shape
 dispatch), and the matching POST on the Python dashboard service
 (`src/zicato/dashboard/endpoints.py`) so both UIs offer the gesture.
 
@@ -733,7 +731,7 @@ Notes on the skeleton: `write_control_marker` / `atomic_write` already
 implement tmp-write + rename (the Rust twin of the Python atomic contract) —
 use them, never a bare `tokio::fs::write`. Targeted routes MUST validate the
 path parameter with `is_safe_id` and answer `400` on failure (see
-`control_kill` / `control_promote`) — the id becomes a filename.
+`control_promote`) — the id becomes a filename.
 
 **Step 3 — read-only 403.** The `forbidden_if_read_only` guard is
 non-negotiable on every POST: a `--read-only` supervisor is the "attach an

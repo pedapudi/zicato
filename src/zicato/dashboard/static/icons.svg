@@ -13,10 +13,6 @@
     <path d="M3 4 L11 10 L3 16 Z" fill="currentColor"/>
     <rect x="13" y="4" width="3" height="12" rx="1" fill="currentColor"/>
   </symbol>
-  <symbol id="icon-kill" viewBox="0 0 20 20">
-    <path d="M5 5 L15 15 M15 5 L5 15" stroke="currentColor" stroke-width="2"
-        stroke-linecap="round" fill="none"/>
-  </symbol>
   <symbol id="icon-promote" viewBox="0 0 20 20">
     <path d="M4 12 L9 7 L14 12 L11 12 L11 16 L7 16 L7 12 Z"
         fill="currentColor"/>

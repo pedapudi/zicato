@@ -26,7 +26,6 @@ evolve loop. This subpackage is pure state plumbing.
 from __future__ import annotations
 
 from zicato.runtime.control import (
-    CMD_KILL_RUN_PREFIX,
     CMD_PAUSE_EPOCH,
     CMD_PROMOTE_PREFIX,
     CMD_REJECT_PREFIX,
@@ -114,7 +113,6 @@ __all__ = [
     # control
     "CMD_PAUSE_EPOCH",
     "CMD_SKIP_ROUND",
-    "CMD_KILL_RUN_PREFIX",
     "CMD_PROMOTE_PREFIX",
     "CMD_REJECT_PREFIX",
     "CMD_RUBRIC_REPLACEMENT",

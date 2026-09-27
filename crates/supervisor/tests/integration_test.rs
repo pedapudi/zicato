@@ -410,7 +410,7 @@ async fn read_only_blocks_post_endpoints() {
     assert_eq!(r.status(), 403);
 
     let r = client
-        .post(format!("{base}/api/control/kill/run-9"))
+        .post(format!("{base}/api/control/promote/v9"))
         .send()
         .await
         .unwrap();
@@ -543,14 +543,14 @@ async fn brief_post_writes_replacement_file() {
 }
 
 #[tokio::test]
-async fn kill_endpoint_rejects_path_traversal() {
+async fn promote_endpoint_rejects_path_traversal() {
     let (_t, paths) = make_workspace();
     let (handle, shutdown) = start_server(paths.clone(), false).await;
     let base = format!("http://{}", handle.addr);
     let client = reqwest::Client::new();
 
     let r = client
-        .post(format!("{base}/api/control/kill/..%2Fevil"))
+        .post(format!("{base}/api/control/promote/..%2Fevil"))
         .send()
         .await
         .unwrap();

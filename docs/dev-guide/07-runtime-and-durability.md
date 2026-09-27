@@ -1202,7 +1202,6 @@ operator can `touch .zicato/runtime/control/pause_epoch` in an emergency.
 |---|---|---|---|---|
 | `pause_epoch` | flag file `control/pause_epoch` (optional JSON body `{"reason", "ts"}`) | dashboard POST `/api/control/pause` (Python service and Rust supervisor both), CLI, bare `touch` | `block_while_paused` — between rounds, and polled until cleared | scheduling held; resume = deleting the flag (`/api/control/resume` unlinks it — never a queued command) |
 | `skip_round` | flag file `control/skip_round` | dashboard / CLI | `claim_skip_round` at the top of `evolve_once` | round aborts cleanly, exactly like a wall-clock budget cut; a *between-rounds* stale skip is drained as a no-op |
-| `kill_runs/<run_id>` | one file per target under `control/kill_runs/` | dashboard POST `/api/control/kill/:run_id` (Python service and Rust supervisor both) | no consumer: neither the orchestrator nor the supervisor reads this directory, so an operator kill request is recorded but not acted on | none |
 | `kill_requests/<run_id>` | one marker per run under `control/kill_requests/` (no `.json` suffix) | the Python parent, through `request_worker_kill`, when a worker overruns its budget or a cancelled run must stop | the **Rust supervisor's** runs loop — not the orchestrator | the single-escalator kill handshake (see 08-supervisor.md §8.10); the supervisor clears the marker once termination is confirmed, and the parent clears it on run cleanup |
 | `promote/<gen_id>` / `reject/<gen_id>` | one file per target | dashboard / CLI | `claim_field_gate_overrides` at the gate, for every structure | overrides the gate's verdict for the *matching* in-flight generation; recorded explicitly as an operator override in the OutcomeRecord/journal, never silently |
 | `rubric_replacement.txt` | one payload file whose body IS the new brief text | dashboard / CLI | `claim_rubric_replacement` between rounds | a contract edit — the payload is written to the live brief and contract-hash auto-epoching rolls the epoch |
@@ -1257,8 +1256,9 @@ freeform `reason`.
 > process group; that ordering is the point of the handshake (no
 > parent↔supervisor race over the same pid). If you add a "kill" feature,
 > write the marker or call the shared process owner; do not import `os.kill`.
-> The operator's `kill_runs/` directory is a separate channel with no
-> consumer; a feature that expects it to stop a run must add one.
+> The operator has no per-run kill command: a run killed from outside is an
+> infrastructure abort (`gone_no_result`) that is rerun in a later round, so
+> the kill would spend budget without producing a decision.
 
 Also in this package: `zicato.runtime.channel.CommandQueue` — the
 generalised many-writer/claim-once queue built on `atomic_claim`, with

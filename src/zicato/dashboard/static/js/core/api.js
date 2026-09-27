@@ -82,7 +82,7 @@ export async function pollLogTailAppend() {
 // {gen}` remain served for curl/operators; nothing on the beat path touches
 // them. See js/CONTRACTS.md (§ drill-down / lazy endpoints).
 
-// POST a control marker (pause / skip-round / kill / promote / reject /
+// POST a control marker (pause / skip-round / promote / reject /
 // brief). Read-only workspaces answer 403 — surfaced to the caller.
 export async function postControl(action, body) {
   const res = await fetch('/api/control/' + action, {

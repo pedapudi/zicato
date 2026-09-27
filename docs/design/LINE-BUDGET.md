@@ -50,9 +50,9 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 469,931 | +61,270 |
-| Production | 197,702 | 188,435 | -9,267 |
-| Production logic | 110,276 | 109,952 | -324 |
+| Total | 408,661 | 469,757 | +61,096 |
+| Production | 197,702 | 188,312 | -9,390 |
+| Production logic | 110,276 | 109,856 | -420 |
 
 The baseline row is the reference `f9052dd` measured by the classification the
 checker holds, which counts the console's hand-written entry point
@@ -84,19 +84,19 @@ production-logic series per subsystem along a branch's first-parent commits.
 
 | Subsystem | Total | Production | Production logic | Prose share |
 |---|---:|---:|---:|---:|
-| src/zicato/dashboard | 61,932 | 32,056 | 22,123 | 31.0% |
+| src/zicato/dashboard | 61,801 | 31,966 | 22,051 | 31.0% |
 | src/zicato/query | 17,742 | 17,742 | 11,166 | 37.1% |
 | src/zicato/epoch | 13,822 | 13,822 | 7,742 | 44.0% |
 | src/zicato/evolve | 11,262 | 11,262 | 7,185 | 36.2% |
 | src/zicato/tournament | 11,223 | 11,223 | 6,647 | 40.8% |
 | src/zicato/reflection | 9,843 | 9,843 | 6,578 | 33.2% |
-| crates/supervisor | 15,977 | 13,521 | 6,279 | 53.6% |
+| crates/supervisor | 15,955 | 13,499 | 6,259 | 53.6% |
 | src/zicato/proposer | 9,521 | 9,521 | 4,772 | 49.9% |
 | src/zicato/cli | 7,088 | 7,088 | 4,697 | 33.7% |
 | src/zicato/analyzer | 7,165 | 7,165 | 4,591 | 35.9% |
 | src/zicato/selection | 5,278 | 5,278 | 3,060 | 42.0% |
 | src/zicato/core | 6,393 | 6,393 | 2,808 | 56.1% |
-| src/zicato/runtime | 5,198 | 5,198 | 2,535 | 51.2% |
+| src/zicato/runtime | 5,188 | 5,188 | 2,531 | 51.2% |
 | src/zicato/index | 4,392 | 4,392 | 2,390 | 45.6% |
 | src/zicato/telemetry | 4,503 | 4,503 | 2,197 | 51.2% |
 | src/zicato/contract_draft | 2,468 | 2,468 | 1,622 | 34.3% |
@@ -104,7 +104,7 @@ production-logic series per subsystem along a branch's first-parent commits.
 | src/zicato/mutation | 2,954 | 2,954 | 1,405 | 52.4% |
 | src/zicato/check | 1,769 | 1,769 | 1,144 | 35.3% |
 | src/zicato/board | 2,412 | 2,412 | 1,097 | 54.5% |
-| src/zicato/workspace | 1,969 | 1,969 | 937 | 52.4% |
+| src/zicato/workspace | 1,968 | 1,968 | 937 | 52.4% |
 | src/zicato/adapters | 2,197 | 2,197 | 821 | 62.6% |
 | src/zicato/judge_runtime | 1,778 | 1,778 | 801 | 54.9% |
 | src/zicato/testing | 1,455 | 1,455 | 767 | 47.3% |
@@ -459,3 +459,6 @@ dropped rows named.
 | Shared recorded results and worker ownership (total) | 472,149 | -2,218 | 469,931 | Tournament execution publishes diagram analysis; readers share canonical measurements; worker ownership removes circular imports; diagnostics and transcripts share record handling. Browser change detection includes displayed scores. |
 | Shared recorded results and worker ownership (production) | 190,095 | -1,660 | 188,435 | Tournament execution publishes diagram analysis; readers share canonical measurements; worker ownership removes circular imports; diagnostics and transcripts share record handling. Browser change detection includes displayed scores. |
 | Shared recorded results and worker ownership (production logic) | 110,735 | -783 | 109,952 | Tournament execution publishes diagram analysis; readers share canonical measurements; worker ownership removes circular imports; diagnostics and transcripts share record handling. Browser change detection includes displayed scores. |
+| Removed per-run kill control (total) | 469,931 | -174 | 469,757 | The unconsumed per-run kill control is removed: its dashboard and supervisor routes, the console's kill button, and the control-protocol constant. Runs stay bounded by their wall-clock budgets. |
+| Removed per-run kill control (production) | 188,435 | -123 | 188,312 | The unconsumed per-run kill control is removed: its dashboard and supervisor routes, the console's kill button, and the control-protocol constant. Runs stay bounded by their wall-clock budgets. |
+| Removed per-run kill control (production logic) | 109,952 | -96 | 109,856 | The unconsumed per-run kill control is removed: its dashboard and supervisor routes, the console's kill button, and the control-protocol constant. Runs stay bounded by their wall-clock budgets. |

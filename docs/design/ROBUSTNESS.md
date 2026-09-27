@@ -724,10 +724,8 @@ The shipped build contains:
 
 Two things are not in the build:
 
-- The `zicato status` and `zicato kill` commands, and any consumer for
-  the dashboard's kill control (`control/kill_runs/{run_id}` is written
-  but never read; [RUNTIME.md](RUNTIME.md) §2.5). `zicato health` and the
-  dashboard are the available views.
+- The `zicato status` command. `zicato health` and the dashboard are the
+  available views.
 - The richer circuit-breaker signals — hypothesis match-rate decay and
   same-drift-kinds detection — beyond the consecutive-reject counter and
   the degenerate-health stop (§2.5).

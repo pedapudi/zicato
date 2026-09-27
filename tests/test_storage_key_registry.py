@@ -188,9 +188,9 @@ _STORAGE_KEYS: tuple[KeyDeclaration, ...] = (
     ),
     KeyDeclaration(
         "control_command_key",
-        runtime_keys.control_command_key(f"kill_runs/{RUN}"),
-        lambda layout: layout.control_command(f"kill_runs/{RUN}"),
-        f"runtime/control/kill_runs/{RUN}",
+        runtime_keys.control_command_key(f"promote/{GENERATION}"),
+        lambda layout: layout.control_command(f"promote/{GENERATION}"),
+        f"runtime/control/promote/{GENERATION}",
     ),
     KeyDeclaration(
         "control_log_prefix",

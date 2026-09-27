@@ -25,7 +25,6 @@ zicato helper uses)::
       control/                        # operator commands queued by dashboard
         pause_epoch                   # flag file
         skip_round                    # flag file
-        kill_runs/{run_id}            # one file per kill target
         kill_requests/{run_id}        # parent->supervisor escalation request
         promote/{generation_id}       # one file per promote target
         reject/{generation_id}        # one file per reject target
@@ -134,8 +133,8 @@ def control_command_path(workspace_root: Path, command: str) -> Path:
 
     The ``command`` argument is taken verbatim as a relative path under
     :func:`control_dir`. It may include subdirectories (e.g.
-    ``"kill_runs/run_abc"``) — the kill/promote/reject commands keep
-    one file per target underneath a per-command-kind subdirectory.
+    ``"promote/v3"``) — the promote and reject commands keep one file per
+    target underneath a per-command-kind subdirectory.
     """
     return _layout(workspace_root).control_command(command)
 
