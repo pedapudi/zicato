@@ -45,10 +45,7 @@ The reader's rules:
 
 - **Envelope names.** `emitted_at`, `event_id`, `kind`, `payload`,
   `run_id`, `seq`, `sequence`, `session_id` belong to the envelope and
-  can never name the payload case. The supervisor's Rust `run_log.rs`
-  declares the same set, spelling both twins of each name because it
-  matches the raw line; `tests/test_event_log_envelope_correspondence.py`
-  holds the two equal.
+  can never name the payload case.
 - **Casing.** An underscore goes before each uppercase ASCII letter that
   follows a lowercase letter or a digit. A run of capitals is one word,
   so `goldfiveLLMCallStart` is `goldfive_llmcall_start` rather than

@@ -181,7 +181,7 @@ def test_unusable_cache_rebuilds_and_cannot_hide_a_failed_build(hook, monkeypatc
     "changed",
     [
         "crates/supervisor/src/main.rs",
-        "crates/supervisor/static/index.html",
+        "crates/supervisor/build.rs",
         "src/zicato/epoch/source_scope.json",
         "Cargo.lock",
         "Cargo.toml",

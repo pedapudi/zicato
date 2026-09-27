@@ -572,11 +572,7 @@ def test_bracket_tournaments_carry_the_elim_model(tmp_path: Path, static_dir: Pa
 
 
 def test_active_tournament_serves_the_elim_model(tmp_path: Path, static_dir: Path) -> None:
-    """The LIVE path: /api/active-tournament carries the same fold.
-
-    The Rust supervisor applies the identical enrichment
-    (crates/supervisor/src/elim_states.rs) so the two dashboards agree.
-    """
+    """The LIVE path: /api/active-tournament carries the same fold."""
     ws = _base_workspace(tmp_path)
     write_tournament(
         ws,

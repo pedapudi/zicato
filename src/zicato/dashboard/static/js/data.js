@@ -113,8 +113,8 @@ export function lineage() { return cachedJson('/api/lineage'); }
 // The SERVER scopes the generations feed: `/api/lineage?epoch=<id>` returns
 // one epoch's generations (every row already carries the server-stamped
 // tri-state `promoted` + `epoch_id`). The residual client-side epoch filter
-// below is a SCOPING GUARD only — a degraded server (the Rust supervisor
-// ignores the query param) still answers with the global feed, and a
+// below is a SCOPING GUARD only — a degraded server (one that ignores the
+// query param) still answers with the global feed, and a
 // foreign-tagged row must not leak into the viewed epoch. It never
 // re-derives any per-row field.
 export async function generationsForEpoch(epochId) {
@@ -185,8 +185,8 @@ export async function activeTournament() {
 // The AUTHORITATIVE live round-pipeline projection (propose → apply → run →
 // gate), computed SERVER-side (build_round_pipeline) so the stepper never
 // re-derives loop position by parsing phase strings client-side. NEVER cached
-// — it moves on every heartbeat — and a failure (the Rust supervisor does not
-// serve it) degrades to null so the hero simply omits the stepper.
+// — it moves on every heartbeat — and a failed read degrades to null so the
+// hero simply omits the stepper.
 export async function livePipeline() {
   try { return await fetchJson('/api/live/pipeline'); } catch (err) { return null; }
 }
@@ -280,9 +280,9 @@ export function fieldStatusSummary(fs) {
 
 // The SETTLED round timeline for one epoch — the champion-spine rounds + the
 // loss-floor waterfall, JOINED SERVER-SIDE (build_round_timeline). The old
-// four-endpoint client join is deleted; a null read (the endpoint absent —
-// e.g. the Rust supervisor) renders the honest empty timeline, never a
-// client-side re-derivation.
+// four-endpoint client join is deleted; a null read (the endpoint absent or
+// the read failed) renders the honest empty timeline, never a client-side
+// re-derivation.
 export function roundTimeline(epochId) {
   return cachedJson(`/api/epoch/${enc(epochId)}/round-timeline`);
 }
@@ -313,14 +313,14 @@ export function experimentsLedger(epochId) {
 // / "warming_up" before anything has settled — the stall words count
 // `settled_count`, not `challenger_count`, so an in-flight racer never reads as
 // a stall) + the floor itself
-// (build_optimization_trajectory). Absent on the Rust supervisor → cachedJson
+// (build_optimization_trajectory). A failed read → cachedJson
 // null-degrades and the panels are simply omitted.
 export function trajectory(epochId) {
   return cachedJson(`/api/epoch/${enc(epochId)}/trajectory`);
 }
 // The wall-clock + run-count COST accounting for one epoch's tournament —
 // per-matchup runtime/runs/aborts + cost_per_promotion_ms (build_tournament_
-// cost). Null-degrades on the Rust supervisor like every accessor here.
+// cost). Null-degrades on a failed read like every accessor here.
 export function tournamentCost(epochId) {
   return cachedJson(`/api/epoch/${enc(epochId)}/cost`);
 }

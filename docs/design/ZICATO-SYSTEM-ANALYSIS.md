@@ -367,7 +367,7 @@ The supervisor (`crates/supervisor/`) is a **separate OS process** with no share
 //! for blowing its wall-clock budget.
 ```
 
-The same binary serves the watchdog `/statusz` surface and (unless `--no-dashboard`) the analytical API/SSE dashboard, on a port range (7920-7930) disjoint from the Python dashboard service (7892-7902), per `crates/supervisor/src/main.rs`.
+The same binary serves the watchdog `/statusz` surface and the audit-ledger check `/api/audit/verify`, on a port range (7920-7930) disjoint from the Python dashboard service (7892-7902), per `crates/supervisor/src/main.rs`.
 
 ---
 

@@ -11,7 +11,7 @@
 //     signal (below noise floor)" — never a confident "plateaued"; "improving"
 //     renders NO chip (the calm default);
 //   * promotionRateLabel / costPerPromotionLabel null-degrade (absent endpoint
-//     on the Rust supervisor → the stats are simply omitted);
+//     on a failed read → the stats are simply omitted);
 //   * sparkline({noiseBand}) draws ONE dn-spark-noise rect; absent floor → none
 //     (byte-identical to today);
 //   * buildTrajectoryPanel / buildCostPanel: null on an absent/empty read; the
@@ -75,7 +75,7 @@ test('loopVerdict: no_signal renders the exact honest phrase, plateaued reads pl
   assertEqual(plat.cls, 'plateau', 'plateau chips wear the caution class');
 
   assertEqual(home.loopVerdict(trajFixture()), null, 'improving = the calm default, NO chip');
-  assertEqual(home.loopVerdict(null), null, 'a null read (Rust supervisor) → no chip');
+  assertEqual(home.loopVerdict(null), null, 'a null read → no chip');
   assertEqual(home.loopVerdict({}), null, 'a degraded read (verdict null) → no chip');
 });
 
@@ -136,7 +136,7 @@ test('heroPlaceholderText: a retained champion is reported, not called "no traje
   assertEqual(home.heroPlaceholderText(trajFixture({ promoted_count: 0, challenger_count: 0 })),
     'no trajectory yet', 'before any challenger settles, the honest word IS "yet"');
   assertEqual(home.heroPlaceholderText(null), 'no trajectory yet',
-    'a null read (Rust supervisor) keeps the original placeholder');
+    'a null read keeps the original placeholder');
 
   // Settled rounds rather than fielded ones: an in-flight challenger has retained
   // nothing yet, so counting it would report a round the loop has not
@@ -188,7 +188,7 @@ test('sparkline({noiseBand}) draws ONE dn-spark-noise rect; omitting it draws no
 
 // ── 4. the epoch trajectory panel ────────────────────────────────────────────
 test('buildTrajectoryPanel: absent / empty reads → null (the view is byte-identical to today)', () => {
-  assertEqual(epoch.buildTrajectoryPanel(null), null, 'null read (Rust supervisor) → no panel');
+  assertEqual(epoch.buildTrajectoryPanel(null), null, 'null read → no panel');
   assertEqual(epoch.buildTrajectoryPanel(undefined), null, 'absent → no panel');
   assertEqual(epoch.buildTrajectoryPanel({ points: [], promotion_rate: null }), null,
     'a degraded (never-indexed) read → no panel');

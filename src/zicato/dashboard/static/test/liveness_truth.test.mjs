@@ -137,8 +137,8 @@ test('in flight: a served verdict can also keep a record the clock would drop', 
 });
 
 test('in flight: a server that sends no verdict still ages the timestamps', () => {
-  // The DEGRADE that must not break: the Rust supervisor (and any build
-  // before this field) sends rows with no `fresh`, and the client falls back
+  // The DEGRADE that must not break: any build before this field sends
+  // rows with no `fresh`, and the client falls back
   // to exactly the ageing it did before.
   const junePlain = LS.livenessFor(juneState(), NOW).status;
   assertEqual(junePlain.inFlight, 0, 'stale rows with no served verdict still age out');
@@ -169,7 +169,7 @@ test('liveness: the client can DEMOTE the server\'s live verdict but never PROMO
     'the server\'s interrupted verdict stands — the client never promotes');
 });
 
-test('liveness: with NO served block the four-state verdict maps in (older / Rust server)', () => {
+test('liveness: with NO served block the four-state verdict maps in (older server)', () => {
   const s = juneState({ liveness: null });
   const { liveness } = LS.livenessFor(s, NOW);
   // Degraded, but still honest here: nothing is fresh, so nothing is live.

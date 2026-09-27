@@ -50,7 +50,7 @@ export async function render(host, ctx, params) {
   // trajectory (promotion rate + uncertainty-honest verdict + noise floor),
   // the tournament cost accounting, and the per-judge loss trend (the reader
   // + endpoint shipped long ago with zero view consumers — this is its view).
-  // All null-degrade (the Rust supervisor serves none of the three) → the
+  // All null-degrade (a failed read yields null) → the
   // panels are simply omitted.
   // The EXPERIMENTS LEDGER (§3) rides the same fan-out: one row per experiment
   // (idea · sites · decision · Δ · reason · round), joined server-side. Null on
@@ -588,7 +588,7 @@ function verdictLine(traj) {
 // gate ladder does not name.
 //
 // The OPTIMIZATION-TRAJECTORY panel for one /api/epoch/{id}/trajectory read.
-// Null when the read is absent (Rust supervisor) or carries no points AND no
+// Null when the read failed or carries no points AND no
 // promotion stats — the epoch view is then byte-identical to today.
 export function buildTrajectoryPanel(traj, opts) {
   if (!traj || typeof traj !== 'object') return null;
@@ -732,7 +732,7 @@ export function costPanelDigest(cost) {
 // One row per judge: name · a sparkline of its weighted loss across the spine
 // generations · the last value. Consumes the /api/epoch/{id}/per-judge-trend
 // shape verbatim ({generations: [spine ids], judges: [{judge_name,
-// by_generation}]}). Null when the read is absent (Rust supervisor), degraded
+// by_generation}]}). Null when the read failed, degraded
 // (note, empty judges), or carries no judge with a plottable value — the
 // epoch view is then byte-identical to today.
 export function buildJudgeTrendPanel(trend) {
@@ -776,7 +776,7 @@ export function buildJudgeTrendPanel(trend) {
 // The third card of the Measurement band: the proposer's prediction-accuracy
 // fraction across this epoch's lineage. Same read and figure the home view
 // mounts (/api/calibration-trend), at card scale. Null when the read is absent
-// (Rust supervisor) or carries no SCORED point, so an epoch with no falsifiable
+// or carries no SCORED point, so an epoch with no falsifiable
 // claims yet shows a two-card band rather than an empty frame.
 export function buildCalibrationMini(calib, opts) {
   if (!calib || typeof calib !== 'object') return null;

@@ -894,9 +894,8 @@ instead of walking files.
   ever lag the filesystem, never lead it — so a crash leaves a
   self-healing behind-index, never a phantom row.
 - **Single writer.** Only the orchestrator writes the index; the
-  dashboard service opens it read-only (the Rust supervisor's
-  read-only `rusqlite` access exists but, under `--no-dashboard`, is
-  not the live-dashboard reader).
+  dashboard service opens it read-only, and so does the Rust
+  supervisor's opt-in divergence and promotion-gate audits.
 
 The full schema, the rebuild semantics, and the
 SQLite-here-not-there boundary are in
@@ -1032,9 +1031,9 @@ files.
    ┌────────────────────────────────┐         ┌────────────────────────────┐
    │  zicato evolve (Python)        │  spawn  │  watchdog supervisor (Rust)│
    │  ───────────────────────────   ├────────►│  ────────────────────────  │
-   │  • acquires the workspace      │         │  --no-dashboard mode:      │
-   │    writer lock (lock.json)     │         │  watches heartbeat.json +  │
-   │  • writes heartbeat.json (2s)  │         │  active_runs/*.            │
+   │  • acquires the workspace      │         │  watches heartbeat.json +  │
+   │    writer lock (lock.json)     │         │  active_runs/*.            │
+   │  • writes heartbeat.json (2s)  │         │                            │
    │  • runs each tournament run    │         │  Heartbeat-stale → flag    │
    │    in a subprocess worker,     │         │  orchestrator stalled.     │
    │    so a hung run cannot        │         │  Run stale/past deadline → │
@@ -1068,9 +1067,8 @@ Three properties hold across the runtime layer:
    for the writer's lifetime, with a readable ownership record in
    `runtime/lock.json`.
 
-**Supervisor-binary ownership.** `evolve` spawns the watchdog with the
-supervisor's own `--no-dashboard` flag, so it supervises processes and
-serves `/statusz` without serving a UI. `zicato evolve --no-dashboard`
+**Supervisor-binary ownership.** `evolve` spawns the watchdog, which
+supervises processes and serves `/statusz` without serving a UI. `zicato evolve --no-dashboard`
 spawns neither the dashboard service nor the watchdog. The Rust watchdog
 binary splits along
 the library/driver boundary. *Packaging* belongs to the root wheel: the

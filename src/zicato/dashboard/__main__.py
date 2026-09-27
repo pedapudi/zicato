@@ -1,6 +1,6 @@
 """``python -m zicato.dashboard`` entry point.
 
-Spawned by ``zicato evolve`` alongside the watchdog-only supervisor (and
+Spawned by ``zicato evolve`` alongside the watchdog supervisor (and
 usable directly) to serve the standalone Python dashboard against a
 workspace. Thin shim: parse args, resolve the selected static directory,
 hand off to :func:`zicato.dashboard.server.run`.

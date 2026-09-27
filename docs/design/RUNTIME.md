@@ -11,9 +11,8 @@ workspace.
 > heartbeat (`HeartbeatBeater`), the kernel workspace writer guard, the
 > atomic-write helper, and the control-file protocol module all ship
 > (`src/zicato/runtime/`). The Rust watchdog supervisor
-> (`crates/supervisor/`) ships and is auto-spawned by `evolve` in
-> watchdog-only mode (`--no-dashboard`): it runs the heartbeat and
-> run-staleness loops, escalates from SIGTERM through a grace period to
+> (`crates/supervisor/`) ships and is auto-spawned by `evolve`: it runs
+> the heartbeat and run-staleness loops, escalates from SIGTERM through a grace period to
 > SIGKILL, and serves a `/statusz` probe. The live dashboard is a
 > separate Python (Starlette) service spawned alongside the watchdog
 > (see [DASHBOARD.md](DASHBOARD.md)) rather than a role of the Rust
@@ -406,23 +405,14 @@ build hook) and a dev-checkout `target/release/` build; the system `PATH`.
 If none resolve, `evolve` prints a warning and runs **without** the
 watchdog.
 
-The binary is capable of two roles, but **as shipped only one is
-used**:
-
-- **Watchdog (always on).** Polls `.zicato/runtime/heartbeat.json` and
-  the per-run files under `active_runs/`; it warns on a stale heartbeat
-  and escalates a stalled or overdue run SIGTERM → grace → SIGKILL. It also serves a terse
-  `/statusz` (and `/statusz.json`) operational probe. No LLM, no
-  in-memory authoritative state — every decision is a pure function of
-  the on-disk files.
-- **Dashboard server (compiled in, left unmounted).** The binary can
-  serve the HTTP and server-sent-events dashboard, but `zicato evolve`
-  always spawns it with `--no-dashboard`, so those routes are never
-  mounted. The separate Python service serves the live dashboard user
-  interface (see §3.0 and [DASHBOARD.md](DASHBOARD.md)).
-
-The watchdog uses a filesystem watcher plus a poll loop on
-`.zicato/runtime/`.
+The binary polls `.zicato/runtime/heartbeat.json` and the per-run files
+under `active_runs/`; it warns on a stale heartbeat and escalates a
+stalled or overdue run SIGTERM → grace → SIGKILL. It also serves a terse
+`/statusz` (and `/statusz.json`) operational probe and the audit-ledger
+check `/api/audit/verify`. No LLM, no in-memory authoritative state —
+every decision is a pure function of the on-disk files. The separate
+Python service serves the live dashboard user interface (see §3.0 and
+[DASHBOARD.md](DASHBOARD.md)).
 
 ### 3.0 Two processes: watchdog + dashboard service
 
@@ -430,15 +420,13 @@ The watchdog uses a filesystem watcher plus a poll loop on
 
 | Process | What it is | Default port | Role |
 |---|---|---|---|
-| `zicato-supervisor` | Rust binary, spawned `--no-dashboard` | `7920` (walks `7920..=7930`) | watchdog + `/statusz` |
+| `zicato-supervisor` | Rust binary, spawned with `--workspace` | `7920` (walks `7920..=7930`) | watchdog + `/statusz` |
 | `python -m zicato.dashboard` | Python/Starlette service | `7892` (walks `+1` up to 10×) | the dashboard UI + API the operator opens |
 
 They bind distinct default ports so neither walks onto the other. The
 dashboard URL that `evolve` prints is read back from
 `runtime/dashboard.json`, which records the port the dashboard bound,
-and is never assumed. The dashboard runs as its own Python service
-rather than as a role of the Rust binary, by design; the Rust binary's
-in-process dashboard routes stay compiled in and unmounted.
+and is never assumed.
 
 ### 3.1 Lifecycle
 
@@ -448,8 +436,8 @@ in-process dashboard routes stay compiled in and unmounted.
 │  ─────────────────────────────────────────                      │
 │  1. Acquire runtime/lock.guard; publish lock.json metadata.      │
 │  2. Start the HeartbeatBeater (writes heartbeat.json).          │
-│  3. Spawn zicato-supervisor (watchdog) with --no-dashboard,     │
-│     and python -m zicato.dashboard (the UI service).            │
+│  3. Spawn zicato-supervisor (the watchdog) and                  │
+│     python -m zicato.dashboard (the UI service).                │
 │  4. Read runtime/dashboard.json; print the dashboard URL.       │
 │  5. Run the meta-loop (rounds 1..N).                            │
 │  6. On exit: join owned work and finish worker cleanup;         │
@@ -458,9 +446,9 @@ in-process dashboard routes stay compiled in and unmounted.
                           │ spawns (×2)
                           ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  zicato-supervisor (Rust, --no-dashboard)                       │
+│  zicato-supervisor (Rust)                                       │
 │  ─────────────────────────                                      │
-│  1. Resolve workspace; open the runtime/ watcher.               │
+│  1. Resolve the workspace.                                      │
 │  2. Bind --port (default 7920, +1 up to +10) for /statusz.      │
 │  3. Loop: on the poll interval (default 2s), check heartbeat    │
 │     staleness and per-run staleness; escalate on threshold      │
@@ -482,12 +470,12 @@ without the orchestrator's involvement. See §3.3.
 orchestrator                           supervisor
      │                                      │
      │ write heartbeat.json (t=0)           │
-     ├─────────────────────────────────────►│  inotify: rename → reload
+     ├─────────────────────────────────────►│  tick: read heartbeat.json
      │                                      │
      │ ... working ...                      │  set last_seen = t
      │                                      │
      │ write heartbeat.json (t=2)           │
-     ├─────────────────────────────────────►│  inotify: rename → reload
+     ├─────────────────────────────────────►│  tick: read heartbeat.json
      │                                      │
      │ ... working ...                      │  set last_seen = t+2
      │                                      │
@@ -556,7 +544,6 @@ Rust is chosen on practical grounds, none of them cosmetic.
 |---|---|---|---|---|
 | Single static binary | no (interpreter required) | yes (with care) | yes | **yes** |
 | Memory-safe (cannot itself crash and corrupt state) | yes (but GIL wedges) | no | yes | **yes** |
-| Native inotify / FSEvents | yes (pyinotify / fsevents) | yes (libinotify) | yes | **yes (notify crate)** |
 | Fast startup (~ms; spawned every `evolve`) | slow (50-200ms cold) | fast | fast | **fast (~5-20ms)** |
 | HTTP server in stdlib / mature crate | yes (stdlib) | partial | yes (net/http) | **yes (axum / hyper)** |
 
@@ -595,7 +582,7 @@ Inside `.zicato/runtime/` the writer rules are strict:
 | `heartbeat.json` | orchestrator | supervisor, dashboard |
 | `progress.events.jsonl` | Invocation appends through its exclusive workspace writer | supervisor (via the heartbeat's `seq`), dashboard |
 | `dashboard.json` | dashboard service | orchestrator (URL readback) |
-| `active_tournament.events.jsonl` | Invocation publishes snapshots and field replacements through its exclusive workspace writer | supervisor, dashboard |
+| `active_tournament.events.jsonl` | Invocation publishes snapshots and field replacements through its exclusive workspace writer | dashboard |
 | `active_runs/{run_id}.json` | Tournament worker or proposal producer publishes its owned record; its parent finalizes after confirmed exit; the supervisor finalizes a confirmed orphan under the writer guard | supervisor, dashboard |
 | `control/<command>` | dashboard service | orchestrator, at its safe points |
 | `control/kill_requests/{run_id}` | tournament parent, when a worker overruns its budget plus grace | supervisor, which clears it after confirmed termination |

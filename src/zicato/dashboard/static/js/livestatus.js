@@ -64,8 +64,8 @@ export function isActivePhase(phase) {
 }
 
 // The heartbeat's ONE typed liveness timestamp: `ts`, integer MILLISECONDS
-// since the epoch, stamped SERVER-SIDE (both the Python reader and the Rust
-// supervisor derive it from `last_heartbeat`). The old sec-vs-ms magnitude
+// since the epoch, stamped SERVER-SIDE (the Python reader derives it from
+// `last_heartbeat`). The old sec-vs-ms magnitude
 // guessing + the four alternate keys are DELETED — a heartbeat without a
 // numeric `ts` has no ageable timestamp and reads STALE, never fresh.
 function heartbeatTs(hb) {
@@ -106,8 +106,8 @@ function runTs(r) {
 // and the server — running on the worker's own host — can ask whether that
 // exact process still exists, so a record whose worker is provably gone drops
 // out at once instead of waiting out the staleness window. Ageing timestamps
-// is the fallback for a server that sends no verdict (the Rust supervisor, or
-// any build predating the field); the two agree on every record the client can
+// is the fallback for a server that sends no verdict (any build predating
+// the field); the two agree on every record the client can
 // judge for itself.
 function runIsFresh(r, now) {
   if (r && typeof r === 'object' && typeof r.fresh === 'boolean') return r.fresh;

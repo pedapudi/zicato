@@ -7,20 +7,6 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
-
-/// `.zicato/runtime/lock.json`
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct Lock {
-    #[serde(default)]
-    pub pid: Option<i32>,
-    #[serde(default)]
-    pub instance_id: Option<String>,
-    #[serde(default)]
-    pub started_at: Option<DateTime<Utc>>,
-    #[serde(default)]
-    pub workspace: Option<String>,
-}
 
 /// `.zicato/runtime/heartbeat.json`
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -124,116 +110,9 @@ pub struct ActiveRun {
     #[serde(default)]
     pub phase: Option<String>,
     /// Worker-reported task progress, when the worker chooses to write
-    /// one. Distinct from the supervisor's computed deadline fraction
-    /// (`ActiveRunView::progress`); serialized as `reported_progress` so
-    /// the two never collide in `/api/active-runs`.
+    /// one.
     #[serde(default)]
     pub reported_progress: Option<f64>,
     #[serde(default)]
     pub message: Option<String>,
-}
-
-/// Folded from `.zicato/runtime/active_tournament.events.jsonl`.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct ActiveTournament {
-    #[serde(default)]
-    pub tournament_id: Option<String>,
-    #[serde(default)]
-    pub generation_id: Option<String>,
-    #[serde(default)]
-    pub parent_generation_id: Option<String>,
-    #[serde(default)]
-    pub round: Option<u64>,
-    #[serde(default)]
-    pub started_at: Option<DateTime<Utc>>,
-    #[serde(default)]
-    pub entries: Vec<TournamentEntry>,
-    #[serde(default)]
-    pub gate: Option<serde_json::Value>,
-    #[serde(default)]
-    pub partial_aggregate: Option<serde_json::Value>,
-    #[serde(default)]
-    pub predicted_verdict: Option<String>,
-    /// Tournament structure and diagram analysis recorded by execution.
-    #[serde(default)]
-    pub structure: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rounds: Option<serde_json::Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub gen_states: Option<serde_json::Value>,
-    #[serde(default, flatten)]
-    pub extra: BTreeMap<String, serde_json::Value>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct TournamentEntry {
-    #[serde(default)]
-    pub entry_id: String,
-    #[serde(default)]
-    pub patch_id: Option<String>,
-    #[serde(default)]
-    pub status: Option<String>,
-    #[serde(default)]
-    pub score: Option<f64>,
-    #[serde(default)]
-    pub run_id: Option<String>,
-    #[serde(default, flatten)]
-    pub extra: BTreeMap<String, serde_json::Value>,
-}
-
-/// Lineage view emitted by the Python side (compatible with the existing
-/// `lineage.json` cross-cutting DAG in `epochs/`).
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct Lineage {
-    #[serde(default)]
-    pub generations: Vec<LineageNode>,
-    #[serde(default)]
-    pub edges: Vec<LineageEdge>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct LineageNode {
-    #[serde(default)]
-    pub generation_id: String,
-    #[serde(default)]
-    pub parent_id: Option<String>,
-    #[serde(default)]
-    pub epoch_id: Option<String>,
-    #[serde(default)]
-    pub round: Option<u64>,
-    #[serde(default)]
-    pub created_at: Option<DateTime<Utc>>,
-    #[serde(default)]
-    pub status: Option<String>,
-    #[serde(default)]
-    pub score: Option<f64>,
-    #[serde(default, flatten)]
-    pub extra: BTreeMap<String, serde_json::Value>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct LineageEdge {
-    #[serde(default)]
-    pub from: String,
-    #[serde(default)]
-    pub to: String,
-    #[serde(default)]
-    pub kind: Option<String>,
-}
-
-/// Composite snapshot returned by `/api/state`.
-#[derive(Debug, Clone, Default, Serialize)]
-pub struct Snapshot {
-    pub heartbeat: Option<Heartbeat>,
-    pub lock: Option<Lock>,
-    pub active_runs: Vec<ActiveRun>,
-    pub active_tournament: Option<ActiveTournament>,
-    pub lineage: Option<Lineage>,
-    pub epoch_id: Option<String>,
-    /// The current epoch's full definition (board, proposer brief,
-    /// scoring, registered harness, mutation surface). Embedded here so the UI
-    /// gets it in the initial snapshot without a second fetch; the same
-    /// object is served standalone by `/api/epoch`.
-    pub epoch: crate::epoch::EpochView,
-    pub generated_at: DateTime<Utc>,
 }

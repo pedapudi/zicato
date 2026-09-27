@@ -372,7 +372,7 @@ orchestrator watching itself is not a defense.
 
 The watchdog supervisor is a separate Rust process with its own
 language and runtime (`crates/supervisor/`). It ships: `zicato
-evolve` auto-spawns it in watchdog-only mode, and it watches
+evolve` auto-spawns it, and it watches
 `heartbeat.json` and the `active_runs/*` files, escalating from SIGTERM
 through a grace period to SIGKILL on a stalled or overdue run. Each
 `active_runs/{run_id}.json` carries that run's own worker process id,
@@ -714,8 +714,7 @@ The shipped build contains:
 - Atomic writes for the runtime state files and for `experiment.json`,
   the round settlement receipts and `gen_score.json`. Every JSON and text file goes through the
   temp-then-rename helper.
-- The Rust watchdog supervisor, auto-spawned by `evolve` in
-  watchdog-only mode, escalating from SIGTERM through a grace period to
+- The Rust watchdog supervisor, auto-spawned by `evolve`, escalating from SIGTERM through a grace period to
   SIGKILL on a stalled run.
 - The `.zicato/runtime/` state files and the dashboard service that
   reads them.

@@ -117,7 +117,7 @@ export async function render(host, ctx, params) {
   }
   const experiments = (ep && Array.isArray(ep.experiments)) ? ep.experiments : [];
   // the visibility rating triple rides the lineage rows (server-joined; the
-  // Rust view / experiments fallback simply omit it -> unrated, renders '—').
+  // experiments fallback simply omits it -> unrated, renders '—').
   const gens = rows.length
     ? rows.map((g) => ({ id: g.generation_id, parent: g.parent_generation_id || null, promoted: g.promoted == null ? null : !!g.promoted, decision: g.decision, decisionLabel: g.decision_label, elo: g.elo, elo_se: g.elo_se, elo_games: g.elo_games }))
     : experiments.map((x) => ({ id: x.generation_id, parent: x.parent_generation_id || null, promoted: x.promoted == null ? null : !!x.promoted, decision: x.decision, decisionLabel: x.decision_label }));

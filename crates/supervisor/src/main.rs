@@ -8,13 +8,13 @@ use std::time::Duration;
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::broadcast;
 use tracing::{error, info};
-use zicato_supervisor::{action_log::WatchdogLog, log, reader, server, watchdog, watcher};
+use zicato_supervisor::{action_log::WatchdogLog, log, reader, server, watchdog};
 
 #[derive(Parser, Debug)]
 #[command(
     name = "zicato-supervisor",
     version,
-    about = "Watchdog + dashboard server for the zicato runtime state files."
+    about = "Watchdog for the zicato runtime state files."
 )]
 struct Cli {
     /// Path to the zicato workspace (default: ./.zicato)
@@ -35,16 +35,6 @@ struct Cli {
     /// Bind address (default: 127.0.0.1)
     #[arg(long, default_value = "127.0.0.1")]
     bind: IpAddr,
-
-    /// Disable control-file writing (POST endpoints return 403)
-    #[arg(long, default_value_t = false)]
-    read_only: bool,
-
-    /// Run as the watchdog only: do not mount the dashboard UI, the
-    /// analytical `/api/*` routes, the SSE stream, or the control
-    /// endpoints. The watchdog's own `/statusz` surface stays available.
-    #[arg(long, default_value_t = false)]
-    no_dashboard: bool,
 
     /// Heartbeat staleness check interval (seconds)
     #[arg(long, default_value_t = 2)]
@@ -144,30 +134,12 @@ struct Cli {
     /// Log level (default: info)
     #[arg(long, default_value = "info")]
     log: String,
-
-    /// Detach and run in the background (for `zicato dashboard --daemon`)
-    #[arg(long, default_value_t = false)]
-    daemon: bool,
 }
 
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
     let cli = Cli::parse();
     log::init(&cli.log);
-
-    if cli.daemon {
-        // Best-effort fork into background. We avoid pulling in a full
-        // daemonization crate; the parent simply exits after kicking the
-        // worker. Logs continue to stderr (the operator is expected to
-        // redirect them).
-        match daemonize() {
-            Ok(true) => return std::process::ExitCode::SUCCESS,
-            Ok(false) => {} // child continues
-            Err(e) => {
-                error!(error=%e, "daemonize failed; running in foreground");
-            }
-        }
-    }
 
     let workspace = match cli.workspace.canonicalize() {
         Ok(p) => p,
@@ -186,19 +158,7 @@ async fn main() -> std::process::ExitCode {
     let paths = reader::WorkspacePaths::new(workspace);
     info!(workspace=?paths.workspace, "starting zicato-supervisor");
 
-    // Channels.
-    let (watch_tx, _) = broadcast::channel::<watcher::WatchEvent>(256);
     let (shutdown_tx, _) = broadcast::channel::<()>(8);
-
-    // Filesystem watcher (kept in scope for the program lifetime).
-    let _watcher = match watcher::spawn(paths.clone(), watch_tx.clone(), Duration::from_millis(100))
-    {
-        Ok(w) => Some(w),
-        Err(e) => {
-            error!(error=%e, "failed to start filesystem watcher");
-            None
-        }
-    };
 
     // Watchdog tasks.
     let thresholds = watchdog::Thresholds {
@@ -214,9 +174,6 @@ async fn main() -> std::process::ExitCode {
     if cli.run_deadline_kill_disabled {
         info!("per-run wall-clock deadline enforcement is disabled");
     }
-    if cli.no_dashboard {
-        info!("watchdog-only mode: dashboard routes disabled; /statusz still served");
-    }
 
     // Shared in-memory ring buffer: the watchdog loops record their
     // escalations here, and `/statusz` reads them back.
@@ -226,11 +183,6 @@ async fn main() -> std::process::ExitCode {
     // each tick; `/statusz` reads (does not advance) it to report the same
     // seq-change age the watchdog is deciding on.
     let seq_liveness = Arc::new(std::sync::Mutex::new(watchdog::SeqLiveness::new()));
-
-    // Cumulative torn-write / non-monotonic-seq counters over the canonical
-    // active-tournament JSONL fold; the fold path accumulates, `/statusz`
-    // surfaces.
-    let fold_diagnostics = Arc::new(zicato_supervisor::fold_stats::FoldDiagnostics::new());
 
     // Tamper-evident audit ledger (INTEGRITY NOTARY). Opt-in: only created
     // when `--ledger-dir` is set, so the default supervisor behaves exactly
@@ -325,18 +277,14 @@ async fn main() -> std::process::ExitCode {
         cli.bind,
         cli.port,
         server::ServeOptions {
-            read_only: cli.read_only,
-            dashboard_disabled: cli.no_dashboard,
             heartbeat_stale_threshold_seconds: cli.heartbeat_stale_warn,
             action_log: action_log.clone(),
             seq_liveness: seq_liveness.clone(),
-            fold_diagnostics: fold_diagnostics.clone(),
             ledger: ledger.clone(),
             diff_findings: diff_findings.clone(),
             promotion_gate_findings: promotion_gate_findings.clone(),
             divergence_findings: divergence_findings.clone(),
         },
-        watch_tx.clone(),
         shutdown_tx.clone(),
     )
     .await
@@ -373,33 +321,4 @@ async fn main() -> std::process::ExitCode {
     // Give the server a moment to drain.
     tokio::time::sleep(Duration::from_millis(200)).await;
     std::process::ExitCode::SUCCESS
-}
-
-/// Best-effort daemonization. Returns `Ok(true)` in the parent (which
-/// should exit immediately) and `Ok(false)` in the child.
-fn daemonize() -> std::io::Result<bool> {
-    // SAFETY: fork()/setsid() are required for daemonization. We do not
-    // touch shared state between fork and exec; we are not threaded yet
-    // when this runs.
-    use std::os::unix::io::AsRawFd;
-    let pid = unsafe { libc::fork() };
-    if pid < 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-    if pid > 0 {
-        // Parent.
-        return Ok(true);
-    }
-    // Child: detach from controlling terminal.
-    unsafe {
-        if libc::setsid() < 0 {
-            return Err(std::io::Error::last_os_error());
-        }
-        // Redirect stdin to /dev/null. Keep stdout/stderr so logs still flow.
-        if let Ok(f) = std::fs::File::open("/dev/null") {
-            let fd = f.as_raw_fd();
-            libc::dup2(fd, libc::STDIN_FILENO);
-        }
-    }
-    Ok(false)
 }

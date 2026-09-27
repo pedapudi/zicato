@@ -9,8 +9,8 @@ Covered:
 * ``resolve_static_dir`` points at the bundled
   ``zicato/dashboard/static`` directory and honours the ``--static-dir``
   override (the former env override is deleted and ignored).
-* ``zicato evolve`` spawns the watchdog supervisor with
-  ``--no-dashboard`` and ALSO spawns the Python dashboard service.
+* ``zicato evolve`` spawns the watchdog supervisor and ALSO spawns the
+  Python dashboard service.
 * ``zicato evolve --no-dashboard`` suppresses the dashboard spawn.
 * Both children are torn down when the evolve loop exits.
 
@@ -209,8 +209,8 @@ def _evolve_args(*extra: str) -> list[str]:
 
 
 def test_evolve_spawns_supervisor_and_dashboard(monkeypatch: pytest.MonkeyPatch) -> None:
-    """``zicato evolve`` spawns the watchdog supervisor (--no-dashboard)
-    AND the Python dashboard service."""
+    """``zicato evolve`` spawns the watchdog supervisor AND the Python
+    dashboard service."""
     from zicato.cli.commands.evolve import evolve_cmd
 
     spawned = _install_evolve_mocks(monkeypatch)
@@ -223,7 +223,7 @@ def test_evolve_spawns_supervisor_and_dashboard(monkeypatch: pytest.MonkeyPatch)
     assert len(spawned) == 2
 
     sup_argv = next(a.argv for a in spawned if "zicato-supervisor" in a.argv[0])
-    assert "--no-dashboard" in sup_argv, "supervisor must be watchdog-only"
+    assert len(sup_argv) == 3 and sup_argv[1] == "--workspace", sup_argv
 
     dash_argv = next(a.argv for a in spawned if "zicato.dashboard" in a.argv)
     assert "-m" in dash_argv and "zicato.dashboard" in dash_argv

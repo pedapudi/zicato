@@ -9,7 +9,6 @@ pub mod action_log;
 pub mod diff_containment;
 pub mod divergence;
 pub mod epoch;
-pub mod fold_stats;
 pub mod index_db;
 pub mod ledger;
 pub mod log;
@@ -18,16 +17,12 @@ pub mod range_containment;
 pub mod reader;
 pub mod reap;
 pub mod routes;
-pub mod run_log;
 pub mod server;
 pub mod sha256;
 pub mod signal;
-pub mod sse;
 pub mod state;
-pub mod static_assets;
 pub mod statusz;
 pub mod watchdog;
-pub mod watcher;
 
 #[cfg(test)]
 mod test_process_group;

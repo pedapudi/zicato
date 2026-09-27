@@ -1,7 +1,7 @@
 """Tests for the child-process spawn helpers in
 ``zicato.cli.commands.evolve``.
 
-``zicato evolve`` spawns two children: the watchdog-only supervisor
+``zicato evolve`` spawns two children: the watchdog supervisor
 binary and the Python dashboard service. These tests pin a sentinel
 shell script (instead of the real Rust binary) as the
 ``integration.supervisor_binary`` config knob — exactly as the
@@ -210,13 +210,13 @@ def test_maybe_spawn_supervisor_disabled() -> None:
     assert proc is None
 
 
-def test_supervisor_spawned_with_no_dashboard(
+def test_supervisor_spawn_argv_names_only_the_workspace(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """The watchdog supervisor is spawned with ``--no-dashboard``.
+    """The watchdog supervisor is spawned with ``--workspace`` alone.
 
-    The dashboard UI is now served by the Python service, so the
-    supervisor must run watchdog-only.
+    The supervisor has one mode, so evolve passes no mode flag, and it
+    binds its own default port rather than taking ``--port`` or ``--bind``.
     """
     sentinel = _write_sentinel(tmp_path)
 
@@ -238,10 +238,7 @@ def test_supervisor_spawned_with_no_dashboard(
         await _terminate_child(proc)
 
     asyncio.run(_scenario())
-    assert "--no-dashboard" in captured["argv"]
-    assert "--workspace" in captured["argv"]
-    # The supervisor no longer takes --port / --bind from evolve.
-    assert "--bind" not in captured["argv"]
+    assert captured["argv"][1:] == ("--workspace", str(tmp_path))
 
 
 def test_spawn_and_terminate_round_trip(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
