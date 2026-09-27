@@ -129,8 +129,10 @@ process of the episode inherits.
 
 Independent of *which* resolution backs the proposer, every proposer reads the
 same per-round task input the orchestrator assembles: the brief, the mutation
-manifest, the loss summary, the prior-experiment digest, the analyzer
-insights. That input also carries a **failure-mode profile**: a compact,
+manifest, the loss summary, the prior-experiment digest, and the most
+recent round's decision-telemetry insight (the highest-numbered
+`insights/round_{N}.md`, computed over the training slice's runs only).
+That input also carries a **failure-mode profile**: a compact,
 board-anonymized read of *why* the parent's answers were wrong, rather than
 only that a scalar moved.
 

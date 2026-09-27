@@ -3,7 +3,9 @@
 The analyzer's job for one epoch:
 
 1. Walk the workspace's ``epochs/{epoch}/generations/{*}/runs/{*}/events.jsonl``
-   tree and collect every events file the epoch has accumulated.
+   tree and collect every events file the epoch has accumulated, narrowed
+   to the board entries the caller names (the training slice, when the
+   insight is meant for the proposer).
 2. Aggregate the five decision-telemetry event types into a
    :class:`zicato.analyzer.aggregator.DecisionEventSummary`.
 3. Render the system + user prompts.
@@ -16,18 +18,19 @@ The analyzer's job for one epoch:
 Every failure mode (no events at all, LLM timeout, LLM error) is
 handled by writing a short markdown placeholder rather than raising —
 the orchestrator calls this best-effort and a wedge here must not
-abort the round.
+abort the round. Each placeholder opens with :data:`NO_ANALYSIS_MARKER`,
+which keeps it out of the proposal evidence.
 
-A sibling :func:`load_latest_insights` helper reads every
-``insights/*.md`` file in lexicographic order and concatenates the
-contents so the proposer can splice them into its user prompt.
+:func:`load_latest_insight` reads the highest-numbered
+``insights/round_{N}.md`` back for the next round's proposal evidence.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import time
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Collection, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -43,13 +46,23 @@ from zicato.aux_timeout import aux_call_timeout_s
 from zicato.core.settings import AuxConfig
 from zicato.core.workspace import epoch_dir
 from zicato.storage import atomic_write_text
-from zicato.workspace import is_events_file
+from zicato.workspace import WorkspaceLayout, is_events_file, read_board_entries
 
 if TYPE_CHECKING:  # pragma: no cover - typing-only import
     from zicato.telemetry.meta_loop import MetaLoopEmitter
 
 
-def _collect_events_jsonl_paths(workspace_root: Path, epoch_id: str) -> list[Path]:
+#: First line of every placeholder insight: the body written when no
+#: decision telemetry was observed or the evaluation call failed. An HTML
+#: comment, so it is invisible in rendered markdown. :func:`load_latest_insight`
+#: returns nothing for a file that opens with it, because a placeholder
+#: carries no analysis for the proposer to act on.
+NO_ANALYSIS_MARKER = "<!-- zicato: placeholder insight, withheld from the proposer -->"
+
+
+def _collect_events_jsonl_paths(
+    workspace_root: Path, epoch_id: str, entry_ids: Collection[str] | None = None
+) -> list[Path]:
     """Walk the epoch's generation tree and return every current events path.
 
     The walk is filesystem-driven (rather than reading the board) so
@@ -64,16 +77,49 @@ def _collect_events_jsonl_paths(workspace_root: Path, epoch_id: str) -> list[Pat
     entry. That is deliberate for a whole-epoch drift summary — but it
     means a per-entry count read off this list counts draws rather than units.
     Archived predecessors (``*.prev.jsonl``) are excluded.
+
+    ``entry_ids``, when given, keeps only the runs of those board entries
+    (the run directory under ``runs/`` is named by entry id); ``None``
+    keeps every run.
     """
 
     root = epoch_dir(workspace_root, epoch_id) / "generations"
     if not root.exists():
         return []
+    wanted = None if entry_ids is None else frozenset(entry_ids)
     out: list[Path] = []
     for path in sorted(root.glob("*/runs/*/seed-*/events.*.r*.jsonl")):
+        if wanted is not None and path.parents[1].name not in wanted:
+            continue
         if path.is_file() and is_events_file(path):
             out.append(path)
     return out
+
+
+def proposer_visible_entry_ids(workspace_root: Path, epoch_id: str) -> tuple[str, ...]:
+    """The training slice of the epoch's frozen board, in board order.
+
+    Splits the board with the epoch's frozen ``overfitting`` block and the
+    same rotation seed the round preparation uses, so the result is the
+    slice the proposer's patterns and loss summary are computed on.
+    Raises :class:`FileNotFoundError` when the epoch has no board, because
+    an analysis that cannot tell training runs from holdout runs must not
+    write into the proposer's insight directory.
+    """
+    from zicato.board.split import rotation_seed, split_board  # noqa: PLC0415
+    from zicato.workspace_loader import scoring_weights_from_dict  # noqa: PLC0415
+
+    layout = WorkspaceLayout.from_root(workspace_root)
+    board = read_board_entries(layout, epoch_id)
+    if board is None:
+        raise FileNotFoundError(f"epoch {epoch_id!r} has no board at {layout.board(epoch_id)}")
+    scoring_path = layout.epoch_dir(epoch_id) / "scoring.json"
+    raw = json.loads(scoring_path.read_text(encoding="utf-8")) if scoring_path.exists() else {}
+    overfitting = scoring_weights_from_dict(raw).overfitting
+    train_ids, _holdout_ids = split_board(
+        board.entries, overfitting, seed=rotation_seed(overfitting, epoch_id)
+    )
+    return train_ids
 
 
 def _insights_dir(workspace_root: Path, epoch_id: str) -> Path:
@@ -98,6 +144,7 @@ def _empty_insight_body(epoch_id: str, summary: DecisionEventSummary) -> str:
     """
 
     return (
+        f"{NO_ANALYSIS_MARKER}\n"
         f"# Decision telemetry insights — epoch {epoch_id}\n\n"
         f"No decision-telemetry events were observed in this epoch's "
         f"runs (total_events_seen={summary.total_events_seen}). This is "
@@ -118,6 +165,7 @@ def _error_insight_body(epoch_id: str, err: str) -> str:
     """
 
     return (
+        f"{NO_ANALYSIS_MARKER}\n"
         f"# Decision telemetry insights — epoch {epoch_id}\n\n"
         f"_(evaluation LLM call failed: {err}; no insights generated for "
         "this round)_\n"
@@ -133,6 +181,7 @@ async def analyze_epoch_telemetry(
     mutation_ids: Sequence[str] | None = None,
     meta_loop_emitter: MetaLoopEmitter | None = None,
     aux_config: AuxConfig | None = None,
+    entry_ids: Collection[str] | None = None,
 ) -> Path:
     """Build the decision-event summary, call the LLM, persist the insight.
 
@@ -163,6 +212,11 @@ async def analyze_epoch_telemetry(
         mutation target ids absent from the agent's surface. When
         ``None`` the prompt still renders, with a "none provided"
         marker, and the system prompt forbids inventing an id.
+    entry_ids:
+        The board entries whose runs are analyzed. The insight is read
+        back into the next round's proposal evidence, so both production
+        callers pass the epoch's training slice and no holdout run reaches
+        the analysis. ``None`` analyzes every run in the epoch.
 
     Returns
     -------
@@ -179,7 +233,7 @@ async def analyze_epoch_telemetry(
     right behaviour for the orchestrator's ``try / except`` wrapper.
     """
 
-    events_paths = _collect_events_jsonl_paths(workspace_root, epoch_id)
+    events_paths = _collect_events_jsonl_paths(workspace_root, epoch_id, entry_ids)
     summary = aggregate_decision_events(events_paths)
 
     target = _insight_target(workspace_root, epoch_id, round_n)
@@ -281,42 +335,35 @@ async def analyze_epoch_telemetry(
     return target
 
 
-def load_latest_insights(workspace_root: Path, epoch_id: str) -> str:
-    """Concatenate every ``insights/*.md`` file under the epoch in order.
+def load_latest_insight(workspace_root: Path, epoch_id: str) -> str:
+    """The most recent round's insight, for the next round's proposal evidence.
 
-    Reads ``round_{N}.md`` files in lexicographic order (which matches
-    numeric ordering because of the zero-pad), followed by any
-    ``latest.md`` written when an analyzer ran with ``round_n=None``.
-    The concatenation joins files with a blank line so the
-    proposer-side embedding renders cleanly.
+    Reads only the highest-numbered ``insights/round_{N}.md`` (the zero
+    padding makes lexicographic order numeric), so the evidence holds one
+    analysis however many rounds the epoch has run. ``insights/latest.md``,
+    which ``zicato inspect telemetry`` writes when no round is given, is an
+    operator report and is not read.
 
-    Returns the empty string when the insights directory does not
-    exist or carries no readable markdown files. Empty string is the
-    proposer-side sentinel for "no insights to embed".
+    Returns the empty string, which omits the evidence block, when the
+    epoch has no round insight, when the file cannot be read, or when the
+    file is a placeholder that opens with :data:`NO_ANALYSIS_MARKER`.
     """
 
-    insights_root = _insights_dir(workspace_root, epoch_id)
-    if not insights_root.exists():
-        return ""
-
-    files = sorted(p for p in insights_root.glob("*.md") if p.is_file())
+    files = sorted(_insights_dir(workspace_root, epoch_id).glob("round_*.md"))
     if not files:
         return ""
-
-    bodies: list[str] = []
-    for f in files:
-        try:
-            text = f.read_text(encoding="utf-8").strip()
-        except OSError:
-            continue
-        if text:
-            bodies.append(text)
-    if not bodies:
+    try:
+        text = files[-1].read_text(encoding="utf-8").strip()
+    except OSError:
         return ""
-    return "\n\n".join(bodies) + "\n"
+    if text.startswith(NO_ANALYSIS_MARKER):
+        return ""
+    return text + "\n" if text else ""
 
 
 __all__ = [
+    "NO_ANALYSIS_MARKER",
     "analyze_epoch_telemetry",
-    "load_latest_insights",
+    "load_latest_insight",
+    "proposer_visible_entry_ids",
 ]

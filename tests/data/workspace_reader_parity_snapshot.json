@@ -2232,8 +2232,8 @@
     },
     "unreadable_generations": []
   },
-  "zicato.analyzer.load_latest_insights::e10": "# Round 1 insights\n\nThe ladder escalated on plan thrash.\n",
-  "zicato.analyzer.load_latest_insights::e2": "# Round 1 insights\n\nThe ladder escalated on plan thrash.\n\n# Round 2 insights\n\nThe ladder escalated on plan thrash.\n\n# Round 10 insights\n\nThe ladder escalated on plan thrash.\n",
+  "zicato.analyzer.load_latest_insight::e10": "# Round 1 insights\n\nThe ladder escalated on plan thrash.\n",
+  "zicato.analyzer.load_latest_insight::e2": "# Round 10 insights\n\nThe ladder escalated on plan thrash.\n",
   "zicato.cli.health.generation_ids::e10": [
     "v0",
     "v1"

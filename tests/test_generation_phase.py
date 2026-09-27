@@ -38,6 +38,7 @@ def test_prepared_round_is_immutable() -> None:
         patterns=(),
         loss_summary="",
         failure_profile="",
+        insights="",
         metric_priorities="",
         process_exemplars="",
         genealogy=(),

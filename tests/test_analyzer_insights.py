@@ -5,7 +5,10 @@ files and exercise:
 
 * ``analyze_epoch_telemetry`` happy path → markdown written.
 * Empty epoch (no events) → fallback markdown written, no LLM call.
-* ``load_latest_insights`` concatenation across multiple round files.
+* ``load_latest_insight`` returns only the highest-numbered round file and
+  withholds placeholders.
+* ``entry_ids`` narrows the analysis to the named board entries' runs, and
+  ``proposer_visible_entry_ids`` names the epoch's training slice.
 * Timeout enforcement when the evaluation callable hangs.
 * An aux callable that raises → fallback body cites the exception.
 """
@@ -17,7 +20,8 @@ import json
 import stat
 from pathlib import Path
 
-from zicato.analyzer import analyze_epoch_telemetry, load_latest_insights
+from zicato.analyzer import analyze_epoch_telemetry, load_latest_insight
+from zicato.analyzer.insights import NO_ANALYSIS_MARKER, proposer_visible_entry_ids
 
 
 def test_report_replacement_preserves_an_open_reader(tmp_path: Path) -> None:
@@ -306,44 +310,118 @@ def test_analyze_epoch_telemetry_latest_filename(tmp_path: Path) -> None:
     assert out.name == "latest.md"
 
 
-def test_load_latest_insights_concatenates_round_files(tmp_path: Path) -> None:
-    """Multiple round_*.md files concatenate in lexicographic order."""
+def test_load_latest_insight_reads_only_the_highest_numbered_round(tmp_path: Path) -> None:
+    """Only the most recent round's file is returned; earlier rounds and the
+    operator's ``latest.md`` are not."""
 
     workspace = tmp_path / ".zicato"
     epoch_id = "ep_load"
     insights_dir = workspace / "epochs" / epoch_id / "insights"
     insights_dir.mkdir(parents=True, exist_ok=True)
-    (insights_dir / "round_0001.md").write_text("# round 1\n", encoding="utf-8")
     (insights_dir / "round_0002.md").write_text("# round 2\n", encoding="utf-8")
+    (insights_dir / "round_0010.md").write_text("# round 10\n", encoding="utf-8")
     (insights_dir / "round_0003.md").write_text("# round 3\n", encoding="utf-8")
+    (insights_dir / "latest.md").write_text("# operator run\n", encoding="utf-8")
 
-    joined = load_latest_insights(workspace, epoch_id)
-
-    assert "# round 1" in joined
-    assert "# round 2" in joined
-    assert "# round 3" in joined
-    # Ordering: round_0001 before round_0002 before round_0003.
-    assert joined.index("# round 1") < joined.index("# round 2")
-    assert joined.index("# round 2") < joined.index("# round 3")
+    assert load_latest_insight(workspace, epoch_id) == "# round 10\n"
 
 
-def test_load_latest_insights_empty_when_missing(tmp_path: Path) -> None:
+def test_load_latest_insight_withholds_a_placeholder(tmp_path: Path) -> None:
+    """A placeholder in the latest round yields nothing, not an older analysis."""
+
+    workspace = tmp_path / ".zicato"
+    epoch_id = "ep_placeholder"
+
+    async def unused_aux(_system: str, _user: str, _model: str) -> str:
+        raise AssertionError("an epoch with no telemetry requires no evaluation call")
+
+    insights_dir = workspace / "epochs" / epoch_id / "insights"
+    insights_dir.mkdir(parents=True, exist_ok=True)
+    (insights_dir / "round_0001.md").write_text("# real analysis\n", encoding="utf-8")
+    # No telemetry at all: the analyzer writes the empty-epoch placeholder.
+    out = asyncio.run(analyze_epoch_telemetry(workspace, epoch_id, unused_aux, round_n=2))
+
+    assert out.read_text(encoding="utf-8").startswith(NO_ANALYSIS_MARKER)
+    assert load_latest_insight(workspace, epoch_id) == ""
+
+
+def test_load_latest_insight_empty_when_missing(tmp_path: Path) -> None:
     """No insights directory → empty string (the proposer's sentinel)."""
 
     workspace = tmp_path / ".zicato"
     epoch_id = "ep_none"
-    assert load_latest_insights(workspace, epoch_id) == ""
+    assert load_latest_insight(workspace, epoch_id) == ""
 
 
-def test_load_latest_insights_empty_when_no_md(tmp_path: Path) -> None:
-    """Insights dir exists but has no readable markdown → empty string."""
+def test_load_latest_insight_empty_when_no_round_file(tmp_path: Path) -> None:
+    """Insights dir exists but has no round file → empty string."""
 
     workspace = tmp_path / ".zicato"
     epoch_id = "ep_blank"
     (workspace / "epochs" / epoch_id / "insights").mkdir(parents=True, exist_ok=True)
-    # Stray non-.md file should be ignored.
     (workspace / "epochs" / epoch_id / "insights" / "notes.txt").write_text("ignore me")
-    assert load_latest_insights(workspace, epoch_id) == ""
+    (workspace / "epochs" / epoch_id / "insights" / "latest.md").write_text("# operator run\n")
+    assert load_latest_insight(workspace, epoch_id) == ""
+
+
+def test_entry_ids_narrow_the_analysis_to_the_named_entries(tmp_path: Path) -> None:
+    """Runs of entries outside ``entry_ids`` contribute nothing to the prompt."""
+
+    workspace = tmp_path / ".zicato"
+    epoch_id = "ep_slice"
+    _make_epoch_tree(workspace, epoch_id)
+    for entry, policy in (("train_a", "policy_on_train"), ("held_b", "policy_on_holdout")):
+        _write_events(
+            workspace,
+            epoch_id,
+            "v1",
+            entry,
+            [
+                _envelope(
+                    0,
+                    "policy_applied",
+                    {"policy_name": policy, "outcome": "applied", "reason": "", "detail": ""},
+                )
+            ],
+        )
+    prompts: list[str] = []
+
+    async def recording_aux(_system: str, user: str, _model: str) -> str:
+        prompts.append(user)
+        return "# insight\n"
+
+    asyncio.run(
+        analyze_epoch_telemetry(
+            workspace, epoch_id, recording_aux, round_n=1, entry_ids=("train_a",)
+        )
+    )
+
+    assert len(prompts) == 1
+    assert "policy_on_train" in prompts[0]
+    assert "policy_on_holdout" not in prompts[0]
+
+
+def test_proposer_visible_entry_ids_is_the_training_slice(tmp_path: Path) -> None:
+    """The epoch's frozen board minus its holdout-tagged entries, in board order."""
+
+    workspace = tmp_path / ".zicato"
+    epoch_id = "ep_split"
+    epoch = workspace / "epochs" / epoch_id
+    epoch.mkdir(parents=True)
+    rows = [
+        {"id": "t1", "kind": "single_turn", "wall_clock_budget_seconds": 60, "input": "a"},
+        {
+            "id": "h1",
+            "kind": "single_turn",
+            "wall_clock_budget_seconds": 60,
+            "input": "b",
+            "tags": ["holdout"],
+        },
+        {"id": "t2", "kind": "single_turn", "wall_clock_budget_seconds": 60, "input": "c"},
+    ]
+    (epoch / "board.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+
+    assert proposer_visible_entry_ids(workspace, epoch_id) == ("t1", "t2")
 
 
 def test_analyze_epoch_telemetry_timeout_bounded(tmp_path: Path) -> None:

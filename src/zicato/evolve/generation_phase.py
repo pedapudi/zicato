@@ -41,6 +41,7 @@ class PreparedRound:
     patterns: tuple[Any, ...]
     loss_summary: str
     failure_profile: str
+    insights: str
     metric_priorities: str
     process_exemplars: str
     genealogy: tuple[Any, ...]

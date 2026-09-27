@@ -202,6 +202,7 @@ async def produce_candidate_batch(
             proposer_agent=prepared.proposer_agent,
             restrict_visibility=prepared.weights.overfitting.restrict_proposer_visibility,
             failure_profile=prepared.failure_profile,
+            insights=prepared.insights,
             metric_priorities=prepared.metric_priorities,
             process_exemplars=prepared.process_exemplars,
             genealogy=prepared.genealogy,

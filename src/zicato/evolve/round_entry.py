@@ -523,6 +523,16 @@ async def _evolve_once(
         losses, weights, workspace_root=workspace_root, epoch_id=epoch_id, round_index=round_index
     )
 
+    # --- The previous round's decision-telemetry insight ---
+    # The analyzer ran at the end of the previous round over the training
+    # slice's runs only (``_round_epilogue`` passes ``train_board``'s ids), so
+    # the text holds no holdout run and no entry identity. Only the most
+    # recent round file is read; an absent file or a placeholder reads as
+    # the empty string, which omits the section.
+    from zicato.analyzer.insights import load_latest_insight  # noqa: PLC0415
+
+    insights = load_latest_insight(workspace_root, resolved_epoch_id)
+
     # --- 5a''. Opt-in process-exemplar block (PROCESS-EXEMPLARS.md) ---
     # When the contract opts in (experimental.process_exemplars > 0),
     # extract up to that many drift-anchored, mechanically-REDACTED event
@@ -630,6 +640,7 @@ async def _evolve_once(
         patterns=tuple(patterns),
         loss_summary=loss_summary,
         failure_profile=failure_profile,
+        insights=insights,
         metric_priorities=metric_priorities_block,
         process_exemplars=process_exemplars_block,
         genealogy=tuple(genealogy_items),

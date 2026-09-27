@@ -42,7 +42,8 @@ $Z inspect mutations --show preview           # add --format json to script it
 
 # 1. Analyzer: (re)build the decision-telemetry insight for this epoch.
 #    Writes insights/round_{N:04d}.md (round_0007.md for --round 7), or
-#    insights/latest.md when --round is omitted.
+#    insights/latest.md when --round is omitted. The highest-numbered round
+#    file is what the next proposal episode receives; latest.md is not.
 $Z inspect telemetry --round 7                # spends no proposer budget
 
 # 2. Propose: run ONE proposal episode against the current champion. (LLM — gated.)

@@ -989,9 +989,10 @@ in THIS round's report. The placebo never advances the champion.
 
 **`_round_epilogue`.** The shared end-of-round tail — loop-health
 assessment persisted to `epochs/{epoch}/health/round_{N}.json` (CRITICAL
-no-signal warning to stderr), the decision-telemetry analyzer (writes
-`insights/round_{NNNN}.md` for the NEXT round's proposer, grounded in the
-real mutation-id list so the model cannot hallucinate targets), and the
+no-signal warning to stderr), the decision-telemetry analyzer (reads only
+the training slice's runs and writes `insights/round_{NNNN}.md`, which the
+NEXT round's proposal evidence carries; the prompt is grounded in the real
+mutation-id list so the model cannot hallucinate targets), and the
 epoch analysis report regeneration. Every settled round and the rejected
 tail call this one tail, so a new epilogue step can never land on one path
 only. Every step is best-effort by contract.

@@ -16,7 +16,10 @@ The command wires together:
   :class:`zicato.core.types.RuntimeConfig` and its ``evaluation_call_llm``
   callable.
 * :func:`zicato.analyzer.insights.analyze_epoch_telemetry` for the
-  analysis itself.
+  analysis itself, over the runs of the epoch's training slice
+  (:func:`zicato.analyzer.insights.proposer_visible_entry_ids`). A
+  ``round_{N}.md`` written here is read into the next round's proposal
+  evidence, so holdout runs stay out of it as they do in the loop.
 
 The evaluation callable is resolved from the named engine selected by
 `models.roles.evaluation`. Import or configuration failures produce a command
@@ -111,13 +114,22 @@ def analyze_telemetry_cmd(workspace: str, epoch: str | None, round_n: int | None
 
     # Lazy import: keeps `zicato --help` fast and the analyzer module
     # easy to install incrementally.
-    from zicato.analyzer.insights import analyze_epoch_telemetry  # noqa: PLC0415
+    from zicato.analyzer.insights import (  # noqa: PLC0415
+        analyze_epoch_telemetry,
+        proposer_visible_entry_ids,
+    )
 
     workspace_dir = Path(workspace)
     config = _load_workspace_config(workspace_dir)
     epoch_id = _resolve_epoch(workspace_dir, epoch)
     aux_call_llm = _resolve_aux_llm(config)
     model = config.evaluation_model
+    try:
+        entry_ids = proposer_visible_entry_ids(workspace_dir, epoch_id)
+    except (OSError, ValueError) as exc:
+        raise click.ClickException(
+            f"Cannot resolve the training slice of epoch {epoch_id!r}: {exc}"
+        ) from exc
 
     out_path = asyncio.run(
         analyze_epoch_telemetry(
@@ -127,6 +139,7 @@ def analyze_telemetry_cmd(workspace: str, epoch: str | None, round_n: int | None
             model=model,
             aux_config=resolve_configuration(config.raw).values.aux,
             round_n=round_n,
+            entry_ids=entry_ids,
         )
     )
     click.echo(f"Wrote decision-telemetry insight for epoch {epoch_id!r} to {out_path}")

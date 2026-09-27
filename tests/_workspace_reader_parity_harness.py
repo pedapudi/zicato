@@ -1185,7 +1185,7 @@ def _capture_workspace_reads(ws: Path, snap: dict[str, Any]) -> None:
 def _capture_analyzer(ws: Path, snap: dict[str, Any]) -> None:
     """The analyzer's report gathering, telemetry aggregation and insights."""
     from zicato.analyzer import aggregate_decision_events, gather_epoch_report_data
-    from zicato.analyzer.insights import _collect_events_jsonl_paths, load_latest_insights
+    from zicato.analyzer.insights import _collect_events_jsonl_paths, load_latest_insight
     from zicato.analyzer.process_exemplars import extract_process_exemplars
     from zicato.core.patterns import Pattern
     from zicato.mutation.inventory import read_mutation_inventory
@@ -1199,9 +1199,7 @@ def _capture_analyzer(ws: Path, snap: dict[str, Any]) -> None:
         snap[f"zicato.mutation.read_mutation_inventory::{epoch_id}"] = read_mutation_inventory(
             layout.mutations(epoch_id)
         )
-        snap[f"zicato.analyzer.load_latest_insights::{epoch_id}"] = load_latest_insights(
-            ws, epoch_id
-        )
+        snap[f"zicato.analyzer.load_latest_insight::{epoch_id}"] = load_latest_insight(ws, epoch_id)
         # The walk that finds the epoch's telemetry files has no public entry
         # point of its own, and its ORDER is what the aggregator accumulates
         # in, so it is captured under its own label: a reordering of the walk

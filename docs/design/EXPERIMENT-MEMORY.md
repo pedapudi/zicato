@@ -36,7 +36,7 @@ is scoped to one evaluation contract, and how it reaches the prompt.
 ## 1. Why the proposer needs settled history
 
 The proposal episode's task is assembled from several channels (see
-`zicato.proposer.foe_request.render_evidence`). Three of them describe the
+`zicato.proposer.foe_request.render_evidence`). Four of them describe the
 round's present state:
 
 - `current_loss_summary` — a one-line digest of the *current champion's*
@@ -57,14 +57,22 @@ round's present state:
   marginal-not-joint, holdout-integrity guarantees as the rest of the
   proposer feed.
 
-`ProposalEvidence` also declares an `insights` field, rendered under
-`## Recent telemetry insights` when non-empty. `evidence_from_context`
-does not populate it, so a proposal episode never receives that
-section. The decision-telemetry analyzer writes its insight files under
-the epoch's `insights/` directory, and `zicato.analyzer.load_latest_insights`
-can read them, but no caller passes them to the proposer.
+- `insights` — the most recent round's decision-telemetry insight
+  (`zicato.analyzer.insights.load_latest_insight`), rendered under
+  `## Recent telemetry insights`. At the end of every round the
+  decision-telemetry analyzer summarizes the epoch's steering decisions
+  (intervention-ladder levels, detector verdicts, policy outcomes, retry
+  budgets) with one evaluation-model call and writes
+  `insights/round_{N}.md`. The next round's preparation reads the
+  highest-numbered of those files, and only that file, into
+  `ProposerContext.insights`. The analyzer reads only the training
+  slice's runs, and its input holds counts keyed by steering vocabulary,
+  so the text carries no holdout run and no entry identity. A placeholder
+  file, written when the epoch has no decision telemetry or the
+  evaluation call fails, delivers nothing, and neither does the epoch's
+  first round.
 
-Each of the three channels describes the champion's current state and the
+Each of the four channels describes the champion's current state and the
 most recent round's observations. None of them carries the **settled
 history** — "round 3 already tried tightening the researcher's
 instruction and it was rejected for a pass-rate regression", or "round 5
