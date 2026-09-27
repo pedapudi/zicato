@@ -360,7 +360,7 @@ export const REFLECTION_PRACTICES = {
       evidence: {},
       rationale: 'a monoculture loss optimizes one blind spot (ch.04 §1.5).',
       proposed_op: null,
-      unmeasured_reason: 'no corpus term-contributions (run `zicato reflect run` for the loss decomposition)' },
+      unmeasured_reason: 'no corpus term-contributions (run `zicato inspect reflection run` for the loss decomposition)' },
   ],
   verdict_counts: { sound: 1, attend: 1, unsound: 1, unmeasured: 1 },
 };

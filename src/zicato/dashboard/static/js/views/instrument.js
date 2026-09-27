@@ -234,7 +234,7 @@ function buildLanding(d, ctx) {
     nodes.push(section('Reflections', el('div', { class: 'dn-panel' }, [
       empty('No reflections for this epoch yet.'),
       el('p', { class: 'dn-faint', style: 'font-size:12px;margin:6px 0 0;' }, [
-        'Run one with ', el('code', { class: 'dn-instr-apply', text: 'zicato reflect run' }), ' (off the happy path — diagnose-and-recommend only; it never edits the contract).',
+        'Run one with ', el('code', { class: 'dn-instr-apply', text: 'zicato inspect reflection run' }), ' (off the happy path — diagnose-and-recommend only; it never edits the contract).',
       ]),
     ])));
     // The proposer panel is independent of board reflection — an epoch with no
@@ -458,8 +458,8 @@ function practiceReview(review) {
     return el('div', { class: 'dn-panel' }, [
       empty('No practice review for this reflection.'),
       el('p', { class: 'dn-faint', style: 'font-size:12px;margin:6px 0 0;' }, [
-        'Generate one with ', el('code', { class: 'dn-instr-apply', text: 'zicato reflect run' }),
-        ' (or the instant ', el('code', { class: 'dn-instr-apply', text: 'zicato reflect practices' }), ' contract+history tier).',
+        'Generate one with ', el('code', { class: 'dn-instr-apply', text: 'zicato inspect reflection run' }),
+        ' (or the instant ', el('code', { class: 'dn-instr-apply', text: 'zicato inspect reflection practices' }), ' contract+history tier).',
       ]),
     ]);
   }

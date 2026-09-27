@@ -90,7 +90,7 @@ test('landing: renders the reflection list from the fixture', async () => {
   assert(t.includes('n/a'), 'a null-flip reflection renders n/a in the flip column');
 });
 
-test('landing: an empty reflection set points at `zicato reflect run`', async () => {
+test('landing: an empty reflection set points at `zicato inspect reflection run`', async () => {
   fresh();
   const F = { ...reflectionFixtureMap(), '/api/reflections': { reflections: [] } };
   installFixtureMap(F);
@@ -98,7 +98,7 @@ test('landing: an empty reflection set points at `zicato reflect run`', async ()
   await instrument.render(host, CTX, { epochId: EPOCH_ID });
   const t = textOf(host);
   assert(t.includes('No reflections'), 'honest empty state');
-  assert(t.includes('zicato reflect run'), 'points at the CLI entry point');
+  assert(t.includes('zicato inspect reflection run'), 'points at the CLI entry point');
 });
 
 // ====================================================================
@@ -318,7 +318,7 @@ test('practice review: an empty review degrades to the honest CLI prompt', async
   await instrument.render(host, CTX, { epochId: EPOCH_ID, reflectionId: REFLECTION_ID });
   const t = textOf(host);
   assert(t.includes('No practice review'), 'honest empty state');
-  assert(t.includes('zicato reflect run') || t.includes('zicato reflect practices'), 'points at a CLI entry point');
+  assert(t.includes('zicato inspect reflection run') || t.includes('zicato inspect reflection practices'), 'points at a CLI entry point');
 });
 
 // ====================================================================
