@@ -5,8 +5,9 @@ of it, in four steps that always run in this order and nowhere else:
 
 * :func:`_build_field_settlement` turns the crowning into one terminal
   :class:`OutcomeRecord` per applied challenger;
-* :func:`_commit_field_settlement` records the complete receipt, then commits
-  outcomes, lineage, the champion pointer, journals, and the settled bracket;
+* :func:`_commit_field_settlement` records the complete settlement receipt,
+  marks it committed, and refreshes the derived index; the receipt carries
+  every candidate outcome, the settled bracket, and the crowned champion;
 * :func:`_publish_field_observations` publishes the Pareto observation and live
   dashboard envelope after the canonical commit;
 * :func:`_close_field_round` runs the round epilogue and returns the
@@ -17,8 +18,9 @@ post-promotion hook failure — stay inside the module, because nothing
 outside it can observe a round mid-settlement.
 
 Every write in this phase happens on the post-holdout, post-integrity,
-post-override truth, so no durable store can describe a crowning the
-champion pointer contradicts.
+post-override truth. Lineage dispositions and the current champion are read
+back from committed receipts, so no durable store can describe a crowning
+the receipt contradicts.
 """
 
 from __future__ import annotations
@@ -327,16 +329,17 @@ def _build_field_settlement(
 
 
 def _assert_crowning_agrees(settlement: RoundSettlement, candidates: CandidateField) -> None:
-    """Refuse to persist a bracket the champion pointer would contradict.
+    """Refuse to persist a bracket that disagrees with the crowned champion.
 
-    The durable bracket and the champion state MUST agree (issue #20).  A
+    The settled bracket and the crowned champion MUST agree (issue #20). A
     settled bracket that records ``promoted`` with a promoted generation the
-    champion pointer and lineage never advance to — or the inverse — is a
-    silent correctness bug, so this fails loudly before lineage is written.
-    The persisted decision is the post-holdout truth and the primary promoted
-    id is what drives lineage and ``current_generation``; the two are the
-    same value by construction, and this guard makes that contract explicit
-    and catches any future code path that lets them drift apart.
+    receipt does not crown — or the inverse — is a silent correctness bug, so
+    this fails loudly before the receipt is written. The persisted decision is
+    the post-holdout truth, and the primary promoted id is the champion that
+    lineage and :func:`~zicato.evolve.generation_phase.current_generation`
+    read back from the committed receipt. The two are the same value by
+    construction; this guard makes that contract explicit and catches any
+    code path that lets them drift apart.
     """
 
     bracket_promoted = settlement.decision.decision == "promoted"
@@ -377,17 +380,19 @@ async def _commit_field_settlement(
 ) -> tuple[str, str, str] | None:
     """Commit the replayable settlement and run the promotion hook.
 
-    The complete decision lands in a settlement receipt before any outcome
-    write. The recovery module applies outcomes, lineage, the champion marker,
-    journals, the settled bracket, and one reported derived-index refresh in
-    that order. Every canonical write is idempotent, so startup can repeat the
-    commit without evaluating the tournament again.
+    The complete decision lands in a pending settlement receipt. The recovery
+    module then marks the receipt committed and runs one reported
+    derived-index refresh. Lineage dispositions and the current champion are
+    read from committed receipts, so committing the receipt publishes every
+    outcome at once. Each step is idempotent, so startup can repeat the commit
+    without evaluating the tournament again.
 
-    The post-promotion adapter hook (issue #125) fires once, after the
-    champion marker advances, for the PRIMARY head only: an operator
-    multi-promote marks several candidates promoted in lineage, but
-    ``current_generation`` advances to exactly one, and it is that crowning
-    the adapter's out-of-tree state has to track.
+    The post-promotion adapter hook (issue #125) fires once, after the receipt
+    commits, for the PRIMARY head only: an operator multi-promote marks
+    several candidates promoted in lineage, but
+    :func:`~zicato.evolve.generation_phase.current_generation` names exactly
+    one, and it is that crowning the adapter's out-of-tree state has to
+    track.
     """
 
     prepared = field_round.prepared

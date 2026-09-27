@@ -94,12 +94,11 @@ class ProposerContext:
     #: binds it onto the tool context, and the external-proposer launch
     #: forwards it into the MCP server's per-round context file.
     #:
-    #: ``None`` (the default) means "no orchestrator populated this" — the
-    #: ADK path then falls back to deriving it, which is exactly the
-    #: duplication this field removes, so the fallback is a compatibility
-    #: shim for contexts built by hand (tests, a standalone propose) and NOT
-    #: a supported production shape. ``_propose_child`` takes it as a
-    #: REQUIRED argument so the real path cannot reach the fallback.
+    #: ``None`` (the default) means "no orchestrator populated this". The
+    #: Foe-backed proposer refuses such a context, because an episode reads
+    #: the parent snapshot and has nothing to propose against without it.
+    #: ``_propose_child`` takes the root as a REQUIRED argument, so the
+    #: evolve loop always populates it.
     generation_root: Path | None = None
     mutation_policy: MutationPolicy | None = None
     validate_experiment: ExperimentValidator | None = None

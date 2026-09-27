@@ -2,14 +2,13 @@
 
 This package exposes :func:`main` as the console-script entry point for
 the ``zicato`` executable. The root :class:`click.Group` is constructed
-by :func:`zicato.cli.discovery.build_cli_root`, which auto-discovers
-every importable module under :mod:`zicato.cli.commands` and registers
-its top-level :class:`click.Command` / :class:`click.Group` objects.
+by :func:`zicato.cli.discovery.build_cli_root`, which imports each
+command module under :mod:`zicato.cli.commands` by name and places every
+command at its fixed position in the tree. A command module that fails to
+import fails the CLI; there is no plugin discovery.
 
-Subcommands are intentionally split across many small modules so that
-parallel work streams can each own a single command file without
-stepping on the root group. A broken plugin module logs a warning and
-is skipped; it does not crash the CLI.
+Subcommands are split across small modules so that each command's code
+lives in one file without touching the root group.
 """
 
 from __future__ import annotations
@@ -20,7 +19,7 @@ from zicato.cli.discovery import build_cli_root
 def main() -> None:
     """Console-script entry point.
 
-    Bootstraps the click root group via auto-discovery and invokes it.
+    Builds the click root group and invokes it.
     Click handles ``sys.argv`` parsing internally.
     """
     root = build_cli_root()

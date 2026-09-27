@@ -39,9 +39,9 @@ from zicato.driver_imports import with_workspace_imports
 # meta-judge (adjudicator) budget — is refused unless the operator supplies an
 # explicit adjudicator callable. Reflection never silently spends budget.
 _LIVE_RUN_GATE_MSG = (
-    "reflect run requested adjudication (ACTIVE mode) but no --adjudicator-call-llm "
-    "was supplied. Adjudication spends live meta-judge budget, and the live-run gate "
-    "forbids spending it without an explicit callable. Either pass "
+    "inspect reflection run requested adjudication (ACTIVE mode) but no "
+    "--adjudicator-call-llm was supplied. Adjudication spends live meta-judge "
+    "budget, and the live-run gate forbids spending it without an explicit callable. Either pass "
     "--adjudicator-call-llm DOTTED_PATH (an independent meta-judge, distinct from "
     "every judge model), or run the cheap zero-LLM tier with --no-llm-adjudication "
     "(reliability + discrimination + coverage) or --passive (ingest-only)."
@@ -418,7 +418,7 @@ def run_cmd(
     set_log_context(epoch_id=resolved_epoch)
     # Contract-load preflight: surface the telemetry-dialect capability
     # warnings ONCE for this invocation — the SAME single seam evolve uses
-    # (evolve.loop.emit_dialect_capability_warnings), so a `reflect run`
+    # (evolve.loop.emit_dialect_capability_warnings), so an `inspect reflection run`
     # tuning a drift-derived loss under a drift-incapable dialect is warned
     # too. Best-effort; a warning-emit failure never fails the run.
     from zicato.epoch._storage import RecordError  # noqa: PLC0415
@@ -997,7 +997,7 @@ def practices_cmd(workspace: str, epoch_id: str | None, as_json: bool) -> None:
     lineage. The checks that need a reflection corpus or scorecards
     (``loss_monoculture`` / ``judge_criterion_quality`` / ``weight_revisit``)
     honestly report ``unmeasured`` naming the missing input — run ``zicato
-    reflect run`` for those. Nothing is persisted (there is no reflection id);
+    inspect reflection run`` for those. Nothing is persisted (there is no reflection id);
     the review is printed.
     """
     from zicato.core.workspace import board_path as _board_path  # noqa: PLC0415

@@ -1,9 +1,9 @@
 """``zicato evolve`` — the single entry point to the self-improvement loop.
 
 ``evolve`` is the whole happy path past ``zicato init``. It is
-self-orchestrating: the operator never runs ``register`` / ``propose``
-/ ``tournament`` / ``reindex`` / ``epoch`` by hand — ``evolve`` drives
-all of them internally.
+self-orchestrating: the operator never runs ``epoch register`` /
+``proposer propose`` / ``tournament run`` / ``repair index`` / ``epoch new``
+by hand — ``evolve`` performs each of those steps internally.
 
 Each invocation:
 
@@ -828,8 +828,8 @@ def evolve_cmd(
     `evolve` is self-orchestrating: it resolves the evaluation
     contract, auto-opens an epoch when that contract has changed, then
     proposes / runs the tournament / promotes for --rounds rounds. You
-    do not run `register`, `propose`, `tournament`, `reindex`, or
-    `epoch` by hand — evolve drives them.
+    do not run `epoch register`, `proposer propose`, `tournament run`,
+    `repair index`, or `epoch new` by hand — evolve performs those steps.
 
     By default, contract-hash auto-epoching is ON: when the evaluation
     contract (board / proposer brief / scoring / system-under-test

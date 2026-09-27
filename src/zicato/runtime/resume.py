@@ -514,10 +514,10 @@ def prepare_resume(
     agree; every ambiguous state is discarded so the round can be proposed
     again.
     """
-    # A field settlement has a complete, replayable receipt before its first
-    # outcome write. Finish those commits before classifying generations: an
-    # experiment whose outcome already landed can still have pending lineage,
-    # journal, champion-marker, or bracket writes.
+    # A field settlement records a complete, replayable receipt before it
+    # commits. Finish those commits before classifying generations: lineage
+    # dispositions and the current champion are read from committed receipts,
+    # so a pending receipt leaves its candidates looking unresolved.
     from zicato.epoch.genstore import default_generation_store  # noqa: PLC0415
     from zicato.evolve.settlement_recovery import (  # noqa: PLC0415
         recover_field_settlements,

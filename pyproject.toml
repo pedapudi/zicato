@@ -91,8 +91,8 @@ dev = [
     "pytest >= 8",
     "pytest-asyncio >= 0.23",
     # Parallel test execution across worker processes. The default test
-    # run uses `-n auto` (see [tool.pytest.ini_options] addopts) so the
-    # ~5990-case suite fans out across CPU cores. The suite is already
+    # run uses `-n 4` (see [tool.pytest.ini_options] addopts) so the
+    # suite fans out across four worker processes. The suite is
     # process-isolation-clean (tmp_path everywhere, dynamic ports via
     # bind(("127.0.0.1", 0)), tempdir-isolated worker fixtures) so xdist
     # needs no per-test fixes. `-n0` on the command line overrides back
@@ -122,7 +122,6 @@ dev = [
     "uvicorn >= 0.30",
     "watchdog >= 4.0",
     "httpx >= 0.27",
-    # The terminal console and its Pilot-driven tests.
     # The vendored dogfood targets — a separate distribution under
     # examples/, resolved as a uv workspace member (see
     # [tool.uv.sources] below). The test_example_* smoke tests import
@@ -271,13 +270,12 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-# Default run: the FAST TIER, fanned out across CPU cores with
-# pytest-xdist. `-n auto` spawns one worker per detected core (the suite
-# is process-isolation-clean — see the pytest-xdist note in the `dev`
-# extra). Override to a single serial in-process run for debugging with
+# Default run: the FAST TIER, fanned out across four worker processes
+# with pytest-xdist (`-n 4`; the suite is process-isolation-clean — see
+# the pytest-xdist note in the `dev` extra). Override to a single serial in-process run for debugging with
 # `-n0` on the command line, e.g. `pytest -n0 tests/test_foo.py::test_bar`.
 #
-# Three marker terms are excluded, for three different reasons:
+# Two marker terms are excluded, for two different reasons:
 #
 #   not node        drops the `test_dashboard_js` shim that re-runs the
 #                   whole standalone Node suite inside pytest (a full

@@ -91,12 +91,12 @@ class ContractInputs:
         retain normalized path identity because no workspace base is available.
     proposer_path:
         Location of the proposer dir (``proposers/<name>/``) the epoch
-        steers with, or ``None`` for the built-in default proposer.
+        steers with, or ``None`` when the proposer runs without skills.
         :func:`compute_contract_hash` resolves it to a
         :class:`zicato.core.types.ProposerSpec` and folds the agent id,
-        tools, skill bodies, and any custom ``agent.py`` source into the
-        hash, so configuring a proposer dir — or editing a skill — rolls
-        the epoch. ``None`` (the builtin) canonicalizes to a stable form.
+        tools, and skill bodies into the hash, so configuring a proposer
+        dir — or editing a skill — rolls the epoch. ``None`` canonicalizes
+        to a stable form.
     """
 
     board_path: Path
@@ -683,12 +683,13 @@ def _canon_proposer(
 ) -> str:
     """Canonical form of the proposer: agent identity + skills + tools.
 
-    Resolves the proposer dir (or ``None`` ⇒ the built-in default) to a
+    Resolves the proposer dir (or ``None``, no skills) to a
     :class:`zicato.core.types.ProposerSpec` via
     :func:`zicato.proposer.skills.resolve_proposer_spec`, then reduces it
     to a sorted-key JSON string:
 
-    * ``agent_id`` — ``"builtin:default"`` or ``"dir:<name>"``;
+    * ``agent_id`` — ``"external:<label>"`` for a named proposer class,
+      otherwise ``"dir:<name>"`` or ``"builtin:default"``;
     * ``tools`` — the tool names, sorted;
     * ``skills`` — ``[{"name": ..., "sha256": <hash of the normalized
       body>}]``, sorted by name. Skill bodies are normalized exactly like
@@ -708,8 +709,8 @@ def _canon_proposer(
     that configures none canonicalizes byte-identically to before this
     seam existed — and its contract hash does not move.
 
-    The built-in default produces a stable canonical string, so a
-    workspace that never configures a proposer keeps a stable hash.
+    A workspace that configures no proposer produces a stable canonical
+    string, so its hash stays stable.
     """
     from zicato.proposer.skills import (  # noqa: PLC0415
         normalize_skill_body,
@@ -778,8 +779,9 @@ def _compute_contract_hash(
       (`os.path.normpath` + POSIX; never filesystem-resolved, so the
       hash does not depend on the process cwd or checkout — bug #10).
     * **proposer** — the resolved :class:`ProposerSpec` (agent id, sorted
-      tools, per-skill normalized-body hashes sorted by name, custom
-      ``agent.py`` source hash), serialized sorted-key.
+      tools, per-skill normalized-body hashes sorted by name, and the
+      proposer class's identity digest when one is named), serialized
+      sorted-key.
 
     The canonical forms are concatenated with a NUL-delimited
     separator and hashed. Missing files are treated as the empty string

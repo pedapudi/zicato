@@ -29,8 +29,10 @@ these paths back on every ``evolve`` to decide whether the evaluation
 contract has drifted (see ``docs/design/EPOCHS-AND-JOURNALING.md``).
 
 ``--proposer-path`` optionally points the workspace at a proposer dir
-(``proposers/<name>/`` — skills, plus an optional custom ``agent.py``).
-Absent ⇒ the built-in default proposer. The proposer is itself a
+(``proposers/<name>/``) whose ``skills/*.md`` steer the proposer; a
+directory holding an ``agent.py`` is refused. Absent ⇒ the proposer runs
+without skills. The proposer runtime is declared separately, in the
+``proposer`` block of the workspace config. The proposer is a
 contract input: configuring a proposer dir — or editing one of its
 skills — rolls the epoch on the next ``evolve`` (see
 ``docs/design/PROPOSER.md``).
@@ -167,8 +169,8 @@ def _validate_entrypoint(entrypoint: str, mutable_trees: tuple[str, ...] = ()) -
     default=None,
     type=click.Path(),
     help=(
-        "Proposer dir (proposers/<name>/ — skills + optional agent.py). "
-        "Absent ⇒ the built-in default proposer. Part of the contract: "
+        "Proposer dir (proposers/<name>/ holding skills/*.md; an agent.py is "
+        "refused). Absent ⇒ the proposer runs without skills. Part of the contract: "
         "configuring it (or editing a skill) rolls the epoch."
     ),
 )
@@ -223,8 +225,9 @@ def register_cmd(
     key as `contract.proposer_path` (absolutised). It is itself a
     contract input — configuring a proposer dir, or editing one of its
     skills, rolls the epoch on the next `evolve`. Omitting the flag
-    leaves the key unset, which resolves to the built-in default
-    proposer.
+    leaves the key unset, and the proposer runs without skills. The
+    proposer runtime is declared separately, in the `proposer` block of
+    the workspace config; a round refuses to open without it.
     """
     if bool(entrypoint) == bool(factory):
         raise click.UsageError("select exactly one of --adk or --factory")

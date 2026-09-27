@@ -22,7 +22,9 @@ The artifacts read here, all under ``epochs/{epoch_id}/``:
   tournament aggregate (scalar, drift_loss_mean, pass_rate, ...).
 * ``generations/{gen}/runs/{entry}/loss.json`` — the reducer's per-run
   loss profile.
-* ``journal.md`` — the running narrative.
+
+The report's running journal is rendered from those experiments by
+:func:`zicato.epoch.journal.render_journal`.
 
 Every read degrades rather than raising, so the report still generates
 on a partially-populated workspace (the common case mid-epoch). Where a

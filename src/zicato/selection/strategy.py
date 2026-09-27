@@ -250,13 +250,10 @@ class RoundRecord:
     round / Swiss round / racing rung INSIDE one evolve round); it is a
     DIFFERENT axis from a generation's ``Generation.round_index`` /
     ``Experiment.round_index``, which is the OUTER evolve (epoch-child) round
-    the generation was born in. They were once both called ``round_index``;
-    the within-tournament axis was renamed to ``stage_index`` to kill that
-    overload, so the unqualified word "round" now always means the evolve
-    round. ``label`` stays structure-qualified ("Bracket round N" / "Swiss
-    round N" / "Rung N" / "Winners' bracket"). The persisted ``rounds[]`` JSON
-    key is ``stage_index``; readers also accept the ``round_index``
-    spelling, so a workspace written with either name loads.
+    the generation was born in. The distinct name keeps the unqualified word
+    "round" meaning the evolve round. ``label`` stays structure-qualified
+    ("Bracket round N" / "Swiss round N" / "Rung N" / "Winners' bracket").
+    The persisted ``rounds[]`` JSON key is ``stage_index``.
     """
 
     stage_index: int

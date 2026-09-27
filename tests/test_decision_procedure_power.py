@@ -1153,8 +1153,8 @@ def test_noisy_session_seed_derives_only_from_stable_identifiers(tmp_path):
 # characteristics of the veto-first screen over the SAME seeded noise model.
 #
 # The screen runs each best-of-N slate candidate on a small champion-passing
-# train panel BEFORE selection (reserved replicate 3000; the confirm re-run
-# of a pass-flip at 3001) and vetoes only a CONFIRMED catastrophic
+# train panel BEFORE selection (the ``candidate_screen`` measurement purpose,
+# draw 0; the confirm re-run of a pass-flip is draw 1) and vetoes only a CONFIRMED catastrophic
 # regression. These tests measure, on the Tier-2 noise harness:
 #
 # * the deterministic contract — a broken candidate (one that breaks an
@@ -1282,7 +1282,9 @@ def _screen_experiment(exp_id: str) -> Any:
     )
 
 
-def _fab_metrics_measured(seed: int, gen_key: str, replicate: int, sigma: float) -> bool:
+def _fab_metrics_measured(
+    seed: int, gen_key: str, measurement: MeasurementDraw, sigma: float
+) -> bool:
     """Whether ``fabricate-metrics`` is MEASURED present for one draw —
     the same stable-seeded draw the engine's fake worker makes, so the
     naive any-flip alternative is computed on the identical sample."""
@@ -1291,7 +1293,7 @@ def _fab_metrics_measured(seed: int, gen_key: str, replicate: int, sigma: float)
             workspace_seed=seed,
             generation_key=gen_key,
             entry_id="conv_no_fabrication",
-            measurement=MeasurementDraw(MeasurementPurpose.TOURNAMENT, replicate),
+            measurement=measurement,
         )
     )
     measured = draw_measured_tokens(list(BASE_TOKENS), rng, sigma)
@@ -1322,7 +1324,7 @@ def test_screen_deterministic_slate_vetoes_broken_selects_best(
     ]
     results = asyncio.run(runner(candidates))
     assert [r.vetoed for r in results] == [True, False, False]
-    assert results[0].confirmed is True  # the flip re-confirmed at 3001
+    assert results[0].confirmed is True  # the flip re-confirmed on screen draw 1
     assert results[0].scalar is not None  # measured, selection-biased
     # Panel scalars order the survivors: the full fix beats champion-equal.
     assert results[2].scalar is not None and results[1].scalar is not None
@@ -1370,7 +1372,7 @@ def _measure_screen_false_veto_rates(
 
     The candidate's TRUE tokens equal the champion's, so ANY veto is
     false. The naive alternative is computed on the identical seeded
-    draws the engine consumed (one flip at replicate 3000 = veto), so
+    draws the engine consumed (one flip on screen draw 0 = veto), so
     the two rates compare the RULES, not the samples.
     """
     confirmed_vetoes = 0
@@ -1387,7 +1389,10 @@ def _measure_screen_false_veto_rates(
         confirmed_vetoes += 1 if result.vetoed else 0
         # conv_body cannot flip (structural pass); the panel's only
         # flip-capable entry is conv_no_fabrication.
-        naive_vetoes += 1 if _fab_metrics_measured(trial, "v0-screen-r0c0", 3000, sigma) else 0
+        first_screen_draw = MeasurementDraw(MeasurementPurpose.SCREEN, 0)
+        naive_vetoes += (
+            1 if _fab_metrics_measured(trial, "v0-screen-r0c0", first_screen_draw, sigma) else 0
+        )
     return confirmed_vetoes / trials, naive_vetoes / trials
 
 

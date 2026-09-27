@@ -21,11 +21,9 @@ those workers:
   for (telemetry/runtime-state lazy imports, run-id derivation, the live
   analytical-index dual-write).
 
-These helpers were extracted verbatim from :mod:`zicato.tournament.runner`,
-which still owns ``_run_single`` (the orchestrating call site that the
-test suite patches in place) and re-exports this module's public surface
-so existing ``from zicato.tournament.runner import ...`` imports keep
-working unchanged.
+The call site that drives one run through these helpers, ``_run_single``,
+lives in :mod:`zicato.tournament.worker_execution`. Callers import the
+helpers from this module directly.
 """
 
 from __future__ import annotations

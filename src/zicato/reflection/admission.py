@@ -325,8 +325,9 @@ async def _noop_target(system: str, user: str, model: str) -> str:  # pragma: no
 
     The admission probes drive the board-unit runner, which invokes the ADAPTER,
     not this callable; ``make_runtime_config`` merely requires a callable when no
-    ``models.*`` role is configured (mirrors ``reflect run``'s adjudication). A
-    DISTINCT placeholder per role keeps ``assert_distinct_callables`` honest.
+    ``models.*`` role is configured (mirrors the adjudication of
+    ``inspect reflection run``). A DISTINCT placeholder per role keeps
+    ``assert_distinct_callables`` honest.
     """
     return ""
 
@@ -346,13 +347,12 @@ def admit(
     """The sync admission seam: stamp admission records onto surface suggestions (§5).
 
     The CLI calls this function only when ``--probe`` is requested. It resolves
-    the same corpus context that
-    ``reflect run`` builds — the epoch board / scoring / experiments, and (only
-    when spending) the champion / :class:`RuntimeConfig` / adapter — builds an
-    :class:`AdmissionRequest` per suggestion (populating the §4 self-preference
-    families from provenance), runs :func:`admit_suggestion` with
-    ``spend=probe``, and folds ``AdmissionRecord.to_json()`` into each
-    suggestion's ``admission`` field.
+    the same corpus context that ``inspect reflection run`` builds — the epoch
+    board / scoring / experiments, and (only when spending) the champion /
+    :class:`RuntimeConfig` / adapter — builds an :class:`AdmissionRequest` per
+    suggestion (populating the §4 self-preference families from provenance),
+    runs :func:`admit_suggestion` with ``spend=probe``, and folds
+    ``AdmissionRecord.to_json()`` into each suggestion's ``admission`` field.
 
     ``probe=False`` runs NOTHING live — :func:`admit_suggestion` computes the
     cost estimate + the pure leakage check and returns every live stage
@@ -569,11 +569,12 @@ def _probe_context(
 ) -> tuple[Generation | None, RuntimeConfig, Any]:
     """Resolve the champion / config / adapter for the live probes (§5).
 
-    Mirrors ``reflect run`` / the tournament CLI's reconstruction: the champion
-    generation off its on-disk snapshot, a :class:`RuntimeConfig` from the
-    workspace config (with placeholder callables — the adapter is what the runner
-    spends), and the adapter from ``config.json``. A missing champion / adapter
-    degrades to a placeholder so the pipeline still runs its honest degrades.
+    Mirrors the reconstruction in ``inspect reflection run`` and the tournament
+    CLI: the champion generation off its on-disk snapshot, a
+    :class:`RuntimeConfig` from the workspace config (with placeholder
+    callables — the adapter is what the runner spends), and the adapter from
+    ``config.json``. A missing champion / adapter degrades to a placeholder so
+    the pipeline still runs its honest degrades.
     """
     from zicato import adapter_factory, runtime_factory, workspace_loader  # noqa: PLC0415
 

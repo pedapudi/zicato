@@ -335,7 +335,7 @@ silently, which keeps the posture recommend-only end to end.
 
 **Live probes need an operator go-ahead.** The execution, noise and
 discrimination probes spend real champion budget and are gated the same way
-`reflect run`'s adjudication is: never without an explicit operator go-ahead
+the adjudication in `inspect reflection run` is: never without an explicit operator go-ahead
 and a live endpoint. The pipeline is **fully testable against fixtures and
 mocks** — the
 probes monkeypatch `worker_execution._run_single` on a seeded noise model (the

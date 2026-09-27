@@ -16,7 +16,6 @@ Storage layout managed here::
           brief.md                 # frozen proposer brief
           scoring.json             # serialized ScoringWeights
           config.json              # EpochConfig serialized (id/name/created_at/closed/closed_at)
-          journal.md               # appended per experiment (see journal.py)
           analysis.md              # written at close (see analysis.py)
 
 Epoch ids are formed as ``{YYYY-MM-DD}_{short_name}`` where ``short_name``
