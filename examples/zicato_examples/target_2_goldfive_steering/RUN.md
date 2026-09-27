@@ -2,7 +2,7 @@
 
 This document walks the operator through standing up a `zicato evolve`
 loop where the **system under test is goldfive itself**. The proposer emits
-patches against goldfive's own prompt + threshold surface; the runner
+patches against goldfive's own prompts; the runner
 mounts a fresh goldfive snapshot per generation; the tournament scores
 the snapshots against an adversarial board.
 
@@ -149,13 +149,13 @@ The board ships 10 entries:
   steerer must not degrade a well-behaved workload.
 
 The proposer brief's preferred-edits section steers the proposer at
-goldfive's refine prompt (`refine_system_prompt`), its reasoning-drift
-and goal-drift judge prompts (`reasoning_judge_system_prompt`,
-`goal_drift_system_prompt`), and the off-topic and looping-reasoning
-thresholds. The forbidden-edits section blocks the refine retry budgets
-that decide when the steerer escalates (`refine_failure_threshold`,
-`parallel_executor_refine_failure_threshold`,
-`planner_default_max_refine_attempts`).
+goldfive's refine prompt (`refine_system_prompt`) and its
+reasoning-drift and goal-drift judge prompts
+(`reasoning_judge_system_prompt`, `goal_drift_system_prompt`). It names
+no numeric knob, because a proposal cannot change one (§8), and its
+forbidden-edits section is empty for the same reason: the refine retry
+budgets that decide when the steerer escalates are numeric, so they stay
+fixed.
 
 `scoring.json` weighs **pass rate far above drift count**, because the
 loss on this target is pass/fail correctness against synthetic ground
@@ -313,20 +313,25 @@ proposer.
    model replaces the stand-in. The episode reads the parent
    generation's pattern-detector output — for example "hot drift kind:
    hallucination_suspected" — and proposes a substantive rewrite of the
-   relevant prompt or threshold. With a real proposer driving, `pass_rate_delta` decides the round: `scoring.json`
-   sets `pass_rate_monotonicity: true`, so a proposer that lowers
+   relevant prompt. With a real proposer driving, `pass_rate_delta`
+   decides the round: `scoring.json` sets `pass_rate_monotonicity: true`, so a proposer that lowers
    adversarial recall to suppress drift loses at the gate however much
    `drift_loss_delta` improves.
 
 ## 8. Known limitations
 
-* **A numeric mutation can be enumerated but not patched end to end.**
-  The applier's `set_numeric` path looks for a `# zicato:mutable` marker
-  comment near the constant, and the manifest bridge synthesizes no such
-  marker, so the lookup fails. Closing this means teaching the applier to
-  honour `MutationPoint.metadata["python_attr"]` and to walk the AST for
-  the named module-level attribute. Until then only prompt-body
-  mutations apply end to end.
+* **A numeric mutation is enumerated but cannot be applied.** The
+  manifest bridge records a numeric point with the manifest's declared
+  default as its content, a placeholder line range, and no marker in the
+  source. A proposal episode that edits the constant therefore leaves
+  the point's content unchanged, and the read-back of the working copy
+  refuses the edited file as an edit outside every mutation point. An
+  explicit `set_numeric` patch fails as well, because the applier
+  locates the constant through a `# zicato:mutable` marker. Closing this
+  means reading and rewriting the module-level attribute that
+  `MutationPoint.metadata["python_attr"]` names, in both the enumerator
+  and the applier. Until then only prompt-body mutations apply, and the
+  proposer brief names prompt ids only.
 * **The event log carries two shapes.** Goldfive's persistence sink
   emits some events as proto-JSON (camelCase keys, ISO-string
   timestamps) and others as snake_case with a nested timestamp object.

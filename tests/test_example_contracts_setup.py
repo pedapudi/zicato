@@ -17,7 +17,10 @@ here instead of in an operator's first ``evolve``.
 Each case also checks that every mutation id the brief lists under
 ``Preferred edits`` or ``Forbidden edits`` names a point on the registered
 surface, so a brief cannot steer the proposer at an id that does not
-exist.
+exist, and that no preferred id is a numeric manifest point. The manifest
+bridge records a numeric point's content from the manifest rather than
+from the source, so a proposal cannot change one: the read-back refuses
+the edited file as an edit outside every mutation point.
 """
 
 from __future__ import annotations
@@ -204,6 +207,12 @@ def test_example_contract_passes_the_pre_spend_gate(
     require_workspace_valid(workspace, live_contract=True)
 
     brief = parse_brief((tmp_path / "brief.md").read_text(encoding="utf-8"))
-    surface = {point.id for point in enumerate_mutations([tree])}
+    surface = {point.id: point for point in enumerate_mutations([tree])}
     named = set(brief.preferred_ids) | set(brief.forbidden_ids)
-    assert named <= surface, sorted(named - surface)
+    assert named <= surface.keys(), sorted(named - surface.keys())
+    unappliable = sorted(
+        mutation_id
+        for mutation_id in brief.preferred_ids
+        if surface[mutation_id].metadata.get("manifest_kind") == "numeric"
+    )
+    assert not unappliable, unappliable

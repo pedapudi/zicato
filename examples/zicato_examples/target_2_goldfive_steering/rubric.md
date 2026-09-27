@@ -23,32 +23,18 @@ The proposer should prefer these mutation points:
 - `goal_drift_system_prompt` — the system prompt of the trajectory-level
   goal-alignment judge, which runs after a configurable number of agent
   invocations.
-- `off_topic_distance_threshold` — the embedding distance above which
-  a reasoning block is flagged off topic.
-- `looping_reasoning_similarity_threshold` — the embedding similarity
-  above which a reasoning block is flagged as looping.
 
-Tighten a threshold on false-positive regression and loosen it on
-false-negative regression.
+Goldfive's numeric knobs (its drift thresholds and retry budgets) appear
+in the mutation surface, but a proposal cannot change them: an edit to
+one is refused as an edit outside every mutation point. Work through the
+prompts above.
 
 ## Forbidden edits
 
-The proposer MUST NOT touch:
-
-- `refine_failure_threshold` — consecutive refine failures before the
-  steerer stops refining.
-- `parallel_executor_refine_failure_threshold` — the same limit for the
-  parallel executor.
-- `planner_default_max_refine_attempts` — the planner's refine retry
-  budget.
-
-These budgets decide when the steerer stops refining and escalates, and
-that escalation path is fixed for this epoch. Change its effect through
-its inputs: the judge prompts and thresholds listed under preferred
-edits.
-
-If a proposer round emits a patch against a forbidden id, the
-generation is rejected without running.
+None. The refine retry budgets that decide when the steerer stops
+refining and escalates are numeric knobs, so no proposal can change
+them, and the escalation path stays fixed. Change its effect through its
+inputs: the judge prompts listed under preferred edits.
 
 ## Style
 
@@ -56,12 +42,6 @@ generation is rejected without running.
   ("might", "could", "potentially"); the judge is a classifier, not a
   philosopher. Hedge words bleed into the classifier's output
   distribution and reduce the separation between classes.
-
-- Threshold changes must be justified by a concrete pattern showing
-  false-positive or false-negative regression. "Lowered from 0.8 to
-  0.7" is not a hypothesis; "lowered from 0.8 to 0.7 because pattern
-  `hot_kind:hallucination_suspected` shows 7 misses across normal
-  entries" is.
 
 - Refine-prompt changes should preserve any structural placeholders
   (`{task_title}`, `{drift_kind}`, etc.) the upstream template

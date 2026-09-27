@@ -2,8 +2,8 @@
 
 Here the system under test is **goldfive itself**, and the mutable surface
 lives inside goldfive's source tree. The proposer edits goldfive's judge
-prompts, its refine prompt, and its drift-detection thresholds. The resulting child generation runs against a board of
-synthetic adversarial cases, and the tournament decides whether to
+prompts and its refine prompt. The resulting child generation runs
+against a board of synthetic adversarial cases, and the tournament decides whether to
 promote it.
 
 The presentation-agent example asks whether the loop converges on an
@@ -103,7 +103,9 @@ manifest, `goldfive/optimization/manifest.toml`, declares the mutable
 surface, and zicato's manifest bridge turns each manifest entry into one
 `MutationPoint`: a prompt body under `goldfive/optimization/prompts/` or
 a numeric constant in the module the entry names. `zicato inspect
-mutations` lists them. The proposer's patches target those points by
+mutations` lists them. Only the prompt points can be changed by a
+proposal; [RUN.md §8](./RUN.md#8-known-limitations) explains why the
+numeric points cannot. The proposer's patches target those points by
 id. The patch applier copies the goldfive snapshot and
 applies the patches, and the runner mounts that snapshot as goldfive's
 source root for the duration of the child generation's runs.
@@ -130,8 +132,8 @@ zicato evolve
 1. Records goldfive's source tree as the seed generation.
 2. Runs the board against that snapshot, producing a baseline scoreline.
 3. Asks the proposer for a hypothesis and an edit against the mutation
-   ids the proposer brief prefers: judge prompts, threshold knobs, and
-   the refine template. `scoring.json` carries no `tournament` block, so
+   ids the proposer brief prefers: the judge prompts and the refine
+   prompt. `scoring.json` carries no `tournament` block, so
    each round fields several challengers under the default racing
    structure.
 4. Materializes each child generation, runs the board against it, and

@@ -50,9 +50,9 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 467,040 | +58,379 |
-| Production | 197,702 | 186,234 | -11,468 |
-| Production logic | 110,276 | 108,624 | -1,652 |
+| Total | 408,661 | 466,953 | +58,292 |
+| Production | 197,702 | 186,241 | -11,461 |
+| Production logic | 110,276 | 108,626 | -1,650 |
 
 The baseline row is the reference `f9052dd` measured by the classification the
 checker holds, which counts the console's hand-written entry point
@@ -109,7 +109,7 @@ production-logic series per subsystem along a branch's first-parent commits.
 | src/zicato/judge_runtime | 1,778 | 1,778 | 801 | 54.9% |
 | src/zicato/testing | 1,455 | 1,455 | 767 | 47.3% |
 | src/zicato/_tournament_worker.py | 1,197 | 1,197 | 704 | 41.2% |
-| src/zicato/synthetic | 1,195 | 1,195 | 572 | 52.1% |
+| src/zicato/synthetic | 1,202 | 1,202 | 574 | 52.2% |
 | src/zicato/models_config.py | 635 | 635 | 490 | 22.8% |
 | src/zicato/scoring | 1,401 | 1,401 | 475 | 66.1% |
 | src/zicato/patterns | 753 | 753 | 410 | 45.6% |
@@ -471,3 +471,5 @@ dropped rows named.
 | Synthetic entry drift grading (total) | 466,744 | +296 | 467,040 | Synthetic board entries: the tournament worker grades an adversarial entry by its required drift kinds and a clean entry by the absence of warning or critical drift, conjoined with any declared expectation. A synthetic grading revision in the board hash rolls only epochs whose board holds a synthetic entry. Worker-process and contract-hash tests cover both. |
 | Synthetic entry drift grading (production) | 186,157 | +77 | 186,234 | Synthetic board entries: the tournament worker grades an adversarial entry by its required drift kinds and a clean entry by the absence of warning or critical drift, conjoined with any declared expectation. A synthetic grading revision in the board hash rolls only epochs whose board holds a synthetic entry. Worker-process and contract-hash tests cover both. |
 | Synthetic entry drift grading (production logic) | 108,590 | +34 | 108,624 | Synthetic board entries: the tournament worker grades an adversarial entry by its required drift kinds and a clean entry by the absence of warning or critical drift, conjoined with any declared expectation. A synthetic grading revision in the board hash rolls only epochs whose board holds a synthetic entry. Worker-process and contract-hash tests cover both. |
+| Manifest resolution from the package directory (production) | 186,234 | +7 | 186,241 | The goldfive optimization manifest resolves when the enumerated root is the `goldfive` package directory, which is the tree `epoch register` records and the directory a generation snapshot holds. Without it, every manifest source path resolves one directory too deep and the goldfive example has no mutation points. |
+| Manifest resolution from the package directory (production logic) | 108,624 | +2 | 108,626 | The goldfive optimization manifest resolves when the enumerated root is the `goldfive` package directory, which is the tree `epoch register` records and the directory a generation snapshot holds. Without it, every manifest source path resolves one directory too deep and the goldfive example has no mutation points. |
