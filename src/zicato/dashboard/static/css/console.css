@@ -1005,7 +1005,9 @@
 
   .dn-mtx { border-collapse: collapse; font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1)); }
   .dn-mtx th, .dn-mtx td { border: 1px solid var(--v2-rule); padding: 0; }
-  .dn-mtx-corner { text-align: left; padding: 5px 8px; color: var(--v2-ink-faint); font-weight: 400; font-size: calc(10px * var(--dt-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.05em; }
+  /* The grid is set in the data face for its ids and numbers. The corner that
+   * names the two axes is a label, so it takes the sans. */
+  .dn-mtx-corner { text-align: left; padding: 5px 8px; color: var(--v2-ink-faint); font-family: var(--v2-sans); font-weight: 400; font-size: calc(10px * var(--dt-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.05em; }
   .dn-mtx-gen { padding: 5px 6px; }
   .dn-mtx-genlink { color: var(--v2-ink); text-decoration: none; }
   .dn-mtx-genlink:hover { color: var(--v2-accent); }
@@ -1062,7 +1064,7 @@
   .dn-evalmtx-wrap { margin: 4px 0 0; }
   .dn-evalmtx-legend { font-size: calc(10.5px * var(--dt-font-scale, 1)); margin: 8px 0 0; line-height: 1.4; }
   .dn-evalmtx-grouprow .dn-evalmtx-group { text-align: center; padding: 3px 6px; color: var(--v2-ink-faint);
-    font-weight: 400; font-size: calc(9.5px * var(--dt-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.05em;
+    font-family: var(--v2-sans); font-weight: 400; font-size: calc(9.5px * var(--dt-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.05em;
     background: var(--v2-panel); }
   .dn-evalmtx-groupcorner { border: 1px solid var(--v2-rule); }
   .dn-evalmtx-genhead { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 4px 6px; }
@@ -1077,8 +1079,10 @@
   .dn-evalmtx-entry { color: var(--v2-ink); }
   /* a held-out entry: the drawn padlock and the word "holdout" in the accent. */
   .dn-evalmtx-holdout-mark { display: inline-flex; align-items: center; gap: 3px;
-    font-size: calc(10px * var(--dt-font-scale, 1)); color: var(--v2-accent); }
-  .dn-eval-flip { font-size: calc(10px * var(--dt-font-scale, 1)); white-space: nowrap; }
+    font-family: var(--v2-sans); font-size: calc(10px * var(--dt-font-scale, 1)); color: var(--v2-accent); }
+  /* the flip-rate note: the word in the sans, the rate in the data face. */
+  .dn-eval-flip { font-family: var(--v2-sans); font-size: calc(10px * var(--dt-font-scale, 1)); white-space: nowrap; }
+  .dn-eval-flip-rate { font-family: var(--v2-mono); }
   .dn-eval-flip-clean { color: var(--v2-good); }
   .dn-eval-flip-warm { color: var(--v2-caution, var(--v2-ink-soft)); }
   .dn-eval-flip-hot { color: var(--v2-bad); font-weight: 600; }

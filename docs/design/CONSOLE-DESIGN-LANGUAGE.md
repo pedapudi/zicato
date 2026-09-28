@@ -183,7 +183,10 @@ title). The top bar, the tree, buttons, section headings and prose resolve to
 the sans; an element opts into the mono by its data role (`.dn-mono`, a
 table, a numeric tile value, a tree row named by an id, a figure's tick
 values and ids). A figure's captions, axis titles, legends and sentences are
-sans, and so is a tile value led by a word (`ui.valueFace`). The Google
+sans, and so is a tile value led by a word (`ui.valueFace`). A matrix table
+is set in the mono for its ids and numbers, and its labels opt back into the
+sans: the corner naming the axes (`entry · candidate →`), the round group
+headers, the `holdout` word and the word `flip` before a flip rate. The Google
 Fonts families load in `console.js` with `display=swap` and system sans or
 monospace fallbacks — the only external dependency; the self-hosted JetBrains
 Mono under `fonts/` backs the fixed brand mono and the editorial and display

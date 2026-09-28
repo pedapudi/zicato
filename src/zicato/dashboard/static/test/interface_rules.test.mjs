@@ -316,6 +316,57 @@ test('every typeface option keeps prose and controls in a sans and data in a mon
   }
 });
 
+// ---- matrix tables: labels in the sans, ids and numbers in the mono ---------
+
+// The font family an element resolves to: the last rule in the sheet whose
+// subject names only classes the element carries, else the nearest ancestor's.
+// `chain` lists the class sets from the outermost element to the element. The
+// matcher ignores specificity and pseudo-classes; the sheet sets each of these
+// families through one plain class rule.
+function familyOf(chain) {
+  for (let i = chain.length - 1; i >= 0; i--) {
+    let fam = null;
+    for (const r of RULES) {
+      const d = r.decls.find(([p]) => p === 'font-family');
+      if (!d) continue;
+      const hit = r.selectors.some((sel) => {
+        const subj = subject(sel);
+        if (subj.includes(':') || subj.includes('[')) return false;
+        const cls = classesOf(subj);
+        return cls.length > 0 && cls.every((c) => chain[i].includes(c));
+      });
+      if (hit) fam = d[1];
+    }
+    if (fam) return fam;
+  }
+  return null;
+}
+
+test('a matrix table sets its axis and header labels in the sans and its ids and numbers in the mono', () => {
+  const TABLE = ['dn-mtx', 'dn-evalmtx'];
+  const HEAD = [TABLE, ['dn-evalmtx-headrow']];
+  const ROWHEAD = [TABLE, ['dn-mtx-row', 'dn-evalmtx-row'], ['dn-mtx-site', 'dn-evalmtx-site'], ['dn-evalmtx-sitehead']];
+  const labels = {
+    'the corner naming the axes ("entry · candidate →")': [...HEAD, ['dn-mtx-corner']],
+    'a round group header ("round 0")': [TABLE, ['dn-evalmtx-grouprow'], ['dn-evalmtx-group']],
+    'the holdout word': [...ROWHEAD, ['dn-evalmtx-holdout-mark']],
+    'the flip-rate word': [...ROWHEAD, ['dn-eval-flip', 'dn-eval-flip-hot']],
+    'the mutation matrix corner ("site (file:line · role)")': [['dn-mtx'], ['dn-mtx-corner']],
+  };
+  for (const [what, chain] of Object.entries(labels)) {
+    assertEqual(familyOf(chain), 'var(--v2-sans)', what + ' resolves to the sans token');
+  }
+  const data = {
+    'an entry id': [...ROWHEAD, ['dn-mtx-file', 'dn-evalmtx-entry']],
+    'a candidate id': [...HEAD, ['dn-mtx-gen', 'dn-evalmtx-gen'], ['dn-evalmtx-genhead'], ['dn-mtx-genlink', 'dn-evalmtx-genlink']],
+    'a flip rate': [...ROWHEAD, ['dn-eval-flip', 'dn-eval-flip-hot'], ['dn-eval-flip-rate']],
+    'a cell\'s drift number': [TABLE, ['dn-mtx-row'], ['dn-mtx-cell', 'dn-evalmtx-cell'], ['dn-evalmtx-celllink'], ['dn-evalmtx-drift']],
+  };
+  for (const [what, chain] of Object.entries(data)) {
+    assertEqual(familyOf(chain), 'var(--v2-mono)', what + ' resolves to the mono token');
+  }
+});
+
 // ---- the top bar holds one line -------------------------------------------
 
 test('the breadcrumb never wraps an id: crumbs hold one line and truncate with an ellipsis', async () => {
