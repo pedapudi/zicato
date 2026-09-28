@@ -2,11 +2,13 @@
 
 Three measurements are taken over the tracked files: ``total`` newline counts,
 the ``production`` subset of them, and the ``production_logic`` lines that
-execute. Each is enforced against a limit in ``.line-budget.json`` and each is
-also reported per subsystem, where a subsystem's three numbers partition the
-repository-wide ones, so the per-subsystem logic column sums to the enforced
-logic count. A subsystem's prose share is the share of its production lines
-that do not execute: ``1 - production_logic / production``.
+execute. Each is enforced against a limit: the starting limit
+``.line-budget.json`` holds plus the deltas the ledger entries under
+``docs/design/line-budget-ledger/`` record. Each is also reported per
+subsystem, where a subsystem's three numbers partition the repository-wide
+ones, so the per-subsystem logic column sums to the enforced logic count. A
+subsystem's prose share is the share of its production lines that do not
+execute: ``1 - production_logic / production``.
 
 The logic counters reach Python, JavaScript, and Rust. CSS and HTML hold no
 counter, so every line of a CSS or HTML file counts as executable, in the
@@ -35,7 +37,7 @@ import sys
 import tokenize
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable, Iterator
-from dataclasses import asdict, astuple, dataclass
+from dataclasses import asdict, astuple, dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -43,9 +45,20 @@ ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / ".line-budget.json"
 LEDGER_PATH = "docs/design/LINE-BUDGET.md"
 LEDGER = ROOT / LEDGER_PATH
-LEDGER_HEADING = "## Deliberate increases"
-SUBSYSTEM_HEADING = "## Production logic by subsystem"
-SUBSYSTEM_TABLE_HEADER = "| Subsystem | Total | Production | Production logic | Prose share |"
+# One Markdown file per change: its name, the delta it moves each measurement
+# by, and the reason. Independent changes add different files, so no two of
+# them edit the same line.
+ENTRIES_PATH = "docs/design/line-budget-ledger"
+ENTRY_NAME = re.compile(r"\d{4}-\d{2}-\d{2}-[a-z0-9]+(?:-[a-z0-9]+)*\.md")
+ENTRY_TABLE = ("| Measurement | Delta |", "|---|---:|")
+ENTRY_ROW = re.compile(
+    r"\| (?P<label>Total|Production|Production logic) \| (?P<delta>[+-]?[\d,]+) \|"
+)
+# The closed table of changes recorded with running totals. Its rows are not
+# re-derived; the digest pins their labels, measurements, and numbers, so a
+# reason may be reworded and nothing else may change.
+HISTORY_HEADING = "## Changes recorded with running totals"
+HISTORY_DIGEST = "a306b5f689f8cd53892bf29b3b7ad2ec7173a99aa93fddc1120b17959177ee8b"
 HISTORY_CACHE = ROOT / ".cache" / "line_budget_history.json"
 MEASUREMENTS = ("total", "production", "production_logic")
 # The summary table's row labels, in the order the table lists them, against the
@@ -55,14 +68,14 @@ SUMMARY_LABELS = (
     ("Production", "production"),
     ("Production logic", "production_logic"),
 )
-# A summary row: the label, the baseline, the enforced limit, and their signed
+# A summary row: the label, the baseline, the starting limit, and their signed
 # difference.
 SUMMARY_ROW = re.compile(
     r"^\| (?P<label>Total|Production|Production logic) \| (?P<baseline>[\d,]+) \| "
     r"(?P<limit>[\d,]+) \| (?P<difference>[+-][\d,]+) \|$",
     re.MULTILINE,
 )
-# A ledger row's first cell: the change's name, then the measurement it moves.
+# A closed-table row's first cell: the change's name, then the measurement it moved.
 LEDGER_LABEL = re.compile(r"(?P<label>.+) \((?P<measurement>total|production|production logic)\)")
 LOCKFILES = {"Cargo.lock", "uv.lock", "package-lock.json", "npm-shrinkwrap.json"}
 # The paths the budget does not count at all, and the reason each one holds no
@@ -413,15 +426,16 @@ def _format_rows(rows: Iterable[tuple[str, int]]) -> str:
     return "\n".join(f"  {name:<28} {count:>9,}" for name, count in rows)
 
 
-def render(report: Report) -> str:
+def render(report: Report, limits: dict[str, int]) -> str:
     by_total = sorted(report.subsystems.items(), key=lambda item: -item[1].total)
     return "\n".join(
         (
-            f"total             {report.lines:>9,} lines  {report.files:>5,} files",
+            f"total             {report.lines:>9,} lines  {report.files:>5,} files  "
+            f"limit {limits['total']:>9,}",
             f"production        {report.production_lines:>9,} lines  "
-            f"{report.production_files:>5,} files",
+            f"{report.production_files:>5,} files  limit {limits['production']:>9,}",
             f"production logic  {report.production_logic_lines:>9,} lines  "
-            f"{report.production_files:>5,} files",
+            f"{report.production_files:>5,} files  limit {limits['production_logic']:>9,}",
             "by language",
             _format_rows(report.languages.items()),
             "by subsystem",
@@ -460,83 +474,6 @@ def render_report(report: Report) -> str:
             f"{lines.production_logic:>16,}  {_share(lines):>11}"
         )
     return "\n".join(rows)
-
-
-def render_subsystem_table(report: Report) -> str:
-    """The ledger's per-subsystem table: every subsystem holding production files."""
-    rows = [SUBSYSTEM_TABLE_HEADER, "|---|---:|---:|---:|---:|"]
-    for name, lines in report.subsystems.items():
-        if lines.production:
-            rows.append(
-                f"| {name} | {lines.total:,} | {lines.production:,} | "
-                f"{lines.production_logic:,} | {_share(lines)} |"
-            )
-    return "\n".join(rows)
-
-
-def _subsystem_section(text: str) -> tuple[int, int]:
-    """The span of the per-subsystem table in the ledger document, header row included."""
-    start = text.find(SUBSYSTEM_HEADING)
-    if start < 0:
-        raise ValueError(f"{LEDGER_PATH} has no '{SUBSYSTEM_HEADING}' section")
-    end = text.find("\n## ", start + len(SUBSYSTEM_HEADING))
-    end = len(text) if end < 0 else end
-    table = text.find(SUBSYSTEM_TABLE_HEADER, start, end)
-    if table < 0:
-        return end, end
-    lines = text[table:end].split("\n")
-    rows = 0
-    while rows < len(lines) and lines[rows].startswith("|"):
-        rows += 1
-    return table, table + len("\n".join(lines[:rows]))
-
-
-def write_summary(text: str, report: Report) -> str:
-    """Return the ledger document with its per-subsystem table rewritten from the report."""
-    start, end = _subsystem_section(text)
-    table = render_subsystem_table(report)
-    if start == end:
-        table = "\n" + table + "\n"
-    return text[:start] + table + text[end:]
-
-
-def _table_rows(table: str) -> dict[str, str]:
-    rows = {}
-    for line in table.splitlines()[2:]:
-        name, _, cells = line.strip().strip("|").strip().partition(" | ")
-        rows[name] = cells
-    return rows
-
-
-def check_subsystem_table(text: str, report: Report) -> list[str]:
-    """Check that the ledger's per-subsystem table states what the report measures.
-
-    A row whose numbers differ, a subsystem with no row, and a row for a
-    subsystem the report does not measure are each an error, so the table
-    cannot fall behind the tree it describes. ``--write-summary`` rewrites it.
-    """
-    start, end = _subsystem_section(text)
-    expected = render_subsystem_table(report)
-    found = text[start:end]
-    if found == expected:
-        return []
-    errors = []
-    stated, measured = _table_rows(found), _table_rows(expected)
-    for name, cells in measured.items():
-        if name not in stated:
-            errors.append(f"subsystem table: no row for {name}, which measures {cells}")
-        elif stated[name] != cells:
-            errors.append(
-                f"subsystem table, {name}: states {stated[name]}, but the tree measures {cells}"
-            )
-    errors += [
-        f"subsystem table, {name}: no production files measure under that name"
-        for name in stated
-        if name not in measured
-    ]
-    if not errors:
-        errors.append("subsystem table: the rows are out of order")
-    return errors + ["run `python tools/line_budget.py --write-summary` to rewrite the table"]
 
 
 @dataclass(frozen=True)
@@ -652,16 +589,19 @@ def render_history(points: list[Point], subsystem: str | None = None) -> str:
     return "\n".join(rows)
 
 
-def check(report: Report, config_path: Path = CONFIG) -> list[str]:
-    config = json.loads(config_path.read_text())
-    limits = config["limits"]
+def _measured(report: Report) -> dict[str, int]:
+    return {
+        "total": report.lines,
+        "production": report.production_lines,
+        "production_logic": report.production_logic_lines,
+    }
+
+
+def check(report: Report, limits: dict[str, int]) -> list[str]:
+    """Name every measurement the report puts above its enforced limit."""
     errors = []
-    for key, actual in (
-        ("total", report.lines),
-        ("production", report.production_lines),
-        ("production_logic", report.production_logic_lines),
-    ):
-        ceiling = int(limits[key])
+    for key, actual in _measured(report).items():
+        ceiling = limits[key]
         if actual > ceiling:
             errors.append(f"{key}: {actual:,} exceeds {ceiling:,} by {actual - ceiling:,}")
     return errors
@@ -669,7 +609,7 @@ def check(report: Report, config_path: Path = CONFIG) -> list[str]:
 
 @dataclass(frozen=True)
 class LedgerRow:
-    """One deliberate increase: which measurement it moved, and from what to what."""
+    """One row of the closed table: the measurement it moved, and from what to what."""
 
     label: str
     measurement: str
@@ -681,20 +621,36 @@ class LedgerRow:
         return f"{self.label} ({self.measurement}) {self.previous:,} {self.delta:+,} {self.new:,}"
 
 
+@dataclass(frozen=True)
+class Entry:
+    """One change's movement of the three limits, in ``MEASUREMENTS`` order, and why.
+
+    ``name`` is the entry's file name; ``title`` names the change. The reason
+    is free to be reworded, so it takes no part in comparing entries.
+    """
+
+    name: str
+    title: str
+    deltas: tuple[int, ...]
+    reason: str = field(compare=False)
+
+    def __str__(self) -> str:
+        moves = ", ".join(
+            f"{label.lower()} {delta:+,}"
+            for (label, _), delta in zip(SUMMARY_LABELS, self.deltas, strict=True)
+        )
+        return f"{self.name} ({moves})"
+
+
 def _ledger_number(cell: str) -> int:
     return int(cell.replace(",", "").replace("+", ""))
 
 
-def parse_ledger(text: str) -> tuple[list[LedgerRow], list[str]]:
-    """Read the deliberate-increases table into rows, naming any row that will not parse.
-
-    A row is its label, the measurement the label's parenthetical names, and the
-    three numbers. The reason cell is dropped, so rewording one leaves the row
-    unchanged.
-    """
+def parse_history(text: str) -> tuple[list[LedgerRow], list[str]]:
+    """Read the closed table into rows, naming any row that will not parse."""
     rows: list[LedgerRow] = []
     errors: list[str] = []
-    section = text.partition(LEDGER_HEADING)[2].partition("\n## ")[0]
+    section = text.partition(HISTORY_HEADING)[2].partition("\n## ")[0]
     for line in section.splitlines():
         if not line.startswith("|"):
             continue
@@ -713,38 +669,51 @@ def parse_ledger(text: str) -> tuple[list[LedgerRow], list[str]]:
         measurement = named["measurement"].replace(" ", "_")
         rows.append(LedgerRow(named["label"], measurement, *numbers))
     if not rows:
-        errors.append(f"no rows found under '{LEDGER_HEADING}'")
+        errors.append(f"no rows found under '{HISTORY_HEADING}'")
     return rows, errors
 
 
-def _dropped_rows(rows: list[LedgerRow], base_text: str) -> list[str]:
-    """Name every base-revision row that is absent from the working tree's ledger."""
-    present = {astuple(row) for row in rows}
-    base = parse_ledger(base_text)[0]
-    return [
-        f"{row}: present in the base ledger and missing here"
-        for row in base
-        if astuple(row) not in present
-    ]
+def history_digest(rows: Iterable[LedgerRow]) -> str:
+    return hashlib.sha256("\n".join(map(str, rows)).encode()).hexdigest()
 
 
-def check_summary(text: str, config_path: Path = CONFIG) -> list[str]:
-    """Check that the summary table states the limits the config holds.
+def check_history(text: str, config: dict[str, Any]) -> list[str]:
+    """Check that the closed table is unchanged and that the starting limits continue it.
 
-    The table above the ledger reports each measurement's baseline, its
-    enforced limit, and the difference between them, and the prose beside it
-    says those limits are the ones ``.line-budget.json`` holds. Nothing made
-    that true: a change that moved the config could leave the table behind,
-    and twice did. Two rules close it, both read against the config:
+    Its rows must hash to ``HISTORY_DIGEST``, and each starting limit in
+    ``.line-budget.json`` must equal the value the table's last row for that
+    measurement reaches, so neither can move a limit without an entry.
+    """
+    rows, errors = parse_history(text)
+    if history_digest(rows) != HISTORY_DIGEST:
+        errors.append(
+            f"the table under '{HISTORY_HEADING}' is closed and its rows changed; "
+            f"record a change as a file under {ENTRIES_PATH}/"
+        )
+    reached = {row.measurement: row.new for row in rows}
+    for measurement in MEASUREMENTS:
+        start = int(config["starting_limits"][measurement])
+        if reached.get(measurement) != start:
+            errors.append(
+                f"{measurement}: .line-budget.json starts the limit at {start:,}, "
+                f"but the closed table ends at {reached.get(measurement, 0):,}"
+            )
+    return errors
 
-    1. Each row's enforced limit equals the configured limit.
+
+def check_summary(text: str, config: dict[str, Any]) -> list[str]:
+    """Check that the summary table states the starting limits the config holds.
+
+    The table reports each measurement's baseline, its starting limit, and the
+    difference between them. Two rules hold it to the config:
+
+    1. Each row's starting limit equals the configured one.
     2. Each row's last column equals its limit minus its baseline.
 
     A missing or unreadable row is an error in itself, so deleting the table
     is not a way to pass.
     """
     errors: list[str] = []
-    config = json.loads(config_path.read_text())
     found = {match["label"]: match for match in SUMMARY_ROW.finditer(text)}
     for label, measurement in SUMMARY_LABELS:
         row = found.get(label)
@@ -754,7 +723,7 @@ def check_summary(text: str, config_path: Path = CONFIG) -> list[str]:
         baseline = _ledger_number(row["baseline"])
         limit = _ledger_number(row["limit"])
         difference = int(row["difference"].replace(",", ""))
-        configured = int(config["limits"][measurement])
+        configured = int(config["starting_limits"][measurement])
         if limit != configured:
             errors.append(
                 f"summary table, {label}: states the limit {limit:,}, "
@@ -768,77 +737,144 @@ def check_summary(text: str, config_path: Path = CONFIG) -> list[str]:
     return errors
 
 
-def check_ledger(text: str, base_text: str | None = None, config_path: Path = CONFIG) -> list[str]:
-    """Check the deliberate-increases ledger's arithmetic, chaining, and completeness.
+def parse_entry(name: str, text: str) -> tuple[Entry | None, list[str]]:
+    """Read one entry file: a ``# `` title, the three-row delta table, and a reason."""
+    errors = []
+    if not ENTRY_NAME.fullmatch(name):
+        errors.append(f"{name}: an entry file is named YYYY-MM-DD-words-joined-by-hyphens.md")
+    lines = text.splitlines()
+    title = lines[0].removeprefix("# ").strip() if lines and lines[0].startswith("# ") else ""
+    if not title:
+        errors.append(f"{name}: the first line must be '# ' followed by the change's name")
+    deltas: dict[str, int] = {}
+    reason = []
+    for line in lines[1:]:
+        row = ENTRY_ROW.fullmatch(line.strip())
+        if row and row["label"] not in deltas:
+            deltas[row["label"]] = _ledger_number(row["delta"])
+        elif line.startswith("|") and line.strip() not in ENTRY_TABLE:
+            errors.append(f"{name}: unreadable or repeated row: {line.strip()}")
+        elif not line.startswith("|") and line.strip():
+            reason.append(line.strip())
+    missing = [label for label, _ in SUMMARY_LABELS if label not in deltas]
+    if missing:
+        errors.append(f"{name}: no delta row for {', '.join(missing)}")
+    if not reason:
+        errors.append(f"{name}: no reason follows the table")
+    if errors:
+        return None, errors
+    ordered = tuple(deltas[label] for label, _ in SUMMARY_LABELS)
+    return Entry(name, title, ordered, " ".join(reason)), []
 
-    Four rules hold over the table, the first three read from the ledger alone:
 
-    1. Every row's previous value plus its signed delta equals its new value.
-    2. Each row's parenthetical names one of the three measurements.
-    3. Within one measurement, a row starts no higher than the value the
-       preceding row for that measurement reached. A start below it is a
-       reduction, which ratchets the limit with no row of its own; a start above
-       it means a row was dropped or invented.
-    4. The last row for a measurement stands at or above that measurement's
-       enforced limit in ``.line-budget.json``. An increase sets the limit to
-       the value its row states, so where the last recorded event is an
-       increase the two are equal, and a reduction can only carry the limit
-       further down. A last row below the limit therefore means the increase
-       that raised the limit to where it stands was never written down. The
-       logic rows sit above their limit by a second amount the ledger explains:
-       a ``production_logic`` value in the table is measured over a definition
-       reaching only Python and JavaScript.
+def read_entries(ref: str | None = None, cwd: Path = ROOT) -> tuple[list[Entry], list[str]]:
+    """Every ledger entry in the worktree or at a ref, in file-name order."""
+    if ref:
+        listing = _git("ls-tree", "--name-only", ref, f"{ENTRIES_PATH}/", cwd=cwd).decode()
+        files = {
+            PurePosixPath(path).name: _content(path, ref, cwd).decode()
+            for path in listing.splitlines()
+        }
+    else:
+        directory = cwd / ENTRIES_PATH
+        paths = sorted(directory.iterdir()) if directory.is_dir() else []
+        files = {path.name: path.read_text() for path in paths}
+    entries: list[Entry] = []
+    errors: list[str] = []
+    for name in sorted(files):
+        entry, problems = parse_entry(name, files[name])
+        errors += problems
+        if entry is not None:
+            entries.append(entry)
+    return entries, errors
 
-    :func:`check_summary` adds two more over the summary table above the
-    ledger, so a change that moves a limit in ``.line-budget.json`` cannot
-    leave that table stating the old one.
 
-    With ``base_text``, a further rule makes the ledger append-only: every row
-    the base revision records must still be present with the same label,
-    measurement, and numbers. The reason cell is free to be reworded.
+def enforced_limits(config: dict[str, Any], entries: Iterable[Entry]) -> dict[str, int]:
+    """Each measurement's starting limit plus the deltas every entry records."""
+    limits = {key: int(config["starting_limits"][key]) for key in MEASUREMENTS}
+    for entry in entries:
+        for key, delta in zip(MEASUREMENTS, entry.deltas, strict=True):
+            limits[key] += delta
+    return limits
+
+
+def check_entries(
+    entries: list[Entry], earlier: list[Entry], moved: dict[str, int], fork: str
+) -> list[str]:
+    """Check a change's entries against the entries and measurement at its fork point.
+
+    1. Every entry present at the fork point is still present with the same
+       name, title, and deltas; its reason may be reworded.
+    2. The entries the change adds record, per measurement, the amount the
+       tree moved since the fork point. A limit therefore moves with the tree:
+       an increase raises it by the recorded delta and a reduction lowers it
+       by the same amount.
     """
-    rows, errors = parse_ledger(text)
-    limits = json.loads(config_path.read_text())["limits"]
-    reached: dict[str, int] = {}
-    for row in rows:
-        if row.previous + row.delta != row.new:
-            errors.append(f"{row}: the sum is {row.previous + row.delta:,}")
-        standing = reached.get(row.measurement)
-        if standing is not None and row.previous > standing:
-            errors.append(f"{row}: starts above the {standing:,} the preceding row reached")
-        reached[row.measurement] = row.new
-    for measurement in MEASUREMENTS:
-        ceiling = int(limits[measurement])
-        if measurement not in reached:
-            errors.append(f"{measurement}: no row records it")
-        elif reached[measurement] < ceiling:
-            errors.append(
-                f"{measurement}: the last row reaches {reached[measurement]:,}, "
-                f"below the enforced {ceiling:,}"
-            )
-    errors += check_summary(text, config_path)
-    return errors + (_dropped_rows(rows, base_text) if base_text is not None else [])
+    names = {entry.name: entry for entry in entries}
+    errors = [
+        f"{entry}: present at {fork[:12]} and missing or altered here"
+        for entry in earlier
+        if names.get(entry.name) != entry
+    ]
+    known = {entry.name for entry in earlier}
+    added = [entry for entry in entries if entry.name not in known]
+    recorded = {
+        key: sum(entry.deltas[index] for entry in added) for index, key in enumerate(MEASUREMENTS)
+    }
+    mismatched = [key for key in MEASUREMENTS if recorded[key] != moved[key]]
+    for key in mismatched:
+        errors.append(
+            f"{key}: the entries this change adds record {recorded[key]:+,}, "
+            f"but the tree moved it by {moved[key]:+,} since {fork[:12]}"
+        )
+    if mismatched:
+        table = "\n".join(f"    | {label} | {moved[key]:+,} |" for label, key in SUMMARY_LABELS)
+        errors.append(
+            f"record the change in a file under {ENTRIES_PATH}/ whose table states:\n{table}"
+        )
+    return errors
+
+
+def check_ledger(cwd: Path = ROOT, base: str | None = None) -> list[str]:
+    """Check the entries, the closed table, and the summary table in a worktree.
+
+    With ``base``, the fork point of the worktree's ``HEAD`` and ``base`` is
+    measured, and :func:`check_entries` compares the worktree with it. The
+    fork point makes the check independent of changes that landed on the base
+    after this one forked, so two changes that record their own deltas never
+    need each other's numbers.
+    """
+    text = (cwd / LEDGER_PATH).read_text()
+    config = json.loads((cwd / CONFIG.name).read_text())
+    entries, errors = read_entries(None, cwd)
+    errors += check_history(text, config) + check_summary(text, config)
+    if base is not None:
+        fork = _git("merge-base", base, "HEAD", cwd=cwd).decode().strip()
+        earlier = read_entries(fork, cwd)[0]
+        before, after = _measured(measure(fork, cwd)), _measured(measure(None, cwd))
+        moved = {key: after[key] - before[key] for key in MEASUREMENTS}
+        errors += check_entries(entries, earlier, moved, fork)
+    return errors
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--ref", help="measure a commit instead of the worktree")
-    parser.add_argument("--check", action="store_true", help="enforce configured limits")
+    parser.add_argument("--check", action="store_true", help="enforce the limits")
     parser.add_argument(
         "--check-ledger",
         action="store_true",
-        help="check the deliberate-increases ledger instead of measuring",
+        help="check the ledger entries and the tables in the policy document instead of measuring",
     )
-    parser.add_argument("--base", help="ref whose ledger rows must all still be present")
+    parser.add_argument(
+        "--base",
+        help="with --check-ledger, require the entries added since the fork point with this "
+        "ref to record the measured change",
+    )
     parser.add_argument(
         "--report",
         action="store_true",
         help="print every subsystem's three counts and prose share, by production logic",
-    )
-    parser.add_argument(
-        "--write-summary",
-        action="store_true",
-        help=f"rewrite the per-subsystem table in {LEDGER_PATH} from the measurement",
     )
     parser.add_argument(
         "--history",
@@ -851,9 +887,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--json", action="store_true", dest="as_json")
     args = parser.parse_args(argv)
     if args.check_ledger:
-        base = _content(LEDGER_PATH, args.base, ROOT).decode() if args.base else None
-        text = LEDGER.read_text()
-        errors = check_ledger(text, base) + check_subsystem_table(text, measure(args.ref))
+        errors = check_ledger(ROOT, args.base)
         subject = "line-budget ledger"
     elif args.history:
         since = args.since or json.loads(CONFIG.read_text())["baseline"]["ref"]
@@ -869,15 +903,16 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     else:
         report = measure(args.ref)
-        if args.write_summary:
-            LEDGER.write_text(write_summary(LEDGER.read_text(), report))
+        config = json.loads(_content(CONFIG.name, args.ref, ROOT))
+        entries, entry_errors = read_entries(args.ref)
+        limits = enforced_limits(config, entries)
         if args.as_json:
             print(json.dumps(report_json(report), indent=2))
         elif args.report:
             print(render_report(report))
         else:
-            print(render(report))
-        errors = check(report) if args.check else []
+            print(render(report, limits))
+        errors = entry_errors + check(report, limits) if args.check else []
         subject = "line budget"
     if errors:
         message = f"{subject} failed:\n" + "\n".join(f"  {error}" for error in errors)

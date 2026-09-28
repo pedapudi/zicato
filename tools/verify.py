@@ -113,7 +113,7 @@ def check_plan(
         Check(
             "ledger",
             "repository",
-            ("docs/design/LINE-BUDGET.md", ".line-budget.json", "tools/line_budget.py"),
+            ("*",),
             (python, "tools/line_budget.py", "--check-ledger", "--base", base),
         ),
         Check(

@@ -1507,17 +1507,29 @@ subsystem so movement is reviewable.
 `--report` prints every subsystem's total, production subset, production
 logic, and prose share (the share of production lines that do not execute) in
 descending order of production logic; the three columns partition the
-repository-wide counts. `--write-summary` rewrites the
-per-subsystem table in `docs/design/LINE-BUDGET.md` from the same measurement,
-and `--check-ledger` fails while that table differs from the tree, so a change
-to production code lands with the table it produces; the CI job writes the
-`--report` table into the job summary. `--history [--since <ref>] [--subsystem
-<name>]` prints the production-logic series per subsystem along the
-first-parent chain ending at `--ref` (default `HEAD`), from the baseline
-reference by default, through a content-addressed cache under `.cache/` that a
-change to the counters discards.
+repository-wide counts. The CI job writes the `--report` table into the job
+summary. `--history [--since <ref>] [--subsystem <name>]` prints the
+production-logic series per subsystem along the first-parent chain ending at
+`--ref` (default `HEAD`), from the baseline reference by default, through a
+content-addressed cache under `.cache/` that a change to the counters discards.
 
-`.line-budget.json` contains hard limits without an allowance. Keep the three
+Each enforced limit is the starting limit in `.line-budget.json` plus the
+deltas recorded by every entry under `docs/design/line-budget-ledger/`, and
+`enforced_limits()` computes it; the plain report prints each measurement
+beside it. A change that moves a measurement adds one entry file stating the
+change's own delta per measurement and its reason. `--check-ledger --base
+origin/main` measures the fork point of `HEAD` and the base, requires the
+entries the change adds to sum to the measured movement, and requires every
+entry present at the fork point to keep its name, title, and deltas. When the
+entry is missing or wrong, the failure prints the table the entry must state,
+so the usual loop is: run the check, write the entry it prints, run it again.
+The same command pins the closed table of running totals by `HISTORY_DIGEST`
+and holds the summary table and the starting limits to `.line-budget.json`.
+`tests/test_line_budget_ledger.py` runs these rules end to end in a throwaway
+repository, including two branches that each record their own entry and merge
+in sequence without edits.
+
+The limits carry no allowance. Keep the three
 independent one-line-overage assertions in `tests/test_line_budget.py`: each
 proves that one limit fails at `limit + 1` while the other two are unchanged.
 Four fixture tests beside them pin the split the logic count makes — a Python
@@ -1531,8 +1543,9 @@ no counter that keeps its raw count — and one more pins that every path in
 Run:
 
 ```bash
-uv run pytest tests/test_line_budget.py -q
+uv run pytest tests/test_line_budget.py tests/test_line_budget_ledger.py -q
 python tools/line_budget.py --check
+python tools/line_budget.py --check-ledger --base origin/main
 ```
 
 The stable measurement contract, final arithmetic, and ratchet policy live in

@@ -12,14 +12,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # The ledger check reads the base branch's copy of the table, so the
-          # base ref has to exist locally.
+          # The ledger check measures the fork point with the base branch and
+          # reads its ledger entries, so the base history has to exist locally.
           fetch-depth: 0
 
       - name: Report and enforce line budgets
         run: python tools/verify.py --only line-budget --report-dir "${{ runner.temp }}/verification-reports"
 
-      - name: Check the ledger's arithmetic and that no row was dropped
+      - name: Check that the ledger entries record the measured change and none was dropped
         env:
           VERIFICATION_BASE: origin/${{ github.base_ref || github.ref_name }}
         run: python tools/verify.py --only ledger --report-dir "${{ runner.temp }}/verification-reports"
