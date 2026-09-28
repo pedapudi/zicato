@@ -120,10 +120,15 @@ misleading "seed" or a default "rejected".
 
 ## 5. Liveness — what "live" means, and the no-flash rule
 
-- **The status line** has two parts. The connection **word** (`live` /
-  `connecting…` / `offline`) = the **SSE connection** state, nothing more. The
-  separate run-state word with its pulsing dot names the structure + phase (`racing · rung 0`,
-  `swiss · round 2`, `proposing field`) and the in-flight unit count.
+- **The status line** reads as one status. One drawn mark carries the
+  connection and the run verdict together: filled while the loop runs (it
+  pulses when LIVE), an open circle once SETTLED, a struck circle when DEAD or
+  INTERRUPTED, a dashed circle when the event stream is down or no run exists.
+  The connection **word** (`connecting…` / `disconnected — retrying`) appears
+  only while the stream is broken. The run-state word follows the mark and
+  names the structure + phase (`racing · rung 0`, `swiss · round 2`,
+  `proposing field`) and the in-flight unit count, or `last seen 1h ago` once
+  the heartbeat has frozen.
 - **A tournament reads running ONLY when the heartbeat is FRESH.** The
   supervisor rewrites the heartbeat every few seconds; a frozen heartbeat from a
   torn-down run (older than ~30 s, or with no parseable timestamp) **must not**

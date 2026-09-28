@@ -415,18 +415,22 @@ Persisted under `zicato.console.scale`. Focus ring `2px --v2-accent`.
 
 ### 4.5 The status line (`.dt-status`)
 
-A connection dot + a connection word, plus ONE liveness label (`.dt-run-state`)
-that reads `● <STATE> · <structure · phase> · <N units>`, or
-`· last seen Ns ago` when the heartbeat has frozen (`shell.js` `mountShell`,
+The status area reads as one status: ONE drawn mark, the connection word
+(present only while the socket is broken), and ONE liveness label
+(`.dt-run-state`) that reads `<STATE> · <structure · phase> · <N units>`, or
+`<STATE> · last seen Ns ago` when the heartbeat has frozen (`shell.js`
+`mountShell` and `renderStatus`, `livestatus.statusMark`,
 `livestatus.runStateLabel`):
 
 ```html
 <span class="dt-status dt-connected">          <!-- + .dt-running while a run is live -->
-  <span class="dt-status-dot"></span>           <!-- flat → good (connected) → caution (running) -->
+  <span class="dt-status-mark" role="img" data-state="live"
+        aria-label="Run live: the loop is making progress">
+    <svg class="zi zi-status-running" data-icon="status-running" aria-hidden="true">…</svg>
+  </span>
   <span class="dt-status-text"></span>          <!-- empty (hidden) while the socket is healthy -->
   <span class="dt-run-state dt-rs-on dt-rs-live" aria-live="polite">
-    <span class="dt-rs-dot dt-status-dot" aria-hidden="true"></span>
-    <span class="dt-rs-text">LIVE</span>        <!-- LIVE / STALLED / SETTLED / DEAD -->
+    <span class="dt-rs-text">LIVE</span>        <!-- LIVE / STALLED / SETTLED / DEAD / INTERRUPTED -->
     <span class="dt-run-label">racing · rung 0</span>
     <span class="dt-run-count">3 in flight</span>
     <span class="dt-status-stale"></span>       <!-- "last seen Ns ago" when frozen -->
@@ -434,12 +438,29 @@ that reads `● <STATE> · <structure · phase> · <N units>`, or
 </span>
 ```
 
-The four states key on the orchestrator progress cursor rather than a
-heartbeat timestamp, and speak the colour roles by direction: LIVE = good,
-STALLED = caution, SETTLED = calm ink (a clean end), DEAD = bad (gone without
-settling). Only the LIVE dot pulses (`@keyframes dt-run-pulse`, a 1.6s
-expanding box-shadow ring), and the pulse is disabled under
-`prefers-reduced-motion`. The `LIVE` word (`.dt-live-state`) and the structure
+The mark folds two signals into one drawing, because they answer one
+question, whether the loop is running now. The browser's event stream
+connection decides whether the console holds a current verdict at all. The
+run verdict decides which verdict that is. The mark takes one of four
+drawings from `js/icons.js`:
+
+| drawing | icon | states |
+| --- | --- | --- |
+| filled circle | `status-running` | LIVE, STALLED |
+| open circle | `status-settled` | SETTLED |
+| struck circle | `status-unsettled` | DEAD, INTERRUPTED |
+| dashed circle | `status-unknown` | socket down (`offline`), no run recorded (`idle`) |
+
+A broken socket outranks the run verdict: the mark turns dashed and flat
+while the connection word says `connecting…` or `disconnected — retrying`,
+and the last-known state word stays beside it. The mark's colour speaks the
+colour roles by direction: LIVE = good, STALLED = caution, SETTLED = calm ink
+(a clean end), DEAD and INTERRUPTED = bad (gone without settling), no run =
+faint ink, socket down = flat. The mark's `aria-label` (also its `title`)
+names the state in a sentence. The four run states key on the orchestrator
+progress cursor rather than a heartbeat timestamp. Only the LIVE mark pulses
+(`@keyframes dt-status-pulse`, a 1.6s opacity fade), and the pulse is
+disabled under `prefers-reduced-motion`. The `LIVE` word (`.dt-live-state`) and the structure
 label (`.dt-structure-label`, `structure Racing (successive halving)`) ride in
 the view header rather than the top bar, as plain text.
 
@@ -792,8 +813,9 @@ The discipline in full:
   `animation: …infinite`** for structure. Live state animates *values /
   positions* (GPU-friendly `transform` / `opacity` / `width`); digest-gating
   governs *structure*.
-- The keyframe animations are the liveness pulse (`dt-run-pulse`, on the
-  run-state dot, the live hero and band dots, and the in-flight count), the
+- The keyframe animations are the liveness pulses (`dt-status-pulse` on the
+  top bar's LIVE status mark; `dt-run-pulse` on the live hero and band dots
+  and the in-flight count), the
   projected-row pulse (`dt-proj-pulse`), and two one-shot entry fades
   (`dt-live-fade`, `dt-ticker-in`). Every one is switched off under
   `@media (prefers-reduced-motion: reduce)`.

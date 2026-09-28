@@ -403,8 +403,10 @@ poll*. `live.js` owns one persistent `LiveController` patched in place on every
 - **Live state words / markers.** A structure-agnostic status line
   (`.dt-status`, `livestatus.deriveLiveStatus`) folds a non-idle heartbeat
   phase, the in-flight active-runs count, and the active-tournament phase into
-  one verdict. While a run is going it shows a pulsing dot and the state word,
-  naming the structure and phase (`racing · rung 0`, `swiss · round 2`,
+  one verdict. The top bar shows it as one drawn status mark (filled while
+  running, open once settled, struck when the loop stopped without settling,
+  dashed with no current verdict), then the state word. While a run is going
+  the mark pulses and the label names the structure and phase (`racing · rung 0`, `swiss · round 2`,
   `proposing field`). A `LIVE` word (`.dt-live-state`) rides beside the
   structure label, as plain text.
 - **Structure-aware pending labels — never a faked verdict.** A rung with no

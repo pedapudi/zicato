@@ -1968,6 +1968,16 @@ token, keeping the colour decision in CSS:
 ```
 — `src/zicato/dashboard/static/js/shell.js`, `renderStatus`
 
+The same render picks the top bar's one status mark through
+`statusMark(transportBroken, runState)`. The mark folds the event-stream
+connection and the run verdict into one drawing from `js/icons.js`: a broken
+connection returns `offline` (a dashed circle) whatever the last verdict was,
+because that verdict stops being current when the stream drops. Otherwise
+LIVE and STALLED draw a filled circle, SETTLED an open circle, DEAD and
+INTERRUPTED a struck circle, and a workspace with no recorded run a dashed
+circle (`idle`). The returned `key` becomes the mark's `data-state`, which
+the stylesheet colours; the returned `label` becomes its `aria-label`.
+
 The module also owns `structureStatusLabel` (the ONE structure-aware
 standings mapper — elim→"in bracket", swiss→"playing", racing→"racing",
 else→"alive" — so a non-racing tournament never borrows racing vocabulary)
