@@ -20,29 +20,17 @@
  * infinite animation.
  */
 
-/* ===================  self-hosted monospace faces (@font-face)  ===================
+/* ===================  the self-hosted monospace face (@font-face)  ===================
  *
- * Two SIL-OFL monospace faces ship as woff2 under ../../../fonts/ (relative to
- * this stylesheet at css/), so they never depend on a font CDN:
- *
- *   JetBrains Mono — the fixed brand mono of the wordmark, and the data face
- *                    of the Editorial and Display typeface options.
- *   iA Writer Mono — declared here; no font token currently names it.
+ * One SIL-OFL monospace face ships as woff2 under ../../../fonts/ (relative to
+ * this stylesheet at css/), so it never depends on a font CDN: JetBrains Mono,
+ * the fixed brand mono of the wordmark and the data face of the Editorial and
+ * Display typeface options.
  *
  * The other faces the typeface options name load from Google Fonts (see the
  * loader in console.js). `font-display: swap` so a slow font never blocks
  * paint.
  */
-@font-face {
-  font-family: "iA Writer Mono"; font-style: normal; font-weight: 400;
-  font-display: swap;
-  src: url("../../../fonts/iAWriterMonoS-Regular.woff2") format("woff2");
-}
-@font-face {
-  font-family: "iA Writer Mono"; font-style: normal; font-weight: 700;
-  font-display: swap;
-  src: url("../../../fonts/iAWriterMonoS-Bold.woff2") format("woff2");
-}
 @font-face {
   font-family: "JetBrains Mono"; font-style: normal; font-weight: 400;
   font-display: swap;

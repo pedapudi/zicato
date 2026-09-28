@@ -267,12 +267,12 @@ pairings put each face in the role the interface rule allows.
 
 ### 3.3 Self-hosted vs loaded
 
-- **Two monos are self-hosted woff2** under
-  `src/zicato/dashboard/static/fonts/` — `iAWriterMonoS-Regular/Bold.woff2` and
-  `JetBrainsMono-Regular/Bold.woff2` — declared with `@font-face` +
-  `font-display: swap` at the top of `console.css`. JetBrains Mono backs the
-  fixed brand mono (`--v2-brand-mono`) and is the data face of the editorial
-  and display options. No token names iA Writer Mono.
+- **One mono is self-hosted woff2**: JetBrains Mono, as
+  `JetBrainsMono-Regular/Bold.woff2` under
+  `src/zicato/dashboard/static/fonts/`, declared with `@font-face` +
+  `font-display: swap` at the top of `console.css`. It backs the fixed brand
+  mono (`--v2-brand-mono`) and is the data face of the editorial and display
+  options.
 - **The other picker faces load from Google Fonts** — the only external
   dependency — injected by `console.js` `ensureFonts()` with `display=swap`
   and a preconnect to the font origins. Every stack lists a system fallback,

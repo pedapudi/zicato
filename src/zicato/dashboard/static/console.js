@@ -8,8 +8,7 @@
 // colour theme and the Open Sans + Google Sans Mono typeface pairing. index.html
 // loads this entry, which:
 //   1. injects the console's scoped stylesheet (self-contained), which itself
-//      @font-faces the SELF-HOSTED monospace woff2 (iA Writer Mono + JetBrains
-//      Mono),
+//      @font-faces the SELF-HOSTED monospace woff2 (JetBrains Mono),
 //   2. injects the Google Fonts link for the families the typeface options
 //      read (fonts only, with system fallbacks + font-display: swap),
 //   3. paints the dashboard into #console-root,
@@ -40,10 +39,9 @@ function ensureStylesheet() {
 }
 
 // FONTS — a SPLIT loading strategy:
-//   * The two self-hosted monos — iA Writer Mono + JetBrains Mono — stay SELF-
-//     HOSTED woff2 under static/fonts/ via @font-face in console.css (JetBrains
-//     Mono backs the fixed brand mono and the Editorial and Display data face),
-//     so the brand never touches a CDN.
+//   * JetBrains Mono stays SELF-HOSTED woff2 under static/fonts/ via
+//     @font-face in console.css. It backs the fixed brand mono and the
+//     Editorial and Display data face, so the brand never touches a CDN.
 //   * The TYPEFACE PICKER's finalized 12 faces (4 per mode) read families that
 //     are NOT self-hosted. They load from the ONLY permitted external dependency:
 //     Google Fonts (fonts only). `display=swap` so a slow font never blocks paint;
