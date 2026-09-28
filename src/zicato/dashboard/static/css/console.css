@@ -2194,8 +2194,13 @@
   .dt-twisty-leaf { cursor: default; }
   .dt-twisty:disabled { cursor: default; }
 
+  /* A row is four columns: the mark, the name, the live pulse, the caption.
+   * The name's column grows to the name's full width before the caption's
+   * column receives any space, so a long caption truncates first and the name
+   * truncates only once the caption is gone. */
   .dt-label {
-    display: inline-flex; align-items: center; gap: 6px; width: 100%;
+    display: grid; grid-template-columns: auto minmax(0, max-content) auto minmax(0, 1fr);
+    align-items: center; width: 100%;
     border: none; background: transparent; cursor: pointer; text-align: left;
     padding: 4px 6px 4px 2px; color: var(--v2-ink-soft);
     font-family: var(--v2-sans); font-size: calc(12px * var(--dt-font-scale, 1)); line-height: 1.2;
@@ -2204,7 +2209,8 @@
   .dt-label:hover { color: var(--v2-ink); }
   /* the selected row: its name in the accent colour (no fill, no rail). */
   .dt-tree .dt-node.dt-sel .dt-label, .dt-tree .dt-node.dt-sel .dt-text { color: var(--v2-accent); font-weight: 600; }
-  .dt-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dt-label > .dt-icon, .dt-label > .dt-glyph { grid-row: 1; grid-column: 1; margin-right: 6px; }
+  .dt-text { grid-row: 1; grid-column: 2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   /* branch labels (Environment / Epoch / Generations / Boards) read as headers */
   .dt-branch[data-kind="epoch"] .dt-text { font-family: var(--v2-mono); }
@@ -2245,11 +2251,16 @@
    * right so it reads as a clue, not a banner. The pulse is CSS-animated, so an
    * unchanged live set needs no DOM (the tree digest re-stamps only on a set
    * change). Reduced-motion drops the animation (it keeps a static dot). */
-  .dt-node-pulse { width: 6px; height: 6px; margin-left: auto; }
+  .dt-node-pulse { grid-row: 1; grid-column: 3; width: 6px; height: 6px; margin-left: 6px; }
 
-  .dt-sub { font-family: var(--v2-sans); font-size: calc(9px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); margin-left: auto; padding-left: 6px; }
-  /* a row's role word (champion, former champion, …): plain text in its colour. */
-  .dt-role { font-size: calc(10px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); margin-left: auto; padding-left: 6px; white-space: nowrap; }
+  /* A row's caption: a branch's count or gate outcome (.dt-sub), a leaf's role
+   * word such as champion or former champion (.dt-role). It sits at the row's
+   * right edge and truncates with an ellipsis; its full text stays in the
+   * row's accessible name and in a hovercard. */
+  .dt-sub, .dt-role { grid-row: 1; grid-column: 4; justify-self: end; min-width: 0; max-width: 100%;
+    padding-left: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dt-sub { font-family: var(--v2-sans); font-size: calc(9px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); }
+  .dt-role { font-size: calc(10px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); }
   .dt-role-gen-champ { color: var(--v2-good); }
   .dt-role-gen-former { color: var(--v2-ink-faint); font-style: italic; }
   /* a CARRIED champion reference ("↑ … defends"): a dimmed, caution-toned tag —

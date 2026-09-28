@@ -664,8 +664,17 @@ not a container or a control.
 - `flagLabel(tone, word)` builds a `.dn-flag` word: lowercase, coloured by
   `.dn-flag-live` (caution) / `-open` (good) / `-closed` (faint) and the loop
   verdict tones.
-- A tree row's role (`champion`, `former champion`, `current`, `workspace`) is
-  a `.dt-role` word at the row's right edge.
+- A tree row's caption is a word at the row's right edge: a leaf's role
+  (`champion`, `former champion`, `defends · cached`) in `.dt-role`, and a
+  branch's count, `current`, `workspace` or gate outcome
+  (`v0 defends · ↑ v2 promoted`) in `.dt-sub`. When the rail is short of room
+  the caption truncates with an ellipsis first. The row's name keeps its full
+  text until the caption has no room left, so a round row never reads
+  `Roun…`. The row label is a four-column grid (mark, name, live pulse,
+  caption) whose name column is `minmax(0, max-content)` and whose caption
+  column is `minmax(0, 1fr)`. Hovering the caption shows the row name and the
+  full caption in a hovercard, and the row button's accessible name holds
+  both.
 - A held-out board entry is marked by the drawn `holdout` padlock and the
   accent colour, in the evals matrix and in the board-status entry grid.
 - A pane letter in the side-by-side compare (`.dt-split-letter`, A or B) is
