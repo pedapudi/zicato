@@ -51,7 +51,7 @@ objective. Mirror the worked example
 ## Preferred edits
 <Mutation ids the proposer should touch first — where the signal lives.>
 - `researcher_instruction` — research_agent's system prompt
-- `writer_instruction` — the presentation-builder's system prompt
+- `web_developer_instruction` — the presentation builder's system prompt
 - `coordinator_instruction` — routing logic and stage flow
 
 ## Secondary edits

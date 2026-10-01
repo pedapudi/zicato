@@ -30,5 +30,6 @@
   },
   "experimental": {
     "tournament_structures": true
-  }
+  },
+  "goldfive": {}
 }

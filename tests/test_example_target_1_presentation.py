@@ -129,7 +129,6 @@ def test_mutation_ids_include_routing_and_specialist_instructions() -> None:
     specialist_ids = {
         "researcher_instruction",
         "web_developer_instruction",
-        "writer_instruction",
         "reviewer_instruction",
         "debugger_instruction",
     }

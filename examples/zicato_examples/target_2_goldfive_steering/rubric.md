@@ -9,36 +9,32 @@ edits to it sparse and decisive — diff churn in the rubric is itself a
 signal that the operator is uncertain about what the proposer should
 do, and an uncertain proposer is a noisy proposer.
 
-## Preferred edits (focus the proposer here)
+## Preferred edits
 
-The proposer should prefer mutation points whose ids fall under one of:
+The proposer should prefer these mutation points:
 
-- `refine_steer_prompt` — the prompt template the steerer hands to the
-  planner when it requests a refine. Wording changes here cascade into
-  every drift-triggered replan.
-- `reasoning_judge_prompt` — the iter-10 reasoning-judge classifier
-  prompt. Three-state output (on_topic / off_topic / justified_deviation);
-  small rephrasings move false-positive and false-negative rates.
-- `goal_drift_judge_prompt` — the trajectory-level goal-alignment judge
-  prompt. Fires after a configurable number of agent invocations.
-- `reasoning_judge_threshold_warning`,
-  `reasoning_judge_threshold_critical` — numeric thresholds on the
-  reasoning-judge's confidence score that gate WARNING vs CRITICAL
-  classification. Tighten on false-positive regression, loosen on
-  false-negative regression.
+- `refine_system_prompt` — the system prompt the planner receives when
+  the steerer requests a refine. Wording changes here reach every
+  drift-triggered replan.
+- `reasoning_judge_system_prompt` — the system prompt of the
+  reasoning-drift judge, which classifies each reasoning block as on
+  topic, off topic, or a justified deviation. Small rephrasings move its
+  false-positive and false-negative rates.
+- `goal_drift_system_prompt` — the system prompt of the trajectory-level
+  goal-alignment judge, which runs after a configurable number of agent
+  invocations.
+
+Goldfive's numeric knobs (its drift thresholds and retry budgets) appear
+in the mutation surface, but a proposal cannot change them: an edit to
+one is refused as an edit outside every mutation point. Work through the
+prompts above.
 
 ## Forbidden edits
 
-The proposer MUST NOT touch:
-
-- Any mutation id under `intervention_ladder/*`. The ladder's structural
-  shape (refine -> escalate -> human-pause) is fixed for this epoch.
-  The right way to change the ladder's effect is to change the INPUTS
-  to it (judge prompts, thresholds) — i.e. the preferred-edits surface
-  above — not the ladder's own routing logic.
-
-If a proposer round emits a patch against a forbidden id, the
-generation is rejected without running.
+None. The refine retry budgets that decide when the steerer stops
+refining and escalates are numeric knobs, so no proposal can change
+them, and the escalation path stays fixed. Change its effect through its
+inputs: the judge prompts listed under preferred edits.
 
 ## Style
 
@@ -46,12 +42,6 @@ generation is rejected without running.
   ("might", "could", "potentially"); the judge is a classifier, not a
   philosopher. Hedge words bleed into the classifier's output
   distribution and reduce the separation between classes.
-
-- Threshold changes must be justified by a concrete pattern showing
-  false-positive or false-negative regression. "Lowered from 0.8 to
-  0.7" is not a hypothesis; "lowered from 0.8 to 0.7 because pattern
-  `hot_kind:hallucination_suspected` shows 7 misses across normal
-  entries" is.
 
 - Refine-prompt changes should preserve any structural placeholders
   (`{task_title}`, `{drift_kind}`, etc.) the upstream template

@@ -7,7 +7,7 @@ CREATE TABLE epochs (
       goal TEXT,
       parent_epoch_id TEXT
     );
-INSERT INTO "epochs" VALUES('<DATE>_t1_racing','b9fb16c55022c28f7e6cb7a26ccc5cdfd370cf537f04f0ca2bae5d89f0d43f25','<TS>',0,'',NULL);
+INSERT INTO "epochs" VALUES('<DATE>_t1_racing','cf71596230815a167594d20b305e7d23e529ac38857155b72deef3ddd12a855d','<TS>',0,'',NULL);
 CREATE TABLE experiments (
       epoch_id TEXT,
       generation_id TEXT,

@@ -111,14 +111,11 @@ AGENT_CONFIG_DIR_ENV = "PI_CODING_AGENT_DIR"
 #: it can name a bare binary (``pi``), an absolute path, or an interpreter
 #: plus module. ``--mode rpc --no-session`` is appended by the driver.
 #:
-#: A ``runtime.pi_bin`` knob now exists (#173) but belongs to a DIFFERENT
-#: surface: :func:`zicato.proposer.pi_agent.resolve_pi_bin` reads it off
-#: :class:`~zicato.proposer.external.ExternalProposerConfig`, which
-#: configures the PROPOSER. This adapter configures the TARGET, and #170
-#: keeps those two roles apart on purpose — the same binary in two roles
-#: is the safety argument, so one knob naming both would erase the
-#: distinction it rests on. The env var stays until a target-side knob
-#: exists. See README.md for the pinned-install question that raises.
+#: The workspace's ``proposer`` block names the binary of the proposal
+#: runtime. This variable names the binary of the system under test, and
+#: the two stay separate settings so that one role can never silently run
+#: the other's binary. RUN.md recommends naming an absolute path to a
+#: pinned install.
 AGENT_BIN_ENV = "ZICATO_TARGET_4_AGENT_BIN"
 
 #: Default when :data:`AGENT_BIN_ENV` is unset.

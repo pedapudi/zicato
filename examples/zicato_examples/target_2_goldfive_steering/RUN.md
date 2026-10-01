@@ -2,7 +2,7 @@
 
 This document walks the operator through standing up a `zicato evolve`
 loop where the **system under test is goldfive itself**. The proposer emits
-patches against goldfive's own prompt + threshold surface; the runner
+patches against goldfive's own prompts; the runner
 mounts a fresh goldfive snapshot per generation; the tournament scores
 the snapshots against an adversarial board.
 
@@ -108,52 +108,34 @@ the `.md` body under `goldfive/optimization/prompts/`; threshold
 mutations point at the `.py` files the manifest's `source` field names.
 
 The manifest's `source` fields are relative to the directory that
-*contains* the `goldfive` package. The orchestrator enumerates a
-generation's snapshot root, which holds the tree under its basename
-(`goldfive/`), so every entry resolves there. `inspect mutations`
-enumerates the registered package directory itself, where those paths
-do not resolve, so it reports no mutation points for this target:
+*contains* the `goldfive` package. When the enumerated root is the
+package directory itself — the registered tree, or its copy
+`<snapshot>/goldfive` in a generation snapshot — the bridge resolves
+those fields against the root's parent. `inspect mutations` therefore
+lists the same manifest-derived points the loop proposes against (61 at
+the pinned goldfive revision):
 
 ```
 python -m zicato.cli inspect mutations --workspace .zicato
-```
-
-To list the manifest-derived points, call the bridge on the directory
-that contains the package:
-
-```
-python -c "
-import pathlib, goldfive
-from zicato.synthetic.manifest_bridge import enumerate_manifest_points
-root = pathlib.Path(goldfive.__file__).resolve().parents[1]
-print(len(enumerate_manifest_points([root])))
-"
 ```
 
 ## 3. Create the epoch
 
 The board, brief and scoring files live next to this file, under
 `examples/zicato_examples/target_2_goldfive_steering/` in a checkout.
-The ADK adapter runs under Goldfive, and `evolve` refuses a
-Goldfive-enabled contract whose `scoring.json` has no `goldfive` object
-(`goldfive_config_missing`). The example's `scoring.json` has none, so
-the epoch opens from a copy that adds an empty one, which selects the
-fixed defaults
+The ADK adapter runs under Goldfive, and `evolve` refuses a contract for
+that adapter whose `scoring.json` has no `goldfive` object
+(`goldfive_config_missing`). The example's `scoring.json` carries an
+empty one, which selects the fixed defaults
 ([`docs/design/GOLDFIVE-CONFIG.md`](../../../docs/design/GOLDFIVE-CONFIG.md)):
 
 ```
 ZICATO=${ZICATO:?set ZICATO to your zicato checkout}
 EX=$ZICATO/examples/zicato_examples/target_2_goldfive_steering
-python - "$EX/scoring.json" ./scoring.t2.json <<'PYEOF'
-import json, sys
-scoring = json.load(open(sys.argv[1]))
-scoring.setdefault("goldfive", {})
-json.dump(scoring, open(sys.argv[2], "w"), indent=2)
-PYEOF
 python -m zicato.cli epoch new t2_smoke --workspace .zicato \
     --board   $EX/board.jsonl \
     --brief   $EX/rubric.md \
-    --scoring ./scoring.t2.json
+    --scoring $EX/scoring.json
 ```
 
 The board ships 10 entries:
@@ -167,9 +149,13 @@ The board ships 10 entries:
   steerer must not degrade a well-behaved workload.
 
 The proposer brief's preferred-edits section steers the proposer at
-goldfive's refine prompt, its reasoning-judge and goal-drift judge
-prompts, and the reasoning-judge threshold knobs. The forbidden-edits
-section blocks anything under `intervention_ladder/*`.
+goldfive's refine prompt (`refine_system_prompt`) and its
+reasoning-drift and goal-drift judge prompts
+(`reasoning_judge_system_prompt`, `goal_drift_system_prompt`). It names
+no numeric knob, because a proposal cannot change one (§8), and its
+forbidden-edits section is empty for the same reason: the refine retry
+budgets that decide when the steerer escalates are numeric, so they stay
+fixed.
 
 `scoring.json` weighs **pass rate far above drift count**, because the
 loss on this target is pass/fail correctness against synthetic ground
@@ -207,6 +193,9 @@ cfg["models"] = {
 cfg["proposer"] = stand_in_proposer_block(pathlib.Path("foe").resolve())
 cfg_path.write_text(json.dumps(cfg, indent=2) + "\n")
 PYEOF
+
+# The checks that gate evolve, with no model call and no board entry.
+python -m zicato.cli inspect setup --workspace .zicato
 
 python -m zicato.cli evolve --workspace .zicato \
     --rounds 2 \
@@ -324,20 +313,25 @@ proposer.
    model replaces the stand-in. The episode reads the parent
    generation's pattern-detector output — for example "hot drift kind:
    hallucination_suspected" — and proposes a substantive rewrite of the
-   relevant prompt or threshold. With a real proposer driving, `pass_rate_delta` decides the round: `scoring.json`
-   sets `pass_rate_monotonicity: true`, so a proposer that lowers
+   relevant prompt. With a real proposer driving, `pass_rate_delta`
+   decides the round: `scoring.json` sets `pass_rate_monotonicity: true`, so a proposer that lowers
    adversarial recall to suppress drift loses at the gate however much
    `drift_loss_delta` improves.
 
 ## 8. Known limitations
 
-* **A numeric mutation can be enumerated but not patched end to end.**
-  The applier's `set_numeric` path looks for a `# zicato:mutable` marker
-  comment near the constant, and the manifest bridge synthesizes no such
-  marker, so the lookup fails. Closing this means teaching the applier to
-  honour `MutationPoint.metadata["python_attr"]` and to walk the AST for
-  the named module-level attribute. Until then only prompt-body
-  mutations apply end to end.
+* **A numeric mutation is enumerated but cannot be applied.** The
+  manifest bridge records a numeric point with the manifest's declared
+  default as its content, a placeholder line range, and no marker in the
+  source. A proposal episode that edits the constant therefore leaves
+  the point's content unchanged, and the read-back of the working copy
+  refuses the edited file as an edit outside every mutation point. An
+  explicit `set_numeric` patch fails as well, because the applier
+  locates the constant through a `# zicato:mutable` marker. Closing this
+  means reading and rewriting the module-level attribute that
+  `MutationPoint.metadata["python_attr"]` names, in both the enumerator
+  and the applier. Until then only prompt-body mutations apply, and the
+  proposer brief names prompt ids only.
 * **The event log carries two shapes.** Goldfive's persistence sink
   emits some events as proto-JSON (camelCase keys, ISO-string
   timestamps) and others as snake_case with a nested timestamp object.

@@ -2,9 +2,8 @@
 
 Here the system under test is **goldfive itself**, and the mutable surface
 lives inside goldfive's source tree. The proposer edits goldfive's judge
-prompts, its refine-prompt template, and its intervention-ladder
-threshold knobs. The resulting child generation runs against a board of
-synthetic adversarial cases, and the tournament decides whether to
+prompts and its refine prompt. The resulting child generation runs
+against a board of synthetic adversarial cases, and the tournament decides whether to
 promote it.
 
 The presentation-agent example asks whether the loop converges on an
@@ -99,28 +98,31 @@ zicato epoch register \
 > `generations/{gen}/harness_load.json`. See
 > [RUN.md §1](./RUN.md#1-workspace-setup).
 
-The adapter walks the goldfive source tree for `# zicato:mutable`
-annotations, or the equivalent file-level marker, and produces one
-`MutationPoint` per annotated region: judge-prompt strings, threshold
-literals, and the refine-template body. The proposer's patches target
-those points by id. The patch applier copies the goldfive snapshot and
+Goldfive carries no `# zicato:mutable` markers. Its optimization
+manifest, `goldfive/optimization/manifest.toml`, declares the mutable
+surface, and zicato's manifest bridge turns each manifest entry into one
+`MutationPoint`: a prompt body under `goldfive/optimization/prompts/` or
+a numeric constant in the module the entry names. `zicato inspect
+mutations` lists them. Only the prompt points can be changed by a
+proposal; [RUN.md §8](./RUN.md#8-known-limitations) explains why the
+numeric points cannot. The proposer's patches target those points by
+id. The patch applier copies the goldfive snapshot and
 applies the patches, and the runner mounts that snapshot as goldfive's
 source root for the duration of the child generation's runs.
 
 ## Running
 
-[`RUN.md`](./RUN.md) gives the full command sequence. Two things beyond
-the files in this directory are needed before a round can open: a
-`proposer` block in `.zicato/config.json`, and a `goldfive` object in
-the scoring contract (the ADK adapter runs under Goldfive, and the
-example's `scoring.json` does not carry one). RUN.md adds both. The
-epoch then opens from the example's contract:
+[`RUN.md`](./RUN.md) gives the full command sequence. Beyond the files
+in this directory, a round needs a `proposer` block in
+`.zicato/config.json`, which RUN.md adds. `scoring.json` carries the
+empty `goldfive` object that the ADK adapter requires, which selects
+Goldfive's fixed defaults. The epoch opens from the example's contract:
 
 ```
 zicato epoch new goldfive-steering-e0 \
   --board examples/zicato_examples/target_2_goldfive_steering/board.jsonl \
   --brief examples/zicato_examples/target_2_goldfive_steering/rubric.md \
-  --scoring <copy of scoring.json with "goldfive": {} added>
+  --scoring examples/zicato_examples/target_2_goldfive_steering/scoring.json
 
 zicato evolve
 ```
@@ -130,8 +132,8 @@ zicato evolve
 1. Records goldfive's source tree as the seed generation.
 2. Runs the board against that snapshot, producing a baseline scoreline.
 3. Asks the proposer for a hypothesis and an edit against the mutation
-   ids the proposer brief prefers: judge prompts, threshold knobs, and
-   the refine template. `scoring.json` carries no `tournament` block, so
+   ids the proposer brief prefers: the judge prompts and the refine
+   prompt. `scoring.json` carries no `tournament` block, so
    each round fields several challengers under the default racing
    structure.
 4. Materializes each child generation, runs the board against it, and

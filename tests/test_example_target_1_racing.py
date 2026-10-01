@@ -4,33 +4,33 @@ run under the NON-GAUNTLET ``racing`` tournament structure.
 This is the runnable counterpart to the example's gauntlet smoke recipe
 (``examples/zicato_examples/target_1_presentation/RUN.md``): it drives the
 *real* presentation example — its annotated ``agent/`` tree, its
-``board.jsonl``, its ``scoring.racing.json`` contract, and its
-``mocks.aux_llm`` proposer — through ``evolve_once`` under the racing
-(successive-halving) strategy, with NO live LLM.
+``board.jsonl``, and its ``scoring.racing.json`` contract — through
+``evolve_once`` under the racing (successive-halving) strategy, with NO
+live LLM.
 
 It mirrors ``tests/test_orchestrator_multi_challenger.py`` (the synthetic
-Swiss field test) but, instead of a hand-built one-marker stub snapshot
-and a canned ``_valid_proposer_response``, it:
+Swiss field test) but, instead of a hand-built one-marker stub snapshot,
+it:
 
 * copies the vendored example ``agent/`` tree into the v0 snapshot so the
   *real* ``coordinator_instruction`` / ``researcher_instruction`` mutation
-  markers are enumerated and the example's proposer patches actually
-  apply;
+  markers are enumerated and the proposal episodes' edits apply to them;
 * loads the example's ``scoring.racing.json`` so the frozen epoch contract
   carries the racing ``tournament`` block (field_size=4, eta=2). The
   contract does NOT pin ``board_ids``; the orchestrator defaults them to
   the epoch's full board, so this test also proves the board-slicing rungs
   run from the bare CLI-flag-style contract (no ids listed);
-* uses the example's real ``mocks.aux_llm`` as the proposer/aux callable
-  (it rotates ``researcher_instruction`` / ``coordinator_instruction``
-  patches across the four challengers in the field).
+* writes each challenger with the test suite's stand-in for the Foe
+  proposal runtime (``tests/_foe_support.py``), which edits the tree
+  mechanically, and passes the example's ``mocks.aux_llm`` as the
+  evaluation callable.
 
 The per-run harness (the ADK agent's inner LLM + the loss reducer) is
 mocked exactly as the orchestrator-test suite mocks it — the L3
 subprocess worker cannot see in-process harness mocks, so canned
 per-generation losses stand in. That is the same fidelity the existing
 multi-challenger end-to-end test runs at; here the *contract* (board +
-scoring + agent tree + proposer) is the real example.
+scoring + agent tree) is the real example.
 
 The test asserts the full multi-challenger racing path executes:
 N challengers proposed + applied, racing rungs/cuts recorded, a champion
@@ -234,8 +234,8 @@ def _bootstrap_racing_workspace(tmp_path: Path) -> tuple[Path, str]:
 
     Mirrors ``test_orchestrator_multi_challenger._bootstrap_swiss_workspace``
     but freezes the example's ``scoring.racing.json`` contract and seeds
-    v0 with a copy of the *real* annotated ``agent/`` tree (so the example's
-    proposer patches resolve against real mutation markers).
+    v0 with a copy of the *real* annotated ``agent/`` tree (so the proposal
+    episodes' patches resolve against real mutation markers).
     """
     workspace, epoch_id = bootstrap_example_workspace(
         tmp_path, scoring_path=RACING_SCORING_PATH, epoch_name="t1-racing"
@@ -262,7 +262,6 @@ def bootstrap_example_workspace(
     (``tools/parity/lib/mock_evolve_capture.py``) drives both from here so
     every golden lane starts from one workspace definition.
     """
-    _t1_mocks._AUX_STATE["proposer_round"] = 0
     workspace = tmp_path / ".zicato"
     workspace.mkdir()
     (workspace / "config.json").write_text(
@@ -296,7 +295,13 @@ def bootstrap_example_workspace(
         )
     )
 
-    weights = _scoring_from_dict(json.loads(scoring_path.read_text()))
+    # The example contract configures Goldfive for the agent-kit adapter it
+    # ships with. The stub adapter that stands in for it here declares no
+    # Goldfive integration, and the workspace gate refuses a Goldfive block
+    # an adapter does not use, so the frozen contract leaves it out.
+    scoring = json.loads(scoring_path.read_text())
+    scoring.pop("goldfive", None)
+    weights = _scoring_from_dict(scoring)
     from zicato.epoch.contract import resolve_contract_inputs
 
     cfg = new_epoch(
@@ -359,9 +364,8 @@ def test_presentation_racing_field_runs_end_to_end_and_promotes(
     gens = workspace / "epochs" / epoch_id / "generations"
 
     # --- All four challengers were proposed + applied as real children of
-    # v0, each carrying a snapshot of the patched agent tree. The example's
-    # proposer rotates researcher_instruction / coordinator_instruction;
-    # every applied snapshot is a real, validator-surviving edit.
+    # v0, each carrying a snapshot of the patched agent tree; every applied
+    # snapshot is a real, validator-surviving edit.
     for gid in _CHALLENGER_IDS:
         gdir = gens / gid
         assert (gdir / "experiment.json").exists(), gid

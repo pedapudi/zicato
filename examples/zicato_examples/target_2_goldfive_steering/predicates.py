@@ -2,8 +2,7 @@
 
 Target 2 is unusual among zicato dogfood targets: the *system under test* is
 goldfive itself, and the mutable surface lives inside goldfive's source
-tree (judge prompts, intervention-ladder threshold knobs, the refine
-template). The agent under test is some other agent that goldfive
+tree (judge prompts and the refine prompt). The agent under test is some other agent that goldfive
 steers — for the synthetic-adversarial board entries it is a
 deliberately-broken testkit agent (LoopingAgent, HallucinatingAgent,
 etc.), and for the "normal" entries it is the tiny LlmAgent shipped in

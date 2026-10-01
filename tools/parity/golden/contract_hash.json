@@ -2,13 +2,13 @@
   "component_hashes": {
     "adapter": "2f4226a758dce7ae84926414c7b09baef236cb6ddca9fd1007fb350b8d482159",
     "board": "59585cd03311664949b758a19caa27d6ff28598f1796721cf455b7330715a63f",
-    "brief": "466a5a9c2d1569fa8cfa8e0fe2dea135395af1d1cc42bc19ad146dd4ccc59eff",
+    "brief": "95af4529b1dd6019f9644608b840840e4a52920616c0f1fd6147b9d800f57ad6",
     "evaluator_revision": "d4735e3a265e16eee03f59718b9b5d03019c07d8b6c51f90da3a666eec13ab35",
     "mutable_trees": "d4f0bc5a29de06b510f9aa428f1eedba926012b591fef7a518e776a7c9bd1824",
     "proposer": "f7f723a0732e61425942cbeed48c69712a0fe503f72ee76ec8b19445879dc833",
-    "scoring": "6673d9b3e687c88e243be2db66f8eb6a2b36b20e2e6511631ceb7ecd247a2c46"
+    "scoring": "efc87394465438f8451ba918ed84547e10c70069c842eb91b1732c0c1af9e003"
   },
-  "contract_hash": "6afcd40db722bd380751025ae80e0aa628c1165bb533c441f8a954bdc23c2210",
+  "contract_hash": "83558133c25fa29d6907e589c9af2dd6f67acdb387a755655d2fa1029021b2d5",
   "entrypoint": "zicato_examples.target_1_presentation.agent:root_agent",
   "fixture": "target_1_presentation",
   "mutable_trees": [
