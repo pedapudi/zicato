@@ -43,7 +43,7 @@ import click
 
 from zicato.core.drift_kinds import DriftKind
 from zicato.core.types import BoardEntry, Generation, ScoringWeights
-from zicato.core.workspace import board_path, generation_dir, scoring_path
+from zicato.core.workspace import board_path, scoring_path
 from zicato.driver_imports import with_workspace_imports
 
 
@@ -284,20 +284,25 @@ def _load_epoch_contract(
 
 
 def _build_generation(workspace_root: Path, epoch_id: str, generation_id: str) -> Generation:
-    """Build a :class:`Generation` from on-disk snapshot info.
+    """Build a :class:`Generation` whose source tree the workspace's store supplies.
 
-    The tournament runner needs a :class:`Generation` with a valid
-    ``snapshot_root``. We resolve the snapshot directory under the
-    generation's directory and trust the adapter to fail loudly if the
-    snapshot is missing the entrypoint module.
+    The workspace's configured generation store (git or directory) decides
+    where a generation's source tree lives, so the tree is materialized
+    through :func:`zicato.epoch.genstore.default_generation_store`, the same
+    call the evolve loop makes. The returned ``snapshot_root`` is the store's
+    canonical path, which lets each tournament run take a per-run checkout
+    from the store. The adapter fails loudly if the tree lacks the entrypoint.
     """
-    gen_dir = generation_dir(workspace_root, epoch_id, generation_id)
-    snapshot_root = gen_dir / "snapshot"
-    if not snapshot_root.exists():
-        raise click.ClickException(
-            f"snapshot not found at {snapshot_root}; "
-            f"generation {generation_id!r} under epoch {epoch_id!r} is incomplete"
+    from zicato.epoch.genstore import default_generation_store  # noqa: PLC0415
+
+    try:
+        snapshot_root = default_generation_store(workspace_root).materialize_snapshot(
+            epoch_id, generation_id
         )
+    except (FileNotFoundError, ValueError) as exc:
+        raise click.ClickException(
+            f"generation {generation_id!r} under epoch {epoch_id!r} has no source tree: {exc}"
+        ) from exc
     return Generation(
         id=generation_id,
         epoch_id=epoch_id,

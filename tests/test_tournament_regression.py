@@ -34,7 +34,11 @@ from typing import Any
 import pytest
 
 import zicato.tournament.worker_execution as _tournament_worker_execution
-from tests._runtime_builders import prepare_tournament_epoch, runtime_config
+from tests._runtime_builders import (
+    prepare_tournament_epoch,
+    runtime_config,
+    seed_tournament_generations,
+)
 from zicato.core import (
     BoardEntry,
     ExpectationResult,
@@ -606,10 +610,7 @@ def test_cli_skip_regression_bypasses_gate(monkeypatch: pytest.MonkeyPatch, tmp_
         _board(),
         ScoringWeights(regression_gate_enabled=True),
     )
-    snap_v0 = workspace / "epochs" / epoch_id / "generations" / "v0" / "snapshot"
-    snap_v1 = workspace / "epochs" / epoch_id / "generations" / "v1" / "snapshot"
-    snap_v0.mkdir(parents=True)
-    snap_v1.mkdir(parents=True)
+    seed_tournament_generations(workspace, epoch_id, "directory")
 
     _make_cli_stubs(monkeypatch)
 
@@ -661,10 +662,7 @@ def test_cli_keeps_regression_flag_when_not_skipped(
         _board(),
         ScoringWeights(regression_gate_enabled=True),
     )
-    snap_v0 = workspace / "epochs" / epoch_id / "generations" / "v0" / "snapshot"
-    snap_v1 = workspace / "epochs" / epoch_id / "generations" / "v1" / "snapshot"
-    snap_v0.mkdir(parents=True)
-    snap_v1.mkdir(parents=True)
+    seed_tournament_generations(workspace, epoch_id, "directory")
 
     _make_cli_stubs(monkeypatch)
 

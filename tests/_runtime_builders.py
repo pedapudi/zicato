@@ -23,12 +23,14 @@ from typing import Any
 from zicato.board.jsonl import save_board
 from zicato.core import BoardEntry, Generation, RuntimeConfig, ScoringWeights
 from zicato.epoch.contract import ContractInputs
+from zicato.epoch.genstore import default_generation_store
 from zicato.epoch.lifecycle import new_epoch, scoring_to_dict
 from zicato.epoch.lineage import append_to_lineage
 from zicato.models_config import execution_roles_for_runtime
 from zicato.runtime.lock import acquire_workspace_lock
 from zicato.tournament.scoring import read_gen_score, write_gen_score
 from zicato.workspace import WorkspaceLayout
+from zicato.workspace.config_io import write_workspace_config
 
 
 async def empty_target_call(system: str, user: str, model: str) -> str:
@@ -68,6 +70,28 @@ def prepare_tournament_epoch(
             execution_roles=execution_roles_for_runtime(config),
         )
         return new_epoch(workspace_root, name, board_path, brief_path, weights, contract=inputs).id
+
+
+def seed_tournament_generations(workspace: Path, epoch_id: str, backend: str) -> None:
+    """Configure ``backend`` as the source store and seed ``v0`` and ``v1`` through it.
+
+    Each generation's tree holds ``agent/generation.txt`` naming that
+    generation, so a test can tell which tree the command handed the runner.
+    """
+    write_workspace_config(
+        workspace,
+        {
+            "instance_id": "test",
+            "created_at": "2026-05-14T00:00:00Z",
+            "generation_source_backend": backend,
+        },
+    )
+    store = default_generation_store(workspace)
+    for generation_id in ("v0", "v1"):
+        tree = workspace.parent / "sources" / generation_id / "agent"
+        tree.mkdir(parents=True)
+        (tree / "generation.txt").write_text(generation_id, encoding="utf-8")
+        store.seed_generation(epoch_id, generation_id, [tree])
 
 
 def record_tournament_score(
