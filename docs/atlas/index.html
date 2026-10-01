@@ -1142,8 +1142,8 @@ $EDITOR brief.md
 <span class="cm">#    and spawns a watchdog plus the console on http://127.0.0.1:7892.</span>
 <span class="hi">zicato evolve</span>
 
-<span class="cm"># 5. Read what happened — in the browser, in the terminal, or on disk.</span>
-<span class="hi">zicato tui</span>
+<span class="cm"># 5. Read what happened — in the console, or on disk.</span>
+<span class="hi">zicato dashboard</span>
 cat .zicato/epochs/&lt;epoch&gt;/rounds/&lt;round&gt;/field_settlement.json</pre>
 
       <p>
@@ -1170,14 +1170,13 @@ cat .zicato/epochs/&lt;epoch&gt;/rounds/&lt;round&gt;/field_settlement.json</pre
         <div class="cmd"><span class="name">zicato init</span><span class="what">Scaffold a fresh workspace. Once per project.</span></div>
         <div class="cmd"><span class="name">zicato evolve</span><span class="what">Resolve the contract, auto-open an epoch on any change, and run the loop.</span></div>
         <div class="cmd"><span class="name">zicato dashboard</span><span class="what">Serve the console for an existing workspace. <code>evolve</code> already spawns it.</span></div>
-        <div class="cmd"><span class="name">zicato tui</span><span class="what">Review a workspace in the terminal — the console's peer surface, rendering the same served payloads.</span></div>
         <div class="cmd"><span class="name">zicato health</span><span class="what">Report whether the loop has real optimization signal.</span></div>
       </div>
       <h3>Namespaces</h3>
       <div class="cmds">
         <div class="cmd"><span class="name">board</span><span class="what">Inspect and hand-edit a per-epoch board.</span></div>
         <div class="cmd"><span class="name">epoch</span><span class="what">Inspect and force epochs. <code>evolve</code> opens them for you.</span></div>
-        <div class="cmd"><span class="name">proposer</span><span class="what">Score, diagnose, and improve the proposer itself.</span></div>
+        <div class="cmd"><span class="name">proposer</span><span class="what">Run one proposal episode by hand and score proposal quality per epoch.</span></div>
         <div class="cmd"><span class="name">tournament</span><span class="what">Run isolated tournament operations.</span></div>
         <div class="cmd"><span class="name">inspect</span><span class="what">Inspect workspace state and derived analysis, including the mutation-surface audit.</span></div>
         <div class="cmd"><span class="name">repair</span><span class="what">Rebuild derived and legacy workspace data, such as the analytical index.</span></div>
