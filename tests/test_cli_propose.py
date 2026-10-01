@@ -146,6 +146,25 @@ def test_the_episode_is_given_the_round_s_authorized_context(tmp_path: Path) -> 
     assert "id=instr" in task
 
 
+def test_the_episode_is_given_the_latest_telemetry_insight(tmp_path: Path) -> None:
+    """The command delivers the insight a round would: the latest marked file."""
+    workspace, epoch_id = _workspace(tmp_path)
+    insights = workspace / "epochs" / epoch_id / "insights"
+    insights.mkdir()
+    marker = "<!-- zicato: decision-telemetry analysis of the training slice -->"
+    (insights / "round_0001.md").write_text(f"{marker}\nOlder finding.\n", encoding="utf-8")
+    (insights / "round_0002.md").write_text(f"{marker}\nNewest finding.\n", encoding="utf-8")
+
+    assert _run(workspace).exit_code == 0
+
+    from zicato.proposer.input_capture import ROLE_PROPOSAL, read_proposer_inputs
+
+    records = [r for r in read_proposer_inputs(workspace, epoch_id) if r["role"] == ROLE_PROPOSAL]
+    assert len(records) == 1
+    assert "## Recent telemetry insights\nNewest finding." in records[0]["user"]
+    assert "Older finding." not in records[0]["user"]
+
+
 def test_no_board_entry_reaches_the_episode(tmp_path: Path) -> None:
     """Not the holdout, and not the train slice either: no entry is shown."""
     workspace, epoch_id = _workspace(tmp_path)

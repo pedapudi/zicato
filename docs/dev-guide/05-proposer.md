@@ -2334,7 +2334,9 @@ that episode:
   profile, the metric priorities, the process exemplars, the genealogy
   sample and the calibration record. Each is computed by a round from the
   tournament state it is about to spend, and none is reconstructible
-  outside one;
+  outside one. The most recent telemetry insight is not one of them: it is
+  a file on disk, and the command reads it with `load_latest_insight`, as a
+  round does;
 - there is **no post-apply validation hook** wired (no snapshot is derived),
   so a destructive patch that the round would bounce inside the episode
   survives here;

@@ -428,6 +428,12 @@ async def _propose(
 
         prior = _load_prior_experiments(workspace_dir, epoch_id)
 
+        # The most recent round's telemetry insight, read as the round reads
+        # it: only a training-slice analysis is delivered, bounded in length.
+        from zicato.analyzer.insights import load_latest_insight  # noqa: PLC0415
+
+        insights = load_latest_insight(workspace_dir, epoch_id)
+
         try:
             experiment = await agent.propose(
                 ProposerContext(
@@ -447,6 +453,7 @@ async def _propose(
                     generation_root=generation_root,
                     custom_judge_names=custom_judge_names,
                     prior_experiments=tuple(prior),
+                    insights=insights,
                 )
             )
         except ProposerError as exc:
