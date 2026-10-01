@@ -19,8 +19,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
 from zicato.aux_timeout import aux_call_timeout_s
@@ -64,16 +63,16 @@ class EmulatedMultiTurnDriver:
 
     Parameters
     ----------
-    sink_emit_fn:
-        Optional callable for emitting audit spans. Either a goldfive-
-        shaped sink object exposing an ``emit(event)`` method, or
-        ``None`` to keep audits in memory only. When ``None``, audits
-        are still produced and exposed via :attr:`audits` after a
-        :meth:`drive` call completes.
+    sinks:
+        Sinks that receive each turn's audit record through
+        :func:`zicato.emulator.audit.emit_audit_span`. Each exposes an
+        ``emit(event)`` method, synchronous or asynchronous. With no sinks
+        the audits stay in memory only. In both cases the records of the
+        latest :meth:`drive` call are exposed via :attr:`audits`.
     """
 
-    def __init__(self, sink_emit_fn: Any = None) -> None:
-        self._sink = sink_emit_fn
+    def __init__(self, sinks: Sequence[Any] = ()) -> None:
+        self._sinks = tuple(sinks)
         self._audits: list[EmulatorTurnAudit] = []
 
     @property
@@ -86,6 +85,8 @@ class EmulatedMultiTurnDriver:
         run_harness_turn: Callable[[str], Awaitable[str]],
         entry: BoardEntry,
         config: RuntimeConfig,
+        *,
+        run_id: str,
     ) -> RunResult:
         """Drive one multi-turn-emulated conversation.
 
@@ -106,6 +107,10 @@ class EmulatedMultiTurnDriver:
             The runtime config carrying ``evaluation_call_llm``. The
             two-callable invariant is checked at the top of this
             method via :func:`assert_distinct_callables`.
+        run_id:
+            The caller's identifier for this run. The returned
+            :attr:`RunResult.run_id` is this value, and log lines about
+            the run name it.
 
         Returns
         -------
@@ -152,7 +157,6 @@ class EmulatedMultiTurnDriver:
         max_turns = entry.max_turns
         system_prompt = build_emulator_system_prompt(persona)
 
-        run_id = uuid.uuid4().hex
         agent_transcript: list[str] = []
         started_ns = time.monotonic_ns()
         aborted = False
@@ -180,7 +184,7 @@ class EmulatedMultiTurnDriver:
 
             audit = audit_turn(persona, tuple(agent_transcript), emulator_output)
             self._audits.append(audit)
-            emit_audit_span(self._sink, audit)
+            await emit_audit_span(self._sinks, audit)
 
             # Stop signal: <<END>> on a line by itself.
             stripped_lines = [line.strip() for line in emulator_output.splitlines()]

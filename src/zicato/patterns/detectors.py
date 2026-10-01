@@ -32,6 +32,7 @@ Design constraints:
 from __future__ import annotations
 
 import hashlib
+import json
 import statistics
 from collections import Counter
 from collections.abc import Callable, Iterable
@@ -121,25 +122,37 @@ def _safe_median(values: list[float] | list[int]) -> float:
 
 
 def _replay_events(path: Path) -> list[Any] | None:
-    """Replay a goldfive events JSONL, or return ``None`` if unavailable.
+    """Parse a goldfive events JSONL into ``Event`` messages, or return ``None``.
 
-    Returns ``None`` when goldfive is not importable OR the file does
-    not exist OR the replay raised. Detectors that need events treat a
-    ``None`` as "skip this entry" so a single corrupted file does not
-    erase the rest of the detector's output.
+    Each line is parsed strictly into a goldfive ``Event``, except a line
+    whose top-level ``kind`` is a string. That is the normalized record
+    shape (:mod:`zicato.telemetry.event_log`), which the strict parser
+    cannot read; the user emulator's per-turn audit has it. Such a line is
+    skipped. Returns ``None`` when goldfive is not importable, the file
+    does not exist, or any other line fails to parse.
+    Detectors that need events treat a ``None`` as "skip this entry" so a
+    single corrupted file does not erase the rest of the detector's output.
     """
 
     try:
-        from goldfive.sinks import replay_from_jsonl
+        from goldfive.pb.goldfive.v1 import events_pb2
+        from google.protobuf.json_format import Parse
     except Exception:
         return None
     if not Path(path).exists():
         return None
+    events: list[Any] = []
     try:
-        events: list[Any] = replay_from_jsonl(path)
-        return events
+        for line in Path(path).read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            obj = json.loads(line)
+            if isinstance(obj, dict) and isinstance(obj.get("kind"), str):
+                continue
+            events.append(Parse(line, events_pb2.Event()))
     except Exception:
         return None
+    return events
 
 
 def _payload_name(event: Any) -> str | None:

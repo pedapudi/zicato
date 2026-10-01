@@ -189,13 +189,16 @@ replicate, trace kind), never prompts or expected answers.
 
 ### The emulator lane
 
-Multi-turn runs emit the user-emulator's per-turn LLM calls on a dedicated
-lane named **`zicato:emulator`** (bracketed `emulator_turn`, carrying the
-emulator `model` and previews). The lane name is the discriminator: anything
-on `zicato:emulator` is the emulator's work, anything on the target
-lane is the agent's. This is why a multi-turn entry's wall-clock can exceed
-the agent's own thinking time — the emulator's LLM time counts toward the
-entry's `wall_clock_budget_seconds`.
+A `multi_turn_emulated` run writes one audit line per user-emulator turn
+into its `events.jsonl`, on the lane **`zicato:emulator`** with kind
+`zicato.emulator.turn_audit`. Each line carries a persona fingerprint
+(`persona_hash`), the characters of agent reply the emulator read
+(`transcript_chars_in`), and the size and first 200 characters of the
+emulator's reply (`output_chars_out`, `output_preview`). Anything on
+`zicato:emulator` is the emulator's work; the goldfive events around it are
+the agent's. Harmonograf does not show these lines. They explain why a
+multi-turn entry's wall-clock can exceed the agent's own thinking time: the
+emulator's model time counts toward the entry's `wall_clock_budget_seconds`.
 
 Session scope is one generation × board entry × replicate. Separate board
 entries and replicates must never share a target or emulator session. Several

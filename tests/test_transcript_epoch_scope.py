@@ -116,3 +116,15 @@ def test_epoch_filter_applies_to_run_id_lookup(tmp_path: Path, source: str) -> N
     assert resolve_conversation(paths, run_id) == events
     assert resolve_conversation(paths, run_id, epoch="missing") is None
     assert resolve_conversation(paths, run_id, epoch="available") == events
+
+
+def test_run_id_lookup_skips_a_leading_line_without_a_run_id(tmp_path: Path) -> None:
+    """An emulated run's events file opens with the emulator's audit record."""
+    events = WorkspaceLayout.from_root(tmp_path).events("available", "v0", "entry")
+    events.parent.mkdir(parents=True)
+    audit = {"lane": "zicato:emulator", "kind": "zicato.emulator.turn_audit"}
+    events.write_text(json.dumps(audit) + "\n" + json.dumps({"runId": "goldfive-run"}) + "\n")
+    paths = WorkspacePaths(tmp_path)
+
+    assert find_run_events_path(paths, "goldfive-run") == events
+    assert resolve_conversation(paths, "goldfive-run") == events

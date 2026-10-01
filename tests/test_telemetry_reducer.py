@@ -30,6 +30,7 @@ from zicato.core import (
 from zicato.telemetry.reducer import (
     compute_drift_loss,
     compute_per_judge_loss,
+    loss_profile_to_dict,
     read_loss_profile,
     reduce_loss,
     split_judge_attributed_kind,
@@ -1648,3 +1649,89 @@ def test_loss_profile_round_trip_with_adk_session_id(tmp_path: Path) -> None:
     loaded = read_loss_profile(p)
     assert loaded == profile
     assert loaded.adk_session_id == "abc123def456"
+
+
+# ---------------------------------------------------------------------------
+# The user emulator's per-turn audit records share the events file
+# ---------------------------------------------------------------------------
+
+
+async def _emulator_audit_events(count: int) -> list[dict]:
+    """Audit events exactly as the emulator emits them to a run's sinks."""
+    from zicato.emulator import audit_turn, emit_audit_span
+
+    class _ListSink:
+        def __init__(self) -> None:
+            self.events: list[dict] = []
+
+        def emit(self, event: dict) -> None:
+            self.events.append(event)
+
+    sink = _ListSink()
+    persona = _multi_turn_emulated_entry().user_persona
+    assert persona is not None
+    for turn in range(count):
+        audit = audit_turn(persona, ("agent reply",) * turn, f"user message {turn}")
+        await emit_audit_span([sink], audit)
+    return sink.events
+
+
+def test_emulator_audit_lines_leave_the_loss_profile_unchanged(tmp_path: Path) -> None:
+    """Audit lines are observability: the reduced profile ignores them.
+
+    The goldfive events go through the real JSONL sink. An audit line is not
+    a goldfive ``Event``, so its presence moves the reducer from the strict
+    proto replay to the plain-JSON reader; both must reduce to one profile.
+    """
+    pytest.importorskip("goldfive")
+    import asyncio
+
+    from goldfive.pb.goldfive.v1 import events_pb2, types_pb2  # type: ignore
+    from goldfive.sinks.persistence import JSONLPersistenceSink
+
+    def _goldfive_events() -> list[object]:
+        started = events_pb2.Event(run_id="run-g", sequence=0)
+        started.run_started.goal_summary = "book a flight to Lisbon"
+        drift = events_pb2.Event(run_id="run-g", sequence=1)
+        drift.drift_detected.kind = types_pb2.DRIFT_KIND_OFF_TOPIC
+        drift.drift_detected.severity = types_pb2.DRIFT_SEVERITY_WARNING
+        done = events_pb2.Event(run_id="run-g", sequence=2)
+        done.agent_invocation_completed.agent_name = "a"
+        done.agent_invocation_completed.summary = "Booked the flight."
+        return [started, drift, done]
+
+    async def _write(path: Path, with_audits: bool) -> None:
+        sink = JSONLPersistenceSink(path=path, mode="write")
+        audits = await _emulator_audit_events(3) if with_audits else []
+        for index, event in enumerate(_goldfive_events()):
+            if index < len(audits):
+                await sink.emit(audits[index])
+            await sink.emit(event)
+        await sink.close()
+
+    plain, audited = tmp_path / "plain.jsonl", tmp_path / "audited.jsonl"
+    asyncio.run(_write(plain, with_audits=False))
+    asyncio.run(_write(audited, with_audits=True))
+    assert json.loads(audited.read_text().splitlines()[0])["kind"] == ("zicato.emulator.turn_audit")
+
+    def _reduce(path: Path) -> dict:
+        return loss_profile_to_dict(
+            reduce_loss(
+                events_jsonl_path=path,
+                entry=_multi_turn_emulated_entry(),
+                generation_id="v0",
+                epoch_id="ep1",
+                expectation_result=None,
+                runtime_ms=0,
+                wall_clock_budget_exceeded=False,
+                weights=_default_weights(),
+            )
+        )
+
+    reduced = _reduce(plain)
+    assert reduced["run_id"] == "run-g"
+    assert reduced["turns_completed"] == 1
+    assert {"name": "drift:off_topic", "severity": "warning", "count": 1.0} in reduced[
+        "metric_counts"
+    ]
+    assert _reduce(audited) == reduced

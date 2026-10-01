@@ -1103,3 +1103,41 @@ def test_reconstructs_a_real_tournament_file() -> None:
     for ann in t.annotations:
         assert ann.anchor_seq is None or ann.anchor_seq in turn_seqs
     json.dumps(t.to_dict())
+
+
+def test_emulator_audit_lines_add_no_turns(tmp_path: Path) -> None:
+    """The user emulator's per-turn audit records carry no conversation content."""
+
+    conversation = [
+        _camel("runStarted", {"goalSummary": "Plan a trip"}, runId="r1", sequence="0"),
+        _camel(
+            "agentInvocationCompleted",
+            {"agentName": "planner", "summary": "Here is a plan."},
+            runId="r1",
+            sequence="1",
+        ),
+        _camel("runCompleted", {"outcomeSummary": "done"}, runId="r1", sequence="2"),
+    ]
+    audit = json.dumps(
+        {
+            "lane": "zicato:emulator",
+            "kind": "zicato.emulator.turn_audit",
+            "persona_hash": "0123456789abcdef",
+            "transcript_chars_in": 0,
+            "output_chars_out": 11,
+            "output_preview": "Plan a trip",
+        }
+    )
+    plain = reconstruct_transcript(_write(tmp_path, conversation, name="plain.jsonl"))
+    audited = reconstruct_transcript(
+        _write(tmp_path, [audit, *conversation, audit], name="audited.jsonl")
+    )
+
+    def _content(t: Transcript) -> list[tuple[str, str | None, str]]:
+        return [(turn.role, turn.agent, turn.text) for turn in t.turns]
+
+    assert _content(audited) == _content(plain)
+    assert [turn.role for turn in plain.turns] == ["user", "agent", "system"]
+    assert audited.run_id == plain.run_id == "r1"
+    assert audited.complete is plain.complete is True
+    assert audited.annotations == plain.annotations == []

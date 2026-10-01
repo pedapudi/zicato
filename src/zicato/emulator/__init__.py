@@ -10,7 +10,8 @@ prevented by construction:
   required to differ by identity at drive time.
 * The system prompt bakes in a non-leakage rule paragraph verbatim.
 * A post-hoc answer-leak heuristic aborts the run on suspicious output.
-* Each turn emits a ``zicato:emulator`` audit span (best-effort).
+* Each turn emits a ``zicato:emulator`` audit record to the run's sinks
+  (best-effort).
 
 Downstream callers should import from this package surface::
 
@@ -51,9 +52,11 @@ async def run_emulated(
     ``__call__(user_msg)`` returning the agent's user-facing reply.
     Adapters that do something richer should call the driver directly
     rather than going through this wrapper.
+
+    Each emulator turn's audit record goes to every sink in ``sinks``,
+    and the returned :attr:`RunResult.run_id` is ``run_id``.
     """
-    del run_id, sinks  # accepted for API parity; not threaded yet
-    driver = EmulatedMultiTurnDriver()
+    driver = EmulatedMultiTurnDriver(sinks=sinks)
 
     async def _run_harness_turn(user_msg: str) -> str:
         method = getattr(agent, "run", None)
@@ -74,6 +77,7 @@ async def run_emulated(
         run_harness_turn=_run_harness_turn,
         entry=entry,
         config=config,
+        run_id=run_id,
     )
 
 

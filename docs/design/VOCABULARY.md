@@ -77,9 +77,9 @@ check is rejected; the applier repairs nothing. See
 
 The per-turn record of the multi-turn user emulator: one
 `EmulatorTurnAudit` per turn carrying the persona hash, the prompt size,
-the reply size, and the first 200 characters of the reply. A driver built
-with a sink also emits each audit on the `zicato:emulator` lane; the
-tournament path wires no sink, so the audits stay in memory. See
+the reply size, and the first 200 characters of the reply. The driver
+emits each audit on the `zicato:emulator` lane to the run's sinks, so a
+tournament run's `events.jsonl` holds one audit line per turn. See
 [EMULATOR.md §8](EMULATOR.md#8-audit-trail-the-zicatoemulator-lane) and
 [TELEMETRY.md §4.2](TELEMETRY.md#42-the-emulators-zicatoemulator-audit-lane).
 

@@ -10,6 +10,7 @@ environment without goldfive on ``sys.path``.
 
 from __future__ import annotations
 
+import json
 from functools import partial
 from pathlib import Path
 
@@ -393,6 +394,40 @@ def test_detect_hot_tasks_counts_blocks_too(tmp_path: Path) -> None:
     patterns = detect_hot_tasks(inp)
     assert len(patterns) == 1
     assert patterns[0].detail["task_id"] == "t_block"
+
+
+def test_detect_hot_tasks_skips_emulator_audit_lines(tmp_path: Path) -> None:
+    """An emulated run's events file also holds the emulator's audit records."""
+    pytest.importorskip("goldfive")
+    from goldfive.sinks.persistence import _events_module  # type: ignore[import-not-found]
+
+    pb = _events_module()
+    events: list[object] = []
+    seq = 0
+    # Two tasks, both started 4 times. t_fail fails every time; t_clean never.
+    for _ in range(4):
+        for case, fields in (
+            ("task_started", {"task_id": "t_fail"}),
+            ("task_started", {"task_id": "t_clean"}),
+            ("task_failed", {"task_id": "t_fail", "reason": "x", "recoverable": False}),
+        ):
+            events.append(_new_event(pb, seq, **{case: fields}))
+            seq += 1
+    events_path = tmp_path / "events.jsonl"
+    _write_events_jsonl(events_path, events)
+    audit = {"lane": "zicato:emulator", "kind": "zicato.emulator.turn_audit"}
+    lines = events_path.read_text(encoding="utf-8").splitlines()
+    events_path.write_text(
+        "\n".join([json.dumps(audit), *lines, json.dumps(audit)]) + "\n", encoding="utf-8"
+    )
+
+    inp = DetectorInput(
+        losses=[_loss(run_id="r0")],
+        entries={"e1": _single_turn_entry()},
+        events_paths={"e1": events_path},
+    )
+    patterns = detect_hot_tasks(inp)
+    assert [p.detail["task_id"] for p in patterns] == ["t_fail"]
 
 
 def test_detect_hot_tasks_returns_empty_when_no_events_files() -> None:

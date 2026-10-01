@@ -83,7 +83,7 @@ async def test_drive_accumulates_transcript(
     )
     harness = _RecordingHarness()
     driver = ScriptedMultiTurnDriver()
-    result = await driver.drive(harness, entry, sinks=[], config=runtime_config)
+    result = await driver.drive(harness, entry, sinks=[], config=runtime_config, run_id="run-test")
 
     assert harness.received == ["hello", "again", "done"]
     assert result.transcript == (
@@ -112,7 +112,7 @@ async def test_drive_stops_at_max_turns(runtime_config: RuntimeConfig) -> None:
     )
     harness = _RecordingHarness()
     driver = ScriptedMultiTurnDriver()
-    result = await driver.drive(harness, entry, sinks=[], config=runtime_config)
+    result = await driver.drive(harness, entry, sinks=[], config=runtime_config, run_id="run-test")
     assert harness.received == ["a", "b"]
     assert len(result.transcript) == 2
     assert result.aborted is False
@@ -131,7 +131,7 @@ async def test_drive_stops_when_turns_exhausted(
     )
     harness = _RecordingHarness()
     driver = ScriptedMultiTurnDriver()
-    result = await driver.drive(harness, entry, sinks=[], config=runtime_config)
+    result = await driver.drive(harness, entry, sinks=[], config=runtime_config, run_id="run-test")
     assert harness.received == ["only"]
     assert len(result.transcript) == 1
     assert result.aborted is False
@@ -154,7 +154,7 @@ async def test_drive_aborts_on_budget_cutoff(
     )
     harness = _SlowHarness(sleep_seconds=0.6)
     driver = ScriptedMultiTurnDriver()
-    result = await driver.drive(harness, entry, sinks=[], config=runtime_config)
+    result = await driver.drive(harness, entry, sinks=[], config=runtime_config, run_id="run-test")
 
     assert result.aborted is True
     assert result.abort_reason == "wall_clock_budget"
@@ -184,7 +184,7 @@ async def test_drive_uses_call_method_when_no_run(
     )
     harness = _CallHarness()
     driver = ScriptedMultiTurnDriver()
-    result = await driver.drive(harness, entry, sinks=[], config=runtime_config)
+    result = await driver.drive(harness, entry, sinks=[], config=runtime_config, run_id="run-test")
     assert harness.received == ["x"]
     assert result.final_output == "call: x"
 
@@ -200,7 +200,9 @@ async def test_drive_unwraps_final_output_attribute(
         max_turns=2,
     )
     driver = ScriptedMultiTurnDriver()
-    result = await driver.drive(_FinalOutputHarness(), entry, sinks=[], config=runtime_config)
+    result = await driver.drive(
+        _FinalOutputHarness(), entry, sinks=[], config=runtime_config, run_id="run-test"
+    )
     assert result.transcript == ("wrapped: hi",)
     assert result.final_output == "wrapped: hi"
 
@@ -216,7 +218,9 @@ async def test_drive_rejects_non_scripted_entry(
     )
     driver = ScriptedMultiTurnDriver()
     with pytest.raises(ValueError, match="multi_turn_scripted"):
-        await driver.drive(_RecordingHarness(), entry, sinks=[], config=runtime_config)
+        await driver.drive(
+            _RecordingHarness(), entry, sinks=[], config=runtime_config, run_id="run-test"
+        )
 
 
 async def test_drive_records_harness_error_as_abort(
@@ -234,7 +238,31 @@ async def test_drive_records_harness_error_as_abort(
         max_turns=2,
     )
     driver = ScriptedMultiTurnDriver()
-    result = await driver.drive(_ExplodingHarness(), entry, sinks=[], config=runtime_config)
+    result = await driver.drive(
+        _ExplodingHarness(), entry, sinks=[], config=runtime_config, run_id="run-test"
+    )
     assert result.aborted is True
     assert "harness_error" in result.abort_reason
     assert "kaboom" in result.abort_reason
+
+
+async def test_run_scripted_returns_the_caller_run_id(
+    runtime_config: RuntimeConfig,
+) -> None:
+    from zicato.board.scripted import run_scripted
+
+    entry = BoardEntry(
+        id="scripted",
+        kind="multi_turn_scripted",
+        wall_clock_budget_seconds=30,
+        turns=(ScriptedTurn("hello"),),
+        max_turns=1,
+    )
+    result = await run_scripted(
+        agent=_RecordingHarness(),
+        entry=entry,
+        sinks=[],
+        config=runtime_config,
+        run_id="run-from-caller",
+    )
+    assert result.run_id == "run-from-caller"

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import json
 import sqlite3
 from pathlib import Path
@@ -53,17 +54,23 @@ from zicato.workspace.reads import generation_base_seed
 # ---------------------------------------------------------------------------
 
 
+#: Lines :func:`_run_id_of_events_file` reads before giving up on a run id.
+_RUN_ID_SCAN_LINES = 64
+
+
 def _run_id_of_events_file(events_path: Path) -> str | None:
     """Best-effort read of the goldfive ``runId`` from an events file.
 
-    Every event envelope carries the same ``runId`` (camelCase from the
-    persistence sink; ``run_id`` from the reducer's proto-reparse path),
-    so the first parseable line is sufficient. Returns ``None`` on any
-    read / parse failure or when no run id field is present.
+    Returns the first non-empty ``runId`` (camelCase from the persistence
+    sink; ``run_id`` from the reducer's proto-reparse path) among the
+    first :data:`_RUN_ID_SCAN_LINES` lines. A line without one is skipped:
+    an emulated run's file opens with the user emulator's audit record,
+    which carries no run id. Returns ``None`` on any read or parse failure,
+    or when no scanned line names a run id.
     """
     try:
         with open(events_path, encoding="utf-8") as handle:
-            for raw in handle:
+            for raw in itertools.islice(handle, _RUN_ID_SCAN_LINES):
                 stripped = raw.strip()
                 if not stripped:
                     continue
@@ -71,7 +78,8 @@ def _run_id_of_events_file(events_path: Path) -> str | None:
                 if not isinstance(evt, dict):
                     continue
                 rid = evt.get("runId") or evt.get("run_id")
-                return str(rid) if isinstance(rid, str) and rid else None
+                if isinstance(rid, str) and rid:
+                    return rid
     except (OSError, json.JSONDecodeError):
         return None
     return None
