@@ -74,7 +74,9 @@ round's present state:
   written when the epoch has no decision telemetry or the evaluation call
   fails, a file written by an analyzer that read every run, and a
   hand-written file. An older marked file is never substituted, and the
-  epoch's first round has no file to deliver.
+  epoch's first round has no file to deliver. A delivered insight longer
+  than 8,000 characters, the bound the mutation manifest applies to a
+  span, is cut there and ends with a note saying it was truncated.
 
 Each of the four channels describes the champion's current state and the
 most recent round's observations. None of them carries the **settled

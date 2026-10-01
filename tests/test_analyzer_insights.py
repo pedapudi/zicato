@@ -383,6 +383,22 @@ def test_load_latest_insight_withholds_a_marker_that_is_not_the_first_line(
     assert _latest_after_writing(tmp_path, "# notes\n" + _MARK + "- nudge x 3\n") == ""
 
 
+def test_load_latest_insight_cuts_a_long_analysis_with_a_visible_note(tmp_path: Path) -> None:
+    """The delivered text is bounded at 8000 characters, the bound the
+    mutation manifest applies to a span, and says that it was cut."""
+
+    delivered = _latest_after_writing(tmp_path, _MARK + "x" * 9000 + "\nTAIL\n")
+
+    assert delivered.startswith("x" * 8000 + "\n")
+    assert "x" * 8001 not in delivered
+    assert "TAIL" not in delivered
+    assert delivered.endswith("[... truncated: the insight exceeds 8000 chars ...]\n")
+
+
+def test_load_latest_insight_delivers_an_analysis_at_the_bound_unchanged(tmp_path: Path) -> None:
+    assert _latest_after_writing(tmp_path, _MARK + "y" * 8000 + "\n") == "y" * 8000 + "\n"
+
+
 def test_load_latest_insight_delivers_a_marked_analysis_without_its_marker(
     tmp_path: Path,
 ) -> None:

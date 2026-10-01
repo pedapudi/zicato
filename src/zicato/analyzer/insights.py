@@ -63,6 +63,13 @@ TRAINING_SLICE_ANALYSIS_MARKER = (
     "<!-- zicato: decision-telemetry analysis of the training slice -->"
 )
 
+#: The most characters of an insight the proposal evidence carries. The
+#: model's response is unbounded, and the block is sent with every proposal
+#: of the next round, so a longer insight is cut here with a visible note.
+#: The bound is the one the proposer's mutation manifest applies to a span
+#: (``zicato.proposer.prompts._MUTATION_CONTENT_LIMIT_CHARS``).
+INSIGHT_LIMIT_CHARS = 8000
+
 
 def _collect_events_jsonl_paths(
     workspace_root: Path, epoch_id: str, entry_ids: Collection[str] | None = None
@@ -354,7 +361,9 @@ def load_latest_insight(workspace_root: Path, epoch_id: str) -> str:
     :data:`TRAINING_SLICE_ANALYSIS_MARKER`. Otherwise, and when the epoch
     has no round insight or the file cannot be read, the result is the
     empty string, which omits the evidence block. An older marked file is
-    never substituted for an unmarked latest one.
+    never substituted for an unmarked latest one. A delivered insight longer
+    than :data:`INSIGHT_LIMIT_CHARS` is cut to that length and followed by
+    a note saying so.
     """
 
     files = sorted(_insights_dir(workspace_root, epoch_id).glob("round_*.md"))
@@ -365,12 +374,19 @@ def load_latest_insight(workspace_root: Path, epoch_id: str) -> str:
     except OSError:
         return ""
     marker, _, body = text.partition("\n")
-    if marker.strip() != TRAINING_SLICE_ANALYSIS_MARKER or not body.strip():
+    body = body.strip()
+    if marker.strip() != TRAINING_SLICE_ANALYSIS_MARKER or not body:
         return ""
-    return body.strip() + "\n"
+    if len(body) > INSIGHT_LIMIT_CHARS:
+        body = (
+            f"{body[:INSIGHT_LIMIT_CHARS].rstrip()}\n"
+            f"[... truncated: the insight exceeds {INSIGHT_LIMIT_CHARS} chars ...]"
+        )
+    return body + "\n"
 
 
 __all__ = [
+    "INSIGHT_LIMIT_CHARS",
     "TRAINING_SLICE_ANALYSIS_MARKER",
     "analyze_epoch_telemetry",
     "load_latest_insight",
