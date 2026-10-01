@@ -132,8 +132,9 @@ class ProposerContext:
     #: vocabulary (ladder levels, detector and policy names); it holds no
     #: entry id, task text, or holdout run. When non-empty, a
     #: ``## Recent telemetry insights`` section is spliced into the evidence.
-    #: Empty (the default — the epoch's first round, or a round whose
-    #: predecessor wrote only a placeholder) omits the section.
+    #: Empty (the default — the epoch's first round, or a round whose latest
+    #: insight file lacks the training-slice provenance line) omits the
+    #: section.
     insights: str = ""
     #: Pre-rendered, BANDED statement of what the frozen contract scores —
     #: built by the orchestrator from the epoch's

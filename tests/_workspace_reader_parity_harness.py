@@ -1004,6 +1004,9 @@ def _write_epoch(ws: Path, epoch_id: str) -> None:
     for round_index in ROUND_INDICES if epoch_id == RICH_EPOCH_ID else (1,):
         _write_text(
             edir / "insights" / f"round_{round_index:04d}.md",
+            # Opens with the provenance line the analyzer writes on a
+            # training-slice analysis, which the loader requires.
+            "<!-- zicato: decision-telemetry analysis of the training slice -->\n"
             f"# Round {round_index} insights\n\nThe ladder escalated on plan thrash.\n",
         )
 

@@ -527,8 +527,9 @@ async def _evolve_once(
     # The analyzer ran at the end of the previous round over the training
     # slice's runs only (``_round_epilogue`` passes ``train_board``'s ids), so
     # the text holds no holdout run and no entry identity. Only the most
-    # recent round file is read; an absent file or a placeholder reads as
-    # the empty string, which omits the section.
+    # recent round file is read, and only when it opens with the analyzer's
+    # training-slice provenance line; anything else reads as the empty
+    # string, which omits the section.
     from zicato.analyzer.insights import load_latest_insight  # noqa: PLC0415
 
     insights = load_latest_insight(workspace_root, resolved_epoch_id)

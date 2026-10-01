@@ -67,10 +67,14 @@ round's present state:
   highest-numbered of those files, and only that file, into
   `ProposerContext.insights`. The analyzer reads only the training
   slice's runs, and its input holds counts keyed by steering vocabulary,
-  so the text carries no holdout run and no entry identity. A placeholder
-  file, written when the epoch has no decision telemetry or the
-  evaluation call fails, delivers nothing, and neither does the epoch's
-  first round.
+  so the text carries no holdout run and no entry identity. A model
+  analysis opens with a provenance line naming it an analysis of the
+  training slice, and only a latest file that opens with that line is
+  delivered. Every other latest file delivers nothing: the placeholder
+  written when the epoch has no decision telemetry or the evaluation call
+  fails, a file written by an analyzer that read every run, and a
+  hand-written file. An older marked file is never substituted, and the
+  epoch's first round has no file to deliver.
 
 Each of the four channels describes the champion's current state and the
 most recent round's observations. None of them carries the **settled

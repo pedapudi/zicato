@@ -21,7 +21,15 @@ import stat
 from pathlib import Path
 
 from zicato.analyzer import analyze_epoch_telemetry, load_latest_insight
-from zicato.analyzer.insights import NO_ANALYSIS_MARKER, proposer_visible_entry_ids
+from zicato.analyzer.insights import proposer_visible_entry_ids
+
+# The provenance line the analyzer writes on a training-slice analysis
+# (``TRAINING_SLICE_ANALYSIS_MARKER``), spelled out so the format is pinned.
+TRAINING_SLICE_ANALYSIS_MARKER = (
+    "<!-- zicato: decision-telemetry analysis of the training slice -->"
+)
+
+_MARK = TRAINING_SLICE_ANALYSIS_MARKER + "\n"
 
 
 def test_report_replacement_preserves_an_open_reader(tmp_path: Path) -> None:
@@ -130,8 +138,7 @@ def test_analyze_epoch_telemetry_writes_markdown(tmp_path: Path) -> None:
     # round_n=3 → zero-padded to width 4 in the filename.
     assert out.name == "round_0003.md"
     body = out.read_text(encoding="utf-8")
-    assert "Headline observations" in body
-    assert "saw 1 ladder transition" in body
+    assert body == _MARK + "## Headline observations\n- saw 1 ladder transition\n"
     # The LLM was given the system + user prompts.
     assert "decision telemetry" in captured["system"].lower()
     assert "observe->nudge" in captured["user"]
@@ -318,10 +325,10 @@ def test_load_latest_insight_reads_only_the_highest_numbered_round(tmp_path: Pat
     epoch_id = "ep_load"
     insights_dir = workspace / "epochs" / epoch_id / "insights"
     insights_dir.mkdir(parents=True, exist_ok=True)
-    (insights_dir / "round_0002.md").write_text("# round 2\n", encoding="utf-8")
-    (insights_dir / "round_0010.md").write_text("# round 10\n", encoding="utf-8")
-    (insights_dir / "round_0003.md").write_text("# round 3\n", encoding="utf-8")
-    (insights_dir / "latest.md").write_text("# operator run\n", encoding="utf-8")
+    (insights_dir / "round_0002.md").write_text(_MARK + "# round 2\n", encoding="utf-8")
+    (insights_dir / "round_0010.md").write_text(_MARK + "# round 10\n", encoding="utf-8")
+    (insights_dir / "round_0003.md").write_text(_MARK + "# round 3\n", encoding="utf-8")
+    (insights_dir / "latest.md").write_text(_MARK + "# operator run\n", encoding="utf-8")
 
     assert load_latest_insight(workspace, epoch_id) == "# round 10\n"
 
@@ -337,12 +344,50 @@ def test_load_latest_insight_withholds_a_placeholder(tmp_path: Path) -> None:
 
     insights_dir = workspace / "epochs" / epoch_id / "insights"
     insights_dir.mkdir(parents=True, exist_ok=True)
-    (insights_dir / "round_0001.md").write_text("# real analysis\n", encoding="utf-8")
+    (insights_dir / "round_0001.md").write_text(_MARK + "# real analysis\n", encoding="utf-8")
     # No telemetry at all: the analyzer writes the empty-epoch placeholder.
     out = asyncio.run(analyze_epoch_telemetry(workspace, epoch_id, unused_aux, round_n=2))
 
-    assert out.read_text(encoding="utf-8").startswith(NO_ANALYSIS_MARKER)
+    assert not out.read_text(encoding="utf-8").startswith(TRAINING_SLICE_ANALYSIS_MARKER)
     assert load_latest_insight(workspace, epoch_id) == ""
+
+
+def _latest_after_writing(tmp_path: Path, body: str) -> str:
+    workspace = tmp_path / ".zicato"
+    insights_dir = workspace / "epochs" / "ep_provenance" / "insights"
+    insights_dir.mkdir(parents=True, exist_ok=True)
+    (insights_dir / "round_0004.md").write_text(body, encoding="utf-8")
+    return load_latest_insight(workspace, "ep_provenance")
+
+
+def test_load_latest_insight_withholds_an_unmarked_analysis(tmp_path: Path) -> None:
+    """A file without the provenance line is withheld: an analysis written
+    before the analyzer was limited to the training slice carries none, and
+    may summarize holdout runs."""
+
+    assert _latest_after_writing(tmp_path, "## Headline observations\n- nudge x 3\n") == ""
+
+
+def test_load_latest_insight_withholds_an_old_format_placeholder(tmp_path: Path) -> None:
+    old_placeholder = (
+        "# Decision telemetry insights — epoch ep\n\n"
+        "_(evaluation LLM call failed: TimeoutError: ; no insights generated for "
+        "this round)_\n"
+    )
+    assert _latest_after_writing(tmp_path, old_placeholder) == ""
+
+
+def test_load_latest_insight_withholds_a_marker_that_is_not_the_first_line(
+    tmp_path: Path,
+) -> None:
+    assert _latest_after_writing(tmp_path, "# notes\n" + _MARK + "- nudge x 3\n") == ""
+
+
+def test_load_latest_insight_delivers_a_marked_analysis_without_its_marker(
+    tmp_path: Path,
+) -> None:
+    body = _MARK + "## Headline observations\n- nudge x 3\n"
+    assert _latest_after_writing(tmp_path, body) == "## Headline observations\n- nudge x 3\n"
 
 
 def test_load_latest_insight_empty_when_missing(tmp_path: Path) -> None:

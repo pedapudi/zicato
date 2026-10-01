@@ -81,8 +81,9 @@ channels.**
   - `insights` — the most recent round's decision-telemetry analyzer digest
     (the highest-numbered `insights/round_{N}.md`, computed over the training
     slice's runs), rendered into the `## Recent telemetry insights` section.
-    A round whose analysis found no decision telemetry, or whose evaluation
-    call failed, feeds nothing back.
+    Only a model analysis carrying the analyzer's training-slice provenance
+    line is fed back; a round whose analysis found no decision telemetry, or
+    whose evaluation call failed, feeds nothing back.
 
   So round 2's field is informed by round 1's results **whether or not anything
   was promoted.** A rejected challenger still teaches the proposer "that

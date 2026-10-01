@@ -18,11 +18,12 @@ The analyzer's job for one epoch:
 Every failure mode (no events at all, LLM timeout, LLM error) is
 handled by writing a short markdown placeholder rather than raising —
 the orchestrator calls this best-effort and a wedge here must not
-abort the round. Each placeholder opens with :data:`NO_ANALYSIS_MARKER`,
-which keeps it out of the proposal evidence.
+abort the round. A model analysis, and nothing else, opens with
+:data:`TRAINING_SLICE_ANALYSIS_MARKER`.
 
 :func:`load_latest_insight` reads the highest-numbered
-``insights/round_{N}.md`` back for the next round's proposal evidence.
+``insights/round_{N}.md`` back for the next round's proposal evidence, and
+delivers it only when it opens with that marker.
 """
 
 from __future__ import annotations
@@ -52,12 +53,15 @@ if TYPE_CHECKING:  # pragma: no cover - typing-only import
     from zicato.telemetry.meta_loop import MetaLoopEmitter
 
 
-#: First line of every placeholder insight: the body written when no
-#: decision telemetry was observed or the evaluation call failed. An HTML
-#: comment, so it is invisible in rendered markdown. :func:`load_latest_insight`
-#: returns nothing for a file that opens with it, because a placeholder
-#: carries no analysis for the proposer to act on.
-NO_ANALYSIS_MARKER = "<!-- zicato: placeholder insight, withheld from the proposer -->"
+#: First line of every insight that holds a model analysis of training-slice
+#: runs. An HTML comment, so it is invisible in rendered markdown.
+#: :func:`load_latest_insight` delivers a file only when it opens with this
+#: line. Placeholders, files written before the analyzer was limited to the
+#: training slice, and hand-written files lack it and are withheld, so
+#: delivery fails closed.
+TRAINING_SLICE_ANALYSIS_MARKER = (
+    "<!-- zicato: decision-telemetry analysis of the training slice -->"
+)
 
 
 def _collect_events_jsonl_paths(
@@ -144,7 +148,6 @@ def _empty_insight_body(epoch_id: str, summary: DecisionEventSummary) -> str:
     """
 
     return (
-        f"{NO_ANALYSIS_MARKER}\n"
         f"# Decision telemetry insights — epoch {epoch_id}\n\n"
         f"No decision-telemetry events were observed in this epoch's "
         f"runs (total_events_seen={summary.total_events_seen}). This is "
@@ -165,7 +168,6 @@ def _error_insight_body(epoch_id: str, err: str) -> str:
     """
 
     return (
-        f"{NO_ANALYSIS_MARKER}\n"
         f"# Decision telemetry insights — epoch {epoch_id}\n\n"
         f"_(evaluation LLM call failed: {err}; no insights generated for "
         "this round)_\n"
@@ -327,10 +329,14 @@ async def analyze_epoch_telemetry(
         except Exception:  # noqa: BLE001 — additive telemetry only
             pass
 
-    # The LLM body is written verbatim. The system prompt already
-    # constrains it to a markdown shape; we don't second-guess by
-    # post-processing.
-    body = response.strip() + "\n" if response else _empty_insight_body(epoch_id, summary)
+    # The LLM body is written verbatim under the provenance marker. The
+    # system prompt already constrains it to a markdown shape; we don't
+    # second-guess by post-processing.
+    body = (
+        f"{TRAINING_SLICE_ANALYSIS_MARKER}\n{response.strip()}\n"
+        if response and response.strip()
+        else _empty_insight_body(epoch_id, summary)
+    )
     atomic_write_text(target, body, mode=None)
     return target
 
@@ -344,9 +350,11 @@ def load_latest_insight(workspace_root: Path, epoch_id: str) -> str:
     which ``zicato inspect telemetry`` writes when no round is given, is an
     operator report and is not read.
 
-    Returns the empty string, which omits the evidence block, when the
-    epoch has no round insight, when the file cannot be read, or when the
-    file is a placeholder that opens with :data:`NO_ANALYSIS_MARKER`.
+    The file is delivered, without its first line, only when that line is
+    :data:`TRAINING_SLICE_ANALYSIS_MARKER`. Otherwise, and when the epoch
+    has no round insight or the file cannot be read, the result is the
+    empty string, which omits the evidence block. An older marked file is
+    never substituted for an unmarked latest one.
     """
 
     files = sorted(_insights_dir(workspace_root, epoch_id).glob("round_*.md"))
@@ -356,13 +364,14 @@ def load_latest_insight(workspace_root: Path, epoch_id: str) -> str:
         text = files[-1].read_text(encoding="utf-8").strip()
     except OSError:
         return ""
-    if text.startswith(NO_ANALYSIS_MARKER):
+    marker, _, body = text.partition("\n")
+    if marker.strip() != TRAINING_SLICE_ANALYSIS_MARKER or not body.strip():
         return ""
-    return text + "\n" if text else ""
+    return body.strip() + "\n"
 
 
 __all__ = [
-    "NO_ANALYSIS_MARKER",
+    "TRAINING_SLICE_ANALYSIS_MARKER",
     "analyze_epoch_telemetry",
     "load_latest_insight",
     "proposer_visible_entry_ids",

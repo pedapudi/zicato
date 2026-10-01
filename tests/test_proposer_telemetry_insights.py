@@ -42,6 +42,10 @@ from zicato.core.types import OverfittingConfig
 from zicato.proposer.input_capture import ROLE_PROPOSAL, read_proposer_inputs
 
 _HEADING = "## Recent telemetry insights"
+# The provenance line the analyzer writes on a training-slice analysis.
+TRAINING_SLICE_ANALYSIS_MARKER = (
+    "<!-- zicato: decision-telemetry analysis of the training slice -->"
+)
 
 
 def _proposal_tasks(workspace: Path, epoch_id: str) -> list[str]:
@@ -53,9 +57,10 @@ def _proposal_tasks(workspace: Path, epoch_id: str) -> list[str]:
 
 
 def _write_insight(workspace: Path, epoch_id: str, name: str, body: str) -> None:
+    """Write ``body`` as an analysis of the training slice, marker included."""
     directory = workspace / "epochs" / epoch_id / "insights"
     directory.mkdir(parents=True, exist_ok=True)
-    (directory / name).write_text(body, encoding="utf-8")
+    (directory / name).write_text(f"{TRAINING_SLICE_ANALYSIS_MARKER}\n{body}", encoding="utf-8")
 
 
 def _run_scripted_round(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[Path, str]:
