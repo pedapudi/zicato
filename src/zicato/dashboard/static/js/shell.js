@@ -871,7 +871,7 @@ export async function buildTreeModel(route) {
     // ROUND GROUPING (Task 5): Epoch → Round 0 / Round 1 / … → {challengers
     // minted that round}, read off the SERVED per-epoch round timeline
     // (/api/epoch/{id}/round-timeline). A missing timeline (the endpoint
-    // absent — e.g. the Rust supervisor) yields no round nodes: the tree
+    // absent or the read failed) yields no round nodes: the tree
     // renders its flat generation list, never a re-derived grouping.
     const epochStructure = (isContractEpoch && ep && ep.tournament && ep.tournament.structure) || 'gauntlet';
     const treeRounds = roundsForTree({
@@ -1176,7 +1176,7 @@ async function refreshPipeline(alive) {
     const pipe = await D.livePipeline();
     _live.updatePipeline(pipe);
   } catch (err) {
-    // absent endpoint (Rust supervisor) / transient failure → no stepper.
+    // absent endpoint / transient failure → no stepper.
     _live.updatePipeline(null);
   } finally {
     _pipeInFlight = false;

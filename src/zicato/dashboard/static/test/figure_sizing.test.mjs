@@ -183,7 +183,7 @@ test('per-judge trend: the CSS lane is intrinsic (max-content) and the value sta
 
 // ── 5. the calibration MINI (the band's third card) ────────────────────────
 test('buildCalibrationMini: null on an absent read and on a lineage with no SCORED point', () => {
-  assertEqual(epochView.buildCalibrationMini(null), null, 'absent (Rust supervisor) → no card');
+  assertEqual(epochView.buildCalibrationMini(null), null, 'absent → no card');
   assertEqual(epochView.buildCalibrationMini({ points: [] }), null, 'no points → no card');
   assertEqual(epochView.buildCalibrationMini({
     points: [{ generation_id: 'v0', score_fraction: null, total_claims: 0 }],

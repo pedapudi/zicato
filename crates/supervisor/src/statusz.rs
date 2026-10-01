@@ -4,7 +4,7 @@
 //! supervisor itself is responsible for and can directly observe:
 //!
 //!   * the supervisor process: version, build, bound port, uptime,
-//!     workspace, read-only flag;
+//!     workspace;
 //!   * the process tree it polices: the orchestrator pid and each
 //!     in-flight run worker pid;
 //!   * per-run wall-clock deadlines and time remaining / overrun;
@@ -37,11 +37,6 @@ pub struct SupervisorInfo {
     pub uptime_seconds: u64,
     /// Absolute workspace path being watched.
     pub workspace: String,
-    /// Whether control-file writes are disabled (`--read-only`).
-    pub read_only: bool,
-    /// Whether the full dashboard routes are disabled (`--no-dashboard`):
-    /// `true` means watchdog-only mode.
-    pub dashboard_disabled: bool,
     /// This supervisor process's own pid.
     pub pid: i32,
 }
@@ -115,9 +110,6 @@ pub struct StatuszView {
     /// Recent watchdog escalations from the in-memory ring buffer,
     /// newest last.
     pub watchdog_actions: Vec<Action>,
-    /// Cumulative torn-write / non-monotonic-seq counters over the canonical
-    /// active-tournament JSONL fold (process lifetime).
-    pub fold_diagnostics: crate::fold_stats::FoldDiagnosticsView,
     /// Integrity status of the tamper-evident audit ledger.
     pub audit_ledger: AuditStatus,
     /// Latest diff-containment scan result (record #2).
@@ -165,8 +157,6 @@ pub struct SupervisorIdentity {
     pub port: u16,
     pub uptime_seconds: u64,
     pub workspace: String,
-    pub read_only: bool,
-    pub dashboard_disabled: bool,
 }
 
 /// Compute per-run deadline status. Pure and `now`-injected.
@@ -248,7 +238,7 @@ fn heartbeat_status(
 /// watchdog is deciding on. `None` means seq is not being tracked (legacy
 /// heartbeat) and staleness falls back to the timestamp age.
 // A pure assembler: each parameter is one independent, already-computed input
-// surface (identity, thresholds, the two heartbeat ages, the fold/ledger/diff
+// surface (identity, thresholds, the two heartbeat ages, the ledger/diff
 // diagnostics, the action ring). Bundling them into a struct would only move
 // the same fields behind one more name, so the explicit signature is clearer.
 #[allow(clippy::too_many_arguments)]
@@ -257,7 +247,6 @@ pub fn build_statusz(
     identity: &SupervisorIdentity,
     heartbeat_stale_threshold_seconds: u64,
     seq_age_seconds: Option<u64>,
-    fold_diagnostics: crate::fold_stats::FoldDiagnosticsView,
     action_log: &Arc<WatchdogLog>,
     audit_ledger: AuditStatus,
     diff_containment: crate::diff_containment::DiffContainmentView,
@@ -299,8 +288,6 @@ pub fn build_statusz(
             port: identity.port,
             uptime_seconds: identity.uptime_seconds,
             workspace: identity.workspace.clone(),
-            read_only: identity.read_only,
-            dashboard_disabled: identity.dashboard_disabled,
             pid: std::process::id() as i32,
         },
         heartbeat,
@@ -308,7 +295,6 @@ pub fn build_statusz(
         runs_over_deadline,
         summary,
         watchdog_actions: action_log.snapshot(),
-        fold_diagnostics,
         audit_ledger,
         diff_containment,
         promotion_gate,
@@ -391,18 +377,6 @@ th{color:#888;font-weight:normal}\
     out.push_str(&format!(
         "<tr><th>workspace</th><td>{}</td></tr>",
         esc(&s.workspace)
-    ));
-    out.push_str(&format!(
-        "<tr><th>read-only</th><td>{}</td></tr>",
-        s.read_only
-    ));
-    out.push_str(&format!(
-        "<tr><th>mode</th><td>{}</td></tr>",
-        if s.dashboard_disabled {
-            "watchdog-only (--no-dashboard)"
-        } else {
-            "watchdog + dashboard"
-        }
     ));
     out.push_str("</table>");
 
@@ -525,26 +499,6 @@ th{color:#888;font-weight:normal}\
         }
         out.push_str("</table>");
     }
-
-    // Fold diagnostics: torn-write / non-monotonic-seq counters over the
-    // canonical active-tournament JSONL fold (process lifetime).
-    let fd = &v.fold_diagnostics;
-    out.push_str("<h2>fold diagnostics</h2><table>");
-    let pf_cls = if fd.parse_failures > 0 { "bad" } else { "ok" };
-    let sg_cls = if fd.seq_gaps > 0 { "warn" } else { "ok" };
-    out.push_str(&format!(
-        "<tr><th>torn writes (parse failures)</th><td class=\"{pf_cls}\">{}</td></tr>",
-        fd.parse_failures
-    ));
-    out.push_str(&format!(
-        "<tr><th>non-monotonic seq (gaps)</th><td class=\"{sg_cls}\">{}</td></tr>",
-        fd.seq_gaps
-    ));
-    out.push_str(&format!(
-        "<tr><th>folds observed</th><td class=\"dim\">{}</td></tr>",
-        fd.folds
-    ));
-    out.push_str("</table>");
 
     // Audit ledger: the tamper-evident hash-chain's integrity.
     let al = &v.audit_ledger;
@@ -893,8 +847,6 @@ mod tests {
                 port: 7892,
                 uptime_seconds: 10,
                 workspace: "/tmp/ws".into(),
-                read_only: false,
-                dashboard_disabled: true,
                 pid: 1234,
             },
             heartbeat: heartbeat_status(None, Utc::now(), 90, None),
@@ -908,7 +860,6 @@ mod tests {
                 run_id: Some("r-late".into()),
                 outcome: Outcome::KilledForcefully,
             }],
-            fold_diagnostics: Default::default(),
             audit_ledger: Default::default(),
             diff_containment: Default::default(),
             promotion_gate: Default::default(),
@@ -936,8 +887,6 @@ mod tests {
                 port: 7892,
                 uptime_seconds: 10,
                 workspace: "/tmp/<evil>".into(),
-                read_only: false,
-                dashboard_disabled: false,
                 pid: 1,
             },
             heartbeat: heartbeat_status(None, Utc::now(), 90, None),
@@ -945,7 +894,6 @@ mod tests {
             runs_over_deadline: 0,
             summary: "no active runs".into(),
             watchdog_actions: vec![],
-            fold_diagnostics: Default::default(),
             audit_ledger: Default::default(),
             diff_containment: Default::default(),
             promotion_gate: Default::default(),

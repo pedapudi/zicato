@@ -1042,11 +1042,9 @@ Two processes read the index, and neither writes it:
   `query/_sqlite.py` (a SQLite URI with `mode=ro`).
 - **The Rust supervisor** (`crates/supervisor`, see
   [RUNTIME.md](RUNTIME.md) §3) opens it read-only through the
-  **`rusqlite`** crate (`index_db.rs`, `SQLITE_OPEN_READ_ONLY`). `zicato
-  evolve` spawns the supervisor with `--no-dashboard`, so there it runs
-  only the watchdog and `/statusz`; the supervisor's own dashboard routes,
-  and their index queries, serve only when an operator runs the binary
-  without that flag.
+  **`rusqlite`** crate (`index_db.rs`, `SQLITE_OPEN_READ_ONLY`). Only
+  its opt-in promotion-gate and divergence audits query it; the
+  supervisor serves no index-backed route.
 
 ```
 ┌────────────────────────────┐   ┌───────────────────────────┐   ┌───────────────────────────┐

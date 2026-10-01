@@ -6,7 +6,7 @@
 // the server computes and the client renders. The formats are: mono `1512 ±34`
 // in the quiet-precision register; a faint `provisional` suffix under
 // MIN_RATING_GAMES; and `—` when the fold has not rated a generation, or when
-// the payload omits the keys (the Rust lineage view). No chips. The rating is
+// the payload omits the keys (a pre-rating payload). No chips. The rating is
 // VISIBILITY-ONLY and nothing here feeds the gate.
 // Digest guardrails per touched view: a no-op beat churns zero DOM; a rating
 // moving on reindex repaints.
@@ -27,7 +27,7 @@ const ui = await import('../js/ui.js');
 // ====================================================================
 
 test('ratingModel: integer register, provisional floor, null degrade', () => {
-  // unrated: missing / null elo (the Rust view omits the keys entirely).
+  // unrated: missing / null elo (a pre-rating payload omits the keys).
   assertEqual(ui.ratingModel(null), null);
   assertEqual(ui.ratingModel({}), null);
   assertEqual(ui.ratingModel({ elo: null, elo_se: null, elo_games: null }), null);
@@ -141,7 +141,7 @@ test('gens roster: the rating cell renders per row (rated / provisional / —)',
   assert(cells.some((c) => c.textContent === '—'), 'the unrated row reads —');
 });
 
-test('gens roster: digest guardrail — no-op beat churns NO DOM; absent triple degrades (Rust view)', async () => {
+test('gens roster: digest guardrail — no-op beat churns NO DOM; absent triple degrades', async () => {
   freshState();
   installFixtureMap(ratedGauntletFixture());
   const gens = await import('../js/views/gens.js');
@@ -155,7 +155,7 @@ test('gens roster: digest guardrail — no-op beat churns NO DOM; absent triple 
   assertEqual(host.innerHTMLWriteCount(), writes, 'identical payload: zero additional writes');
 
   // KEY-ABSENT degrade: the stock FIXTURE lineage has NO rating keys at all
-  // (the Rust lineage view / a pre-rating payload) — renders, all dashes.
+  // (a pre-rating payload) — renders, all dashes.
   freshState();
   installFetch();
   const host2 = document.createElement('div');

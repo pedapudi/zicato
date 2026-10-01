@@ -729,7 +729,7 @@ export function stat(value, key) {
 // server derives them and these helpers only FORMAT. Quiet-precision register:
 // mono `1512 ±34`, a faint `provisional` suffix while the sample is thin,
 // `—` when the fold has not rated the generation (zero settled duels, cold
-// index, or the Rust lineage view, which omits the keys — absence reads as
+// index, or a lineage payload that omits the keys — absence reads as
 // null). NO chips.
 
 // THE one home of the provisionality floor (the views import it from here;

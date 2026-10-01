@@ -16,7 +16,7 @@
 //     the ACTIVE element while all four steps sit pending, and its draw count
 //     renders — that stretch is work rather than a stalled round;
 //   * LiveController.updatePipeline: an idle projection (all pending, no
-//     decision) or a null read (Rust supervisor) leaves the host EMPTY; a
+//     decision) or a null read leaves the host EMPTY; a
 //     live one renders; an identical re-serve keeps DOM NODE IDENTITY (zero
 //     rebuild — the no-flash contract); an advance repaints.
 
@@ -156,7 +156,7 @@ test('LiveController.updatePipeline: idle/null → empty host; live renders; ide
   assert(host, 'the hero head carries the pipeline host');
 
   ctl.updatePipeline(null);
-  assertEqual(host.childNodes.length, 0, 'a null read (Rust supervisor) leaves the head unchanged');
+  assertEqual(host.childNodes.length, 0, 'a null read leaves the head unchanged');
   ctl.updatePipeline(idlePipe());
   assertEqual(host.childNodes.length, 0, 'an idle projection renders no stepper');
 

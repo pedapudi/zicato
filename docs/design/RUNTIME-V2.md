@@ -24,7 +24,8 @@ producer-consumer channels, each with its own file format, write discipline, ato
 and polling or inotify path:
 
 - **live state** — orchestrator/runner *produce* `heartbeat.json`,
-  `active_runs/*`, `active_tournament.events.jsonl`; dashboard + supervisor *consume*.
+  `active_runs/*`, `active_tournament.events.jsonl`; the dashboard consumes all
+  three, and the supervisor consumes `heartbeat.json` and `active_runs/*`.
 - **control commands** — dashboard *produces* `control/*`; the orchestrator
   *consumes* them at its safe points
   (`src/zicato/runtime/control_consumer.py`). The consumer was unwired when
@@ -104,7 +105,7 @@ view is derived from it, so views cannot contradict each other.
 
 | hand-rolled channel | proposed replacement | shipped state |
 |---|---|---|
-| Tournament live updates | an `EventLog` | shipped: `runtime/active_tournament.events.jsonl`, folded by the Python reader (`zicato.runtime.tournament_log`) and the supervisor (`read_active_tournament`) |
+| Tournament live updates | an `EventLog` | shipped: `runtime/active_tournament.events.jsonl`, folded by the Python reader (`zicato.runtime.tournament_log`) |
 | `heartbeat.json` + `active_runs/*` | a runtime `EventLog` | partly shipped: the progress log `runtime/progress.events.jsonl` carries the liveness `seq`; `heartbeat.json` (which mirrors that `seq`) and `active_runs/*` remain snapshot files |
 | `control/*` commands | a **`CommandQueue`** (wire the consumer) | consumer wired (`zicato.runtime.control_consumer`); claim-once is an atomic move into `control_log/` in `zicato.runtime.control`, and `CommandQueue` is unused |
 | `control/kill_requests/*` | a `CommandQueue` | not migrated: one JSON marker per run, written by `request_worker_kill` and cleared by the supervisor |
@@ -187,8 +188,7 @@ Verified against the code:
 The on-disk live-state format changed from snapshots to logs for the
 tournament state, so that migration did not preserve the file format. The test suite gates it: the producer-consumer
 parity tests assert that the dashboard renders identically, and tests cover
-the log path, with producer and consumer migrated together. The Rust
-supervisor reads the same log (`WorkspacePaths::active_tournament_log`).
+the log path, with producer and consumer migrated together.
 
 ## Non-goals
 

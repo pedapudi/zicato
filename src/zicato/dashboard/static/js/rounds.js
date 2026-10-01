@@ -9,7 +9,7 @@
 // This module only renames served fields for the renderer. Tournament records,
 // projected standings, gate outcomes, and live rounds arrive already joined.
 //
-// A NULL timeline (the endpoint absent — e.g. the Rust supervisor) yields an
+// A NULL timeline (the endpoint absent or the read failed) yields an
 // EMPTY settled list: the views render their honest empty state; the rounds
 // are never re-derived client-side.
 

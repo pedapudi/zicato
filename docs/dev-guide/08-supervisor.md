@@ -6,8 +6,7 @@
 > confirmed-dead-only reaping, the hash-chained ledger, diff-containment,
 > promotion gatekeeping, the divergence auditor, the read-only SQLite
 > discipline), the kill-request single-escalator handshake, build/packaging
-> and binary resolution, the Rust dev workflow, and the recipe for adding a
-> control route.
+> and binary resolution, and the Rust dev workflow.
 >
 > **Prerequisites.** 07-runtime-and-durability.md (every file the supervisor
 > reads is defined there: heartbeat, active runs, the tournament event log,
@@ -27,13 +26,12 @@
 > | S5 | the confirmed-death-before-reaping rule | Orphan signalling and cleanup require a positively dead producer identity recorded by the run and the stable writer guard. Live, unknown or unreadable producer identity retains ownership. |
 > | S6 | the path-confined snapshot collection rule | Snapshot GC removes only a `ztw-snap-*` root that is a strict descendant of the system temp dir. Any other path is refused, however it got into the record. |
 > | S7 | the ledger-records-never-gates rule | The audit ledger is append-only, hash-chained, fsynced per append, torn-tail-repaired at open, and verified on startup. It records; it never gates. |
-> | S8 | the read-only version-pinned index rule | The supervisor opens `index.db` read-only, refuses a `user_version` that does not equal its pinned `EXPECTED_SCHEMA_VERSION`, and every index-backed endpoint degrades to an empty/`null` payload with a `note` rather than a 500. |
+> | S8 | the read-only version-pinned index rule | The supervisor opens `index.db` read-only and refuses a `user_version` that does not equal its pinned `EXPECTED_SCHEMA_VERSION`. A missing, stale or unreadable index makes the promotion-gate and divergence audits report no finding; it never fails a route or a watchdog loop. |
 > | S9 | coordinated worker termination | The parent delegates termination through a kill-request marker when a supervisor is reachable. A bounded fallback uses the captured process identity if delegation does not confirm group termination. |
 > | S10 | the read-only fail-open integrity check | Every integrity-notary check (diff containment, promotion gate, divergence) is read-only and fail-open on the supervisor side: it alarms on positive observed evidence and reports nothing when the attestation cannot be made. |
 > | S11 | independent enforcement with fixed trigger priority | Run enforcement applies confirmed-death reap, kill-request, deadline, then staleness. Each verified owner has one concurrent escalation, recorded in the action ring and optional ledger. Integrity scans run separately. |
-> | S12 | the never-block-never-leak live surface rule | The live surface never blocks and never leaks write intermediates: the filesystem watcher drops `*.tmp` atomic-write intermediates and per-file-debounces; the SSE broker is a bounded broadcast that drops a slow client rather than blocking the watcher or other clients. |
-> | S13 | the no-cached-state-across-ticks rule | The supervisor holds NO cached state across ticks except the explicitly-carried trackers (`SeqLiveness`, pending process owners and their guarded orphan snapshots, integrity de-dup sets, the ledger tail) and the process-lifetime counters. `WorkspacePaths` is read fresh every tick and is the Rust twin of `zicato.runtime.paths`. |
-> | S14 | the operational-not-analytical HTTP surface rule | The HTTP read surface is operational. Analytical tournament and health projections belong to `zicato.query`; the supervisor may inspect the index for alarms but never serves it as business truth. |
+> | S12 | the no-cached-state-across-ticks rule | The supervisor holds NO cached state across ticks except the explicitly-carried trackers (`SeqLiveness`, pending process owners and their guarded orphan snapshots, integrity de-dup sets, the ledger tail) and the process-lifetime action ring. `WorkspacePaths` is read fresh every tick and is the Rust twin of `zicato.runtime.paths`. |
+> | S13 | the operational-not-analytical HTTP surface rule | The HTTP read surface is operational. Analytical tournament and health projections belong to `zicato.query`; the supervisor may inspect the index for alarms but never serves it as business truth. |
 
 ---
 
@@ -44,16 +42,15 @@ event loop cannot notice it is wedged; a process that rewrites its own
 records is not a trustworthy witness to them. So the supervisor is:
 
 - **a separate OS process** — `zicato-supervisor`, a Rust binary spawned by
-  `zicato evolve` (with `--no-dashboard`, so it runs the watchdog loop and
-  its `/statusz` surface only) or run standalone by the operator / `zicato
-  dashboard`;
+  `zicato evolve` or run standalone by the operator; it runs the watchdog
+  loops and serves `/statusz`, `/statusz.json` and `/api/audit/verify`;
 - **a reader of atomic runtime files** — observations come from the files
   chapter 07 defines, through `crates/supervisor/src/reader.rs`. Read operations
   need no writer lock. Orphan mutation holds the stable kernel guard while
   it inspects records, terminates verified groups and finalizes ownership;
 - **never a peer in memory** — no shared queues, no IPC channel, no port the
   orchestrator must answer on. The one "write channel" back toward the loop
-  is the same control-file protocol everyone else uses (§8.10, §8.13).
+  is the kill-request marker it clears after acting on it (§8.10).
 
 This is what makes its guarantees meaningful: a deadline kill fires even when
 the orchestrator's event loop is parked, because nothing about the supervisor
@@ -80,10 +77,10 @@ producer death, competing writer leases and asynchronous enforcement.
 
 | Module | Role |
 |---|---|
-| `main.rs` | CLI (`clap`) + wiring: spawns the two watchdog loops, the filesystem watcher, the HTTP server; opt-in flags for the integrity notary (`--diff-containment`, `--promotion-gate`, `--divergence-audit`, `--ledger-dir`); `--read-only`, `--no-dashboard`, `--daemon`. |
+| `main.rs` | CLI (`clap`) + wiring: spawns the two watchdog loops and the HTTP server; opt-in flags for the integrity notary (`--diff-containment`, `--promotion-gate`, `--divergence-audit`, `--ledger-dir`). |
 | `lib.rs` | Library facade so the integration tests exercise the same code paths without spawning the binary. |
 | `watchdog.rs` | Heartbeat, run enforcement, and independent integrity scan tasks, with their decision functions and timing state. |
-| `reader.rs` | Reads runtime state files into snapshots; `WorkspacePaths` (the path map twin of `zicato.runtime.paths`); kill-request read/clear; lineage/active-run views. |
+| `reader.rs` | Reads runtime state files; `WorkspacePaths` (the path map twin of `zicato.runtime.paths`); kill-request read/clear; the lineage view the audits read. |
 | `state.rs` | Serde wire structs mirroring the Python dataclasses — every field `#[serde(default)]`. |
 | `signal.rs` | POSIX signal helpers: liveness, `pid_start_time`, `verified_process`, pgid guards, and identity-checked escalation (`escalate_owned_target`). |
 | `reap.rs` | Confirmed-dead determination + prefix-guarded `ztw-snap-*` snapshot GC. |
@@ -94,14 +91,10 @@ producer death, competing writer leases and asynchronous enforcement.
 | `promotion_gate.rs` | Integrity record #3: re-derive the gate's scalar rule per recorded promotion (`check_row`). |
 | `divergence.rs` | Integrity record #4: canonical-vs-index join auditor. |
 | `index_db.rs` | Read-only SQLite access; `EXPECTED_SCHEMA_VERSION` pin; best-effort row readers. |
-| `epoch.rs` | Assembles the current epoch's contract view for the dashboard. |
-| `run_log.rs` | Tails recent goldfive events for the log panel. |
-| `fold_stats.rs` | Cumulative torn-write / seq-gap counters over the tournament-log fold, surfaced on `/statusz`. |
-| `routes.rs` | HTTP handlers; the read-only 403 guard; control-marker writers. |
+| `epoch.rs` | Assembles the current epoch's contract view for the integrity audits. |
+| `routes.rs` | HTTP handlers for `/statusz`, `/statusz.json` and `/api/audit/verify`. |
 | `server.rs` | Axum server; binds the first free port in `--port..=--port+10`. |
-| `sse.rs` / `watcher.rs` | SSE broker fed by the inotify/FSEvents watcher (100ms debounce). |
 | `statusz.rs` | The watchdog's own minimal operational surface (`/statusz`, `/statusz.json`). |
-| `static_assets.rs` | Compile-time embedded dashboard assets. |
 | `action_log.rs` | In-memory ring buffer of recent watchdog escalations. |
 | `log.rs` | Tracing subscriber init. |
 | `test_process_group.rs` | Test-only helpers (`#[cfg(test)]`) that spawn real process groups for the signal and reap tests. |
@@ -381,9 +374,7 @@ the ledger alongside the in-memory ring; `TransitionObserver` stamps each
 newly observed promote/reject decision and epoch contract-hash change
 (de-duplicated, so a steady-state poll appends nothing); the three
 integrity-notary scans append their findings. `/statusz` shows a chain-break
-indicator and `GET /api/audit/verify` runs a full walk — both stay mounted
-even under `--no-dashboard` (chain integrity must be checkable in
-watchdog-only mode).
+indicator and `GET /api/audit/verify` runs a full walk.
 
 > ✅ ALWAYS route a new supervisor-observed event through
 > `AuditLedger::append` with a new additive `RecordKind` — never write the
@@ -516,28 +507,19 @@ promotion-gate alarms. They do not feed dashboard decisions. A missing,
 stale, or malformed index makes those checks fail open with no attestation;
 the operational HTTP surface remains file-backed.
 
-**The API/static subset it serves.** The router (`routes.rs::router`)
-mounts two tiers. Unconditionally — the watchdog's own surface: `/statusz`,
-`/statusz.json`, `/api/audit/verify`. Under `--no-dashboard` that is ALL you
-get. Otherwise the full dashboard surface: the embedded static UI (`/`,
-`/static/*`, fallback asset resolution), the state APIs (`/api/state`,
-`/api/epoch`, `/api/lineage`, `/api/run-log`, `/api/active-runs`,
-`/api/active-tournament`, `/api/heartbeat`, `/api/health`), the SSE stream
-(`/events`, fed by the filesystem watcher), and the control POSTs
-(`/api/control/pause`, `/resume`, `/skip-round`,
-`/promote/:generation_id`, `/reject/:generation_id`, `/brief`; §8.13).
+**The routes it serves.** The router (`routes.rs::router`) mounts three
+read-only `GET` routes: `/statusz`, `/statusz.json` and `/api/audit/verify`.
+The dashboard user interface and its API belong to the Python dashboard
+service (09-dashboard-and-query.md).
 
-**What degrades on the index being absent/stale.** File-backed endpoints
-(heartbeat, active runs, active tournament, run log) keep working. Integrity
-audits report no claim when their index side cannot be read. Analytical
-endpoints are not mounted here; add them to `zicato.query` rather than to the
-supervisor.
+**What degrades on the index being absent/stale.** `/statusz` reads only
+runtime files and keeps working. Integrity audits report no claim when their
+index side cannot be read. Analytical endpoints belong in `zicato.query`.
 
 > ⛔ NEVER return a 500 from a supervisor GET because a workspace file or
 > the index is missing. The supervisor's contract is to run against a
 > workspace that has never booted an orchestrator; every reader treats
-> absence as a valid state. (400 for a malformed id and 403 for read-only
-> POSTs are the deliberate exceptions.)
+> absence as a valid state.
 
 ---
 
@@ -564,7 +546,7 @@ signal, signal a recycled pid the other side already reaped, or interleave
 SIGTERM/SIGKILL windows unpredictably. One writer of intent, one owner of
 signals during the delegation window.
 
-`kill_requests/` has no dashboard route. The operator has no per-run kill
+No HTTP route writes `kill_requests/`. The operator has no per-run kill
 control: a run killed from outside ends with no result file, which the parent
 records as the infrastructure abort `gone_no_result`, so the round is
 deferred and the run is evaluated again.
@@ -625,10 +607,10 @@ supervision is protective, never load-bearing for the loop itself.
 > certainly running the stale copy: rebuild, or pass `--supervisor-binary
 > target/release/zicato-supervisor` explicitly.
 
-`zicato evolve` spawns the resolved binary with `--no-dashboard` (the
-watchdog + `/statusz` only — the UI is the separate Python dashboard
-service, whose port walk range 7892–7902 is deliberately disjoint from the
-supervisor's 7920–7930; see the `--port` doc in `main.rs`).
+`zicato evolve` spawns the resolved binary with `--workspace <root>`. The UI
+is the separate Python dashboard service, whose port walk range 7892–7902 is
+disjoint from the supervisor's 7920–7930 (see the `--port` doc in
+`main.rs`).
 
 ---
 
@@ -655,9 +637,9 @@ wrong here.
   (`producer_death_requires_valid_saved_identity`, `refuses_a_path_outside_the_temp_dir` are
   the tone to match — one named property per test).
 - *Route/end-to-end tests* live in `crates/supervisor/tests/integration_test.rs`
-  (~2,400 lines): build a synthetic workspace with `make_workspace()`
+  (~1,600 lines): build a synthetic workspace with `make_workspace()`
   (tempdir + `runtime/active_runs`, `runtime/control`, `epochs/`),
-  construct `ServeOptions` via the `serve_opts(read_only)` helper, bind an
+  construct `ServeOptions` via the `serve_opts()` helper, bind an
   EPHEMERAL port (`port 0`) through `server::serve`, then drive real HTTP
   against `handle.addr`. Because `lib.rs` exposes every module, the tests
   exercise the same code paths as the binary without spawning it.
@@ -675,105 +657,32 @@ work is required when:
 | Change class | Rust work required |
 |---|---|
 | Additive field the supervisor should ignore | none (serde ignores unknown keys; defaults cover absence) |
-| Additive field the supervisor must surface | mirror field in `state.rs` + wire into the route/statusz view + a deserialization test |
-| Semantic/shape change to a served payload | change the Python service AND the Rust route in the same commit — the heartbeat-ts lesson: when the dashboard schema clean-break made `ts` THE one typed liveness timestamp (integer ms, stamped server-side from `last_heartbeat`), both the Python reader and the Rust supervisor's heartbeat route had to move atomically, or the two dashboards would disagree about liveness (see 12-bug-casebook.md) |
+| Additive field the supervisor must surface | mirror field in `state.rs` + wire into the statusz view + a deserialization test |
+| Semantic/shape change to a field the supervisor reads | change the Python writer AND the Rust `state.rs` struct in the same commit, with a deserialization test on the Rust side |
 | Index schema change | bump Python `SCHEMA_VERSION` AND Rust `EXPECTED_SCHEMA_VERSION` together, update the row readers, re-capture the REINDEX-DUMP golden (11-testing.md §11.7) |
-| Control-file shape change | update the Rust marker writers in `routes.rs` AND the Python consumer in the same commit (§8.13's checklist) |
+| Kill-request marker change | update `reader.rs::read_kill_requests` / `clear_kill_request` AND the Python writer in the same commit |
 
 > ✅ ALWAYS grep BOTH languages when you touch a shared name. The shared
 > vocabulary is small and explicit: `ztw-snap-` / `SNAPSHOT_PREFIX`,
 > `SCHEMA_VERSION` / `EXPECTED_SCHEMA_VERSION`, `promote_margin` /
 > `DEFAULT_PROMOTE_MARGIN`, the runtime file field names in `state.py` /
-> `state.rs`, the control-file names (`pause_epoch`, `skip_round`,
-> `kill_requests/`, `promote/`, `reject/`), and the start-time token semantics
+> `state.rs`, the kill-request directory `kill_requests/`, and the start-time token semantics
 > in `lock.py` / `signal.rs`. Each pair carries a comment pointing at its
 > twin — keep the comments true.
 
 ---
 
-## 8.13 Recipe: add a control route
+## 8.13 Control gestures belong to the Python dashboard
 
-Scenario: a new operator gesture — say "rotate the board now" — needs a
-dashboard button. Control gestures are files (07-runtime-and-durability.md
-§"The control protocol"); the supervisor's role is to expose a POST that
-writes the marker. Six steps, two languages, tests on both sides.
-
-**Step 1 — Python endpoint.** Add the marker constant + write path in
-`zicato.runtime.control` (a flag file `control/rotate_board`, or a targeted
-`control/rotate_board/<arg>` — copy the `CMD_SKIP_ROUND` /
-`CMD_PROMOTE_PREFIX` patterns, including `write_command`'s shape
-dispatch), and the matching POST on the Python dashboard service
-(`src/zicato/dashboard/endpoints.py`) so both UIs offer the gesture.
-
-**Step 2 — Rust parity route.** In `crates/supervisor/src/routes.rs`:
-register the route in `router()` inside the `!state.dashboard_disabled`
-block, and write the handler on the established skeleton — read-only guard
-first, id validation for targeted commands, atomic write, `202 ACCEPTED`
-with the payload echoed:
-
-```rust
-async fn control_skip_round(State(s): State<AppState>, body: Option<Json<EmptyBody>>) -> Response {
-    if let Some(r) = forbidden_if_read_only(&s) {
-        return r;
-    }
-    let reason = body.and_then(|Json(b)| b.reason).unwrap_or_default();
-    write_control_marker(
-        &s,
-        "skip_round",
-        serde_json::json!({"reason": reason, "ts": chrono::Utc::now()}),
-    )
-    .await
-}
-```
-— `crates/supervisor/src/routes.rs` (the pattern to copy)
-
-Notes on the skeleton: `write_control_marker` / `atomic_write` already
-implement tmp-write + rename (the Rust twin of the Python atomic contract) —
-use them, never a bare `tokio::fs::write`. Targeted routes MUST validate the
-path parameter with `is_safe_id` and answer `400` on failure (see
-`control_promote`) — the id becomes a filename.
-
-**Step 3 — read-only 403.** The `forbidden_if_read_only` guard is
-non-negotiable on every POST: a `--read-only` supervisor is the "attach an
-observability supervisor to a run it should not police" mode, and a control
-write from it would violate that promise. There is an existing integration
-test asserting POSTs return 403 under `read_only: true` — extend it to your
-route.
-
-**Step 4 — consumer.** A command nobody consumes is the "dead
-producer-consumer" RUNTIME-V2 names. Wire the evolve-loop semantics in
-`zicato.runtime.control_consumer` at the correct safe point (between rounds
-/ top of `evolve_once` / at the gate — see the safe-point table in
-07-runtime-and-durability.md §"The control protocol"), consuming via
-`consume_command` with `source=CONSUMER_SOURCE` and a real `reason` so the
-audit trail stays complete. Decide the staleness story explicitly: does the
-command survive an epoch roll (pause does) or must it be drained
-(promote/reject are)?
-
-**Step 5 — tests, both sides.**
-
-- Rust: an integration test in `crates/supervisor/tests/integration_test.rs`
-  — POST against an ephemeral-port server, assert `202` and that the marker
-  file exists with the expected JSON body; a second assertion under
-  `read_only: true` expecting `403`; for a targeted route, a malformed-id
-  `400`.
-- Python: a consumer test in `tests/` — write the command via
-  `write_command`, drive the safe-point function, assert the effect AND the
-  `control_log/` audit record (name, arg, source, reason).
-
-**Step 6 — frontend + docs.** If the dashboard UI grows a button, the node
-suite needs the behaviour test (11-testing.md §11.9);
-`--help` text changes ripple into the CLI-HELP parity golden only if you
-added a CLI verb.
-
-**Verify**
-
-```bash
-cargo fmt --check && cargo clippy --all-targets -- -D warnings
-cargo test -p zicato-supervisor            # includes the new route tests
-uv run pytest tests/ -q -k "control"       # consumer + audit-log coverage
-uv run pytest tests/ -m "not node and not cascade_oc" -q  # nothing else regressed, both tiers
-```
+The supervisor serves no control routes. An operator gesture such as pause,
+resume, skip-round, promote or reject is a control file
+(07-runtime-and-durability.md §"The control protocol") that the Python
+dashboard service writes through its `POST /api/control/*` endpoints
+(09-dashboard-and-query.md §9.5.3) and the orchestrator consumes at its safe
+points. Add a new gesture there: the marker constant and write path in
+`zicato.runtime.control`, the route in `src/zicato/dashboard/server.py` with
+its handler, and the consumer in `zicato.runtime.control_consumer`, each with
+its tests.
 
 ---
 
@@ -781,15 +690,13 @@ uv run pytest tests/ -m "not node and not cascade_oc" -q  # nothing else regress
 
 `main.rs` starts the heartbeat and run-enforcement loops. Run enforcement
 starts the independent integrity task. Initialization constructs workspace paths,
-thresholds, the filesystem watcher, shared trackers and the optional ledger.
+thresholds, shared trackers and the optional ledger.
 It records supervisor startup, then spawns the polling loops at `--interval`.
 A broadcast channel stops polling, and run enforcement finishes admitted
 escalations before returning.
 
 ```rust
     let seq_liveness = Arc::new(std::sync::Mutex::new(watchdog::SeqLiveness::new()));
-    ...
-    let fold_diagnostics = Arc::new(zicato_supervisor::fold_stats::FoldDiagnostics::new());
     ...
     let led = Arc::new(zicato_supervisor::ledger::AuditLedger::open(dir));
     ... led.append(zicato_supervisor::ledger::RecordKind::SupervisorStart, ...)
@@ -891,15 +798,14 @@ turns the runtime state files into typed snapshots, read FRESH each tick.
 Its `WorkspacePaths` struct is the Rust twin of `zicato.runtime.paths` — the same
 path map, in the other language:
 
-- `heartbeat()`, `lock()`, `active_runs_dir()`, `active_tournament_log()`, `lineage()`, `control_dir()`, `current_epoch_marker()`,
-  and the `runtime` / `epochs` / `workspace` roots. `watcher.rs::classify` and
-  every reader resolve against these, so the Python and Rust sides agree on
-  *where every file lives* by construction.
+- `heartbeat()`, `lock()`, `lock_guard()`, `active_runs_dir()`, `lineage()`, `control_dir()`, `kill_requests_dir()`, `current_epoch_marker()`,
+  `index_db()`, `epoch_health_dir()`, and the `runtime` / `epochs` / `workspace`
+  roots. Every reader resolves against these, so the Python and Rust sides
+  agree on *where every file lives* by construction.
 - `read_heartbeat` / `read_active_runs` / `read_kill_requests` /
-  `read_active_tournament` (folding the event log — §8.18) / `build_snapshot`
-  (the composite `/api/state` shape). Each is best-effort: a missing/malformed
-  file degrades to `None`/empty, never a panic — the file-side twin of the
-  read-only version-pinned index rule.
+  `read_current_epoch` / `build_lineage_view`. Each is best-effort: a
+  missing/malformed file degrades to `None`/empty, never a panic — the
+  file-side twin of the read-only version-pinned index rule.
 
 Because every Python writer is atomic (tmp→fsync→rename — 07-runtime-and-
 durability.md §"The atomic-write contract"), the reader never needs a lock and
@@ -909,11 +815,10 @@ supervisor shares
 no memory, no lock, no socket with the orchestrator; the atomic file rename IS
 the synchronization.
 
-> ✅ ALWAYS add a new runtime file's path to BOTH `zicato.runtime.paths` and
-> `WorkspacePaths`, and add its `ChangeKind` to `watcher.rs::classify`, in the
-> same commit. A path that exists on only one side is a file the supervisor
-> either cannot find or cannot notify on — the silent-skew class §8.12's
-> `grep BOTH languages` rule exists to catch.
+> ✅ ALWAYS add a runtime file the supervisor reads to BOTH
+> `zicato.runtime.paths` and `WorkspacePaths` in the same commit. A path that
+> exists on only one side is a file the supervisor cannot find — the
+> silent-skew class §8.12's `grep BOTH languages` rule exists to catch.
 
 ---
 
@@ -1093,96 +998,28 @@ handful of records per run), which in turn is what makes the fsync-per-append of
 
 ---
 
-## 8.18 The live surface: the filesystem watcher and SSE
+## 8.18 Every loop polls the state files
 
-The supervisor's dashboard tier is fed by an inotify/FSEvents watcher and an SSE
-broker, both built to satisfy the never-block-never-leak live surface rule.
-
-### 8.18.1 The watcher — debounce + the `.tmp` filter
-
-`watcher.rs::spawn` watches the `runtime` tree recursively, the `epochs` tree
-recursively (when present), and the workspace root non-recursively (for
-`current_epoch` / `lineage.json`). A dedicated thread drains raw `notify` events,
-debounces per-file, and classifies each path into a `ChangeKind`. The single most
-important filter is the atomic-write intermediate:
-
-```rust
-/// Whether `path` is an atomic-write intermediate (`*.tmp`). The Python
-/// side writes state files as `path.tmp` then renames to `path`; the
-/// `.tmp` create/modify/remove events are pure noise and must never
-/// reach an SSE client.
-fn is_tmp_path(path: &Path) -> bool { ... }
-```
-— `crates/supervisor/src/watcher.rs`, `is_tmp_path`
-
-This is the watcher's side of the two-language atomic-write contract: because the
-Python writer renames `path.tmp → path` (07-runtime-and-durability.md §"The
-atomic-write contract"), the `.tmp` events are noise and the REAL event is the
-rename into place. Emitting the `.tmp` intermediates would fan a write storm out
-to every SSE client. The per-file debounce (100ms) further collapses a rename
-storm. `classify` resolves each path against `WorkspacePaths` (§8.15) into
-`ChangeKind::{Heartbeat, ActiveRuns, ActiveTournament, Lineage, Lock, Epoch,
-Control, Unknown}` — the same tokens the SSE `state_change.kind` field carries.
-
-### 8.18.2 The SSE broker — snapshot then live, bounded, non-blocking
-
-```rust
-    let live = BroadcastStream::new(rx)
-        .filter_map(|res| async move { res.ok() })
-        .map(|ev| { ... SseEvent::default().event("state_change").data(payload) });
-    let merged = initial.chain(live);
-    Sse::new(merged).keep_alive(KeepAlive::new().interval(Duration::from_secs(15)).text("ping"))
-```
-— `crates/supervisor/src/sse.rs`, `build_sse` (abridged)
-
-A new client gets a `snapshot` event (a full `build_snapshot` — §8.15) followed
-by live `state_change` events as files mutate, with a 15s keep-alive `ping`. The
-channel is a bounded `tokio::sync::broadcast`: a slow client that cannot keep up
-is DROPPED (`filter_map(res.ok())` discards its lag errors) rather than
-back-pressuring the watcher or other clients. The `/events` route serves
-this; it is part of the full-dashboard tier, so it is absent under
-`--no-dashboard` (§8.9).
-
-### 8.18.3 `fold_stats` — the torn-write / seq-gap counters
-
-The active-tournament view is a single-writer append-only JSONL the supervisor
-folds on every read. The lenient fold hides two failure modes, and
-`fold_stats.rs` makes them countable on `/statusz`:
-
-```rust
-//!   * **Torn writes** — a line that fails to parse as JSON. ... This is
-//!     the Rust-drops-vs-Python-raises divergence: the Python reader raises
-//!     on a bad line; the Rust reader swallows it. Counting it restores
-//!     visibility without changing the lenient behavior.
-//!   * **Non-monotonic `seq`** — ... A gap (or a backwards step) means the
-//!     writer lost events or republished out of order.
-```
-— `crates/supervisor/src/fold_stats.rs` (module docstring)
-
-`FoldDiagnostics` holds three `AtomicU64`s (`parse_failures`, `seq_gaps`,
-`folds`), shared by `Arc` and read by `/statusz`. They are cumulative
-*process-lifetime* counters — a restart starts them at zero, "the honest thing to
-report". The `folds` counter (incremented on every fold, even a clean one) lets a
-reader tell "0 folds, 0 problems" apart from "many folds, 0 problems". This is
-the deliberate design point where the Rust reader stays LENIENT (it drops a torn
-line, matching the fold's `filter_map`) while surfacing the divergence from the
-Python reader's raise — visibility without a behavior change.
+The supervisor has no filesystem watcher. `heartbeat_loop`, `runs_loop` and
+`integrity_loop` each reread the state files they need on every
+`--interval` tick (default 2s), and `/statusz` reads them again on each
+request. A missed file event therefore cannot hide a stale heartbeat or an
+overdue run: the next tick sees the file as it is on disk. Because every
+Python writer renames a complete temporary file into place (§8.15), a read
+never observes a partial record.
 
 ---
 
 ## 8.19 The operational surface: `/statusz`
 
-`/statusz` (HTML) and `/statusz.json` are the watchdog's own minimal surface,
-mounted UNCONDITIONALLY — even under `--no-dashboard` — because a watchdog's
-health must be checkable in watchdog-only mode (§8.9). The `StatuszView` payload
-(`statusz.rs`) carries:
+`/statusz` (HTML) and `/statusz.json` are the watchdog's own minimal surface.
+The `StatuszView` payload (`statusz.rs`) carries:
 
 | Field | Source | What it tells an operator |
 |---|---|---|
 | version / build / bound port / `uptime_seconds` | the supervisor process | the notary itself is alive and which build |
 | `orchestrator_uptime_seconds` | `heartbeat.started_at` | how long the audited loop has run (`None` when no heartbeat) |
 | `watchdog_actions` | the `action_log` ring (`WatchdogLog::snapshot`) | the recent SIGTERM/SIGKILL escalations, per trigger + outcome |
-| `fold_diagnostics` | `FoldDiagnostics::view` (§8.18.3) | cumulative torn-write / seq-gap counts over the tournament fold |
 | ledger chain status | `AuditLedger::verify` → `AuditStatus` | `configured` + `intact` + `records`, and `first_break_seq` + `break_reason` on a break |
 
 The `action_log` (`action_log.rs`) is an in-memory ring buffer of the most recent
@@ -1190,15 +1027,12 @@ escalations — the fast, always-available operational view that `record_action`
 writes alongside the ledger (§8.14.3). The two are complementary: the ring is
 process-lifetime and lossy (a bounded ring), the ledger is durable and
 hash-chained (§8.7). `GET /api/audit/verify` runs a full fresh chain walk on
-demand; like `/statusz`, it stays mounted even under `--no-dashboard`, so chain
-integrity is checkable without the dashboard tier.
+demand.
 
 > ✅ ALWAYS surface a new supervisor-observed condition on BOTH `/statusz`
 > (the live view) and — when it is an integrity finding — the ledger (the
-> durable record). The `fold_diagnostics` counters are the model: a condition
-> the fold silently swallowed became a visible cumulative counter without
-> changing the lenient fold behavior. A finding that lands in only one place is
-> either invisible to a live operator or absent from the audit trail.
+> durable record). A finding that lands in only one place is either
+> invisible to a live operator or absent from the audit trail.
 
 ---
 
@@ -1326,7 +1160,7 @@ what "escaped" means.
   `ztw-snap-` checkout contract; the control protocol's Python half; the
   seq-vs-timestamp liveness design.
 - 09-dashboard-and-query.md — the separate Python dashboard service that
-  serves the full UI; the supervisor's embedded UI is the minimal twin.
+  serves the UI.
 - 11-testing.md — the Rust checks in complete validation before merge; the
   REINDEX-DUMP gate that pins the shared index schema; route-test patterns.
 - 12-bug-casebook.md — the watchdog-kills-orchestrator finding that

@@ -22,7 +22,7 @@ Each invocation:
    experiment, applies it, runs the tournament, and either promotes or
    rejects the child generation.
 4. **Launches the dashboard** and prints its URL. The dashboard service
-   and the watchdog-only supervisor bind distinct default ports so they
+   and the watchdog supervisor bind distinct default ports so they
    never contend; the reported URL is the dashboard's *actually-bound*
    port, read back from ``runtime/dashboard.json`` rather than assumed.
 
@@ -208,11 +208,9 @@ async def _maybe_spawn_supervisor(
 ) -> asyncio.subprocess.Process | None:
     """Spawn the supervisor binary as a subprocess (or return ``None``).
 
-    The supervisor is now a watchdog-only process: it is started with
-    ``--no-dashboard`` so it runs the process-supervision loop and the
-    always-on ``/statusz`` probe but does NOT serve the dashboard UI.
-    The dashboard is served by the separate Python service spawned by
-    :func:`_maybe_spawn_dashboard`.
+    The supervisor is the watchdog: it runs the process-supervision loop
+    and serves the ``/statusz`` probe. The dashboard is served by the
+    separate Python service spawned by :func:`_maybe_spawn_dashboard`.
 
     The binary's stdout/stderr are inherited from the parent so log
     output appears alongside ``zicato evolve``'s own messages. On
@@ -242,7 +240,6 @@ async def _maybe_spawn_supervisor(
             str(binary),
             "--workspace",
             str(workspace_root),
-            "--no-dashboard",
             start_new_session=True,
         )
     except (OSError, TypeError, ValueError) as exc:
@@ -928,9 +925,8 @@ def evolve_cmd(
             # default disposition — no worse than before this handler.
             pass
 
-        # The supervisor is now watchdog-only (spawned with
-        # --no-dashboard); the dashboard UI is served by the separate
-        # Python dashboard service. Both are children of this evolve
+        # The supervisor is the watchdog; the dashboard UI is served by
+        # the separate Python dashboard service. Both are children of this evolve
         # process and both are torn down on exit.
         #
         # The two bind distinct default ports (the watchdog supervisor

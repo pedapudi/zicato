@@ -12,8 +12,7 @@ in wire form, and the same event reaches disk in either of two shapes:
   "emitted_at": {"seconds": …, "nanos": …}}``. Field names are snake_case
   and the timestamp is a proto ``Timestamp`` message rather than a string.
   The meta-loop emitter writes this whenever the proto stubs are
-  unavailable, and the supervisor's ``run_log.rs`` documents it as the
-  form a proto reparse produces.
+  unavailable.
 
 :func:`parse_event` resolves both to one :class:`EventRecord`, and
 :func:`read_event_log` turns a file into records. Every consumer reads
@@ -76,9 +75,6 @@ def to_snake(name: str) -> str:
     builds its JSON name from a snake_case field name, so each capital
     follows a lowercase letter — but a hand-written or foreign log may, and
     splitting inside an acronym produces a case name no dispatch table holds.
-
-    The supervisor's Rust ``run_log::to_snake`` implements the same rule, so
-    an event kind has one spelling whichever of the two services read it.
     """
     out: list[str] = []
     prev_lower_or_digit = False

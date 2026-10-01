@@ -165,8 +165,8 @@ export async function render(host, ctx, params, route) {
   const sideB = cmpId ? resolveCandidate(dossierB, cmpId, genList, experiments, scalarByGen, championId, championScalar, allMatchups, null, racingSt, epochInflight, liveProjected, liveness) : null;
 
   // the per-CANDIDATE visibility rating (the server-joined lineage triple;
-  // distinct from the per-PAIR gate ratingBlock below). Absent on the Rust
-  // lineage view / a pre-rating payload -> null -> the stat renders '—'.
+  // distinct from the per-PAIR gate ratingBlock below). Absent on a
+  // pre-rating payload -> null -> the stat renders '—'.
   const ratingByGen = new Map(rows.map((g) => [String(g.generation_id), { elo: g.elo, elo_se: g.elo_se, elo_games: g.elo_games }]));
   sideA.rating = ratingByGen.get(String(genId)) || null;
   if (sideB) sideB.rating = ratingByGen.get(String(cmpId)) || null;

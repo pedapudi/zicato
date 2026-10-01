@@ -52,7 +52,7 @@ because breaking it caused a real failure.
 | how candidates are generated / what the proposer sees | `05-proposer.md` | proposer 1–6 (+ G8) |
 | tournament execution / structures / the worker / caching | `06-tournament-and-selection.md` | the unit-cache and gate rules, **T1–T11** (+ G9) |
 | state files / storage / resume / the round log | `07-runtime-and-durability.md` | the persistence and crash-safety rules, **D1–D12** |
-| the Rust supervisor | `08-supervisor.md` | the out-of-band enforcement rules, **S1–S14** |
+| the Rust supervisor | `08-supervisor.md` | the out-of-band enforcement rules, **S1–S13** |
 | a reader / endpoint / view | `09-dashboard-and-query.md` | the dashboard/query doctrine, **DQ1–DQ15** (+ G10) |
 | contract preparation / a CLI flag / the public API | `10-cli-and-configuration.md` | contract and library boundaries: typed edits, publication that launches no run, driver-independent library code |
 | tests | `11-testing.md` | the verification discipline, **V1–V10** |

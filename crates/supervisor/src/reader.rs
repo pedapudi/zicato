@@ -4,10 +4,9 @@
 //! (`.tmp` + `rename`). Reads are best-effort: a missing or
 //! transiently-truncated file returns `None` rather than panicking.
 
-use crate::state::{ActiveRun, ActiveTournament, Heartbeat, Lineage, Lock, Snapshot};
-use chrono::{DateTime, Utc};
+use crate::state::{ActiveRun, Heartbeat};
+use chrono::Utc;
 use serde::de::DeserializeOwned;
-use serde::Serialize;
 use std::path::{Path, PathBuf};
 use tracing::warn;
 
@@ -45,13 +44,6 @@ impl WorkspacePaths {
 
     pub fn active_runs_dir(&self) -> PathBuf {
         self.runtime.join("active_runs")
-    }
-
-    /// The active-tournament EVENT LOG (RUNTIME-V2 Phase 3): an
-    /// append-only JSONL the orchestrator/runner publish live state onto.
-    /// `read_active_tournament` folds it into the live view.
-    pub fn active_tournament_log(&self) -> PathBuf {
-        self.runtime.join("active_tournament.events.jsonl")
     }
 
     pub fn control_dir(&self) -> PathBuf {
@@ -109,158 +101,17 @@ fn read_json<T: DeserializeOwned>(path: &Path) -> Option<T> {
     }
 }
 
-/// Public best-effort JSON read, used by sibling modules (`run_log`).
-/// Mirrors `read_json`: missing/empty/malformed -> `None`.
-pub fn read_json_opt<T: DeserializeOwned>(path: &Path) -> Option<T> {
-    read_json(path)
-}
-
 pub fn read_heartbeat(paths: &WorkspacePaths) -> Option<Heartbeat> {
     read_json(&paths.heartbeat())
-}
-
-pub fn read_lock(paths: &WorkspacePaths) -> Option<Lock> {
-    read_json(&paths.lock())
-}
-
-/// Fold the active-tournament event log into the live view.
-///
-/// The log is single-writer append-only JSONL: a full-envelope `Snapshot`
-/// event (the authoritative base/reset) plus `EntryUpdate` /
-/// `PartialAggregate` / `ProjectedUpdate` deltas. We fold from the LAST
-/// `Snapshot` forward, applying the deltas that affect this view's
-/// (coarse) fields — entry transitions + the partial aggregate — so the
-/// supervisor's tournament panel reflects the recorded transitions.
-/// A missing, empty or unusable log yields `None`.
-pub fn read_active_tournament(paths: &WorkspacePaths) -> Option<ActiveTournament> {
-    read_active_tournament_with_stats(paths).0
-}
-
-/// `read_active_tournament`, additionally returning the [`FoldStats`]
-/// gathered while folding the event log (torn-write parse failures +
-/// non-monotonic-`seq` gaps). The supervisor accumulates these into the
-/// shared [`crate::fold_stats::FoldDiagnostics`] for `/statusz`; callers
-/// that do not care can use the thin [`read_active_tournament`] wrapper.
-pub fn read_active_tournament_with_stats(
-    paths: &WorkspacePaths,
-) -> (Option<ActiveTournament>, crate::fold_stats::FoldStats) {
-    let (value, stats) = fold_active_tournament_value_with_stats(&paths.active_tournament_log());
-    let tournament = value.and_then(|value| serde_json::from_value(value).ok());
-    (tournament, stats)
-}
-
-/// Replay the event log into the folded envelope JSON `Value` (or `None`
-/// when the log is absent/empty, so the caller can fall back to the
-/// snapshot), tallying torn-write parse failures and non-monotonic-`seq`
-/// gaps over the canonical fold.
-///
-/// Operates on raw JSON so the coarse `ActiveTournament` struct need not
-/// model every delta field — the fold matches `(entry_id, side)` on the raw
-/// rows exactly as the Python writer did. The lenient behavior is preserved
-/// exactly — a bad line is still skipped, a republished snapshot still
-/// resets the fold — but each skipped/torn line now increments
-/// `parse_failures` and each `seq` that is not exactly one past its
-/// predecessor increments `seq_gaps`, so the conditions the fold otherwise
-/// hides become visible on `/statusz`.
-fn fold_active_tournament_value_with_stats(
-    log_path: &Path,
-) -> (Option<serde_json::Value>, crate::fold_stats::FoldStats) {
-    let mut stats = crate::fold_stats::FoldStats::default();
-    let text = match std::fs::read_to_string(log_path) {
-        Ok(t) => t,
-        Err(_) => return (None, stats),
-    };
-    // Each line is one event record: {seq, ts, type, payload}. Parse every
-    // non-blank line; count (not silently drop) the ones that fail.
-    let mut events: Vec<serde_json::Value> = Vec::new();
-    for line in text.lines().filter(|l| !l.trim().is_empty()) {
-        match serde_json::from_str::<serde_json::Value>(line) {
-            Ok(v) => events.push(v),
-            Err(_) => stats.parse_failures += 1,
-        }
-    }
-
-    // Count non-monotonic seq across the successfully-parsed events: each
-    // event's `seq` should be exactly one past the previous one. A gap or a
-    // backwards step (lost events / out-of-order republish) is tallied. The
-    // first event of the log is never a gap. Events without a `seq` field do
-    // not advance the cursor (they cannot be judged monotonic).
-    let mut prev_seq: Option<i64> = None;
-    for ev in &events {
-        if let Some(seq) = ev.get("seq").and_then(|s| s.as_i64()) {
-            if let Some(prev) = prev_seq {
-                if seq != prev + 1 {
-                    stats.seq_gaps += 1;
-                }
-            }
-            prev_seq = Some(seq);
-        }
-    }
-
-    if events.is_empty() {
-        return (None, stats);
-    }
-    // Fold from the last Snapshot (a Snapshot is the authoritative reset).
-    let base_idx = match events
-        .iter()
-        .rposition(|e| e.get("type").and_then(|t| t.as_str()) == Some("Snapshot"))
-    {
-        Some(i) => i,
-        None => return (None, stats),
-    };
-    let mut current = match events[base_idx].get("payload") {
-        Some(p) => p.clone(),
-        None => return (None, stats),
-    };
-    for ev in &events[base_idx + 1..] {
-        let ty = ev.get("type").and_then(|t| t.as_str()).unwrap_or("");
-        let payload = match ev.get("payload") {
-            Some(p) => p,
-            None => continue,
-        };
-        match ty {
-            "Snapshot" => current = payload.clone(),
-            "Update" => {
-                if let (Some(fields), Some(view)) = (
-                    payload.get("fields").and_then(|v| v.as_object()),
-                    current.as_object_mut(),
-                ) {
-                    view.extend(
-                        fields
-                            .iter()
-                            .map(|(key, value)| (key.clone(), value.clone())),
-                    );
-                }
-                if let (Some(updates), Some(entries)) = (
-                    payload.get("entries").and_then(|v| v.as_object()),
-                    current.get_mut("entries").and_then(|v| v.as_array_mut()),
-                ) {
-                    for (index, entry) in updates {
-                        if let Some(row) =
-                            index.parse::<usize>().ok().and_then(|i| entries.get_mut(i))
-                        {
-                            *row = entry.clone();
-                        }
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    (Some(current), stats)
-}
-
-pub fn read_lineage(paths: &WorkspacePaths) -> Option<Lineage> {
-    read_json(&paths.lineage())
 }
 
 /// One generation node in the directory-derived lineage view.
 ///
 /// `promoted` is tri-state: `Some(true)` / `Some(false)` once the
 /// tournament has resolved, and `None` while the generation is still in
-/// flight (its `experiment.json` carries no decision yet). The dashboard
-/// Tree needs the in-flight node so it can draw a generation that is
-/// being scored *right now* — not only the promoted chain.
+/// flight (its `experiment.json` carries no decision yet), so the audits
+/// see a generation that is being scored *right now*, not only the
+/// promoted chain.
 #[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct LineageGeneration {
     pub generation_id: String,
@@ -271,8 +122,7 @@ pub struct LineageGeneration {
     pub created_at: Option<String>,
 }
 
-/// The `GET /api/lineage` response: every generation directory under
-/// every epoch, in flight or resolved.
+/// Every generation directory under every epoch, in flight or resolved.
 #[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct LineageView {
     pub generations: Vec<LineageGeneration>,
@@ -514,73 +364,6 @@ pub fn clear_kill_request(paths: &WorkspacePaths, run_id: &str) {
     }
 }
 
-/// An `active_runs/{run_id}.json` enriched with a computed deadline
-/// fraction for the dashboard's per-entry progress bars.
-///
-/// `progress` is *not* true task progress — that signal does not exist.
-/// It is `(now - started_at) / (deadline - started_at)`, clamped to
-/// `0.0..=1.0`: a wall-clock-elapsed-vs-budget fraction. `elapsed_seconds`
-/// and `budget_seconds` are exposed alongside so the UI can render
-/// "01:56 / 15:00" and honestly label the bar "elapsed".
-#[derive(Debug, Clone, Serialize)]
-pub struct ActiveRunView {
-    /// All fields of the on-disk `ActiveRun`, inlined.
-    #[serde(flatten)]
-    pub run: ActiveRun,
-    /// Deadline fraction in `0.0..=1.0`; `null` when `started_at` or
-    /// `deadline` is missing so a fraction cannot be computed.
-    pub progress: Option<f64>,
-    /// Whole seconds elapsed since `started_at` (clamped at 0).
-    pub elapsed_seconds: Option<i64>,
-    /// Total budget window `deadline - started_at` in whole seconds.
-    pub budget_seconds: Option<i64>,
-}
-
-/// Compute the elapsed / budget / clamped-fraction triple for one run.
-///
-/// Pure and `now`-injected so it is unit-testable. Any missing input
-/// degrades that field to `None` rather than guessing.
-pub fn compute_run_progress(
-    run: &ActiveRun,
-    now: DateTime<Utc>,
-) -> (Option<f64>, Option<i64>, Option<i64>) {
-    let started = match run.started_at {
-        Some(s) => s,
-        None => return (None, None, None),
-    };
-    let elapsed = (now - started).num_seconds().max(0);
-    let deadline = match run.deadline {
-        Some(d) => d,
-        // No deadline: we can report elapsed but not a fraction/budget.
-        None => return (None, Some(elapsed), None),
-    };
-    let budget = (deadline - started).num_seconds();
-    if budget <= 0 {
-        // Degenerate window (deadline <= start): treat as fully elapsed.
-        return (Some(1.0), Some(elapsed), Some(budget.max(0)));
-    }
-    let fraction = (elapsed as f64 / budget as f64).clamp(0.0, 1.0);
-    (Some(fraction), Some(elapsed), Some(budget))
-}
-
-/// `read_active_runs`, enriched with the computed deadline fraction.
-/// Backs `GET /api/active-runs`.
-pub fn read_active_runs_view(paths: &WorkspacePaths) -> Vec<ActiveRunView> {
-    let now = Utc::now();
-    read_active_runs(paths)
-        .into_iter()
-        .map(|run| {
-            let (progress, elapsed_seconds, budget_seconds) = compute_run_progress(&run, now);
-            ActiveRunView {
-                run,
-                progress,
-                elapsed_seconds,
-                budget_seconds,
-            }
-        })
-        .collect()
-}
-
 pub fn read_current_epoch(paths: &WorkspacePaths) -> Option<String> {
     let marker = paths.current_epoch_marker();
     match std::fs::read_to_string(&marker) {
@@ -593,19 +376,6 @@ pub fn read_current_epoch(paths: &WorkspacePaths) -> Option<String> {
             }
         }
         Err(_) => None,
-    }
-}
-
-pub fn build_snapshot(paths: &WorkspacePaths) -> Snapshot {
-    Snapshot {
-        heartbeat: read_heartbeat(paths),
-        lock: read_lock(paths),
-        active_runs: read_active_runs(paths),
-        active_tournament: read_active_tournament(paths),
-        lineage: read_lineage(paths),
-        epoch_id: read_current_epoch(paths),
-        epoch: crate::epoch::build_epoch_view(paths),
-        generated_at: Utc::now(),
     }
 }
 
@@ -627,7 +397,6 @@ mod tests {
     fn missing_files_yield_none() {
         let (_t, p) = make_ws();
         assert!(read_heartbeat(&p).is_none());
-        assert!(read_active_tournament(&p).is_none());
         assert!(read_active_runs(&p).is_empty());
     }
 
@@ -719,142 +488,5 @@ mod tests {
         assert!(!read_kill_requests(&p).contains("run_a"));
         // Clearing a vanished marker is a no-op, not an error.
         clear_kill_request(&p, "run_a");
-    }
-
-    #[test]
-    fn folds_the_active_tournament_event_log() {
-        // Published updates replace fields without recalculating display values.
-        let (_t, p) = make_ws();
-        let log = [
-            r#"{"seq":1,"ts":"t","type":"Snapshot","payload":{"tournament_id":"t1","entries":[{"entry_id":"b0","side":"child","status":"queued"},{"entry_id":"b0","side":"parent","status":"queued"}]}}"#,
-            r#"{"seq":2,"ts":"t","type":"Update","payload":{"fields":{},"entries":{"0":{"entry_id":"b0","side":"child","status":"running"},"1":{"entry_id":"b0","side":"parent","status":"queued"}}}}"#,
-            r#"{"seq":3,"ts":"t","type":"Update","payload":{"fields":{"partial_challenger_agg":{"scalar":0.5},"standings":[{"generation_id":"v1","rank":1}],"projected":{"v1":{"scalar":0.25}},"gen_states":[{"generation_id":"v1","eliminated_at_round":null,"lost_rounds":[0]}]},"entries":{}}}"#,
-        ]
-        .join("\n");
-        std::fs::write(p.active_tournament_log(), log).unwrap();
-
-        let at = read_active_tournament(&p).expect("the folded tournament");
-        assert_eq!(at.tournament_id.as_deref(), Some("t1"));
-        let child = at.entries.iter().find(|e| e.entry_id == "b0").unwrap();
-        assert_eq!(child.status.as_deref(), Some("running"));
-        let published = serde_json::to_value(&at).unwrap();
-        assert_eq!(published["standings"][0]["generation_id"], "v1");
-        assert_eq!(published["projected"]["v1"]["scalar"], 0.25);
-        assert_eq!(
-            published["gen_states"][0]["lost_rounds"],
-            serde_json::json!([0])
-        );
-        assert!(published["gen_states"][0]["eliminated_at_round"].is_null());
-    }
-
-    #[test]
-    fn last_snapshot_event_resets_the_fold() {
-        // A later Snapshot supersedes the earlier base (a republish).
-        let (_t, p) = make_ws();
-        let log = [
-            r#"{"seq":1,"ts":"t","type":"Snapshot","payload":{"tournament_id":"old","entries":[]}}"#,
-            r#"{"seq":2,"ts":"t","type":"Snapshot","payload":{"tournament_id":"new","entries":[]}}"#,
-        ]
-        .join("\n");
-        std::fs::write(p.active_tournament_log(), log).unwrap();
-        let at = read_active_tournament(&p).expect("the folded tournament");
-        assert_eq!(at.tournament_id.as_deref(), Some("new"));
-    }
-
-    #[test]
-    fn absent_log_ignores_saved_snapshot() {
-        let (_t, p) = make_ws();
-        let path = p.runtime.join("active_tournament.json");
-        let saved = r#"{"tournament_id":"saved","entries":[]}"#;
-        std::fs::write(&path, saved).unwrap();
-        let (at, stats) = read_active_tournament_with_stats(&p);
-        assert!(at.is_none());
-        assert_eq!(stats, crate::fold_stats::FoldStats::default());
-        assert_eq!(std::fs::read_to_string(path).unwrap(), saved);
-    }
-
-    #[test]
-    fn snapshot_assembles_full_payload() {
-        let (_t, p) = make_ws();
-        std::fs::write(p.heartbeat(), r#"{"pid":1,"phase":"running"}"#).unwrap();
-        std::fs::write(
-            p.active_tournament_log(),
-            r#"{"seq":1,"ts":"t","type":"Snapshot","payload":{"tournament_id":"t1","entries":[]}}"#,
-        )
-        .unwrap();
-        std::fs::write(p.current_epoch_marker(), "2026-05-14_test").unwrap();
-
-        let snap = build_snapshot(&p);
-        assert_eq!(snap.heartbeat.as_ref().unwrap().pid, Some(1));
-        assert_eq!(
-            snap.active_tournament
-                .as_ref()
-                .unwrap()
-                .tournament_id
-                .as_deref(),
-            Some("t1")
-        );
-        assert_eq!(snap.epoch_id.as_deref(), Some("2026-05-14_test"));
-    }
-
-    // ---- fold diagnostics (torn writes + non-monotonic seq) --------
-
-    #[test]
-    fn clean_log_reports_zero_fold_diagnostics() {
-        let (_t, p) = make_ws();
-        let log = [
-            r#"{"seq":1,"ts":"t","type":"Snapshot","payload":{"tournament_id":"t1","entries":[]}}"#,
-            r#"{"seq":2,"ts":"t","type":"Update","payload":{"fields":{},"entries":{}}}"#,
-            r#"{"seq":3,"ts":"t","type":"Update","payload":{"fields":{"partial_challenger_agg":{"scalar":0.5}},"entries":{}}}"#,
-        ]
-        .join("\n");
-        std::fs::write(p.active_tournament_log(), log).unwrap();
-        let (at, stats) = read_active_tournament_with_stats(&p);
-        assert!(at.is_some());
-        assert_eq!(stats.parse_failures, 0);
-        assert_eq!(stats.seq_gaps, 0);
-    }
-
-    #[test]
-    fn torn_write_lines_are_counted_not_just_dropped() {
-        // Two corrupt (un-parseable) lines interleaved with good events. The
-        // fold still succeeds on the good lines (lenient), but the torn
-        // writes are now COUNTED rather than silently dropped.
-        let (_t, p) = make_ws();
-        let log = [
-            r#"{"seq":1,"ts":"t","type":"Snapshot","payload":{"tournament_id":"t1","entries":[]}}"#,
-            r#"{"seq":2,"ts":"t","type":"EntryUp"#, // torn mid-line
-            r#"not json at all"#,                   // garbage
-            r#"{"seq":3,"ts":"t","type":"Update","payload":{"fields":{"partial_challenger_agg":{"scalar":0.9}},"entries":{}}}"#,
-        ]
-        .join("\n");
-        std::fs::write(p.active_tournament_log(), log).unwrap();
-        let (at, stats) = read_active_tournament_with_stats(&p);
-        // The good Snapshot still folds through.
-        assert_eq!(
-            at.expect("good lines still fold").tournament_id.as_deref(),
-            Some("t1")
-        );
-        assert_eq!(stats.parse_failures, 2);
-        // seq jumped 1 -> 3 across the two dropped lines: one gap.
-        assert_eq!(stats.seq_gaps, 1);
-    }
-
-    #[test]
-    fn non_monotonic_seq_is_counted() {
-        // seq goes 1, 2, 5, 3 — a forward gap (2->5) and a backward step
-        // (5->3) are each a non-monotonic event: two gaps.
-        let (_t, p) = make_ws();
-        let log = [
-            r#"{"seq":1,"ts":"t","type":"Snapshot","payload":{"tournament_id":"t1","entries":[]}}"#,
-            r#"{"seq":2,"ts":"t","type":"Update","payload":{"fields":{},"entries":{}}}"#,
-            r#"{"seq":5,"ts":"t","type":"Update","payload":{"fields":{},"entries":{}}}"#,
-            r#"{"seq":3,"ts":"t","type":"Update","payload":{"fields":{},"entries":{}}}"#,
-        ]
-        .join("\n");
-        std::fs::write(p.active_tournament_log(), log).unwrap();
-        let (_at, stats) = read_active_tournament_with_stats(&p);
-        assert_eq!(stats.parse_failures, 0);
-        assert_eq!(stats.seq_gaps, 2);
     }
 }

@@ -359,7 +359,7 @@ complete list of torn-tail-tolerant stores:
 |---|---|---|
 | Per-run `events.jsonl` (telemetry) | the one reader counts an unparseable line and keeps the rest, and reports whether the last line parsed | none (one writer, then read-once) |
 | `epochs/{e}/rounds/{n}/round_log.jsonl` | `RoundLog.read` ignores unterminated bytes before decoding; malformed complete rows raise | On first append or after a failed write, `RoundLog.append` validates the history and truncates an interrupted suffix |
-| `runtime/active_tournament.events.jsonl` + `runtime/progress.events.jsonl` | the Python fold and the Rust supervisor's fold (which counts torn lines into `FoldDiagnostics` for `/statusz`) | cleared wholesale on resume |
+| `runtime/active_tournament.events.jsonl` + `runtime/progress.events.jsonl` | the Python fold | cleared wholesale on resume |
 | Supervisor `audit_ledger.jsonl` | `verify_chain` after `repair_torn_tail` | `AuditLedger::open` truncates the torn tail before verifying/chaining |
 
 And the half of the invariant that keeps this from becoming general
@@ -922,9 +922,8 @@ browser is never the worker's host, so it can age the timestamps and nothing
 more. `read_active_runs_view` therefore stamps the SAME per-record predicate
 (`is_run_fresh`, both gates) onto every served row as `fresh`, and the
 frontend's `freshRunCount` (`livestatus.js`) reads that verdict. Ageing the
-timestamps is its fallback for a server that sends no `fresh` field — the
-Rust supervisor's `/api/active-runs`, or any build predating it — which is
-the one case where the two can differ, and only by keeping a record whose
+timestamps is its fallback for a server that sends no `fresh` field — any
+build predating it — which is the one case where the two can differ, and only by keeping a record whose
 worker the client cannot see is gone.
 
 ### 7.6.3 The writer publishes complete tournament display fields
@@ -1200,7 +1199,7 @@ operator can `touch .zicato/runtime/control/pause_epoch` in an emergency.
 
 | Command | On-disk shape | Written by | Consumed at | Effect |
 |---|---|---|---|---|
-| `pause_epoch` | flag file `control/pause_epoch` (optional JSON body `{"reason", "ts"}`) | dashboard POST `/api/control/pause` (Python service and Rust supervisor both), CLI, bare `touch` | `block_while_paused` — between rounds, and polled until cleared | scheduling held; resume = deleting the flag (`/api/control/resume` unlinks it — never a queued command) |
+| `pause_epoch` | flag file `control/pause_epoch` (optional JSON body `{"reason", "ts"}`) | dashboard POST `/api/control/pause`, CLI, bare `touch` | `block_while_paused` — between rounds, and polled until cleared | scheduling held; resume = deleting the flag (`/api/control/resume` unlinks it — never a queued command) |
 | `skip_round` | flag file `control/skip_round` | dashboard / CLI | `claim_skip_round` at the top of `evolve_once` | round aborts cleanly, exactly like a wall-clock budget cut; a *between-rounds* stale skip is drained as a no-op |
 | `kill_requests/<run_id>` | one marker per run under `control/kill_requests/` (no `.json` suffix) | the Python parent, through `request_worker_kill`, when a worker overruns its budget or a cancelled run must stop | the **Rust supervisor's** runs loop — not the orchestrator | the single-escalator kill handshake (see 08-supervisor.md §8.10); the supervisor clears the marker once termination is confirmed, and the parent clears it on run cleanup |
 | `promote/<gen_id>` / `reject/<gen_id>` | one file per target | dashboard / CLI | `claim_field_gate_overrides` at the gate, for every structure | overrides the gate's verdict for the *matching* in-flight generation; recorded explicitly as an operator override in the OutcomeRecord/journal, never silently |

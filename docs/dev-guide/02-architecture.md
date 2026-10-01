@@ -1726,7 +1726,7 @@ signals:
 - **What it reads:** the `.zicato/runtime/` state files — `heartbeat.json`
   (staleness), the active-run records (each carrying `started_at`,
   `last_progress`, the worker `pid`, and a `deadline = started_at +
-  wall_clock_budget_seconds`), the tournament envelope — plus, for the
+  wall_clock_budget_seconds`), the kill-request markers — plus, for the
   alarm-only notary scans, generation snapshots and settled outcomes.
 - **What it can kill:** worker pids. Two independent triggers per its
   `watchdog.rs` header — deadline ("when `now` passes that deadline the

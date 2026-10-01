@@ -28,8 +28,7 @@ def clamp_run_log_limit(requested: int | None) -> int:
     return min(requested, RUN_LOG_MAX_LIMIT)
 
 
-# Default / ceiling for the ``/api/run-log`` ``?limit=`` query — these
-# match the Rust supervisor's ``run_log::DEFAULT_LIMIT`` / ``MAX_LIMIT``.
+# Default / ceiling for the ``/api/run-log`` ``?limit=`` query.
 RUN_LOG_DEFAULT_LIMIT = 40
 
 

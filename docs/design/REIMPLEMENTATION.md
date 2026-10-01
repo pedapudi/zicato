@@ -729,11 +729,10 @@ registry or generic record hierarchy does not establish that agreement.
   wedge.
 
 The duplication is **only** that subset of index-projection views. Most of
-the 26-file crate is NOT a `query/` duplicate but crash-survival and
+the crate is NOT a `query/` duplicate but crash-survival and
 integrity infrastructure with no Python equivalent: `reader.rs`'s in-flight
-lineage node (`reader.rs:55` the live active-tournament event log; `:304`
-the tri-state in-flight generation the Tree needs), `run_log.rs`'s live
-`events.jsonl` tail, `divergence.rs`'s dead-worker/dead-pid audit
+lineage node (the tri-state in-flight generation the audits read),
+`divergence.rs`'s dead-worker/dead-pid audit
 (`divergence.rs:23`), `ledger.rs` + `diff_containment.rs` (the
 tamper-evident integrity notary), `signal.rs` (POSIX `/proc` liveness), and
 `statusz.rs`/`watchdog.rs` (heartbeat freshness + escalation). These exist
@@ -762,8 +761,7 @@ that made the failure possible.
   **Carve-out:** this applies ONLY to the reader-parity dashboard read-views
   that overlap Python `query/` (epoch / tournament / lineage / gate / racing
   / ratings). It must NOT touch the liveness/integrity surface named in
-  *Observed* — `reader.rs`'s in-flight lineage node, `run_log.rs`'s live
-  telemetry tail, `divergence.rs`'s dead-pid audit, `ledger.rs`,
+  *Observed* — `reader.rs`'s in-flight lineage node, `divergence.rs`'s dead-pid audit, `ledger.rs`,
   `diff_containment.rs`, `signal.rs`//proc, and `statusz.rs`/watchdog
   heartbeat — which reads canonical files directly *by design*, so
   it can still report when the index (and the orchestrator writing it) has

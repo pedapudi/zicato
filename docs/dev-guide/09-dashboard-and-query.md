@@ -34,7 +34,7 @@
 > | DQ5 | change-signals carry no content | **SSE change frames carry changed regions, content revision and progress metadata.** A `state_change` is a signal to fetch rather than a payload. |
 > | DQ6 | a no-op heartbeat rebuilds zero DOM | **A no-op heartbeat rebuilds ZERO DOM.** The client skips unchanged content revisions and progress cursors; a view folds a content digest (timestamps excluded) and swaps only on a real change. Node tests assert DOM-node identity across a re-serve. |
 > | DQ7 | verdicts are honest about the noise floor | **Verdicts are honest about the noise floor.** Movement inside the measured A/A floor reads `no_signal` ("no detectable signal"), never "plateaued" or "improving". |
-> | DQ8 | null-degrade under the Rust supervisor | **Every new GET null-degrades on the Rust supervisor.** A payload the Rust reader does not serve returns `null`/empty; the client paints the honest empty state, never a spinner or a crash. |
+> | DQ8 | a failed read null-degrades | **Every new GET null-degrades.** When a read fails or the endpoint is absent, the client accessor returns `null` and the view paints the honest empty state, never a spinner or a crash. |
 > | DQ9 | controls gate on writability | **Controls gate on `read_only:false`; a destructive control takes a two-step confirm.** A successful control write requests immediate readback; content revision also makes the change visible to other clients. |
 > | DQ10 | completed rounds identify the champion | **`current_champion` is the most recent champion named by a committed round**, or the baseline before any promotion. A gate explanation includes its recorded `deciding_rule`. |
 > | DQ11 | a payload-shape change is a clean break | **A payload-shape change is a clean break.** Server and client change in the same commit, client-side coalescers are deleted, and the node suite's recorded responses and the goldens are re-recorded together. |
@@ -106,11 +106,9 @@ Two orientation facts before anything else:
   the orchestrator and the Rust supervisor read — it is one of three
   independent readers of the runtime state (07-runtime-and-durability.md
   §7.6).
-- **There are TWO servers that speak the same wire.** This Python service
-  and the Rust supervisor (08-supervisor.md) both serve the dashboard
-  bundle and both answer the read APIs. The JS cannot tell which one it is
-  talking to, which is the whole reason for null-degradation under the Rust supervisor (every new GET must
-  null-degrade the way the Rust side will serve it).
+- **This service is the only dashboard server.** The Rust supervisor
+  (08-supervisor.md) serves only its watchdog status routes, so every
+  dashboard read API and the browser bundle come from here.
 
 ---
 
@@ -158,9 +156,8 @@ forbidden_modules = ["zicato.dashboard"]
 — `pyproject.toml`
 
 **Why this matters.** The readers live outside the driver, in per-view
-submodules, so that (1) the Rust supervisor's read layer has a Python peer
-to keep parity with, (2) tests and the CLI can exercise the read model
-without booting a server, and (3) the readers cannot accrete an HTTP concern
+submodules, so that (1) tests and the CLI can exercise the read model
+without booting a server, and (2) the readers cannot accrete an HTTP concern
 by accident. `__init__.py` re-exports the readers production code calls, so
 the endpoint table writes `query.build_epoch_view`; a name absent from
 `__all__` is imported from the submodule that defines it.
@@ -169,8 +166,7 @@ the endpoint table writes `query.build_epoch_view`; a name absent from
 > `zicato.dashboard` from a `zicato.query` module. A reader returns plain
 > Python (`dict` / `list` / scalars); the endpoint wraps it in a
 > `JSONResponse`. The moment a reader knows about HTTP, the query layer has stopped being library code and
-> `make import-lint` reds — and the Rust supervisor loses the Python peer it
-> keeps parity with.
+> `make import-lint` reds.
 
 > ✅ ALWAYS add a new reader to `zicato.query` (a per-view submodule) and
 > re-export it from `__init__.py`'s import block AND `__all__`. The endpoint
@@ -517,8 +513,8 @@ resulting verdict verbatim.
 per-match losers, bracket sides, and each candidate's progression in `gen_states`.
 The publication helper is `tournament/structure.py::attach_elim_states`.
 Both live updates and completed tournament records include its output. The
-Python query service and the Rust supervisor serve those recorded values.
-Neither reader sorts matches, removes duplicates, or infers eliminations.
+query service serves those recorded values. It does not sort matches, remove
+duplicates, or infer eliminations.
 
 In double elimination, a first loss in the winners' bracket leaves a candidate
 eligible for the losers' bracket, including before that match is scheduled.
@@ -742,9 +738,8 @@ def coerce_float(value: Any) -> float | None:
 
 The other normalization the readers depend on lives outside this package.
 `zicato.telemetry.event_log.to_snake` folds a `camelCase`/`PascalCase`
-event key to `snake_case`, and it is one half of a two-language contract —
-the Rust `run_log::to_snake` implements the same rule, so event kinds key on
-ONE stable vocabulary across both servers:
+event key to `snake_case`, so event kinds key on ONE stable vocabulary
+across every reader:
 
 ```python
 def to_snake(name: str) -> str:
@@ -756,18 +751,14 @@ def to_snake(name: str) -> str:
     conversion is idempotent, so a file mixing both spellings normalizes to
     one vocabulary.
     ...
-    The supervisor's Rust ``run_log::to_snake`` implements the same rule, so
-    an event kind has one spelling whichever of the two services read it.
     """
 ```
 — `src/zicato/telemetry/event_log.py`, `to_snake` (docstring)
 
-> ⚠️ TRAP — `to_snake` has a Rust twin. If you change how a goldfive event
-> key is normalized on the Python side, the Rust supervisor's run-log tailer
-> keys on a different vocabulary and the two dashboards show different event
-> kinds for the same file. Change both, or neither. The transcript
-> reconstructor (`query/transcript_reconstruction.py`) reuses this exact helper
-> for the same reason — one normalization, three consumers.
+> ⚠️ TRAP — every event-log consumer keys on `to_snake`'s output. The
+> transcript reconstructor (`query/transcript_reconstruction.py`) reuses this
+> exact helper, so a change to the rule renames event kinds in every consumer
+> at once and moves the recorded responses and goldens that carry them.
 
 ### 9.3.5 The read-only index open
 
@@ -851,7 +842,7 @@ chapter leans on:
 | `build_per_entry_for_generation` | `/api/generation/{e}/{g}/per-entry` | `{tournament_id, mean_score, facet_scores, entries[]}`; `facet_scores` is `{facets: {name: {scalar, mean_score, scored_count, entry_count, ran_count}}, overall}` — the candidate re-aggregated per `facet:` board tag at the epoch's frozen weights, so a facet scalar is comparable to the `overall` row | `{facets: {}, overall: null}` (always present) |
 | `build_snapshot` | `/api/state`, SSE `snapshot` | see above | each field independently `None` |
 | `read_active_runs_view` | `/api/active-runs` | `[{run_id, progress, elapsed_seconds, budget_seconds, last_progress_ts, fresh, …}]`; `fresh` is the server's per-row in-flight verdict — both of `fresh_run_count`'s gates, so the tally is the count of `fresh` rows | `[]` |
-| `read_effective_settings` | `/api/config` | `{recorded_at, pid, instance_id, settings}` where `settings` is the OPEN map `{name: {value, source}}` keyed by each knob's dotted configuration name, `source` naming the tier that set it (the dataclass default, the workspace `config.json`, a pinned CLI flag, the host's CPU count; for `tournament.replicates`, the frozen contract, the measured noise floor, or the structure default). Read off the heartbeat record the loop stamped it on, so the served value is the one in force rather than a second reading of the same files | `null` when the workspace holds no run record, and on the Rust supervisor, which does not serve the route; a record written before the map existed serves it empty |
+| `read_effective_settings` | `/api/config` | `{recorded_at, pid, instance_id, settings}` where `settings` is the OPEN map `{name: {value, source}}` keyed by each knob's dotted configuration name, `source` naming the tier that set it (the dataclass default, the workspace `config.json`, a pinned CLI flag, the host's CPU count; for `tournament.replicates`, the frozen contract, the measured noise floor, or the structure default). Read off the heartbeat record the loop stamped it on, so the served value is the one in force rather than a second reading of the same files | `null` when the workspace holds no run record; a record written before the map existed serves it empty |
 | `list_reflections` (`query/reflection_view.py`) | `/api/reflections[?epoch=]` | `{reflections:[{reflection_id, epoch_id, created_at, mode, executed, noise_floor_max_abs_delta, decision_flip_p, n_findings, n_judges}]}` | `{reflections: []}` |
 | `build_reflection_summary` | `/api/reflection/{id}/summary` | `{found, pillars:{reliability, discrimination, validity, calibration}, findings[], fidelity_tiers}` | `found: false` same-shape empty |
 | `build_judge_scorecards` | `/api/reflection/{id}/scorecards` | `{judges:[{judge_name, tp/fp/fn/tn, ambiguous, precision, recall, f1, disagreement_rate, self_consistency_kappa, exercised, redundant_with}]}` | `{judges: []}` |
@@ -2043,10 +2034,9 @@ step's does not, and an identical re-serve keeps DOM node identity (§9.7.5).
 > ⛔ NEVER teach the JS stepper a phase token. If a new phase should advance
 > the stepper, add it to `_project_pipeline` (server-side) and the JS renders
 > the new `state` automatically. The moment the JS parses `phase` to decide
-> which pip is active, you have a second inference the Rust supervisor cannot
-> match and a re-derivation that breaks server authority. `data.js::livePipeline`
-> null-degrades on a server that does not serve `/api/live/pipeline` (the
-> Rust supervisor), so the stepper simply omits — never guesses.
+> which pip is active, you have a second inference that breaks server
+> authority. `data.js::livePipeline` null-degrades when `/api/live/pipeline`
+> fails, so the stepper simply omits — never guesses.
 
 > ⚠️ TRAP — do not conflate the propose→apply→run→gate PIPELINE stepper with
 > the RUNG stepper (`live.js::rungStepper`), which shows one pip per
@@ -2167,14 +2157,14 @@ on the heartbeat payload (`query/runtime_view.py::read_paused` →
 
 ---
 
-## 9.13 The Rust-supervisor null-degradation duty
+## 9.13 The null-degradation duty
 
-Every read API is served by TWO servers — this Python service and the Rust
-supervisor (08-supervisor.md). The JS cannot tell which one answered. So
-every new GET carries a duty: the client must render an honest empty state
-when the endpoint returns `null`/empty, because the Rust supervisor may not
-serve it (yet, or at all). The client accessors bake this in — an absent
-endpoint degrades to `null`, and the view omits the panel:
+Every new GET carries a duty: the client must render an honest empty state
+when the endpoint returns `null`/empty or the read fails. A read fails when
+the index is absent, when the server errors, and when a browser tab built
+against a newer bundle talks to a service that lacks the endpoint. The client
+accessors bake this in — a failed read degrades to `null`, and the view omits
+the panel:
 
 ```javascript
 export async function livePipeline() {
@@ -2184,26 +2174,21 @@ export async function livePipeline() {
 — `src/zicato/dashboard/static/js/data.js`, `livePipeline`
 
 `home.js` reads the loop-communication endpoints (`trajectory`, `cost`)
-this way and states the duty in a comment: "Both null-degrade (absent
-endpoint on the Rust supervisor) → the stats are simply omitted." The
-pipeline stepper does the same — `updatePipeline(null)` leaves the host
-empty (§9.7.5's node test asserts it: "a null read (Rust supervisor) leaves
-the head unchanged").
+this way, so a failed read omits the stats. The pipeline stepper does the
+same — `updatePipeline(null)` leaves the host empty (§9.7.5's node test
+asserts it).
 
 > ✅ ALWAYS write a new GET's client accessor to null-degrade AND write the
 > view to render an honest empty state on `null`. When you add
-> `/api/epoch/{id}/newthing`, assume the Rust supervisor does not serve it:
-> the accessor returns `null` on a 404, the panel omits or shows "unavailable"
-> — never a spinner, never a crash. The reciprocal duty is on the Rust
-> side (08-supervisor.md §8.12): a payload SHAPE change the client depends on
-> must land in both servers in lock-step, or the two dashboards skew.
+> `/api/epoch/{id}/newthing`, the accessor returns `null` on a 404 or a
+> failed request, and the panel omits or shows "unavailable" — never a
+> spinner, never a crash.
 
-> ⚠️ TRAP — the failure mode of skipping the null-degrade is invisible on the Python
-> service (where you develop) and only shows against the Rust supervisor
-> (where operators often run). A new panel that works perfectly in your
-> `zicato dashboard` session throws `Cannot read property 'x' of null` under
-> the supervisor. Test the accessor's `null` path in the node suite; you
-> cannot rely on hitting the Rust server locally.
+> ⚠️ TRAP — the failure mode of skipping the null-degrade is invisible in a
+> healthy development session, where every read succeeds. A new panel that
+> works in your `zicato dashboard` session throws `Cannot read property 'x'
+> of null` the first time its read fails. Test the accessor's `null` path in
+> the node suite.
 
 ---
 
@@ -2361,8 +2346,8 @@ payload, a declared payload with no route, and a degrade whose fields do not
 match the types the contract names.
 
 **Step 5 — The client accessor, null-degrading.** Add a thin cached
-accessor to `data.js`, and write it to degrade to `null` on an absent
-endpoint (the Rust supervisor may not serve it):
+accessor to `data.js`, and write it to degrade to `null` on a failed read
+(§9.13):
 
 ```javascript
 export async function promotionCadence(epochId) {
@@ -2427,8 +2412,8 @@ uv run mypy src/zicato/
 ```
 
 If you skipped step 1's degrade, a never-built index 500s the endpoint
-and raise. If you skipped step 5's null-degrade, the panel throws under the
-Rust supervisor. If you skipped step 7's node assertion, the panel flashes
+and raise. If you skipped step 5's null-degrade, the panel throws on the
+first failed read. If you skipped step 7's node assertion, the panel flashes
 on every beat and nothing in CI notices (§9.7.1).
 
 ---
@@ -2478,24 +2463,18 @@ shape change legitimately reds those gates. Re-capture with
 behavioural reason in the commit — a golden update is a claim that the new
 bytes are correct, never a rubber-stamp.
 
-**Step 5 — Rust parity, if the client depends on the field.** A shape change
-the JS reads must land in BOTH servers in the same commit or the two
-dashboards skew. Update the Rust route's serde
-(`crates/supervisor/src/...`) to emit the same spelling.
-
 **Verify**
 
 ```bash
 uv run pytest tests/ -q -k "dashboard or query or the_changed_payload"
 make node-test                                 # the views render the recorded responses
 bash tools/parity.sh --only MOCK-GOLDEN --only REINDEX-DUMP   # re-capture if legit
-cargo test -p zicato-supervisor                # Rust parity, if applicable
 ```
 
 > ⛔ NEVER ship a payload change as "add the new field, keep the old one for
 > a release". That grows an alias, forces the client to coalesce
-> (which then never gets removed), and lets the two servers disagree about
-> which field is authoritative. The workspace files are canonical and
+> (which then never gets removed), and leaves two fields that can disagree
+> about which value is authoritative. The workspace files are canonical and
 > rebuildable (07-runtime-and-durability.md §7.1) — there is no wire-format
 > back-compat obligation to a client you ship in the same wheel. Break it
 > clean, in one commit, pins and all.

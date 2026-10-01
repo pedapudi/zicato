@@ -1,4 +1,5 @@
-//! Assemble the current epoch's full evaluation contract for the dashboard.
+//! Assemble the current epoch's full evaluation contract for the integrity
+//! audits (diff containment, promotion gatekeeping, divergence).
 //!
 //! An epoch is defined by a handful of files under
 //! `.zicato/epochs/{epoch_id}/` (`board.jsonl`, `brief.md`,
@@ -8,7 +9,7 @@
 //!
 //! Every component degrades gracefully: a missing or malformed file
 //! yields an empty/`null` value for that component rather than failing
-//! the whole response. When there is no current epoch at all the result
+//! the whole view. When there is no current epoch at all the result
 //! is `{ "epoch_id": null }`.
 
 use crate::reader::WorkspacePaths;
@@ -19,8 +20,7 @@ use tracing::warn;
 /// mutation `preview`).
 const PREVIEW_CHARS: usize = 120;
 
-/// Full epoch definition returned by `/api/epoch` and embedded in the
-/// `/api/state` snapshot under the `epoch` key.
+/// The current epoch's contract, as the integrity audits read it.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct EpochView {
     /// `None` when there is no current epoch marker.

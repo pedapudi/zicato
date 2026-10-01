@@ -1,8 +1,8 @@
 //! Build script: capture a short commit SHA so the running binary can
-//! report a precise build identifier in `/api/health`.
+//! report a precise build identifier on `/statusz`.
 //!
 //! Best-effort: when `git` is unavailable (e.g. a source-tarball build)
-//! the SHA is simply absent and the health endpoint falls back to the
+//! the SHA is simply absent and the build identifier falls back to the
 //! crate version alone. The build never fails on its account.
 
 use std::path::Path;
@@ -25,7 +25,7 @@ fn main() {
     match sha {
         Some(s) => println!("cargo:rustc-env=ZICATO_GIT_SHA={s}"),
         // Emit an empty value so `option_env!` is still consistent;
-        // `routes.rs` treats an empty SHA as "unknown".
+        // `server::build_id` treats an empty SHA as "unknown".
         None => println!("cargo:rustc-env=ZICATO_GIT_SHA="),
     }
 

@@ -48,7 +48,7 @@ export async function render(host, ctx) {
   // The LOOP-COMMUNICATION reads ride alongside: the per-epoch optimization
   // trajectory (promotion rate + the uncertainty-honest verdict + the measured
   // noise floor) and the tournament cost (cost/promotion). Both null-degrade
-  // (absent endpoint on the Rust supervisor) → the stats are simply omitted.
+  // (a failed read) → the stats are simply omitted.
   const [trajs, loops, costs] = await Promise.all([
     Promise.all(rows.map((r) => D.scoreTrajectory(r.epoch_id))),
     Promise.all(rows.map((r) => D.trajectory(r.epoch_id))),
@@ -327,7 +327,7 @@ function fleetCard(row, isCurrent, ctx, sparkVals, live, loop, cost, goalModel) 
 // The round count is SETTLED challengers, matching the verdict chip beside it:
 // a challenger that is still racing has retained nothing yet, and counting it
 // would report a round the loop has not finished. `settled_count` is additive,
-// so a payload from before it existed (or the Rust supervisor's) falls back to
+// so a payload from before it existed falls back to
 // challenger_count and reads exactly as it did.
 export function heroPlaceholderText(loop) {
   const l = loop && typeof loop === 'object' ? loop : null;

@@ -1,16 +1,15 @@
-//! Axum HTTP + SSE server. Binds to the first available port in the
-//! `--port..=--port+10` range to avoid clashing with a previous run.
+//! Axum HTTP server for the watchdog's operational surface. Binds to the
+//! first available port in the `--port..=--port+10` range to avoid clashing
+//! with a previous run.
 
 use crate::action_log::WatchdogLog;
 use crate::reader::WorkspacePaths;
 use crate::routes::{router, AppState};
-use crate::watcher::WatchEvent;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::net::TcpListener;
 use tokio::sync::broadcast;
-use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
 
 /// Outcome of binding the listener.
@@ -18,7 +17,7 @@ pub struct ServerHandle {
     pub addr: SocketAddr,
 }
 
-/// A non-empty build identifier for the dashboard footer.
+/// A non-empty build identifier for `/statusz` and the audit ledger.
 ///
 /// The crate version, suffixed with a short git SHA when the build
 /// script (`build.rs`) could resolve one. Falls back to the bare version
@@ -63,12 +62,9 @@ pub async fn build_listener(
 /// Tunables for the HTTP server that are not derived from the listener.
 ///
 /// Grouped into a struct so `serve` keeps a small, stable signature as the
-/// watchdog-only surface (`/statusz`) grows its inputs.
+/// `/statusz` surface grows its inputs.
 #[derive(Clone)]
 pub struct ServeOptions {
-    pub read_only: bool,
-    /// `--no-dashboard`: serve only the watchdog surface (`/statusz`).
-    pub dashboard_disabled: bool,
     /// Heartbeat staleness threshold the watchdog enforces (seconds).
     pub heartbeat_stale_threshold_seconds: u64,
     /// Shared in-memory ring buffer of recent watchdog escalations.
@@ -76,9 +72,6 @@ pub struct ServeOptions {
     /// Heartbeat seq-liveness tracker shared with the watchdog loop so
     /// `/statusz` reports the same seq-change age the watchdog decides on.
     pub seq_liveness: Arc<std::sync::Mutex<crate::watchdog::SeqLiveness>>,
-    /// Cumulative torn-write / non-monotonic-seq counters over the canonical
-    /// active-tournament JSONL fold; `/statusz` surfaces it.
-    pub fold_diagnostics: Arc<crate::fold_stats::FoldDiagnostics>,
     /// The tamper-evident audit ledger, when one is configured
     /// (`--ledger-dir`). `None` → no ledger; `/statusz` and
     /// `/api/audit/verify` then report it as "not configured". Shared with
@@ -102,7 +95,6 @@ pub async fn serve(
     bind: IpAddr,
     preferred_port: u16,
     options: ServeOptions,
-    watch_tx: broadcast::Sender<WatchEvent>,
     shutdown: broadcast::Sender<()>,
 ) -> std::io::Result<ServerHandle> {
     let listener = build_listener(bind, preferred_port, 10).await?;
@@ -111,31 +103,22 @@ pub async fn serve(
 
     let state = AppState {
         paths,
-        watch_tx,
-        read_only: options.read_only,
         started: Arc::new(Instant::now()),
         build_version: env!("CARGO_PKG_VERSION"),
         // The port actually bound (which may differ from `preferred_port`
         // after the retry walk).
         port: addr.port(),
         build_id: build_id(),
-        dashboard_disabled: options.dashboard_disabled,
         heartbeat_stale_threshold_seconds: options.heartbeat_stale_threshold_seconds,
         action_log: options.action_log,
         seq_liveness: options.seq_liveness,
-        fold_diagnostics: options.fold_diagnostics,
         ledger: options.ledger,
         diff_findings: options.diff_findings,
         promotion_gate_findings: options.promotion_gate_findings,
         divergence_findings: options.divergence_findings,
     };
 
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
-
-    let app = router(state).layer(cors);
+    let app = router(state);
 
     let mut shutdown_rx = shutdown.subscribe();
     tokio::spawn(async move {

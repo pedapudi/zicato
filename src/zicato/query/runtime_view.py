@@ -763,9 +763,8 @@ def read_effective_settings(paths: WorkspacePaths) -> dict[str, Any] | None:
 
     ``None`` when the workspace holds no heartbeat record at all: there is
     no run whose settings could be reported, and the client paints the
-    honest empty state. The Rust supervisor does not serve this route and
-    answers the same ``null`` (09-dashboard-and-query.md, the
-    null-degradation duty).
+    honest empty state (09-dashboard-and-query.md, the null-degradation
+    duty).
 
     Reads the RAW record rather than :func:`read_heartbeat_dict`, whose
     synthetic post-mortem heartbeat carries harmonograf fields and no
@@ -804,7 +803,7 @@ def read_lineage_dict(paths: WorkspacePaths) -> dict[str, Any] | None:
 
 
 def build_snapshot(paths: WorkspacePaths) -> SnapshotPayload:
-    """The full ``/api/state`` snapshot, mirroring the Rust ``Snapshot``.
+    """The full ``/api/state`` snapshot.
 
     ``paused`` (the operator pause-flag presence) rides top-level too —
     a paused-but-not-running workspace has no heartbeat to carry it, so

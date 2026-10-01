@@ -7,8 +7,7 @@
 //
 // Pins:
 //   * absent / degraded / empty reads → null (the epoch view stays
-//     byte-identical to today, incl. against the Rust supervisor which does
-//     not serve the endpoint);
+//     byte-identical to today, incl. when the endpoint read fails);
 //   * one dn-judgetrend-row per judge that has ≥1 plottable value; a judge
 //     with NO values in the spine is dropped (never an all-empty lane);
 //   * a spine gap (a generation with no loss for that judge) renders as a
@@ -46,7 +45,7 @@ function trendFixture() {
 }
 
 test('buildJudgeTrendPanel: absent / degraded / empty → null (byte-identical to today)', () => {
-  assertEqual(epoch.buildJudgeTrendPanel(null), null, 'null read (Rust supervisor) → no panel');
+  assertEqual(epoch.buildJudgeTrendPanel(null), null, 'null read → no panel');
   assertEqual(epoch.buildJudgeTrendPanel(undefined), null, 'absent → no panel');
   assertEqual(epoch.buildJudgeTrendPanel({ generations: [], judges: [], note: 'index not built' }),
     null, 'the never-indexed degrade shape → no panel');

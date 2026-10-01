@@ -13,10 +13,8 @@ each epoch.
 The dashboard is served by a standalone Python (Starlette) service
 (`src/zicato/dashboard/`, run as `python -m zicato.dashboard`). `zicato
 evolve` spawns it as a separate process alongside the Rust watchdog
-supervisor. The Rust binary can also serve a dashboard, but `evolve`
-always runs it `--no-dashboard`, so the user interface belongs to the
-Python service; [RUNTIME.md](RUNTIME.md) §3.0 records why the two are
-separate services. The dashboard's data source is the runtime state
+supervisor, which serves no user interface; [RUNTIME.md](RUNTIME.md)
+§3.0 describes the two processes. The dashboard's data source is the runtime state
 files described in [RUNTIME.md](RUNTIME.md), the `.zicato/index.db`
 analytical index, and the committed `epochs/` artifacts. The defense
 layers in [ROBUSTNESS.md](ROBUSTNESS.md) cover what each layer catches;
@@ -133,8 +131,8 @@ interrupted with Ctrl-C:
 >
 > | Planned mode | Use case | Intended behavior |
 > |---|---|---|
-> | `--read-only` | Post-mortem or shared view | Disable the POST control surface. The capability exists as `create_app(read_only=…)` and as the Rust binary's `--read-only`, but no `zicato dashboard` flag reaches it, so the standalone command serves with the control surface enabled. |
-> | `--daemon` | A long-running continuous-integration host | Outlive one `evolve` invocation and pick up the next. (The Rust binary has a `--daemon`; the Python `zicato dashboard` does not.) |
+> | `--read-only` | Post-mortem or shared view | Disable the POST control surface. The capability exists as `create_app(read_only=…)`, but no `zicato dashboard` flag reaches it, so the standalone command serves with the control surface enabled. |
+> | `--daemon` | A long-running continuous-integration host | Outlive one `evolve` invocation and pick up the next. |
 
 The automatic spawn is the common path, and it needs no command of its
 own: `evolve` starts the service.
@@ -180,7 +178,7 @@ The two processes the operator runs into:
 
 | Process | Port | Role |
 |---|---|---|
-| Rust watchdog supervisor | `:7920` | Watches the orchestrator's heartbeat; restarts / escalates. Serves its own dashboard only when run standalone — under `evolve` it runs `--no-dashboard`. |
+| Rust watchdog supervisor | `:7920` | Warns on a stale orchestrator heartbeat and escalates stalled or overdue runs from SIGTERM to SIGKILL. Serves only `/statusz`, `/statusz.json` and `/api/audit/verify`. |
 | Python dashboard service | `:7892` | The dashboard this document describes. Reads the workspace, serves GET and the event stream, and writes `control/` files on POST. |
 
 The control POST endpoints write the `control/` files, and the
@@ -795,8 +793,8 @@ control, because a run killed from outside is an infrastructure abort that
 is rerun in a later round ([RUNTIME.md](RUNTIME.md) §5.3). The console has no control for `brief`; the endpoint
 serves direct HTTP callers. The read-only posture,
 in which the POST endpoints return `403`, is reachable through
-`create_app(read_only=…)` and the Rust binary's `--read-only`, but no
-`zicato dashboard` flag exposes it (§2.2).
+`create_app(read_only=…)`, but no `zicato dashboard` flag exposes it
+(§2.2).
 
 ### 5.2 Write-back via the control-file protocol
 

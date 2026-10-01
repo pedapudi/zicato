@@ -50,9 +50,9 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 469,757 | +61,096 |
-| Production | 197,702 | 188,312 | -9,390 |
-| Production logic | 110,276 | 109,856 | -420 |
+| Total | 408,661 | 466,782 | +58,121 |
+| Production | 197,702 | 186,208 | -11,494 |
+| Production logic | 110,276 | 108,626 | -1,650 |
 
 The baseline row is the reference `f9052dd` measured by the classification the
 checker holds, which counts the console's hand-written entry point
@@ -84,21 +84,21 @@ production-logic series per subsystem along a branch's first-parent commits.
 
 | Subsystem | Total | Production | Production logic | Prose share |
 |---|---:|---:|---:|---:|
-| src/zicato/dashboard | 61,801 | 31,966 | 22,051 | 31.0% |
-| src/zicato/query | 17,742 | 17,742 | 11,166 | 37.1% |
+| src/zicato/dashboard | 61,800 | 31,966 | 22,051 | 31.0% |
+| src/zicato/query | 17,740 | 17,740 | 11,166 | 37.1% |
 | src/zicato/epoch | 13,822 | 13,822 | 7,742 | 44.0% |
 | src/zicato/evolve | 11,262 | 11,262 | 7,185 | 36.2% |
 | src/zicato/tournament | 11,223 | 11,223 | 6,647 | 40.8% |
 | src/zicato/reflection | 9,843 | 9,843 | 6,578 | 33.2% |
-| crates/supervisor | 15,955 | 13,499 | 6,259 | 53.6% |
+| crates/supervisor | 13,091 | 11,405 | 5,030 | 55.9% |
 | src/zicato/proposer | 9,521 | 9,521 | 4,772 | 49.9% |
-| src/zicato/cli | 7,088 | 7,088 | 4,697 | 33.7% |
+| src/zicato/cli | 7,084 | 7,084 | 4,696 | 33.7% |
 | src/zicato/analyzer | 7,165 | 7,165 | 4,591 | 35.9% |
 | src/zicato/selection | 5,278 | 5,278 | 3,060 | 42.0% |
 | src/zicato/core | 6,393 | 6,393 | 2,808 | 56.1% |
 | src/zicato/runtime | 5,188 | 5,188 | 2,531 | 51.2% |
 | src/zicato/index | 4,392 | 4,392 | 2,390 | 45.6% |
-| src/zicato/telemetry | 4,503 | 4,503 | 2,197 | 51.2% |
+| src/zicato/telemetry | 4,499 | 4,499 | 2,197 | 51.2% |
 | src/zicato/contract_draft | 2,468 | 2,468 | 1,622 | 34.3% |
 | src/zicato/health | 2,557 | 2,557 | 1,501 | 41.3% |
 | src/zicato/mutation | 2,954 | 2,954 | 1,405 | 52.4% |
@@ -462,3 +462,6 @@ dropped rows named.
 | Removed per-run kill control (total) | 469,931 | -174 | 469,757 | The unconsumed per-run kill control is removed: its dashboard and supervisor routes, the console's kill button, and the control-protocol constant. Runs stay bounded by their wall-clock budgets. |
 | Removed per-run kill control (production) | 188,435 | -123 | 188,312 | The unconsumed per-run kill control is removed: its dashboard and supervisor routes, the console's kill button, and the control-protocol constant. Runs stay bounded by their wall-clock budgets. |
 | Removed per-run kill control (production logic) | 109,952 | -96 | 109,856 | The unconsumed per-run kill control is removed: its dashboard and supervisor routes, the console's kill button, and the control-protocol constant. Runs stay bounded by their wall-clock budgets. |
+| Watchdog-only supervisor (total) | 469,757 | -2,975 | 466,782 | The Rust supervisor serves only its watchdog routes (`/statusz`, `/statusz.json`, `/api/audit/verify`); its unmounted dashboard, event-stream and control routes, their readers and seven unused dependencies are removed. The watchdog loops and integrity audits remain. |
+| Watchdog-only supervisor (production) | 188,312 | -2,104 | 186,208 | The Rust supervisor serves only its watchdog routes (`/statusz`, `/statusz.json`, `/api/audit/verify`); its unmounted dashboard, event-stream and control routes, their readers and seven unused dependencies are removed. The watchdog loops and integrity audits remain. |
+| Watchdog-only supervisor (production logic) | 109,856 | -1,230 | 108,626 | The Rust supervisor serves only its watchdog routes (`/statusz`, `/statusz.json`, `/api/audit/verify`); its unmounted dashboard, event-stream and control routes, their readers and seven unused dependencies are removed. The watchdog loops and integrity audits remain. |

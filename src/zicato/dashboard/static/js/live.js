@@ -727,8 +727,8 @@ export class LiveController {
     this._meta = el('span', { class: 'dt-live-hero-meta', text: '' });
     // the ROUND-PIPELINE stepper host (propose→apply→run→gate) — filled by
     // updatePipeline() with the server's authoritative projection, digest-
-    // gated; empty (and invisible) when the endpoint is absent (Rust
-    // supervisor) or the pipeline is idle.
+    // gated; empty (and invisible) when the read fails or the pipeline
+    // is idle.
     this._pipeHost = el('span', { class: 'dt-live-hero-pipe' });
     const head = el('div', { class: 'dt-live-hero-head' }, [this._pill, this._meta, this._pipeHost]);
 
@@ -912,7 +912,7 @@ export class LiveController {
   // Drive the round-pipeline stepper from the server's /api/live/pipeline
   // projection. Digest-gated: a steady heartbeat re-serving the same
   // projection writes ZERO DOM; a step advancing repaints. `null` (endpoint
-  // absent — the Rust supervisor — or the hero going idle) clears the host,
+  // failed, or the hero going idle) clears the host,
   // degrading the head to exactly its pre-stepper reading.
   updatePipeline(pipe) {
     if (!this._pipeHost) return;
