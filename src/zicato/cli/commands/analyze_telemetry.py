@@ -118,6 +118,7 @@ def analyze_telemetry_cmd(workspace: str, epoch: str | None, round_n: int | None
         analyze_epoch_telemetry,
         proposer_slice,
     )
+    from zicato.epoch._storage import RecordError  # noqa: PLC0415
 
     workspace_dir = Path(workspace)
     config = _load_workspace_config(workspace_dir)
@@ -126,7 +127,7 @@ def analyze_telemetry_cmd(workspace: str, epoch: str | None, round_n: int | None
     model = config.evaluation_model
     try:
         visible = proposer_slice(workspace_dir, epoch_id)
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, RecordError) as exc:
         raise click.ClickException(
             f"Cannot resolve the training slice of epoch {epoch_id!r}: {exc}"
         ) from exc

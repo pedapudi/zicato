@@ -70,3 +70,21 @@ def test_command_analyzes_the_training_slice_of_a_board_with_a_holdout_entry(
     written = (workspace / "epochs" / epoch_id / "insights" / "round_0003.md").read_text()
     assert "policy_seen_on_training_run" in written
     assert "policy_seen_on_holdout_run" not in written
+
+
+def test_a_corrupt_board_is_a_command_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    workspace, epoch_id = _bootstrap(tmp_path, structure="racing", field_size=2)
+    (workspace / "epochs" / epoch_id / "board.jsonl").write_text('{"id": "broken"\n')
+
+    async def unused_aux(_system: str, _user: str, _model: str) -> str:
+        raise AssertionError("no analysis runs without a training slice")
+
+    monkeypatch.setattr(analyze_telemetry, "_resolve_aux_llm", lambda _config: unused_aux)
+
+    result = _invoke(workspace, epoch_id)
+
+    assert result.exit_code == 1, result.output  # type: ignore[attr-defined]
+    assert "Cannot resolve the training slice" in result.output  # type: ignore[attr-defined]
+    assert not (workspace / "epochs" / epoch_id / "insights").exists()
