@@ -667,6 +667,12 @@ async def _close_field_round(
         board=list(prepared.board),
         round_n=generation_round_number(first_challenger_id) or prepared.round_index,
         analyzer_round=generation_round_number(first_challenger_id),
+        analyzer_entry_ids=tuple(e.id for e in prepared.train_board),
+        analyzer_restricted_identities=(
+            tuple(e.id for e in prepared.board)
+            if prepared.weights.overfitting.restrict_proposer_visibility
+            else None
+        ),
         mutations=list(prepared.mutations),
         evaluation_call_llm=field_round.evaluation_call_llm,
         evaluation_model=field_round.evaluation_model,

@@ -124,6 +124,21 @@ class ProposerContext:
     #: banded by its renderer; the agents only forward it. Empty (the
     #: default) omits the section, leaving the prompt otherwise unchanged.
     failure_profile: str = ""
+    #: The most recent round's decision-telemetry insight: the markdown the
+    #: analyzer (:func:`~zicato.analyzer.insights.analyze_epoch_telemetry`)
+    #: wrote at the end of the previous round, read back by
+    #: :func:`~zicato.analyzer.insights.load_latest_insight`. The analyzer
+    #: reads only the training slice's runs, so no holdout run reaches it.
+    #: Its input is decision-event counts keyed by strings the system under
+    #: test emits; under restricted visibility ladder reasons are dropped and
+    #: any other string that is long, holds a non-identifier character, or
+    #: contains a board entry id is withheld
+    #: (:func:`~zicato.analyzer.aggregator.restrict_summary`). When non-empty, a
+    #: ``## Recent telemetry insights`` section is spliced into the evidence.
+    #: Empty (the default — the epoch's first round, or a round whose latest
+    #: insight file lacks the training-slice provenance line) omits the
+    #: section.
+    insights: str = ""
     #: Pre-rendered, BANDED statement of what the frozen contract scores —
     #: built by the orchestrator from the epoch's
     #: :class:`~zicato.core.scoring_config.ScoringWeights` via

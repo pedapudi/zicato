@@ -78,8 +78,12 @@ channels.**
     loss). Rendered into the proposer's `## What's already been tried` prompt
     section (see [EXPERIMENT-MEMORY.md](../../docs/design/EXPERIMENT-MEMORY.md)
     §3.2 — the `PriorExperiment` record).
-  - `insights` — the per-round decision-telemetry analyzer's digest, rendered
-    into the `## Recent telemetry insights` section.
+  - `insights` — the most recent round's decision-telemetry analyzer digest
+    (the highest-numbered `insights/round_{N}.md`, computed over the training
+    slice's runs), rendered into the `## Recent telemetry insights` section.
+    Only a model analysis carrying the analyzer's training-slice provenance
+    line is fed back; a round whose analysis found no decision telemetry, or
+    whose evaluation call failed, feeds nothing back.
 
   So round 2's field is informed by round 1's results **whether or not anything
   was promoted.** A rejected challenger still teaches the proposer "that
@@ -265,7 +269,8 @@ done
 jq -r '"\(.round_index)\t\(.generation_id)\t\(.hypothesis.core_idea)\tmodulating=\(.hypothesis.modulating|join(","))"' \
    "$E"/generations/*/experiment.json | sort -n
 
-# the analyzer's per-round insight digest (what gets fed back as `insights`):
+# the analyzer's per-round insight digests (the highest-numbered round file is
+# what gets fed back as `insights`):
 ls "$E"/insights/ 2>/dev/null
 ```
 

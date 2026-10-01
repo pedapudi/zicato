@@ -3,7 +3,8 @@
 The analyzer's job for one epoch:
 
 1. Walk the workspace's ``epochs/{epoch}/generations/{*}/runs/{*}/events.jsonl``
-   tree and collect every events file the epoch has accumulated.
+   tree and collect the events files of the training-slice entries the
+   caller names.
 2. Aggregate the five decision-telemetry event types into a
    :class:`zicato.analyzer.aggregator.DecisionEventSummary`.
 3. Render the system + user prompts.
@@ -16,24 +17,27 @@ The analyzer's job for one epoch:
 Every failure mode (no events at all, LLM timeout, LLM error) is
 handled by writing a short markdown placeholder rather than raising —
 the orchestrator calls this best-effort and a wedge here must not
-abort the round.
+abort the round. A model analysis, and nothing else, opens with
+:data:`TRAINING_SLICE_ANALYSIS_MARKER`.
 
-A sibling :func:`load_latest_insights` helper reads every
-``insights/*.md`` file in lexicographic order and concatenates the
-contents so the proposer can splice them into its user prompt.
+:func:`load_latest_insight` reads the highest-numbered
+``insights/round_{N}.md`` back for the next round's proposal evidence, and
+delivers it only when it opens with that marker.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import time
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Collection, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from zicato.analyzer.aggregator import (
     DecisionEventSummary,
     aggregate_decision_events,
+    restrict_summary,
 )
 from zicato.analyzer.prompts import (
     INSIGHT_SYSTEM_PROMPT,
@@ -43,13 +47,33 @@ from zicato.aux_timeout import aux_call_timeout_s
 from zicato.core.settings import AuxConfig
 from zicato.core.workspace import epoch_dir
 from zicato.storage import atomic_write_text
-from zicato.workspace import is_events_file
+from zicato.workspace import WorkspaceLayout, is_events_file, read_board_entries
 
 if TYPE_CHECKING:  # pragma: no cover - typing-only import
     from zicato.telemetry.meta_loop import MetaLoopEmitter
 
 
-def _collect_events_jsonl_paths(workspace_root: Path, epoch_id: str) -> list[Path]:
+#: First line of every insight that holds a model analysis of training-slice
+#: runs. An HTML comment, so it is invisible in rendered markdown.
+#: :func:`load_latest_insight` delivers a file only when it opens with this
+#: line. Placeholders, files written before the analyzer was limited to the
+#: training slice, and hand-written files lack it and are withheld, so
+#: delivery fails closed.
+TRAINING_SLICE_ANALYSIS_MARKER = (
+    "<!-- zicato: decision-telemetry analysis of the training slice -->"
+)
+
+#: The most characters of an insight the proposal evidence carries. The
+#: model's response is unbounded, and the block is sent with every proposal
+#: of the next round, so a longer insight is cut here with a visible note.
+#: The bound is the one the proposer's mutation manifest applies to a span
+#: (``zicato.proposer.prompts._MUTATION_CONTENT_LIMIT_CHARS``).
+INSIGHT_LIMIT_CHARS = 8000
+
+
+def _collect_events_jsonl_paths(
+    workspace_root: Path, epoch_id: str, entry_ids: Collection[str] | None = None
+) -> list[Path]:
     """Walk the epoch's generation tree and return every current events path.
 
     The walk is filesystem-driven (rather than reading the board) so
@@ -64,16 +88,65 @@ def _collect_events_jsonl_paths(workspace_root: Path, epoch_id: str) -> list[Pat
     entry. That is deliberate for a whole-epoch drift summary — but it
     means a per-entry count read off this list counts draws rather than units.
     Archived predecessors (``*.prev.jsonl``) are excluded.
+
+    ``entry_ids``, when given, keeps only the runs of those board entries
+    (the run directory under ``runs/`` is named by entry id); ``None``
+    keeps every run.
     """
 
     root = epoch_dir(workspace_root, epoch_id) / "generations"
     if not root.exists():
         return []
+    wanted = None if entry_ids is None else frozenset(entry_ids)
     out: list[Path] = []
     for path in sorted(root.glob("*/runs/*/seed-*/events.*.r*.jsonl")):
+        if wanted is not None and path.parents[1].name not in wanted:
+            continue
         if path.is_file() and is_events_file(path):
             out.append(path)
     return out
+
+
+class ProposerSlice(NamedTuple):
+    """What the analyzer may read and keep for an insight the proposer receives."""
+
+    #: The training slice of the board, in board order.
+    training_entry_ids: tuple[str, ...]
+    #: Every board entry id when the epoch restricts proposer visibility,
+    #: which makes the analyzer restrict its summary
+    #: (:func:`~zicato.analyzer.aggregator.restrict_summary`); ``None`` when
+    #: it does not.
+    restricted_identities: tuple[str, ...] | None
+
+
+def proposer_slice(workspace_root: Path, epoch_id: str) -> ProposerSlice:
+    """The epoch's training slice and visibility posture, from its frozen contract.
+
+    Splits the board with the epoch's frozen ``overfitting`` block and the
+    same rotation seed the round preparation uses, so the slice is the one
+    the proposer's patterns and loss summary are computed on.
+    Raises :class:`FileNotFoundError` when the epoch has no board, because
+    an analysis that cannot tell training runs from holdout runs must not
+    write into the proposer's insight directory.
+    """
+    from zicato.board.split import rotation_seed, split_board  # noqa: PLC0415
+    from zicato.workspace_loader import scoring_weights_from_dict  # noqa: PLC0415
+
+    layout = WorkspaceLayout.from_root(workspace_root)
+    board = read_board_entries(layout, epoch_id)
+    if board is None:
+        raise FileNotFoundError(f"epoch {epoch_id!r} has no board at {layout.board(epoch_id)}")
+    scoring_path = layout.epoch_dir(epoch_id) / "scoring.json"
+    raw = json.loads(scoring_path.read_text(encoding="utf-8")) if scoring_path.exists() else {}
+    overfitting = scoring_weights_from_dict(raw).overfitting
+    train_ids, _holdout_ids = split_board(
+        board.entries, overfitting, seed=rotation_seed(overfitting, epoch_id)
+    )
+    restricted = overfitting.restrict_proposer_visibility
+    return ProposerSlice(
+        training_entry_ids=train_ids,
+        restricted_identities=tuple(e.id for e in board.entries) if restricted else None,
+    )
 
 
 def _insights_dir(workspace_root: Path, epoch_id: str) -> Path:
@@ -133,6 +206,9 @@ async def analyze_epoch_telemetry(
     mutation_ids: Sequence[str] | None = None,
     meta_loop_emitter: MetaLoopEmitter | None = None,
     aux_config: AuxConfig | None = None,
+    *,
+    training_entry_ids: Collection[str],
+    restricted_identities: Collection[str] | None,
 ) -> Path:
     """Build the decision-event summary, call the LLM, persist the insight.
 
@@ -163,6 +239,19 @@ async def analyze_epoch_telemetry(
         mutation target ids absent from the agent's surface. When
         ``None`` the prompt still renders, with a "none provided"
         marker, and the system prompt forbids inventing an id.
+    training_entry_ids:
+        The board entries whose runs are analyzed: the epoch's training
+        slice. Required, because the insight is read back into the next
+        round's proposal evidence and carries the training-slice
+        provenance line; no holdout run may reach it.
+    restricted_identities:
+        Required. The board's entry ids when the epoch restricts proposer
+        visibility: the summary then passes through
+        :func:`~zicato.analyzer.aggregator.restrict_summary` before the
+        prompt is rendered, which drops the free-text ladder reasons and
+        withholds every name that is not a short identifier or that
+        contains one of these ids. ``None`` renders the summary as
+        aggregated.
 
     Returns
     -------
@@ -179,8 +268,10 @@ async def analyze_epoch_telemetry(
     right behaviour for the orchestrator's ``try / except`` wrapper.
     """
 
-    events_paths = _collect_events_jsonl_paths(workspace_root, epoch_id)
+    events_paths = _collect_events_jsonl_paths(workspace_root, epoch_id, training_entry_ids)
     summary = aggregate_decision_events(events_paths)
+    if restricted_identities is not None:
+        summary = restrict_summary(summary, restricted_identities)
 
     target = _insight_target(workspace_root, epoch_id, round_n)
 
@@ -273,50 +364,60 @@ async def analyze_epoch_telemetry(
         except Exception:  # noqa: BLE001 — additive telemetry only
             pass
 
-    # The LLM body is written verbatim. The system prompt already
-    # constrains it to a markdown shape; we don't second-guess by
-    # post-processing.
-    body = response.strip() + "\n" if response else _empty_insight_body(epoch_id, summary)
+    # The LLM body is written verbatim under the provenance marker. The
+    # system prompt already constrains it to a markdown shape; we don't
+    # second-guess by post-processing.
+    body = (
+        f"{TRAINING_SLICE_ANALYSIS_MARKER}\n{response.strip()}\n"
+        if response and response.strip()
+        else _empty_insight_body(epoch_id, summary)
+    )
     atomic_write_text(target, body, mode=None)
     return target
 
 
-def load_latest_insights(workspace_root: Path, epoch_id: str) -> str:
-    """Concatenate every ``insights/*.md`` file under the epoch in order.
+def load_latest_insight(workspace_root: Path, epoch_id: str) -> str:
+    """The most recent round's insight, for the next round's proposal evidence.
 
-    Reads ``round_{N}.md`` files in lexicographic order (which matches
-    numeric ordering because of the zero-pad), followed by any
-    ``latest.md`` written when an analyzer ran with ``round_n=None``.
-    The concatenation joins files with a blank line so the
-    proposer-side embedding renders cleanly.
+    Reads only the highest-numbered ``insights/round_{N}.md`` (the zero
+    padding makes lexicographic order numeric), so the evidence holds one
+    analysis however many rounds the epoch has run. ``insights/latest.md``,
+    which ``zicato inspect telemetry`` writes when no round is given, is an
+    operator report and is not read.
 
-    Returns the empty string when the insights directory does not
-    exist or carries no readable markdown files. Empty string is the
-    proposer-side sentinel for "no insights to embed".
+    The file is delivered, without its first line, only when that line is
+    :data:`TRAINING_SLICE_ANALYSIS_MARKER`. Otherwise, and when the epoch
+    has no round insight or the file cannot be read, the result is the
+    empty string, which omits the evidence block. An older marked file is
+    never substituted for an unmarked latest one. A delivered insight longer
+    than :data:`INSIGHT_LIMIT_CHARS` is cut to that length and followed by
+    a note saying so.
     """
 
-    insights_root = _insights_dir(workspace_root, epoch_id)
-    if not insights_root.exists():
-        return ""
-
-    files = sorted(p for p in insights_root.glob("*.md") if p.is_file())
+    files = sorted(_insights_dir(workspace_root, epoch_id).glob("round_*.md"))
     if not files:
         return ""
-
-    bodies: list[str] = []
-    for f in files:
-        try:
-            text = f.read_text(encoding="utf-8").strip()
-        except OSError:
-            continue
-        if text:
-            bodies.append(text)
-    if not bodies:
+    try:
+        text = files[-1].read_text(encoding="utf-8").strip()
+    except OSError:
         return ""
-    return "\n\n".join(bodies) + "\n"
+    marker, _, body = text.partition("\n")
+    body = body.strip()
+    if marker.strip() != TRAINING_SLICE_ANALYSIS_MARKER or not body:
+        return ""
+    if len(body) > INSIGHT_LIMIT_CHARS:
+        body = (
+            f"{body[:INSIGHT_LIMIT_CHARS].rstrip()}\n"
+            f"[... truncated: the insight exceeds {INSIGHT_LIMIT_CHARS} chars ...]"
+        )
+    return body + "\n"
 
 
 __all__ = [
+    "INSIGHT_LIMIT_CHARS",
+    "TRAINING_SLICE_ANALYSIS_MARKER",
     "analyze_epoch_telemetry",
-    "load_latest_insights",
+    "load_latest_insight",
+    "ProposerSlice",
+    "proposer_slice",
 ]

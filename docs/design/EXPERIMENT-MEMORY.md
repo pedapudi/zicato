@@ -36,7 +36,7 @@ is scoped to one evaluation contract, and how it reaches the prompt.
 ## 1. Why the proposer needs settled history
 
 The proposal episode's task is assembled from several channels (see
-`zicato.proposer.foe_request.render_evidence`). Three of them describe the
+`zicato.proposer.foe_request.render_evidence`). Four of them describe the
 round's present state:
 
 - `current_loss_summary` — a one-line digest of the *current champion's*
@@ -57,14 +57,32 @@ round's present state:
   marginal-not-joint, holdout-integrity guarantees as the rest of the
   proposer feed.
 
-`ProposalEvidence` also declares an `insights` field, rendered under
-`## Recent telemetry insights` when non-empty. `evidence_from_context`
-does not populate it, so a proposal episode never receives that
-section. The decision-telemetry analyzer writes its insight files under
-the epoch's `insights/` directory, and `zicato.analyzer.load_latest_insights`
-can read them, but no caller passes them to the proposer.
+- `insights` — the most recent round's decision-telemetry insight
+  (`zicato.analyzer.insights.load_latest_insight`), rendered under
+  `## Recent telemetry insights`. At the end of every round the
+  decision-telemetry analyzer summarizes the epoch's steering decisions
+  (intervention-ladder levels, detector verdicts, policy outcomes, retry
+  budgets) with one evaluation-model call and writes
+  `insights/round_{N}.md`. The next round's preparation reads the
+  highest-numbered of those files, and only that file, into
+  `ProposerContext.insights`. The analyzer reads only the training
+  slice's runs, so no holdout run reaches it. The events it counts are
+  written by the system under test, so the names they carry are
+  emitter-supplied. Under restricted proposer visibility the analyzer
+  drops the free-text ladder reasons and withholds every other name that
+  is longer than 48 characters, is not an identifier, or contains a board
+  entry id; a short identifier that is not an entry id passes through. A model
+  analysis opens with a provenance line naming it an analysis of the
+  training slice, and only a latest file that opens with that line is
+  delivered. Every other latest file delivers nothing: the placeholder
+  written when the epoch has no decision telemetry or the evaluation call
+  fails, a file written by an analyzer that read every run, and a
+  hand-written file. An older marked file is never substituted, and the
+  epoch's first round has no file to deliver. A delivered insight longer
+  than 8,000 characters, the bound the mutation manifest applies to a
+  span, is cut there and ends with a note saying it was truncated.
 
-Each of the three channels describes the champion's current state and the
+Each of the four channels describes the champion's current state and the
 most recent round's observations. None of them carries the **settled
 history** — "round 3 already tried tightening the researcher's
 instruction and it was rejected for a pass-rate regression", or "round 5
@@ -484,9 +502,10 @@ blocks.
   `_propose_and_apply_challenger` takes a `prior_experiments` keyword and
   threads it onto the `ProposerContext` its episode runs from.
 - **The standalone propose command** (`zicato/cli/commands/propose.py`)
-  loads the same-epoch digest the same way, so `zicato proposer propose`
-  sees the section the loop sees; it does not apply
-  `experimental.cross_epoch_memory`.
+  loads the same-epoch digest the same way and renders it under the
+  epoch's frozen `restrict_proposer_visibility` setting, so
+  `zicato proposer propose` sees the section the loop sees; it does not
+  apply `experimental.cross_epoch_memory`.
 
 ### 5.6 The tests
 

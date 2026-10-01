@@ -149,7 +149,10 @@ regardless, so `--no-llm` is the safe, budget-free repair.
 Runs the decision-telemetry analyzer for an epoch out of band, writing an
 insight to `epochs/{id}/insights/round_{N:04d}.md` (or `insights/latest.md` when
 `--round` is omitted). `evolve` runs this per round; use it to regenerate an
-insight without re-running the loop.
+insight without re-running the loop. The analysis covers the training slice's
+runs only. The next round's proposal evidence carries the highest-numbered
+`round_{N:04d}.md`, so a file written with `--round` can reach the proposer;
+`latest.md` never does.
 
 ## Guardrails
 

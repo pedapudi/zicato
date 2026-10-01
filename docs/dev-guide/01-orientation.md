@@ -891,8 +891,9 @@ orchestrator imports it lazily and runs the assessment inside a
 best-effort boundary, so a failure here costs the round its health report
 and never its verdict.
 
-**`analyzer/`** — decision-telemetry insights (`insights/round_{N}.md`
-read back by the next round's proposer), the epoch analysis report
+**`analyzer/`** — decision-telemetry insights (`insights/round_{N}.md`,
+computed over the training slice's runs; the most recent file is read into
+the next round's proposal evidence), the epoch analysis report
 (`analysis.md`/`analysis.html`), outcome marginals, and the
 process-exemplar extractor.
 

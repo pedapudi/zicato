@@ -5,9 +5,10 @@ The analyzer has two outputs, both regenerated as the evolve loop runs:
 * **Per-round insights** — the analyzer reads goldfive's
   decision-telemetry events from the ``events.jsonl`` files an epoch has
   accumulated and produces an LLM-generated insight summary, persisted
-  under ``epochs/{epoch}/insights/round_{N}.md`` and read back by the
-  proposer the next round. This closes a feedback loop between
-  goldfive's silent-decision telemetry and the proposer's next move.
+  under ``epochs/{epoch}/insights/round_{N}.md``. The next round's
+  proposal evidence carries the most recent of these files, so the
+  proposer sees what goldfive's decision telemetry showed. The loop
+  analyzes only the training slice's runs.
 
 * **The epoch analysis report** — a comprehensive, academic-paper-style
   narrative of the whole improvement campaign, regenerated after every
@@ -22,8 +23,8 @@ Public surface:
   aggregated counts the analyzer ships to the LLM.
 * :func:`aggregate_decision_events` — JSONL replay + count aggregation.
 * :func:`analyze_epoch_telemetry` — per-round insights entry point.
-* :func:`load_latest_insights` — concatenate every insights file in
-  chronological order for embedding in the proposer prompt.
+* :func:`load_latest_insight` — the most recent round's insight, for
+  the next round's proposal evidence.
 * :func:`generate_epoch_report` — regenerate the comprehensive epoch
   analysis report (``analysis.md`` + ``analysis.html``).
 * :class:`EpochReportData` / :func:`gather_epoch_report_data` — the
@@ -36,7 +37,7 @@ from zicato.analyzer.aggregator import (
     DecisionEventSummary,
     aggregate_decision_events,
 )
-from zicato.analyzer.insights import analyze_epoch_telemetry, load_latest_insights
+from zicato.analyzer.insights import analyze_epoch_telemetry, load_latest_insight
 from zicato.analyzer.outcome_marginals import (
     OutcomeMarginalSummary,
     aggregate_outcome_marginals,
@@ -58,7 +59,7 @@ __all__ = [
     "DecisionEventSummary",
     "aggregate_decision_events",
     "analyze_epoch_telemetry",
-    "load_latest_insights",
+    "load_latest_insight",
     "OutcomeMarginalSummary",
     "aggregate_outcome_marginals",
     "run_operator_summarizer",

@@ -31,6 +31,8 @@ from tests._contract_pins import deterministic_weights
 from tests._foe_support import stand_in_proposer_block
 from tests._source_tree_builders import mutable_tree
 from zicato.cli.commands.propose import propose_cmd
+from zicato.core.experiment import PriorExperiment
+from zicato.core.types import OverfittingConfig
 from zicato.epoch.lifecycle import new_epoch
 
 #: A board whose one holdout-tagged entry carries a phrase that appears
@@ -58,7 +60,9 @@ def _board(path: Path) -> None:
     path.write_text("\n".join(json.dumps(e) for e in entries) + "\n", encoding="utf-8")
 
 
-def _workspace(tmp_path: Path, **proposer: Any) -> tuple[Path, str]:
+def _workspace(
+    tmp_path: Path, *, restrict_visibility: bool = True, **proposer: Any
+) -> tuple[Path, str]:
     """A registered workspace with one epoch, a v0 snapshot, and a proposer."""
     workspace = tmp_path / ".zicato"
     workspace.mkdir()
@@ -92,7 +96,10 @@ def _workspace(tmp_path: Path, **proposer: Any) -> tuple[Path, str]:
         name="propose",
         board_source=board_src,
         brief_source=brief_src,
-        weights=deterministic_weights(promote_margin=0.01),
+        weights=deterministic_weights(
+            promote_margin=0.01,
+            overfitting=OverfittingConfig(restrict_proposer_visibility=restrict_visibility),
+        ),
         auto_close_previous=False,
     )
 
@@ -144,6 +151,77 @@ def test_the_episode_is_given_the_round_s_authorized_context(tmp_path: Path) -> 
     # The round's evidence blocks, in the task.
     assert "## Mutation points" in task
     assert "id=instr" in task
+
+
+def test_the_episode_is_given_the_latest_telemetry_insight(tmp_path: Path) -> None:
+    """The command delivers the insight a round would: the latest marked file."""
+    workspace, epoch_id = _workspace(tmp_path)
+    insights = workspace / "epochs" / epoch_id / "insights"
+    insights.mkdir()
+    marker = "<!-- zicato: decision-telemetry analysis of the training slice -->"
+    (insights / "round_0001.md").write_text(f"{marker}\nOlder finding.\n", encoding="utf-8")
+    (insights / "round_0002.md").write_text(f"{marker}\nNewest finding.\n", encoding="utf-8")
+
+    assert _run(workspace).exit_code == 0
+
+    from zicato.proposer.input_capture import ROLE_PROPOSAL, read_proposer_inputs
+
+    records = [r for r in read_proposer_inputs(workspace, epoch_id) if r["role"] == ROLE_PROPOSAL]
+    assert len(records) == 1
+    assert "## Recent telemetry insights\nNewest finding." in records[0]["user"]
+    assert "Older finding." not in records[0]["user"]
+
+
+@pytest.mark.parametrize("restrict_visibility", [True, False])
+def test_the_request_follows_the_epoch_s_visibility_posture(
+    restrict_visibility: bool, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Experiment memory is banded and patterns are projected when the
+    epoch's frozen scoring restricts proposer visibility, as in a round."""
+    import zicato.evolve.ingest as ingest
+
+    workspace, epoch_id = _workspace(tmp_path, restrict_visibility=restrict_visibility)
+    prior = PriorExperiment(
+        generation_id="v1",
+        epoch_id=epoch_id,
+        core_idea="tighten the routing instruction",
+        modulating=("instr",),
+        decision="rejected",
+        rejection_reason="did_not_beat_margin",
+        scalar_score_delta=-0.123,
+    )
+    monkeypatch.setattr(ingest, "_load_prior_experiments", lambda *_a, **_k: [prior])
+    patterns = tmp_path / "patterns.json"
+    patterns.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "pattern-about-entry-train",
+                    "kind": "drift_metric_frequency",
+                    "summary": "the capital-city answer drifted off topic",
+                    "detail": {"entry_id": "entry_train", "count": 3},
+                    "severity": "warning",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    assert _run(workspace, "--patterns-from", str(patterns)).exit_code == 0
+
+    from zicato.proposer.input_capture import ROLE_PROPOSAL, read_proposer_inputs
+
+    records = [r for r in read_proposer_inputs(workspace, epoch_id) if r["role"] == ROLE_PROPOSAL]
+    assert len(records) == 1
+    task = records[0]["user"]
+    if restrict_visibility:
+        assert "Δscalar=improved" in task
+        assert "-0.123" not in task
+        assert "capital-city answer" not in task
+        assert "pattern-about-entry-train" not in task
+    else:
+        assert "Δscalar=-0.123" in task
+        assert "capital-city answer" in task
 
 
 def test_no_board_entry_reaches_the_episode(tmp_path: Path) -> None:

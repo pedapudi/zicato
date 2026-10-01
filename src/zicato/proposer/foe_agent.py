@@ -621,6 +621,7 @@ def evidence_from_context(ctx: ProposerContext) -> ProposalEvidence:
         custom_judge_names=tuple(sorted(ctx.custom_judge_names or ())),
         metric_priorities=ctx.metric_priorities,
         failure_profile=ctx.failure_profile,
+        insights=ctx.insights,
         process_exemplars=ctx.process_exemplars,
         genealogy=ctx.genealogy,
         calibration=ctx.calibration,

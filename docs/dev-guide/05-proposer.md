@@ -81,6 +81,7 @@ evolve_once (evolve/round_entry.py)
  ├─ enumerate_mutations → split_board(train/holdout) → detect_patterns(TRAIN)
  ├─ _render_loss_summary(TRAIN losses)
  ├─ _render_failure_profile(TRAIN losses, weights)          # banded block or ""
+ ├─ load_latest_insight(root, epoch)                        # latest round file or ""
  ├─ _render_process_exemplars_block(...)                    # redacted block or ""
  ├─ _build_candidate_screen_runner(...)                     # closure or None
  └─ evolve_field_round (evolve/field.py) → assemble_candidate_field
@@ -272,7 +273,7 @@ folded to counts), **REDACTED** (mechanically scrubbed content), **SANITIZED**
 
 | Field | Type / default | Who SETS it | Who READS it | Envelope class |
 |---|---|---|---|---|
-| `epoch_id` | `str` | orchestrator (resolved epoch) | prompt-independent: lineage coordinate for the minted `Experiment`; tools context; insights lookup | MACHINERY (never rendered into the prompt body) |
+| `epoch_id` | `str` | orchestrator (resolved epoch) | prompt-independent: lineage coordinate for the minted `Experiment`; tools context | MACHINERY (never rendered into the prompt body) |
 | `parent_generation_id` | `str` | orchestrator (current champion) | `Experiment.parent_generation_id`; the tool context's `generation_id`; meta-loop events | MACHINERY |
 | `new_generation_id` | `str` | orchestrator (`next_generation_id`, or the resume plan's reused id) | `Experiment.generation_id`; `Experiment.id = f"exp_{epoch}_{gen}"` | MACHINERY |
 | `patterns` | `tuple[Pattern, ...]` | orchestrator: `detect_patterns` over the **TRAIN slice only** | `render_pattern_block` (prompt), `_targets_observed_failure` (best-of-N heuristic), exemplar anchors | Under `restrict_visibility`, only declared measurements, severity, known metric labels, and mutation references render; **train-only** |
@@ -294,6 +295,7 @@ folded to counts), **REDACTED** (mechanically scrubbed content), **SANITIZED**
 | `prior_experiments` | `tuple[PriorExperiment, ...] = ()` | orchestrator: `_load_prior_experiments` (+ the field loop appends in-flight `siblings`) | `render_prior_experiments_block` (prompt); `recent_prediction_accuracy` (best-of-N calibration) | BANDED under `restrict_visibility` (Δscalar bucketed; accuracy always banded); curated + capped at 12 (§5.10) |
 | `restrict_visibility` | `bool = False` (context default) — **default-ON in production** via `weights.overfitting.restrict_proposer_visibility` | orchestrator from the contract | `render_evidence` → `render_pattern_block(restrict=…)`, `_render_prior_experiment_line(restrict=…)`; the best-of-N critic renders the SAME evidence | MACHINERY (the envelope switch itself) |
 | `failure_profile` | `str = ""` | orchestrator: `_render_failure_profile(TRAIN losses, weights)` — pre-rendered, **already banded** | spliced as `## Failure-mode profile`; `hint_for_slot` parses its stable line shapes for the dominant mode | BANDED + AGGREGATED (every number through `band_rate`/`_band_quality`; board-anonymous by construction) |
+| `insights` | `str = ""` | orchestrator: `load_latest_insight(root, epoch)` — the highest-numbered `insights/round_{N}.md`, which the previous round's epilogue wrote from the TRAIN slice's runs; a file without the `TRAINING_SLICE_ANALYSIS_MARKER` first line (a placeholder, a hand-written file, an analysis of every run) reads as `""`; text beyond `INSIGHT_LIMIT_CHARS` (8000) is cut with a visible note | spliced as `## Recent telemetry insights`; also fed to the critic | AGGREGATED + SANITIZED (decision-event counts keyed by emitter-supplied names; under `restrict_visibility` `restrict_summary` drops ladder reasons and withholds names that are long, hold non-identifier characters, or contain a board entry id); train-only |
 | `metric_priorities` | `str = ""` | orchestrator: `render_metric_priorities_block(build_metric_priorities(board, weights, losses))` — pre-rendered, **already banded** | replaces the flat vocabulary inside `## Valid expectation targets`; also threaded into the recombination merge prompt | BANDED (within-channel weight ratios only — the raw coefficients are the objective function and stay orchestrator-side, §5.8) |
 | `process_exemplars` | `str = ""` | orchestrator: `_render_process_exemplars_block` — **opt-in** (`experimental.process_exemplars > 0`), best-effort | spliced as `## Process exemplars` directly after the failure profile; also fed to the critic | REDACTED (the four redaction rules, §5.8.3); train-only; empty at default |
 | `sample_hint` | `str = ""` | the **best-of-N wrapper** (`replace(ctx, sample_hint=hint_for_slot(i, n, profile))`) — never the orchestrator | `render_evidence` → `## Edit-class hint (this sample)` at the very top | IDENTITY-FREE (static instruction strings only) |
@@ -755,7 +757,7 @@ the episode block plus `render_evidence`. Sections in top-to-bottom order:
 | 0 | `## This episode` — both tree roots, and the candidate (and slate slot) being produced | always | `render_episode_block` |
 | 1 | `## Why the previous attempt was set aside` | `revise_feedback` non-empty (§5.3.2) | `_render_revise_feedback` |
 | 2 | `## Edit-class hint (this sample)` | `sample_hint` non-empty (a best-of-N slot) | `hint_for_slot` |
-| 3 | `## Recent telemetry insights` | `ProposalEvidence.insights` non-empty; `evidence_from_context` never sets it, so loop episodes omit it | — |
+| 3 | `## Recent telemetry insights` | `insights` non-empty (a previous round of this epoch wrote an analysis) | `load_latest_insight` |
 | 4 | `## Failure-mode profile (this round, aggregate — train slice)` | `failure_profile` non-empty | `render_failure_mode_profile` |
 | 5 | `## Process exemplars (train slice — redacted event windows)` + the redaction-contract banner | `process_exemplars` non-empty (opt-in) | `render_process_exemplars` |
 | 6 | `## Candidate genealogy (this reign — in-context evolution)` + banner | `genealogy` renders non-empty (opt-in, §5.6.13) | `render_genealogy_block` |
@@ -1265,6 +1267,7 @@ per round (evolve_once, evolve/round_entry.py):
   train split = split_board(board, overfitting, seed=rotation_seed(…, epoch))
   patterns    = detect_patterns(TRAIN losses/entries/events)
   loss_summary, failure_profile ("" or banded block), process_exemplars=""
+  insights = load_latest_insight(root, epoch)    # previous round's file or ""
   screen_candidates = _build_candidate_screen_runner(…)   # 2-entry train panel
   prior = _load_prior_experiments(root, epoch)   # ≤12 curated entries or []
   next_id = next_generation_id(…)                # e.g. "v7"
@@ -1761,7 +1764,7 @@ enforcing code, and the test that pins it.
 | **Static hints** | the per-slot edit-class hint | static instruction strings only — nothing to transform | `src/zicato/proposer/hints.py` (docstring contract) | `tests/test_proposer_hints.py` |
 | **Loss summary** | one line of board-wide means | aggregation (mean drift loss, pass rate over N entries) | `_render_loss_summary` (`src/zicato/evolve/decision_support.py`) | `tests/test_orchestrator.py` |
 | **Screen feedback** (revise + critic block) | counts-only veto/clear summaries | the `CandidateScreenResult.reason` counts-only contract; `_render_screen_note` / `_render_revise_feedback` compose only from it | `src/zicato/epoch/screen.py::_summarize`, `src/zicato/proposer/best_of_n.py` | `tests/test_candidate_screen.py`, `tests/test_proposer_best_of_n.py` |
-| **Telemetry insights** | the analyzer's LLM-summarized markdown, when `ProposalEvidence.insights` is set | produced by the analyzer (`src/zicato/analyzer/`) over the same round artifacts, under its own discipline. `evidence_from_context` does not set the field, so loop episodes carry no insights section | `render_evidence` | `tests/test_analyzer_insights.py` |
+| **Telemetry insights** | the most recent round's evaluation-model summary of steering decisions | train slice only (the required `training_entry_ids`); the prompt holds decision-event counts keyed by emitter-supplied names, and under restricted visibility `restrict_summary` drops ladder reasons and withholds every name that is over 48 characters, holds a non-identifier character, or contains a board entry id — a short identifier that is not an entry id still passes; only a latest file opening with `TRAINING_SLICE_ANALYSIS_MARKER` is delivered | `analyze_epoch_telemetry(training_entry_ids=…, restricted_identities=…)`, `restrict_summary` (`src/zicato/analyzer/aggregator.py`), `load_latest_insight` (`src/zicato/analyzer/insights.py`) | `tests/test_analyzer_insights.py`, `tests/test_proposer_telemetry_insights.py` |
 | **Mutation manifest** | full code-span content | code identity rather than board identity — unrelated to the split, and left untouched | `render_mutation_block` | — |
 
 ### 5.8.3 Process exemplars: the R1–R4 redaction rules
@@ -1808,7 +1811,13 @@ produce `train_ids`; `train_board` filters the board; the champion's
 `losses` are loaded for train entries only. Everything downstream —
 `detect_patterns`, `_render_loss_summary`, `_render_failure_profile`,
 `_render_process_exemplars_block`, `select_screen_entries` — is fed that
-slice. When the board is too small to split, the train slice IS the full
+slice. The decision-telemetry analyzer receives the same slice at the end
+of the round: `_close_field_round` (`src/zicato/evolve/settlement.py`) passes `train_board`'s ids to
+`_round_epilogue` as `analyzer_entry_ids`, and `analyze_epoch_telemetry`
+drops every run outside them, so the insight the next round reads holds no
+holdout telemetry. Under restricted visibility it also passes the board's
+entry ids as `analyzer_restricted_identities`, which restrict the summary
+before the prompt is rendered. When the board is too small to split, the train slice IS the full
 board and every artifact is computed over the whole board (the default-safe
 degrade). The split mechanics are `zicato.board.split`
 (`docs/design/OVERFITTING.md` §3); the Ladder budget over the holdout is
@@ -2321,11 +2330,19 @@ that episode:
   SNAPSHOT (the tree the episode edits), the patterns come from
   `--patterns-from <file>` or fresh detectors, and the brief from the
   epoch's `brief.md` (a missing brief is an error);
+- `restrict_visibility` comes from the epoch's frozen
+  `overfitting.restrict_proposer_visibility`, the field the round reads,
+  through `_load_restrict_visibility`; unreadable scoring yields the
+  restricted posture. Experiment-memory deltas are therefore banded, and
+  patterns, a `--patterns-from` file included, are projected, whenever
+  a round's would be;
 - the round's per-round DERIVED channels are absent — the failure-mode
   profile, the metric priorities, the process exemplars, the genealogy
   sample and the calibration record. Each is computed by a round from the
   tournament state it is about to spend, and none is reconstructible
-  outside one;
+  outside one. The most recent telemetry insight is not one of them: it is
+  a file on disk, and the command reads it with `load_latest_insight`, as a
+  round does;
 - there is **no post-apply validation hook** wired (no snapshot is derived),
   so a destructive patch that the round would bounce inside the episode
   survives here;
