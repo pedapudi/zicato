@@ -19,17 +19,19 @@ from pathlib import Path
 from click.testing import CliRunner
 
 import zicato.tournament.worker_execution as _tournament_worker_execution
+from tests._runtime_builders import seed_tournament_generations
 from tests._stub_adapter import STUB_ADAPTER_FACTORY
 from zicato.board.jsonl import save_board
 from zicato.cli.discovery import build_cli_root
 from zicato.core import BoardEntry, Generation, LossProfile, ScoringWeights
 from zicato.core.board import Expectation, ExpectationKind
 from zicato.core.measurement import TOURNAMENT_DRAW, MeasurementDraw, MeasurementPurpose
-from zicato.core.workspace import generation_dir, reflection_suggestions_path, run_id_for_unit
+from zicato.core.workspace import reflection_suggestions_path, run_id_for_unit
 from zicato.epoch.lifecycle import new_epoch
 from zicato.index.schema import apply_schema
 from zicato.runtime.lock import WorkspaceLock
 from zicato.tournament.unit_cache import _unit_loss_path
+from zicato.workspace import WorkspaceLayout
 
 _REFLECTION_ID = "refl-integration"
 
@@ -104,10 +106,12 @@ def _seed_workspace(tmp_path: Path) -> tuple[Path, str]:
     cfg = new_epoch(ws, "integ", board_file, "steer", ScoringWeights())
     epoch = cfg.id
 
+    # The baseline champion the probes measure, held by the git store; its
+    # record directory is what names it the champion.
+    seed_tournament_generations(ws, epoch, "git", ("v0",))
+    WorkspaceLayout.from_root(ws).generation_dir(epoch, "v0").mkdir(parents=True, exist_ok=True)
+
     # A generation g0 that FAILED login (predicate miss) and passed pay.
-    snap = generation_dir(ws, epoch, "g0") / "snapshot"
-    snap.mkdir(parents=True, exist_ok=True)
-    (snap / "entrypoint.py").write_text("# stub\n", encoding="utf-8")
     _write_loss(ws, epoch, "g0", "login", passes=False)
     _write_loss(ws, epoch, "g0", "pay", passes=True)
     _seed_index(ws, epoch)
@@ -155,6 +159,7 @@ def test_unmocked_probe_measures_against_the_fixture_runner(tmp_path: Path, monk
     class _Runner:
         def __init__(self) -> None:
             self.slots: list[int] = []
+            self.generation_ids: set[str] = set()
 
         async def __call__(
             self,
@@ -172,6 +177,7 @@ def test_unmocked_probe_measures_against_the_fixture_runner(tmp_path: Path, monk
         ) -> LossProfile:
             ri = MeasurementDraw.from_context(entry.context)
             self.slots.append(ri)
+            self.generation_ids.add(generation.id)
             return LossProfile(
                 run_id=f"{generation.id}:{entry.id}:r{ri}",
                 entry_id=entry.id,
@@ -220,6 +226,8 @@ def test_unmocked_probe_measures_against_the_fixture_runner(tmp_path: Path, monk
     )  # measured at the reserved base
     # Every synthesis draw landed at/above the reserved base — r0 untouched.
     assert stub.slots and all(ri.purpose == MeasurementPurpose.ADMISSION for ri in stub.slots)
+    # Every draw ran the recorded champion's source tree.
+    assert stub.generation_ids == {"v0"}
 
 
 def test_admit_seam_plan_mode_runs_nothing(tmp_path: Path, monkeypatch) -> None:

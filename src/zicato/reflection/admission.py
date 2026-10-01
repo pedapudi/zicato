@@ -357,7 +357,10 @@ def admit(
     ``probe=False`` runs NOTHING live — :func:`admit_suggestion` computes the
     cost estimate + the pure leakage check and returns every live stage
     ``unmeasured`` (no champion / adapter is even resolved). ``probe=True`` is the
-    endpoint-gated spend the CLI gates behind ``--probe``.
+    endpoint-gated spend the CLI gates behind ``--probe``. When the configured
+    generation store holds no source tree for the champion, ``probe=True`` also
+    runs nothing and every live stage stays ``unmeasured``: a probe run against
+    any other tree would measure a different system.
     """
     import asyncio  # noqa: PLC0415
 
@@ -371,6 +374,7 @@ def admit(
     adapter: Any = None
     if probe:
         champion, config, adapter = _probe_context(workspace_root, epoch_id)
+    spend = champion is not None
 
     out: list[Suggestion] = []
     for s in suggestions:
@@ -391,7 +395,7 @@ def admit(
                 adapter=adapter,
                 workspace_root=workspace_root,
                 epoch_id=epoch_id,
-                spend=probe,
+                spend=spend,
             ),
         )
         out.append(replace(s, admission=record.to_json()))
@@ -570,11 +574,12 @@ def _probe_context(
     """Resolve the champion / config / adapter for the live probes (§5).
 
     Mirrors the reconstruction in ``inspect reflection run`` and the tournament
-    CLI: the champion generation off its on-disk snapshot, a
-    :class:`RuntimeConfig` from the workspace config (with placeholder
+    CLI: the champion generation's source tree from the configured generation
+    store, a :class:`RuntimeConfig` from the workspace config (with placeholder
     callables — the adapter is what the runner spends), and the adapter from
-    ``config.json``. A missing champion / adapter degrades to a placeholder so
-    the pipeline still runs its honest degrades.
+    ``config.json``. A champion the store does not hold is ``None``, and
+    :func:`admit` then spends nothing; a missing adapter degrades to a
+    placeholder object.
     """
     from zicato import adapter_factory, runtime_factory, workspace_loader  # noqa: PLC0415
 
@@ -611,7 +616,7 @@ def _resolve_champion(workspace_root: Path, epoch_id: str) -> Generation | None:
 
 
 def _placeholder_generation(workspace_root: Path, epoch_id: str) -> Generation:
-    """A stand-in champion for PLAN mode — never executed (spend=False runs nothing)."""
+    """A stand-in champion for a record that spends nothing — never executed."""
     return Generation(
         id="__admission_plan__",
         epoch_id=epoch_id,
@@ -742,8 +747,8 @@ async def _discrimination_probe(
     """Run ``entry`` against recent settled ``(champion, challenger)`` pairs.
 
     For each of the most recent ``discrimination_candidates`` settled matchups,
-    reconstruct BOTH generations' snapshot trees (the recombination builder's
-    reconstruction precedent) and run the drafted entry on each side; a pair is
+    materialize BOTH generations' source trees through the configured generation
+    store and run the drafted entry on each side; a pair is
     *compared* when both sides produce a usable verdict and *separated* when the
     two verdicts differ. No settled candidate / no reconstructable tree degrades
     to ``unmeasured`` (``separated = 0, pairs = 0``) — an honest zero, never a
@@ -836,27 +841,31 @@ async def _run_side(
 def _reconstruct_generation(
     workspace_root: Path, epoch_id: str, generation_id: str
 ) -> Generation | None:
-    """A :class:`Generation` over an on-disk snapshot, or ``None`` when absent.
+    """A :class:`Generation` over the source tree the configured store supplies.
 
-    Mirrors the tournament CLI's ``_build_generation`` reconstruction: the
-    snapshot lives under ``generations/{id}/snapshot``. A missing snapshot
-    (a pruned / never-materialised tree) degrades to ``None``.
+    The workspace's generation store (git or directory) decides where a
+    generation's source tree lives, so the tree is materialized through
+    :func:`zicato.epoch.genstore.default_generation_store`, as the evolve loop
+    and ``zicato tournament run`` do. The returned ``snapshot_root`` is the
+    store's canonical path, so each probe run takes its per-run checkout from
+    the store. A generation the store does not hold (pruned, never derived), or
+    a workspace whose store cannot be built, degrades to ``None``.
     """
-    from zicato.core.workspace import generation_dir  # noqa: PLC0415
+    from zicato.epoch.genstore import default_generation_store  # noqa: PLC0415
 
     try:
-        snapshot_root = generation_dir(workspace_root, epoch_id, generation_id) / "snapshot"
-        if not snapshot_root.exists():
-            return None
-        return Generation(
-            id=generation_id,
-            epoch_id=epoch_id,
-            parent_id=None,
-            snapshot_root=snapshot_root.resolve(),
-            created_at="",
+        snapshot_root = default_generation_store(workspace_root).materialize_snapshot(
+            epoch_id, generation_id
         )
-    except Exception:  # noqa: BLE001
+    except (OSError, ValueError, RuntimeError):  # RuntimeError covers a failed git command
         return None
+    return Generation(
+        id=generation_id,
+        epoch_id=epoch_id,
+        parent_id=None,
+        snapshot_root=snapshot_root.resolve(),
+        created_at="",
+    )
 
 
 # ---------------------------------------------------------------------------

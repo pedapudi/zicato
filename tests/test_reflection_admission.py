@@ -14,7 +14,10 @@ is a known answer with zero live spend. The suite pins:
   leaves discrimination ``unmeasured``, an invalid draft marks execution
   ``ran=false``, a single usable draw leaves the flip rate ``unmeasured``;
 * the **leakage / collusion** checks — the §4 rotation rule, the emulator guard,
-  and the self-preference flag.
+  and the self-preference flag;
+* the **source trees** — every generation the probes run is materialized
+  through the workspace's configured generation store, under the git store
+  and the directory store alike.
 """
 
 from __future__ import annotations
@@ -25,6 +28,7 @@ from pathlib import Path
 import pytest
 
 import zicato.tournament.worker_execution as _tournament_worker_execution
+from tests._runtime_builders import seed_tournament_generations
 from zicato.core import (
     BoardEntry,
     Generation,
@@ -40,10 +44,12 @@ from zicato.core.board import (
     UserPersona,
 )
 from zicato.core.measurement import MeasurementDraw, MeasurementPurpose
-from zicato.core.workspace import generation_dir, loss_profile_path, run_dir
+from zicato.core.workspace import loss_profile_path, run_dir
+from zicato.epoch.genstore import default_generation_store
 from zicato.reflection.admission import (
     DEFAULT_NOISE_RUNS,
     AdmissionRequest,
+    admit,
     admit_suggestion,
     estimate_cost,
 )
@@ -52,7 +58,9 @@ from zicato.reflection.mining import (
     HINT_JUDGE,
     HINT_REGRESSION_ENTRY,
 )
+from zicato.reflection.suggestions import Suggestion
 from zicato.runtime.lock import WorkspaceLock
+from zicato.workspace import WorkspaceLayout
 
 EPOCH = "epoch-1"
 CHAMPION = "champ-v0"
@@ -80,6 +88,7 @@ class _ScriptedRunner:
     def __init__(self) -> None:
         self.calls = 0
         self.slots: list[tuple[str, str, int]] = []
+        self.trees: dict[str, Path] = {}
 
     async def __call__(
         self,
@@ -98,6 +107,7 @@ class _ScriptedRunner:
         self.calls += 1
         measurement = MeasurementDraw.from_context(entry.context)
         self.slots.append((generation.id, entry.id, measurement))
+        self.trees[generation.id] = Path(generation.snapshot_root)
         abort_cause = "wall_clock_budget" if entry.id == "abort_probe" else None
         return LossProfile(
             run_id=f"run-{generation.id}-{entry.id}-{measurement}",
@@ -173,12 +183,23 @@ _EXPERIMENTS = [
 ]
 
 
-def _materialize_snapshots(workspace: Path) -> None:
-    """Create the on-disk snapshot trees the discrimination probe reconstructs."""
-    for gid in {CHAMPION, *(g for pair in _MATCHUPS for g in pair)}:
-        snap = generation_dir(workspace, EPOCH, gid) / "snapshot"
-        snap.mkdir(parents=True, exist_ok=True)
-        (snap / "entrypoint.py").write_text("# stub\n", encoding="utf-8")
+def _materialize_snapshots(
+    workspace: Path, backend: str = "git", generation_ids: tuple[str, ...] | None = None
+) -> None:
+    """Seed the source trees the probes run through the configured generation store.
+
+    By default every generation of :data:`_MATCHUPS` and the champion is seeded.
+    """
+    if generation_ids is None:
+        generation_ids = tuple(sorted({CHAMPION, *(g for pair in _MATCHUPS for g in pair)}))
+    workspace.mkdir(parents=True, exist_ok=True)
+    seed_tournament_generations(workspace, EPOCH, backend, generation_ids)
+
+
+def _champion(workspace: Path) -> Generation:
+    """The champion over the source tree its store materializes."""
+    tree = default_generation_store(workspace).materialize_snapshot(EPOCH, CHAMPION)
+    return _generation(CHAMPION, tree)
 
 
 def _run(coro):
@@ -186,11 +207,12 @@ def _run(coro):
 
 
 def _admit(request: AdmissionRequest, workspace: Path, *, spend: bool, board=None):
-    champ_snap = generation_dir(workspace, EPOCH, CHAMPION) / "snapshot"
+    # A plan never runs the champion, so it needs no source tree.
+    champion = _champion(workspace) if spend else _generation(CHAMPION, workspace)
     return _run(
         admit_suggestion(
             request,
-            champion=_generation(CHAMPION, champ_snap),
+            champion=champion,
             board=board if board is not None else [request.entry],
             experiments=_EXPERIMENTS,
             weights=ScoringWeights(),
@@ -208,9 +230,12 @@ def _admit(request: AdmissionRequest, workspace: Path, *, spend: bool, board=Non
 # ---------------------------------------------------------------------------
 
 
-def test_oc_proof_live_entry_discriminates_dead_entry_does_not(tmp_path: Path, monkeypatch) -> None:
+@pytest.mark.parametrize("backend", ["git", "directory"])
+def test_oc_proof_live_entry_discriminates_dead_entry_does_not(
+    tmp_path: Path, monkeypatch, backend: str
+) -> None:
     workspace = tmp_path / ".zicato"
-    _materialize_snapshots(workspace)
+    _materialize_snapshots(workspace, backend)
     stub = _ScriptedRunner()
     monkeypatch.setattr(_tournament_worker_execution, "_run_single", stub)
 
@@ -238,6 +263,9 @@ def test_oc_proof_live_entry_discriminates_dead_entry_does_not(tmp_path: Path, m
     assert live.discrimination["separated"] == 2
     assert dead.discrimination["separated"] == 0
     assert dead.discrimination["pairs"] == 3
+    # Each side ran on the tree the configured store holds for that generation.
+    for generation_id, tree in stub.trees.items():
+        assert (tree / "agent" / "generation.txt").read_text(encoding="utf-8") == generation_id
 
     # Flip rates are MEASURED at the reserved base 6000.
     assert live.noise["measured"] is True
@@ -354,7 +382,7 @@ def test_estimate_cost_matches_settled_matchups() -> None:
 
 def test_discrimination_unmeasured_on_cold_workspace(tmp_path: Path, monkeypatch) -> None:
     workspace = tmp_path / ".zicato"
-    generation_dir(workspace, EPOCH, CHAMPION).mkdir(parents=True, exist_ok=True)
+    _materialize_snapshots(workspace, generation_ids=(CHAMPION,))
     stub = _ScriptedRunner()
     monkeypatch.setattr(_tournament_worker_execution, "_run_single", stub)
 
@@ -364,7 +392,7 @@ def test_discrimination_unmeasured_on_cold_workspace(tmp_path: Path, monkeypatch
                 entry=_entry("live_probe", tags=("holdout",)),
                 suggestion_type=HINT_COVERAGE_ENTRY,
             ),
-            champion=_generation(CHAMPION, generation_dir(workspace, EPOCH, CHAMPION) / "snapshot"),
+            champion=_champion(workspace),
             board=[_entry("live_probe", tags=("holdout",))],
             experiments=[],  # no settled candidates
             weights=ScoringWeights(),
@@ -390,8 +418,8 @@ def test_discrimination_unmeasured_when_trees_unreconstructable(
     tmp_path: Path, monkeypatch
 ) -> None:
     workspace = tmp_path / ".zicato"
-    # Champion snapshot only; the settled candidates have NO snapshot tree.
-    (generation_dir(workspace, EPOCH, CHAMPION) / "snapshot").mkdir(parents=True, exist_ok=True)
+    # The store holds the champion only; the settled candidates have no source tree.
+    _materialize_snapshots(workspace, generation_ids=(CHAMPION,))
     monkeypatch.setattr(_tournament_worker_execution, "_run_single", _ScriptedRunner())
 
     record = _admit(
@@ -447,6 +475,78 @@ def test_aborted_draw_marks_execution_aborted_and_noise_unmeasured(
     # Draw 0 aborted → the A/A series stops → flip rate unmeasured (never a lie).
     assert record.noise["measured"] is False
     assert record.noise["flip_rate"] is None
+
+
+# ---------------------------------------------------------------------------
+# The sync seam measures the champion the configured store holds
+# ---------------------------------------------------------------------------
+
+
+def _entry_suggestion() -> Suggestion:
+    draft = {
+        "id": "live_probe",
+        "kind": "single_turn",
+        "wall_clock_budget_seconds": 30,
+        "input": "probe",
+    }
+    return Suggestion(
+        suggestion_id="sug-probe",
+        suggestion_type=HINT_REGRESSION_ENTRY,
+        artifact_kind="board_entry",
+        subject="live_probe",
+        summary="pin the probe entry",
+        rationale="the probe entry failed",
+        target_slice="train",
+        draft_artifact=draft,
+        proposed_op={"op": "add_board_entry", "args": {"entry": draft}},
+        provenance={},
+        admission=None,
+        severity_rank=1,
+        recency_key=0,
+        coverage_key=0,
+    )
+
+
+@pytest.mark.parametrize("backend", ["git", "directory"])
+def test_probe_runs_the_champion_tree_the_store_holds(
+    tmp_path: Path, monkeypatch, backend: str
+) -> None:
+    """``admit(probe=True)`` measures the baseline champion's own source tree."""
+    workspace = tmp_path / ".zicato"
+    _materialize_snapshots(workspace, backend, generation_ids=("v0",))
+    # The baseline's record directory is what names it the champion.
+    WorkspaceLayout.from_root(workspace).generation_dir(EPOCH, "v0").mkdir(
+        parents=True, exist_ok=True
+    )
+    stub = _ScriptedRunner()
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", stub)
+
+    [stamped] = admit([_entry_suggestion()], probe=True, workspace_root=workspace, epoch_id=EPOCH)
+
+    assert stamped.admission is not None
+    assert stamped.admission["spent"] is True
+    assert stamped.admission["executed"] is True
+    assert set(stub.trees) == {"v0"}
+    assert (stub.trees["v0"] / "agent" / "generation.txt").read_text(encoding="utf-8") == "v0"
+
+
+@pytest.mark.parametrize("backend", ["git", "directory"])
+def test_probe_without_a_champion_tree_spends_nothing(
+    tmp_path: Path, monkeypatch, backend: str
+) -> None:
+    """No champion source tree means no run against any other tree."""
+    workspace = tmp_path / ".zicato"
+    _materialize_snapshots(workspace, backend, generation_ids=())
+    stub = _ScriptedRunner()
+    monkeypatch.setattr(_tournament_worker_execution, "_run_single", stub)
+
+    [stamped] = admit([_entry_suggestion()], probe=True, workspace_root=workspace, epoch_id=EPOCH)
+
+    assert stub.calls == 0
+    assert stamped.admission is not None
+    assert stamped.admission["spent"] is False
+    assert stamped.admission["execution"]["measured"] is False
+    assert stamped.admission["noise"]["measured"] is False
 
 
 # ---------------------------------------------------------------------------

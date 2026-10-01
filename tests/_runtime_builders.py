@@ -16,6 +16,7 @@ explicitly or builds the object itself.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
@@ -72,20 +73,25 @@ def prepare_tournament_epoch(
         return new_epoch(workspace_root, name, board_path, brief_path, weights, contract=inputs).id
 
 
-def seed_tournament_generations(workspace: Path, epoch_id: str, backend: str) -> None:
-    """Configure ``backend`` as the source store and seed ``v0`` and ``v1`` through it.
+def seed_tournament_generations(
+    workspace: Path,
+    epoch_id: str,
+    backend: str,
+    generation_ids: Iterable[str] = ("v0", "v1"),
+) -> None:
+    """Configure ``backend`` as the source store and seed each generation through it.
 
     The backend is merged into any existing ``config.json``; a workspace
     without one gets a minimal config. Each generation's tree holds
     ``agent/generation.txt`` naming that generation, so a test can tell which
-    tree the command handed the runner.
+    tree the code under test handed the runner.
     """
     existing = read_workspace_config(workspace)
     config = dict(existing.raw) if existing.exists else {"instance_id": "test"}
     config.setdefault("created_at", "2026-05-14T00:00:00Z")
     write_workspace_config(workspace, {**config, "generation_source_backend": backend})
     store = default_generation_store(workspace)
-    for generation_id in ("v0", "v1"):
+    for generation_id in generation_ids:
         tree = workspace.parent / "sources" / generation_id / "agent"
         tree.mkdir(parents=True)
         (tree / "generation.txt").write_text(generation_id, encoding="utf-8")
