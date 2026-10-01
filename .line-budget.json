@@ -6,10 +6,10 @@
     "production": 197702,
     "production_logic": 110276
   },
-  "limits": {
-    "total": 470524,
+  "starting_limits": {
+    "total": 470525,
     "production": 187309,
     "production_logic": 109256,
-    "note": "Final measured limits; see docs/design/LINE-BUDGET.md."
+    "note": "The values the closed table in docs/design/LINE-BUDGET.md ends at. Each enforced limit adds the deltas the entries in docs/design/line-budget-ledger/ record."
   }
 }

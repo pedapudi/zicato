@@ -1507,17 +1507,39 @@ subsystem so movement is reviewable.
 `--report` prints every subsystem's total, production subset, production
 logic, and prose share (the share of production lines that do not execute) in
 descending order of production logic; the three columns partition the
-repository-wide counts. `--write-summary` rewrites the
-per-subsystem table in `docs/design/LINE-BUDGET.md` from the same measurement,
-and `--check-ledger` fails while that table differs from the tree, so a change
-to production code lands with the table it produces; the CI job writes the
-`--report` table into the job summary. `--history [--since <ref>] [--subsystem
-<name>]` prints the production-logic series per subsystem along the
-first-parent chain ending at `--ref` (default `HEAD`), from the baseline
-reference by default, through a content-addressed cache under `.cache/` that a
-change to the counters discards.
+repository-wide counts. The CI job writes the `--report` table into the job
+summary. `--history [--since <ref>] [--subsystem <name>]` prints the
+production-logic series per subsystem along the first-parent chain ending at
+`--ref` (default `HEAD`), from the baseline reference by default, through a
+content-addressed cache under `.cache/` that a change to the counters discards.
 
-`.line-budget.json` contains hard limits without an allowance. Keep the three
+Each enforced limit is the starting limit in `.line-budget.json` plus the
+deltas recorded by every entry under `docs/design/line-budget-ledger/`, and
+`enforced_limits()` computes it; the plain report prints each measurement
+beside it. A change that moves a measurement adds one entry file stating the
+change's own delta per measurement and its reason. `check_reconciled()`
+requires each limit to equal the tree's measurement, taken with the change's
+own counting rules, so a change to `EXCLUDED_FROM_BUDGET` or to a logic counter
+records the lines it exposes or hides. With `--base`, `check_fork()` finds the
+fork point of `HEAD` and the base and requires every entry, the starting
+limits, and the closed table's rows to keep their values there; entries absent
+at the fork point are the ones the failure message attributes to the change.
+When an entry is missing or wrong, the failure prints the table the entry must
+state, so the usual loop is: run the check, write the entry it prints, run it
+again. `_base_gap()` measures the fork point against its own limits when
+`tools/line_budget.py` is unchanged since then. A merge whose logic counts did
+not add up leaves that gap nonzero; `check_reconciled()` reports it on its own
+line and leaves it out of the printed table, so one dedicated change records
+it and no other change absorbs it. A `--base` that shares no history with
+`HEAD` in the clone fails with a message naming it. The same command pins the closed table of running totals by
+`HISTORY_DIGEST`, holds the summary table and the starting limits to
+`.line-budget.json`, and refuses a directory inside the ledger.
+`tests/test_line_budget_ledger.py` runs these rules end to end in a throwaway
+repository, including counting-rule changes in both directions, two branches
+that each record their own entry and merge in sequence without edits, and two
+balanced branches whose merge leaves the base off its logic limit.
+
+The limits carry no allowance. Keep the three
 independent one-line-overage assertions in `tests/test_line_budget.py`: each
 proves that one limit fails at `limit + 1` while the other two are unchanged.
 Four fixture tests beside them pin the split the logic count makes — a Python
@@ -1531,8 +1553,9 @@ no counter that keeps its raw count — and one more pins that every path in
 Run:
 
 ```bash
-uv run pytest tests/test_line_budget.py -q
+uv run pytest tests/test_line_budget.py tests/test_line_budget_ledger.py -q
 python tools/line_budget.py --check
+python tools/line_budget.py --check-ledger --base origin/main
 ```
 
 The stable measurement contract, final arithmetic, and ratchet policy live in

@@ -29,28 +29,22 @@ carrying `#[cfg(test)]`; for every other file type, the raw newline count,
 because the tool holds no comment syntax for them. A comment or docstring
 sharing a line with code leaves that line executable.
 
-The logic row's two numbers are what this definition yields. A
-`production_logic` value named in an appendix entry below is measured over a
-definition reaching only Python and JavaScript. Each such value is higher by
-the supervisor crate's comment and test lines — 6,748 of them at the baseline
-reference and 6,632 at the enforced limit. Extending the definition to a
-language is not a deliberate increase, so both the baseline and the limit move
-to what the definition measures, and the appendix carries no row for that move.
-
 Documentation and comments therefore reach the total and the production
 subtotal and never the logic count. Writing them spends two budgets and
 deleting them relieves neither ceiling that measures logic, so the third
 ceiling can only be moved by removing code. The checker owns the exact
 classifications.
 
-The baseline and the enforced limit use the same metric within each row. All
-three limits below are the ones `.line-budget.json` holds, and the last column
-subtracts the baseline from the limit: it is positive where the limit stands
-above the baseline and negative where it stands below.
+Each enforced limit is a starting limit plus the deltas of every entry in the
+ledger described under [Recording a change](#recording-a-change).
+`.line-budget.json` holds the three starting limits, and the table below states
+them beside the baseline; the last column subtracts the baseline from the
+starting limit. `python tools/line_budget.py` prints each measurement beside the
+limit in force.
 
-| Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
+| Measurement | Baseline (`f9052dd`) | Starting limit | Starting limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 470,524 | +61,863 |
+| Total | 408,661 | 470,525 | +61,864 |
 | Production | 197,702 | 187,309 | -10,393 |
 | Production logic | 110,276 | 109,256 | -1,020 |
 
@@ -68,97 +62,121 @@ lockfiles and excluded paths and is not an enforced metric.
 The three counts are also taken per subsystem, where a subsystem is a package
 directly under `src/zicato/`, a crate, an integration, or a top-level path, and
 a subsystem's three numbers partition the repository-wide ones: the production
-logic column below sums to the enforced logic count. Prose share is the share
-of a subsystem's production lines that do not execute (blank lines, comments,
-and docstrings), `1 - logic / production`. CSS and HTML hold no logic counter,
-so every line of the console's stylesheet counts as executable here as in the
+logic column sums to the enforced logic count. Prose share is the share of a
+subsystem's production lines that do not execute (blank lines, comments, and
+docstrings), `1 - logic / production`. CSS and HTML hold no logic counter, so
+every line of the console's stylesheet counts as executable here as in the
 enforced measurement.
 
-The table lists every subsystem holding production files in descending order
-of production logic and states the working tree of the commit that wrote it.
-`python tools/line_budget.py --write-summary` rewrites it from a fresh
-measurement, and `--check-ledger` fails when the table differs from the tree it
-runs in, so a change to production code lands with the table it produces.
-`--report` prints the same table for every subsystem, and `--history` prints the
+`python tools/line_budget.py --report` prints every subsystem in descending
+order of production logic, and the line-budget job in CI writes the same table
+into its job summary for every pull request. `--history` prints the
 production-logic series per subsystem along a branch's first-parent commits.
-
-| Subsystem | Total | Production | Production logic | Prose share |
-|---|---:|---:|---:|---:|
-| src/zicato/dashboard | 63,349 | 32,474 | 22,403 | 31.0% |
-| src/zicato/query | 17,763 | 17,763 | 11,165 | 37.1% |
-| src/zicato/epoch | 13,988 | 13,988 | 7,842 | 43.9% |
-| src/zicato/evolve | 11,262 | 11,262 | 7,183 | 36.2% |
-| src/zicato/tournament | 11,221 | 11,221 | 6,647 | 40.8% |
-| src/zicato/reflection | 9,853 | 9,853 | 6,579 | 33.2% |
-| crates/supervisor | 13,091 | 11,405 | 5,030 | 55.9% |
-| src/zicato/proposer | 9,537 | 9,537 | 4,771 | 50.0% |
-| src/zicato/cli | 7,190 | 7,190 | 4,743 | 34.0% |
-| src/zicato/analyzer | 7,359 | 7,359 | 4,691 | 36.3% |
-| src/zicato/selection | 5,281 | 5,281 | 3,063 | 42.0% |
-| src/zicato/core | 6,375 | 6,375 | 2,793 | 56.2% |
-| src/zicato/runtime | 5,175 | 5,175 | 2,528 | 51.1% |
-| src/zicato/index | 4,392 | 4,392 | 2,390 | 45.6% |
-| src/zicato/telemetry | 4,499 | 4,499 | 2,197 | 51.2% |
-| src/zicato/contract_draft | 2,485 | 2,485 | 1,630 | 34.4% |
-| src/zicato/health | 2,557 | 2,557 | 1,501 | 41.3% |
-| src/zicato/mutation | 2,954 | 2,954 | 1,405 | 52.4% |
-| src/zicato/check | 1,769 | 1,769 | 1,144 | 35.3% |
-| src/zicato/board | 2,412 | 2,412 | 1,096 | 54.6% |
-| src/zicato/workspace | 1,963 | 1,963 | 937 | 52.3% |
-| src/zicato/adapters | 2,197 | 2,197 | 821 | 62.6% |
-| src/zicato/judge_runtime | 1,778 | 1,778 | 801 | 54.9% |
-| src/zicato/testing | 1,455 | 1,455 | 767 | 47.3% |
-| src/zicato/_tournament_worker.py | 1,197 | 1,197 | 704 | 41.2% |
-| src/zicato/synthetic | 1,203 | 1,203 | 574 | 52.3% |
-| src/zicato/models_config.py | 635 | 635 | 490 | 22.8% |
-| src/zicato/scoring | 1,402 | 1,402 | 475 | 66.1% |
-| src/zicato/patterns | 766 | 766 | 419 | 45.3% |
-| src/zicato/storage | 1,022 | 1,022 | 360 | 64.8% |
-| src/zicato/logging_stream.py | 627 | 627 | 333 | 46.9% |
-| src/zicato/emulator | 682 | 682 | 306 | 55.1% |
-| src/zicato/example_workspace | 657 | 657 | 300 | 54.3% |
-| hatch_build.py | 205 | 205 | 169 | 17.6% |
-| src/zicato/driver_imports.py | 206 | 206 | 161 | 21.8% |
-| src/zicato/runtime_factory.py | 160 | 160 | 132 | 17.5% |
-| src/zicato/config.py | 159 | 159 | 118 | 25.8% |
-| src/zicato/workspace_loader.py | 236 | 236 | 103 | 56.4% |
-| src/zicato/integrations | 143 | 143 | 100 | 30.1% |
-| src/zicato/util | 175 | 175 | 94 | 46.3% |
-| src/zicato/reasoning.py | 112 | 112 | 83 | 25.9% |
-| src/zicato/adapter_factory.py | 102 | 102 | 76 | 25.5% |
-| src/zicato/import_path.py | 180 | 180 | 74 | 58.9% |
-| src/zicato/__init__.py | 67 | 67 | 41 | 38.8% |
-| src/zicato/orchestrator.py | 14 | 14 | 11 | 21.4% |
-| src/zicato/aux_timeout.py | 15 | 15 | 6 | 60.0% |
+This document holds no copy of the table: a copy would change with every edit
+to production code, so two independent pull requests would conflict on it.
 
 ## Ratchet policy
 
-There is no temporary allowance. A change exceeding any of the three limits
-fails. A deliberate increase must update the limit and record the previous
-value, signed delta, new value, issue, and reason in this document. Reductions
-ratchet each machine limit directly to the new measured total.
+There is no temporary allowance. A change that moves any of the three
+measurements records the movement in a ledger entry. The enforced limit moves
+by the recorded delta: an increase raises the limit by the lines it adds, and a
+reduction lowers the limit by the lines it removes. A change exceeding a limit
+fails.
 
 Minification, concatenation, moving implementation into excluded paths,
 checked-in generated replacements, weakening tests, or deleting documentation
 and comments do not qualify as simplification. Any classification change
-receives the same review as a budget increase; where it corrects an exclusion
-and so brings real source into a measurement, the ceiling rises by the lines the
-correction exposes and the entry records that reason.
+receives the same review as a budget increase and is recorded the same way;
+where it corrects an exclusion and so brings real source into a measurement,
+its entry records the lines the correction exposes and says so.
 
-The appendix below is append-only, and `python tools/line_budget.py
---check-ledger` enforces it. Read from the table alone, every row's previous
-value plus its signed delta must equal its new value, each row must start no
-higher than the value the preceding row for the same measurement reached, and
-the last row for a measurement must stand at or above that measurement's
-enforced limit, because an increase ends at the limit it sets and a reduction
-carries the limit further down with no row. Given a base revision (`--base
-origin/main`), every row that revision records must still be present with the
-same label, measurement, and numbers, while a reason is free to be reworded.
-The line-budget job in CI runs the check against the pull request's base
-branch, so a merge that resolves the table toward one side fails with the
-dropped rows named.
+## Recording a change
 
-## Deliberate increases
+The ledger is the directory `docs/design/line-budget-ledger/`, one Markdown
+file per change. A file is named `YYYY-MM-DD-words-joined-by-hyphens.md`, so a
+directory listing reads in date order. It holds the change's name as its title,
+one table stating the signed delta for each measurement, and the reason:
+
+```markdown
+# Shared record readers for the query layer
+
+| Measurement | Delta |
+|---|---:|
+| Total | +412 |
+| Production | -35 |
+| Production logic | -61 |
+
+One reader per record replaces the decoding each query module held; the added
+lines are the reader's tests.
+```
+
+Every row is required; a measurement the change leaves alone records `0`.
+An entry states only the change's own movement, so it does not depend on
+where the default branch stands, and independent pull requests add different
+files.
+
+`python tools/line_budget.py --check-ledger --base origin/main` enforces the
+ledger with three rules:
+
+- **Reconciled with the tree.** Each enforced limit equals what the tree
+  measures. Every commit on the default branch meets this rule, so a change
+  meets it when the entries it adds record its own movement. A change to the
+  counting rules (an exclusion added or removed, a counter extended to a
+  language) records the movement it causes, because the tree is measured with
+  the rules that change carries. A missing or wrong entry fails, and the
+  failure prints the table the entry must state.
+- **Append-only.** Every entry present at the fork point of `HEAD` and the
+  base is still present with the same file name, title, and deltas; a reason
+  may be reworded.
+- **Fixed starting point.** The starting limits in `.line-budget.json` and the
+  rows of the closed table below equal their values at the fork point, so a
+  limit moves only by an entry.
+
+None of the rules reads a total from the base. In CI the checkout of a pull
+request is the pull request merged into its base, so the reconciliation rule
+measures the merged tree, and the entries absent at the base's tip are the
+pull request's own. A push to the default branch is compared with the tip it
+replaced. `python tools/line_budget.py --check` enforces each measurement
+against its limit.
+
+Line counts are additive across a clean merge, but the logic count is not
+always. In a function body holding `x = 0`, `y = 0`, and a string expression,
+deleting either assignment removes one executable line, and each change records
+that. Deleting both makes the string the function's docstring, so the merged
+tree loses a third executable line that neither change recorded, and the
+default branch measures one line below its logic limit.
+
+The check keeps that difference out of every other change's table. With
+`--base`, and when `tools/line_budget.py` is unchanged since the fork point, it
+also measures the fork point against its own limits. A nonzero result is
+reported on a line of its own, naming the fork point and the difference, and
+the table printed for the change states only the change's own movement. One
+change records the difference in an entry of its own, stating that a merge
+produced it; that change balances the tree and passes. Until it lands, every
+other pull request fails on that line alone and passes on a re-run once it
+has merged, with no edit.
+
+`--check-ledger` also holds the summary table above to `.line-budget.json` and
+checks the closed table below.
+
+## Changes recorded with running totals
+
+Before the per-change ledger, each change appended rows to this table, one row
+per measurement, stating the value before the change, the signed delta, and
+the value after it. Those values were anchored to the default branch's
+measurement when written. The table is closed. `--check-ledger` pins its
+labels, measurements, and numbers by digest and by comparison with the fork
+point (reasons may be reworded), and requires each starting limit in
+`.line-budget.json` to equal the value the table's last row for that
+measurement reaches. The rows are not re-derived:
+some start below their predecessor because a reduction then lowered the limit
+without a row.
+
+Logic values in rows above the row "Rust executable lines counted" were
+measured over a definition reaching only Python and JavaScript. Each such value
+is higher by the supervisor crate's comment and test lines, 6,748 of them at
+the baseline reference and 6,632 at the limit in force when the Rust counter
+was added.
 
 | Change | Previous | Delta | New | Reason |
 |---|---:|---:|---:|---|

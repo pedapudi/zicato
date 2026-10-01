@@ -8,24 +8,27 @@ import pytest
 
 import tools.line_budget as line_budget
 from tools.line_budget import (
+    CONFIG,
     EXCLUDED_FROM_BUDGET,
     LEDGER,
     ROOT,
+    Entry,
     Lines,
     Point,
     Report,
     _excluded,
     _production,
     check,
+    check_history,
     check_ledger,
-    check_subsystem_table,
+    check_summary,
+    enforced_limits,
     history,
     measure,
+    parse_entry,
     render_history,
     render_report,
-    render_subsystem_table,
     report_json,
-    write_summary,
 )
 
 PYTHON_FIXTURE = '''"""Module docstring.
@@ -84,15 +87,7 @@ def _report(*, total: int, production: int, logic: int = 0) -> Report:
     return Report(1, total, 1, production, logic, {}, {})
 
 
-def _config(path: Path, *, total: int = 10, production: int = 5, logic: int = 3) -> Path:
-    path.write_text(
-        json.dumps(
-            {
-                "limits": {"total": total, "production": production, "production_logic": logic},
-            }
-        )
-    )
-    return path
+LIMITS = {"total": 10, "production": 5, "production_logic": 3}
 
 
 def _measure(tmp_path: Path, files: dict[str, str]) -> Report:
@@ -268,250 +263,142 @@ def test_report_lists_every_subsystem_by_production_logic(tmp_path: Path) -> Non
     assert rows[-1].split() == ["tests", "1", "0", "0"]
 
 
-def test_the_ledger_table_lists_only_subsystems_holding_production_files(tmp_path: Path) -> None:
-    table = render_subsystem_table(_measure(tmp_path, PER_LANGUAGE)).splitlines()
-
-    assert table[:3] == [
-        "| Subsystem | Total | Production | Production logic | Prose share |",
-        "|---|---:|---:|---:|---:|",
-        "| crates/supervisor | 24 | 24 | 5 | 79.2% |",
-    ]
-    assert not any(row.startswith("| tests ") for row in table)
+def test_check_rejects_one_line_total_overage() -> None:
+    assert check(_report(total=11, production=5), LIMITS) == ["total: 11 exceeds 10 by 1"]
 
 
-def test_check_rejects_one_line_total_overage(tmp_path: Path) -> None:
-    config = _config(tmp_path / "budget.json")
-    assert check(_report(total=11, production=5), config) == ["total: 11 exceeds 10 by 1"]
+def test_check_rejects_one_line_production_overage() -> None:
+    assert check(_report(total=10, production=6), LIMITS) == ["production: 6 exceeds 5 by 1"]
 
 
-def test_check_rejects_one_line_production_overage(tmp_path: Path) -> None:
-    config = _config(tmp_path / "budget.json")
-    assert check(_report(total=10, production=6), config) == ["production: 6 exceeds 5 by 1"]
-
-
-def test_check_rejects_one_line_production_logic_overage(tmp_path: Path) -> None:
-    config = _config(tmp_path / "budget.json")
-    assert check(_report(total=10, production=5, logic=4), config) == [
+def test_check_rejects_one_line_production_logic_overage() -> None:
+    assert check(_report(total=10, production=5, logic=4), LIMITS) == [
         "production_logic: 4 exceeds 3 by 1"
     ]
 
 
-LEDGER_FIXTURE = """# Line budgets
+CONFIG_DATA = json.loads(CONFIG.read_text())
 
-## Measurement contract
-
-| Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
+SUMMARY_FIXTURE = """| Measurement | Baseline | Starting limit | Starting limit minus baseline |
 |---|---:|---:|---:|
 | Total | 100 | 114 | +14 |
 | Production | 50 | 55 | +5 |
 | Production logic | 30 | 34 | +4 |
-
-## Ratchet policy
-
-Prose the parser walks past.
-
-## Deliberate increases
-
-| Change | Previous | Delta | New | Reason |
-|---|---:|---:|---:|---|
-| First change (total) | 100 | +10 | 110 | The reason it was worth ten lines. |
-| First change (production) | 50 | +5 | 55 | The reason it was worth five lines. |
-| First change (production logic) | 30 | +4 | 34 | The reason it was worth four lines. |
-| Second change (total) | 108 | +6 | 114 | A reduction to 108 landed between the two rows. |
 """
+SUMMARY_CONFIG = {"starting_limits": {"total": 114, "production": 55, "production_logic": 34}}
 
-LEDGER_LIMITS = {"total": 114, "production": 55, "logic": 34}
+ENTRY_FIXTURE = """# Shared readers
 
+| Measurement | Delta |
+|---|---:|
+| Total | +1,204 |
+| Production | -35 |
+| Production logic | 0 |
 
-def _ledger_config(tmp_path: Path) -> Path:
-    return _config(tmp_path / "ledger-budget.json", **LEDGER_LIMITS)
+One reader per record replaces the decoding each module held.
+"""
 
 
 def test_the_repository_ledger_passes_its_own_check() -> None:
-    assert check_ledger(LEDGER.read_text()) == []
+    assert check_ledger() == []
 
 
-def test_a_well_formed_ledger_passes(tmp_path: Path) -> None:
-    assert check_ledger(LEDGER_FIXTURE, config_path=_ledger_config(tmp_path)) == []
+def test_a_summary_row_stating_a_limit_the_config_does_not_hold_fails() -> None:
+    stale = SUMMARY_FIXTURE.replace("| 50 | 55 | +5 |", "| 50 | 51 | +1 |")
 
-
-def test_a_row_whose_delta_misses_its_new_value_fails(tmp_path: Path) -> None:
-    broken = LEDGER_FIXTURE.replace("| 50 | +5 | 55 |", "| 50 | +5 | 57 |")
-
-    errors = check_ledger(broken, config_path=_ledger_config(tmp_path))
-
-    assert errors == ["First change (production) 50 +5 57: the sum is 55"]
-
-
-def test_a_row_starting_above_the_preceding_row_fails(tmp_path: Path) -> None:
-    """A start above the last recorded value means a row was dropped or invented."""
-    broken = LEDGER_FIXTURE.replace("| 108 | +6 | 114 |", "| 120 | +6 | 126 |")
-
-    errors = check_ledger(broken, config_path=_ledger_config(tmp_path))
-
-    assert errors == [
-        "Second change (total) 120 +6 126: starts above the 110 the preceding row reached"
-    ]
-
-
-def test_a_row_the_base_records_may_not_leave_the_table(tmp_path: Path) -> None:
-    rows = LEDGER_FIXTURE.splitlines(keepends=True)
-    trimmed = "".join(row for row in rows if not row.startswith("| First change (total) |"))
-
-    errors = check_ledger(trimmed, LEDGER_FIXTURE, _ledger_config(tmp_path))
-
-    assert errors == [
-        "First change (total) 100 +10 110: present in the base ledger and missing here"
-    ]
-
-
-def test_a_reworded_reason_keeps_the_row(tmp_path: Path) -> None:
-    reworded = LEDGER_FIXTURE.replace(
-        "The reason it was worth five lines.", "The same five lines, said another way."
-    )
-
-    assert check_ledger(reworded, LEDGER_FIXTURE, _ledger_config(tmp_path)) == []
-
-
-def test_a_measurement_whose_last_row_sits_below_its_limit_fails(tmp_path: Path) -> None:
-    """Raising the limit without a row is caught twice over.
-
-    The ledger rule names the unrecorded increase; the summary rule names the
-    table left behind, because raising a limit means the table above the ledger
-    now states a value the config does not hold.
-    """
-    config = _config(tmp_path / "raised.json", total=200, production=55, logic=34)
-
-    errors = check_ledger(LEDGER_FIXTURE, config_path=config)
-
-    assert errors == [
-        "total: the last row reaches 114, below the enforced 200",
-        "summary table, Total: states the limit 114, but .line-budget.json holds 200",
-    ]
-
-
-def test_a_summary_row_stating_a_limit_the_config_does_not_hold_fails(tmp_path: Path) -> None:
-    """The defect this rule exists for: the config moved, the table did not."""
-    stale = LEDGER_FIXTURE.replace("| Production | 50 | 55 | +5 |", "| Production | 50 | 51 | +1 |")
-
-    errors = check_ledger(stale, config_path=_ledger_config(tmp_path))
-
-    assert errors == [
+    assert check_summary(stale, SUMMARY_CONFIG) == [
         "summary table, Production: states the limit 51, but .line-budget.json holds 55"
     ]
 
 
-def test_a_summary_row_whose_last_column_misses_the_difference_fails(tmp_path: Path) -> None:
-    broken = LEDGER_FIXTURE.replace("| Total | 100 | 114 | +14 |", "| Total | 100 | 114 | +15 |")
+def test_a_summary_row_whose_last_column_misses_the_difference_fails() -> None:
+    broken = SUMMARY_FIXTURE.replace("| Total | 100 | 114 | +14 |", "| Total | 100 | 114 | +15 |")
 
-    errors = check_ledger(broken, config_path=_ledger_config(tmp_path))
-
-    assert errors == [
+    assert check_summary(broken, SUMMARY_CONFIG) == [
         "summary table, Total: the last column states +15, "
         "but the limit minus the baseline is +14"
     ]
 
 
-def test_deleting_a_summary_row_is_not_a_way_to_pass(tmp_path: Path) -> None:
-    rows = LEDGER_FIXTURE.splitlines(keepends=True)
+def test_deleting_a_summary_row_is_not_a_way_to_pass() -> None:
+    rows = SUMMARY_FIXTURE.splitlines(keepends=True)
     trimmed = "".join(row for row in rows if not row.startswith("| Production logic |"))
 
-    errors = check_ledger(trimmed, config_path=_ledger_config(tmp_path))
-
-    assert errors == ["summary table: no readable 'Production logic' row"]
-
-
-SUBSYSTEM_DOC = """# Line budgets
-
-## Production logic by subsystem
-
-Prose the writer keeps.
-
-| Subsystem | Total | Production | Production logic | Prose share |
-|---|---:|---:|---:|---:|
-| crates/supervisor | 24 | 24 | 5 | 79.2% |
-| src/zicato/core | 11 | 11 | 2 | 81.8% |
-
-## Ratchet policy
-"""
-
-REWRITE_HINT = "run `python tools/line_budget.py --write-summary` to rewrite the table"
-
-
-def _subsystem_report(**subsystems: Lines) -> Report:
-    return Report(1, 0, 1, 0, 0, {}, subsystems)
-
-
-def test_the_repository_subsystem_table_is_current() -> None:
-    assert check_subsystem_table(LEDGER.read_text(), measure()) == []
-
-
-def test_a_current_subsystem_table_passes() -> None:
-    report = _subsystem_report(
-        **{"crates/supervisor": Lines(24, 24, 5)}, **{"src/zicato/core": Lines(11, 11, 2)}
-    )
-
-    assert check_subsystem_table(SUBSYSTEM_DOC, report) == []
-
-
-def test_a_stale_subsystem_row_fails() -> None:
-    report = _subsystem_report(
-        **{"crates/supervisor": Lines(24, 24, 5)}, **{"src/zicato/core": Lines(12, 12, 3)}
-    )
-
-    assert check_subsystem_table(SUBSYSTEM_DOC, report) == [
-        "subsystem table, src/zicato/core: states 11 | 11 | 2 | 81.8%, "
-        "but the tree measures 12 | 12 | 3 | 75.0%",
-        REWRITE_HINT,
+    assert check_summary(trimmed, SUMMARY_CONFIG) == [
+        "summary table: no readable 'Production logic' row"
     ]
 
 
-def test_a_subsystem_without_a_row_fails() -> None:
-    report = _subsystem_report(
-        **{"crates/supervisor": Lines(24, 24, 5)},
-        **{"src/zicato/core": Lines(11, 11, 2)},
-        **{"src/zicato/tui": Lines(3, 3, 1)},
-    )
+def test_the_closed_table_accepts_a_reworded_reason() -> None:
+    text = LEDGER.read_text()
+    reason = "Issue #12: bounded capture implementation and typed artifact surface."
+    assert text.count(reason) == 1
 
-    assert check_subsystem_table(SUBSYSTEM_DOC, report) == [
-        "subsystem table: no row for src/zicato/tui, which measures 3 | 3 | 1 | 66.7%",
-        REWRITE_HINT,
+    assert check_history(text.replace(reason, "Issue #12: the capture code."), CONFIG_DATA) == []
+
+
+def test_the_closed_table_refuses_a_changed_number() -> None:
+    text = LEDGER.read_text()
+    row = "| 196,526 | +235 | 196,761 |"
+    assert text.count(row) == 1
+
+    errors = check_history(text.replace(row, "| 196,526 | +236 | 196,762 |"), CONFIG_DATA)
+
+    assert errors == [
+        "the table under '## Changes recorded with running totals' is closed and its rows "
+        "changed; record a change as a file under docs/design/line-budget-ledger/"
     ]
 
 
-def test_a_row_naming_no_measured_subsystem_fails() -> None:
-    report = _subsystem_report(**{"crates/supervisor": Lines(24, 24, 5)})
+def test_a_starting_limit_must_continue_the_closed_table() -> None:
+    raised = json.loads(json.dumps(CONFIG_DATA))
+    raised["starting_limits"]["total"] += 1
 
-    assert check_subsystem_table(SUBSYSTEM_DOC, report) == [
-        "subsystem table, src/zicato/core: no production files measure under that name",
-        REWRITE_HINT,
+    errors = check_history(LEDGER.read_text(), raised)
+
+    start = CONFIG_DATA["starting_limits"]["total"]
+    assert errors == [
+        f"total: .line-budget.json starts the limit at {start + 1:,}, "
+        f"but the closed table ends at {start:,}"
     ]
 
 
-def test_write_summary_rewrites_the_table_and_nothing_else() -> None:
-    report = _subsystem_report(**{"src/zicato/core": Lines(12, 12, 3)})
+def test_an_entry_reads_its_title_deltas_and_reason() -> None:
+    entry, errors = parse_entry("2026-09-27-shared-readers.md", ENTRY_FIXTURE)
 
-    written = write_summary(SUBSYSTEM_DOC, report)
+    assert errors == []
+    assert entry == Entry("2026-09-27-shared-readers.md", "Shared readers", (1204, -35, 0), "")
+    assert entry is not None
+    assert entry.reason == "One reader per record replaces the decoding each module held."
 
-    assert written == SUBSYSTEM_DOC.replace(
-        "| crates/supervisor | 24 | 24 | 5 | 79.2% |\n| src/zicato/core | 11 | 11 | 2 | 81.8% |",
-        "| src/zicato/core | 12 | 12 | 3 | 75.0% |",
+
+def test_an_entry_missing_a_row_a_reason_or_a_dated_name_fails() -> None:
+    text = ENTRY_FIXTURE.replace("| Production logic | 0 |\n", "").replace(
+        "One reader per record replaces the decoding each module held.\n", ""
     )
-    assert check_subsystem_table(written, report) == []
+
+    entry, errors = parse_entry("shared-readers.md", text)
+
+    assert entry is None
+    assert errors == [
+        "shared-readers.md: an entry file is named YYYY-MM-DD-words-joined-by-hyphens.md",
+        "shared-readers.md: no delta row for Production logic",
+        "shared-readers.md: no reason follows the table",
+    ]
 
 
-def test_write_summary_fills_a_section_holding_no_table_yet() -> None:
-    report = _subsystem_report(**{"src/zicato/core": Lines(12, 12, 3)})
-    empty = "## Production logic by subsystem\n\nProse.\n\n## Ratchet policy\n"
+def test_each_limit_is_its_start_plus_every_entry() -> None:
+    entries = [
+        Entry("2026-09-27-a.md", "A", (10, 2, -1), ""),
+        Entry("2026-09-28-b.md", "B", (-4, 0, 3), ""),
+    ]
 
-    written = write_summary(empty, report)
+    limits = enforced_limits(SUMMARY_CONFIG, entries)
 
-    assert written == (
-        "## Production logic by subsystem\n\nProse.\n\n"
-        "| Subsystem | Total | Production | Production logic | Prose share |\n"
-        "|---|---:|---:|---:|---:|\n"
-        "| src/zicato/core | 12 | 12 | 3 | 75.0% |\n\n## Ratchet policy\n"
-    )
+    assert limits == {"total": 120, "production": 57, "production_logic": 36}
+    assert check(_report(total=120, production=58, logic=36), limits) == [
+        "production: 58 exceeds 57 by 1"
+    ]
 
 
 def _commit(cwd: Path, files: dict[str, str], message: str) -> str:

@@ -12,16 +12,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # The ledger check reads the base branch's copy of the table, so the
-          # base ref has to exist locally.
+          # The ledger check reads the fork point of HEAD and the base: its
+          # entries, starting limits, closed table, and measurement against its
+          # limits. The base history therefore has to exist locally.
           fetch-depth: 0
 
       - name: Report and enforce line budgets
         run: python tools/verify.py --only line-budget --report-dir "${{ runner.temp }}/verification-reports"
 
-      - name: Check the ledger's arithmetic and that no row was dropped
+      - name: Fetch the tip a push replaced
+        # A force-push leaves the replaced tip out of the clone's refs.
+        if: github.event_name == 'push'
+        run: git fetch --no-tags origin "${{ github.event.before }}"
+
+      - name: Check that the ledger entries record the measured change and none was dropped
         env:
-          VERIFICATION_BASE: origin/${{ github.base_ref || github.ref_name }}
+          # A push compares the new tip with the tip it replaced; a pull
+          # request compares its merge with the base branch.
+          VERIFICATION_BASE: ${{ github.event_name == 'push' && github.event.before || format('origin/{0}', github.base_ref || github.ref_name) }}
         run: python tools/verify.py --only ledger --report-dir "${{ runner.temp }}/verification-reports"
 
       - name: Show production logic per subsystem in the job summary

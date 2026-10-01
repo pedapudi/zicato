@@ -101,8 +101,8 @@ def _is_prose(rel: str) -> bool:
 #: count), and a narrow WRONG answer is worse than a blunt right one.
 #: tools/test_affected_tests.py pins each entry against its reader, so an
 #: entry that stops being true fails a test rather than silently narrowing
-#: a run. The budget file is here because the ratchet policy makes almost
-#: every pull request touch it.
+#: a run. The budget file is here because `tools/line_budget.py` is its
+#: only reader, so a change to it runs that tool's tests alone.
 TRACED_DATA_FILES: dict[str, str] = {".line-budget.json": "tools.line_budget"}
 
 #: Dynamic-import call targets the parser evaluates when the argument is a
