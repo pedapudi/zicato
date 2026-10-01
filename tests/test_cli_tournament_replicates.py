@@ -8,6 +8,10 @@ gauntlet defaults to 2). These tests pin the CLI to the same resolution path
 (mirroring ``orchestrator.evolve_once``) for both ``--mode full`` and
 ``--mode fast``, and verify the new ``--replicates`` debug override reproduces
 the historical single-run behaviour.
+
+The command also reads each generation's source tree through the
+workspace's configured generation store, so it re-scores a pair under the
+git store (the ``zicato init`` default) as well as the directory store.
 """
 
 from __future__ import annotations
@@ -23,9 +27,11 @@ from tests._runtime_builders import (
     prepare_tournament_epoch,
     record_tournament_score,
     runtime_config,
+    seed_tournament_generations,
 )
 from zicato.core import BoardEntry, ScoringWeights
 from zicato.core.tournament import TournamentStructure
+from zicato.epoch.genstore import default_generation_store
 from zicato.epoch.lifecycle import current_epoch_id
 from zicato.tournament.gate import GateOutcome
 from zicato.tournament.runner import TournamentResult
@@ -78,15 +84,14 @@ def _fake_result() -> TournamentResult:
     )
 
 
-def _make_workspace(tmp_path: Path, weights: ScoringWeights | None = None) -> Path:
+def _make_workspace(
+    tmp_path: Path, weights: ScoringWeights | None = None, backend: str = "directory"
+) -> Path:
     workspace = tmp_path / "ws"
     epoch_id = prepare_tournament_epoch(
         workspace, runtime_config(workspace), _board(), weights or ScoringWeights()
     )
-    for generation_id in ("v0", "v1"):
-        (workspace / "epochs" / epoch_id / "generations" / generation_id / "snapshot").mkdir(
-            parents=True
-        )
+    seed_tournament_generations(workspace, epoch_id, backend)
     return workspace
 
 
@@ -376,10 +381,7 @@ def test_cli_explicit_epoch_uses_that_epochs_frozen_contract(
     selected_epoch = epochs["selected"]
     assert current_epoch_id(workspace) == epochs["current"]
 
-    for generation_id in ("v0", "v1"):
-        (workspace / "epochs" / selected_epoch / "generations" / generation_id / "snapshot").mkdir(
-            parents=True
-        )
+    seed_tournament_generations(workspace, selected_epoch, "directory")
 
     events: list[str] = []
     loader_mod = types.SimpleNamespace(
@@ -472,3 +474,66 @@ def test_cli_workspace_gate_stops_before_adapter_construction_or_spend(
     assert result.exit_code != 0
     assert events == ["gate"]
     assert "contract is not measurable" in result.output
+
+
+# ---------------------------------------------------------------------------
+# generation source trees
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("backend", ["git", "directory"])
+def test_cli_reads_generation_trees_through_the_configured_store(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, backend: str
+) -> None:
+    """Each side runs from the tree its configured store materializes."""
+    from click.testing import CliRunner
+
+    from zicato.cli.commands.tournament import tournament_cmd
+
+    workspace = _make_workspace(tmp_path, backend=backend)
+    _make_cli_stubs(monkeypatch)
+    captured: dict[str, Any] = {}
+
+    async def fake_run_tournament(**kwargs: Any) -> Any:
+        captured.update(kwargs)
+        return _fake_result()
+
+    monkeypatch.setattr("zicato.tournament.run_tournament", fake_run_tournament)
+    res = CliRunner().invoke(
+        tournament_cmd, ["v0", "v1", "--workspace", str(workspace)], catch_exceptions=False
+    )
+
+    assert res.exit_code == 0, res.output
+    epoch_id = current_epoch_id(workspace)
+    assert epoch_id is not None
+    store = default_generation_store(workspace)
+    for role, generation_id in (("parent_gen", "v0"), ("child_gen", "v1")):
+        root = Path(captured[role].snapshot_root)
+        assert root == store.materialize_snapshot(epoch_id, generation_id).resolve()
+        assert (root / "agent" / "generation.txt").read_text(encoding="utf-8") == generation_id
+
+
+@pytest.mark.parametrize("backend", ["git", "directory"])
+def test_cli_names_a_generation_its_store_does_not_hold(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, backend: str
+) -> None:
+    """An unknown generation exits 1 with a message before any run starts."""
+    from click.testing import CliRunner
+
+    from zicato.cli.commands.tournament import tournament_cmd
+
+    workspace = _make_workspace(tmp_path, backend=backend)
+    _make_cli_stubs(monkeypatch)
+    calls: list[dict[str, Any]] = []
+
+    async def fake_run_tournament(**kwargs: Any) -> Any:
+        calls.append(kwargs)
+        return _fake_result()
+
+    monkeypatch.setattr("zicato.tournament.run_tournament", fake_run_tournament)
+    res = CliRunner().invoke(tournament_cmd, ["v0", "v9", "--workspace", str(workspace)])
+
+    assert res.exit_code == 1
+    assert "generation 'v9'" in res.output
+    assert "has no source tree" in res.output
+    assert calls == []

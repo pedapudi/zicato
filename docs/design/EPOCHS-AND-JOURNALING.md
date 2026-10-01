@@ -168,6 +168,7 @@ directory.
       rounds/
         {round_index}/
           round_log.jsonl            # the round's step-by-step event log
+          patterns.json              # the detector patterns the round passed to its proposer
           field_settlement.json      # outcomes, tournament details, primary promotion
       tournaments/                   # durable field-tournament snapshots
       insights/
@@ -479,6 +480,10 @@ prose already recorded. The operator can later re-render it with
 
 - The rendered journal for the epoch.
 - The recorded experiments, combining each proposal with its recorded outcome.
+- Each round's detector patterns from `rounds/{round}/patterns.json`, oldest
+  round first, so the retrospective can name the failure patterns that
+  persisted to the end of the epoch. The section is absent when no round
+  recorded patterns.
 - The deterministic tournament outcomes: lineage, scalar trajectory, and
   metric movements.
 
@@ -762,8 +767,9 @@ round.
 A single round, in storage terms:
 
 1. Run the pattern detectors over the parent generation's loss
-   profiles; the patterns are passed to the proposer in memory and are
-   not written to disk.
+   profiles. The round passes the patterns to the proposer and writes
+   them to `rounds/{round}/patterns.json`, which the close-of-epoch
+   retrospective reads.
 2. Run the proposer to produce an `Experiment`.
 3. Validate the experiment's hypothesis schema and patch ids.
 4. Run the applier; write the candidate snapshot to `vN+1/snapshot/`.

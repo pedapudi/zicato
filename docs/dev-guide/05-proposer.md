@@ -2328,7 +2328,9 @@ that episode:
 
 - the mutation manifest is enumerated from the parent generation's own
   SNAPSHOT (the tree the episode edits), the patterns come from
-  `--patterns-from <file>` or fresh detectors, and the brief from the
+  `--patterns-from <file>` (a JSON array of pattern objects, decoded by the
+  `pattern_from_dict` that reads `rounds/{round}/patterns.json`) or fresh
+  detectors, and the brief from the
   epoch's `brief.md` (a missing brief is an error);
 - `restrict_visibility` comes from the epoch's frozen
   `overfitting.restrict_proposer_visibility`, the field the round reads,

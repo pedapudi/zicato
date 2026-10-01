@@ -17,6 +17,7 @@ from zicato.core.settings import InvocationOverlay
 from zicato.core.types import (
     Generation,
 )
+from zicato.epoch.round_patterns import write_round_patterns
 from zicato.evolve import generation_phase
 from zicato.evolve.invocation import InvocationContext, validated_invocation
 from zicato.evolve.lifecycle_services import (
@@ -495,6 +496,19 @@ async def _evolve_once(
         events_paths=events_paths,
     )
     patterns = detect_patterns(detector_input, detectors=ALL_DETECTORS)
+    # Best-effort: the close-of-epoch retrospective reads which patterns each
+    # round observed. A failed write must never abort the round.
+    with best_effort(
+        "round pattern publication",
+        on_error=lambda exc: log.debug("round pattern publication skipped: %s", exc),
+    ):
+        write_round_patterns(
+            WorkspaceLayout.from_root(workspace_root).round_patterns(
+                resolved_epoch_id, round_index
+            ),
+            parent_generation_id=parent_id,
+            patterns=patterns,
+        )
 
     # --- 5. What this contract scores, and the loss summary that reports it ---
     # The operator already answered "what should this round work on" by setting

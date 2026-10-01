@@ -199,7 +199,7 @@ def test_the_request_follows_the_epoch_s_visibility_posture(
                     "id": "pattern-about-entry-train",
                     "kind": "drift_metric_frequency",
                     "summary": "the capital-city answer drifted off topic",
-                    "detail": {"entry_id": "entry_train", "count": 3},
+                    "detail": {"entry_id": "entry_train", "count": "3"},
                     "severity": "warning",
                 }
             ]

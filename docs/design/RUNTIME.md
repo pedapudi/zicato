@@ -623,6 +623,7 @@ loop continues from wherever it was when interrupted.
 | Candidate source | Git commits or directory snapshots, through the configured generation store | yes |
 | Round decisions and tournament details | `epochs/{epoch}/rounds/{round}/field_settlement.json` | yes — committing one record publishes every candidate outcome and the primary promotion |
 | Journal | rendered from accepted experiments | regenerated from durable records when requested |
+| Detector patterns | `epochs/{epoch}/rounds/{round}/patterns.json`, written once per round before the proposal | yes — the close-of-epoch retrospective reads every round's record; a round that resume discards loses its record with it, and the retried round writes a new one |
 | Proposal and patches | per-generation `experiment.json` and `patches/` | yes — tournament outcomes come from the committed round record; rejection before tournament execution is recorded in the proposal file |
 | Per-run event log | `runs/{entry_id}/seed-{seed}/events.{purpose}.r{draw}.jsonl` under the generation | **yes** — but may be partial if the run was mid-flight |
 | Per-run loss profile | `runs/{entry_id}/seed-{seed}/loss.{purpose}.r{draw}.json` under the generation | **yes** if reducer ran |

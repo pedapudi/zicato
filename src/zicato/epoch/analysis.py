@@ -28,13 +28,18 @@ from zicato.core.types import (
     Experiment,
     Generation,
 )
-from zicato.core.workspace import (
-    analysis_path,
-    epoch_dir,
-)
+from zicato.core.workspace import analysis_path
+from zicato.epoch._storage import RecordError
 from zicato.epoch.journal import experiment_body, read_epoch_experiments
 from zicato.epoch.lineage import load_lineage
-from zicato.workspace import ScalarStep, WorkspaceLayout, cumulative_scalars, generation_ids
+from zicato.epoch.round_patterns import read_round_patterns
+from zicato.workspace import (
+    ScalarStep,
+    WorkspaceLayout,
+    cumulative_scalars,
+    generation_ids,
+    round_indices,
+)
 
 # A goldfive-compatible evaluation call_llm.
 _AuxCallLLM = Callable[[str, str, str], Awaitable[str]]
@@ -77,7 +82,7 @@ optimization loop. You will receive:
 
   * the running narrative journal for the epoch,
   * a structured list of every experiment that ran (hypothesis + outcome),
-  * optionally, a patterns snapshot summarising drift observations,
+  * optionally, the failure patterns each round's detectors reported,
   * a pre-rendered "Tournament outcomes" section (mermaid lineage graph,
     trajectory table, ASCII sparkline, drift-kind movement table). These
     diagrams are computed from the journal data and are factually
@@ -111,21 +116,34 @@ def _slice(text: str, limit: int) -> str:
 
 
 def _collect_patterns_snapshot(workspace_root: Path, epoch_id: str) -> str:
-    """Aggregate ``patterns/round_*.json`` files into a single text blob.
+    """Render every round's pattern record as one text block, oldest round first.
 
-    Returns the empty string when there is no patterns directory, which is
-    the common case: nothing writes pattern files yet.
+    Each round contributes a heading naming its parent generation and one
+    line per pattern. A round that recorded no patterns says so; an
+    unreadable record is named with its reason. The block is empty when no
+    round wrote a record.
     """
-    patterns_dir = epoch_dir(workspace_root, epoch_id) / "patterns"
-    if not patterns_dir.exists():
-        return ""
+    layout = WorkspaceLayout.from_root(workspace_root)
     parts: list[str] = []
-    for path in sorted(patterns_dir.glob("*.json")):
+    for round_index in round_indices(layout, epoch_id):
         try:
-            d = json.loads(path.read_text())
-        except (OSError, json.JSONDecodeError):
+            record = read_round_patterns(layout.round_patterns(epoch_id, round_index))
+        except RecordError as exc:
+            parts.append(f"### Round {round_index}\n(pattern record unreadable: {exc})")
             continue
-        parts.append(f"### {path.stem}\n{json.dumps(d, indent=2, sort_keys=True)}")
+        if record is None:
+            continue
+        lines = [f"### Round {round_index} (parent generation {record.parent_generation_id})"]
+        for pattern in record.patterns:
+            line = f"- {pattern.severity} {pattern.kind}: {pattern.summary}"
+            if pattern.detail:
+                line += "; " + ", ".join(f"{k}={v}" for k, v in sorted(pattern.detail.items()))
+            if pattern.affected_mutation_ids:
+                line += "; mutation points: " + ", ".join(pattern.affected_mutation_ids)
+            lines.append(line)
+        if not record.patterns:
+            lines.append("- (no patterns detected)")
+        parts.append("\n".join(lines))
     return "\n\n".join(parts)
 
 
@@ -830,7 +848,7 @@ def _compose_user_prompt(
 
     Layout: pre-rendered tournament outcomes (so it anchors the rest of
     the prompt), then the journal, then the structured experiment list,
-    then any patterns snapshot. The instruction line at the bottom
+    then any per-round patterns. The instruction line at the bottom
     re-emphasises the no-reproduce rule for the outcomes diagrams.
     """
     chunks: list[str] = []

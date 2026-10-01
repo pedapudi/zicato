@@ -372,6 +372,10 @@ class WorkspaceLayout:
         """The round's canonical settlement receipt."""
         return self.round_dir(epoch_id, round_index) / "field_settlement.json"
 
+    def round_patterns(self, epoch_id: str, round_index: int) -> Path:
+        """The detector patterns one round passed to its proposer (``patterns.json``)."""
+        return self.round_dir(epoch_id, round_index) / "patterns.json"
+
     def round_dir(self, epoch_id: str, round_index: int) -> Path:
         """One evolve round's directory under :meth:`rounds_dir`.
 

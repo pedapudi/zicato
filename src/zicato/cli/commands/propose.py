@@ -153,7 +153,14 @@ def _load_patterns(
             data = json.loads(path.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
             raise click.ClickException(f"Could not parse {path}: {exc}") from exc
-        return [_pattern_from_dict(d) for d in data]
+        from zicato.epoch.round_patterns import pattern_from_dict  # noqa: PLC0415
+
+        if not isinstance(data, list):
+            raise click.ClickException(f"{path}: expected a JSON array of patterns")
+        try:
+            return [pattern_from_dict(d) for d in data]
+        except ValueError as exc:
+            raise click.ClickException(f"{path}: {exc}") from exc
 
     try:
         detector_pkg = importlib.import_module("zicato.patterns")
@@ -166,17 +173,6 @@ def _load_patterns(
     if run_detectors is None:
         return []
     return list(run_detectors(workspace_dir, epoch_id, parent_gen))
-
-
-def _pattern_from_dict(d: dict[str, Any]) -> Pattern:
-    return Pattern(
-        id=d["id"],
-        kind=d["kind"],
-        summary=d.get("summary", ""),
-        detail=dict(d.get("detail", {})),
-        affected_mutation_ids=tuple(d.get("affected_mutation_ids", ())),
-        severity=d.get("severity", "info"),
-    )
 
 
 def _load_loss_summary(workspace_dir: Path, epoch_id: str, parent_gen: str) -> str:
