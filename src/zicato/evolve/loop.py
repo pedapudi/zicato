@@ -123,38 +123,6 @@ async def _sleep_for_backoff(seconds: float) -> None:
     await asyncio.sleep(seconds)
 
 
-def _infra_backoff_knobs(workspace_root: Path) -> tuple[float, float]:
-    """Read the endpoint-outage backoff ``(base_s, cap_s)`` for this workspace.
-
-    The evolve loop needs only these two scalars from the runtime block, so
-    it reads them directly off the workspace config (the same
-    ``runtime.infra_backoff_*`` keys :func:`zicato.runtime_factory
-    .make_runtime_config` threads onto :class:`~zicato.core.runtime
-    .RuntimeConfig`) rather than resolving a full config with its LLM
-    callables. Best-effort: any read failure falls back to the shared
-    dataclass defaults, clamped non-negative.
-    """
-    from zicato.core.runtime import (  # noqa: PLC0415
-        INFRA_BACKOFF_BASE_S_DEFAULT,
-        INFRA_BACKOFF_CAP_S_DEFAULT,
-    )
-
-    base, cap = INFRA_BACKOFF_BASE_S_DEFAULT, INFRA_BACKOFF_CAP_S_DEFAULT
-    try:
-        from zicato.workspace.config_io import read_workspace_config  # noqa: PLC0415
-
-        runtime = read_workspace_config(workspace_root).runtime
-        raw_base = runtime.get("infra_backoff_base_s")
-        raw_cap = runtime.get("infra_backoff_cap_s")
-        if raw_base is not None:
-            base = float(raw_base)
-        if raw_cap is not None:
-            cap = float(raw_cap)
-    except Exception as exc:  # noqa: BLE001 — the backoff must never fail the loop
-        log.debug("infra backoff knobs unavailable (%s); using defaults", exc)
-    return max(0.0, base), max(0.0, cap)
-
-
 def _epoch_round_base(workspace_root: Path, epoch_id: str | None) -> int:
     """The next ``round_index`` for ``epoch_id`` — one past its highest
     already-persisted round.

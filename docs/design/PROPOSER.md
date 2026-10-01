@@ -581,30 +581,28 @@ A workspace declares its proposer in one block of its `config.json`:
              "input_tokens": null, "output_tokens": null},
   "model": {"provider": "<managed-cloud provider>", "model": "<model id>",
             "options": {"credentials_file": "/home/me/.config/cloud.json",
-                        "project": "example-project", "location": "example-region"}},
-  "viewer": "off"
+                        "project": "example-project", "location": "example-region"}}
 }
 ```
 
-Four decisions and no fifth. The **binary** is named by absolute path,
+Three decisions and no fourth. The **binary** is named by absolute path,
 because the episode's grants are absolute and a relative path would mean
 different things to the loop and to a worker. The **budget** bounds the
 episode in Foe's own dimensions: `model_calls` (default 12, at least one),
 `seconds` (default 900), and `input_tokens` and `output_tokens` (default
-`null`, unbounded). The **model** block selects the endpoint
-Foe's built-in model client calls. Its provider-specific options pass through
-unchanged. They can name a compatible HTTP endpoint, managed-cloud connection
-fields, or a credential file. Foe may also use the credential recorded by its
-login command. Zicato reads and forwards no credential. The **viewer** is
-one of `off` (the default), `on-failure` or `always`; it is validated and
-recorded but no code path reads it, and every settled episode is rendered
-to a page regardless (see *What a settled episode leaves behind* below).
-The binary and the budget are evaluation-contract fields, so changing
-either rolls the epoch; the model and the viewer are operational and do
-not. The instructions are the epoch's proposer brief and skills, which
-the contract already hashes. The dataclasses are `ProposerDeclaration`,
-`FoeBudget` and `FoeModelRole` (`zicato/core/proposer_config.py`), loaded
-by `load_foe_proposer_config` (`zicato/proposer/foe_config.py`).
+`null`, unbounded). The **model** block selects the endpoint Foe's
+built-in model client calls. Its provider-specific options pass through
+unchanged. They can name a compatible HTTP endpoint, managed-cloud
+connection fields, or a credential file. Foe may also use the credential
+recorded by its login command. Zicato reads and forwards no credential.
+Every settled episode is rendered to a page (see *What a settled episode
+leaves behind* below). The binary and the budget are evaluation-contract
+fields, so changing either rolls the epoch; the model is operational and
+does not. The instructions are the epoch's proposer brief and skills,
+which the contract already hashes. The dataclasses are
+`ProposerDeclaration`, `FoeBudget` and `FoeModelRole`
+(`zicato/core/proposer_config.py`), loaded by `load_foe_proposer_config`
+(`zicato/proposer/foe_config.py`).
 
 Validation is strict and refuses by name. A workspace still carrying a
 retired proposer runtime's configuration — a binary key for the removed
@@ -612,6 +610,10 @@ coding-agent integration, a `runtime.proposer_agent` pointing back into
 zicato's own proposer namespace at anything but the Foe agent, a
 `proposers/<name>/agent.py` module — is refused with the key, what was
 removed, and this document, rather than silently running something else.
+A key the `proposer` block does not declare is refused as an unknown
+field, with the list of accepted keys, by every command that reads the
+workspace configuration, `zicato inspect config` and `zicato inspect
+setup` among them.
 
 ### Scaffolded, then filled in
 

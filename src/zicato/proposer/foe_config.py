@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any
 
 from zicato.core.configuration import authored_dataclass_from_json, dataclass_to_jsonable
-from zicato.core.proposer_config import VIEWER_POLICIES as VIEWER_POLICIES
 from zicato.core.proposer_config import FoeBudget as FoeBudget
 from zicato.core.proposer_config import FoeModelRole as FoeModelRole
 from zicato.core.proposer_config import ProposerDeclaration
@@ -94,7 +93,6 @@ def load_foe_proposer_config(
         binary=declared.binary,
         model=declared.model,
         budget=declared.budget,
-        viewer=declared.viewer,
         guide=declared.guide,
         workspace_root=workspace_root,
     )
@@ -148,7 +146,6 @@ __all__ = [
     "UNSET_BINARY",
     "REMOVED_RUNTIME_KEYS",
     "BUILT_IN_PROPOSER_NAMESPACE",
-    "VIEWER_POLICIES",
     "FoeBudget",
     "FoeModelRole",
     "FoeProposerConfig",

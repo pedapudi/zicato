@@ -44,7 +44,7 @@
 | `src/zicato/proposer/agent.py` | `ProposerContext` (the frozen call-time bundle), the `ProposerAgent` protocol, `build_proposer_agent` (the resolver) |
 | `src/zicato/proposer/foe_agent.py` | `FoeProposerAgent` — one Foe episode per candidate: the host tools, the episode lifecycle, the outcome-to-experiment conversion, the contract identity |
 | `src/zicato/proposer/foe_request.py` | `build_request` — the ONE request builder, for the loop and the CLI: the charter, the sanctioned tool list, the hypothesis schema, `render_evidence` / `render_task` |
-| `src/zicato/proposer/foe_config.py` | The typed `proposer` block (binary, budget, model, viewer) and the refusals for a removed runtime's configuration |
+| `src/zicato/proposer/foe_config.py` | The typed `proposer` block (binary, budget, model) and the refusals for a removed runtime's configuration |
 | `src/zicato/proposer/foe_scratch.py` | The disposable working copy, and the projection that reads it back as a patch set over the declared mutation points |
 | `src/zicato/proposer/episode_process.py` | `EpisodeProcess` — owns the host wait task and the episode's process group until shutdown is confirmed |
 | `src/zicato/proposer/episode_export.py` | Foe's static HTML export, written beside a settled episode's log |
@@ -110,8 +110,8 @@ Two things decide it, and they live in different files.
 
 A workspace's `config.json` says **how it proposes**: the typed `proposer`
 block (`src/zicato/proposer/foe_config.py`) names the Foe binary its
-episodes run, the budget they run under, the model Foe's client calls,
-and the viewer policy. An epoch's `proposers/<name>/` directory says
+episodes run, the budget they run under, and the model Foe's client
+calls. An epoch's `proposers/<name>/` directory says
 **how the proposer is steered**: `skills/*.md`, whose bodies are hashed
 into the contract. The directory holds nothing executable.
 

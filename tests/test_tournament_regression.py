@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
+import os
 import sys
 import textwrap
 import types
@@ -64,6 +65,23 @@ _PYTEST_CMD: tuple[str, ...] = (
     "-q",
     "--tb=line",
 )
+
+
+@pytest.fixture
+def _isolated_inner_pytest(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Remove the outer pytest run's ``PYTEST_*`` variables from the environment.
+
+    :func:`run_regression_suite` starts its child with the parent process's
+    environment, which the production gate relies on to pass the operator's
+    settings through. Inside this suite that environment belongs to the
+    outer pytest run: an exported ``PYTEST_ADDOPTS='--basetemp=<dir>'``
+    makes the inner run exit with usage error 4, because that directory is
+    an ancestor of the inner run's working directory. The xdist worker
+    variables (``PYTEST_XDIST_*``) describe the outer run as well. Pytest
+    sets ``PYTEST_CURRENT_TEST`` again for the call phase; it holds no options.
+    """
+    for name in [key for key in os.environ if key.startswith("PYTEST_")]:
+        monkeypatch.delenv(name)
 
 
 # ---------------------------------------------------------------------------
@@ -131,6 +149,7 @@ def test_run_regression_suite_returns_passed_when_no_tests_dir(tmp_path: Path) -
 
 
 @pytest.mark.integration
+@pytest.mark.usefixtures("_isolated_inner_pytest")
 def test_run_regression_suite_passes_on_green_suite(tmp_path: Path) -> None:
     """A snapshot whose pytest suite passes yields ``passed=True``."""
     snapshot_root = _make_snapshot_with_test(
@@ -150,6 +169,7 @@ def test_run_regression_suite_passes_on_green_suite(tmp_path: Path) -> None:
 
 
 @pytest.mark.integration
+@pytest.mark.usefixtures("_isolated_inner_pytest")
 def test_run_regression_suite_fails_with_failed_ids(tmp_path: Path) -> None:
     """A failing pytest run yields ``passed=False`` + populated failed ids."""
     snapshot_root = _make_snapshot_with_test(
@@ -246,6 +266,7 @@ def test_classify_completed_run_maps_output_and_exit_codes() -> None:
 
 
 @pytest.mark.integration
+@pytest.mark.usefixtures("_isolated_inner_pytest")
 def test_run_regression_suite_times_out_on_slow_test(tmp_path: Path) -> None:
     """A test that outlives the timeout maps to ``passed=False`` w/ timeout summary."""
     snapshot_root = _make_snapshot_with_test(

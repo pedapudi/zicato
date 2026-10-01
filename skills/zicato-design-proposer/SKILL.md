@@ -38,8 +38,7 @@ workspace says so in one typed `proposer` block of its `config.json`:
   "binary": "/usr/local/bin/foe",
   "budget": {"model_calls": 12, "seconds": 900},
   "model": {"provider": "<provider>", "model": "<model id>",
-            "options": {}},
-  "viewer": "off"
+            "options": {}}
 }
 ```
 

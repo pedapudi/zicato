@@ -50,9 +50,9 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 466,782 | +58,121 |
-| Production | 197,702 | 186,208 | -11,494 |
-| Production logic | 110,276 | 108,626 | -1,650 |
+| Total | 408,661 | 466,744 | +58,083 |
+| Production | 197,702 | 186,157 | -11,545 |
+| Production logic | 110,276 | 108,590 | -1,686 |
 
 The baseline row is the reference `f9052dd` measured by the classification the
 checker holds, which counts the console's hand-written entry point
@@ -87,15 +87,15 @@ production-logic series per subsystem along a branch's first-parent commits.
 | src/zicato/dashboard | 61,800 | 31,966 | 22,051 | 31.0% |
 | src/zicato/query | 17,740 | 17,740 | 11,166 | 37.1% |
 | src/zicato/epoch | 13,822 | 13,822 | 7,742 | 44.0% |
-| src/zicato/evolve | 11,262 | 11,262 | 7,185 | 36.2% |
+| src/zicato/evolve | 11,230 | 11,230 | 7,167 | 36.2% |
 | src/zicato/tournament | 11,223 | 11,223 | 6,647 | 40.8% |
 | src/zicato/reflection | 9,843 | 9,843 | 6,578 | 33.2% |
 | crates/supervisor | 13,091 | 11,405 | 5,030 | 55.9% |
-| src/zicato/proposer | 9,521 | 9,521 | 4,772 | 49.9% |
+| src/zicato/proposer | 9,520 | 9,520 | 4,769 | 49.9% |
 | src/zicato/cli | 7,084 | 7,084 | 4,696 | 33.7% |
 | src/zicato/analyzer | 7,165 | 7,165 | 4,591 | 35.9% |
 | src/zicato/selection | 5,278 | 5,278 | 3,060 | 42.0% |
-| src/zicato/core | 6,393 | 6,393 | 2,808 | 56.1% |
+| src/zicato/core | 6,375 | 6,375 | 2,793 | 56.2% |
 | src/zicato/runtime | 5,188 | 5,188 | 2,531 | 51.2% |
 | src/zicato/index | 4,392 | 4,392 | 2,390 | 45.6% |
 | src/zicato/telemetry | 4,499 | 4,499 | 2,197 | 51.2% |
@@ -465,3 +465,6 @@ dropped rows named.
 | Watchdog-only supervisor (total) | 469,757 | -2,975 | 466,782 | The Rust supervisor serves only its watchdog routes (`/statusz`, `/statusz.json`, `/api/audit/verify`); its unmounted dashboard, event-stream and control routes, their readers and seven unused dependencies are removed. The watchdog loops and integrity audits remain. |
 | Watchdog-only supervisor (production) | 188,312 | -2,104 | 186,208 | The Rust supervisor serves only its watchdog routes (`/statusz`, `/statusz.json`, `/api/audit/verify`); its unmounted dashboard, event-stream and control routes, their readers and seven unused dependencies are removed. The watchdog loops and integrity audits remain. |
 | Watchdog-only supervisor (production logic) | 109,856 | -1,230 | 108,626 | The Rust supervisor serves only its watchdog routes (`/statusz`, `/statusz.json`, `/api/audit/verify`); its unmounted dashboard, event-stream and control routes, their readers and seven unused dependencies are removed. The watchdog loops and integrity audits remain. |
+| Unread backoff reader and proposer viewer setting removed (total) | 466,782 | -38 | 466,744 | Removes the uncalled endpoint-outage backoff reader in the evolve loop and its two re-exports, and the proposer block's viewer setting, which no code read; tests that start a nested pytest drop the outer run's PYTEST_* variables. |
+| Unread backoff reader and proposer viewer setting removed (production) | 186,208 | -51 | 186,157 | Removes the uncalled endpoint-outage backoff reader in the evolve loop and its two re-exports, and the proposer block's viewer setting, which no code read; tests that start a nested pytest drop the outer run's PYTEST_* variables. |
+| Unread backoff reader and proposer viewer setting removed (production logic) | 108,626 | -36 | 108,590 | Removes the uncalled endpoint-outage backoff reader in the evolve loop and its two re-exports, and the proposer block's viewer setting, which no code read; tests that start a nested pytest drop the outer run's PYTEST_* variables. |

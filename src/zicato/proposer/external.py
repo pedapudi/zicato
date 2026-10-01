@@ -86,8 +86,9 @@ class ExternalProposerConfig:
     Deliberately thin: the dotted path that named the class, the
     workspace root it may place per-challenger scratch state under, and
     the workspace's ``runtime`` block so an implementation can read its
-    own knobs (``pi_bin``, for the pi agent) without a bespoke field per
-    implementation.
+    own knobs without a bespoke field per implementation. An operator's
+    class that launches its own executable, for example, can read the
+    executable's path from a ``runtime.my_agent_bin`` key it documents.
 
     One builder — :func:`external_proposer_config` — produces this value
     for both the contract-hash path and the orchestrator's build path, so
@@ -97,8 +98,9 @@ class ExternalProposerConfig:
     ``options`` is NOT hashed wholesale. It carries unrelated runtime keys (the
     target/evaluation dotted paths among them), and a change to those is
     infrastructure rather than contract. An implementation folds in only what
-    causally steers it — for the pi agent, the knob's *effect* (the resolved
-    version of the binary it selects) rather than the knob's spelling.
+    causally steers it. For a key that names an executable, that is the
+    version the executable reports, so moving the same build to another path
+    leaves the hash unchanged and installing a different build changes it.
     """
 
     dotted_path: str
