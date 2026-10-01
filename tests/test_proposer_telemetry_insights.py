@@ -101,7 +101,12 @@ def test_round_after_a_placeholder_insight_carries_no_insight_block(
     # placeholder as round 2 without an evaluation call.
     asyncio.run(
         insights_module.analyze_epoch_telemetry(
-            workspace, epoch_id, evaluation_call_llm, round_n=2, training_entry_ids=("entry_a",)
+            workspace,
+            epoch_id,
+            evaluation_call_llm,
+            round_n=2,
+            training_entry_ids=("entry_a",),
+            restricted_identities=("entry_a",),
         )
     )
 
@@ -113,29 +118,35 @@ def test_round_after_a_placeholder_insight_carries_no_insight_block(
         assert _HEADING not in task
 
 
-def _policy_event(entry_id: str, policy_name: str) -> str:
+def _event(entry_id: str, sequence: int, case: str, payload: dict[str, str]) -> str:
     event = {
-        "event_id": f"evt_{entry_id}",
+        "event_id": f"evt_{entry_id}_{sequence}",
         "run_id": f"run_{entry_id}",
-        "sequence": 1,
-        "emitted_at": {"seconds": 1_700_000_000, "nanos": 0},
+        "sequence": sequence,
+        "emitted_at": {"seconds": 1_700_000_000 + sequence, "nanos": 0},
         "session_id": f"sess_{entry_id}",
-        "policy_applied": {
-            "policy_name": policy_name,
-            "outcome": "applied",
-            "reason": "",
-            "detail": "",
-        },
+        case: payload,
     }
     return json.dumps(event) + "\n"
+
+
+def _policy_event(entry_id: str, policy_name: str, sequence: int = 1) -> str:
+    return _event(
+        entry_id,
+        sequence,
+        "policy_applied",
+        {"policy_name": policy_name, "outcome": "applied", "reason": "", "detail": ""},
+    )
 
 
 def _emit_policy_telemetry(monkeypatch: pytest.MonkeyPatch) -> None:
     """Make every stubbed run leave one decision event naming its slice.
 
-    A training entry's run records ``policy_seen_on_training_run``; the
-    holdout entry's run (the confirmation of the crowned challenger)
-    records ``policy_seen_on_holdout_run``.
+    A training entry's run records ``policy_seen_on_training_run``, a
+    policy whose name carries its entry id, and a ladder transition whose
+    free-text reason quotes its task; the holdout entry's run (the
+    confirmation of the crowned challenger) records
+    ``policy_seen_on_holdout_run``.
     """
     run_single = _tournament_worker_execution._run_single
 
@@ -153,10 +164,20 @@ def _emit_policy_telemetry(monkeypatch: pytest.MonkeyPatch) -> None:
             / "seed-none"
         )
         run_dir.mkdir(parents=True, exist_ok=True)
-        policy = "policy_seen_on_holdout_run" if entry_id == "h0" else "policy_seen_on_training_run"
-        (run_dir / "events.tournament.r0.jsonl").write_text(
-            _policy_event(entry_id, policy), encoding="utf-8"
-        )
+        if entry_id == "h0":
+            lines = _policy_event(entry_id, "policy_seen_on_holdout_run")
+        else:
+            lines = (
+                _policy_event(entry_id, "policy_seen_on_training_run")
+                + _policy_event(entry_id, f"gate_named_for_{entry_id}", sequence=2)
+                + _event(
+                    entry_id,
+                    3,
+                    "ladder_transition_decided",
+                    {"to_level": "nudge", "reason": "repeat while answering the hello task"},
+                )
+            )
+        (run_dir / "events.tournament.r0.jsonl").write_text(lines, encoding="utf-8")
         return profile
 
     monkeypatch.setattr(_tournament_worker_execution, "_run_single", run_and_emit)
@@ -201,6 +222,11 @@ def test_restricted_round_analyzes_the_training_slice_and_withholds_holdout_tele
     assert len(analyzer_prompts) == 1
     assert "policy_seen_on_training_run" in analyzer_prompts[0]
     assert "policy_seen_on_holdout_run" not in analyzer_prompts[0]
+    # Restricted visibility: emitter text naming an entry or quoting a task
+    # is withheld, while the counts remain.
+    assert "gate_named_for_train" not in analyzer_prompts[0]
+    assert "hello task" not in analyzer_prompts[0]
+    assert "(withheld)" in analyzer_prompts[0]
     # The holdout entry did run and leave telemetry; only the analysis skipped it.
     holdout_runs = (workspace / "epochs" / epoch_id / "generations").glob(
         "*/runs/h0/seed-none/events.tournament.r0.jsonl"

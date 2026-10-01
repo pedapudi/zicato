@@ -23,7 +23,8 @@ from pathlib import Path
 import pytest
 
 from zicato.analyzer import analyze_epoch_telemetry, load_latest_insight
-from zicato.analyzer.insights import proposer_visible_entry_ids
+from zicato.analyzer.aggregator import DecisionEventSummary, restrict_summary
+from zicato.analyzer.insights import ProposerSlice, proposer_slice
 
 # The provenance line the analyzer writes on a training-slice analysis
 # (``TRAINING_SLICE_ANALYSIS_MARKER``), spelled out so the format is pinned.
@@ -42,7 +43,9 @@ def test_report_replacement_preserves_an_open_reader(tmp_path: Path) -> None:
         raise AssertionError("an empty epoch requires no evaluation call")
 
     out = asyncio.run(
-        analyze_epoch_telemetry(tmp_path, "epoch", unused_aux, training_entry_ids=_SLICE)
+        analyze_epoch_telemetry(
+            tmp_path, "epoch", unused_aux, training_entry_ids=_SLICE, restricted_identities=None
+        )
     )
     previous = "Previous complete report.\n" * 20
     out.write_text(previous, encoding="utf-8")
@@ -50,7 +53,9 @@ def test_report_replacement_preserves_an_open_reader(tmp_path: Path) -> None:
     with out.open("rb", buffering=0) as reader:
         prefix = reader.read(10)
         asyncio.run(
-            analyze_epoch_telemetry(tmp_path, "epoch", unused_aux, training_entry_ids=_SLICE)
+            analyze_epoch_telemetry(
+                tmp_path, "epoch", unused_aux, training_entry_ids=_SLICE, restricted_identities=None
+            )
         )
         observed = prefix + reader.read()
 
@@ -141,7 +146,13 @@ def test_analyze_epoch_telemetry_writes_markdown(tmp_path: Path) -> None:
 
     out = asyncio.run(
         analyze_epoch_telemetry(
-            workspace, epoch_id, fake_aux, model="opaque-1", round_n=3, training_entry_ids=_SLICE
+            workspace,
+            epoch_id,
+            fake_aux,
+            model="opaque-1",
+            round_n=3,
+            training_entry_ids=_SLICE,
+            restricted_identities=None,
         )
     )
 
@@ -205,6 +216,7 @@ def test_analyze_epoch_telemetry_grounds_prompt_in_mutation_ids(tmp_path: Path) 
             round_n=1,
             mutation_ids=mutation_ids,
             training_entry_ids=_SLICE,
+            restricted_identities=None,
         )
     )
 
@@ -251,7 +263,14 @@ def test_analyze_epoch_telemetry_marks_absent_mutation_surface(tmp_path: Path) -
         return "## Headline observations\n- ok\n"
 
     asyncio.run(
-        analyze_epoch_telemetry(workspace, epoch_id, fake_aux, round_n=1, training_entry_ids=_SLICE)
+        analyze_epoch_telemetry(
+            workspace,
+            epoch_id,
+            fake_aux,
+            round_n=1,
+            training_entry_ids=_SLICE,
+            restricted_identities=None,
+        )
     )
     assert "Available mutation targets" in captured["user"]
     assert "none observed" in captured["user"].lower()
@@ -291,7 +310,14 @@ def test_analyze_epoch_telemetry_empty_epoch_short_circuits(tmp_path: Path) -> N
         return "this should not appear"
 
     out = asyncio.run(
-        analyze_epoch_telemetry(workspace, epoch_id, fake_aux, round_n=0, training_entry_ids=_SLICE)
+        analyze_epoch_telemetry(
+            workspace,
+            epoch_id,
+            fake_aux,
+            round_n=0,
+            training_entry_ids=_SLICE,
+            restricted_identities=None,
+        )
     )
 
     assert out.exists()
@@ -330,7 +356,12 @@ def test_analyze_epoch_telemetry_latest_filename(tmp_path: Path) -> None:
 
     out = asyncio.run(
         analyze_epoch_telemetry(
-            workspace, epoch_id, fake_aux, round_n=None, training_entry_ids=_SLICE
+            workspace,
+            epoch_id,
+            fake_aux,
+            round_n=None,
+            training_entry_ids=_SLICE,
+            restricted_identities=None,
         )
     )
 
@@ -368,7 +399,12 @@ def test_load_latest_insight_withholds_a_placeholder(tmp_path: Path) -> None:
     # No telemetry at all: the analyzer writes the empty-epoch placeholder.
     out = asyncio.run(
         analyze_epoch_telemetry(
-            workspace, epoch_id, unused_aux, round_n=2, training_entry_ids=_SLICE
+            workspace,
+            epoch_id,
+            unused_aux,
+            round_n=2,
+            training_entry_ids=_SLICE,
+            restricted_identities=None,
         )
     )
 
@@ -487,7 +523,12 @@ def test_entry_ids_narrow_the_analysis_to_the_named_entries(tmp_path: Path) -> N
 
     asyncio.run(
         analyze_epoch_telemetry(
-            workspace, epoch_id, recording_aux, round_n=1, training_entry_ids=("train_a",)
+            workspace,
+            epoch_id,
+            recording_aux,
+            round_n=1,
+            training_entry_ids=("train_a",),
+            restricted_identities=None,
         )
     )
 
@@ -496,7 +537,7 @@ def test_entry_ids_narrow_the_analysis_to_the_named_entries(tmp_path: Path) -> N
     assert "policy_on_holdout" not in prompts[0]
 
 
-def test_proposer_visible_entry_ids_is_the_training_slice(tmp_path: Path) -> None:
+def test_proposer_slice_is_the_training_slice_and_visibility_posture(tmp_path: Path) -> None:
     """The epoch's frozen board minus its holdout-tagged entries, in board order."""
 
     workspace = tmp_path / ".zicato"
@@ -516,7 +557,17 @@ def test_proposer_visible_entry_ids_is_the_training_slice(tmp_path: Path) -> Non
     ]
     (epoch / "board.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
 
-    assert proposer_visible_entry_ids(workspace, epoch_id) == ("t1", "t2")
+    # Restricted visibility is the scoring default; an absent scoring file
+    # resolves to the defaults.
+    assert proposer_slice(workspace, epoch_id) == ProposerSlice(
+        training_entry_ids=("t1", "t2"), restricted_identities=("t1", "h1", "t2")
+    )
+    (epoch / "scoring.json").write_text(
+        json.dumps({"overfitting": {"restrict_proposer_visibility": False}})
+    )
+    assert proposer_slice(workspace, epoch_id) == ProposerSlice(
+        training_entry_ids=("t1", "t2"), restricted_identities=None
+    )
 
 
 def test_analyze_epoch_telemetry_timeout_bounded(tmp_path: Path) -> None:
@@ -558,6 +609,7 @@ def test_analyze_epoch_telemetry_timeout_bounded(tmp_path: Path) -> None:
             round_n=1,
             aux_config=AuxConfig(call_timeout_s=0.1),
             training_entry_ids=_SLICE,
+            restricted_identities=None,
         )
     )
 
@@ -595,10 +647,95 @@ def test_analyze_epoch_telemetry_handles_aux_exception(tmp_path: Path) -> None:
 
     out = asyncio.run(
         analyze_epoch_telemetry(
-            workspace, epoch_id, broken_aux, round_n=0, training_entry_ids=_SLICE
+            workspace,
+            epoch_id,
+            broken_aux,
+            round_n=0,
+            training_entry_ids=_SLICE,
+            restricted_identities=None,
         )
     )
 
     body = out.read_text(encoding="utf-8")
     assert "simulated provider outage" in body
     assert "RuntimeError" in body
+
+
+def test_restricted_summary_keeps_counts_and_drops_emitter_text() -> None:
+    """Free-text reasons are dropped; a name that is long, not an identifier,
+    or contains a board entry id is withheld, and its counts are summed."""
+
+    summary = DecisionEventSummary(
+        ladder_transitions={"(none)->nudge": 2, "(none)->Train_7 escalation": 1},
+        ladder_reasons={"repeat (count=2) on the capital-of-France task": 2},
+        dispatch_orders=[("goal_drift", "detector_about_train_7")],
+        policy_outcomes={
+            "same_turn_dedup": {"applied": 3, "skipped because the user asked X": 1},
+            "p" * 49: {"applied": 1},
+            "policy for train_7": {"applied": 2},
+        },
+        retry_attempts={"refine": [1, 2], "refine:train_7": [1]},
+        steering_decisions={"goal_drift": {"drift": 4}},
+        total_events_seen=9,
+    )
+
+    restricted = restrict_summary(summary, ("train_7", "h1"))
+
+    assert restricted.ladder_transitions == {"(none)->nudge": 2, "(none)->(withheld)": 1}
+    assert restricted.ladder_reasons == {}
+    assert restricted.dispatch_orders == [("goal_drift", "(withheld)")]
+    assert restricted.policy_outcomes == {
+        "same_turn_dedup": {"applied": 3, "(withheld)": 1},
+        "(withheld)": {"applied": 3},
+    }
+    assert restricted.retry_attempts == {"refine": [1, 2], "(withheld)": [1]}
+    assert restricted.steering_decisions == {"goal_drift": {"drift": 4}}
+    assert restricted.total_events_seen == 9
+
+
+def test_restricted_analysis_prompt_omits_reasons_and_entry_ids(tmp_path: Path) -> None:
+    workspace = tmp_path / ".zicato"
+    epoch_id = "ep_restricted"
+    _make_epoch_tree(workspace, epoch_id)
+    _write_events(
+        workspace,
+        epoch_id,
+        "v1",
+        "e1",
+        [
+            _envelope(
+                0,
+                "ladder_transition_decided",
+                {"to_level": "nudge", "reason": "repeat on the e1 sorting task"},
+            ),
+            _envelope(
+                1,
+                "policy_applied",
+                {"policy_name": "gate_for_e1", "outcome": "applied", "reason": "", "detail": ""},
+            ),
+        ],
+    )
+    prompts: list[str] = []
+
+    async def recording_aux(_system: str, user: str, _model: str) -> str:
+        prompts.append(user)
+        return "# insight\n"
+
+    for restricted in (None, ("e1",)):
+        asyncio.run(
+            analyze_epoch_telemetry(
+                workspace,
+                epoch_id,
+                recording_aux,
+                round_n=1,
+                training_entry_ids=_SLICE,
+                restricted_identities=restricted,
+            )
+        )
+
+    unrestricted, restricted_prompt = prompts
+    assert "repeat on the e1 sorting task" in unrestricted
+    assert "gate_for_e1" in unrestricted
+    assert "sorting task" not in restricted_prompt
+    assert "gate_for_e1" not in restricted_prompt
+    assert "(withheld)" in restricted_prompt

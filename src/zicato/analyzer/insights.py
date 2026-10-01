@@ -32,11 +32,12 @@ import json
 import time
 from collections.abc import Awaitable, Callable, Collection, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from zicato.analyzer.aggregator import (
     DecisionEventSummary,
     aggregate_decision_events,
+    restrict_summary,
 )
 from zicato.analyzer.prompts import (
     INSIGHT_SYSTEM_PROMPT,
@@ -106,12 +107,24 @@ def _collect_events_jsonl_paths(
     return out
 
 
-def proposer_visible_entry_ids(workspace_root: Path, epoch_id: str) -> tuple[str, ...]:
-    """The training slice of the epoch's frozen board, in board order.
+class ProposerSlice(NamedTuple):
+    """What the analyzer may read and keep for an insight the proposer receives."""
+
+    #: The training slice of the board, in board order.
+    training_entry_ids: tuple[str, ...]
+    #: Every board entry id when the epoch restricts proposer visibility,
+    #: which makes the analyzer restrict its summary
+    #: (:func:`~zicato.analyzer.aggregator.restrict_summary`); ``None`` when
+    #: it does not.
+    restricted_identities: tuple[str, ...] | None
+
+
+def proposer_slice(workspace_root: Path, epoch_id: str) -> ProposerSlice:
+    """The epoch's training slice and visibility posture, from its frozen contract.
 
     Splits the board with the epoch's frozen ``overfitting`` block and the
-    same rotation seed the round preparation uses, so the result is the
-    slice the proposer's patterns and loss summary are computed on.
+    same rotation seed the round preparation uses, so the slice is the one
+    the proposer's patterns and loss summary are computed on.
     Raises :class:`FileNotFoundError` when the epoch has no board, because
     an analysis that cannot tell training runs from holdout runs must not
     write into the proposer's insight directory.
@@ -129,7 +142,11 @@ def proposer_visible_entry_ids(workspace_root: Path, epoch_id: str) -> tuple[str
     train_ids, _holdout_ids = split_board(
         board.entries, overfitting, seed=rotation_seed(overfitting, epoch_id)
     )
-    return train_ids
+    restricted = overfitting.restrict_proposer_visibility
+    return ProposerSlice(
+        training_entry_ids=train_ids,
+        restricted_identities=tuple(e.id for e in board.entries) if restricted else None,
+    )
 
 
 def _insights_dir(workspace_root: Path, epoch_id: str) -> Path:
@@ -191,6 +208,7 @@ async def analyze_epoch_telemetry(
     aux_config: AuxConfig | None = None,
     *,
     training_entry_ids: Collection[str],
+    restricted_identities: Collection[str] | None,
 ) -> Path:
     """Build the decision-event summary, call the LLM, persist the insight.
 
@@ -226,6 +244,14 @@ async def analyze_epoch_telemetry(
         slice. Required, because the insight is read back into the next
         round's proposal evidence and carries the training-slice
         provenance line; no holdout run may reach it.
+    restricted_identities:
+        Required. The board's entry ids when the epoch restricts proposer
+        visibility: the summary then passes through
+        :func:`~zicato.analyzer.aggregator.restrict_summary` before the
+        prompt is rendered, which drops the free-text ladder reasons and
+        withholds every name that is not a short identifier or that
+        contains one of these ids. ``None`` renders the summary as
+        aggregated.
 
     Returns
     -------
@@ -244,6 +270,8 @@ async def analyze_epoch_telemetry(
 
     events_paths = _collect_events_jsonl_paths(workspace_root, epoch_id, training_entry_ids)
     summary = aggregate_decision_events(events_paths)
+    if restricted_identities is not None:
+        summary = restrict_summary(summary, restricted_identities)
 
     target = _insight_target(workspace_root, epoch_id, round_n)
 
@@ -390,5 +418,6 @@ __all__ = [
     "TRAINING_SLICE_ANALYSIS_MARKER",
     "analyze_epoch_telemetry",
     "load_latest_insight",
-    "proposer_visible_entry_ids",
+    "ProposerSlice",
+    "proposer_slice",
 ]

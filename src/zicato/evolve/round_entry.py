@@ -525,8 +525,9 @@ async def _evolve_once(
 
     # --- The previous round's decision-telemetry insight ---
     # The analyzer ran at the end of the previous round over the training
-    # slice's runs only (``_round_epilogue`` passes ``train_board``'s ids), so
-    # the text holds no holdout run and no entry identity. Only the most
+    # slice's runs only (``_round_epilogue`` passes ``train_board``'s ids), and
+    # under restricted visibility it withheld emitter strings that could carry
+    # an entry id or free text (``restrict_summary``). Only the most
     # recent round file is read, and only when it opens with the analyzer's
     # training-slice provenance line; anything else reads as the empty
     # string, which omits the section.

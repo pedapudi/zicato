@@ -31,6 +31,8 @@ Tolerant on every axis:
 
 from __future__ import annotations
 
+import re
+from collections.abc import Collection
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -229,7 +231,95 @@ def aggregate_decision_events(events_jsonl_paths: list[Path]) -> DecisionEventSu
     )
 
 
+#: The longest name a restricted summary keeps verbatim. The symbolic names
+#: goldfive emits (ladder levels, detector, policy and operation names,
+#: outcomes) are short snake_case words well under this bound.
+RESTRICTED_NAME_MAX_CHARS = 48
+
+#: What a restricted summary shows in place of a name it does not keep.
+WITHHELD_NAME = "(withheld)"
+
+_IDENTIFIER = re.compile(r"[A-Za-z0-9_.:-]+")
+
+
+def _restricted_name(name: str, identities: Collection[str]) -> str:
+    """``name`` when it is a short identifier naming no board entry, else withheld."""
+    folded = name.casefold()
+    if (
+        len(name) > RESTRICTED_NAME_MAX_CHARS
+        or not _IDENTIFIER.fullmatch(name)
+        or any(identity and identity.casefold() in folded for identity in identities)
+    ):
+        return WITHHELD_NAME
+    return name
+
+
+def _merge_counts(counts: dict[str, int], identities: Collection[str]) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for name, count in counts.items():
+        kept = _restricted_name(name, identities)
+        out[kept] = out.get(kept, 0) + count
+    return out
+
+
+def restrict_summary(
+    summary: DecisionEventSummary, identities: Collection[str]
+) -> DecisionEventSummary:
+    """The summary a proposer under restricted visibility may be shown.
+
+    The system under test writes the events this summary counts, and the
+    proposer edits that system, so every string in the summary is
+    emitter-supplied. The restricted form keeps counts and drops or
+    replaces every string that could carry board content:
+
+    * ladder reasons, which are free text, are dropped;
+    * every other string (ladder levels, detector, policy and operation
+      names, outcomes, dispatch-order entries) is kept only when it is an
+      identifier of at most :data:`RESTRICTED_NAME_MAX_CHARS` characters
+      that contains none of ``identities`` (the board's entry ids, compared
+      case-insensitively); otherwise it becomes :data:`WITHHELD_NAME`, and
+      counts that collapse onto it are summed.
+
+    A short identifier chosen by the system under test that is neither an
+    entry id nor contains one still passes through.
+    """
+
+    def name(value: str) -> str:
+        return _restricted_name(value, identities)
+
+    transitions: dict[str, int] = {}
+    for key, count in summary.ladder_transitions.items():
+        from_level, _, to_level = key.partition("->")
+        kept = f"{name(from_level) if from_level != '(none)' else from_level}->{name(to_level)}"
+        transitions[kept] = transitions.get(kept, 0) + count
+    policies: dict[str, dict[str, int]] = {}
+    for policy, outcomes in summary.policy_outcomes.items():
+        bucket = policies.setdefault(name(policy), {})
+        for outcome, count in _merge_counts(outcomes, identities).items():
+            bucket[outcome] = bucket.get(outcome, 0) + count
+    retries: dict[str, list[int]] = {}
+    for operation, attempts in summary.retry_attempts.items():
+        retries.setdefault(name(operation), []).extend(attempts)
+    steering: dict[str, dict[str, int]] = {}
+    for detector, outcomes in summary.steering_decisions.items():
+        bucket = steering.setdefault(name(detector), {})
+        for outcome, count in _merge_counts(outcomes, identities).items():
+            bucket[outcome] = bucket.get(outcome, 0) + count
+    return DecisionEventSummary(
+        ladder_transitions=transitions,
+        ladder_reasons={},
+        dispatch_orders=[tuple(name(d) for d in order) for order in summary.dispatch_orders],
+        policy_outcomes=policies,
+        retry_attempts=retries,
+        steering_decisions=steering,
+        total_events_seen=summary.total_events_seen,
+    )
+
+
 __all__ = [
+    "RESTRICTED_NAME_MAX_CHARS",
+    "WITHHELD_NAME",
     "DecisionEventSummary",
     "aggregate_decision_events",
+    "restrict_summary",
 ]

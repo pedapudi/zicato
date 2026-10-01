@@ -66,8 +66,12 @@ round's present state:
   `insights/round_{N}.md`. The next round's preparation reads the
   highest-numbered of those files, and only that file, into
   `ProposerContext.insights`. The analyzer reads only the training
-  slice's runs, and its input holds counts keyed by steering vocabulary,
-  so the text carries no holdout run and no entry identity. A model
+  slice's runs, so no holdout run reaches it. The events it counts are
+  written by the system under test, so the names they carry are
+  emitter-supplied. Under restricted proposer visibility the analyzer
+  drops the free-text ladder reasons and withholds every other name that
+  is longer than 48 characters, is not an identifier, or contains a board
+  entry id; a short identifier that is not an entry id passes through. A model
   analysis opens with a provenance line naming it an analysis of the
   training slice, and only a latest file that opens with that line is
   delivered. Every other latest file delivers nothing: the placeholder

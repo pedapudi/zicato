@@ -127,10 +127,13 @@ class ProposerContext:
     #: The most recent round's decision-telemetry insight: the markdown the
     #: analyzer (:func:`~zicato.analyzer.insights.analyze_epoch_telemetry`)
     #: wrote at the end of the previous round, read back by
-    #: :func:`~zicato.analyzer.insights.load_latest_insight`. The analyzer's
-    #: input is the training slice's decision-event counts, keyed by steerer
-    #: vocabulary (ladder levels, detector and policy names); it holds no
-    #: entry id, task text, or holdout run. When non-empty, a
+    #: :func:`~zicato.analyzer.insights.load_latest_insight`. The analyzer
+    #: reads only the training slice's runs, so no holdout run reaches it.
+    #: Its input is decision-event counts keyed by strings the system under
+    #: test emits; under restricted visibility ladder reasons are dropped and
+    #: any other string that is long, not an identifier, or contains a board
+    #: entry id is withheld (:func:`~zicato.analyzer.aggregator.restrict_summary`).
+    #: When non-empty, a
     #: ``## Recent telemetry insights`` section is spliced into the evidence.
     #: Empty (the default — the epoch's first round, or a round whose latest
     #: insight file lacks the training-slice provenance line) omits the

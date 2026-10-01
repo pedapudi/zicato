@@ -67,6 +67,7 @@ async def _round_epilogue(
     meta_loop_emitter: Any,
     run_analyzer: bool = True,
     analyzer_entry_ids: tuple[str, ...] = (),
+    analyzer_restricted_identities: tuple[str, ...] | None = (),
     token_clip: tuple[int, int] | None = None,
     attributable_regressions: dict[str, dict[str, Any]] | None = None,
     on_promote_failure: tuple[str, str, str] | None = None,
@@ -87,7 +88,9 @@ async def _round_epilogue(
       skipped on the gauntlet's validation-reject tail
       (``run_analyzer=False``). The default ``()`` analyzes no run, so a
       caller that names no slice cannot hand holdout telemetry to the
-      proposer;
+      proposer. ``analyzer_restricted_identities`` is the board's entry ids
+      under restricted proposer visibility and ``None`` otherwise; its
+      default restricts the summary;
     * the comprehensive epoch analysis report regeneration.
 
     ``token_clip`` — the round's ``(tokens_spent, max_tokens_per_round)``
@@ -146,6 +149,7 @@ async def _round_epilogue(
                 # The insight is read back into the next round's proposal
                 # evidence, so it is computed over the training slice only.
                 training_entry_ids=analyzer_entry_ids,
+                restricted_identities=analyzer_restricted_identities,
             )
 
     await _regenerate_epoch_report(workspace_root, epoch_id, evaluation_call_llm, evaluation_model)
