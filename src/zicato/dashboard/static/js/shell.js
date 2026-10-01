@@ -1207,9 +1207,10 @@ async function refreshPipeline(alive) {
 // parent to climb to) and active everywhere else.
 function renderBack(route) {
   if (!_backBtn) return;
-  const dest = up(route);
-  _backBtn.disabled = !dest;
-  patchClass(_backBtn, 'dt-back-off', !dest);
+  const off = !up(route);
+  // dispatch runs on every live tick; write the property only when it changes.
+  if (_backBtn.disabled !== off) _backBtn.disabled = off;
+  patchClass(_backBtn, 'dt-back-off', off);
 }
 
 // ── the settings overlay (Change 1) ──────────────────────────────────
@@ -1218,12 +1219,18 @@ function renderBack(route) {
 // the underlying route. The underlying route = the last non-settings route the
 // shell dispatched (or home if loaded cold straight onto `#/settings`).
 
+// Show or hide the drawer. dispatch hides it on every live tick, so the
+// attribute and the class are written only when they change.
+function setSettingsDrawer(open) {
+  _settingsOpen = open;
+  if (!_settingsOverlay) return;
+  const flag = open ? '1' : '0';
+  if (_settingsOverlay.getAttribute('data-open') !== flag) _settingsOverlay.setAttribute('data-open', flag);
+  patchClass(_settingsOverlay, 'dt-drawer-open', open);
+}
+
 function openSettingsOverlay() {
-  _settingsOpen = true;
-  if (_settingsOverlay) {
-    _settingsOverlay.setAttribute('data-open', '1');
-    if (_settingsOverlay.classList) _settingsOverlay.classList.add('dt-drawer-open');
-  }
+  setSettingsDrawer(true);
 }
 
 function closeSettingsOverlay() {
@@ -1236,11 +1243,7 @@ function closeSettingsOverlay() {
 }
 
 function hideSettingsOverlay() {
-  _settingsOpen = false;
-  if (_settingsOverlay) {
-    _settingsOverlay.setAttribute('data-open', '0');
-    if (_settingsOverlay.classList) _settingsOverlay.classList.remove('dt-drawer-open');
-  }
+  setSettingsDrawer(false);
 }
 
 // Render the underlying view (the one the overlay sits over) into `_viewHost`,
