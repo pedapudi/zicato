@@ -121,7 +121,7 @@ GET  /events                         — server-sent events: snapshot,
                                        coalesced state_change, run_log
 GET  /settings/models                — configured model engines, secrets
                                        withheld
-POST /api/control/{pause,resume,skip-round,kill,promote,reject,brief}
+POST /api/control/{pause,resume,skip-round,promote,reject,brief}
 ```
 
 `js/CONTRACTS.md` lists the payload shapes and names the routes no

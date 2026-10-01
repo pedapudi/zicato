@@ -100,7 +100,6 @@ pub fn router(state: AppState) -> Router {
             .route("/api/control/pause", post(control_pause))
             .route("/api/control/resume", post(control_resume))
             .route("/api/control/skip-round", post(control_skip_round))
-            .route("/api/control/kill/:run_id", post(control_kill))
             .route("/api/control/promote/:generation_id", post(control_promote))
             .route("/api/control/reject/:generation_id", post(control_reject))
             .route("/api/control/brief", post(control_brief))
@@ -468,26 +467,6 @@ async fn control_skip_round(State(s): State<AppState>, body: Option<Json<EmptyBo
         serde_json::json!({"reason": reason, "ts": chrono::Utc::now()}),
     )
     .await
-}
-
-async fn control_kill(State(s): State<AppState>, AxumPath(run_id): AxumPath<String>) -> Response {
-    if let Some(r) = forbidden_if_read_only(&s) {
-        return r;
-    }
-    if !is_safe_id(&run_id) {
-        return (StatusCode::BAD_REQUEST, "invalid run_id").into_response();
-    }
-    let path = s.paths.control_dir().join("kill_runs").join(&run_id);
-    let payload = serde_json::json!({"run_id": run_id, "ts": chrono::Utc::now()});
-    let body = serde_json::to_vec(&payload).unwrap_or_else(|_| b"{}".to_vec());
-    match atomic_write(&path, &body).await {
-        Ok(_) => (StatusCode::ACCEPTED, Json(payload)).into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("write failed: {e}"),
-        )
-            .into_response(),
-    }
 }
 
 async fn control_promote(

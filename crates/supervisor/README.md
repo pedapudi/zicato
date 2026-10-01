@@ -102,7 +102,6 @@ Files written by the control endpoints (mounted only without
 
 - `.zicato/runtime/control/pause_epoch` (removed by `POST /api/control/resume`)
 - `.zicato/runtime/control/skip_round`
-- `.zicato/runtime/control/kill_runs/{run_id}`
 - `.zicato/runtime/control/promote/{generation_id}`
 - `.zicato/runtime/control/reject/{generation_id}`
 - `.zicato/runtime/control/rubric_replacement.txt`
@@ -135,7 +134,6 @@ Mounted only without `--no-dashboard`:
 - `POST /api/control/pause` — `{reason?}`
 - `POST /api/control/resume` — clears the pause flag
 - `POST /api/control/skip-round` — `{reason?}`
-- `POST /api/control/kill/{run_id}`
 - `POST /api/control/promote/{generation_id}`
 - `POST /api/control/reject/{generation_id}`
 - `POST /api/control/brief` — raw text body, replaces the proposer brief

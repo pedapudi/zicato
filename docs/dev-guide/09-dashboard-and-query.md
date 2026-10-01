@@ -1255,8 +1255,8 @@ consumes — 07-runtime-and-durability.md §7.9):
 The command surface: `pause`/`skip-round` are reason-stamped flag files
 (one shared `_flag_control` factory); `resume` is a plain unlink of the
 `pause_epoch` flag (idempotent — resuming an unpaused workspace is an
-accepted no-op, `removed: false`); `kill/{run_id}`, `promote/{gen}`,
-`reject/{gen}` write one marker per target; `brief` writes the payload
+accepted no-op, `removed: false`); `promote/{gen}` and `reject/{gen}`
+write one marker per target; `brief` writes the payload
 body to `rubric_replacement.txt` (the protocol name is kept even though the
 UI label is "brief"). A promote/reject carries the override provenance
 (`epoch`/`tournament_id`/`structure`/`reason`) additively so a FIELD
@@ -1264,8 +1264,7 @@ override's readback names which round it targeted; the gauntlet consumer
 reads only `reason`.
 
 > ⛔ NEVER make a control endpoint DELETE the source command or signal a
-> worker pid directly. The dashboard WRITES a marker; the orchestrator (or
-> the Rust supervisor for `kill_runs/`) consumes it and archives the audit
+> worker pid directly. The dashboard WRITES a marker; the orchestrator consumes it and archives the audit
 > record. `resume` unlinking `pause_epoch` is the ONE legitimate bare unlink,
 > because the orchestrator archives the pause episode itself
 > (07-runtime-and-durability.md §7.9). If you add a control, write a marker —
@@ -2066,7 +2065,7 @@ POSTs the marker and surfaces a `403` for a read-only workspace to the
 caller:
 
 ```javascript
-// POST a control marker (pause / skip-round / kill / promote / reject /
+// POST a control marker (pause / skip-round / promote / reject /
 // brief). Read-only workspaces answer 403 — surfaced to the caller.
 export async function postControl(action, body) {
   const res = await fetch('/api/control/' + action, {

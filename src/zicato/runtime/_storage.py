@@ -95,7 +95,7 @@ def control_command_key(command: str) -> str:
 
     ``command`` is taken verbatim as a relative path under the control
     prefix; it may contain a subdirectory component (e.g.
-    ``"kill_runs/run_abc"``).
+    ``"promote/v3"``).
     """
     return storage_key(_LAYOUT.control_command(command.strip("/")))
 
@@ -109,8 +109,7 @@ def kill_request_key(run_id: str) -> str:
     """Storage key for one run's parent→supervisor kill-request marker.
 
     Lives under ``control/kill_requests/{run_id}`` (no ``.json`` suffix —
-    the supervisor matches on the bare run id). Distinct from the
-    operator's ``kill_runs/{run_id}`` channel: this one asks the Rust
+    the supervisor matches on the bare run id). The marker asks the Rust
     supervisor to run the single SIGTERM→grace→SIGKILL escalator on the
     worker pid, so the Python parent never signals the worker itself.
     """

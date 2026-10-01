@@ -495,49 +495,9 @@ export function liveMatchGroupedBlocks(blocks, onCompetitor, ctl) {
   return wrap;
 }
 
-// ── the per-run KILL affordance ──────────────────────────────────────
-//
-// One small ✕ per IN-FLIGHT run on a competitor's row, posting the file-based
-// kill marker (postControl('kill/'+runId) at the call site). Confirm-on-click:
-// the first click ARMS ("kill?"), the second fires; an armed button auto-
-// disarms. Hidden entirely when the workspace is read-only (the caller passes
-// no ctl / canControl:false). Clicks never bubble into the row's competitor
-// navigation. Exported for the node behaviour tests.
-export function killRunButton(runInfo, onKill) {
-  const runId = String((runInfo && runInfo.run_id) || '');
-  const entry = (runInfo && runInfo.entry_id) ? String(runInfo.entry_id) : '';
-  const btn = el('button', {
-    class: 'dt-live-kill', type: 'button', 'data-run': runId,
-    title: 'kill run ' + runId + (entry ? ' (' + entry + ')' : '') + ' — the supervisor tears the unit down',
-    'aria-label': 'kill run ' + runId,
-    text: '✕',
-  });
-  let armed = false;
-  let timer = null;
-  const disarm = () => {
-    armed = false;
-    if (timer != null) { clearTimeout(timer); timer = null; }
-    patchText(btn, '✕');
-    btn.classList.remove('dt-live-kill-armed');
-  };
-  btn.addEventListener('click', (ev) => {
-    if (ev && ev.stopPropagation) ev.stopPropagation();
-    if (!armed) {
-      armed = true;
-      patchText(btn, 'kill?');
-      btn.classList.add('dt-live-kill-armed');
-      timer = setTimeout(disarm, 4000);
-      return;
-    }
-    disarm();
-    if (onKill && runId) onKill(runId);
-  });
-  return btn;
-}
-
 // One "follow" affordance for one in-flight run — opens that unit's live
 // conversation pane. There is no confirm step: reading a conversation is
-// harmless and reversible, unlike the kill beside it. The click never bubbles
+// harmless and reversible. The click never bubbles
 // into the row's competitor navigation, which would take the operator to the
 // candidate page instead. Exported for the node behaviour tests.
 export function followRunButton(gen, runInfo, onFollow) {
@@ -600,10 +560,15 @@ function liveMatchRow(e, onCompetitor, ctl) {
   // "~proj" (dimmed/dashed) so the hero distinguishes a climbing projection
   // from a settled verdict.
   const proj = !!(e.projected && isNum(e.projected_scalar) && !settled);
-  // the per-run KILL cluster (writable workspace + attributed in-flight runs).
-  const killRuns = (ctl && ctl.canControl && Array.isArray(e.runs)) ? e.runs.filter((r) => r && r.run_id) : [];
+  // THE FOLLOW AFFORDANCE. One per in-flight run on this competitor: the
+  // operator can see a unit is running here, so this is where its conversation
+  // opens. Offered ONLY while the run is in flight — a settled unit's transcript
+  // is reached through its board, and offering "follow" against a stopped loop
+  // would claim liveness the run does not have.
+  const followRuns = (ctl && typeof ctl.onFollow === 'function' && !settled && Array.isArray(e.runs))
+    ? e.runs.filter((r) => r && r.entry_id) : [];
   const row = el('div', {
-    class: 'dt-live-match-row' + (proj ? ' dt-proj' : '') + (killRuns.length ? ' dt-live-match-row-kill' : ''),
+    class: 'dt-live-match-row' + (proj ? ' dt-proj' : '') + (followRuns.length ? ' dt-live-match-row-follow' : ''),
     tabindex: onCompetitor ? '0' : null,
   });
 
@@ -653,21 +618,9 @@ function liveMatchRow(e, onCompetitor, ctl) {
   row.appendChild(scalar);
   row.appendChild(boards);
   row.appendChild(tag);
-  // THE FOLLOW AFFORDANCE. One per in-flight run on this competitor: the
-  // operator can see a unit is running here, so this is where its conversation
-  // opens. Offered ONLY while the run is in flight — a settled unit's transcript
-  // is reached through its board, and offering "follow" against a stopped loop
-  // would claim liveness the run does not have.
-  const followRuns = (ctl && typeof ctl.onFollow === 'function' && !settled && Array.isArray(e.runs))
-    ? e.runs.filter((r) => r && r.entry_id) : [];
   if (followRuns.length) {
     const cluster = el('span', { class: 'dt-live-follow-cluster' });
     for (const r of followRuns) cluster.appendChild(followRunButton(String(e.id), r, ctl.onFollow));
-    row.appendChild(cluster);
-  }
-  if (killRuns.length) {
-    const cluster = el('span', { class: 'dt-live-kill-cluster' });
-    for (const r of killRuns) cluster.appendChild(killRunButton(r, ctl.onKill));
     row.appendChild(cluster);
   }
   if (onCompetitor && e.id && e.id !== 'tbd') {
@@ -714,13 +667,10 @@ export class LiveController {
     this._collapsed = readCollapsed();
     this._bandKey = null;
     this.onCompetitor = typeof o.onCompetitor === 'function' ? o.onCompetitor : null;
-    // the per-run kill sink (postControl('kill/'+runId) at the shell); null
-    // (or canControl:false on update) hides every kill affordance.
-    this.onKill = typeof o.onKill === 'function' ? o.onKill : null;
     // the per-run FOLLOW sink — navigates to the unit's live conversation
-    // pane. Read-only, so it is NOT gated on canControl.
+    // pane. Reading a conversation writes nothing, so a read-only workspace
+    // offers it too.
     this.onFollow = typeof o.onFollow === 'function' ? o.onFollow : null;
-    this._canControl = false;
     this._seq = 0;
     this._prevSnap = null;
     // tracks the alive→idle edge so the ticker is cleared exactly once on the
@@ -843,10 +793,7 @@ export class LiveController {
 
   // Drive the hero from the current live state. Returns true when a run is live
   // (so the shell can toggle the hero's visibility class).
-  update({ status, heartbeat, activeRuns, activeTournament, canControl, liveness } = {}) {
-    // whether the workspace accepts control POSTs (read_only:false) — gates
-    // the per-run kill affordances in the "what's running" rows.
-    if (canControl != null) this._canControl = !!canControl;
+  update({ status, heartbeat, activeRuns, activeTournament, liveness } = {}) {
     const running = !!(status && status.running);
     // THE DRAWER GATE is the served tri-state rather than file presence: the
     // drawer exists only while liveness reads `live`. A caller that supplies no
@@ -1036,13 +983,12 @@ export class LiveController {
       if (fb) blocks = [fb];
     }
     // ANNOTATE each competitor row with its attributed in-flight runs so the
-    // per-run kill affordance can render (epoch-guarded — a foreign-epoch run
-    // never earns a kill button on a stale tournament). Folded into the digest
-    // (alongside the canControl gate) so a run starting/finishing — or the
-    // workspace flipping writable — repaints, while a steady beat stays no-op.
-    const canKill = !!(this._canControl && this.onKill);
-    const byGen = canKill ? runsByGeneration(activeRuns, at) : {};
-    if (canKill) {
+    // per-run follow affordance can render (epoch-guarded — a foreign-epoch run
+    // never earns a follow button on a stale tournament). Folded into the
+    // digest so a run starting or finishing repaints, while a steady beat
+    // stays no-op.
+    const byGen = this.onFollow ? runsByGeneration(activeRuns, at) : {};
+    if (this.onFollow) {
       for (const b of blocks) {
         for (const e of (Array.isArray(b.entries) ? b.entries : [])) {
           if (e && e.id != null && byGen[String(e.id)]) e.runs = byGen[String(e.id)];
@@ -1052,12 +998,9 @@ export class LiveController {
     const runsKey = Object.keys(byGen).sort()
       .map((g) => g + ':' + byGen[g].map((r) => r.run_id).sort().join('+')).join(',');
     // the second-idiom digest gate folded onto gatedSwap (same no-flash contract).
-    const digest = liveMatchBlocksDigest(blocks) + '|kill:' + (canKill ? runsKey : '-')
-      + '|follow:' + (this.onFollow ? runsKey : '-');
+    const digest = liveMatchBlocksDigest(blocks) + '|follow:' + (this.onFollow ? runsKey : '-');
     gatedSwap(this._matchesBody, digest, () => {
-      const ctl = (canKill || this.onFollow)
-        ? { canControl: canKill, onKill: this.onKill, onFollow: this.onFollow }
-        : undefined;
+      const ctl = this.onFollow ? { onFollow: this.onFollow } : undefined;
       const node = liveMatchGroupedBlocks(blocks, this.onCompetitor || undefined, ctl);
       if (node.classList) node.classList.add('dt-live-enter');
       return node;

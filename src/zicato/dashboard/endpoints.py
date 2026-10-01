@@ -1391,18 +1391,6 @@ def _make_control_endpoints(paths: WorkspacePaths, *, read_only: bool) -> dict[s
             status_code=202,
         )
 
-    async def control_kill(request: Request) -> Response:
-        forbidden = _forbidden_if_read_only()
-        if forbidden is not None:
-            return forbidden
-        run_id = request.path_params["run_id"]
-        if not _is_safe_id(run_id):
-            return PlainTextResponse("invalid run_id", status_code=400)
-        path = _control_path("kill_runs", run_id)
-        payload = {"run_id": run_id, "ts": _now_iso()}
-        _atomic_write(path, json.dumps(payload).encode())
-        return JSONResponse(payload, status_code=202)
-
     async def control_promote(request: Request) -> Response:
         forbidden = _forbidden_if_read_only()
         if forbidden is not None:
@@ -1452,7 +1440,6 @@ def _make_control_endpoints(paths: WorkspacePaths, *, read_only: bool) -> dict[s
         "control_pause": _flag_control("pause_epoch"),
         "control_resume": control_resume,
         "control_skip_round": _flag_control("skip_round"),
-        "control_kill": control_kill,
         "control_promote": control_promote,
         "control_reject": control_reject,
         "control_brief": control_brief,

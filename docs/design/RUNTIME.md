@@ -106,8 +106,6 @@ Python memory or only in the supervisor's memory.
 ├── control/                        # incoming operator commands (written by dashboard)
 │   ├── pause_epoch                 # presence = "pause requested"
 │   ├── skip_round                  # presence = "skip current round"
-│   ├── kill_runs/
-│   │   └── {run_id}                # presence = "kill this run"
 │   ├── promote/
 │   │   └── {generation_id}         # presence = "force promote this generation"
 │   ├── reject/
@@ -349,9 +347,7 @@ contention, because each worker is the sole writer of its own file.
 > `src/zicato/evolve/loop.py`, at the head of a round for `skip_round`
 > from `src/zicato/evolve/round_entry.py`, and at the gate for
 > `promote` and `reject` from `src/zicato/evolve/gate.py`.
-> `control/kill_runs/{run_id}` is written by the dashboard's kill
-> control, but no process consumes it: the orchestrator's consumer does
-> not handle it and the supervisor does not read it.
+> There is no per-run kill command; §5.3 gives the reason.
 
 The orchestrator reads `control/` at **safe points only** —
 between rounds, at the head of a round, and at the gate — never mid-run. When a command is consumed, the file is moved
@@ -367,7 +363,6 @@ contract.
 |---|---|---|
 | `control/pause_epoch` | dashboard "pause" button | empty file; presence is the signal |
 | `control/skip_round` | "skip" button on active round | empty file |
-| `control/kill_runs/{run_id}` | "kill" button on a run row | JSON `{run_id, ts}` per run; not consumed (see above) |
 | `control/promote/{gen_id}` | "force promote" button | empty file per generation |
 | `control/reject/{gen_id}` | "force reject" button | empty file per generation |
 | `control/rubric_replacement.txt` | "edit proposer brief" panel | text file; contents replace `brief.md` |
@@ -796,10 +791,15 @@ board-unit budget the worker enforces, so the final full-board crowning
 duel, which is the longest-running one, can be capped without capping
 every duel.
 
-The dashboard's "kill" button writes `control/kill_runs/{run_id}`, but no
-process consumes that file (§2.5). A run is terminated only by its own
-budget, by the parent's kill request, or by the supervisor's deadline and
-staleness checks.
+A run is terminated only by its own budget, by the parent's kill request,
+or by the supervisor's deadline and staleness checks. The operator has no
+per-run kill control. Every run is already bounded by its wall-clock
+budget, and a run killed from outside ends with no result file, which the
+parent records as the infrastructure abort `gone_no_result`. An
+infrastructure abort counts as incomplete execution, so the round is
+deferred and the run is evaluated again: the kill would spend budget
+without producing a decision. The operator's interventions are the
+pause and skip-round controls, or stopping `zicato evolve`.
 
 ### 5.4 Adapter loading in workers
 
@@ -1358,7 +1358,6 @@ The watchdog supervisor logs via `tracing` (level set by `--log` /
 | watchdog `/statusz` | The watchdog's own view: heartbeat age, per-run staleness, recent escalations. | yes |
 | dashboard `GET /api/state` | Composite live snapshot — heartbeat, active tournament, active runs, lineage — plus the rest of the API in [DASHBOARD.md](DASHBOARD.md) §6. | yes |
 | `zicato status` one-shot CLI | A filesystem-only snapshot that needs no running supervisor. | **unbuilt** — no such command in the CLI |
-| `zicato kill <run_id>` CLI | Write `control/kill_runs/{run_id}` and wait for consumption. | **unbuilt** — the dashboard's kill control is the available path |
 
 The dashboard's `GET /api/*` endpoints read the state files directly,
 so the operator can inspect even a half-broken setup ("did the
@@ -1374,9 +1373,9 @@ below is the runtime layer's own staging.
 | Stage | What lands |
 |---|---|
 | **The workspace lock and heartbeat** | `.zicato/runtime/lock.guard` and `lock.json`, `heartbeat.json` written live by `HeartbeatBeater`, and `asyncio.wait_for` per-call timeouts. **Shipped.** |
-| **The full runtime layout and the watchdog** | The complete `.zicato/runtime/` layout with atomic writes; the Rust watchdog supervisor in its watchdog role, auto-spawned by `evolve`; escalation from SIGTERM through a grace period to SIGKILL; and subprocess tournament workers with hard per-run wall-clock budgets (`_tournament_worker.py`), and the conservative crash-resume protocol (`runtime/resume.py`). **Shipped**, except for the `zicato status` and `zicato kill` commands. |
+| **The full runtime layout and the watchdog** | The complete `.zicato/runtime/` layout with atomic writes; the Rust watchdog supervisor in its watchdog role, auto-spawned by `evolve`; escalation from SIGTERM through a grace period to SIGKILL; and subprocess tournament workers with hard per-run wall-clock budgets (`_tournament_worker.py`), and the conservative crash-resume protocol (`runtime/resume.py`). **Shipped**, except for the `zicato status` command. |
 | **The dashboard service** | The live dashboard, served over HTTP and server-sent events as a separate Python service auto-spawned by `evolve`. **Shipped.** |
-| **Interactive dashboard controls** | **Shipped** on both sides: the dashboard's POST control endpoints and the write side of the control-file protocol, and the orchestrator's consumption of `control/` at its safe points with the `control_log/` audit (`runtime/control_consumer.py`). `control/kill_runs/` has no consumer. |
+| **Interactive dashboard controls** | **Shipped** on both sides: the dashboard's POST control endpoints and the write side of the control-file protocol, and the orchestrator's consumption of `control/` at its safe points with the `control_log/` audit (`runtime/control_consumer.py`). |
 
 The staging is by design. The watchdog and atomic-write safety work is
 the production-readiness pass, and the dashboard is a thick layer on top

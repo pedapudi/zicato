@@ -569,7 +569,7 @@ the `primary_driver` field of `/api/round/.../per-judge-comparison`.
 `/api/control/promote/{gen}` and `/api/control/reject/{gen}` endpoints
 appear as a per-challenger override control in the tournament
 structure's standings table (`views/structure.js`); pause, resume and
-skip sit in the top bar, and kill sits on each live run row (§5). The
+skip sit in the top bar (§5). The
 server answers `403` when the app is built `read_only`. Clicking one writes
 the `control/` file atomically; the orchestrator reads it at its next
 safe point and applies the override (see [RUNTIME.md](RUNTIME.md)
@@ -786,12 +786,13 @@ running loop, and the dashboard reads the result back.
 | All panel data (read) | `.zicato/runtime/` + `.zicato/index.db` + `.zicato/epochs/` |
 | Open in harmonograf | Constructs a handoff URL; no zicato state change |
 | Reload page | Re-fetches `/api/environment`, re-opens SSE (fresh snapshot) |
-| **Pause / Resume / Skip / Kill / Promote / Reject / Brief** | `POST /api/control/...` → atomic write of a `control/` file (returns `202`); the orchestrator consumes it at its next safe point. |
+| **Pause / Resume / Skip / Promote / Reject / Brief** | `POST /api/control/...` → atomic write of a `control/` file (returns `202`); the orchestrator consumes it at its next safe point. |
 
 Pause, resume and skip live in the top bar and render only while the
-loop is live and the workspace writable; kill sits on each live run
-row, though no process consumes the marker it writes (§5.3); promote and reject sit in the tournament structure's standings
-table (§4.2 ⑥). The console has no control for `brief`; the endpoint
+loop is live and the workspace writable; promote and reject sit in the
+tournament structure's standings table (§4.2 ⑥). There is no per-run kill
+control, because a run killed from outside is an infrastructure abort that
+is rerun in a later round ([RUNTIME.md](RUNTIME.md) §5.3). The console has no control for `brief`; the endpoint
 serves direct HTTP callers. The read-only posture,
 in which the POST endpoints return `403`, is reachable through
 `create_app(read_only=…)` and the Rust binary's `--read-only`, but no
@@ -839,7 +840,6 @@ browser → updates the decision verdict / status pill
 | pause | `control/pause_epoch` | between rounds | scheduling holds until the flag is cleared |
 | resume | removes `control/pause_epoch` | while the orchestrator waits in its pause loop | the pause loop sees the flag gone and scheduling continues |
 | skip round | `control/skip_round` | at the head of a round | the round aborts cleanly; a flag found between rounds is archived as a no-op |
-| kill run | `control/kill_runs/{run_id}` | never | no process consumes it (see [RUNTIME.md](RUNTIME.md) §2.5) |
 | promote override | `control/promote/{gen_id}` | at the gate, after the tournament settles and before the outcome is persisted | the gate's verdict is overridden and recorded as an operator override |
 | reject override | `control/reject/{gen_id}` | at the gate | as above |
 | brief replacement | `control/rubric_replacement.txt` | between rounds | the text replaces `brief.md`, a contract edit that rolls the epoch |
@@ -849,8 +849,8 @@ Every consumed command is moved into `control_log/` with a JSON record
 `original_file_path`); [RUNTIME.md](RUNTIME.md) §2.5 shows one.
 
 **The POST endpoints behind the catalogue.** The dashboard exposes
-`pause`, `resume`, `skip-round`, `kill/{run_id}`, `promote/{gen_id}`,
-`reject/{gen_id}`, and `brief`, which writes the proposer-brief
+`pause`, `resume`, `skip-round`, `promote/{gen_id}`, `reject/{gen_id}`,
+and `brief`, which writes the proposer-brief
 replacement.
 
 **Safe points** are the orchestrator's natural pause boundaries:
@@ -983,7 +983,7 @@ with the route's degraded shape rather than a `500`.
 
 | Route | Purpose |
 |---|---|
-| `POST /api/control/{pause,resume,skip-round,kill/{run_id},promote/{gen},reject/{gen},brief}` | Control surface (§6.2). |
+| `POST /api/control/{pause,resume,skip-round,promote/{gen},reject/{gen},brief}` | Control surface (§6.2). |
 
 The sections below detail the endpoints whose response shape clients
 depend on.
@@ -1182,7 +1182,6 @@ by the `read_only` flag.
 | `POST /api/control/pause` | optional `{"reason": "..."}` | Atomically write `control/pause_epoch` (JSON `{reason, ts}`). |
 | `POST /api/control/resume` | (none) | Remove `control/pause_epoch`. Idempotent: resuming a workspace that is not paused is an accepted no-op reporting `removed: false`. |
 | `POST /api/control/skip-round` | optional `{"reason": "..."}` | Write `control/skip_round`. |
-| `POST /api/control/kill/{run_id}` | (none) | Write `control/kill_runs/{run_id}`; no process consumes it. |
 | `POST /api/control/promote/{generation_id}` | optional `{"reason", "epoch", "tournament_id", "structure"}` | Write `control/promote/{generation_id}`; the extra keys name the field round an override targeted. |
 | `POST /api/control/reject/{generation_id}` | optional `{"reason", "epoch", "tournament_id", "structure"}` | Write `control/reject/{generation_id}`. |
 | `POST /api/control/brief` | raw text body | Write `control/rubric_replacement.txt` (the on-disk file keeps its protocol name; the UI calls it the proposer brief). |
@@ -1231,7 +1230,7 @@ Either stands alone.
 | Drill-down navigation from the workspace through epoch, candidate and board to a run, and the status pill | Shipped. |
 | Live panels read the runtime JSON files, while resolved decisions and cross-run analytics read the analytical index (§3.4) | Shipped. |
 | Server-sent events for live updates: one snapshot then coalesced `state_change` frames | Shipped. |
-| The POST control endpoints under `/api/control/`, the orchestrator's consumption of them at safe points, and the `control_log/` audit | Shipped, except that nothing consumes the kill marker. |
+| The POST control endpoints under `/api/control/`, the orchestrator's consumption of them at safe points, and the `control_log/` audit | Shipped. |
 | The decision view — gate ladder, diverging comparison chart, scalar waterfall, primary-driver call-out, margin band (§4.2) | Shipped. |
 | The loop-health banner (§4.5), backed by `/api/health-report` | Shipped. |
 | Replicate standard errors and the Bradley–Terry rating with its credible interval and `p_stronger` (§4.6) | Shipped. |

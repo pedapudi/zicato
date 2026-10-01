@@ -78,7 +78,7 @@ def test_exports_pass_counts_callers(run_json) -> None:
 
 
 def test_routes_pass_matches_holes_to_segments(run_json) -> None:
-    assert console_measure._route_matches("/api/control/kill/{x}", "/api/control/{x}/{x}")
+    assert console_measure._route_matches("/api/control/promote/{x}", "/api/control/{x}/{x}")
     assert not console_measure._route_matches("/api/files", "/api/files/")
     result = run_json("routes")
     assert set(result) == {

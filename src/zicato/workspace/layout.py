@@ -208,9 +208,9 @@ class WorkspaceLayout:
         """One control command's file, under :meth:`control_dir`.
 
         ``command`` is taken verbatim as a relative path, and may include a
-        subdirectory component: the kill, promote, and reject commands keep one
-        file per target under a per-command-kind subdirectory (for example
-        ``kill_runs/run_abc``).
+        subdirectory component: the promote and reject commands keep one file
+        per target under a per-command-kind subdirectory (for example
+        ``promote/v3``).
         """
         return self.control_dir / command
 
@@ -223,8 +223,7 @@ class WorkspaceLayout:
     def kill_requests_dir(self) -> Path:
         """The directory holding parent-to-supervisor kill escalations.
 
-        Distinct from the operator's ``control/kill_runs/`` channel, which the
-        orchestrator consumes. A marker here is written by the Python parent
+        A marker here is written by the Python parent
         when a worker overran its budget, asking the Rust supervisor to run the
         single SIGTERM-grace-SIGKILL escalator on that worker's pid.
         Consolidating escalation in the supervisor removes the race the parent

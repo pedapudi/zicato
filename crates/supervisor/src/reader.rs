@@ -61,8 +61,7 @@ impl WorkspacePaths {
     /// Directory holding parent→supervisor kill-escalation requests. The
     /// Python parent writes `control/kill_requests/{run_id}` when a worker
     /// overran its budget; this supervisor is the single SIGTERM→grace→
-    /// SIGKILL escalator that acts on them. Distinct from the operator's
-    /// `control/kill_runs/` channel (consumed by the orchestrator).
+    /// SIGKILL escalator that acts on them.
     pub fn kill_requests_dir(&self) -> PathBuf {
         self.control_dir().join("kill_requests")
     }

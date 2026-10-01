@@ -2619,12 +2619,6 @@ def test_paused_flag_surfaces_in_runtime_payloads(rw_client: TestClient, workspa
     assert rw_client.get("/api/state").json()["paused"] is False
 
 
-def test_control_kill_writes_per_run_marker(rw_client: TestClient, workspace: Path) -> None:
-    r = rw_client.post("/api/control/kill/waffles_single")
-    assert r.status_code == 202
-    assert (workspace / "runtime" / "control" / "kill_runs" / "waffles_single").exists()
-
-
 def test_control_promote_and_reject(rw_client: TestClient, workspace: Path) -> None:
     assert rw_client.post("/api/control/promote/v1").status_code == 202
     assert rw_client.post("/api/control/reject/v1").status_code == 202
@@ -2663,10 +2657,11 @@ def test_control_reject_empty_body_is_back_compat(rw_client: TestClient, workspa
     assert "structure" not in written
 
 
-def test_control_kill_rejects_bad_id(rw_client: TestClient) -> None:
+def test_control_promote_rejects_bad_id(rw_client: TestClient, workspace: Path) -> None:
     # An id the validator rejects (a space) is a 400, not a marker write.
-    r = rw_client.post("/api/control/kill/bad%20id")
+    r = rw_client.post("/api/control/promote/bad%20id")
     assert r.status_code == 400
+    assert not (workspace / "runtime" / "control" / "promote").exists()
 
 
 def test_control_brief_writes_text(rw_client: TestClient, workspace: Path) -> None:

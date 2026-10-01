@@ -8,7 +8,6 @@ from pathlib import Path
 import pytest
 
 from zicato.runtime.control import (
-    CMD_KILL_RUN_PREFIX,
     CMD_PAUSE_EPOCH,
     CMD_PROMOTE_PREFIX,
     CMD_REJECT_PREFIX,
@@ -45,13 +44,13 @@ def test_list_skip_round_flag(tmp_path: Path) -> None:
     assert [c.name for c in cmds] == [CMD_SKIP_ROUND]
 
 
-def test_list_targeted_kill_runs(tmp_path: Path) -> None:
-    write_command(tmp_path, ControlCommand(name=CMD_KILL_RUN_PREFIX, arg="run_a"))
-    write_command(tmp_path, ControlCommand(name=CMD_KILL_RUN_PREFIX, arg="run_b"))
+def test_list_targeted_command_per_target(tmp_path: Path) -> None:
+    write_command(tmp_path, ControlCommand(name=CMD_PROMOTE_PREFIX, arg="v1"))
+    write_command(tmp_path, ControlCommand(name=CMD_PROMOTE_PREFIX, arg="v2"))
     cmds = list_pending_commands(tmp_path)
     by_arg = sorted(c.arg for c in cmds)
-    assert by_arg == ["run_a", "run_b"]
-    assert all(c.name == CMD_KILL_RUN_PREFIX for c in cmds)
+    assert by_arg == ["v1", "v2"]
+    assert all(c.name == CMD_PROMOTE_PREFIX for c in cmds)
 
 
 def test_list_targeted_promote_and_reject(tmp_path: Path) -> None:
@@ -83,8 +82,8 @@ def test_list_skips_tmp_files(tmp_path: Path) -> None:
 def test_list_mixed_command_set_is_deterministic(tmp_path: Path) -> None:
     write_command(tmp_path, ControlCommand(name=CMD_SKIP_ROUND))
     write_command(tmp_path, ControlCommand(name=CMD_PAUSE_EPOCH))
-    write_command(tmp_path, ControlCommand(name=CMD_KILL_RUN_PREFIX, arg="run_b"))
-    write_command(tmp_path, ControlCommand(name=CMD_KILL_RUN_PREFIX, arg="run_a"))
+    write_command(tmp_path, ControlCommand(name=CMD_PROMOTE_PREFIX, arg="v2"))
+    write_command(tmp_path, ControlCommand(name=CMD_PROMOTE_PREFIX, arg="v1"))
     write_command(
         tmp_path,
         ControlCommand(name=CMD_RUBRIC_REPLACEMENT, payload="..."),
@@ -99,8 +98,8 @@ def test_list_mixed_command_set_is_deterministic(tmp_path: Path) -> None:
         [
             CMD_SKIP_ROUND,
             CMD_PAUSE_EPOCH,
-            CMD_KILL_RUN_PREFIX,
-            CMD_KILL_RUN_PREFIX,
+            CMD_PROMOTE_PREFIX,
+            CMD_PROMOTE_PREFIX,
             CMD_RUBRIC_REPLACEMENT,
         ]
     )
@@ -127,7 +126,7 @@ def test_is_paused_true_after_pause(tmp_path: Path) -> None:
 
 def test_write_targeted_command_requires_arg(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="requires a non-empty arg"):
-        write_command(tmp_path, ControlCommand(name=CMD_KILL_RUN_PREFIX))
+        write_command(tmp_path, ControlCommand(name=CMD_PROMOTE_PREFIX))
 
 
 def test_write_command_returns_file_path(tmp_path: Path) -> None:
@@ -168,15 +167,15 @@ def test_consume_moves_file_into_log_dir(tmp_path: Path) -> None:
 
 
 def test_consume_targeted_command_records_arg(tmp_path: Path) -> None:
-    write_command(tmp_path, ControlCommand(name=CMD_KILL_RUN_PREFIX, arg="run_xyz"))
+    write_command(tmp_path, ControlCommand(name=CMD_PROMOTE_PREFIX, arg="v7"))
     [cmd] = list_pending_commands(tmp_path)
     log_path = consume_command(tmp_path, cmd)
 
     record = json.loads(log_path.read_text())
-    assert record["command"] == CMD_KILL_RUN_PREFIX
-    assert record["arg"] == "run_xyz"
+    assert record["command"] == CMD_PROMOTE_PREFIX
+    assert record["arg"] == "v7"
     # Audit-log filename embeds the arg too.
-    assert "run_xyz" in log_path.name
+    assert "v7" in log_path.name
 
 
 def test_consume_rubric_replacement_preserves_payload(tmp_path: Path) -> None:
@@ -192,23 +191,23 @@ def test_consume_rubric_replacement_preserves_payload(tmp_path: Path) -> None:
 
 
 def test_consume_cleans_empty_targeted_subdir(tmp_path: Path) -> None:
-    write_command(tmp_path, ControlCommand(name=CMD_KILL_RUN_PREFIX, arg="run_a"))
+    write_command(tmp_path, ControlCommand(name=CMD_PROMOTE_PREFIX, arg="v1"))
     [cmd] = list_pending_commands(tmp_path)
     consume_command(tmp_path, cmd)
-    # The kill_runs/ directory should now be gone since it's empty.
-    assert not (control_dir(tmp_path) / CMD_KILL_RUN_PREFIX).exists()
+    # The promote/ directory should now be gone since it's empty.
+    assert not (control_dir(tmp_path) / CMD_PROMOTE_PREFIX).exists()
 
 
 def test_consume_targeted_keeps_subdir_when_siblings_remain(tmp_path: Path) -> None:
-    write_command(tmp_path, ControlCommand(name=CMD_KILL_RUN_PREFIX, arg="run_a"))
-    write_command(tmp_path, ControlCommand(name=CMD_KILL_RUN_PREFIX, arg="run_b"))
+    write_command(tmp_path, ControlCommand(name=CMD_PROMOTE_PREFIX, arg="v1"))
+    write_command(tmp_path, ControlCommand(name=CMD_PROMOTE_PREFIX, arg="v2"))
     cmds = list_pending_commands(tmp_path)
-    a = next(c for c in cmds if c.arg == "run_a")
+    a = next(c for c in cmds if c.arg == "v1")
     consume_command(tmp_path, a)
-    # Subdir survives; run_b still pending.
-    assert (control_dir(tmp_path) / CMD_KILL_RUN_PREFIX).is_dir()
+    # Subdir survives; v2 still pending.
+    assert (control_dir(tmp_path) / CMD_PROMOTE_PREFIX).is_dir()
     remaining = list_pending_commands(tmp_path)
-    assert [c.arg for c in remaining] == ["run_b"]
+    assert [c.arg for c in remaining] == ["v2"]
 
 
 def test_consume_idempotent_when_source_already_deleted(tmp_path: Path) -> None:

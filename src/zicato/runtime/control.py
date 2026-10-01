@@ -25,8 +25,8 @@ the corresponding path. Two flavors:
 
 * **Flag commands** (``pause_epoch``, ``skip_round``) — single file with
   no per-target argument. Empty payload (timestamp suffices).
-* **Targeted commands** (``kill_runs/<run_id>``, ``promote/<gen_id>``,
-  ``reject/<gen_id>``) — one file per target under a per-command
+* **Targeted commands** (``promote/<gen_id>``, ``reject/<gen_id>``) —
+  one file per target under a per-command
   subdirectory. The argument is encoded in the filename.
 * **Payload command** (``rubric_replacement.txt``) — one file whose body
   IS the new rubric. The orchestrator reads it on consume and overwrites
@@ -60,11 +60,6 @@ CMD_PAUSE_EPOCH = "pause_epoch"
 #: Flag command. Skips the remainder of the current round.
 CMD_SKIP_ROUND = "skip_round"
 
-#: Targeted command prefix. Files live at ``control/kill_runs/<run_id>``.
-#: The orchestrator sends SIGTERM to the named run; if the run was
-#: already finished, consume is a no-op.
-CMD_KILL_RUN_PREFIX = "kill_runs"
-
 #: Targeted command prefix. Files live at ``control/promote/<generation_id>``.
 #: Force-promotes the named generation regardless of tournament outcome.
 #: Operator overrides are audit-logged in the journal.
@@ -92,12 +87,12 @@ class ControlCommand:
     ------
     name:
         The command kind. For targeted commands this is the prefix
-        (``"kill_runs"``, ``"promote"``, ``"reject"``); the per-target
-        id lives in :attr:`arg`. For flag and payload commands this is
+        (``"promote"``, ``"reject"``); the per-target id lives in
+        :attr:`arg`. For flag and payload commands this is
         the full name.
     arg:
-        Per-target argument for targeted commands (the run id, the
-        generation id). Empty string for flag and payload commands.
+        Per-target argument for targeted commands (the generation
+        id). Empty string for flag and payload commands.
     payload:
         Body of the file when it carries operator-supplied text (today
         only :data:`CMD_RUBRIC_REPLACEMENT`). Empty string otherwise.
@@ -238,7 +233,7 @@ def write_command(workspace_root: Path, cmd: ControlCommand) -> Path:
     if not cmd.arg:
         raise ValueError(
             f"control command {cmd.name!r} requires a non-empty arg "
-            "(e.g. run_id for kill_runs, generation_id for promote/reject)"
+            "(the generation_id for promote/reject)"
         )
     # A targeted command's body is empty by default (the arg in the filename
     # is the whole command). A promote/reject MAY carry a JSON ``payload`` body
@@ -323,7 +318,6 @@ def consume_command(
 __all__ = [
     "CMD_PAUSE_EPOCH",
     "CMD_SKIP_ROUND",
-    "CMD_KILL_RUN_PREFIX",
     "CMD_PROMOTE_PREFIX",
     "CMD_REJECT_PREFIX",
     "CMD_RUBRIC_REPLACEMENT",

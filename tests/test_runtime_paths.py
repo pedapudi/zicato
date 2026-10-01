@@ -47,15 +47,12 @@ def test_control_and_control_log_dirs(tmp_path: Path) -> None:
 def test_control_command_path_takes_relative_subpath(tmp_path: Path) -> None:
     rt = runtime_dir(tmp_path)
     assert control_command_path(tmp_path, "pause_epoch") == rt / "control" / "pause_epoch"
-    assert (
-        control_command_path(tmp_path, "kill_runs/run_xyz")
-        == rt / "control" / "kill_runs" / "run_xyz"
-    )
+    assert control_command_path(tmp_path, "promote/v3") == rt / "control" / "promote" / "v3"
 
 
 def test_kill_request_paths_live_under_a_distinct_control_subdir(tmp_path: Path) -> None:
-    # Parent→supervisor kill requests sit under control/kill_requests/, kept
-    # distinct from the operator's control/kill_runs/ channel.
+    # Parent→supervisor kill requests sit under their own control/kill_requests/
+    # subdirectory.
     rt = runtime_dir(tmp_path)
     assert kill_requests_dir(tmp_path) == rt / "control" / "kill_requests"
     assert kill_request_path(tmp_path, "run_xyz") == rt / "control" / "kill_requests" / "run_xyz"

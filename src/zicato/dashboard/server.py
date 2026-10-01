@@ -332,11 +332,6 @@ def create_app(
             methods=["POST"],
         ),
         Route(
-            "/api/control/kill/{run_id}",
-            handlers["control_kill"],
-            methods=["POST"],
-        ),
-        Route(
             "/api/control/promote/{generation_id}",
             handlers["control_promote"],
             methods=["POST"],

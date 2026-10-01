@@ -3169,26 +3169,17 @@
   .dt-live-match-row { display: grid;
     grid-template-columns: max-content minmax(40px, 1fr) max-content max-content max-content;
     align-items: center; column-gap: 9px; border-radius: 4px; padding: 1px 2px; }
-  /* a row carrying the per-run kill cluster grows a sixth content column. */
-  .dt-live-match-row-kill {
+  /* a row carrying the per-run follow cluster grows a sixth content column. */
+  .dt-live-match-row-follow {
     grid-template-columns: max-content minmax(40px, 1fr) max-content max-content max-content max-content; }
-  .dt-live-kill-cluster { display: inline-flex; gap: 4px; }
-  /* the per-run FOLLOW affordance (issue #194 §2) — same quiet register as the
-     kill button beside it, but tinted with the accent rather than the bad tone:
-     reading a conversation is the safe sibling of tearing a run down. */
+  /* the per-run FOLLOW affordance — a quiet outlined button tinted with the
+     accent on hover. */
   .dt-live-follow-cluster { display: inline-flex; gap: 4px; }
   .dt-live-follow { font-family: var(--v2-mono); font-size: calc(9.5px * var(--dt-font-scale, 1));
     color: var(--v2-ink-faint); background: transparent; border: 1px solid var(--v2-rule);
     border-radius: 4px; padding: 0 5px; line-height: 1.5; cursor: pointer; white-space: nowrap;
     transition: color 0.15s, border-color 0.15s; }
   .dt-live-follow:hover { color: var(--v2-accent); border-color: var(--v2-accent); }
-  .dt-live-kill { font-family: var(--v2-mono); font-size: calc(9.5px * var(--dt-font-scale, 1));
-    color: var(--v2-ink-faint); background: transparent; border: 1px solid var(--v2-rule);
-    border-radius: 4px; padding: 0 5px; line-height: 1.5; cursor: pointer; white-space: nowrap;
-    transition: color 0.15s, border-color 0.15s, background 0.15s; }
-  .dt-live-kill:hover { color: var(--v2-bad); border-color: var(--v2-bad); }
-  .dt-live-kill.dt-live-kill-armed { color: var(--v2-bad); border-color: var(--v2-bad); }
-  .dt-live-kill.dt-live-kill-armed:hover { color: var(--v2-paper); background: var(--v2-bad); }
   .dt-live-match-row[tabindex] { cursor: pointer; }
   .dt-live-match-row[tabindex]:hover { background: var(--v2-rule-soft); }
   .dt-live-match-row:focus-visible { outline: 2px solid var(--v2-accent); outline-offset: 1px; }

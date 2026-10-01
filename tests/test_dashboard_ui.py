@@ -591,9 +591,8 @@ def test_bundle_under_size_envelope() -> None:
     # cost-per-promotion stats + the uncertainty-honest plateau/no-signal chip
     # (home), reading the new /api/epoch/{id}/trajectory + /cost endpoints; the
     # sparkline's opt-in measured-noise band; the topbar pause/resume + skip-round
-    # controls and the per-run kill buttons through the previously-dead
-    # postControl; and the authoritative /api/live/pipeline propose→apply→run→gate
-    # stepper in the live hero (server-side inference rendered verbatim). All
+    # controls through postControl; and the authoritative /api/live/pipeline
+    # propose→apply→run→gate stepper in the live hero (server-side inference rendered verbatim). All
     # digest-gated (a no-op beat is byte-identical) + back-compat (absent
     # endpoints — the Rust supervisor — render byte-identical to today). ~30 KB of
     # new loop-communication surface. The envelope is raised to 1.29 MB to cover

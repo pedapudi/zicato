@@ -626,10 +626,6 @@ export function mountShell(root) {
       const epochId = (r.params && r.params.epochId) || state.epoch.id || null;
       if (epochId) navigate('candidate', { epochId, gen });
     },
-    // the per-run kill sink (confirm-on-click lives in the row's button) —
-    // routes through the file-based control channel; refresh afterwards so
-    // the torn-down run leaves the in-flight rows promptly.
-    onKill: (runId) => fireLoopControl('kill/' + encodeURIComponent(runId), undefined, null),
     // the per-run FOLLOW sink — opens that unit's live conversation on its
     // board, deep-linked so the followed conversation survives a reload and
     // can be shared.
@@ -1159,8 +1155,6 @@ function refreshLive() {
     heartbeat: state.heartbeat,
     activeRuns: state.activeRuns,
     activeTournament: state.activeTournament,
-    // the kill affordances render only on a writable workspace.
-    canControl: !!(state.health && state.health.read_only === false),
   });
   // The host is always laid out (it carries the status band); the class only
   // tints it while a run is in flight.

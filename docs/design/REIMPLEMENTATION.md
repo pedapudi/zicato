@@ -74,7 +74,7 @@ outcome is present; the shape may differ from the plan's wording.
 | Delete the stale root `zicato/` tree | shipped | no `zicato/` directory at the repository root |
 | Delete `telemetry/scoring.py` duplicate | not done | `telemetry/scoring.py` still defines `aggregate_generation_score` and is re-exported from `zicato.telemetry` |
 | Delete the dashboard preview page and variant indirection | shipped | only `dashboard/static/js/` and `css/console.css` remain |
-| Control protocol: wire or delete | wired | `runtime/control_consumer.py`, called from `evolve/loop.py`, `evolve/round_entry.py` and `evolve/gate.py`; the dashboard's `kill_runs` command has no consumer |
+| Control protocol: wire or delete | wired | `runtime/control_consumer.py`, called from `evolve/loop.py`, `evolve/round_entry.py` and `evolve/gate.py` |
 | 1a `zicato/util/` primitives | partly | `util/iso_time.py` (`now_iso`), `util/best_effort.py`, `util/text.py`, `util/async_tasks.py`; no `llm_json.py`, `dotted_path.py` or `floats.py` (JSON extraction stays in `proposer/structured.py`, dotted imports in `zicato/import_path.py`) |
 | 1b one drift normalizer and one event reader | shipped | `core/drift_kinds.py` (`DriftKind`, `normalize_wire_drift_kind`); `telemetry/event_log.py` (`parse_event`, `read_event_log`) is the single `events.jsonl` reader |
 | 1c typed canonical-read layer; index as projection | partly | `workspace/layout.py` (`WorkspaceLayout`), `workspace/reads.py` (enumeration, board, loss and events reads); experiments decode in `epoch/journal.py`, scores in `tournament/scoring.py`; `index/ingest._drift_counts_from_events` is deleted |
