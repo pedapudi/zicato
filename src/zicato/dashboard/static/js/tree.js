@@ -26,6 +26,7 @@
 
 import { el, clearChildren } from './core/dom.js';
 import { icon, CROWN } from './icons.js';
+import { attachHovercard } from './hovercard.js';
 
 // `data` is the structural model the shell assembles once per dispatch:
 //   { epochs:[{id, current}], expanded:{ epochs:{<id>:{gens, boards}} },
@@ -319,6 +320,18 @@ export function buildTree(host, model, route, toggles, ctx, onToggle, live) {
   host.appendChild(tree);
 }
 
+// A row caption truncates before the row's name does (console.css `.dt-label`),
+// so its full text rides in a hovercard on the caption, shown with the row's
+// name. The caption sits inside the row's button, so the card is wired to the
+// pointer only: keyboard and screen-reader users get the same text from the
+// button's accessible name, which holds the name and the full caption.
+function captionWithHovercard(name, caption) {
+  attachHovercard(caption, () => el('span', {}, [
+    name + ' · ', ...Array.from(caption.childNodes).map((n) => n.cloneNode(true)),
+  ]), { focusable: false });
+  return caption;
+}
+
 function branchRow(o) {
   const row = el('div', {
     class: 'dt-node dt-branch dt-d' + o.depth + (o.selected ? ' dt-sel' : ''),
@@ -340,7 +353,7 @@ function branchRow(o) {
   const label = el('button', { class: 'dt-label', type: 'button' }, [
     el('span', { class: 'dt-icon dt-icon-' + o.kind, 'aria-hidden': 'true' }),
     el('span', { class: 'dt-text', text: o.label }),
-    o.sub ? el('span', { class: 'dt-sub' }, Array.isArray(o.sub) ? o.sub : [o.sub]) : null,
+    o.sub ? captionWithHovercard(o.label, el('span', { class: 'dt-sub' }, Array.isArray(o.sub) ? o.sub : [o.sub])) : null,
   ].filter(Boolean));
   if (o.selected) label.setAttribute('aria-current', 'true');
   label.addEventListener('click', () => o.onSelect());
@@ -363,7 +376,7 @@ function leafRow(o) {
     // board entry). It is a clue rather than a banner — reuses the dn-inflight-pulse
     // animation. Re-stamped only when the row ENTERS/LEAVES the live set (digest).
     o.live ? el('span', { class: 'dt-node-pulse dn-inflight-pulse', title: 'running', 'aria-label': 'running' }) : null,
-    o.tag ? el('span', { class: 'dt-role dt-role-' + o.kind, text: o.tag }) : null,
+    o.tag ? captionWithHovercard(o.label, el('span', { class: 'dt-role dt-role-' + o.kind, text: o.tag })) : null,
   ].filter(Boolean));
   if (o.selected) label.setAttribute('aria-current', 'true');
   label.addEventListener('click', () => o.onSelect());

@@ -50,9 +50,9 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 469,824 | +61,163 |
-| Production | 197,702 | 187,117 | -10,585 |
-| Production logic | 110,276 | 109,113 | -1,163 |
+| Total | 408,661 | 470,314 | +61,653 |
+| Production | 197,702 | 187,290 | -10,412 |
+| Production logic | 110,276 | 109,254 | -1,022 |
 
 The baseline row is the reference `f9052dd` measured by the classification the
 checker holds, which counts the console's hand-written entry point
@@ -84,7 +84,7 @@ production-logic series per subsystem along a branch's first-parent commits.
 
 | Subsystem | Total | Production | Production logic | Prose share |
 |---|---:|---:|---:|---:|
-| src/zicato/dashboard | 62,860 | 32,301 | 22,262 | 31.1% |
+| src/zicato/dashboard | 63,349 | 32,474 | 22,403 | 31.0% |
 | src/zicato/query | 17,763 | 17,763 | 11,165 | 37.1% |
 | src/zicato/epoch | 13,995 | 13,995 | 7,849 | 43.9% |
 | src/zicato/evolve | 11,285 | 11,285 | 7,198 | 36.2% |
@@ -530,3 +530,27 @@ dropped rows named.
 | Console interface rules (total) | 469,364 | +460 | 469,824 | The console follows its interface rules: chrome, prose and figure labels in a sans with mono kept for numbers, ids and code; no accent left rail; no pill or tag chips; and a one-line top bar. A node test enforces each rule, and the trace strip model drops its unread `glyph` field. |
 | Console interface rules (production) | 187,039 | +78 | 187,117 | The console follows its interface rules: chrome, prose and figure labels in a sans with mono kept for numbers, ids and code; no accent left rail; no pill or tag chips; and a one-line top bar. A node test enforces each rule, and the trace strip model drops its unread `glyph` field. |
 | Console interface rules (production logic) | 109,072 | +41 | 109,113 | The console follows its interface rules: chrome, prose and figure labels in a sans with mono kept for numbers, ids and code; no accent left rail; no pill or tag chips; and a one-line top bar. A node test enforces each rule, and the trace strip model drops its unread `glyph` field. |
+| One console status mark (total) | 469,824 | +199 | 470,023 | The top bar's status area draws one mark whose drawing and colour carry the event-stream connection and the run verdict together, in place of a connection dot and a run-state dot. Four icons join the icon set, livestatus gains the mark mapping, and a node test checks one mark in every state. |
+| One console status mark (production) | 187,117 | +44 | 187,161 | The top bar's status area draws one mark whose drawing and colour carry the event-stream connection and the run verdict together, in place of a connection dot and a run-state dot. Four icons join the icon set, livestatus gains the mark mapping, and a node test checks one mark in every state. |
+| One console status mark (production logic) | 109,113 | +28 | 109,141 | The top bar's status area draws one mark whose drawing and colour carry the event-stream connection and the run verdict together, in place of a connection dot and a run-state dot. Four icons join the icon set, livestatus gains the mark mapping, and a node test checks one mark in every state. |
+| Matrix labels in the sans (total) | 470,023 | +55 | 470,078 | The axis corner, the round group headers and the holdout and flip words of a matrix table take the sans, and the flip rate stays in the mono in its own span. A node test resolves each label and each id or number to its font token. |
+| Matrix labels in the sans (production) | 187,161 | +4 | 187,165 | The axis corner, the round group headers and the holdout and flip words of a matrix table take the sans, and the flip rate stays in the mono in its own span. A node test resolves each label and each id or number to its font token. |
+| Matrix labels in the sans (production logic) | 109,141 | +4 | 109,145 | The axis corner, the round group headers and the holdout and flip words of a matrix table take the sans, and the flip rate stays in the mono in its own span. A node test resolves each label and each id or number to its font token. |
+| Tree captions yield first (total) | 470,078 | +132 | 470,210 | A tree row's caption truncates with an ellipsis before the row's name does, through a four-column grid row label, and shows the row name and full caption in a hovercard. A node test checks the column sizing and every captioned row kind. |
+| Tree captions yield first (production) | 187,165 | +24 | 187,189 | A tree row's caption truncates with an ellipsis before the row's name does, through a four-column grid row label, and shows the row name and full caption in a hovercard. A node test checks the column sizing and every captioned row kind. |
+| Tree captions yield first (production logic) | 109,145 | +19 | 109,164 | A tree row's caption truncates with an ellipsis before the row's name does, through a four-column grid row label, and shows the row name and full caption in a hovercard. A node test checks the column sizing and every captioned row kind. |
+| Status mark writes on change (total) | 469,901 | +109 | 470,010 | The top bar's status mark writes its state attributes only when its state changes, and shows its state sentence in the console hovercard instead of a native title. A shared test helper records DOM writes so a test can assert an unchanged frame writes nothing. |
+| Status mark writes on change (production) | 187,175 | +5 | 187,180 | The top bar's status mark writes its state attributes only when its state changes, and shows its state sentence in the console hovercard instead of a native title. A shared test helper records DOM writes so a test can assert an unchanged frame writes nothing. |
+| Status mark writes on change (production logic) | 109,152 | +2 | 109,154 | The top bar's status mark writes its state attributes only when its state changes, and shows its state sentence in the console hovercard instead of a native title. A shared test helper records DOM writes so a test can assert an unchanged frame writes nothing. |
+| Pointer-only caption hovercard (total) | 470,010 | +13 | 470,023 | A tree caption inside its row button opens its hovercard on the pointer only, with no tab stop, through a new attachHovercard option. |
+| Pointer-only caption hovercard (production) | 187,180 | +10 | 187,190 | A tree caption inside its row button opens its hovercard on the pointer only, with no tab stop, through a new attachHovercard option. |
+| Pointer-only caption hovercard (production logic) | 109,154 | +4 | 109,158 | A tree caption inside its row button opens its hovercard on the pointer only, with no tab stop, through a new attachHovercard option. |
+| Drawer and up button write on change (total) | 470,023 | +68 | 470,091 | The settings drawer and the top bar's up button are written only when their state changes, so a re-dispatch on a live tick writes nothing to them. A node test counts the writes. |
+| Drawer and up button write on change (production) | 187,190 | +3 | 187,193 | The settings drawer and the top bar's up button are written only when their state changes, so a re-dispatch on a live tick writes nothing to them. A node test counts the writes. |
+| Opaque settings drawer (total) | 470,091 | +37 | 470,128 | The settings drawer panel reads a declared theme token, so it paints an opaque background, and a node test checks that every custom property read without a fallback is declared. |
+| JetBrains Mono licence (total) | 470,128 | +101 | 470,229 | The SIL Open Font License text and copyright notice for the self-hosted JetBrains Mono ship beside its font files, as the licence requires, and the font test pins them. The checker has no counter for a text file, so each of the licence's 93 lines counts as production logic. |
+| JetBrains Mono licence (production) | 187,193 | +94 | 187,287 | The SIL Open Font License text and copyright notice for the self-hosted JetBrains Mono ship beside its font files, as the licence requires, and the font test pins them. The checker has no counter for a text file, so each of the licence's 93 lines counts as production logic. |
+| JetBrains Mono licence (production logic) | 109,157 | +94 | 109,251 | The SIL Open Font License text and copyright notice for the self-hosted JetBrains Mono ship beside its font files, as the licence requires, and the font test pins them. The checker has no counter for a text file, so each of the licence's 93 lines counts as production logic. |
+| Fleet card stats fit the card (total) | 470,229 | +85 | 470,314 | A fleet card's stat row wraps and each stat holds one line, so no stat leaves the card. A node test pins those rules and the settings drawer's stacking and opaque background. |
+| Fleet card stats fit the card (production) | 187,287 | +3 | 187,290 | A fleet card's stat row wraps and each stat holds one line, so no stat leaves the card. A node test pins those rules and the settings drawer's stacking and opaque background. |
+| Fleet card stats fit the card (production logic) | 109,251 | +3 | 109,254 | A fleet card's stat row wraps and each stat holds one line, so no stat leaves the card. A node test pins those rules and the settings drawer's stacking and opaque background. |

@@ -183,7 +183,10 @@ title). The top bar, the tree, buttons, section headings and prose resolve to
 the sans; an element opts into the mono by its data role (`.dn-mono`, a
 table, a numeric tile value, a tree row named by an id, a figure's tick
 values and ids). A figure's captions, axis titles, legends and sentences are
-sans, and so is a tile value led by a word (`ui.valueFace`). The Google
+sans, and so is a tile value led by a word (`ui.valueFace`). A matrix table
+is set in the mono for its ids and numbers, and its labels opt back into the
+sans: the corner naming the axes (`entry · candidate →`), the round group
+headers, the `holdout` word and the word `flip` before a flip rate. The Google
 Fonts families load in `console.js` with `display=swap` and system sans or
 monospace fallbacks — the only external dependency; the self-hosted JetBrains
 Mono under `fonts/` backs the fixed brand mono and the editorial and display
@@ -403,8 +406,10 @@ poll*. `live.js` owns one persistent `LiveController` patched in place on every
 - **Live state words / markers.** A structure-agnostic status line
   (`.dt-status`, `livestatus.deriveLiveStatus`) folds a non-idle heartbeat
   phase, the in-flight active-runs count, and the active-tournament phase into
-  one verdict. While a run is going it shows a pulsing dot and the state word,
-  naming the structure and phase (`racing · rung 0`, `swiss · round 2`,
+  one verdict. The top bar shows it as one drawn status mark (filled while
+  running, open once settled, struck when the loop stopped without settling,
+  dashed with no current verdict), then the state word. While a run is going
+  the mark pulses and the label names the structure and phase (`racing · rung 0`, `swiss · round 2`,
   `proposing field`). A `LIVE` word (`.dt-live-state`) rides beside the
   structure label, as plain text.
 - **Structure-aware pending labels — never a faked verdict.** A rung with no

@@ -85,6 +85,13 @@ const DRAWINGS = {
   contract: [['rect', { x: 3.5, y: 3, width: 9, height: 10.5, rx: 1 }], ['path', { d: 'M6 2.5h4v2H6zM6 8h4M6 10.5h4' }]],
   models: [['path', { d: 'M8 2.5 9.4 6.6 13.5 8 9.4 9.4 8 13.5 6.6 9.4 2.5 8l4.1-1.4z' }]],
   appearance: [['circle', { cx: 8, cy: 8, r: 5 }], ['path', { d: 'M8 3a5 5 0 0 1 0 10z', ...FILLED }]],
+  // the top bar's run status: the fill says whether the loop is running, the
+  // outline how it ended (clean, or cut short), a dashed outline that the
+  // console holds no current verdict (the socket is down, or no run exists)
+  'status-running': [['circle', { cx: 8, cy: 8, r: 4, ...FILLED }]],
+  'status-settled': [['circle', { cx: 8, cy: 8, r: 4 }]],
+  'status-unsettled': [['circle', { cx: 8, cy: 8, r: 4 }], ['path', { d: 'M5.2 10.8l5.6-5.6' }]],
+  'status-unknown': [['circle', { cx: 8, cy: 8, r: 4, 'stroke-dasharray': '1.6 1.9' }]],
   // figure legend keys
   dot: [['circle', { cx: 8, cy: 8, r: 3.5, ...FILLED }]],
   ring: [['circle', { cx: 8, cy: 8, r: 3.5 }]],

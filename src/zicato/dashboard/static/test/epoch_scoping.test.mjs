@@ -922,24 +922,26 @@ test('brand mono: --v2-brand-mono is a FIXED monospace, distinct from the swappa
 });
 
 // FONTS — a SPLIT loading strategy:
-//   * The two self-hosted monos (iA Writer Mono + JetBrains Mono) stay SELF-
-//     HOSTED woff2 declared via @font-face in the scoped CSS (JetBrains Mono
-//     still backs the fixed brand mono) — those never touch a CDN.
+//   * JetBrains Mono stays SELF-HOSTED woff2 declared via @font-face in the
+//     scoped CSS (it backs the fixed brand mono), so it never touches a CDN.
+//     It is the only self-hosted face: every face the stylesheet declares is
+//     one a font token or typeface option names.
 //   * The typeface picker's finalized 12 faces load from the Google-Fonts loader
 //     in console.js (preconnect + a single css2 request, display=swap). Every
 //     family the 12 options reference must be in that request.
-test('fonts: the two self-hosted monos stay woff2; the 12 finalized faces load via the Google-Fonts loader (preconnect + display=swap)', async () => {
+test('fonts: JetBrains Mono stays self-hosted woff2; the 12 finalized faces load via the Google-Fonts loader (preconnect + display=swap)', async () => {
   const css = readCss();
-  // the two self-hosted monos are still declared via @font-face from local woff2.
-  for (const fam of ['iA Writer Mono', 'JetBrains Mono']) {
-    const re = new RegExp('@font-face[^}]*font-family:\\s*"' + fam + '"[^}]*url\\([^)]*\\.woff2[^)]*\\)\\s*format\\("woff2"\\)', 's');
-    assert(re.test(css), '@font-face declares ' + fam + ' from a local .woff2');
-  }
+  // the self-hosted mono is declared via @font-face from local woff2, and it
+  // is the only face declared that way.
+  const re = /@font-face[^}]*font-family:\s*"JetBrains Mono"[^}]*url\([^)]*\.woff2[^)]*\)\s*format\("woff2"\)/s;
+  assert(re.test(css), '@font-face declares JetBrains Mono from a local .woff2');
+  const declared = new Set([...css.matchAll(/@font-face\s*\{[^}]*font-family:\s*"([^"]+)"/g)].map((m) => m[1]));
+  assertEqual([...declared].join(','), 'JetBrains Mono', 'JetBrains Mono is the only self-hosted face');
   assert(!/Space Mono/.test(css), 'Space Mono is no longer referenced in the CSS');
   assert(/font-display:\s*swap/.test(css), 'self-hosted faces load with font-display: swap');
   // every @font-face src is LOCAL (no external host) — the self-hosted monos.
   const faces = css.match(/@font-face\s*\{[^}]*\}/gs) || [];
-  assert(faces.length >= 2, 'at least two @font-face blocks declared (iA Writer Mono + JetBrains Mono)');
+  assertEqual(faces.length, 2, 'two @font-face blocks declared (JetBrains Mono regular and bold)');
   for (const f of faces) assert(!/url\(\s*['"]?https?:/.test(f), 'a face src is a LOCAL url (no http/https CDN)');
 
   const fs = await import('node:fs');
@@ -958,7 +960,6 @@ test('fonts: the two self-hosted monos stay woff2; the 12 finalized faces load v
     assert(loaded.includes(fam), 'console.js loads the ' + fam + ' family (display=swap)');
   }
   assert(!loaded.includes('JetBrains Mono'), 'JetBrains Mono is self-hosted, NOT requested from the CDN');
-  assert(!loaded.includes('iA Writer Mono'), 'iA Writer Mono is self-hosted, NOT requested from the CDN');
   assert(/display=swap/.test(appJs), 'CDN fonts are requested with display=swap');
   // a preconnect to the Google-Fonts origins is set up before the stylesheet.
   assert(/rel\s*=\s*['"]preconnect['"]/.test(appJs), 'console.js preconnects to the font origins');
@@ -967,8 +968,16 @@ test('fonts: the two self-hosted monos stay woff2; the 12 finalized faces load v
   // the self-hosted woff2 files actually ship on disk under static/fonts/.
   const path = await import('node:path');
   const fontsDir = path.dirname(new URL('../console.js', import.meta.url).pathname) + '/fonts';
-  for (const f of ['JetBrainsMono-Regular.woff2', 'iAWriterMonoS-Regular.woff2']) {
-    assert(fs.existsSync(fontsDir + '/' + f) && fs.statSync(fontsDir + '/' + f).size > 0, 'ships ' + f);
+  assertEqual(fs.readdirSync(fontsDir).sort().join(','),
+    'JetBrainsMono-Bold.woff2,JetBrainsMono-OFL.txt,JetBrainsMono-Regular.woff2',
+    'static/fonts/ ships the JetBrains Mono faces and their licence, and nothing else');
+  // the SIL Open Font License requires its text and the copyright notice to
+  // travel with the font files.
+  const licence = fs.readFileSync(fontsDir + '/JetBrainsMono-OFL.txt', 'utf8');
+  assert(/Copyright 2020 The JetBrains Mono Project Authors/.test(licence), 'the licence carries the copyright notice');
+  assert(/SIL OPEN FONT LICENSE Version 1\.1/.test(licence), 'and the SIL Open Font License 1.1 text');
+  for (const f of ['JetBrainsMono-Regular.woff2', 'JetBrainsMono-Bold.woff2']) {
+    assert(fs.statSync(fontsDir + '/' + f).size > 0, 'ships ' + f);
   }
 });
 

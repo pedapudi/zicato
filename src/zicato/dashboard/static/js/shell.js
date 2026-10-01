@@ -33,7 +33,7 @@ import * as D from './data.js';
 import { invalidateLive, liveDataSignature } from './data.js';
 import { buildTree, treeDigest } from './tree.js';
 import { roundsForTree } from './rounds.js';
-import { livenessFor, liveStatusDigest, treeLiveSet, staleLabel, runStateLabel, LIVENESS } from './livestatus.js';
+import { livenessFor, liveStatusDigest, treeLiveSet, staleLabel, runStateLabel, statusMark, LIVENESS } from './livestatus.js';
 import { LiveController } from './live.js';
 import { attachHovercard } from './hovercard.js';
 import { buildSwatchDropdown, syncSwatchDropdowns } from './swatchdropdown.js';
@@ -76,9 +76,10 @@ let _viewHost = null;
 let _treeHost = null;
 let _crumbHost = null;
 let _statusEl = null;
-let _statusTextEl = null;     // the connection word (connected/connecting/offline)
-let _runStateEl = null;       // the four-state run pill (LIVE/STALLED/SETTLED/DEAD)
-let _runStateTextEl = null;   // the run-state WORD inside the pill
+let _statusMarkEl = null;     // the one drawn status mark (socket + run verdict)
+let _statusTextEl = null;     // the connection word (connecting/disconnected)
+let _runStateEl = null;       // the run-state label (LIVE/STALLED/SETTLED/DEAD)
+let _runStateTextEl = null;   // the run-state WORD inside the label
 let _runLabelEl = null;       // the structure+phase run label
 let _runCountEl = null;       // the in-flight board-unit count
 let _staleEl = null;          // the "last seen Ns ago / stale" affordance
@@ -520,30 +521,29 @@ export function mountShell(root) {
   // applyScale stamps and persists without syncing any top-bar node, so every
   // apply path (restore, keyboard, the Settings picker) shares one route.
 
-  // The live-status label: a connection dot + the connection word, plus a
-  // RUN mark that lights up whenever the loop is active for ANY tournament
-  // structure (read from the live APIs in renderStatus rather than the gauntlet-only
-  // activeTournament). The run mark carries the structure + phase label and an
-  // in-flight board-unit count; it is hidden when idle/done.
+  // The status area reads as one status: ONE drawn mark whose drawing and
+  // colour carry the socket and the run verdict together (livestatus
+  // `statusMark`), then the transport word (only while the socket is broken),
+  // then the run-state label `<STATE> · <structure · phase> · <N units>` (or
+  // `· last seen Ns ago` when the heartbeat has frozen). The run state is read
+  // for ANY tournament structure from the live APIs in renderStatus. The
+  // four-state word keeps its `dt-rs-<state>` CSS modifier.
+  _statusMarkEl = el('span', { class: 'dt-status-mark', role: 'img' });
+  // Hovering or focusing the mark shows its state sentence (the aria-label).
+  attachHovercard(_statusMarkEl, () => _statusMarkEl.getAttribute('aria-label') || '');
   _statusTextEl = el('span', { class: 'dt-status-text', text: 'connecting…' });
-  // ONE consolidated LIVENESS label — the three competing "live" signals (the
-  // bare four-state word, a separate run-mark phase label, a separate "last
-  // seen Ns ago" affordance) fold into a single `dt-run-state` label reading
-  // `● <STATE> · <structure · phase> · <N units>` (or `· last seen Ns ago` when
-  // frozen). The four-state word keeps its `dt-rs-<state>` CSS modifier.
   _runStateTextEl = el('span', { class: 'dt-rs-text', text: '' });
   _runLabelEl = el('span', { class: 'dt-run-label', text: '' });
   _runCountEl = el('span', { class: 'dt-run-count', text: '' });
   _staleEl = el('span', { class: 'dt-status-stale', text: '' });
   _runStateEl = el('span', { class: 'dt-run-state', 'aria-live': 'polite' }, [
-    el('span', { class: 'dt-rs-dot dt-status-dot', 'aria-hidden': 'true' }),
     _runStateTextEl,
     _runLabelEl,
     _runCountEl,
     _staleEl,
   ]);
   _statusEl = el('span', { class: 'dt-status' }, [
-    el('span', { class: 'dt-status-dot' }),
+    _statusMarkEl,
     _statusTextEl,
     _runStateEl,
   ]);
@@ -979,28 +979,39 @@ function renderStatus() {
 
   patchText(_statusTextEl || _statusEl, conn);
   patchClass(_statusEl, 'dt-connected', state.connected);
-  // The transport DOT is the healthy socket's only trace; the word is empty.
+  // A healthy socket leaves the transport word empty.
   patchClass(_statusEl, 'dt-transport-quiet', !conn);
   patchClass(_statusEl, 'dt-running', liveness.live && status.running);
-  // A frozen heartbeat (stale rather than live) gets a distinct chrome class so the
-  // dot/mark can read "not live" rather than borrowing the running accent.
+  // A frozen heartbeat (stale rather than live) gets a distinct chrome class.
   patchClass(_statusEl, 'dt-stale', !liveness.live && !!status.heartbeatStale);
 
   // The FOUR-STATE run label — show the LIVE/STALLED/SETTLED/DEAD word only
   // while there is SOMETHING to report (a never-run workspace would read
   // SETTLED, which is misleading). One `dt-rs-<state>` modifier maps onto
   // the console states (no new hue — the class is toggled, never the accent).
+  const everSeen = !!(state.heartbeat || state.activeTournament
+    || (state.activeRuns && state.activeRuns.length) || state.lastSeq >= 0);
+  // The tri-state decides WHETHER the run is live; the four-state verdict
+  // only refines a live one into LIVE vs STALLED (alive, no progress).
+  // A not-live workspace reads its own word — never a borrowed LIVE.
+  const rs = liveness.live ? status.runState
+    : (liveness.state === LIVENESS.SETTLED ? 'settled' : 'dead');
+  const interrupted = liveness.state === LIVENESS.INTERRUPTED;
+  const word = everSeen ? (interrupted ? 'INTERRUPTED' : runStateLabel(rs)) : '';
+
+  // The one status mark: the socket and the run verdict in a single drawing.
+  // The status digest also changes as the heartbeat ages, so the mark is
+  // written only when its state changes; its icon and label follow the state.
+  if (_statusMarkEl) {
+    const mark = statusMark(!!conn, word ? (interrupted ? 'interrupted' : rs) : '');
+    if (_statusMarkEl.getAttribute('data-state') !== mark.key) {
+      patchIconLabel(_statusMarkEl, mark.icon, '');
+      _statusMarkEl.setAttribute('data-state', mark.key);
+      _statusMarkEl.setAttribute('aria-label', mark.label);
+    }
+  }
+
   if (_runStateEl) {
-    const everSeen = !!(state.heartbeat || state.activeTournament
-      || (state.activeRuns && state.activeRuns.length) || state.lastSeq >= 0);
-    // The tri-state decides WHETHER the run is live; the four-state verdict
-    // only refines a live one into LIVE vs STALLED (alive, no progress).
-    // A not-live workspace reads its own word — never a borrowed LIVE.
-    const rs = liveness.live ? status.runState
-      : (liveness.state === LIVENESS.SETTLED ? 'settled' : 'dead');
-    const word = everSeen
-      ? (liveness.state === LIVENESS.INTERRUPTED ? 'INTERRUPTED' : runStateLabel(rs))
-      : '';
     if (_runStateTextEl) patchText(_runStateTextEl, word);
     patchClass(_runStateEl, 'dt-rs-live', word ? rs === 'live' : false);
     patchClass(_runStateEl, 'dt-rs-stalled', word ? rs === 'stalled' : false);
@@ -1196,9 +1207,10 @@ async function refreshPipeline(alive) {
 // parent to climb to) and active everywhere else.
 function renderBack(route) {
   if (!_backBtn) return;
-  const dest = up(route);
-  _backBtn.disabled = !dest;
-  patchClass(_backBtn, 'dt-back-off', !dest);
+  const off = !up(route);
+  // dispatch runs on every live tick; write the property only when it changes.
+  if (_backBtn.disabled !== off) _backBtn.disabled = off;
+  patchClass(_backBtn, 'dt-back-off', off);
 }
 
 // ── the settings overlay (Change 1) ──────────────────────────────────
@@ -1207,12 +1219,18 @@ function renderBack(route) {
 // the underlying route. The underlying route = the last non-settings route the
 // shell dispatched (or home if loaded cold straight onto `#/settings`).
 
+// Show or hide the drawer. dispatch hides it on every live tick, so the
+// attribute and the class are written only when they change.
+function setSettingsDrawer(open) {
+  _settingsOpen = open;
+  if (!_settingsOverlay) return;
+  const flag = open ? '1' : '0';
+  if (_settingsOverlay.getAttribute('data-open') !== flag) _settingsOverlay.setAttribute('data-open', flag);
+  patchClass(_settingsOverlay, 'dt-drawer-open', open);
+}
+
 function openSettingsOverlay() {
-  _settingsOpen = true;
-  if (_settingsOverlay) {
-    _settingsOverlay.setAttribute('data-open', '1');
-    if (_settingsOverlay.classList) _settingsOverlay.classList.add('dt-drawer-open');
-  }
+  setSettingsDrawer(true);
 }
 
 function closeSettingsOverlay() {
@@ -1225,11 +1243,7 @@ function closeSettingsOverlay() {
 }
 
 function hideSettingsOverlay() {
-  _settingsOpen = false;
-  if (_settingsOverlay) {
-    _settingsOverlay.setAttribute('data-open', '0');
-    if (_settingsOverlay.classList) _settingsOverlay.classList.remove('dt-drawer-open');
-  }
+  setSettingsDrawer(false);
 }
 
 // Render the underlying view (the one the overlay sits over) into `_viewHost`,

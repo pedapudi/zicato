@@ -519,6 +519,34 @@ export function runStateLabel(runState) {
   }
 }
 
+// The top bar's one status mark. It folds the browser's socket and the run
+// verdict into a single drawn mark (the `status-*` drawings in icons.js):
+//   status-running    — filled: the loop is running (LIVE, or STALLED)
+//   status-settled    — an outline: the loop ended cleanly
+//   status-unsettled  — a struck outline: the loop stopped without settling
+//   status-unknown    — a dashed outline: no current verdict
+// A broken socket outranks the run verdict, because the verdict the console
+// holds stops being current the moment the stream drops. `runState` is the
+// chrome's run-state token ('live', 'stalled', 'settled', 'dead' or
+// 'interrupted'), or '' when the workspace has recorded no run. The returned
+// `key` names the mark's colour modifier; `label` is its accessible name.
+export const STATUS_MARKS = Object.freeze({
+  live: { icon: 'status-running', label: 'Run live: the loop is making progress' },
+  stalled: { icon: 'status-running', label: 'Run stalled: the loop is alive but its progress counter has not advanced' },
+  settled: { icon: 'status-settled', label: 'Run settled: the loop ended cleanly' },
+  dead: { icon: 'status-unsettled', label: 'Run dead: the loop stopped without settling' },
+  interrupted: { icon: 'status-unsettled', label: 'Run interrupted: the loop stopped without settling' },
+  idle: { icon: 'status-unknown', label: 'No run recorded in this workspace' },
+  offline: { icon: 'status-unknown', label: 'Not connected to the dashboard server, so the run state is not current' },
+});
+
+const RUN_MARK_KEYS = ['live', 'stalled', 'settled', 'dead', 'interrupted'];
+
+export function statusMark(transportBroken, runState) {
+  const key = transportBroken ? 'offline' : (RUN_MARK_KEYS.includes(runState) ? runState : 'idle');
+  return { key, ...STATUS_MARKS[key] };
+}
+
 // A stable digest of the derived status so the chrome only re-stamps on a real
 // change (digest-gated — a steady heartbeat ping writes ZERO DOM).
 export function liveStatusDigest(conn, status) {

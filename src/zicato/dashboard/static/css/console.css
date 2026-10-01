@@ -20,29 +20,18 @@
  * infinite animation.
  */
 
-/* ===================  self-hosted monospace faces (@font-face)  ===================
+/* ===================  the self-hosted monospace face (@font-face)  ===================
  *
- * Two SIL-OFL monospace faces ship as woff2 under ../../../fonts/ (relative to
- * this stylesheet at css/), so they never depend on a font CDN:
- *
- *   JetBrains Mono — the fixed brand mono of the wordmark, and the data face
- *                    of the Editorial and Display typeface options.
- *   iA Writer Mono — declared here; no font token currently names it.
+ * One SIL-OFL monospace face ships as woff2 under ../../../fonts/ (relative to
+ * this stylesheet at css/), so it never depends on a font CDN: JetBrains Mono,
+ * the fixed brand mono of the wordmark and the data face of the Editorial and
+ * Display typeface options. Its licence ships beside it as
+ * fonts/JetBrainsMono-OFL.txt.
  *
  * The other faces the typeface options name load from Google Fonts (see the
  * loader in console.js). `font-display: swap` so a slow font never blocks
  * paint.
  */
-@font-face {
-  font-family: "iA Writer Mono"; font-style: normal; font-weight: 400;
-  font-display: swap;
-  src: url("../../../fonts/iAWriterMonoS-Regular.woff2") format("woff2");
-}
-@font-face {
-  font-family: "iA Writer Mono"; font-style: normal; font-weight: 700;
-  font-display: swap;
-  src: url("../../../fonts/iAWriterMonoS-Bold.woff2") format("woff2");
-}
 @font-face {
   font-family: "JetBrains Mono"; font-style: normal; font-weight: 400;
   font-display: swap;
@@ -616,10 +605,13 @@
        overrunning the card. */
     overflow-wrap: anywhere; }
   .dn-fleet-spark { margin: 3px 0 6px; }
-  .dn-fleet-stats { display: flex; gap: 16px; }
-  .dn-mini { display: flex; flex-direction: column; }
-  .dn-mini-k { font-size: calc(9px * var(--dt-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.05em; color: var(--v2-ink-faint); }
-  .dn-mini-v { font-family: var(--v2-mono); font-size: calc(13px * var(--dt-font-scale, 1)); font-variant-numeric: tabular-nums; color: var(--v2-ink); }
+  /* the card's stats wrap onto a second row when the card is narrow; each
+     stat keeps its key and its value on one line and never shrinks, so no
+     stat runs past the card's border. */
+  .dn-fleet-stats { display: flex; flex-wrap: wrap; gap: 8px 16px; }
+  .dn-mini { display: flex; flex-direction: column; flex: none; }
+  .dn-mini-k { font-size: calc(9px * var(--dt-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.05em; color: var(--v2-ink-faint); white-space: nowrap; }
+  .dn-mini-v { font-family: var(--v2-mono); font-size: calc(13px * var(--dt-font-scale, 1)); font-variant-numeric: tabular-nums; color: var(--v2-ink); white-space: nowrap; }
 
   /* a flag: a state word in its semantic colour, set as plain text. */
   .dn-flag { display: inline-flex; align-items: center; gap: 4px; font-family: var(--v2-sans);
@@ -1005,7 +997,9 @@
 
   .dn-mtx { border-collapse: collapse; font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1)); }
   .dn-mtx th, .dn-mtx td { border: 1px solid var(--v2-rule); padding: 0; }
-  .dn-mtx-corner { text-align: left; padding: 5px 8px; color: var(--v2-ink-faint); font-weight: 400; font-size: calc(10px * var(--dt-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.05em; }
+  /* The grid is set in the data face for its ids and numbers. The corner that
+   * names the two axes is a label, so it takes the sans. */
+  .dn-mtx-corner { text-align: left; padding: 5px 8px; color: var(--v2-ink-faint); font-family: var(--v2-sans); font-weight: 400; font-size: calc(10px * var(--dt-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.05em; }
   .dn-mtx-gen { padding: 5px 6px; }
   .dn-mtx-genlink { color: var(--v2-ink); text-decoration: none; }
   .dn-mtx-genlink:hover { color: var(--v2-accent); }
@@ -1062,7 +1056,7 @@
   .dn-evalmtx-wrap { margin: 4px 0 0; }
   .dn-evalmtx-legend { font-size: calc(10.5px * var(--dt-font-scale, 1)); margin: 8px 0 0; line-height: 1.4; }
   .dn-evalmtx-grouprow .dn-evalmtx-group { text-align: center; padding: 3px 6px; color: var(--v2-ink-faint);
-    font-weight: 400; font-size: calc(9.5px * var(--dt-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.05em;
+    font-family: var(--v2-sans); font-weight: 400; font-size: calc(9.5px * var(--dt-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.05em;
     background: var(--v2-panel); }
   .dn-evalmtx-groupcorner { border: 1px solid var(--v2-rule); }
   .dn-evalmtx-genhead { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 4px 6px; }
@@ -1077,8 +1071,10 @@
   .dn-evalmtx-entry { color: var(--v2-ink); }
   /* a held-out entry: the drawn padlock and the word "holdout" in the accent. */
   .dn-evalmtx-holdout-mark { display: inline-flex; align-items: center; gap: 3px;
-    font-size: calc(10px * var(--dt-font-scale, 1)); color: var(--v2-accent); }
-  .dn-eval-flip { font-size: calc(10px * var(--dt-font-scale, 1)); white-space: nowrap; }
+    font-family: var(--v2-sans); font-size: calc(10px * var(--dt-font-scale, 1)); color: var(--v2-accent); }
+  /* the flip-rate note: the word in the sans, the rate in the data face. */
+  .dn-eval-flip { font-family: var(--v2-sans); font-size: calc(10px * var(--dt-font-scale, 1)); white-space: nowrap; }
+  .dn-eval-flip-rate { font-family: var(--v2-mono); }
   .dn-eval-flip-clean { color: var(--v2-good); }
   .dn-eval-flip-warm { color: var(--v2-caution, var(--v2-ink-soft)); }
   .dn-eval-flip-hot { color: var(--v2-bad); font-weight: 600; }
@@ -2028,12 +2024,22 @@
 
   .dt-status { display: inline-flex; align-items: center; gap: 5px; font-family: var(--v2-sans);
     font-size: calc(10.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); }
-  .dt-status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--v2-flat); transition: background 0.2s; }
-  .dt-status.dt-connected .dt-status-dot { background: var(--v2-good); }
-  .dt-status.dt-running .dt-status-dot { background: var(--v2-caution); }
-  /* A frozen heartbeat (stale, not live): a dim, hollow dot + a muted
-     "last seen Ns ago" note — never the live accent, never a silent freeze. */
-  .dt-status.dt-stale .dt-status-dot { background: transparent; box-shadow: inset 0 0 0 1.5px var(--v2-flat); }
+  /* The one status mark (js/icons.js `status-*`, chosen by livestatus
+   * `statusMark`). Its drawing says whether the loop runs and how it ended;
+   * its colour speaks the direction: LIVE = good, STALLED = caution,
+   * SETTLED = calm ink, DEAD and INTERRUPTED = bad, no run = faint ink,
+   * a broken socket = flat. Only the LIVE mark pulses. */
+  .dt-status-mark { display: inline-flex; flex: none; font-size: calc(11px * var(--dt-font-scale, 1));
+    color: var(--v2-flat); transition: color 0.2s; }
+  .dt-status-mark[data-state="live"] { color: var(--v2-good); }
+  .dt-status-mark[data-state="live"] .zi { animation: dt-status-pulse 1.6s ease-in-out infinite; }
+  .dt-status-mark[data-state="stalled"] { color: var(--v2-caution); }
+  .dt-status-mark[data-state="settled"] { color: var(--v2-ink-soft); }
+  .dt-status-mark[data-state="dead"], .dt-status-mark[data-state="interrupted"] { color: var(--v2-bad); }
+  .dt-status-mark[data-state="idle"] { color: var(--v2-ink-faint); }
+  @keyframes dt-status-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+  /* A frozen heartbeat (stale, not live) adds a muted "last seen Ns ago"
+     note inside the run-state label — never a silent freeze. */
   /* The stale affordance, the phase label and the in-flight count ride
    * INSIDE the one liveness label (.dt-run-state) below. They reset the label's uppercase/tracked treatment so the phase reads
    * naturally ("· racing · rung 0", "· last seen 30s ago") and collapse to
@@ -2060,30 +2066,23 @@
    * no pulse). Speaks the console decision language — good/caution/ink/bad by
    * DIRECTION, no new hue: LIVE = good (progress), STALLED = caution, SETTLED =
    * calm ink (the desired clean end), DEAD = bad (gone without settling). The
-   * `dt-rs-dot` reuses the `.dt-status-dot` shape; the word is a small mono label. */
-  .dt-run-state { display: none; align-items: center; gap: 4px; margin-left: 7px;
+   * status mark before it (.dt-status-mark) carries the same state as a
+   * drawing; the word is a small sans label. */
+  .dt-run-state { display: none; align-items: center; gap: 4px;
     font-family: var(--v2-sans); font-size: calc(9.5px * var(--dt-font-scale, 1));
     letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; }
   .dt-run-state.dt-rs-on { display: inline-flex; }
-  .dt-run-state .dt-rs-dot { width: 6px; height: 6px; flex: 0 0 auto; }
   .dt-run-state .dt-rs-text { color: var(--v2-ink-faint); }
-  /* LIVE — progress is happening: the good direction + a soft pulse on the dot. */
-  .dt-run-state.dt-rs-live .dt-rs-dot { background: var(--v2-good);
-    box-shadow: 0 0 0 0 var(--v2-good); animation: dt-run-pulse 1.6s ease-out infinite; }
+  /* LIVE — progress is happening: the good direction. */
   .dt-run-state.dt-rs-live .dt-rs-text { color: var(--v2-good); }
   /* STALLED — alive but no progress: caution. */
-  .dt-run-state.dt-rs-stalled .dt-rs-dot { background: var(--v2-caution); }
   .dt-run-state.dt-rs-stalled .dt-rs-text { color: var(--v2-caution); }
   /* SETTLED — the loop cleanly ended: a calm, neutral ink read (not a verdict). */
-  .dt-run-state.dt-rs-settled .dt-rs-dot { background: transparent;
-    box-shadow: inset 0 0 0 1.5px var(--v2-ink-faint); }
   .dt-run-state.dt-rs-settled .dt-rs-text { color: var(--v2-ink-soft); }
-  /* DEAD — gone without settling: the bad direction, hollow dot (no pulse). */
-  .dt-run-state.dt-rs-dead .dt-rs-dot { background: transparent;
-    box-shadow: inset 0 0 0 1.5px var(--v2-bad); }
+  /* DEAD — gone without settling: the bad direction. */
   .dt-run-state.dt-rs-dead .dt-rs-text { color: var(--v2-bad); }
   @media (prefers-reduced-motion: reduce) {
-    .dt-run-state.dt-rs-live .dt-rs-dot { animation: none; }
+    .dt-status-mark[data-state="live"] .zi { animation: none; }
   }
 
   /* board-detail — the LIVE in-flight candidates panel. Liveness is carried by
@@ -2187,8 +2186,13 @@
   .dt-twisty-leaf { cursor: default; }
   .dt-twisty:disabled { cursor: default; }
 
+  /* A row is four columns: the mark, the name, the live pulse, the caption.
+   * The name's column grows to the name's full width before the caption's
+   * column receives any space, so a long caption truncates first and the name
+   * truncates only once the caption is gone. */
   .dt-label {
-    display: inline-flex; align-items: center; gap: 6px; width: 100%;
+    display: grid; grid-template-columns: auto minmax(0, max-content) auto minmax(0, 1fr);
+    align-items: center; width: 100%;
     border: none; background: transparent; cursor: pointer; text-align: left;
     padding: 4px 6px 4px 2px; color: var(--v2-ink-soft);
     font-family: var(--v2-sans); font-size: calc(12px * var(--dt-font-scale, 1)); line-height: 1.2;
@@ -2197,7 +2201,8 @@
   .dt-label:hover { color: var(--v2-ink); }
   /* the selected row: its name in the accent colour (no fill, no rail). */
   .dt-tree .dt-node.dt-sel .dt-label, .dt-tree .dt-node.dt-sel .dt-text { color: var(--v2-accent); font-weight: 600; }
-  .dt-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dt-label > .dt-icon, .dt-label > .dt-glyph { grid-row: 1; grid-column: 1; margin-right: 6px; }
+  .dt-text { grid-row: 1; grid-column: 2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   /* branch labels (Environment / Epoch / Generations / Boards) read as headers */
   .dt-branch[data-kind="epoch"] .dt-text { font-family: var(--v2-mono); }
@@ -2238,11 +2243,16 @@
    * right so it reads as a clue, not a banner. The pulse is CSS-animated, so an
    * unchanged live set needs no DOM (the tree digest re-stamps only on a set
    * change). Reduced-motion drops the animation (it keeps a static dot). */
-  .dt-node-pulse { width: 6px; height: 6px; margin-left: auto; }
+  .dt-node-pulse { grid-row: 1; grid-column: 3; width: 6px; height: 6px; margin-left: 6px; }
 
-  .dt-sub { font-family: var(--v2-sans); font-size: calc(9px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); margin-left: auto; padding-left: 6px; }
-  /* a row's role word (champion, former champion, …): plain text in its colour. */
-  .dt-role { font-size: calc(10px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); margin-left: auto; padding-left: 6px; white-space: nowrap; }
+  /* A row's caption: a branch's count or gate outcome (.dt-sub), a leaf's role
+   * word such as champion or former champion (.dt-role). It sits at the row's
+   * right edge and truncates with an ellipsis; its full text stays in the
+   * row's accessible name and in a hovercard. */
+  .dt-sub, .dt-role { grid-row: 1; grid-column: 4; justify-self: end; min-width: 0; max-width: 100%;
+    padding-left: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dt-sub { font-family: var(--v2-sans); font-size: calc(9px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); }
+  .dt-role { font-size: calc(10px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); }
   .dt-role-gen-champ { color: var(--v2-good); }
   .dt-role-gen-former { color: var(--v2-ink-faint); font-style: italic; }
   /* a CARRIED champion reference ("↑ … defends"): a dimmed, caution-toned tag —
@@ -3429,7 +3439,7 @@
     backdrop-filter: blur(1px); cursor: pointer; }
   .dt-drawer-panel { position: absolute; top: 0; right: 0; bottom: 0;
     width: min(560px, 94vw); display: flex; flex-direction: column;
-    background: var(--v2-ground); border-left: 1px solid var(--v2-rule);
+    background: var(--v2-paper); border-left: 1px solid var(--v2-rule);
     box-shadow: -8px 0 28px rgba(0, 0, 0, 0.32); overflow: hidden; }
   .dt-drawer-head { display: flex; align-items: center; justify-content: space-between;
     gap: 12px; padding: 13px 18px; border-bottom: 1px solid var(--v2-rule); flex: none; }

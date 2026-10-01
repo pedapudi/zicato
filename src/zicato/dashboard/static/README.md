@@ -6,9 +6,9 @@ off disk from `/` and `/static/...`.
 
 No build step. No framework. No external network, with one exception:
 `console.js` loads the typeface picker's families from Google Fonts with
-`display=swap` and system fallbacks. Two monospace faces (iA Writer Mono
-and JetBrains Mono) are self-hosted under `fonts/`; JetBrains Mono backs
-the fixed brand mono.
+`display=swap` and system fallbacks. One monospace face, JetBrains Mono,
+is self-hosted under `fonts/`; it backs the fixed brand mono and the data
+face of the editorial and display typeface options.
 Everything else in this directory must remain self-contained — no CDN,
 no remote scripts.
 
@@ -85,6 +85,9 @@ in `js/CONTRACTS.md`.
   development tool and is NOT shipped in the wheel.
 - `brand/` and `fonts/` — the favicons and logo marks `index.html`
   links, and the self-hosted woff2 faces `css/console.css` declares.
+  `fonts/JetBrainsMono-OFL.txt` is the SIL Open Font License 1.1 and
+  copyright notice that JetBrains Mono ships under; the licence requires
+  it to travel with the font files.
 
 ### The structural no-flash render spine (digest-gating)
 

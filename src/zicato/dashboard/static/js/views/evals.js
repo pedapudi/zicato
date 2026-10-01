@@ -82,7 +82,7 @@ function flipBadge(entry) {
     title: 'A/A flip rate ' + pct + '% over ' + (entry.calibration_runs || 0)
       + ' calibration draws' + onGen
       + ' — the fraction of self-duel draws whose verdict flipped',
-  }, ['flip ' + pct + '%']);
+  }, ['flip ', el('span', { class: 'dn-eval-flip-rate', text: pct + '%' })]);
 }
 
 // Does an entry row survive the active filters? Row-level (the matrix stays
