@@ -392,7 +392,7 @@ async def _adjudicate_once(
     — that attempt yields no parse and its timeout text becomes the raw
     response — because this function's contract is that it never raises, and a
     ``TimeoutError`` escaping here would propagate through a whole corpus
-    adjudication and wedge ``reflect run`` on one unlucky decision. The retry
+    adjudication and wedge ``inspect reflection run`` on one unlucky decision. The retry
     is still EXACTLY ONE: a first attempt that times out gets the same single
     second chance a first attempt that returns garbage gets.
     """

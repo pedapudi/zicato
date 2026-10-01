@@ -26,8 +26,9 @@ class EpochConfig:
     It is required; changed live inputs create a different epoch.
 
     Board and brief paths name the frozen files. Optional proposer_path selects
-    a saved proposer directory; None selects the built-in proposer. The goal
-    describes the operator's objective. closed and closed_at record completion.
+    a saved proposer directory; None means the proposer runs without skills.
+    The goal describes the operator's objective. closed and closed_at record
+    completion.
 
     noise_floor and preflight are optional measurements made after creation.
     They do not contribute to contract identity. implementation_identity records

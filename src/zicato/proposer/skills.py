@@ -5,6 +5,7 @@ A *proposer* is, on disk, a directory ``proposers/<name>/`` carrying:
 * ``skills/*.md`` — markdown skill modules. Each is SKILL.md-style: an
   optional YAML-ish frontmatter block (``name`` + ``description``) fenced
   by ``---`` lines, followed by a free-form markdown body. Zero or more.
+
 A directory may not carry an ``agent.py``;
 :func:`zicato.proposer.foe_config.refuse_removed_proposer_directory` refuses
 one before an agent is built.

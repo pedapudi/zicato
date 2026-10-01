@@ -1,9 +1,12 @@
 """``zicato evolve`` — the single entry point to the self-improvement loop.
 
-``evolve`` is the whole happy path past ``zicato init``. It is
-self-orchestrating: the operator never runs ``epoch register`` /
-``proposer propose`` / ``tournament run`` / ``repair index`` / ``epoch new``
-by hand — ``evolve`` performs each of those steps internally.
+``evolve`` runs once the workspace is registered: ``zicato init``
+followed by ``zicato epoch register``, which records the adapter and the
+source trees the proposer may edit (``zicato init --example`` registers
+its example project itself). From there ``evolve`` is self-orchestrating:
+the operator never runs ``proposer propose`` / ``tournament run`` /
+``repair index`` / ``epoch new`` by hand — ``evolve`` performs each of
+those steps internally.
 
 Each invocation:
 
@@ -825,11 +828,14 @@ def evolve_cmd(
 ) -> None:
     """Run the self-improvement loop — the single happy-path entry point.
 
-    `evolve` is self-orchestrating: it resolves the evaluation
-    contract, auto-opens an epoch when that contract has changed, then
-    proposes / runs the tournament / promotes for --rounds rounds. You
-    do not run `epoch register`, `proposer propose`, `tournament run`,
-    `repair index`, or `epoch new` by hand — evolve performs those steps.
+    Run it after `zicato epoch register` has recorded the adapter and
+    the source trees the proposer may edit; a workspace made by `zicato
+    init --example` is already registered. `evolve` is
+    self-orchestrating: it resolves the evaluation contract, auto-opens
+    an epoch when that contract has changed, then proposes / runs the
+    tournament / promotes for --rounds rounds. You do not run `proposer
+    propose`, `tournament run`, `repair index`, or `epoch new` by hand —
+    evolve performs those steps.
 
     By default, contract-hash auto-epoching is ON: when the evaluation
     contract (board / proposer brief / scoring / system-under-test

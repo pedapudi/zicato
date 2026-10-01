@@ -298,9 +298,9 @@ class ProposerContext:
 class ProposerAgent(Protocol):
     """A proposer that turns a :class:`ProposerContext` into an experiment.
 
-    The protocol is the single seam the orchestrator drives, regardless of
-    whether the proposer is the built-in single-shot agent or a custom
-    agent that calls tools. An implementation MUST raise
+    The protocol is the one interface the orchestrator drives, whether the
+    implementation is the Foe-backed agent or an operator's own class. An
+    implementation MUST raise
     :class:`zicato.proposer.proposer.ProposerError` when it cannot produce
     a schema-valid experiment within its budget, matching the contract the
     orchestrator already handles at each propose site.

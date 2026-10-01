@@ -9,8 +9,11 @@ description: The flagship operating skill for driving `zicato evolve` (the self-
 it resolves the evaluation contract (board + proposer brief + scoring + the
 registered target-adapter identity + the proposer), auto-opens/auto-rolls the
 epoch if that contract has drifted, then runs propose -> tournament -> promote for `--rounds`
-rounds. You do **not** run `epoch register` / `proposer propose` /
-`tournament run` / `repair index` / `epoch new` by hand — `evolve` drives them.
+rounds. It needs a registered workspace first: `zicato epoch register` records
+the adapter and the source trees the proposer may edit (`zicato init --example`
+registers its example project itself). After that you do **not** run
+`proposer propose` / `tournament run` / `repair index` / `epoch new` by hand —
+`evolve` drives them.
 
 Always invoke via `.venv/bin/zicato`. Install with `uv sync --all-extras`, never
 bare `uv sync`. The hard rules cited here live in the repo-root `AGENTS.md`.

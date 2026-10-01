@@ -13,8 +13,8 @@ contract:
    implementation outside the mutable surface, and the sorted list of
    mutable source-tree paths.
 6. The proposer — the agent identity, its tools, and the skill modules
-   under a configured ``proposers/<name>/`` dir (or the built-in default
-   proposer when none is configured).
+   under a configured ``proposers/<name>/`` dir (no skills when none is
+   configured).
 
 A change to any of these makes generations on either side of the change
 incomparable, so the epoch must roll. The system under test's *source content* is
@@ -120,8 +120,9 @@ class ContractInputs:
     #: :func:`_canon_adapter_declaration`.
     adapter_declaration: Mapping[str, Any] | None = None
     #: Location of the proposer dir (``proposers/<name>/``) frozen for
-    #: the epoch, or ``None`` for the built-in default proposer. ``None``
-    #: by default so existing construction sites keep working.
+    #: the epoch, or ``None`` when none is configured and the proposer runs
+    #: without skills. ``None`` by default so existing construction sites
+    #: keep working.
     proposer_path: Path | None = None
     #: The resolved ``runtime.proposer_agent`` external proposer, or
     #: ``None`` (the default, and every workspace that configures none).
@@ -880,8 +881,8 @@ def resolve_contract_inputs(
 
     Relative contract paths resolve against the workspace's parent. Adapter
     source directories come from its registration block. An absent proposer
-    path selects the built-in proposer. Incomplete contract publication must
-    finish before these inputs can be used.
+    path means the proposer runs without skills. Incomplete contract
+    publication must finish before these inputs can be used.
     """
     from zicato.workspace.contract_publication import (
         assert_contract_publication_complete,  # noqa: PLC0415
@@ -930,8 +931,8 @@ def resolve_contract_inputs(
     if entrypoint:
         source_specs.append(entrypoint)
 
-    # ``contract.proposer_path`` is optional — absent ⇒ the built-in
-    # default proposer (``None``). Relative spellings are resolved like
+    # ``contract.proposer_path`` is optional — absent ⇒ ``None``, and the
+    # proposer runs without skills. Relative spellings are resolved like
     # the other contract paths, against the operator's project root (the
     # workspace's parent).
     raw_proposer = contract.get("proposer_path")
@@ -984,7 +985,7 @@ def default_contract_paths(workspace_root: Path) -> dict[str, Path | None]:
     """Return board, brief, scoring, and optional proposer paths for a workspace.
 
     Editable files live beside the workspace directory. An absent proposer
-    path selects the built-in proposer.
+    path means the proposer runs without skills.
     """
     brief_default = Path(_default_contract_path(workspace_root, "brief.md"))
     return {

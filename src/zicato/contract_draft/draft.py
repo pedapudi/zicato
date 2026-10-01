@@ -110,8 +110,8 @@ class TournamentDraft:
     brief:
         The proposer-brief text (markdown), verbatim.
     proposer_path:
-        Location of the proposer dir, or ``None`` for the built-in
-        default proposer.
+        Location of the proposer dir, or ``None`` when none is configured
+        and the proposer runs without skills.
     disable_drift:
         The board-level ``board_meta`` header's drift-suppression set
         (:class:`goldfive.DriftKind` members). Part of the contract:

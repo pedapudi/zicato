@@ -133,7 +133,8 @@ class ExternalProposerAgent(Protocol):
       produce a schema-valid experiment within its budget.
 
     An implementation may also declare ``external_id``, a short label
-    (``"pi"``) that spells the agent id ``external:pi``. Absent one, the
+    (``"foe"`` for :class:`~zicato.proposer.foe_agent.FoeProposerAgent`)
+    that spells the agent id ``external:foe``. Absent one, the
     dotted path is the label.
     """
 

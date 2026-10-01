@@ -272,8 +272,9 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 # Default run: the FAST TIER, fanned out across four worker processes
 # with pytest-xdist (`-n 4`; the suite is process-isolation-clean — see
-# the pytest-xdist note in the `dev` extra). Override to a single serial in-process run for debugging with
-# `-n0` on the command line, e.g. `pytest -n0 tests/test_foo.py::test_bar`.
+# the pytest-xdist note in the `dev` extra). Override to a single serial
+# in-process run for debugging with `-n0` on the command line, e.g.
+# `pytest -n0 tests/test_foo.py::test_bar`.
 #
 # Two marker terms are excluded, for two different reasons:
 #
