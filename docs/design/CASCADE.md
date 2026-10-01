@@ -17,7 +17,7 @@
 > catches. No source, config schema, or test in the tree changes because
 > of this note. A build decision is gated by the measured **operating
 > characteristics** of §4 rather than by the argument above, and those
-> measurements now exist: the §4 harness is built (`tools/cascade_oc.py`
+> measurements exist: the §4 harness is built (`tools/cascade_oc.py`
 > and `tests/test_cascade_oc_harness.py`) and its first full run is
 > reported in **§5**. The decision itself remains the operator's; this
 > note does not make it.
@@ -32,9 +32,10 @@ This note builds on five design documents and one dev-guide chapter:
 - [`OVERFITTING.md`](OVERFITTING.md) — the train/holdout split, the
   budgeted mechanism that limits how often the holdout may be queried (the
   Ladder), and the reused-holdout hazard the terminal stage inherits.
-- [`SELECTION-THEORY.md`](SELECTION-THEORY.md) — the winner's-curse /
-  optimizer's-curse treatment and the **replicate-first, resolve-second**
-  operating rule this note lifts to a *per-stage* discipline.
+- [`SELECTION-THEORY.md`](SELECTION-THEORY.md) — the **replicate-first,
+  resolve-second** operating rule this note lifts to a *per-stage*
+  discipline. The winner's-curse / optimizer's-curse treatment is in
+  [`OVERFITTING.md`](OVERFITTING.md) §8.
 - dev-guide `04-evaluation-statistics.md` — the noise doctrine, the
   same-versus-same (A/A) noise floor, the evidence gate, the placebo arm,
   measurement identity and artifact separation, and the power-harness methodology
@@ -100,7 +101,7 @@ propose-step candidates
 
 The unification buys three things the independent wirings cannot:
 
-1. **One budget ledger.** Today each stage's cost is set in isolation
+1. **One budget ledger.** In the shipped design each stage's cost is set in isolation
    (screen panel size, racing `eta`/`board_fraction`, the gate's
    `replicates`, the Ladder `budget`). A cascade block lets an operator
    state a *total* per-promotion evaluation budget and have it allocated
@@ -116,7 +117,7 @@ The unification buys three things the independent wirings cannot:
    associated with that sample.
 
 3. **One place to reason about compounding selection** — §3. This is the
-   load-bearing reason to unify at all. A pipeline object can compute how
+   main reason to unify at all. A pipeline object can compute how
    selective each upstream stage was and *raise the terminal gate's
    evidence requirement to match*. Four independent stages structurally
    cannot.
@@ -179,7 +180,7 @@ calibrated margin + confirmation only at the end.
 Survivors of stage `k` are, by definition, the candidates that drew
 *favorably* at stage `k`. Their stage-`k` scalars are therefore
 **optimistically biased** — the classic optimizer's curse
-(`SELECTION-THEORY.md §4`), now incurred once per stage. Two regimes:
+(`OVERFITTING.md §8`), incurred once per stage. Two regimes:
 
 - **If stage k+1 measures an independent draw**, its observation is independent of the sampling noise that selected the candidate at stage `k`. This requires a distinct measurement identity and random stream on both sides (`04-evaluation-statistics.md §6.2`, §8). An evidence replicate
   that cache-read an upstream stage's sample would "replay one identical
@@ -267,7 +268,7 @@ existing decision-procedure power harness
 (`tests/test_decision_procedure_power.py`, the second of the two
 convergence oracles) rather than introducing a new instrument.
 
-### 4.1 Reuse the seeded-noise substrate
+### 4.1 Reuse the seeded-noise example world
 
 The harness inherits the deterministic convergence example world verbatim
 (`examples/zicato_examples/target_0_convergence/harness.py`): `stable_noise_seed`
@@ -313,7 +314,7 @@ The headline decision measurement. On the **identical seeded draws**:
 - **Null (the cascade placebo).** Field an identical arm
   (`{"champion": BASE, "challenger": BASE}`) and run it through the *whole*
   pipeline. Measure `P(promote | null)` with the cascade ON and with it OFF
-  (today's single-stage full-board contract). The doctrine's fact #4 —
+  (the shipped single-stage full-board contract). The doctrine's fact #4 —
   "the evidence-gated contract's false-promotion rate under the A/A null is
   zero" — sets the requirement: **the cascade must not raise
   `P(promote | null)` above the single-stage contract's rate.** If
@@ -531,7 +532,7 @@ trial flipping (to 14 of 16, or 0.875) would drop them below the
 budget signal is real, but for two of the three configs it rests on a single
 trial.
 
-### 5.5 The slot-integrity and cross-stage independence proof (§4.5)
+### 5.5 The slot-integrity check (§4.5)
 
 The reported integrity check preserves the tournament draw-zero loss files
 for both sides while calibration and evidence-confirmation draws execute in
@@ -590,8 +591,9 @@ it reports the measurements.**
 
 ## 6. The config sketch (NOT implemented)
 
-The proposed configuration is a nested frozen block under
-`tournament_structure`. If implemented, every field, including defaults, would
+The proposed configuration is a nested frozen block inside the
+`scoring.json` `tournament` block (the `ScoringWeights.tournament_structure`
+field). If implemented, every field, including defaults, would
 be serialized and hashed through the shared configuration owner. An omitted
 authored block would use its declared defaults. Introducing the block would
 change configuration identity; it would not preserve a hash from a shape that
@@ -599,7 +601,7 @@ lacks the block. See the development guide's contract chapter §3.4 and
 `SCORING.md §2.5`.
 
 ```jsonc
-// FUTURE / SPECULATIVE — no loader, strategy, or test reads this today.
+// FUTURE / SPECULATIVE — no loader, strategy, or test reads this.
 "tournament": {
   "structure": "racing",
   "params": { "field_size": 8, "eta": 2, "board_fraction": 0.25 },
@@ -625,7 +627,7 @@ Design properties this sketch commits to:
   serializer would include every field in the scoring canonical form. Changing
   the effective block would roll the epoch because it changes the promotion
   procedure (`TOURNAMENT-STRUCTURES.md §4.1`).
-- **Default = empty stage list ⇒ today's behavior**: the screen, racing,
+- **Default = empty stage list ⇒ the shipped behavior**: the screen, racing,
   gate, and holdout run as they do now, independently configured.
   The cascade block is purely additive opt-in.
 - **Each stage declares its measurement purpose and draw allocation.** The
@@ -638,7 +640,7 @@ Design properties this sketch commits to:
   budgets* them; it does not reimplement any of them.
 
 This section is a sketch of where the block would attach. **No such key
-exists in the loader, the strategies, or the tests today.**
+exists in the loader, the strategies, or the tests.**
 
 ---
 
@@ -646,12 +648,12 @@ exists in the loader, the strategies, or the tests today.**
 
 | Shipped form | Under a cascade | Deprecated? |
 |---|---|---|
-| Candidate screen (`epoch/screen.py`) | becomes **stage 0** (`kind: screen`, veto-first, confirm-before-veto retained verbatim) | the standalone `proposer_quality` screen wiring is **absorbed** rather than removed — a cascade with no `screen` stage runs today's screen unchanged |
+| Candidate screen (`epoch/screen.py`) | becomes **stage 0** (`kind: screen`, veto-first, confirm-before-veto retained verbatim) | the standalone `proposer_quality` screen wiring is **absorbed** rather than removed — a cascade with no `screen` stage runs the shipped screen unchanged |
 | Racing rungs (`selection/strategies/racing.py`) | become the **middle `rung` stages** (rank-halve, escalating slice) | racing as a standalone `tournament_structure` **stays**; the cascade merely lets its rungs be interleaved with a screen and an explicit terminal budget |
 | Full gate (`tournament/gate.py`) | becomes the penultimate **`full` stage** | **unchanged** — the three-rule ladder is the cut rule, verbatim |
 | Holdout / Ladder (`ladder.py`, gate rule 4) | becomes the terminal **`holdout` stage** | **unchanged** — Ladder release + budget rules retained; the cascade only guarantees it is the never-selected-on anchor |
 | A/A calibration (`calibration.py`) | **not a stage** — a measurement the cascade *consumes* (per-slice floors, §4.2) | unchanged |
-| Evidence gate (`evidence_gate.py`) | **not a stage** — the terminal confirmation whose budget the cascade *scales with selectivity* (§3.3, item 2) | unchanged; opt-in as today |
+| Evidence gate (`evidence_gate.py`) | **not a stage** — the terminal confirmation whose budget the cascade *scales with selectivity* (§3.3, item 2) | unchanged; on by default under `racing`, whose default params set `promote_confidence_threshold` and `promote_confidence_replicates` |
 | Placebo arm (`evolve/placebo.py`) | **not a stage** — the whole-pipeline control (§3.3, item 4) | unchanged; its finding is elevated to cascade-level |
 
 Unification is therefore a **configuration and accounting**
@@ -659,8 +661,8 @@ change — one ordered spec, one budget ledger, explicit measurement identities,
 selectivity — over four mechanisms that already exist and already compose
 pairwise. The proposed empty stage list preserves their execution behavior;
 adding the configuration block still changes contract identity. The design
-must preserve the protected-incumbent invariant, the noise
-doctrine, or the overfitting boundary — a cascade that tried to would fail
+must not weaken the protected-incumbent invariant, the noise doctrine, or
+the overfitting boundary; a cascade that weakened any of them would fail
 Experiment B's null bar (§4.3) and never ship.
 
 ---
@@ -701,8 +703,12 @@ Experiment B's null bar (§4.3) and never ship.
      *no* config qualifies. The
      justification for the added machinery therefore holds in one effect-size
      regime — and there only partly — and fails in another (§4.4).
-  4. §4.5's slot-integrity test proves cross-stage draw independence —
-     **passed** (§5.5).
+  4. §4.5's slot-integrity test shows that calibration and confirmation
+     measurements leave the tournament artifacts intact and land at their
+     own identities — **passed** (§5.5). It checks artifact separation;
+     statistical independence of the draws needs the additional
+     random-stream and execution checks §4.5 describes, which the harness
+     does not yet run.
 - **"Do not build" is a legitimate outcome.** The first run leaves both
   outcomes open (§5.6): a build is defensible for an early-epoch,
   many-candidate, large-effect regime, and keeping the four forms

@@ -58,8 +58,9 @@ discussion of why the single-file model was not adopted.
 average of historical scores. Patterns aggregate forever. No epochs.
 
 **Chosen.** Generations are grouped into epochs. Within an epoch the
-board, the proposer brief's `## Forbidden` list, and the scoring
-weights are frozen. Pattern aggregates reset at epoch boundaries.
+board, the proposer brief (including its `## Forbidden edits` list), the
+scoring configuration, the system-under-test identity, and the proposer
+are frozen. Pattern aggregates reset at epoch boundaries.
 Cross-epoch comparison is explicitly fuzzy. See
 [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md).
 
@@ -93,8 +94,8 @@ is that v7 vs v6 in epoch A is precise.
 patches`. The hypothesis has mandatory structured fields
 (`core_idea`, `modulating`, `why`, `expected_metric_movements`,
 `expected_pass_rate_delta`, `risks`). Schema-invalid responses are
-rejected and re-prompted. See
-[EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) §3.
+rejected and re-prompted (`risks` and `expected_metric_movements` may be
+empty). See [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) §3.
 
 **Why.** Without the hypothesis, the journal degenerates. A few
 weeks into running a loop the operator wants to ask:
@@ -116,8 +117,8 @@ Schema enforcement — rejecting and re-prompting a malformed response —
 keeps the journal interpretable. A free-text hypothesis would degrade
 into prose that resists analysis.
 
-The cost is one extra LLM call's worth of proposer effort per round. The
-benefit is a journal that supports learning across rounds.
+The cost is a larger proposer answer per round. The benefit is a journal
+that supports learning across rounds.
 
 ## 4. Why the emulator is collusion-proof by construction, and why it hard-errors
 
@@ -202,8 +203,10 @@ Adjacent to §4 but worth its own section.
 chooses a vendor and model for the operator. "Just works" out of the
 box.
 
-**Chosen.** No defaults. Operators must supply both callables.
-Registration fails without them. See [CLI.md](CLI.md).
+**Chosen.** No defaults. Operators must configure both roles (the
+`models` block of the workspace `config.json`, or explicit callables for
+an embedding caller); a workspace without them fails the pre-spend check
+before a round opens. See [MODEL-CONFIG.md](MODEL-CONFIG.md).
 
 **Why.** A default would either:
 
@@ -244,10 +247,10 @@ their laptops.
 The cost of filesystem-native is query performance: patterns over a
 hundred generations require walking many files. That suits the
 operator's loop, which is "run a few rounds, look at the journal" rather
-than "query a thousand-row pattern table". When pattern queries become a
-bottleneck, the right move is an index sidecar — one SQLite file used as
-a cache, regenerable from the filesystem — rather than making the
-filesystem layout itself the index.
+than "query a thousand-row pattern table". Where queries need to be fast,
+zicato keeps an index sidecar — one SQLite file (`index.db`) used as a
+derived projection, rebuildable from the filesystem with
+`zicato repair index` — rather than making the database canonical.
 
 A related decision: every artifact is a JSON (or JSONL) document
 with stable key sorting. Git diffs on `.zicato/` are useful — an
@@ -315,7 +318,7 @@ code. The proposer reads the brief, the proposer's hypothesis
 reflects the brief, the journal records whether the proposer
 followed it.
 
-The `## Forbidden` section is mechanically enforced (by
+The `## Forbidden edits` section is mechanically enforced (by
 `check_forbidden_ids`; see
 [MUTATION-SURFACE.md](MUTATION-SURFACE.md) §6). Everything else is
 advisory — the proposer reads it as natural language. Forbidden
@@ -360,7 +363,7 @@ preserved.
 Three adjacent ideas from the single-file framing did transfer:
 
 - **Fixed wall-clock budget per experiment.** See §8.
-- **Operator-edited markdown rubric per epoch.** See §9.
+- **Operator-edited markdown proposer brief per epoch.** See §9.
 - **Optional fast inline keep/discard mode.** Shipped as
   `zicato evolve --mode fast`. See [SCORING.md §7](SCORING.md#7-fast-mode-and-the-tournament).
 
@@ -410,31 +413,41 @@ shape: a sink must make incremental decisions about each event, while a
 reducer has full visibility, which is what loss derivation needs.
 
 This also makes zicato's loss reducer testable with a fixture JSONL
-file: no async sink setup, just `reduce_run(fixture_path)`. The reducer's
+file: no async sink setup, just a call to `reduce_loss`
+(`zicato/telemetry/reducer.py`) over the fixture's events. The reducer's
 tests are roughly a third the size an equivalent custom-sink design would
 need.
 
-## 13. Why the filesystem-native layout is not git-aware
+## 13. Why generation source lives in a private git store
 
-The storage layout is filesystem-native, and git is not the versioning
-underneath it.
+**Alternative considered.** Store every generation's source tree as a
+full directory copy, or commit generations into the operator's own
+repository.
 
-**Why.** Generation snapshots are full copies rather than git refs. The
-snapshot directory is self-contained; it can be `rm -rf`'d without
-worrying about losing history. The journal and analysis are
-markdown files an operator may track in git themselves, and zicato
-itself never commits, pushes, or relies on git.
+**Chosen.** By default each generation's source is a commit in a git
+repository private to zicato, at `.zicato/repo/`: one branch per epoch
+(`epoch/{epoch_id}`), one tag per generation
+(`epoch/{epoch_id}/{generation_id}`), and a `git worktree` as each run's
+isolated checkout (`zicato/epoch/git_genstore.py`). `zicato init` records
+the choice as `generation_source_backend: "git"`. The directory-copy
+backend (`"directory"`) stays selectable for hosts without git. See
+[STORAGE.md](STORAGE.md) §7.
 
-The cost is disk usage: many full copies of the system under test's
-tree. For typical systems under test (a few dozen Python files plus
-prompts), this is on the order of megabytes per generation. The
-benefit is that a snapshot is a filesystem operation rather than a repo
-operation, so zicato never has to reason about merge conflicts, branch
-hygiene, or remote sync.
+**Why.** Full copies cost disk in proportion to lineage length: a module
+unchanged across twenty generations is twenty copies. Git's
+content-addressed object store keeps it as one blob, and a worktree
+replaces the per-run copy. The repository is private because zicato must
+never touch the operator's own repository: it never commits, pushes, or
+branches there, so it never has to reason about the operator's merge
+conflicts, branch hygiene, or remote sync. zicato is the only writer of
+`.zicato/repo/`.
 
-The operator who wants their `.zicato/` tracked in git can do so
-externally. The operator who doesn't want it tracked in git can
-`.gitignore .zicato/`. Both work without any code in zicato.
+The canonical records (`experiment.json`, patches, lineage, round
+settlements) remain plain files beside the repository, so the layout stays
+filesystem-native (§7) and every commit message carries only a redundant,
+operator-readable copy of the lineage coordinates. An operator who wants
+`.zicato/` tracked in their own git history can do so externally, or
+ignore it with `.gitignore`.
 
 ## 14. Why the shipped scoring weights are uncalibrated
 
@@ -515,8 +528,8 @@ the operator's brief is the only place "what we already tried" lives.
 **Chosen.** The proposer additionally reads a compact, capped digest of
 **prior experiments** — each one's `core_idea`, the mutation-point ids
 it touched, its verdict (`promoted` / `rejected` / `deferred`), the
-rejection reason, and its Δscalar — in a new `## What's already been
-tried` user-prompt section. See [EXPERIMENT-MEMORY.md](EXPERIMENT-MEMORY.md).
+rejection reason, and its Δscalar — in a `## What's already been
+tried` section of the proposal context. See [EXPERIMENT-MEMORY.md](EXPERIMENT-MEMORY.md).
 
 **Why.** Every other accumulating component in zicato learns across
 runs — the loss reducer, the pattern detectors, the analyzer — but the
@@ -538,7 +551,7 @@ The two compose: the brief steers, the memory reports.
 The framing is advisory: "avoid repeating these failures, build on these
 wins", never "only do X". It is user-prompt context in the same position
 as patterns, never part of the hard hypothesis schema, and the only hard
-gate on the proposer stays the brief's `## Forbidden` list. A rejected
+gate on the proposer stays the brief's `## Forbidden edits` list. A rejected
 experiment with a near-zero Δscalar is an inconclusive result rather than
 a proven dead end, so the digest carries the signed magnitude verbatim
 instead of collapsing the verdict to a binary "rejected" flag. The

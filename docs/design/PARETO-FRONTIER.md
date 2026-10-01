@@ -4,8 +4,8 @@ The promote gate keeps ONE generation per round and it picks that one by a
 **weighted sum** (`docs/design/SCORING.md` §2). A weighted sum is a
 projection: it collapses several axes onto a line, and everything that was
 only visible off that line is lost. A challenger that halves cost while
-giving up a sliver of rubric loses on the scalar, is rejected, and — today —
-is never mentioned again. The information the loop paid for is discarded.
+giving up a sliver of rubric loses on the scalar, is rejected, and — without
+a record — is never mentioned again. The information the loop paid for is discarded.
 
 This document specifies a **record** of those candidates: for each epoch, the
 set of settled candidates that beat the reigning champion on at least one
@@ -61,27 +61,28 @@ def frontier_axes(weights: ScoringWeights) -> tuple[str, ...]
 ```
 
 The sorted namespace keys of `weights.namespace_weights` whose weight is not
-zero. Under the defaults that is `("cost:", "drift:", "latency:", "rubric:",
-"schema:")`.
+zero. Under the defaults that is `("cost:", "drift:", "failure:", "judge:",
+"latency:", "rubric:", "schema:")`.
 
-`output:` is **not** an axis. Its default weight is `0.0`, and a zero weight
+`output:` and `runtime:` are **not** axes. Their default weight is `0.0`, and a zero weight
 has neither a sign nor a scale — there is no direction in which "more output
-characters" is better or worse, which is why the operator set it to
-zero. Making it an axis would need a per-axis noise floor, which is separate
+characters" is better or worse, which is why the defaults set it to
+zero. An operator who gives `runtime:` (the whole-run duration channel,
+`runtime:seconds`) a non-zero weight makes it an axis. Making it an axis would need a per-axis noise floor, which is separate
 work (§8).
 
 `latency:` **is** an axis by weight (`0.0001`) but is empty in practice: the
 telemetry reducer never fills the `latency:` namespace, even though
-`MetricCount` documents `latency:p95_turn_ms` and `LossProfile.runtime_ms`
-already holds a usable number. `aggregate_namespaced_metrics()` promotes
+`MetricCount` documents `latency:p95_turn_ms`. The run duration is reported
+separately as `runtime:seconds` in the zero-weight `runtime:` namespace. `aggregate_namespaced_metrics()` promotes
 known-but-absent namespaces to `0.0`, so the axis is present and constant —
 it can never separate two candidates, and it can never wrongly separate them
 either. Filling it is **not** done here: the `0.0001` weight
 would start contributing to the scalar and move every score in the workspace.
 That is a scoring change, and it rolls the epoch. Registered in §8.
 
-So the first useful axis set is effectively `drift:`, `cost:`, `rubric:`, and
-`schema:`.
+So the useful default axis set is effectively `cost:`, `drift:`, `failure:`,
+`judge:`, `rubric:`, and `schema:`.
 
 ### 2.2 Axis values
 
@@ -115,7 +116,7 @@ lower-is-better view:
 ```
 better_any = any(right[ns] - left[ns] >= margin and left[ns] < right[ns]  for ns in shared)
 worse_any  = any(left[ns] - right[ns] >= margin and right[ns] < left[ns]  for ns in shared)
-dominates  = better_any and not worse_any
+dominates  = better_any and not worse_any   # the code returns False on the first worse axis
 ```
 
 Each limb requires a *strict* difference on top of clearing the margin. For
@@ -164,7 +165,7 @@ one definition of an atomic write in zicato).
 {
   "format_version": 1,
   "epoch_id": "epoch-2026-08-02T00-00-00Z",
-  "axes": ["cost:", "drift:", "latency:", "rubric:", "schema:"],
+  "axes": ["cost:", "drift:", "failure:", "judge:", "latency:", "rubric:", "schema:"],
   "margin": 0.01,
   "champion_generation_id": "v7",
   "updated_round": 9,
@@ -175,8 +176,8 @@ one definition of an atomic write in zicato).
       "champion_generation_id": "v4",
       "scalar": 0.5130,
       "axis_values": {
-        "cost:": 1.284, "drift:": 0.310, "latency:": 0.0,
-        "rubric:": -0.780, "schema:": 0.0
+        "cost:": 1.284, "drift:": 0.310, "failure:": 0.0, "judge:": 0.12,
+        "latency:": 0.0, "rubric:": -0.780, "schema:": 0.0
       },
       "beats_champion_on": ["cost:"]
     }
@@ -263,8 +264,7 @@ champion to sit outside the set being compared.
 ### 4.1 The gate's own namespace check, reused
 
 The per-namespace monotonicity check is the public `regressed_namespaces()`
-in `tournament/gate.py`, with the private `_regressed_namespaces()` kept as
-an alias. The gate and the frontier call that one function. There is no
+in `tournament/gate.py`. The gate and the frontier call that one function. There is no
 second implementation of "did this namespace regress", so the two cannot
 drift apart.
 
@@ -402,11 +402,13 @@ def record_round_frontier(
 ) -> None
 ```
 
-One best-effort call at the shared **round-settle seam** in
-`evolve_field_round`, after holdout confirmation, integrity checks, and
-operator overrides. The frontier therefore uses the champion that the round
-commits. Per-generation aggregates accumulate in `_run_matchup` where
-`write_gen_score` writes them. Evidence-gate replicate duels set
+One best-effort call from `_publish_field_observations`
+(`zicato/evolve/settlement.py`), which runs after the round's settlement is
+committed — after holdout confirmation, integrity checks, and operator
+overrides. The frontier therefore uses the champion that the round
+commits (the promoted generation, else the incumbent). Per-generation
+aggregates accumulate in `run_field_matchup` (`zicato/evolve/field_execution.py`)
+where `write_gen_score` writes them. Evidence-gate replicate duels set
 `cache_scores=False`, so they cannot overwrite the round-scored aggregate.
 
 Failure of the recorder can never fail a round. It follows the emission
@@ -440,8 +442,8 @@ It joins `EVENT_TYPES`, the `RoundEvent` union, and folds into
 folds identically — an unknown token already reads back as a raw envelope,
 and the new field defaults to empty.
 
-**An additive analytical-index table** (`SCHEMA_VERSION` 12 → 13), following
-the `reflections` precedent: a whole new table materialised by the
+**An additive analytical-index table** (`zicato/index/schema.py`), following
+the `reflections` precedent: a whole table materialised by the
 `CREATE TABLE IF NOT EXISTS` pass, so the in-place migration needs no column
 ALTER.
 
@@ -472,7 +474,7 @@ untouched, the epoch view API payload is unchanged, and no dashboard code is
 touched. A payload field with no renderer is a render-conformance violation
 waiting to happen, and a `zicato frontier` subcommand moves the `CLI-HELP`
 parity golden for a surface nothing has asked for yet. The reader functions
-in §5.2 are the supported way to inspect the record today. Both surfaces are
+in §5.2 are the supported way to inspect the record. Both surfaces are
 registered in §8.
 
 ## 8. Not built
@@ -496,12 +498,12 @@ helps, per the campaign philosophy (`docs/design/CAMPAIGN.md`).
   the thing that would produce.
 - **Make `output:` an axis.** Needs a per-axis noise floor, since a zero
   weight has no sign and no scale.
-- **Fill the `latency:` namespace from `LossProfile.runtime_ms`.** A scoring
-  change at the `0.0001` default weight: it moves every scalar in the
-  workspace and rolls the epoch. Worth doing — it is the axis most likely to
-  actually separate candidates, since `drift:` and `cost:` tend to move
-  together — but on its own terms rather than as a side effect of this
-  record.
+- **Weight the `runtime:` namespace by default.** The run duration is
+  already measured (`runtime:seconds`) at weight `0.0`. A default non-zero
+  weight is a scoring change: it moves every scalar in the workspace and
+  rolls the epoch. It is the axis most likely to separate candidates, since
+  `drift:` and `cost:` tend to move together, but it belongs on its own
+  terms rather than as a side effect of this record.
 - **A `zicato frontier <epoch>` command and an epoch-view surface.** Cheap,
   but they are the operator-facing half of this record's second motivation
   (letting a human pick "80% of the accuracy at 10% of the cost"), which

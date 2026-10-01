@@ -20,12 +20,12 @@
 > [`ROBUSTNESS.md`](ROBUSTNESS.md) (subprocess-isolated runs),
 > [`ARCHITECTURE.md`](ARCHITECTURE.md).
 >
-> Provenance note: an earlier branch audit in
-> [`ZICATO-SYSTEM-ANALYSIS.md`](ZICATO-SYSTEM-ANALYSIS.md) recorded this
-> document's branch as a pre-merge snapshot of an *already-merged* design
-> doc. That was wrong — it had never been merged. It lands here, reheadered,
-> so the places that already cite `GENERATION-ISOLATION.md` by name resolve
-> to a document that tells the truth about today's tree.
+> Provenance note: the branch audit in
+> [`ZICATO-SYSTEM-ANALYSIS.md`](ZICATO-SYSTEM-ANALYSIS.md) describes this
+> document's branch as a pre-merge snapshot of an already-merged design
+> doc. The document had not been merged before it was added here with this
+> header, so the documents that cite `GENERATION-ISOLATION.md` by name
+> resolve to a record of the implemented design.
 
 ## 0. What shipped instead (the as-built answer)
 
@@ -143,16 +143,15 @@ OS-sandbox concern. It shipped anyway, as auditing rather than confinement.
 The supervisor re-hashes every child snapshot out-of-band
 (`crates/supervisor/src/diff_containment.rs`) and alarms on a write outside
 the registered `mutable_trees`. An opt-in, default-off in-band twin
-(`ScoringWeights.block_on_containment_violation`, enforced pre-persist in
-`orchestrator._integrity_block_reason`, mirrored in `evolve/gate.py`) flips a
-violating promotion to REJECTED. The note's claim that an overlay `upper`
+(`ScoringWeights.block_on_containment_violation`, enforced before the
+promotion is persisted by `_integrity_block_reason` in `zicato.evolve.gate`)
+flips a violating promotion to REJECTED. The note's claim that an overlay `upper`
 layer would make this "trivial and exact" is therefore moot: the check
 exists, works on a plain tree walk, and needs no overlay to be cheap enough.
 
 **Consequence for the backlog.** The tracking issue — #50, "Generation
 isolation + delta materialization (replace per-generation copytree)" — is
-answered by the above and should be **closed as superseded** rather than
-implemented. None of the four phases of unscheduled work at the end of this
+answered by the above and is closed. None of the four phases of unscheduled work at the end of this
 note is scheduled: the materialization seam plus its fallback, the
 copy-on-write fast path, the overlay-filesystem fast path, and git
 object-store backing.
@@ -429,10 +428,12 @@ the mandatory one, and the mandatory ones were dropped.*
   which makes the supervisor's diff-containment attestation (issue #48) precise and
   cheap, and feeds the promotion-veto work (issue #47). → **MOOT.** The
   attestation shipped as a snapshot re-hash
-  (`crates/supervisor/src/diff_containment.rs`) and needs no overlay. Issues #47
-  (alarm-only → promotion-veto enforcement) and #48 (tighten the coarse file-set
-  check to inside-site line ranges) remain open on their own merits, independent
-  of this note — neither now depends on an overlay layer.
+  (`crates/supervisor/src/diff_containment.rs`) and needs no overlay. Issue #47
+  (alarm-only → promotion-veto enforcement) remains open. Issue #48 (tighten
+  the coarse file-set check to inside-site ranges) is closed; it shipped as
+  the byte-range containment audit described in
+  [`MUTATION-SURFACE.md`](MUTATION-SURFACE.md) §6. Neither depends on an
+  overlay layer.
 - **Teardown / GC:** the supervisor's orphan-reaper + ephemeral-snapshot GC
   already removes leaked `ztw-snap-*` dirs on a confirmed orchestrator death;
   extend it to also **unmount leaked overlays / drop leaked subvolumes**, so a
@@ -477,10 +478,7 @@ never applied; the fourth and fifth were addressed.)*
 ## Phasing
 
 > **Not scheduled — recorded for completeness.** None of the four steps below
-> will be built; the corresponding as-built work is noted per step. The step
-> labels `P1`–`P4` used here belong to this note alone. The identically
-> spelled `P1`–`P4` in [`MUTATION-SURFACE.md`](MUTATION-SURFACE.md) §6 are the
-> pre-apply validator checks, an unrelated set.
+> will be built; the corresponding as-built work is noted per step.
 
 - **The materialization seam plus its fallback.** Introduce the pluggable
   materialization seam + host

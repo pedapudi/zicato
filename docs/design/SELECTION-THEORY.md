@@ -2,22 +2,26 @@
 
 > **Status.** A literature survey of tournament-solution, social-choice,
 > and selection-under-noise methods, mapped onto zicato's regime, with a
-> ranked recommendation. The recommendation was that the endorsed methods
-> become `tournament.params` knobs — a `resolver` knob and a `rating`
-> knob — layered underneath the five existing structures rather than
-> becoming new top-level structures.
+> ranked recommendation: the endorsed methods are two knobs — a leader
+> resolver and a standings rating — layered underneath the existing
+> structures rather than new top-level structures.
 >
-> What is implemented. `read_resolver` and `read_rating` in
-> `src/zicato/selection/standings_ext.py` read the two knobs from the
-> params block. The `resolver` knob accepts `copeland` and
-> `ranked_pairs`; the `rating` knob accepts `bradley_terry`; any other
-> value, or an absent knob, leaves the structure's own leader pick in
-> place. Both knobs re-order only the internal leader pick and never
-> touch the gate. `resolve_leader` in `src/zicato/selection/resolve.py`
+> What is implemented. The two knobs live in the contract's
+> `experimental` block: `experimental.resolver` (`none`, `copeland`, or
+> `ranked_pairs`) and `experimental.standing_rating` (`none` or
+> `bradley_terry`), both `none` by default. `make_strategy` injects a
+> non-`none` value into the strategy's params only for the structures that
+> read it: single elimination, double elimination, and Swiss, which are
+> themselves experimental. A `rating` or `resolver` key written directly
+> in `tournament.params` is refused with a message naming the
+> `experimental` field. `read_resolver` and `read_rating` in
+> `src/zicato/selection/standings_ext.py` read the injected values. Both
+> knobs re-order only the internal leader pick and never touch the
+> gate. `resolve_leader` in `src/zicato/selection/resolve.py`
 > runs a Condorcet check and a Smith-set prune ahead of whichever
 > resolver is selected; neither stage is a selectable value. The
 > Bradley–Terry and Plackett–Luce fits are
-> `src/zicato/selection/rating.py`, and the same fit drives the opt-in
+> `src/zicato/selection/rating.py`, and the same fit drives the
 > evidence gate (`src/zicato/selection/evidence_gate.py`) and the
 > index's display rating.
 >
@@ -25,10 +29,10 @@
 > have no resolver value and no implementation under `src/`, and the
 > console renderings (§10) are unbuilt. Each section says so in place.
 
-This is the companion to two shipped docs:
+This is the companion to two design docs:
 
 - [`SELECTION.md`](SELECTION.md) — the decision theory of the promote
-  gate and the king-of-the-hill gauntlet (the *why* of the existing
+  gate and the tournament structures (the *why* of the existing
   loop).
 - [`TOURNAMENT-STRUCTURES.md`](TOURNAMENT-STRUCTURES.md) — the
   `SelectionStrategy` abstraction and the five shipped structures
@@ -63,7 +67,8 @@ That collapse is the weak link, for two reasons specific to zicato:
   cycle that is, in zicato's case, very often a *noise artifact* rather
   than a genuine rock-paper-scissors structure.
 - **The field is small and the runs are expensive.** Typical fields are
-  single-digit (`field_size` defaults to 2–8). We can afford a
+  single-digit (`field_size` defaults to 2 in the structures, and the
+  recommended racing contract sets 4). We can afford a
   polynomial-time resolver over the matrix many times over; we *cannot*
   afford to ignore the margins (the loss gaps), which carry most of the
   signal in a small noisy field.
@@ -209,8 +214,8 @@ count as one. In a small noisy field that throws away most of the signal,
 and it is sensitive to clones (adding near-duplicate weak candidates can
 shift the count).
 
-**Verdict.** **Implemented.** `copeland` is one of the two accepted
-`resolver` values (`copeland_order` in `resolve.py`, wins minus losses
+**Verdict.** **Implemented.** `copeland` is one of the two non-`none`
+`experimental.resolver` values (`copeland_order` in `resolve.py`, wins minus losses
 over the net matrix), and the swiss standings order by Copeland score
 without any knob. It is the cheapest baseline and is dominated by the
 margin-aware methods (§5) for zicato's loss-gap-rich regime.
@@ -362,10 +367,10 @@ cleanly onto zicato's journal and dashboard idiom. Every resolution
 reads as "the most-separated duels were trusted, and the duels that
 would have closed a cycle were skipped."
 
-**Verdict.** **Implemented.** `ranked_pairs` is the second accepted
-`resolver` value (`ranked_pairs` in `resolve.py`, with the lock/skip
-trace). It is the endorsed resolver (§8), and it is opt-in: the knob's
-absence keeps each structure's own leader pick.
+**Verdict.** **Implemented.** `ranked_pairs` is the second non-`none`
+`experimental.resolver` value (`ranked_pairs` in `resolve.py`, with the
+lock/skip trace). It is the endorsed resolver (§8), and it is opt-in: the
+default `none` keeps each structure's own leader pick.
 
 ### 5.3 Schulze (beatpath)
 
@@ -454,18 +459,21 @@ concrete schedule. The model also handles the small noisy field: with a
 half-dozen contestants and a handful of replicates each, the
 maximum-likelihood fit is stable and the intervals are meaningful.
 
-**Verdict.** **Implemented** (§8). `rating: bradley_terry` orders a
-structure's standings by the fit, the evidence gate reads the same fit
+**Verdict.** **Implemented** (§8). `experimental.standing_rating:
+bradley_terry` orders an experimental structure's standings by the fit, the evidence gate reads the same fit
 for its confidence intervals and its replication schedule, and the index
 re-fits it for display.
 
 > **Status — implemented: the rating fold, as a Plackett–Luce
 > generalisation.** The batch maximum-likelihood fit
-> (`src/zicato/selection/rating.py::fit_bradley_terry`) is the engine of the
-> index-side visibility rating (`src/zicato/index/elo.py`). At every
-> reindex or ingest it is re-fit over the de-duplicated persisted match
-> ledger and written to `generations.elo` / `elo_se` / `elo_games` on the
-> conventional Elo scale (`1500 + θ·400/ln 10`). It is displayed in the
+> (`src/zicato/selection/rating.py`) is the engine of the index-side
+> visibility rating (`src/zicato/index/elo.py`). At every reindex or
+> ingest it is re-fit over the de-duplicated persisted match ledger and
+> written to `generations.elo` / `elo_games` on the conventional Elo scale
+> (`1500 + θ·400/ln 10`). The `elo_se` column stays null: match rows
+> carry no independent measurement provenance (racing rungs can reuse
+> observations, and finalists are chosen by those outcomes), so the fit's
+> curvature is not served as an inferential standard error. It is displayed in the
 > standings, the generations roster, and the candidate dossier;
 > **visibility only — it never touches the gate or the selection path**.
 >
@@ -540,16 +548,16 @@ simultaneous contestants) board runs.
 ## 8. The recommendation, ranked
 
 Ranked, with the operating rule woven through. Each entry is a
-`tournament.params` knob (§9) layered on a round-robin or Swiss
-scheduler rather than a new top-level structure. Items 1, 2, and 4 are
+knob (§9) layered on a round-robin or Swiss scheduler rather than a new
+top-level structure. Items 1, 2, and 4 are
 implemented and default off; item 3, the maximal lottery, is unbuilt,
 with no implementation anywhere in `src/`.
 
 1. **Ranked Pairs (Tideman) as the winner-resolution layer over
    swiss/round-robin.** Deterministic, Condorcet-consistent, margin-aware,
    cloneproof, and *auditable* (the lock/skip trace explains every
-   resolution). It is an opt-in resolver; an absent `resolver` parameter
-   preserves the structure's own leader selection.
+   resolution). It is an opt-in resolver; `experimental.resolver: none`
+   (the default) preserves the structure's own leader selection.
 2. **Bradley–Terry rating for measured comparisons.** Point ratings can
    describe strategy results. Inferential intervals require independent
    confirmation measurements and covariance-aware strength differences.
@@ -583,31 +591,35 @@ owns promotion**, so the protected-incumbent invariant
 
 The endorsed methods are **resolvers and a rating model**, layered on the
 existing schedulers rather than added as new structures. The surface is
-two optional keys in the `tournament.params` block, read by
-`read_resolver` and `read_rating` in
-`src/zicato/selection/standings_ext.py`:
+two fields of the contract's `experimental` block. `make_strategy`
+injects them into the params of the structures that read them (single
+elimination, double elimination, and Swiss), where `read_resolver` and
+`read_rating` in `src/zicato/selection/standings_ext.py` read them:
 
 ```jsonc
-// Both keys are read; both default off when absent.
+// Both fields default to "none".
 "tournament": {
   "structure": "swiss",            // an existing scheduler produces the matrix
   "params": {
     "field_size": 6,
-    "replicates": 2,
-    "resolver": "ranked_pairs",    // none | copeland | ranked_pairs
-                                   //   copeland = the swiss standings order
-    "rating": "bradley_terry"      // none | bradley_terry
-                                   //   when set, standings order by fitted strength
+    "replicates": 2
   }
+},
+"experimental": {
+  "tournament_structures": true,   // admits swiss
+  "resolver": "ranked_pairs",      // none | copeland | ranked_pairs
+                                   //   copeland = the swiss standings order
+  "standing_rating": "bradley_terry" // none | bradley_terry
+                                   //   when set, standings order by fitted strength
 }
 ```
 
 - `resolver` selects the §5 winner-resolution layer for the internal
-  leader pick; the accepted values are `copeland` and `ranked_pairs`.
-  An absent knob keeps each structure's own leader pick, so adding the
-  knob changes nothing until an operator opts in.
-- `rating` selects the §7 fit for the internal standings order; the
-  accepted value is `bradley_terry`. An absent knob keeps each
+  leader pick; the non-`none` values are `copeland` and `ranked_pairs`.
+  `none` keeps each structure's own leader pick, so the field changes
+  nothing until an operator opts in.
+- `standing_rating` selects the §7 fit for the internal standings order;
+  the non-`none` value is `bradley_terry`. `none` keeps each
   structure's own order. Confidence-interval-driven replication is the
   evidence gate's schedule (§7.1), which `promote_confidence_threshold`
   enables; this knob does not.
@@ -616,14 +628,10 @@ two optional keys in the `tournament.params` block, read by
   correctness and speed step rather than an operator choice.
 - **The champion-gate, the contract-hash treatment, and the
   `SelectionStrategy` interface are all unchanged.** A resolver or rating
-  choice folds into the contract hash in the same way as the existing
-  params do (it changes *what a promotion means*) and rolls the epoch on
+  choice folds into the contract hash like every other `scoring.json`
+  field (it changes *what a promotion means*) and rolls the epoch on
   change — same rationale as
   [`TOURNAMENT-STRUCTURES.md`](TOURNAMENT-STRUCTURES.md) §4.1.
-
-Both keys are read by `read_resolver` and `read_rating` in
-`src/zicato/selection/standings_ext.py`, and both default off when the
-params block omits them.
 
 ---
 
@@ -763,8 +771,8 @@ asserted**.
 |---|---|---|---|---|
 | Condorcet winner | set (fast path) | P (O(n²)) | — (it *is* the winner) | Implemented as the first stage of `resolve_leader` |
 | Smith set (top cycle) | set | P (O(n²)) | yes (= winner if one) | Implemented as the prune stage of `resolve_leader` |
-| Schwartz set | set | P | yes | SKIP (= Smith under continuous loss) |
-| Copeland | set / count | P (O(n²)) | yes | Implemented (`resolver: copeland`; the swiss standings order); margin-blind |
+| Schwartz set | set | P | yes | Not implemented (coincides with Smith only on complete decisive comparisons) |
+| Copeland | set / count | P (O(n²)) | yes | Implemented (`experimental.resolver: copeland`; the swiss standings order); margin-blind |
 | Uncovered (Landau) set | set | P | yes | SKIP (low marginal value, margin-blind) |
 | Bipartisan set | set (LP) | P | yes | SKIP (margin-blind; maximal lotteries would supersede it) |
 | Slater | set / ranking | **NP-hard** | yes | SKIP |
@@ -772,10 +780,10 @@ asserted**.
 | TEQ | set | **NP-hard** + lost stability | yes | **SKIP, emphatically** |
 | Minimal Covering Set | set | **NP-hard** | yes | SKIP |
 | Kemeny–Young | ranking | **NP-hard** | yes | SKIP at scale |
-| **Ranked Pairs (Tideman)** | ranking | **P** | **yes** | **Implemented** (`resolver: ranked_pairs`); the endorsed resolver |
+| **Ranked Pairs (Tideman)** | ranking | **P** | **yes** | **Implemented** (`experimental.resolver: ranked_pairs`); the endorsed resolver |
 | Schulze (beatpath) | ranking | P (O(n³)) | yes | Not implemented (2nd choice) |
 | Maximal lotteries | randomized | P (LP) | yes (degrades to it) | Not implemented; recommended for residual cycles |
-| **Bradley–Terry** | rating | P (convex MLE) | — (a rating rather than a rule) | **Implemented** (`rating: bradley_terry`; the evidence gate; the index display rating) |
+| **Bradley–Terry** | rating | P (convex MLE) | — (a rating rather than a rule) | **Implemented** (`experimental.standing_rating: bradley_terry`; the evidence gate; the index display rating) |
 | Elo | rating | trivial (online) | — | SKIP (dominated by Bradley–Terry) |
 | TrueSkill | rating | tractable | — | SKIP (over-engineered for pairwise batch) |
 
@@ -814,7 +822,7 @@ Authoritative sources for the methods above.
 
 | Topic | Document |
 |---|---|
-| Why the gauntlet is the default; the promote gate; decision theory | [`SELECTION.md`](SELECTION.md) |
-| The `SelectionStrategy` seam + the five shipped schedulers | [`TOURNAMENT-STRUCTURES.md`](TOURNAMENT-STRUCTURES.md) |
+| Why racing is the default; the promote gate; decision theory | [`SELECTION.md`](SELECTION.md) |
+| The `SelectionStrategy` interface and the five schedulers | [`TOURNAMENT-STRUCTURES.md`](TOURNAMENT-STRUCTURES.md) |
 | How a run becomes the scalar loss these methods consume | [`SCORING.md`](SCORING.md) |
 | Operator-facing: choosing + configuring a structure (and the replicate-first rule) | `skills/zicato-design-tournament-structure/SKILL.md` |

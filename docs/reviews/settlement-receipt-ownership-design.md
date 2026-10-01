@@ -1,8 +1,23 @@
 # Settlement receipt ownership and replay validation
 
-Status: implemented receipt and field-tournament ownership slice under
-[issue #411](https://github.com/pedapudi/zicato/issues/411), pending integration review.
-The source inventory was checked against revision `3bddf6424e5b13287fa9adaee34e73a97cb62457`.
+> **Status:** dated design record (2026-09-07) for the receipt and
+> field-tournament ownership slice under
+> [issue #411](https://github.com/pedapudi/zicato/issues/411), checked against
+> revision `3bddf6424e5b13287fa9adaee34e73a97cb62457`. Implemented and still
+> current: the receipt owner `epoch/settlement_receipt.py` (format 3, pure
+> `decode_settlement_receipt`, `validate_workspace_settlement` and
+> `validate_settlement_records`, receipt scanning for health diagnostics),
+> the path in `workspace/layout.py` (`rounds/<n>/field_settlement.json`), the
+> field-tournament owner `tournament/records.py`, and the tests named under
+> "Compatibility and verification". Superseded: the completed receipt is now
+> the one stored record of a round's results. Readers derive candidate
+> outcomes, lineage resolution, promotion status, the journal and the index
+> from it; the workspace stores no separate champion marker or written
+> journal. Replay in `evolve/settlement_recovery.py` therefore publishes the
+> pending receipt, marks it committed, and projects the index. The
+> eight-step write order under "Replay progress and authority remain
+> explicit" records the design at its date.
+
 The [full record audit](persisted-record-ownership-audit.md) retains all 55 approved entries.
 The intended reader maintains canonical workspace records and recovery behavior.
 

@@ -9,13 +9,15 @@ the browser renders served decisions rather than reconstructing them.
 
 Wire spellings are stable and declared with `TypedDict` payloads in
 `zicato.query.contracts`. `ENDPOINT_PAYLOADS` inventories every JSON GET and
-assigns it an object, collection, detail, or runtime contract. Contracts live
+assigns it a collection, detail, or proposal-episode-export contract; a
+correspondence test fails the build when a row of the dashboard's
+`READ_ENDPOINTS` table has no entry. Contracts live
 at the query boundary rather than in the HTTP driver. An optional key means the
 information is unavailable; it is never a second spelling of a key that is
 already declared.
 
-The first declared envelope is the runtime snapshot and its liveness block.
-Liveness carries `state`, optional timestamps, and `epoch_id` while live. The
+`SnapshotPayload` declares the runtime snapshot and `LivenessPayload` its
+liveness block. Liveness carries `state`, optional timestamps, and `epoch_id` while live. The
 server folds the clock and active scope; clients compare the served epoch id
 with the viewed epoch. A liveness block that carries no epoch id is read as a
 single-epoch workspace.
@@ -27,11 +29,12 @@ single-epoch workspace.
   lineage, epoch feeds, and browser views consume those fields.
 - `lineage.json` alone owns generation parentage and tri-state promotion.
   Experiment outcomes are journal detail, never a topology fallback.
-- Index absence or staleness degrades to canonical reads, never a competing
-  verdict.
+- Index absence or staleness degrades to canonical reads, or to an empty
+  result carrying a `note`, never a competing verdict.
 - Composite views read each workspace source once and pass the result through
-  their component builders. In particular, `build_environment` scopes its one
-  lineage feed for `build_epoch_view` instead of walking generations again.
+  their component builders. `build_environment` and `build_snapshot`, for
+  example, capture the runtime inputs once (`RuntimeInputs.capture`) and hand
+  that capture to the workspace-identity, liveness, and run-log builders.
 - The round timeline owns settled and in-flight rounds, embedded tournament
   records, projected standings, and gate state. The browser does not join an
   active envelope or infer a carried champion.
@@ -45,7 +48,7 @@ single-epoch workspace.
   with the present-tense layer withheld, so post-mortem reads stay honest.
 - The supervisor serves operational state, liveness, controls, and parity
   views. Analytical projections belong to the Python query service.
-- No-op updates retain digest equality so neither renderer rebuilds.
+- No-op updates retain digest equality so the console does not rebuild.
 
 A new JSON endpoint must enter `ENDPOINT_PAYLOADS` in the same change. A
 contract addition must preserve current JSON keys and update renderer fixtures.

@@ -38,9 +38,12 @@ which also pins the exact per-round scalars and the on-disk artifacts.
   v3  (1 token,  4/5 pass) = 1.2   round 3 removes skip-citations → PROMOTED (the floor)
   ```
 
-* The scripted proposer ([`mocks.py`](./mocks.py) `aux_llm`) serves
-  exactly those three experiments, in order. Round 2 is the negative
-  control: the gate must reject a strictly-worse child.
+* The proposal episodes are scripted. [`mocks.py`](./mocks.py) holds
+  `GAUNTLET_POLICIES`, the absolute token list each candidate writes, and
+  the test suite's stand-in for the Foe proposal runtime writes exactly
+  those three trees, in order. Round 2 is the negative control: the gate
+  must reject a strictly-worse child. `mocks.aux_llm` answers the
+  evaluation calls (the closing analysis) and proposes nothing.
 
 ## Prerequisites
 
@@ -51,6 +54,18 @@ make install     # uv sync --all-extras, from a repo checkout
 This installs `zicato` and `zicato-examples` editable, so
 `zicato_examples.target_0_convergence.*` resolves from anywhere —
 including inside the spawned tournament worker subprocesses.
+
+Every round needs a proposal runtime. `zicato init` writes a `proposer`
+block whose `binary` is the placeholder `/path/to/foe`, which `inspect
+setup` and `evolve` refuse. The offline walkthrough below replaces it
+with the Foe stand-in that the test suite builds
+(`tests/_foe_support.py`), so it runs only from a repository checkout.
+
+The quickest check is the test itself:
+
+```bash
+uv run pytest tests/test_convergence_known_answer.py
+```
 
 ## End-to-end demo (no endpoint anywhere)
 
@@ -67,13 +82,16 @@ PY=$ZICATO/.venv/bin/python
 # 1. Bootstrap the workspace.
 $PY -m zicato.cli init --workspace .zicato
 
-# 2. Declare the deterministic adapter + the mutable tree + the
-#    skills-only proposer dir. `zicato epoch register`'s --adk flag covers only
-#    the ADK adapter kind today, so the generic import-kind adapter block
-#    is written into config.json directly (the same shape the adapter
-#    factory and the subprocess worker both reconstruct):
-$PY - <<PYEOF
+# 2. Declare the deterministic adapter, the mutable tree, the model
+#    engines, the scripted proposal runtime, and the proposer dir. The
+#    import-kind adapter block is written into config.json directly (the
+#    same shape the adapter factory and the subprocess worker both
+#    reconstruct). PYTHONPATH makes the checkout's `tests` package
+#    importable for the stand-in.
+PYTHONPATH=$ZICATO $PY - <<PYEOF
 import json, pathlib
+from tests._foe_support import stand_in_proposer_block
+from zicato_examples.target_0_convergence.mocks import GAUNTLET_POLICIES
 cfg_path = pathlib.Path(".zicato/config.json")
 cfg = json.loads(cfg_path.read_text())
 cfg["adapter"] = {
@@ -92,6 +110,11 @@ cfg["models"] = {
     },
     "roles": {},
 }
+# A Foe stand-in binary under ./foe whose episodes write the scripted
+# policy for each candidate. It needs no credential, network, or model.
+cfg["proposer"] = stand_in_proposer_block(
+    pathlib.Path("foe").resolve(), contents=GAUNTLET_POLICIES
+)
 contract = dict(cfg.get("contract") or {})
 contract["proposer_path"] = "$EX/proposer"
 cfg["contract"] = contract
@@ -102,10 +125,7 @@ PYEOF
 #    workspace (the streamlined evolve-centric flow: evolve auto-opens
 #    the first epoch from these three files). The example vendors no
 #    brief.md — the scripted proposer ignores its content, it only
-#    shapes the frozen contract — so write a two-line one here. The
-#    proposer dir configured in step 2 is skills-only (no agent.py),
-#    which selects the single-shot text-shim proposer — driven entirely
-#    by the scripted aux callable, so no model endpoint is ever needed.
+#    shapes the frozen contract — so write a two-line one here.
 cp $EX/board.jsonl ./board.jsonl
 cp $EX/scoring.json ./scoring.json
 cat > brief.md <<'EOF'
@@ -117,8 +137,8 @@ EOF
 # 4. Inspect the mutation surface (exactly one id: style_rules).
 $PY -m zicato.cli inspect mutations --workspace .zicato
 
-# 5. Run the three scripted rounds — evolve auto-opens epoch e0 from
-#    the contract above, then: v1 PROMOTED (3.6 → 2.4), v2 REJECTED
+# 5. Run the three scripted rounds — evolve auto-opens a date-named
+#    epoch (for example 2026-09-26_e0) from the contract above, then: v1 PROMOTED (3.6 → 2.4), v2 REJECTED
 #    (the negative control), v3 PROMOTED (2.4 → 1.2 — the exact floor).
 #    evolve launches the dashboard and prints its URL (e.g.
 #    Dashboard: http://127.0.0.1:7892) — watch the bracket live.
@@ -128,45 +148,36 @@ $PY -m zicato.cli evolve --workspace .zicato --rounds 3 --mode full
 $PY -m zicato.cli epoch close --workspace .zicato
 ```
 
-> The walkthrough opens the epoch through `evolve` rather than through
-> `zicato epoch new`. An explicit `epoch new` freezes the epoch without
-> the `contract.proposer_path` configured in step 2, because the CLI
-> does not thread that setting into the frozen epoch config. The live
-> contract hash then differs and the first `evolve` rolls to a fresh
-> epoch: the same rounds and the same numbers, but under an
-> automatically named epoch id. The test
-> (`tests/test_convergence_known_answer.py`) pins the epoch instead by
-> calling `new_epoch(..., proposer_path=...)` directly.
-
 ## The racing variant
 
 [`scoring.effective.json`](./scoring.effective.json) is the same
 contract under a **racing** tournament (`field_size: 4`,
 `replicates: 2`) with the Bradley–Terry evidence pre-gate enabled
-(`promote_confidence_threshold: 0.8`). Point the `evaluation` engine at
-`zicato_examples.target_0_convergence.mocks:racing_aux_llm`. It serves four
-distinct experiments per round whose defect-token sets form a strict
-superset chain, so the rung cuts are deterministic and the best arm
-(only `verbose-prose` left, scalar `1.2`) survives to be crowned.
+(`promote_confidence_threshold: 0.8`). Script the proposal runtime with
+`mocks.RACING_POLICIES` in place of `GAUNTLET_POLICIES` in step 2. It
+writes four distinct candidates per round whose defect-token sets form a
+strict superset chain, so the rung cuts are deterministic and the best
+arm (`v2`, only `verbose-prose` left, scalar `1.2`) survives to be
+crowned.
 
-One tuning note: `promote_confidence_replicates` is raised to `32`.
-With a deterministic harness every crowning duel is decisive in the same
-direction, and Bradley–Terry confidence intervals separate slowly on an
-all-decisive audit, because the fit is starved of evidence rather than
-noisy. The pre-gate needs roughly 25 cache-cheap replicate duels before
-the intervals clear. The default budget of 3 would end the round
-`inconclusive` — the champion stands — even at
-`P(theta_child > theta_champion) ≈ 0.95`.
+The file states `promote_confidence_replicates: 32`, the default
+replicate budget, explicitly. With a deterministic harness every
+crowning duel is decisive in the same direction, and Bradley–Terry
+confidence intervals separate slowly on an all-decisive audit, because
+the fit is starved of evidence rather than noisy. A small budget would
+end the round `inconclusive`, and the champion would stand.
 
 Run it from a FRESH workspace (repeat steps 1–3 in a new scratch dir,
-publishing `scoring.effective.json` as the live `scoring.json`). Do not
+with `RACING_POLICIES` in step 2 and `scoring.effective.json` published
+as the live `scoring.json`). Do not
 chain it after the gauntlet demo above: a contract roll seeds the new
 epoch's `v0` from the previous epoch's promoted head, which is already
 AT the floor — every racing arm then ties the champion at `1.2` and is
 correctly rejected.
 
 ```bash
-# In a fresh scratch dir, after steps 1-2 (init + config.json):
+# In a fresh scratch dir, after steps 1-2 (init + config.json, with
+# RACING_POLICIES):
 cp $EX/board.jsonl            ./board.jsonl
 cp $EX/scoring.effective.json ./scoring.json
 cat > brief.md <<'EOF'
@@ -180,11 +191,11 @@ EOF
 $PY -m zicato.cli evolve --workspace .zicato --rounds 1 --mode full
 ```
 
-## Deferred: the live variant
+## No live variant
 
 This example carries no live variant — the same board and the same
-predicates, but a real model editing the policy through the default
-tool-using proposer. Its worth is that the floor is exact; a live
+predicates, but a real model editing the policy through a Foe
+`proposer` block that names a real model. Its worth is that the floor is exact; a live
 proposer makes the decision sequence depend on the model, which belongs
 in a separate exercise with an operator go-ahead, real endpoints
 configured under `models`, and the dashboard watched live. The

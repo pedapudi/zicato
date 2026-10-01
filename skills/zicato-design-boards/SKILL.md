@@ -130,8 +130,8 @@ Rules of thumb:
 
 (`synthetic_adversarial` / `synthetic_clean` are reserved forward-compat kinds
 for the goldfive-as-target dogfood plan — a known-bad agent the steerer must
-notice via `required_drift_kinds`. Not part of the v0 authoring surface; ignore
-them unless you are explicitly building that target.)
+notice via `required_drift_kinds`. They are not part of the everyday authoring
+surface; ignore them unless you are building that target.)
 
 ## Weighting: spend signal where it matters
 

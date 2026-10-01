@@ -196,17 +196,18 @@ mitigations (§3–§11).
 Overfitting is enabled by *what the optimizer can observe*. The narrower
 and more aggregated the feedback, the harder the board is to memorize.
 zicato's proposer prompt is assembled in
-[`proposer/prompts.py`](../../src/zicato/proposer/prompts.py); the orchestrator
-fills it in
-([`orchestrator.py`](../../src/zicato/orchestrator.py) `_render_loss_summary`,
-≈L3058). Enumerated by leakage risk:
+[`proposer/prompts.py`](../../src/zicato/proposer/prompts.py) and
+[`proposer/foe_request.py`](../../src/zicato/proposer/foe_request.py); the
+round fills it in
+([`evolve/decision_support.py`](../../src/zicato/evolve/decision_support.py)
+`_render_loss_summary`). Enumerated by leakage risk:
 
 | Surface | Built by | Per-entry identity leaked? | Memorization risk |
 |---|---|---|---|
-| **Loss summary** | `_render_loss_summary` (`orchestrator.py:3058`) | **No** — board-wide aggregate only: `drift_loss_mean=… over N runs, pass_rate=… over M entries`. | **Low.** This is the one surface that is already aggregated. It cannot, on its own, tell the proposer *which* entry to target. |
+| **Loss summary** | `_render_loss_summary` (`evolve/decision_support.py`) | **No** — board-wide aggregate only: `drift_loss_mean=… over N runs, pass_rate=… over M entries`. | **Low.** This is the one surface that is already aggregated. It cannot, on its own, tell the proposer *which* entry to target. |
 | **Detector patterns** | `patterns/detectors.py`, projected by `proposer/pattern_feedback.py` and rendered by `render_pattern_block` | Restricted requests receive declared numeric fields, severity, known metric labels, and mutation references. Diagnostic ids, summaries, entry/task/agent/run identities, unknown fields, and custom metric labels are omitted. | Anonymous counts and rates still provide optimization feedback. Disabling `restrict_proposer_visibility` exposes the full identifying diagnostic record. |
-| **Mutation manifest** | `render_mutation_block` (`prompts.py:246`) | n/a (shows full editable span content, up to 8000 chars) | **Medium.** The proposer sees, and may rewrite, the *entire* content of every mutable span (a prompt body, a tool docstring). This is the *capability* to hardcode; the patterns tell it *what* to hardcode toward. |
-| **Experiment memory** | `render_prior_experiments_block` (`prompts.py:293`); digest from the index | Per-experiment `Δscalar` against the **same board** (`_render_prior_experiment_line`, `prompts.py:270`) | **Medium.** Settled `Δscalar` history is the gradient signal of an iterative optimizer: it tells the proposer which *directions* lowered the measured loss, round over round. See [`EXPERIMENT-MEMORY.md`](EXPERIMENT-MEMORY.md). |
+| **Mutation manifest** | `render_mutation_block` (`prompts.py`) | n/a (shows full editable span content, up to 8000 chars, `_MUTATION_CONTENT_LIMIT_CHARS`) | **Medium.** The proposer sees, and may rewrite, the *entire* content of every mutable span (a prompt body, a tool docstring). This is the *capability* to hardcode; the patterns tell it *what* to hardcode toward. |
+| **Experiment memory** | `render_prior_experiments_block` (`prompts.py`); digest from the index | Per-experiment `Δscalar` against the **same board** (`_render_prior_experiment_line`, `prompts.py`) | **Medium.** Settled `Δscalar` history is the gradient signal of an iterative optimizer: it tells the proposer which *directions* lowered the measured loss, round over round. See [`EXPERIMENT-MEMORY.md`](EXPERIMENT-MEMORY.md). |
 | **Telemetry insights** | LLM-summarised per-round observations (`ProposalEvidence.insights`, rendered by `render_evidence`) | Possibly (free text — may name entries) | **Medium.** An evaluation LLM summary that can re-surface per-entry specifics the structured channels withheld. |
 
 Restricted pattern feedback constructs summaries from permitted measurements
@@ -253,7 +254,7 @@ split of the board**: the proposer and the patterns see only the *train*
 slice; a held-out slice *confirms* a promotion and *measures the
 generalization gap*, and is never shown to the proposer or consulted to
 pick the edit. `BoardEntry` already carries a `tags: tuple[str, ...]` field
-([`core/types.py`](../../src/zicato/core/types.py):483), so a `holdout`
+([`core/board.py`](../../src/zicato/core/board.py)), so a `holdout`
 tag is a zero-schema-change way to declare the split.
 
 **Verdict.** **BUILD — the foundational lever (§12, the train/holdout
@@ -386,8 +387,8 @@ references][early-stop]). Early stopping is itself a regularizer: it caps
 how specialized to the training set the parameters can get.
 
 **Maps to zicato.** zicato's "epochs" are the optimization horizon; the
-generalization gap is `train_slice_loss` vs `holdout_slice_loss` tracked
-across the lineage. A widening gap is the signature of the proposer
+generalization gap is the champion's train-slice loss against its
+holdout-slice loss, tracked across the lineage. A widening gap is the signature of the proposer
 overfitting the board: the champion's *train* loss keeps falling while
 its *holdout* loss stalls or rises. That is the cue to **end the epoch
 and refresh the board** rather than keep mining a contract the proposer
@@ -418,7 +419,7 @@ search from overfitting its validation set**.
 
 **Maps to zicato.** Two cadences. (a) **Refresh on epoch roll.** Because
 the board is part of the contract hash
-([`epoch/contract.py`](../../src/zicato/epoch/contract.py):92 —
+([`epoch/contract.py`](../../src/zicato/epoch/contract.py) —
 `_canon_board`), *any* board edit rolls the epoch by construction. So
 board rotation/refresh is **already a first-class operation** — it is an
 epoch boundary. The design question is *cadence and discipline*: refresh
@@ -544,7 +545,7 @@ than to how zicato evaluates:
    never surfaced. (Prerequisite: §3.)
 2. **Aggregate `affected_entry_ids` out of the pattern detail.** Replace
    the verbatim entry-id list in `detect_metric_frequency`'s detail
-   (`detectors.py:265`) and the named `entry_id`/`task_id` in
+   (`detectors.py`) and the named `entry_id`/`task_id` in
    `detect_hot_tasks`/`detect_hot_agents` with *counts and rates*, such
    as "`off_topic` fires in 40% of runs across 4 entries". That is enough
    to steer a *general* fix and not enough to special-case a named
@@ -678,8 +679,9 @@ restricted to train. *Cost:* the holdout entries must be *run* to confirm
 (more compute per promotion) — but they are run *anyway* under the
 winner's-curse confirmation idea (§8), so the two share the cost.
 *Tradeoff:* a smaller train slice means weaker per-round steering; needs a
-board large enough to split (small boards cannot afford it — make the
-split opt-in, off by default, like the namespace guards).
+board large enough to split. As built, the split is on by default
+(`overfitting.enabled`) and a board below `min_board_size_for_split` with no
+explicitly tagged holdout entries runs unsplit.
 
 *The holdout carries its own bounds (issue #118).* A holdout slice is
 smaller than the train slice, so its scalar moves in coarser `1/N` steps
@@ -788,7 +790,7 @@ the board and paid a larger toll is not worded as a regression.
 *What:* track `train_loss` vs `holdout_loss` across the lineage; fire
 `warning`/`critical` when the gap widens past a threshold. *Where:* a new
 detector in [`health/diagnostics.py`](../../src/zicato/health/diagnostics.py)
-beside the existing five ([`LOOP-HEALTH.md`](LOOP-HEALTH.md) §3), with a
+beside the other loop-health detectors ([`LOOP-HEALTH.md`](LOOP-HEALTH.md) §3), with a
 `config.json` `health`-block knob. *Cost:* trivial (a pure function over history).
 *Tradeoff:* none beyond needing the split. Depends on the train/holdout
 split.

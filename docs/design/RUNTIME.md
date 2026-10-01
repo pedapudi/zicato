@@ -7,7 +7,7 @@ protocols, the resume semantics on orchestrator restart, and the
 concurrency model that lets parallel tournaments coexist on one
 workspace.
 
-> **What ships today.** The `.zicato/runtime/` state files, the
+> **What ships.** The `.zicato/runtime/` state files, the
 > heartbeat (`HeartbeatBeater`), the kernel workspace writer guard, the
 > atomic-write helper, and the control-file protocol module all ship
 > (`src/zicato/runtime/`). The Rust watchdog supervisor
@@ -20,7 +20,7 @@ workspace.
 > binary. The subprocess tournament workers ship: every board-entry run
 > executes in its own `python -m zicato._tournament_worker` subprocess
 > (`src/zicato/_tournament_worker.py`, spawned by
-> `src/zicato/tournament/runner.py`), which lets a per-run wall-clock
+> `src/zicato/tournament/worker_execution.py`), which lets a per-run wall-clock
 > budget be hard-enforced by killing the process and gives each run a
 > fresh interpreter, so no module cache carries between generations. The
 > control protocol is wired end to end: the dashboard writes `control/`
@@ -95,9 +95,11 @@ Python memory or only in the supervisor's memory.
 .zicato/runtime/
 ├── lock.guard                      # stable kernel writer guard; never removed
 ├── lock.json                       # readable writer identity metadata
-├── heartbeat.json                  # orchestrator pulse, bumped every 1-5s
+├── heartbeat.json                  # orchestrator pulse, bumped every 2s
+├── progress.events.jsonl           # orchestrator progress log; its seq is the liveness cursor
 ├── dashboard.json                  # dashboard's actually-bound host/port
-├── active_tournament.events.jsonl          # current tournament shape + per-entry status
+├── active_tournament.events.jsonl  # current tournament shape + per-entry status
+├── inconclusive/                   # opt-in rating pre-gate: unresolved crowning duels
 ├── active_runs/
 │   ├── {run_id}.json               # one file per in-flight tournament run
 │   └── ...
@@ -110,13 +112,16 @@ Python memory or only in the supervisor's memory.
 │   │   └── {generation_id}         # presence = "force promote this generation"
 │   ├── reject/
 │   │   └── {generation_id}         # presence = "force reject"
-│   └── rubric_replacement.txt      # contents = new rubric body
+│   ├── rubric_replacement.txt      # contents = new proposer brief body
+│   └── kill_requests/
+│       └── {run_id}                # parent asks the supervisor to kill a worker
 └── control_log/                    # consumed commands persist here for audit
-    ├── 2026-05-14T12:34:50Z_pause_epoch.json
+    ├── 2026-05-14T12-34-50Z_pause_epoch.json
     └── ...
 ```
 
-The path helpers for this tree ship in `src/zicato/runtime/paths.py`.
+The path helpers for this tree ship in `src/zicato/runtime/paths.py`, over
+the workspace layout in `src/zicato/workspace/layout.py`.
 `dashboard.json` is written by the Python dashboard service once it
 binds (it walks `+1` from its preferred port if taken), so `evolve`
 can read back the *actually-bound* port rather than assume one. The
@@ -170,8 +175,8 @@ independent deadline, requested and stale-run enforcement continue.
 
 ### 2.2 `heartbeat.json` — orchestrator pulse
 
-The orchestrator writes a fresh heartbeat every 1-5 seconds (default
-2s; configurable). The supervisor reads it; a stale heartbeat is
+The orchestrator writes a fresh heartbeat every 2 seconds
+(`HeartbeatBeater`'s `interval_s`). The supervisor reads it; a stale heartbeat is
 the primary signal that the orchestrator wedged.
 
 ```json
@@ -185,18 +190,27 @@ the primary signal that the orchestrator wedged.
   "generation_id": "v5",
   "round_index": 4,
   "round_started_at": "2026-05-14T12:34:55.000Z",
-  "harmonograf_url": ""
+  "seq": 17,
+  "harmonograf_url": "",
+  "harmonograf_meta_session": "",
+  "settings": {}
 }
 ```
 
 This is the shipped `Heartbeat` dataclass (`src/zicato/runtime/state.py`).
-`last_heartbeat` is the freshness timestamp the watchdog keys on
-(`started_at` is the orchestrator's boot time); the per-run population is
-tracked in the separate `active_runs/*.json` files rather than inlined
-here.
+`last_heartbeat` is the timer-driven freshness timestamp (`started_at` is
+the orchestrator's boot time). `seq` is the tail sequence number of the
+progress log `progress.events.jsonl` at the last genuine loop transition
+(round start, propose, apply, tournament start and settle, gate, promote or
+reject); the timer rewrites the same `seq`, so it advances only on real
+progress. `settings` maps each effective setting's dotted name to its value
+and the tier that set it (`zicato.runtime.effective_settings`). The per-run
+population is tracked in the separate `active_runs/*.json` files rather
+than inlined here.
 
 **Atomicity.** Written via the atomic-write helper
-— that is, write to `heartbeat.json.tmp`, `fsync`, then `rename`.
+— that is, write to a uniquely named sibling temporary file, `fsync`, then
+`rename`.
 Readers (the watchdog supervisor, the dashboard) always see either the
 old or the new content, never a partial write. This matters because the
 supervisor polls on a short interval and a partial read would be a
@@ -213,12 +227,12 @@ false positive for "orchestrator went silent".
   new phase without waiting for the next timer tick.
 
 **Staleness thresholds.** The shipped watchdog uses **two** thresholds
-keyed on `last_heartbeat` age (both configurable on the supervisor
-binary): `--heartbeat-stale-warn` (default 30s — log a warning) and
-`--heartbeat-stale-kill` (default 90s — escalate). The two-stage
-threshold is loose enough to absorb a slow disk sync or a
-paused-by-debugger orchestrator before it warns, and looser still
-before it escalates.
+(both configurable on the supervisor binary): `--heartbeat-stale-warn`
+(default 30s — log a warning) and `--heartbeat-stale-kill` (default 90s —
+raise the warning to a deep-stale warning). When the heartbeat carries a
+`seq`, the age measured is the time since `seq` last changed
+(`SeqLiveness`, `crates/supervisor/src/watchdog.rs`); otherwise it is the
+`last_heartbeat` age. Neither threshold signals the orchestrator (§3.2).
 
 ### 2.3 `active_tournament.events.jsonl` — published tournament display state
 
@@ -274,12 +288,23 @@ As shipped (`ActiveRun`), the file carries:
   "last_progress": "2026-05-14T12:35:05.000Z",
   "wall_clock_budget_seconds": 120,
   "deadline": "2026-05-14T12:37:00.000Z",
-  "events_jsonl_path": ".zicato/epochs/hardened_research/generations/v5/runs/short_solar/events.jsonl",
+  "events_jsonl_path": ".zicato/epochs/hardened_research/generations/v5/runs/short_solar/seed-0/events.tournament.r0.jsonl",
   "entry_id": "short_solar",
   "generation_id": "v5",
-  "epoch_id": "hardened_research"
+  "epoch_id": "hardened_research",
+  "pid_start_time": 116371410.0,
+  "pgid": 84522,
+  "snapshot_path": "/tmp/ztw-snap-8d1c/",
+  "producer_pid": 84321,
+  "producer_start_time": 116371304.0
 }
 ```
+
+`pid_start_time` guards against process-id reuse, `pgid` names the
+worker's own process group (the unit the supervisor signals),
+`snapshot_path` names the run's ephemeral snapshot, and `producer_pid` with
+`producer_start_time` identify the process that spawned the worker. The
+last five fields are optional.
 
 **`last_progress` cadence.** The writer bumps `last_progress`
 (`touch_active_run_progress`) as the run makes progress. The watchdog
@@ -313,20 +338,23 @@ contention, because each worker is the sole writer of its own file.
 
 `control/` is where the dashboard writes operator commands.
 
-> **Both sides are in the build.** The **write side** is the Python
+> **Write side and consume side.** The **write side** is the Python
 > dashboard's POST endpoints (and `src/zicato/runtime/control.py`'s
 > `write_command`), which drop the command files described below
 > atomically.
 > The runtime module also exposes the **consume side**
 > (`consume_command`, `is_paused`, `list_pending_commands`), which
-> moves a consumed file into `control_log/`. The orchestrator calls it:
-> `src/zicato/runtime/control_consumer.py` is invoked between rounds
-> from `src/zicato/evolve/loop.py`, and at the head of a round for
-> `skip_round` from `src/zicato/evolve/round_entry.py`.
+> moves a consumed file into `control_log/`. The orchestrator calls it
+> through `src/zicato/runtime/control_consumer.py`: between rounds from
+> `src/zicato/evolve/loop.py`, at the head of a round for `skip_round`
+> from `src/zicato/evolve/round_entry.py`, and at the gate for
+> `promote` and `reject` from `src/zicato/evolve/gate.py`.
+> `control/kill_runs/{run_id}` is written by the dashboard's kill
+> control, but no process consumes it: the orchestrator's consumer does
+> not handle it and the supervisor does not read it.
 
 The orchestrator reads `control/` at **safe points only** —
-between board entries, between rounds, between epoch lifecycle stages —
-never mid-run. When a command is consumed, the file is moved
+between rounds, at the head of a round, and at the gate — never mid-run. When a command is consumed, the file is moved
 atomically into `control_log/` with a timestamp prefix, preserving
 an immutable audit trail.
 
@@ -339,7 +367,7 @@ contract.
 |---|---|---|
 | `control/pause_epoch` | dashboard "pause" button | empty file; presence is the signal |
 | `control/skip_round` | "skip" button on active round | empty file |
-| `control/kill_runs/{run_id}` | "kill" button on a run row | empty file per run |
+| `control/kill_runs/{run_id}` | "kill" button on a run row | JSON `{run_id, ts}` per run; not consumed (see above) |
 | `control/promote/{gen_id}` | "force promote" button | empty file per generation |
 | `control/reject/{gen_id}` | "force reject" button | empty file per generation |
 | `control/rubric_replacement.txt` | "edit proposer brief" panel | text file; contents replace `brief.md` |
@@ -348,22 +376,27 @@ Consumed-command record in `control_log/`:
 
 ```json
 {
-  "ts_consumed": "2026-05-14T12:38:15.412Z",
-  "command": "pause_epoch",
-  "issued_via": "dashboard",
-  "issued_by": "operator-localhost",
-  "consumed_at_safe_point": "between_rounds",
-  "effect": "epoch paused; awaiting resume"
+  "command": "promote",
+  "arg": "v7",
+  "payload": "",
+  "consumed_at": "2026-05-14T12:38:15Z",
+  "source": "orchestrator",
+  "reason": "operator promote override",
+  "original_file_path": ".zicato/runtime/control/promote/v7"
 }
 ```
 
+The archive file is named `{consumed_at}_{command}[_{arg}].json`, with the
+timestamp's colons replaced by hyphens.
+
 The audit trail is what makes an operator override safe. The
 gate-override commands, `promote` and `reject`, are claimed at the gate
-by `claim_gate_override` (`src/zicato/runtime/control_consumer.py`) and
-recorded in the outcome record and the journal next to the original
+by `claim_field_gate_overrides` (`src/zicato/runtime/control_consumer.py`,
+called from `resolve_field_verdict` in `src/zicato/evolve/gate.py`) for
+every candidate in the round's field, and recorded in the outcome record and the journal next to the original
 tournament verdict, so the journal cannot be rewritten silently. An
-override queued for a different generation is left in place rather than
-applied to the wrong round.
+override queued for a generation outside the field is left in place rather
+than applied to the wrong round.
 
 ## 3. The watchdog supervisor binary
 
@@ -371,17 +404,19 @@ applied to the wrong round.
 built `cargo build --release -p zicato-supervisor`). It is
 auto-spawned by `zicato evolve` (opt out with `--no-dashboard`) and
 killed when `evolve` exits. The binary is **resolved** at spawn time
-from, in order: a configured `supervisor_binary` path, the bundled
-`zicato/_bin/zicato-supervisor` (placed by the build hook), the system
-`PATH`, then a dev-checkout `target/release/` build. If none resolve,
-`evolve` prints a warning and runs **without** the watchdog.
+(`_resolve_supervisor_binary`, `src/zicato/cli/commands/evolve.py`) from, in
+order: the `integration.supervisor_binary` setting (`--supervisor-binary`);
+the newer of the bundled `zicato/_bin/zicato-supervisor` (placed by the
+build hook) and a dev-checkout `target/release/` build; the system `PATH`.
+If none resolve, `evolve` prints a warning and runs **without** the
+watchdog.
 
 The binary is capable of two roles, but **as shipped only one is
 used**:
 
 - **Watchdog (always on).** Polls `.zicato/runtime/heartbeat.json` and
-  the per-run files under `active_runs/`; on stale heartbeat or stalled
-  run it escalates SIGTERM → grace → SIGKILL. It also serves a terse
+  the per-run files under `active_runs/`; it warns on a stale heartbeat
+  and escalates a stalled or overdue run SIGTERM → grace → SIGKILL. It also serves a terse
   `/statusz` (and `/statusz.json`) operational probe. No LLM, no
   in-memory authoritative state — every decision is a pure function of
   the on-disk files.
@@ -476,8 +511,9 @@ orchestrator                           supervisor
 
 The two thresholds are `--heartbeat-stale-warn` (default 30s, log
 only) and `--heartbeat-stale-kill` (default 90s). On the
-kill threshold the orchestrator's stall is recorded; the watchdog does
-not itself terminate the orchestrator.
+kill threshold the orchestrator's stall is recorded as a deep-stale
+warning; the watchdog does not itself terminate the orchestrator. The
+decision function `decide_heartbeat` has no kill outcome.
 
 **The supervisor does not kill the orchestrator on heartbeat
 staleness.** The orchestrator can be slow for legitimate reasons: a
@@ -562,10 +598,12 @@ Inside `.zicato/runtime/` the writer rules are strict:
 | `lock.guard` | Public invocation or supervisor orphan batch holds an exclusive kernel lease | Competing owners attempt nonblocking acquisition |
 | `lock.json` | Workspace writer publishes inspection metadata and removes its own record | supervisor |
 | `heartbeat.json` | orchestrator | supervisor, dashboard |
+| `progress.events.jsonl` | Invocation appends through its exclusive workspace writer | supervisor (via the heartbeat's `seq`), dashboard |
 | `dashboard.json` | dashboard service | orchestrator (URL readback) |
 | `active_tournament.events.jsonl` | Invocation publishes snapshots and field replacements through its exclusive workspace writer | supervisor, dashboard |
 | `active_runs/{run_id}.json` | Tournament worker or proposal producer publishes its owned record; its parent finalizes after confirmed exit; the supervisor finalizes a confirmed orphan under the writer guard | supervisor, dashboard |
 | `control/<command>` | dashboard service | orchestrator, at its safe points |
+| `control/kill_requests/{run_id}` | tournament parent, when a worker overruns its budget plus grace | supervisor, which clears it after confirmed termination |
 | `control_log/*` | orchestrator, on consume | dashboard |
 
 Atomic replacement keeps concurrent readers from observing partial records.
@@ -601,12 +639,11 @@ loop continues from wherever it was when interrupted.
 | Artifact | Source of truth | Survives restart? |
 |---|---|---|
 | Candidate source | Git commits or directory snapshots, through the configured generation store | yes |
-| Pattern detector output | `epochs/{epoch}/patterns/round_NNN.json` | **yes** — written once per round |
 | Round decisions and tournament details | `epochs/{epoch}/rounds/{round}/field_settlement.json` | yes — committing one record publishes every candidate outcome and the primary promotion |
 | Journal | rendered from accepted experiments | regenerated from durable records when requested |
 | Proposal and patches | per-generation `experiment.json` and `patches/` | yes — tournament outcomes come from the committed round record; rejection before tournament execution is recorded in the proposal file |
-| Per-run `events.jsonl` | per-entry files under `runs/{entry_id}/` | **yes** — but may be partial if the run was mid-flight |
-| Per-run `loss.json` | per-entry files under `runs/{entry_id}/` | **yes** if reducer ran |
+| Per-run event log | `runs/{entry_id}/seed-{seed}/events.{purpose}.r{draw}.jsonl` under the generation | **yes** — but may be partial if the run was mid-flight |
+| Per-run loss profile | `runs/{entry_id}/seed-{seed}/loss.{purpose}.r{draw}.json` under the generation | **yes** if reducer ran |
 | `active_tournament.events.jsonl` | runtime state | discarded on restart |
 | `active_runs/` | runtime state | discarded on restart |
 | `heartbeat.json` | runtime state | discarded on restart |
@@ -644,25 +681,25 @@ work. The unit cache separately validates each requested measurement before
 reuse; files that fail that validation are evaluated again. Reusing a
 proposal preserves the patches that produced the cached measurements.
 
-### 4.3 Finalising stale runs
+### 4.3 Clearing stale runtime state
 
-When the orchestrator steals a stale lock, it walks
-`active_runs/` and finalises each entry with `status: "aborted"`,
-`abort_reason: "orchestrator_crash"`. This makes the historical
-record consistent: the dashboard panel for a stalled run shows
-"aborted (orchestrator crash)" rather than "still running" — even
-though the worker is long gone.
+After acquiring the workspace writer, `prepare_resume` calls
+`clear_runtime_state` (`src/zicato/runtime/resume.py`), which removes
+`heartbeat.json`, the active-tournament log, and every
+`active_runs/{run_id}.json`. It does not signal any process and writes no
+per-run abort record; completed measurements survive under `epochs/` and
+reach the unit cache.
 
-Workers are also reaped at this step. Any process id in
-`active_runs/*` that is still alive receives SIGTERM and then SIGKILL,
-skipping the grace period because the run is being abandoned. Any
-process id that is already dead is noted in the audit log.
+Orphaned workers are the supervisor's responsibility (§3.3). A worker
+whose recorded producer is positively dead is terminated as a process
+group under the writer guard, its confined `ztw-snap-*` snapshot is
+removed, and its active record is finalized.
 
 ## 5. Worker subprocesses
 
 > **Shipped.** The subprocess worker is
 > `src/zicato/_tournament_worker.py`, spawned per board-entry run by
-> `src/zicato/tournament/runner.py`. Each run executes in its own
+> `src/zicato/tournament/worker_execution.py`. Each run executes in its own
 > operating-system process, so a per-run wall-clock budget can be
 > hard-enforced by killing the process, which is the only reliable
 > defense against a system under test that holds the interpreter lock or
@@ -692,7 +729,7 @@ This is non-negotiable for production. See
 ### 5.2 Worker contract
 
 A worker is invoked as a module entry point taking a single JSON
-**args file** — `_run_single` (`runner.py`) serialises one run's
+**args file** — `_run_single` (`worker_execution.py`, with the args built in `worker_transport.py`) serialises one run's
 inputs (run id, generation, entry, side, snapshot root, the scoring
 weights incl. `per_judge_weights`, the wall-clock budget, the adapter
 spec, the harmonograf URL/gRPC dial, …) to a temp file and spawns:
@@ -705,34 +742,47 @@ via `asyncio.create_subprocess_exec(sys.executable, ...)`. The worker's
 first action is writing `active_runs/{run_id}.json` with its own PID.
 The worker then:
 
-1. Loads the generation's snapshot.
-2. Instantiates the adapter (see §5.4 below).
-3. Wraps `evaluation_call_llm` in the worker's per-call timeout layer,
-   which remains useful as a fast path (see
-   [ROBUSTNESS.md](ROBUSTNESS.md) §2.1).
-4. Calls `adapter.run_entry(entry, sinks=[JSONLPersistenceSink(...)])`.
-5. After the terminal event, runs the loss reducer in-worker.
-6. Writes `loss.json`.
-7. Updates `active_runs/{run_id}.json` to `phase: "done"`.
-8. Exits with code 0.
+1. Starts its per-run heartbeat thread and resolves the model roles
+   (§5.5.8).
+2. Loads the harness from the per-run ephemeral copy of the generation's
+   snapshot it was handed, instantiates the adapter (see §5.4 below), and
+   drives the one entry, with telemetry written to the run's
+   `events.jsonl`.
+3. Captures the files the run produced under its scratch directory and
+   writes an artifact manifest for expectation evaluators.
+4. Runs the loss reducer in-worker and writes `loss.json`.
+5. Writes a result file (the `RunResult`, the loss-profile path, the
+   runtime, and an `aborted` flag).
+6. Removes its `active_runs/{run_id}.json` on a clean exit and exits with
+   code 0.
 
-The worker also runs a per-run heartbeat task — an `asyncio` task or a
-daemon `threading.Thread`, whichever the adapter integrates with more
-cleanly — that bumps `last_progress` on its own
-`active_runs/{run_id}.json` every second. This is the signal the
+The per-run heartbeat is a daemon thread (`RunHeartbeatBeater`,
+`src/zicato/runtime/heartbeat.py`) that bumps `last_progress` on the run's
+own `active_runs/{run_id}.json` every 3 seconds. This is the signal the
 supervisor uses to detect a stalled worker independently of
 orchestrator health.
 
 ### 5.3 Worker termination conditions
 
-| Termination | Worker's exit behavior | `active_runs/{run_id}.json` final state |
+`ActiveRun` carries no phase or status field; the parent
+(`zicato.tournament.worker_execution._run_single`) classifies each run from
+the worker's exit code and result file, and records the classification as
+the loss profile's `abort_cause`:
+
+| Termination | Worker's exit behavior | Recorded outcome |
 |---|---|---|
-| Clean (run completed) | exit code 0 | `phase: "done"`, then file removed |
-| Wall-clock budget exceeded | `RunAborted(wall_clock_budget)` emitted, exit code 7 | `phase: "aborted"`, abort_reason set |
-| Worker crashed (uncaught) | exit code != 0 | `phase: "agent_running"` (worker never got to update) — orchestrator reaps and re-stamps to `crashed` |
-| SIGTERM from supervisor | runs cleanup, emits `RunAborted(killed)`, exit | `phase: "killed"`, cause: `supervisor_sigterm` |
-| SIGKILL from supervisor | no cleanup; process gone | `phase: "agent_running"` — orchestrator reaps and re-stamps to `killed`, cause: `supervisor_sigkill` |
-| `kill_runs/{run_id}` from dashboard | orchestrator forwards SIGTERM to worker | same as SIGTERM path |
+| Clean (run completed) | exit code 0, result file written, active record removed | the worker's loss profile |
+| The worker's own wall-clock budget fired | `run_aborted` frame emitted, loss profile and result file still written, exit code 0 | the worker's loss profile, with `abort_reason = "wall_clock_budget"` and `wall_clock_budget_exceeded` set |
+| Parent budget plus grace exceeded | the parent writes a kill request; the supervisor terminates the process group | aborted, `abort_cause = "parent_kill"` |
+| Process gone with no result file (supervisor kill or crash) | no cleanup | aborted, `abort_cause = "gone_no_result"` |
+| Non-zero exit with a result file | — | aborted, `abort_cause = "nonzero_exit:<code>"` |
+| Result or loss file unreadable, or its measurement does not match the request | — | aborted, `abort_cause = "result_unreadable"` |
+
+For every aborted classification the parent appends a `run_aborted`
+terminal frame to the run's `events.jsonl` when none is present. Only a
+budget abort (`budget_exhausted`) is cache-eligible; every other cause is
+an infrastructure abort (`zicato.core.loss.is_infra_abort_cause`) and is
+evaluated again in a later round.
 
 **Where the per-run budget comes from.** Each run carries a
 `wall_clock_budget_seconds` in its args file, and the worker enforces
@@ -746,16 +796,14 @@ board-unit budget the worker enforces, so the final full-board crowning
 duel, which is the longest-running one, can be capped without capping
 every duel.
 
-The dashboard's "kill" button writes `control/kill_runs/{run_id}`;
-the orchestrator notices the file at the next safe point (in this
-case, the safe point is "right now" — kill is high-priority and
-the orchestrator checks on a short timer) and forwards SIGTERM to
-the worker. The supervisor's automatic escalation runs in parallel
-as a backstop.
+The dashboard's "kill" button writes `control/kill_runs/{run_id}`, but no
+process consumes that file (§2.5). A run is terminated only by its own
+budget, by the parent's kill request, or by the supervisor's deadline and
+staleness checks.
 
 ### 5.4 Adapter loading in workers
 
-The adapter — Google's Agent Development Kit (ADK), LangChain, or a
+The adapter — the Agent Development Kit (ADK), LangChain, or a
 plain callable — is loaded per worker rather than shared across
 workers. Each subprocess gets a
 fresh interpreter and a fresh adapter instance. The cost is some
@@ -779,7 +827,7 @@ measurements and the pool design they gate.
 
 > **Status: this section states a design; no pool is built.** No pool
 > exists in the tree. The per-unit `create_subprocess_exec` in
-> `runner.py` is the shipped shape, and this section does not change
+> `worker_execution.py` is the shipped shape, and this section does not change
 > it. Two cheap and independent wins do ship: the host-wide spawn
 > limiter of §5.5.7 and the lazy role resolution of §5.5.8. The pool
 > itself is gated on the fork-safety probe (§5.5.4) and the
@@ -847,7 +895,7 @@ process group, and the supervisor kills that group by negating its
 pgid:
 
 * the worker is spawned with `start_new_session=True`
-  (`runner.py`), so it `setsid`s before `exec` and becomes the leader
+  (`worker_execution.py`), so it `setsid`s before `exec` and becomes the leader
   of a fresh session/process group containing itself plus every
   grandchild the system under test spawns (shells, helper tools);
 * the worker's **first act** is writing
@@ -1269,23 +1317,25 @@ every board unit.
 Every write to a state file goes through one helper. Reads always
 see either the previous content or the new content — never a
 partial write. The shipped helpers live in `zicato.storage._atomic`
-(`atomic_write_json`, `atomic_write_text`, `read_json`) and the
-`runtime` package consumes them through that storage seam (a backward
-compatible shim re-exports them from `zicato.runtime._atomic`). The
-shape is the classic write-temp-then-rename:
+(`atomic_write_json`, `atomic_write_text`, `read_json`, and `atomic_claim`
+for claim-once moves), and the `runtime` package reaches them through the
+storage backend (`zicato.storage.workspace_backend`). The shape is the
+classic write-temp-then-rename:
 
 ```python
 # zicato.storage._atomic (paraphrased)
 def atomic_write_text(path: pathlib.Path, content: str) -> None:
     """Write `content` to `path` atomically.
 
-    Writes to a sibling `*.tmp` first, then renames into place.
-    `rename(2)` on the same filesystem is atomic; readers always see
-    the old file or the new file, never a half-written one.
+    Writes to a uniquely named sibling `*.tmp`, fsyncs it, renames it
+    into place, then fsyncs the directory. `rename(2)` on the same
+    filesystem is atomic; readers always see the old file or the new
+    file, never a half-written one.
     """
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(content)
-    tmp.replace(path)
+    tmp = path.with_name(f"{path.name}.{uuid4().hex}.tmp")
+    ...  # O_EXCL create, write, fsync
+    os.replace(tmp, path)
+    _fsync_dir(path.parent)
 ```
 
 These helpers back `heartbeat.json`,
@@ -1301,7 +1351,7 @@ event — see [TELEMETRY.md](TELEMETRY.md)).
 The watchdog supervisor logs via `tracing` (level set by `--log` /
 `RUST_LOG`; stdio inherited from `evolve`) and exposes its own state on
 `/statusz` (and `/statusz.json`). The orchestrator logs via Python's
-`logging`. What surfaces the runtime state today:
+`logging`. What surfaces the runtime state:
 
 | Surface | What it shows | Ships? |
 |---|---|---|
@@ -1323,10 +1373,10 @@ below is the runtime layer's own staging.
 
 | Stage | What lands |
 |---|---|
-| **The workspace lock and heartbeat** | `.zicato/runtime/lock.json`, `heartbeat.json` written live by `HeartbeatBeater`, and `asyncio.wait_for` per-call timeouts. **Shipped.** |
+| **The workspace lock and heartbeat** | `.zicato/runtime/lock.guard` and `lock.json`, `heartbeat.json` written live by `HeartbeatBeater`, and `asyncio.wait_for` per-call timeouts. **Shipped.** |
 | **The full runtime layout and the watchdog** | The complete `.zicato/runtime/` layout with atomic writes; the Rust watchdog supervisor in its watchdog role, auto-spawned by `evolve`; escalation from SIGTERM through a grace period to SIGKILL; and subprocess tournament workers with hard per-run wall-clock budgets (`_tournament_worker.py`), and the conservative crash-resume protocol (`runtime/resume.py`). **Shipped**, except for the `zicato status` and `zicato kill` commands. |
 | **The dashboard service** | The live dashboard, served over HTTP and server-sent events as a separate Python service auto-spawned by `evolve`. **Shipped.** |
-| **Interactive dashboard controls** | **Shipped** on both sides: the dashboard's POST control endpoints and the write side of the control-file protocol, and the orchestrator's consumption of `control/` at its safe points with the `control_log/` audit (`runtime/control_consumer.py`). |
+| **Interactive dashboard controls** | **Shipped** on both sides: the dashboard's POST control endpoints and the write side of the control-file protocol, and the orchestrator's consumption of `control/` at its safe points with the `control_log/` audit (`runtime/control_consumer.py`). `control/kill_runs/` has no consumer. |
 
 The staging is by design. The watchdog and atomic-write safety work is
 the production-readiness pass, and the dashboard is a thick layer on top

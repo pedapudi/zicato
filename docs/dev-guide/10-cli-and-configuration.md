@@ -34,6 +34,7 @@ drivers, so core execution does not depend on a browser service.
 | Owner | Responsibility |
 |---|---|
 | `contract_draft/draft.py` | In-memory evaluation inputs, captured live source, and semantic differences. |
+| `contract_draft/admission.py` | The `authored_edit` decorator that validates supplied operation arguments. |
 | `contract_draft/operations.py` | Typed edits, advisory validation, cost estimation, and apply orchestration. |
 | `contract_draft/publication.py` | Accepted file bytes, stale-source checks, writer ownership, and recoverable publication. |
 | `cli/discovery.py` | Explicit assembly of root commands and advanced namespaces. |
@@ -134,10 +135,11 @@ wrapper must not become a second implementation of measurement or validation.
 
 ## 10.5 Applying edits and recovering publication
 
-`apply(draft, root, confirm=False)` validates the candidate and returns its
+`apply(draft, workspace_root, confirm, writer=None)` validates the candidate and returns its
 semantic differences, predicted hash, cost estimate, and warnings without
 writing files. `confirm=True` publishes the accepted contract bytes under a
-workspace writer. A caller that already owns the writer passes the same lease.
+workspace writer. A caller that already owns the writer passes that lease as
+`writer`.
 
 Publication captures board, brief, scoring, and registration bytes together.
 Before preparing an intent, it validates the candidate and checks that every
@@ -268,8 +270,8 @@ Telemetry browser and native endpoints are explicit runtime values. Workers
 receive both addresses with the resolved settings; the coordinator does not
 change its environment to forward them.
 
-The runner writes `configuration` into each worker argument file using
-`_configuration_spec(config)`. The payload contains the selected values and
+`tournament.worker_execution` writes `configuration` into each worker argument
+file using `tournament.worker_transport._configuration_spec(config)`. The payload contains the selected values and
 their sources. `ResolvedConfiguration.from_json` validates both before the
 worker constructs its runtime. Evaluation consumers receive the selected
 `AuxConfig`, including rubric judging and emulated turns.
@@ -338,11 +340,12 @@ zicato is a library first. The public surface is declared in
 `src/zicato/__init__.py` as a **lazy facade**: a dict mapping each public name to
 its home module, resolved on first access by a module-level `__getattr__`. The
 surface is limited to evolve entry points, harness protocols, board/config
-loaders, and scoring types. All three evolve entry points name
-`zicato.orchestrator` as their home — the dispatch surface over the round
-pipeline, so the facade pins no module inside `zicato.evolve`. The
+loaders, and scoring types: eleven names in all. The three loop exports (`evolve_once`,
+`evolve_n_rounds`, `EvolveRoundOutcome`) name `zicato.orchestrator` as their
+home — the dispatch surface over the round pipeline, so the facade pins no
+module inside `zicato.evolve`. The
 reasoning-aware model boundary is an advanced API at `zicato.reasoning`.
-`__all__` is derived from `_EXPORTS`.
+`__all__` is `__version__` plus the sorted `_EXPORTS` keys.
 
 Advanced APIs live in their owning subpackages, and the facade carries no
 forwarding aliases to them.
@@ -363,8 +366,7 @@ def __getattr__(name: str) -> Any:
     return value
 ```
 
-Two properties are load-bearing (the lazy-pure-facade rule), and both are
-machine-pinned in `tests/test_public_api.py`:
+Two properties define the facade, and both are pinned in `tests/test_public_api.py`:
 
 - **`import zicato` imports only `zicato`.** The module body imports nothing but
   `importlib` and `typing`; every export resolves lazily on first touch. This is
@@ -477,23 +479,31 @@ hatch build hook compiles the Rust crate and bundles the binary at
 # hatch_build.py — SupervisorBinaryBuildHook.initialize (tail)
         dest = root / _BUNDLED_REL
         dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(built, dest)
+        dest.write_bytes(payload)
         dest.chmod(0o755)
-        ...
-        # force-include guarantees the binary lands in the wheel even
-        # though it is generated (not VCS-tracked). The wheel path is
-        # zicato/_bin/zicato-supervisor (src/ prefix stripped).
+
         artifact = str(dest)
+        build_data["pure_python"] = False
+        build_data["infer_tag"] = True
         build_data.setdefault("force_include", {})[artifact] = "zicato/_bin/zicato-supervisor"
+        build_data.setdefault("artifacts", []).append(artifact)
 ```
 
-The hook is **best-effort by design**: no `cargo`, or a missing crate (e.g. an
-sdist that excluded `crates/`), logs a warning and leaves the wheel without the
-binary. The CLI's `_resolve_supervisor_binary` then falls back to the
-`--supervisor-binary` flag, the system `PATH`, and — for checkouts — the
-workspace `target/release/` walk. The sdist carries the crate source
-(`crates`, `Cargo.toml`, `Cargo.lock`, `hatch_build.py`) so a downstream wheel
-build can still run the hook.
+A wheel build **requires the Rust toolchain**: a missing
+`crates/supervisor/Cargo.toml` or no `cargo` on `PATH` raises and fails the
+build, so no wheel is published without its supervisor. Source and editable
+installs therefore require Rust. The hook keys a verified executable cache
+(`.supervisor-cache/`) by `build_identity(root)`, a hash of the crate sources,
+toolchain, host, release profile, and build environment, and reuses the cached
+binary only when both the identity and its SHA-256 digest match. The build also
+refuses a cross-compilation target and inputs that change during preparation.
+
+At run time `_resolve_supervisor_binary` in `cli/commands/evolve.py` resolves
+the binary in this order: the `--supervisor-binary` invocation setting; the
+fresher of the bundled `_bin` copy and a checkout's `target/release/` build; the
+system `PATH`; and the checkout release build as a last resort. The sdist
+carries the crate source (`crates`, `Cargo.toml`, `Cargo.lock`,
+`hatch_build.py`) so a downstream wheel build can run the hook.
 
 > ⚠️ TRAP — the supervisor binary is generated rather than VCS-tracked, so it
 > must be `force_include`d (a package glob will not match it) or it never lands

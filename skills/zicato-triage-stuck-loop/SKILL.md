@@ -1,6 +1,6 @@
 ---
 name: zicato-triage-stuck-loop
-description: Diagnose a zicato evolve loop that is not improving — many consecutive rejects or a flat scalar. Use when the loop runs but stops promoting; this is a decision tree that distinguishes a degenerate evaluation from a too-hard board, an over-constrained Forbidden set, or a stuck proposer, and prescribes the contract edit.
+description: Diagnose a zicato evolve loop that is not improving — many consecutive rejects or a flat scalar. Use when the loop runs but stops promoting; this is a decision tree that distinguishes a degenerate evaluation from a too-hard board, an over-constrained `Forbidden edits` list, or a stuck proposer, and prescribes the contract edit.
 ---
 
 # zicato triage stuck-loop (the loop runs but does not improve)
@@ -36,7 +36,7 @@ pre-flight, and infra detectors also file findings):
 
 | Detector | Fires when | Points you at |
 |---|---|---|
-| Degenerate scoring | The last `scoring_window` tournaments ALL came back with `\|Δscalar\| ≤ scoring_epsilon` (`critical` — the only detector that trips the breaker below) | The scoring contract or the board — there is no signal to optimise. |
+| Degenerate scoring | The last `scoring_window` tournaments ALL came back with `\|Δscalar\| ≤ scoring_epsilon` (`critical`, so it counts toward the breaker below) | The scoring contract or the board — there is no signal to optimise. |
 | Non-differentiating board entries | An entry's `drift_loss` is identical across every generation it ran under (`warning`, one finding per entry) | Those entries — they add cost but no discrimination. |
 | Flat drift signal | The `drift:`-namespace metric count is zero across every run in the epoch (`warning`) | Telemetry / expectations — the harness emits no usable drift. |
 | No expectations | Board entries carry no Predicate/Rubric | The board — drift-loss-only is weak signal (severity `info`). |
@@ -51,9 +51,10 @@ to Step 1.
 Two stops to keep straight when the loop ended early on its own.
 `--max-consecutive-rejections` (default 3) is the unproductive-loop stop.
 Separately, the orchestrator's default-on breaker stops the loop with reason
-`degenerate_health` after **2 consecutive rounds** whose health came back
-`critical` — `warning`-only rounds never trip it, and there is no CLI flag for
-it. A refuse-recommended contract pre-flight is not a third stop under the
+`degenerate_health` after **2 consecutive rounds** whose health carried any
+`critical` finding (degenerate scoring, a critical generalization gap, a
+promoted placebo) — `warning`-only rounds never trip it, and there is no CLI
+flag for it. A refuse-recommended contract pre-flight is not a third stop under the
 defaults: it files `preflight_signal_below_floor` at `warning` under
 `runtime.preflight_gate = "warn"` and so cannot halt anything; only
 `preflight_gate = "refuse"` grades it `critical`, and that mode refuses at
@@ -87,14 +88,14 @@ Confirm with read-only SQL (see `zicato-index-ops`):
 -- Is the scalar actually flat across generations?
 sqlite3 -readonly .zicato/index.db "
   SELECT child_generation_id, decision, delta_scalar, rejection_reason
-  FROM tournaments WHERE epoch_id='e3' ORDER BY ran_at;"
+  FROM tournaments WHERE epoch_id='<epoch_id>' ORDER BY ran_at;"
 
 -- Which entries never vary across generations (non-differentiating)?
 sqlite3 -readonly .zicato/index.db "
   SELECT entry_id,
          COUNT(DISTINCT ROUND(drift_loss,4)) AS distinct_losses,
          COUNT(*) AS runs
-  FROM loss_profiles WHERE epoch_id='e3'
+  FROM loss_profiles WHERE epoch_id='<epoch_id>'
   GROUP BY entry_id ORDER BY distinct_losses ASC;"
 ```
 
@@ -107,7 +108,7 @@ demand a leap no single small mutation can clear.
 sqlite3 -readonly .zicato/index.db "
   SELECT child_generation_id, decision, parent_scalar, child_scalar,
          delta_scalar, rejection_reason
-  FROM tournaments WHERE epoch_id='e3' AND decision='rejected' ORDER BY ran_at;"
+  FROM tournaments WHERE epoch_id='<epoch_id>' AND decision='rejected' ORDER BY ran_at;"
 ```
 
 If rejections cite pass-rate monotonicity failures on a few brutal entries,
@@ -115,58 +116,62 @@ split the goal into smaller epochs, or relax/stage the hardest board entries so
 incremental progress can clear the gate. This is a contract edit → it rolls the
 epoch.
 
-### C. Over-constrained `## Forbidden` → the proposer has no room to move
+### C. Over-constrained `## Forbidden edits` → the proposer has no room to move
 If the patterns point at a mutation point the brief forbids, the proposer is
 boxed in: it can see the problem but cannot touch the fix. Check what is allowed
 vs forbidden:
 
 ```sh
-$Z mutations --show preview      # the full mutable surface
-# then read the epoch's brief.md and compare its `## Forbidden` list to where
+$Z inspect mutations --show preview      # the full mutable surface
+# then read the epoch's brief.md and compare its `## Forbidden edits` list to where
 # loss concentrates (Step 0 / index hot-metrics query).
 ```
 
-If the high-loss mutation point is in `## Forbidden`, the remedy is an operator
+If the high-loss mutation point is in `## Forbidden edits`, the remedy is an operator
 decision: either un-forbid it in `brief.md` (a contract/steering edit) or accept
-that this loss is out of scope for the epoch. Removing an id from `## Forbidden`
+that this loss is out of scope for the epoch. Removing an id from `## Forbidden edits`
 changes the mutation contract and rolls the epoch.
 
 ### D. Proposer stuck in a rut → re-steer via the brief
-`health` is ok, the board discriminates, `## Forbidden` is reasonable — but the
+`health` is ok, the board discriminates, `## Forbidden edits` is reasonable — but the
 proposer keeps proposing near-identical changes to the same point and they keep
 rejecting. Look for repetition:
 
 ```sql
 sqlite3 -readonly .zicato/index.db "
   SELECT generation_id, hypothesis_core_idea, tournament_decision
-  FROM experiments WHERE epoch_id='e3' ORDER BY generation_id;"
+  FROM experiments WHERE epoch_id='<epoch_id>' ORDER BY generation_id;"
 
 sqlite3 -readonly .zicato/index.db "
-  SELECT mutation_id, COUNT(*) n FROM patches WHERE epoch_id='e3'
+  SELECT mutation_id, COUNT(*) n FROM patches WHERE epoch_id='<epoch_id>'
   GROUP BY mutation_id ORDER BY n DESC;"
 ```
 
 If the same `mutation_id` / `core_idea` recurs across rejects, edit `brief.md`
-to steer the proposer elsewhere (the brief is steering rather than contract — text
-edits that do **not** change `## Forbidden` do not roll the epoch). Point it at
-an under-explored mutation point or a different drift kind, then design the next
-move with `zicato-design-experiment`.
+to steer the proposer elsewhere. The brief is part of the evaluation contract,
+so any edit that survives canonicalization (anything beyond line endings,
+trailing whitespace, and leading or trailing blank lines) rolls the epoch on the next `evolve`. Point it at an under-explored
+mutation point or a different drift kind, then design the next move with
+`zicato-design-experiment`. Raising `proposer_quality.best_of_n` in
+`scoring.json` (more candidates per proposal) is the other lever; it also rolls
+the epoch.
 
 ## Quick reference
 
 1. `zicato health` — degenerate evaluation? (the #1 cause)
 2. Flat/zero/dead-entry signal → fix the **board/scoring** contract (rolls epoch).
 3. Real rejects, board too hard → relax the **goal/board** (rolls epoch).
-4. Fix is forbidden → revisit `## Forbidden` in **brief.md** (rolls epoch).
-5. Proposer repeating itself → re-steer **brief.md** text (does not roll epoch).
+4. Fix is forbidden → revisit `## Forbidden edits` in **brief.md** (rolls epoch).
+5. Proposer repeating itself → re-steer **brief.md** text (rolls epoch).
 
 ## See also
 
 - `docs/design/LOOP-HEALTH.md` — the detectors, severities, `LoopHealth` report.
 - `docs/design/SCORING.md` — the promotion gate (drift margin + pass-rate
   monotonicity) the rejects are failing.
-- `docs/design/EPOCHS-AND-JOURNALING.md` — contract = board + brief + scoring;
-  what rolls an epoch and what does not (§ on the proposer brief / `## Forbidden`).
+- `docs/design/EPOCHS-AND-JOURNALING.md` — the contract (board + brief +
+  scoring + system-under-test identity + proposer); what rolls an epoch and
+  what does not.
 - sibling skills: `zicato-index-ops` (the queries), `zicato-design-experiment`
   (the next hypothesis once signal returns), `zicato-step-loop` (drive a manual
   round to inspect one rejection).

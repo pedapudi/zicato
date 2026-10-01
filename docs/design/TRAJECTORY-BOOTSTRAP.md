@@ -4,7 +4,7 @@
 > a directory of foreign agent traces into drafted board entries: the trace
 > importer and the imported-trace miner source (§2 to §4 and §9), the
 > bootstrap synthesis tier that drafts an entry from an episode (§5), and the
-> `reflect suggest --from-trajectories` wiring that runs the chain and
+> `zicato inspect reflection suggest --from-trajectories` wiring that runs the chain and
 > persists its output (§6). The seam signatures the three call across are
 > stated once, in §7. Everything is recommend-only: nothing here auto-edits a
 > sealed contract. Suggested artifacts and their evidence remain reports for
@@ -40,9 +40,9 @@ synthesis needs a reign to mine; bootstrap needs only a folder of traces.
 
 ### 1.1 The goldfive-optional principle (load-bearing)
 
-The operator's standing principle, verbatim:
+The design principle:
 
-> **In general, goldfive should be optional for zicato.**
+> **goldfive is optional for zicato.**
 
 Foreign **ADK-style** event logs and **bare transcripts** are first-class
 equals of goldfive traces here rather than a degraded fallback. The importer
@@ -83,18 +83,17 @@ routes it to that dialect's producer.
 
 | Format | Reducer (verified) | Shape |
 |---|---|---|
-| **goldfive** `events.jsonl` | `reducer._goldfive_signals` (`reducer.py:827`) | goldfive `Event` dicts — envelope keys (`event_id` / `run_id` / `sequence` / `emitted_at` / `session_id`, or their camelCase twins) + exactly one **nested-dict** payload under a oneof key (`drift_detected`, `run_started`, `goldfive_llm_call_end`, `judgement_emitted`, …). Verified against `reducer._payload` (`reducer.py:255`). |
-| **adk_events** `events.jsonl` | `dialects.reduce_adk_events` (`dialects.py:288`) | flat objects, one per line, each a `type` (aliases `event_type` / `kind`) drawn from the ADK vocabulary: `tool_call`, `tool_response`, `agent_transfer` (`transfer`), `error` (`exception`), `model_usage`, `agent_message`, `user_message`, `run_start`. Verified against the §3.2 signal table + `dialects._event_type`. |
-| **transcript** (the floor) | `dialects.reduce_transcript` (`dialects.py:402`) | flat objects with a `role` (`user` / `assistant` / `agent` / `human` / `model` / `system`) + a text field (`content` / `text` / `message`), **no** `type`. Verified against `dialects._transcript_lines` / `_message_role`. |
+| **goldfive** `events.jsonl` | `reducer._goldfive_signals` | goldfive `Event` dicts — envelope keys (`event_id` / `run_id` / `sequence` / `emitted_at` / `session_id`, or their camelCase twins) + a payload case the shared event reader resolves (`drift_detected`, `run_started`, `goldfive_llm_call_end`, `judgement_emitted`, …; [TELEMETRY-DIALECTS.md §1](TELEMETRY-DIALECTS.md#1-one-reader-under-every-dialect)). |
+| **adk_events** `events.jsonl` | `dialects.reduce_adk_events` | flat objects, one per line, each a `type` (aliases `event_type` / `kind`) drawn from the ADK vocabulary: `tool_call`, `tool_response`, `agent_transfer` (`transfer`), `error` (`exception`), `model_usage`, `agent_message`, `user_message`, `run_start`. Matches the signal table of TELEMETRY-DIALECTS.md §4.2 and `dialects._event_type`. |
+| **transcript** (the floor) | `dialects.reduce_transcript` | flat objects with a `role` (`user` / `assistant` / `agent` / `human` / `model` / `system`) + a text field (`content` / `text` / `message`), **no** `type`. Matches `dialects._transcript_lines` / `_message_role`. |
 
 ### 2.1 The synthetic-placeholder finding (verified)
 
 Every dialect producer has the signature `(events_jsonl_path, entry:
 BoardEntry) -> DialectSignals`, but **none of the three reads `entry` in its
-body** — verified by inspection: `reduce_adk_events` (`dialects.py:288`),
-`reduce_transcript` (`dialects.py:402`), and `_goldfive_signals`
-(`reducer.py:827`) reference only `events_jsonl_path`; `entry` is present
-solely to satisfy the `DialectReducer` Protocol (`dialects.py:117`). A foreign
+body**: `reduce_adk_events`, `reduce_transcript`, and `_goldfive_signals`
+reference only `events_jsonl_path`; `entry` is present solely to satisfy
+the `DialectReducer` Protocol. A foreign
 trace has no board entry, so the importer satisfies the parameter with a
 **synthetic placeholder** — `BoardEntry(id="__imported__", kind="single_turn",
 wall_clock_budget_seconds=1, input="")` — which the producer never inspects.
@@ -120,8 +119,8 @@ skipped — never raised, mirroring `dialects._iter_json_objects`). Classify
 each parseable object by its **strongest signal**:
 
 - **goldfive-signal** — carries a goldfive envelope marker key (`event_id` /
-  `eventId` / `sequence` / `emitted_at` / `emittedAt`) **and** exactly one
-  nested-dict payload value (the `_payload` oneof shape).
+  `sequence` / `emitted_at`, in either spelling) **and** a payload case the
+  shared event reader resolves.
 - **adk-behavioral-signal** — its `type` / `event_type` / `kind` is a
   *behavioral* ADK event: `tool_call`, `tool_response`, `agent_transfer`,
   `transfer`, `error`, `exception`, `model_usage`, `run_start`. (The message
@@ -148,7 +147,7 @@ first — resolves every ambiguity deterministically):
 `{"type":"tool_call",…}` line sniffs as **adk_events**: any behavioral event
 present wins over the transcript floor. A file of pure role/content lines (no
 behavioral event, no goldfive envelope) sniffs as **transcript**. This is
-deterministic and documented; the KAT fixtures (§9) pin both the mixed
+deterministic and documented; the known-answer fixtures (§9) pin both the mixed
 (ambiguous) file and the pure-transcript file.
 
 Sniffing is pure over the file's parseable lines and independent of line
@@ -194,7 +193,7 @@ class ImportedTrace:
 ### 3.2 Persisted layout (suggest-minted-dir precedent)
 
 The importer's in-memory function needs **no workspace** (goldfive-optional,
-§1.1). When a `reflect suggest --from-trajectories` run persists (§6), the
+§1.1). When a `zicato inspect reflection suggest --from-trajectories` run persists (§6), the
 records land under the **mint-mode reflection dir** eval-synthesis already
 carved (EVAL-SYNTHESIS.md §6 "Mint-mode reflection dirs"):
 
@@ -210,31 +209,33 @@ records carry **no wall-clock field** and the ids are content hashes, so the
 persisted layout is byte-stable across re-imports; GC of suggest-minted dirs
 stays deferred (EVAL-SYNTHESIS.md §8), inherited unchanged.
 
-## 4. The imported-trace miner source (this branch)
+## 4. The imported-trace miner source
 
-`reflection/mining.py` gains a **signal-driven** episode source over imported
+`reflection/mining.py` provides a **signal-driven** episode source over imported
 traces — **no `pass_fail` / judge dependence** (a foreign trace has neither an
 expectation nor an adjudicated corpus). It reads only the reduced
 `DialectSignals`, so it works identically for all three dialects (a
 `transcript` trace simply yields no drift-derived episodes — the honest
-zero-drift stance, TELEMETRY-DIALECTS.md §4.1).
+zero-drift stance, TELEMETRY-DIALECTS.md §5.1).
 
 ### 4.1 The signal-episode vocabulary (from the ADK drift vocabulary)
 
 Each imported trace yields zero or more episodes, one per adverse signal
-present. Bound to the §3.2 ADK drift vocabulary + the cost/failure counts:
+present. Bound to the ADK drift vocabulary (TELEMETRY-DIALECTS.md §4.2) +
+the cost/failure counts. In the table, `drift(k)` is the count of the
+`drift:k` row in `metric_counts`:
 
 | Signal episode | `DialectSignals` binding (verified) | Severity | Seeds |
 |---|---|---|---|
-| **error cascade** | `drift_counts[("tool_error","critical")]` ≥ `MIN_ERROR_CASCADE`, or `task_failure_ratio` ≥ `HIGH_FAILURE_RATIO` | high | bootstrap entry (absence: no tool-error cascade) |
+| **error cascade** | `drift(tool_error)` ≥ `MIN_ERROR_CASCADE`, or `task_failure_ratio` ≥ `HIGH_FAILURE_RATIO` | high | bootstrap entry (absence: no tool-error cascade) |
 | **abort pattern** | `task_started > 0 and task_failed == task_started` (every observed tool failed) | high | bootstrap entry (absence: completes without total failure) |
-| **retry loop** | `drift_counts[("looping_tool_call","warning")]` ≥ `MIN_RETRY_LOOP` | mid | bootstrap entry (absence: no retry loop) |
+| **retry loop** | `drift(looping_tool_call)` ≥ `MIN_RETRY_LOOP` | mid | bootstrap entry (absence: no retry loop) |
 | **budget blowout** | `token_count` ≥ `MAX_TOKENS` or `llm_call_count` ≥ `MAX_LLM_CALLS` | mid | bootstrap entry (absence: completes under a cost budget) |
-| **transfer churn** | `drift_counts[("agent_transfer","info")]` ≥ `MIN_TRANSFER_CHURN` | low | bootstrap entry (absence: bounded transfers) |
+| **transfer churn** | `drift(agent_transfer)` ≥ `MIN_TRANSFER_CHURN` | low | bootstrap entry (absence: bounded transfers) |
 | **behavioral** | no adverse signal **and** a substantive conversation (`len(user_turns) ≥ 1` and `agent_text_chars > 0`) | low | LLM-drafted rubric/predicate entry (aux seam) |
 
 The drift kinds (`tool_error` / `looping_tool_call` / `agent_transfer`) are
-the kinds `reduce_adk_events` emits (TELEMETRY-DIALECTS.md §3.2), so
+the kinds `reduce_adk_events` emits (TELEMETRY-DIALECTS.md §4.2), so
 the binding is to the shape the real reducer produces. Thresholds are
 module-level constants (documented, tunable).
 
@@ -242,19 +243,21 @@ module-level constants (documented, tunable).
 
 Each episode is the **existing** `MinedEpisode` (verified fields:
 `episode_id`, `episode_type`, `subject`, `summary`, `severity_rank`,
-`recency_key`, `coverage_key`, `suggestion_hint`, `evidence`, plus the §4
-provenance fields — `mining.py:113`). Imported episodes set:
+`recency_key`, `coverage_key`, `suggestion_hint`, `evidence`, plus the
+provenance fields `source_refs` and `source_lineage_ids`). Imported
+episodes set:
 
 - `episode_type` — `EPISODE_IMPORTED_SIGNAL` (the signal rows) or
   `EPISODE_IMPORTED_BEHAVIORAL` (the behavioral row);
 - `subject` — the `trace_id`;
-- `suggestion_hint` — **new**: `HINT_BOOTSTRAP_ENTRY` (signal episodes,
+- `suggestion_hint` — `HINT_BOOTSTRAP_ENTRY` (signal episodes,
   mechanical) or `HINT_BOOTSTRAP_RUBRIC` (behavioral, LLM-drafted);
 - `recency_key` — `0` (a foreign trace has no generation lineage);
 - `coverage_key` — the signal magnitude (the cascade / loop / churn count), so
   a bigger cascade outranks a smaller one on the tiebreak;
-- `evidence` — `{signal_kind, dialect, source_file, count, is_multi_turn,
-  n_user_turns, n_agent_turns, opening_user_turn}` — everything the bootstrap
+- `evidence` — `{signal_kind, dialect, source_file, trace_id, is_multi_turn,
+  n_user_turns, n_agent_turns, opening_user_turn}` plus the signal's own
+  counts — everything the bootstrap
   synthesiser (§5) needs to draft an entry, plus the reconstruction pointer;
 - `source_refs` — `(source_file, signal_kind)` (foreign provenance);
 - `source_lineage_ids` — `()`.
@@ -266,7 +269,7 @@ kinds on one trace never collide. Episodes fold into `mine_episodes`'s
 goldfive-optional path) the order reduces to severity → coverage → id — total
 and byte-stable.
 
-`mine_episodes` gains a keyword-only `imported_traces` parameter (§7); it
+`mine_episodes` takes a keyword-only `imported_traces` parameter (§7); it
 mines imported episodes **first and unconditionally** (so a cold / absent
 epoch never suppresses them), then folds in the workspace episodes when an
 epoch resolves, then ranks the union.
@@ -274,9 +277,10 @@ epoch resolves, then ranks the union.
 ## 5. The bootstrap synthesis tier
 
 The bootstrap synthesis tier turns a bootstrap episode into a drafted
-board entry, plugged into the **existing** `synthesis.py` routing by the new
+board entry, plugged into the **existing** `synthesis.py` routing by the bootstrap
 hints (§4.2). The internal `Suggestion` → surface `Suggestion` bridge
-(`synthesis.py:864` `synthesize`) is reused verbatim; only the drafting is new.
+(`synthesize` in `synthesis.py`) is shared with eval synthesis; only the
+drafting is specific to this tier.
 
 ### 5.1 Entry INPUT — reconstructed from the trace
 
@@ -296,9 +300,9 @@ hints (§4.2). The internal `Suggestion` → surface `Suggestion` bridge
   the user's goal">)`, `max_turns = len(user_turns) + 1`. The recorded user
   side becomes the persona brief rather than a verbatim script, because a
   `multi_turn_scripted` entry would over-fit the exact wording while the
-  emulated kind carries the *intent*. (Verified entry/persona shape: `UserPersona`
-  `board.py:190`, `multi_turn_emulated` requires `user_persona` + `max_turns`,
-  BOARD-FORMAT.md §2.3.)
+  emulated kind carries the *intent*. (`UserPersona` is defined in
+  `src/zicato/core/board.py`; `multi_turn_emulated` requires `user_persona` +
+  `max_turns`, BOARD-FORMAT.md §2.3.)
 
 ### 5.2 EXPECTATIONS — drafted, honest about what BOARD-FORMAT can express
 
@@ -322,12 +326,12 @@ episode honestly:
 - **Behavioral episodes** → an **LLM-drafted** `rubric` or `predicate` behind
   the **aux seam** (`CallLLM`, never the target callable — EVAL-SYNTHESIS.md
   §7), tolerant-parsed and loader-validated the way
-  `synthesis._coverage_entry_suggestion` already does (`synthesis.py:620`). A
+  `synthesis._coverage_entry_suggestion` does. A
   parse/validation failure drops that one suggestion with a logged reason.
 
 **All artifacts loader-round-tripped.** Every drafted entry passes
-`synthesis._entry_reject_reason` (real `save_board` / `load_board` round-trip,
-`synthesis.py:246`) and every drafted judge `synthesis._judge_reject_reason`
+`synthesis._entry_reject_reason` (a real `save_board` / `load_board`
+round-trip) and every drafted judge `synthesis._judge_reject_reason`
 before it surfaces — a draft the loader would reject never ships.
 
 ### 5.3 Provenance + target-slice policy
@@ -388,25 +392,25 @@ rationale of every bootstrap entry** (one sentence, `_SELF_TRACE_CAVEAT`), so an
 operator reading the suggestion sees the warning before promoting it out
 of train.
 
-## 6. The `reflect suggest --from-trajectories` wiring
+## 6. The `zicato inspect reflection suggest --from-trajectories` wiring
 
 The CLI calls the shipped synthesis function directly. Imported traces are
 passed through its `imported_traces` argument; ordinary workspace analysis
 uses the empty default. Optional validation calls the shipped measurement
 function only when `--probe` is requested.
 
-- **`reflect suggest --from-trajectories <dir>`** — a new flag on the existing
-  `reflect suggest` mode (`cli/commands/reflect.py`), composing with the
-  existing flags (`--probe` / `--allow-llm` / `--epoch` / `--json`). When set,
-  the CLI:
+- **`zicato inspect reflection suggest --from-trajectories <dir>`** — a flag
+  on the `suggest` subcommand (`cli/commands/reflect.py`), composing with its
+  other flags (`--probe` / `--allow-llm` / `--epoch` / `--reflection` /
+  `--json`). When set, the CLI:
   1. `import_trajectories(<dir>)` → `list[ImportedTrace]` (§7); persists them
      under the minted reflection dir (`write_imported_traces`);
   2. mines **both** sources when both exist — `mine_episodes(paths, epoch,
      imported_traces=traces)` folds imported + workspace episodes into one
      ranked list (§4.2). With no epoch / empty workspace the imported episodes
      stand alone (the goldfive-optional path);
-  3. synthesises via the existing `synthesize(...)` seam extended with
-     `imported_traces=` (§7) so the bootstrap tier can reach the
+  3. synthesises via `synthesize(..., imported_traces=...)` (§7) so the
+     bootstrap tier can reach the
      reconstructions; admission unchanged (foreign provenance rendered, the
      leakage check trivially green per §5.3);
   4. persists `suggestions.json` + the `imported/` records; renders the table.
@@ -480,7 +484,7 @@ def dialect_producer(dialect: str) -> DialectReducer: ...
 **The miner source — `src/zicato/reflection/mining.py`:**
 
 ```python
-# new episode-type + hint constants
+# episode-type + hint constants
 EPISODE_IMPORTED_SIGNAL: str = "imported_signal"
 EPISODE_IMPORTED_BEHAVIORAL: str = "imported_behavioral"
 HINT_BOOTSTRAP_ENTRY: str = "bootstrap_entry"
@@ -509,7 +513,7 @@ def synthesize_bootstrap_suggestions(
     aux_call_llm: CallLLM | None = None,
 ) -> list["Suggestion"]: ...          # internal synthesis.Suggestion objects
 
-# and the sync surface seam extended (default keeps the existing callers valid):
+# and the synthesis entry point, whose imported_traces default is empty:
 def synthesize(
     episodes: Sequence[MinedEpisode],
     *,
@@ -520,8 +524,9 @@ def synthesize(
 ) -> list[Any]: ...                   # surface Suggestion objects (unchanged shape)
 ```
 
-**The surface `Suggestion` a bootstrap entry produces** (the existing
-`reflection.suggestions.Suggestion`, fields verbatim — `suggestions.py:72`):
+**The surface `Suggestion` a bootstrap entry produces** (the
+`reflection.suggestions.Suggestion` record; it also carries `evidence` and
+an optional `target_entry_id`, which a bootstrap entry leaves unset):
 
 ```python
 Suggestion(
@@ -550,7 +555,7 @@ miner source is the `imported_trace_episodes` addition to
 `reducer.dialect_producer` accessor exposes the dialect producers to both. The
 bootstrap synthesis tier lives in `reflection/synthesis.py` alongside the
 `bootstrap_predicates` library, and the CLI wiring is the
-`--from-trajectories` flag on `reflect suggest`.
+`--from-trajectories` flag on `zicato inspect reflection suggest`.
 
 ### 8.1 The prompt-injection surface
 
@@ -568,7 +573,7 @@ prompt-injection surface and is disclosed here explicitly:
 - **emulator persona** (`goal` / `constraints`) and the **aux rubric prompt** —
   these place recorded text into the *emulator*/*aux* LLM's instruction space at
   eval time. A recorded turn like "SYSTEM OVERRIDE: ignore your persona…" would
-  otherwise land as a live instruction. These are now wrapped in an explicit
+  otherwise land as a live instruction. These are wrapped in an explicit
   **untrusted-data frame** (`_fence_recorded`, `_TRACE_DATA_FRAME`): the recorded
   turns sit inside a clearly-fenced block prefixed by a never-follow
   instruction. Drift-signal emulated entries carry no answer-leak-guard
@@ -610,15 +615,15 @@ trace anonymisation / injection-scrubbing stays deferred (below).
 
 `src/zicato/reflection/trace_import.py` — the importer per §2/§3 (deterministic
 sniffing, dialect-reducer reuse via the synthetic placeholder, the `imported/`
-persisted layout, content-hash ids) + `reflection/mining.py` gains
-`imported_trace_episodes` per §4, folded into `mine_episodes`'s ranking.
+persisted layout, content-hash ids) + `imported_trace_episodes` in
+`reflection/mining.py` per §4, folded into `mine_episodes`'s ranking.
 
 **Fixtures are real-shaped** (the standing rule) — authored as the three
 formats actually look:
 
 - a **goldfive** `events.jsonl` (the envelope+oneof shape copied from the test
   corpus — `run_started` / `drift_detected` / `goldfive_llm_call_end`);
-- an **adk_events** log (the §3.2 vocabulary — `tool_call` / `tool_response`
+- an **adk_events** log (the TELEMETRY-DIALECTS.md §4.2 vocabulary — `tool_call` / `tool_response`
   with error status / `agent_transfer` / `model_usage` / `error`);
 - a **bare transcript** (`{"role":…, "content":…}` lines);
 - a **malformed-line** file (a non-JSON line + a JSON-non-object line, counted

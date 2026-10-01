@@ -15,7 +15,7 @@ table carries no definitions; this file carries no code map. A test
 (`tests/test_vocabulary_glossary.py`) checks that every term the table
 lists resolves to a heading here.
 
-Seven mechanisms carry the word *gate*. Each is listed under its
+Several mechanisms carry the word *gate*. Each is listed under its
 qualified name — promotion gate, champion gate, evidence gate, regression
 gate — and the [Gate](#gate) entry tells them apart. User-facing text
 always uses the qualified name.
@@ -26,10 +26,12 @@ The terms are listed alphabetically.
 
 The protocol implementation that separates zicato from any particular
 agent framework: the `HarnessAdapter`. Zicato talks to the adapter; the
-adapter wraps the system under test. An adapter has two methods zicato
-depends on: `run_entry(entry, sinks=[...])`, which executes one board
-entry, and `mutation_points()`, which lists the source locations the
-proposer may rewrite. The one adapter in the tree
+adapter wraps the system under test. zicato depends on three adapter
+methods: `load(generation_root)`, which returns a runnable harness whose
+`run(entry, sinks, config)` executes one board entry;
+`mutation_points()`, which lists the source locations the proposer may
+rewrite; and `mutable_subpaths(generation_root)`, which narrows the
+editable surface. An optional `on_promote` hook runs after a promotion. The one adapter in the tree
 (`src/zicato/adapters/adk.py`) targets the agent development kit (ADK);
 another framework needs its own implementation of the protocol. See
 [ARCHITECTURE.md §4.1](ARCHITECTURE.md#41-harnessadapter).
@@ -54,7 +56,8 @@ A SQLite database at `.zicato/index.db` that is rebuilt from the files
 in the workspace, so that a question spanning many runs is one query
 rather than a walk over every generation directory. Tables: `epochs`, `generations`,
 `experiments`, `patches`, `runs`, `loss_profiles`, `metric_counts`,
-`tournaments`, `judge_losses`, and the Pareto frontier. The files are the
+`tournaments`, `judge_losses`, `reflections`, `pareto_frontier`,
+`judge_scorecards`, and the ingest bookkeeping table `ingest_cursors`. The files are the
 record; the index holds no fact that is absent from them, so deleting it
 costs only a rebuild (`zicato repair index`). The loop writes to it as
 rounds settle, and the dashboard and the CLI read it. See
@@ -72,12 +75,13 @@ check is rejected; the applier repairs nothing. See
 
 ## Audit trail
 
-The `zicato:emulator` lane in the goldfive event stream. Every emulator
-turn emits a `GoldfiveLLMCallStart` / `GoldfiveLLMCallEnd` pair on this
-lane carrying the persona hash, the transcript characters in, the
-emulator's output, and the model identity. An operator replays the lane
-in harmonograf to see what the simulated user said during a run. See
-[EMULATOR.md §8](EMULATOR.md#8-audit-trail-the-zicatoemulator-lane).
+The per-turn record of the multi-turn user emulator: one
+`EmulatorTurnAudit` per turn carrying the persona hash, the prompt size,
+the reply size, and the first 200 characters of the reply. A driver built
+with a sink also emits each audit on the `zicato:emulator` lane; the
+tournament path wires no sink, so the audits stay in memory. See
+[EMULATOR.md §8](EMULATOR.md#8-audit-trail-the-zicatoemulator-lane) and
+[TELEMETRY.md §4.2](TELEMETRY.md#42-the-emulators-zicatoemulator-audit-lane).
 
 ## Best-of-N
 
@@ -154,7 +158,7 @@ split. See [OVERFITTING.md §3](OVERFITTING.md#3-train--validation--test-splits-
 The smallest thing the tournament evaluates: one generation run against
 one board entry at one replicate index, written
 `(generation, entry, replicate)`. Under a fixed contract a unit's result
-is immutable, so it is evaluated at most once and its `loss.json` is
+is immutable, so it is evaluated at most once and its loss file is
 reused by every pairing, round, and structure that needs it. That reuse
 is what `zicato evolve --mode fast` means. The scheduler admits units
 per board entry: in full mode a pairing's champion unit and challenger
@@ -172,7 +176,7 @@ named:
 - **Noise-floor calibration.** Evaluating the champion against itself to
   measure the [noise floor](#noise-floor). Run by `zicato board audit`
   and by the epoch-open step the console shows as "calibrating noise
-  floor"; the draws sit at replicate indices 1000 and above.
+  floor"; its measurements carry the `calibration` purpose.
 - **The calibration pillar of board reflection.** Recommendations on
   the promote margin against the noise floor, on loss terms that never
   move the scalar or swamp the rest, and on judges that duplicate one
@@ -187,13 +191,12 @@ See [BOARD-REFLECTION.md](BOARD-REFLECTION.md#what-reflection-measures--four-pil
 ## Challenger
 
 A candidate generation competing to replace the [champion](#champion).
-In the default gauntlet a round mints one challenger; a wider
-[field](#field) mints several, which compete under the epoch's
-[tournament structure](#tournament-structure) until one reaches the
-champion gate. Lineage calls the same generation the *child*, because it
+The default racing structure mints a [field](#field) of four per round,
+which compete until one reaches the champion gate; the gauntlet mints
+one. Lineage calls the same generation the *child*, because it
 was derived from the champion's snapshot. Tournament text says
 challenger; lineage text says child. See
-[SELECTION.md §3](SELECTION.md#3-where-zicato-sits-today-the-king-of-the-hill-gauntlet).
+[SELECTION.md §3](SELECTION.md#3-the-champion-gate-duel-shown-through-the-gauntlet).
 
 ## Champion
 
@@ -203,7 +206,7 @@ from. It is replaced only when a challenger clears the promotion gate,
 and it keeps its birth round when carried into later rounds. On a
 difference plot the champion's score is the reference line. Lineage
 calls the same generation the *parent*. See
-[SELECTION.md §3](SELECTION.md#3-where-zicato-sits-today-the-king-of-the-hill-gauntlet).
+[SELECTION.md §3](SELECTION.md#3-the-champion-gate-duel-shown-through-the-gauntlet).
 
 ## Champion gate
 
@@ -324,18 +327,19 @@ See [SCORING.md §2.1](SCORING.md#21-the-drift-channel).
 
 ## Drift loss
 
-A weighted number per run computed by the reducer from the goldfive
-event stream: a weighted sum over drift counts (by kind, by severity),
-plan revisions, task failure ratio, runtime over budget, and abort. It
-is available for every run, including runs on entries that declare no
-expectation, and it combines with the pass rate into the generation
-[scalar](#scalar). See
-[SCORING.md §2](SCORING.md#2-the-metric-channels).
+A weighted number per run computed by the reducer from the run's drift
+events: `severity_weights × per_kind_weights × count` summed over drift
+kinds, plus `plan_revision_weight × plan_revisions`. Custom-judge drift
+is left out and scored in the `judge:` channel, and task failures and
+aborts are charged in the `failure:` channel. It is available for every
+run, including runs on entries that declare no expectation, and it is
+the `drift:` channel of the generation [scalar](#scalar). See
+[SCORING.md §2.1](SCORING.md#21-the-drift-channel).
 
 ## Epoch
 
 The span during which the [contract](#contract) is frozen. Within an
-epoch the board, the proposer brief's `## Forbidden` list, and the
+epoch the board, the proposer brief's `## Forbidden edits` list, and the
 scoring weights do not change, so the generations inside it are
 directly comparable; comparison across epochs is approximate by design.
 Pattern aggregates reset at the boundary. An epoch is closed by the
@@ -345,35 +349,39 @@ rolled automatically when the contract hash changes. See
 
 ## Evaluation model
 
-The model role for everything zicato itself runs: the proposer, the
-analysis pass, the multi-turn user emulator, and `rubric`-kind outcome
-checks. It is supplied as the `evaluation_call_llm` callable and named
-`evaluation` under `models.roles`. It must differ from the
-[target model](#target-model) by callable identity or by an explicit
-model override; zicato refuses to start when the two are the same. See
+The default model role for everything zicato itself runs: the analysis
+pass, narration, `rubric`-kind outcome checks, and every evaluator-side
+role an operator does not assign separately. The public roles `judge`,
+`adjudicator`, and `user_emulator` inherit it, and the `proposer` role
+(with `proposer_generate` and `proposer_review`) falls back to it. It is
+supplied as the `evaluation_call_llm` callable and named `evaluation`
+under `models.roles`. No evaluator-side role may use the
+[target model](#target-model)'s engine; zicato refuses a configuration
+where one does. See
 [EMULATOR.md §3](EMULATOR.md#3-the-two-callable-rule) and
 [MODEL-CONFIG.md](MODEL-CONFIG.md).
 
 ## Evidence gate
 
-An optional check that holds a crowning promotion until the measured
-[ratings](#rating) separate it from noise. It fits Bradley–Terry
-strengths over the duels already run and returns one of three verdicts
-for the crowning pair:
+A check that holds a crowning promotion until measured
+[ratings](#rating) support it. After the structure crowns a challenger,
+the driver runs fresh confirmation duels of the crowning pair (never the
+selection duels), fits Bradley–Terry strengths over them, and returns
+one of three verdicts:
 
 - `promoted` — the probability that the challenger is stronger meets
-  `promote_confidence_threshold` and the two confidence intervals do not
-  overlap;
-- `deferred` — either condition fails and replicate budget remains, so
-  the driver replicates the least-resolved duel and refits;
-- `inconclusive` — the budget is spent and the intervals still overlap,
-  which lands in the [dead letter](#dead-letter) queue.
+  `promote_confidence_threshold`, the lower bound of the strength
+  difference's interval is positive, and at least three independent
+  confirmation duels resolved;
+- `deferred` — a condition fails and confirmation budget remains, so the
+  driver runs another confirmation duel and refits;
+- `inconclusive` — the budget (`promote_confidence_replicates`, default
+  32) is spent without support, which lands in the
+  [dead letter](#dead-letter) queue.
 
-It is off unless
-`promote_confidence_threshold` is set; the scaffold `zicato init` writes
-enables it with a stated budget. Its confidence intervals separate only
-after an unbroken run of roughly 37 wins, so it protects soundness
-rather than adding power. See
+It is on in the default scoring (`promote_confidence_threshold` 0.8);
+an explicit null or zero threshold turns it off. It protects soundness
+rather than adding power: power comes from replication. See
 [SELECTION-THEORY.md §7.1](SELECTION-THEORY.md#71-bradleyterry) and
 `src/zicato/selection/evidence_gate.py`.
 
@@ -392,10 +400,11 @@ process-check counterpart. See
 ## Experiment
 
 The proposer's output: a mandatory structured [hypothesis](#hypothesis)
-plus the list of [patches](#patch) that test it. After the tournament
-concludes, an [outcome](#outcome) block is appended to the same
-`experiment.json`, so one file records why a candidate was or was not
-promoted. See
+plus the list of [patches](#patch) that test it, stored as
+`experiment.json` with one file per patch. After the tournament
+concludes, the round's settlement record holds the [outcome](#outcome),
+and the experiment reader joins the two, so one record says why a
+candidate was or was not promoted. See
 [EPOCHS-AND-JOURNALING.md §3](EPOCHS-AND-JOURNALING.md#3-the-experiment).
 
 ## Experiment memory
@@ -415,15 +424,20 @@ memory is neither. See [EXPERIMENT-MEMORY.md](EXPERIMENT-MEMORY.md).
 
 ## Experimental block
 
-The `experimental` block of the scoring contract: one flag per feature
-that has no measured case, each off by default. A feature stays in the
-block until a measurement sweep graduates it
+The `experimental` block of the scoring contract: one field per feature
+that has no measured case, each inactive by default. A feature stays in
+the block until a measurement sweep graduates it
 ([CAMPAIGN.md](CAMPAIGN.md)); graduation moves the knob out of the
-block, which rolls the epoch. Its first member,
-`experimental.tournament_structures`, admits the three experimental
-[tournament structures](#tournament-structure). The block is omitted
-from the contract hash while every flag is off, so a contract that names
-none of them keeps its hash, and a flag turned on rolls the epoch. See
+block, which rolls the epoch. Its members are
+`tournament_structures` (admits the three experimental
+[tournament structures](#tournament-structure)),
+`max_generations_per_contract`, `random_baseline_every_n` (the
+[placebo arm](#placebo-arm)), `process_exemplars`, `recombine`,
+`recombine_merge`, `genealogy`, `calibration_feedback`,
+`diff_complexity_weight`, `diff_complexity_ceiling`,
+`cross_epoch_memory`, `standing_rating`, and `resolver`. Like every
+scoring field, the block is serialized in full into the contract hash,
+so turning any member on rolls the epoch. See
 `src/zicato/core/scoring_config.py` (`ExperimentalConfig`).
 
 ## Facet
@@ -472,7 +486,8 @@ rolls the epoch. See
 
 The challengers one round mints and runs together. The gauntlet has a
 field of one; the other structures read `field_size` from the
-`tournament.params` block (default 2). The round runs as named phases
+`tournament.params` block (strategy default 2; the default racing
+contract sets 4). The round runs as named phases
 over every slot of the field: propose and apply, run, gate, decide. Under a
 wider field the [placebo arm](#placebo-arm), when due, enters as one
 extra slot. See
@@ -511,15 +526,15 @@ the word, and text on any user-facing surface uses the qualified name:
 
 ## Gauntlet
 
-The default [tournament structure](#tournament-structure): one challenger
-per round meets the standing champion directly in a single duel that is
-the [champion gate](#champion-gate). A challenger that clears the
-promotion gate becomes the champion; otherwise the champion stands and
-the next round proposes again. Laid beside elitist iterated racing, the
-mature algorithm for this problem, the correspondence is close, which is
-why it is the default. See
+The one-challenger [tournament structure](#tournament-structure): one
+challenger per round meets the standing champion directly in a single
+duel that is the [champion gate](#champion-gate). A challenger that
+clears the promotion gate becomes the champion; otherwise the champion
+stands and the next round proposes again. It is the degenerate case of
+elitist iterated racing, which the default [racing](#racing) structure
+implements with a field. See
 [SELECTION.md §4](SELECTION.md#4-the-reframe-this-is-a-degenerate-elitist-iterated-race)
-and [TOURNAMENT.md §1](TOURNAMENT.md#1-the-gauntlet-structure).
+and [TOURNAMENT.md §1](TOURNAMENT.md#1-the-king-of-the-hill-model).
 
 ## Generation
 
@@ -579,11 +594,13 @@ and [SCORING.md §5](SCORING.md#5-the-tournament-promotion-gate).
 
 ## Hypothesis
 
-The half of an [experiment](#experiment) written before the run. Six
-required fields: `core_idea` (one sentence), `modulating` (the mutation
-points the patches address), `why` (the pattern observation behind it),
-`expected_metric_movements` (direction and magnitude per kind),
-`expected_pass_rate_delta` (a low–high band), and `risks`. A proposal
+The half of an [experiment](#experiment) written before the run. Its
+fields: `core_idea` (one sentence), `modulating` (the mutation points
+the patches address), `why` (the pattern observation behind it),
+`expected_pass_rate_delta` (free text, so the proposer can state its
+uncertainty), `risks`, and `expected_metric_movements` (a direction and a
+magnitude bucket per named metric; the response parser requires at
+least one). A proposal
 whose hypothesis fails the schema is rejected and the proposer is
 re-prompted with the error. The hypothesis is written before the run and
 the outcome after; that pairing is what makes the journal an experiment
@@ -603,11 +620,13 @@ per-command `--instance` selector. See
 
 ## Journal
 
-The running narrative of an epoch, a Markdown file at
-`.zicato/epochs/{epoch}/journal.md`. Every round appends the
-`core_idea`, `drift_loss_delta`, `pass_rate_delta`, and
-`tournament_decision`. There is no `zicato journal` command; open the
-file or view it in the dashboard. See
+The running narrative of an epoch, rendered as Markdown from the
+recorded experiments and the committed round results rather than
+written as a file. Each proposed generation gets a section with its
+`core_idea`, hypothesis, and, once settled, its decision and deltas.
+There is no `zicato journal` command; the dashboard serves it
+(`/api/epoch/{epoch_id}/journal.md`) and the epoch report includes it.
+See
 [EPOCHS-AND-JOURNALING.md §4](EPOCHS-AND-JOURNALING.md#4-the-journal-running).
 
 ## Judge
@@ -639,10 +658,11 @@ holdout entries or per-entry results. Configured by `LadderConfig`. See
 
 The graph of generations across epochs, held in one atomically
 rewritten file at `.zicato/lineage.json`. It records every epoch's id,
-its start and close timestamps, its promoted and rejected generations,
-and the parent generation in the previous epoch. A generation's
-`promoted` field has three states: `true`, `false` (a rejected dead
-branch), and `null` (applied and still competing). Rendered by
+its start and close timestamps, its generations with their parents and
+birth rounds, and the parent generation in the previous epoch. The
+lineage reader applies each committed round result, so a generation's
+`promoted` field reads in three states: `true`, `false` (a rejected dead
+branch), and `null` (applied and not yet settled). Rendered by
 `zicato epoch list`. See
 [EPOCHS-AND-JOURNALING.md §6](EPOCHS-AND-JOURNALING.md#6-lineage).
 
@@ -653,30 +673,35 @@ signal. A board every generation passes completely, or fails completely,
 produces rounds and journal entries while teaching the proposer nothing.
 Findings include `degenerate_scoring`, `non_differentiating_entry`,
 `flat_drift_signal`, `no_expectations`, `dead_judge`, `judge_erroring`,
-`stalled_loop`, `generalization_gap`, `refresh_cadence`, and
-`placebo_promoted`; a sustained critical finding stops the loop.
+`stalled_loop`, `generalization_gap`, `refresh_cadence`,
+`placebo_promoted`, and `infra_outage`; a sustained critical finding
+stops the loop.
 Reported by `zicato health`. See [LOOP-HEALTH.md](LOOP-HEALTH.md).
 
 ## Loss profile
 
-The reducer's typed output for one run. It is written to `loss.json`
-beside the run's `events.jsonl`. It carries identity (entry id, epoch
-id, generation, tags), drift features (counts by kind and severity,
-escalations, plan revisions, task failure ratio), and multi-turn
-features (turn count, per-turn drift counts, stop reason). It also
-carries runtime features (runtime, aborted, abort reason), the derived
-`drift_loss` and `pass_fail`, and a `per_judge_loss` attribution keyed
-by judge name.
+The reducer's typed output for one run (`LossProfile`). It is written
+as a loss file (`loss.{purpose}.r{draw}.json`) beside the run's events
+file. It carries identity (run id, entry id, generation, epoch, and the
+measurement's purpose, draw, and seed), the named metric counts (drift
+kinds by severity, cost, output, schema), plan revisions, the task
+failure ratio, multi-turn features (turn count, memory-failure and
+context-loss counts), runtime and abort facts (the runtime, the
+budget-exceeded and not-completed flags, and the abort cause), the derived `drift_loss`,
+`pass_fail`, and continuous `score`, a `per_judge_loss` attribution
+keyed by judge name, and reuse provenance for cached measurements.
 Scoring and pattern detection read loss profiles and never the raw
 events. See [TELEMETRY.md §3](TELEMETRY.md#3-lossprofile).
 
 ## Mutation point
 
 An annotated source location the proposer may rewrite. It is marked
-with a `# zicato:mutable id="..."` comment for a span or a
-`# zicato:mutable file id="..."` comment for a whole file. It carries a
-stable id, a kind (`span` or `file`), a source location, and the current
-text. `HarnessAdapter.mutation_points()` returns the list. The set of
+with a `# zicato:mutable id="..."` comment for a span (the string literal
+beneath it), a `# zicato:mutable:file id="..."` comment for a whole file,
+or a `# zicato:mutable:code id="..."` … `# zicato:mutable:end` pair for a
+region of code. Text files such as Markdown or YAML carry the same
+markers in their own comment syntax. It carries a stable id, a kind
+(`span`, `file`, or `code`), a source location, and the current text. `HarnessAdapter.mutation_points()` returns the list. The set of
 registered mutable trees is part of the contract; the content of those
 trees is what the loop changes. See
 [MUTATION-SURFACE.md](MUTATION-SURFACE.md).
@@ -696,12 +721,15 @@ and `src/zicato/tournament/calibration.py`.
 
 ## Outcome
 
-The half of an [experiment](#experiment) written after the tournament.
-Appended to the same `experiment.json`, it records the actual drift
-movements, whether each matched the hypothesis, `drift_loss_delta`,
-`pass_rate_delta`, the tournament decision, the rejection reason if any,
-the wall-clock seconds, and the runtime evidence (holdout block,
-train-versus-holdout loss, evidence-gate resolution, `champion_eval_mode`).
+The half of an [experiment](#experiment) written after the tournament
+(`OutcomeRecord`). The round's settlement record holds it, and the
+experiment reader joins it to `experiment.json`. It records when the
+experiment finished (`ran_at`), the actual metric movements and whether
+each matched the hypothesis, `drift_loss_delta`, `pass_rate_delta`,
+`scalar_score_delta`, the tournament decision, the rejection reason if
+any, the structure fields (rank, elimination stage, match record), and
+the runtime evidence (holdout block, train-versus-holdout loss,
+evidence-gate resolution, operator override, `champion_eval_mode`).
 See
 [EPOCHS-AND-JOURNALING.md §3.3](EPOCHS-AND-JOURNALING.md#33-outcome-written-after-the-run).
 
@@ -719,21 +747,24 @@ the console. See [PARETO-FRONTIER.md](PARETO-FRONTIER.md).
 
 ## Patch
 
-One typed rewrite addressed by mutation-point id. It carries
-`mutation_point_id`, which must resolve to a current mutation point, and
-`new_text`. One or more patches make up an experiment's patches list;
+One typed rewrite addressed by mutation-point id. It carries an `id`,
+a `mutation_id` that must resolve to a current mutation point, an `op`
+(`replace`, `set_numeric`, or `set_enum`), the matching new value
+(`new_content`, `new_numeric`, or `new_enum`), and a `rationale`. One or
+more patches make up an experiment's patches list;
 the applier applies them and the validator checks the result before and
 after. See
 [MUTATION-SURFACE.md §6](MUTATION-SURFACE.md#6-validator-constraints).
 
 ## Pattern
 
-A typed aggregation across the loss profiles recorded so far in the
-epoch. Detectors read every `loss.json` and emit `Pattern` objects with
-kinds such as `drift_concentration_by_kind`, `tag_slice_regression`,
-`multi_turn_memory_failure`, and `unmoved_surface`. Patterns reset at
-epoch boundaries because the contract changed, and the proposer reads
-them. See
+A typed aggregation over the champion's training-slice measurements,
+recomputed at the start of each round. Detectors read the loss profiles
+and events and emit `Pattern` objects with kinds such as
+`drift_metric_frequency`, `hot_task`, `hot_agent`,
+`plan_revision_instability`, and `multi_turn_memory_failure`. Patterns
+never carry across an epoch boundary because the contract changed, and
+the proposer reads them. See
 [TELEMETRY.md §6](TELEMETRY.md#6-patterns-what-aggregates-across-runs).
 
 ## Persona
@@ -809,14 +840,15 @@ result the three rules reach. See
 
 The component that reads the patterns, the experiment memory, and the
 proposer brief and emits an [experiment](#experiment). It runs on the
-evaluation model, its output must satisfy a schema, and it is part of
+`proposer` model role (the evaluation model unless assigned
+separately), its output must satisfy a schema, and it is part of
 the contract: a change to the proposer or its skills rolls the epoch.
 See [PROPOSER.md](PROPOSER.md).
 
 ## Proposer brief
 
 The operator-edited Markdown file per epoch that steers the proposer:
-focus areas, style guidance, and a mechanically enforced `## Forbidden`
+focus areas, style guidance, and a mechanically enforced `## Forbidden edits`
 list of mutation-point ids. It is read fresh into the proposer's prompt
 every round. A [rubric](#rubric) grades one entry's output; the brief
 steers the proposer across the epoch. See
@@ -844,8 +876,8 @@ the survivors re-duel on a larger slice. The last survivor meets the
 champion at the champion gate on the full board. Elimination within a
 rung is by rank rather than by the promotion gate; with a measured
 [noise floor](#noise-floor) on the epoch, a candidate whose gap to the cut
-line is below what the rung's sample resolves advances instead. The scaffold `zicato
-init` writes selects racing with a field of four. See
+line is below what the rung's sample resolves advances instead. The
+default scoring selects racing with a field of four. See
 [TOURNAMENT-STRUCTURES.md §3.5](TOURNAMENT-STRUCTURES.md#35-racing-the-endorsed-bracket-shaped-option).
 
 ## Rating
@@ -854,8 +886,8 @@ A strength fitted to each contestant from the duels observed, under the
 Bradley–Terry model, in which the chance that one contestant beats
 another follows the gap between their strengths. The fit also yields a
 confidence interval per contestant; contestants whose intervals overlap
-are the pairs worth running again. The optional `rating: bradley_terry`
-param orders a structure's internal standings by fitted strength; the
+are the pairs worth running again. The optional `experimental.standing_rating: bradley_terry`
+setting orders an experimental structure's internal standings by fitted strength; the
 [evidence gate](#evidence-gate) reads the same fit; and the analytical
 index re-fits it at every ingest for display on the Elo scale
 (`1500 + θ·400/ln 10`), where it never touches a decision. See
@@ -863,7 +895,7 @@ index re-fits it at every ingest for display on the Elo scale
 
 ## Reducer
 
-The function that walks one run's `events.jsonl` and produces one
+The function (`reduce_loss`) that walks one run's events file and produces one
 [loss profile](#loss-profile). It is a function rather than an event
 sink because derivation needs all of a run's events at once, and it is
 testable against fixture streams in isolation. See
@@ -875,8 +907,8 @@ Running the candidate snapshot's own test suite and rejecting the
 candidate on any failure, however strong its scoring signal. A patch can
 improve the drift loss and the pass rate on the board while breaking an
 invariant the board never exercises. Opt-in through
-`regression_gate_enabled`; a snapshot with no `tests/` directory under
-the mutable tree passes with an explanatory summary, and a suite that
+`regression_gate_enabled`; a snapshot with no `tests/` directory passes
+with an explanatory summary, and a suite that
 exceeds its wall-clock limit fails as `timeout`. See
 `src/zicato/tournament/regression.py`.
 
@@ -891,18 +923,21 @@ the elimination brackets, and Swiss, and to 1 for racing; when the
 contract pins none and the epoch carries a measured
 [noise floor](#noise-floor), the count in effect is the smallest one whose
 [detectable effect](#detectable-effect) is within the promote margin, never
-below the default (`src/zicato/selection/replicates.py`). Replicate
-indices are partitioned by purpose so no two purposes share a cache
-slot: tournament duels from 0, noise-floor calibration from 1000, the
-preflight from 2000, screening from 3000, the evidence gate from 4000,
-and board reflection from 5000. See
+below the default (`src/zicato/selection/replicates.py`). Every
+measurement is named by its purpose and a draw number
+(`loss.tournament.r0.json`, `loss.calibration.r2.json`), so no two
+purposes share a cache slot. The purposes are `tournament`,
+`calibration`, `contract_preflight`, `candidate_screen`,
+`evidence_confirmation`, `board_reflection`, and
+`eval_synthesis_admission`. See
 [SELECTION-THEORY.md §2](SELECTION-THEORY.md#2-the-operating-rule-replicate-first-resolve-second).
 
 ## Resolver
 
 What decides an internal leader when pairwise results form a cycle: one
 contestant beats a second, the second beats a third, and the third beats
-the first. Two values of the optional `resolver` param are accepted:
+the first. The optional `experimental.resolver` setting takes two
+non-`none` values, used by the experimental structures:
 `copeland`, which ranks by wins minus losses, and `ranked_pairs`, which
 locks in the most decisive duels first and skips any that would close a
 cycle. Both run behind a Condorcet check (a contestant that beats every
@@ -923,9 +958,9 @@ experiment left without an outcome by a [deferral](#deferral). See
 
 ## Round
 
-One iteration of the loop within an epoch: run the champion against the
-board, analyze, propose, apply, run the field, decide, then journal and
-record the outcome. A round either promotes a challenger (the generation
+One iteration of the loop within an epoch: read the champion's
+measurements, detect patterns, propose, apply, run the field, gate, and
+commit the round's settlement record. A round either promotes a challenger (the generation
 counter advances) or leaves the champion standing, and returns an
 `EvolveRoundOutcome` summary. Round numbers are
 cumulative within an epoch, and re-running `evolve` continues them. A
@@ -957,11 +992,11 @@ See [BOARD-AUTHORING.md §2](BOARD-AUTHORING.md).
 
 ## Run
 
-One execution of the system under test against one board entry,
-captured as one `events.jsonl` file at
-`.zicato/epochs/{epoch}/generations/v{N}/runs/{entry_id}/events.jsonl`.
+One execution of the system under test against one board entry for one
+measurement, captured as one events file at
+`.zicato/epochs/{epoch}/generations/v{N}/runs/{entry_id}/[seed-{n}/]events.{purpose}.r{draw}.jsonl`.
 A run terminates with `goldfive.v1.RunCompleted` or `RunAborted`, after
-which the reducer writes `loss.json` beside the events. One round
+which the reducer writes the matching loss file beside the events. One round
 contains many runs. See
 [TELEMETRY.md §1.1](TELEMETRY.md#11-wiring-per-run).
 
@@ -987,8 +1022,8 @@ epoch. See [RUNTIME.md](RUNTIME.md).
 
 The one comparable number per generation, lower is better. It
 aggregates the generation's loss profiles under the epoch's scoring
-weights into the weighted drift loss plus `pass_weight × (1 −
-mean_score)` plus the namespace terms. Everything that ranks, gates, or plots a difference
+weights into `pass_weight × (1 − mean_score)` plus one signed term per
+metric channel (`drift:`, `judge:`, `failure:`, `cost:`, and the rest). Everything that ranks, gates, or plots a difference
 reads it, which is why the weights that produce it are frozen with the
 board. A comparison reports `delta_scalar`, the challenger's scalar
 minus the champion's, so a negative delta is an improvement. See
@@ -1000,10 +1035,10 @@ The frozen per-epoch weight set that turns loss profiles into the
 [scalar](#scalar) and parameterizes the [promotion gate](#promotion-gate):
 drift weights by kind and severity, `pass_weight`, namespace weights,
 `promote_margin`, the monotonicity flags, and the nested tournament,
-overfitting, proposer-quality, and experiment-memory blocks. Held in
+overfitting, proposer-quality, and experimental blocks. Held in
 `ScoringWeights`, written as the operator's live `scoring.json`, frozen
 into each epoch, and part of the contract. See
-[SCORING.md §2.5](SCORING.md#25-scoring-config-is-part-of-the-frozen-contract).
+[SCORING.md §2.5](SCORING.md#25-scoring-configuration-is-part-of-the-frozen-contract).
 
 ## Screening
 
@@ -1018,14 +1053,15 @@ called *tryouts*. See `src/zicato/epoch/screen.py`.
 
 ## Settlement receipt
 
-The record of a round's complete decision. It is written before the
-first outcome write and kept afterwards with `state: committed`. Settling a
-field crosses several files (the outcomes, the lineage, the champion
-pointer, the journal, the settled bracket), and a process that dies
-between two of them would leave the round half-decided. On restart,
-resume replays every pending receipt in a fixed idempotent order and
-lands in the same place; a field that died before its receipt was
-written is discarded whole. See
+The record of a round's complete decision,
+`epochs/{epoch}/rounds/{round}/field_settlement.json`: every candidate's
+outcome, the primary promoted generation, the settled tournament
+structure, and the gate explanations. It is written with
+`state: pending` and rewritten with `state: committed`, and readers
+derive lineage dispositions, the champion, and the journal from
+committed receipts alone, so one record decides the round. On restart,
+resume completes every pending receipt and its index refresh; a field
+that died before its receipt was written is discarded whole. See
 `src/zicato/evolve/settlement_recovery.py` and
 [RUNTIME.md §4](RUNTIME.md#4-resume-semantics).
 
@@ -1066,7 +1102,7 @@ and [MODEL-CONFIG.md](MODEL-CONFIG.md).
 The comparison of champion against challengers on the board frozen for
 the epoch, ending in a promotion-gate decision. Its shape is the
 [tournament structure](#tournament-structure); its cache discipline is
-[fast mode](#fast-mode). The standalone `zicato tournament` command runs
+[fast mode](#fast-mode). The standalone `zicato tournament run` command runs
 one comparison outside the loop and defaults to `--mode full`. See
 [TOURNAMENT.md](TOURNAMENT.md) and
 [SCORING.md §5](SCORING.md#5-the-tournament-promotion-gate).
@@ -1074,8 +1110,9 @@ one comparison outside the loop and defaults to `--mode full`. See
 ## Tournament structure
 
 The competition an epoch declares in its `tournament` block. Two form
-the default choice: `gauntlet` (the default, one challenger against the
-champion) and `racing` (successive halving over growing board slices).
+the default choice: `racing` (the default, successive halving over
+growing board slices) and `gauntlet` (one challenger against the
+champion).
 Three are experimental and resolve only when the contract also sets
 `experimental.tournament_structures` to `true`: `single_elim` and
 `double_elim` (pair the field, cut the losers, repeat) and `swiss` (every

@@ -1,15 +1,36 @@
 # Reasoning-model semantics in the `call_llm` seam
 
-> **Status: design proposal — not implemented.** This document records a
+> **Status: design proposal, partly implemented.** This document records a
 > reliability failure observed on a served reasoning model and proposes a
 > reasoning-model-aware `call_llm` adapter that any backend opts into. It
 > is companion to
 > [ARCHITECTURE.md §4.10](ARCHITECTURE.md#410-the-two-call_llm-callables)
-> (the two-callable seam), [EMULATOR.md §3](EMULATOR.md#3-the-two-callable-rule)
-> (the collusion rule the seam enforces), and [PROPOSER.md](PROPOSER.md)
-> (the first consumer hurt by the gap). The adapter proposed in §4 is not
-> built; the parse-side mitigations described in §3 are present in the
-> tree.
+> (the two-callable seam) and [EMULATOR.md §3](EMULATOR.md#3-the-two-callable-rule)
+> (the collusion rule the seam enforces).
+>
+> The following shipped, as checked against the code:
+>
+> - The §4 adapter shipped as `zicato.reasoning.reasoning_aware_call_llm`,
+>   specified in [REASONING-AWARE-CALLS.md](REASONING-AWARE-CALLS.md). It
+>   differs from §4 in three ways: the backend returns a structured
+>   `ModelResponse` with separate `content` and `reasoning` fields rather
+>   than the wrapper splitting a stream; the fallback runs only when the
+>   backend reports the answer budget exhausted, and an empty answer from a
+>   completed call raises `EmptyModelContent`; the fallback does not seed
+>   the second call with the first call's reasoning. The budgets live on
+>   `ReasoningCallConfig`; the workspace `models` block carries none.
+> - No zicato call site applies the adapter; an operator opts in by
+>   decorating their own backend.
+> - Proposals do not pass through `CallLLM`. A proposal is a Foe episode
+>   whose model calls go through Foe's own client
+>   ([PROPOSER.md](PROPOSER.md) §2.9), so the proposer parse-retry loop and
+>   its empty-response feedback that §2.3 and §5 describe are absent from
+>   the tree.
+>   The best-of-N critique and merge calls still use the evaluation
+>   `CallLLM`.
+> - The runaway telemetry marker of §6 is not built.
+>
+> Sections 1 to 6 below are the original analysis and proposal.
 
 zicato's most common target is an agent running on a **reasoning model** —
 a model that emits a chain-of-thought scratchpad before it answers. zicato's
@@ -36,9 +57,10 @@ CallLLM = Callable[[str, str, str], Awaitable[str]]
 
 `(system, user, model) -> response`. A `RuntimeConfig` binds **two** of these
 (plus an optional third for judges): `target_call_llm` for the system under test
-and `evaluation_call_llm` for everything zicato itself runs — the proposer, the
-judges, the analysis pass, the multi-turn emulator. The two MUST differ by
-callable identity or explicit `model=` override; that is the collusion guard
+and `evaluation_call_llm` for everything zicato itself runs through this
+seam — the judges, the analysis pass, the multi-turn emulator, and the
+best-of-N critique and merge calls. The two MUST differ by callable identity
+(`assert_distinct_callables`); that is the collusion guard
 ([ARCHITECTURE.md §4.10](ARCHITECTURE.md#410-the-two-call_llm-callables),
 [EMULATOR.md §3](EMULATOR.md#3-the-two-callable-rule)).
 
@@ -56,8 +78,8 @@ A reasoning model does not honour that presumption.
 
 ## 2. The reality the seam ignores
 
-The served test model is a reasoning model (a gemma-class reasoning model,
-served via vLLM). On every call it produces **two** channels rather than
+The served test model is a reasoning model (an open-weight reasoning
+model served through vLLM). On every call it produces **two** channels rather than
 one:
 
 - a `reasoning` channel — the scratchpad / chain-of-thought, the contents of
@@ -110,12 +132,12 @@ named condition, and it does not authorize substituting the scratchpad.
 
 ### 2.3 Why the proposer's retry loop cannot fix it
 
-The proposer already runs a bounded **parse-retry loop**
-(`zicato/proposer/proposer.py`): on a parse failure it re-prompts with a repair
-section that echoes back the malformed output and, when the prior response was
-empty, instructs the model to *"skip all reasoning and emit the JSON object
-immediately"* (`feedback_was_empty`, `zicato/proposer/prompts.py`). That is a
-repair turn for *prompt-shaped* mistakes — a stray fence, prose around the
+When this failure was observed, the proposer ran a bounded
+**parse-retry loop**: on a parse failure it re-prompted with a repair
+section that echoed back the malformed output and, when the prior response
+was empty, instructed the model to *"skip all reasoning and emit the JSON
+object immediately"*. That loop has since been replaced by the Foe episode
+(see the status note). It was a repair turn for *prompt-shaped* mistakes — a stray fence, prose around the
 object, a `<think>` block that leaked into otherwise-good output.
 
 It cannot fix a chat-template runaway. Re-prompting **re-runs the runaway**:
@@ -132,7 +154,7 @@ the seam.
 
 ## 3. The parse-side mitigations in the tree
 
-zicato already handles reasoning text in three places, all of them
+zicato handles reasoning text in the following places, all of them
 **downstream of the seam**, on the parse side. None addresses the runaway:
 
 - **Reasoning-wrapper stripping** (`zicato/proposer/structured.py`,
@@ -140,14 +162,14 @@ zicato already handles reasoning text in three places, all of them
   `<thinking>…</thinking>`, `<reasoning>…</reasoning>` blocks before JSON
   extraction. Salvages output where the answer *survived* alongside the
   scratchpad; useless when `content` is empty.
-- **Empty-vs-malformed discrimination** (`parse_experiment_json`,
-  `zicato/proposer/structured.py`) — distinguishes an empty response
-  ("likely spent its entire output budget on reasoning") from a malformed one,
-  so the retry feedback can target the failure mode.
+- **Salvage of a reasoning-wrapped answer** (`parse_experiment_json`,
+  `zicato/proposer/structured.py`) — the JSON extraction retries on the
+  reasoning-stripped text and, as a last resort, scans for a balanced
+  object, so an answer that survived beside a scratchpad still parses.
 - **The verifier's findings turn** (`foe.Verified`, declared by
   `build_contract` in `zicato/proposer/foe_request.py`) — the repair the
   episode is given when its working copy does not read back as a
-  well-formed patch set, described in §2.3.
+  well-formed patch set ([PROPOSER.md](PROPOSER.md) §2.10).
 
 Those three are the whole of it. Nothing in the **seam** itself — `CallLLM`,
 the runtime binding, the ADK text shim (`zicato/adapters/adk.py`) — knows that
@@ -155,11 +177,10 @@ a reasoning model has two channels, that `content` can be legitimately empty,
 or that a runaway is a recoverable condition with a deterministic remedy. The
 adapters flatten a request to `(system, user)` text and return a single
 string. The channel split happens, or fails to happen, inside the operator's
-own backend, where zicato cannot observe it. **The seam models no reasoning
-channel, and the only working mitigation lives in a workspace-local helper
-script that is not part of zicato.** Every workspace that points zicato at a
-reasoning model has to re-discover and re-implement that helper, or hit the
-runaway in production.
+own backend, where zicato cannot observe it. **Without the opt-in adapter, the seam models no reasoning
+channel.** A workspace that points zicato at a reasoning model either
+decorates its backend with `zicato.reasoning.reasoning_aware_call_llm` or
+handles the runaway in its own backend.
 
 ---
 
@@ -168,7 +189,7 @@ runaway in production.
 Make reasoning-model semantics a first-class, zicato-provided concern: a
 **reasoning-aware wrapper** that takes a raw, channel-emitting backend callable
 and returns a `CallLLM` honouring the existing `(system, user, model) -> str`
-contract — so it drops into either seam (`harness_` / `evaluation_`) with no
+contract — so it drops into either seam (`target_` / `evaluation_`) with no
 change to any caller. The wrapper owns four behaviours.
 
 ### 4.1 Model the two channels explicitly
@@ -234,7 +255,7 @@ Two placements are possible:
    byte-for-byte unchanged for it.
 
 This keeps the seam's signature and its collusion guarantee intact — the wrapper
-preserves callable identity semantics, so `harness_` and `evaluation_` wrapped
+preserves callable identity semantics, so `target_` and `evaluation_` wrapped
 separately remain identity-distinct ([EMULATOR.md §3](EMULATOR.md#3-the-two-callable-rule)).
 
 ---
@@ -247,25 +268,23 @@ and the required output is structured:
 
 - **The proposer** (`zicato/proposer/`) emits an `Experiment` as JSON. Its
   prompts are the largest zicato sends (mutation manifest, loss patterns, prior
-  experiments, telemetry insights), so it is the most runaway-prone consumer and
-  the one observed to fail live. With the wrapper, its parse-repair loop does
-  only its intended job of fixing prompt-shaped mistakes, instead of re-drawing
-  from a runaway distribution without effect. The `feedback_was_empty` path
-  (§3) becomes rare rather than common.
+  experiments, telemetry insights), so it was the most runaway-prone consumer and
+  the one observed to fail live. Its proposal calls now run inside a Foe
+  episode on Foe's own model client, outside this seam; the best-of-N
+  critique and merge calls remain on the seam.
 - **The judges / rubric matchers** (`zicato/board/rubric.py`,
   `zicato/board/matchers.py`) also demand structured verdicts. They run on
   `effective_judge_call_llm` — the evaluation surface or a dedicated
   `judge_call_llm` — and are equally exposed to a reasoning runaway swallowing
   the verdict. The same wrapper, applied to the judge callable, gives them a
   clean `content` to parse.
-- **The default tool-using ADK proposer** ([PROPOSER.md §2](PROPOSER.md))
-  reasons *while it calls tools* on ADK's own `Runner` rather than over the
-  text shim. Its function-calling turns have their own thinking dynamics. The
-  wrapper's budget and fallback argument applies wherever a reasoning model
-  gates structured output behind a `<think>` block, but the integration point
-  on that path is the configured inner model rather than the last-resort
-  `call_llm` shim (`zicato/adapters/adk.py`). That path needs its own scoping
-  note (§6).
+- **A tool-using agent path** — the Foe proposal episode, or an ADK
+  system under test running on its configured inner model — reasons *while it
+  calls tools* rather than over the text shim. The wrapper's budget and
+  fallback argument applies wherever a reasoning model gates structured
+  output behind a `<think>` block, but the integration point on such a path
+  is that runtime's own model client rather than the `call_llm` shim
+  (`zicato/adapters/adk.py`).
 
 The emulator and the free-text analysis pass carry lower risk, because their
 output is prose, so an over-long reasoning trace costs latency rather than
@@ -282,17 +301,15 @@ scratchpad in place of an answer.
 - **Not a streaming redesign.** The contract stays `-> str`; the wrapper is
   free to consume a stream internally to detect `<think>` termination, but the
   public surface is unchanged.
-- **Open: where the budget config lives.** Almost certainly the workspace
-  `models` block alongside endpoint/model/api-key — to be settled with the
-  implementation, kept off `CallLLM`'s signature.
+- **Settled: where the budget config lives.** On the adapter's
+  `ReasoningCallConfig`, off `CallLLM`'s signature and outside the workspace
+  `models` block.
 - **Open: telemetry.** The seam should probably surface a runaway event (budget
   exhausted, fallback taken) into the meta-loop so operators can see how often a
   reasoning model is running away on their prompts — a tuning signal for prompt
-  size and budget. The proposer already emits paired
-  `proposer_call_started` / `proposer_call_completed` events
-  (`zicato/proposer/proposer.py`); a `reasoning_runaway` / `fallback_taken`
-  marker would slot alongside.
-- **Open: ADK inner-model path.** The tool-using proposer of §5 runs on the
-  configured inner model rather than the `call_llm` shim. Whether the wrapper
-  applies there, or whether ADK's own model layer needs the equivalent budget
-  and fallback, needs its own scoping pass.
+  size and budget. The adapter's `observe_attempt` hook reports each attempt's
+  mode, status and token counts to the operator's code; no meta-loop event
+  carries it.
+- **Open: tool-using paths.** A tool-using path (§5) runs on its runtime's
+  own model client rather than the `call_llm` shim. Whether that client
+  needs the equivalent budget and fallback needs its own scoping pass.

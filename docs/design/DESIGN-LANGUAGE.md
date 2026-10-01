@@ -4,8 +4,8 @@ This is the **canonical, reproducible design-language reference** for zicato.
 Everything here is grounded in the live implementation — concrete token names,
 hex values, font stacks, class names and SVG snippets, each traceable to a
 source file. The goal is that someone could build **any** new zicato surface — a
-new dashboard view, an execution-timeline figure, a skin for the terminal user
-interface — purely from this document and reproduce the same look.
+new dashboard view or an execution-timeline figure — purely from this document
+and reproduce the same look.
 
 The system ships in the Console dashboard, the sole front end. The token sheet
 is
@@ -37,8 +37,9 @@ rather than a consumer report. Five principles:
    stroke and drops decoration — no gridlines for their own sake, no 3-D, no
    chart frames, no chartjunk. Just the band, the dot, the rule, the label.
    (Edward Tufte, *The Visual Display of Quantitative Information*.)
-2. **Monospace-forward.** The default voice is all-monospace — a terminal/console
-   aesthetic where data, labels and code read on a fixed advance grid.
+2. **Monospace-forward.** The default typeface is all-monospace (Google Sans
+   Mono) — a terminal/console aesthetic where data, labels and code read on a
+   fixed advance grid.
 3. **A single green accent on a calm ground.** The brand carries **one**
    non-foreground colour, the green plucked-note (`--zicato-accent`); everything
    else is ink on a quiet paper. The good/bad signal colours are earned by data
@@ -85,13 +86,13 @@ identity**. A challenger is not red because it is a challenger; it is red only
 when it regressed or was cut. An unscored / in-flight candidate is *neutral*
 (pending → `--v2-accent`), never `bad` — an undecided outcome must never
 collapse into a rejection, which is what the code guards against
-(`.dn-pill.dn-pending`, `.ezn-edge-neutral` in `console4.css`).
+(`.dn-pill.dn-pending`, `.ezn-edge-neutral` in `console.css`).
 
 The single brand accent is a **separate** token from the structural `--v2-accent`:
 
 | token | value | source |
 | --- | --- | --- |
-| `--zicato-accent` | `#2FA46A` (light grounds) / `#3FB87A` (dark grounds) | `console4.css` L1259–L1270 |
+| `--zicato-accent` | `#2FA46A` (light grounds) / `#3FB87A` (dark grounds) | `console.css`, "the brand accent token" block |
 
 The mark strokes with `currentColor` (so it flips dark/light with the theme) and
 fills the plucked-note dot with `var(--zicato-accent)`. See §8 and
@@ -104,9 +105,9 @@ fills the plucked-note dot with `var(--zicato-accent)`. See §8 and
 (*ground · surface · ink · improve · regress · accent*) plus the theme name. The
 JS preview tuples live in `ui.js` `COLOR_THEMES` as
 `[paper, panel, ink, good, bad, accent]`; the authoritative per-theme palettes
-are the `--v2-*` sets in `console4.css`.
+are the `--v2-*` sets in `console.css`.
 
-Every value below is lifted verbatim from `console4.css`.
+Every value below is lifted verbatim from `console.css`.
 
 #### Monokai (default) — warm dark
 | token | hex | | token | hex |
@@ -122,7 +123,7 @@ Every value below is lifted verbatim from `console4.css`.
 
 #### The full set — ground, improve, regress, accent
 The six-role contract holds in every theme; this table indexes them all (use the
-`COLOR_THEMES` tuples in `ui.js` L47–L64 / the per-theme block in `console4.css`
+`COLOR_THEMES` tuples in `ui.js` / the per-theme block in `console.css`
 for the complete secondary palette). `lineage` = where the palette came from.
 
 | id | ground | `--v2-paper` | `--v2-ink` | `--v2-good` | `--v2-bad` | `--v2-accent` | lineage |
@@ -156,15 +157,17 @@ gogh-co.github.io/Gogh. One principled rule maps each onto the role contract:
 `caution ← yellow`, and `accent ← cyan`. Where a palette's cyan is a
 low-contrast neutral, `accent` takes its blue instead, as in Belafonte and
 Paper. A few accents and cautions sit off
-the source palette for contrast; see the comments in `console.css`
-§"Gogh palettes".
+the source palette for contrast; see the per-theme comments in `console.css`.
 
 ### 2.3 Derived colours
 
 The heatmap ramp is built at draw time from the theme tokens — a cool→hot mix
 `color-mix(in srgb, var(--v2-hm-hot) <pct>%, var(--v2-hm-cool))`, where
 `--v2-hm-cool` defaults to `--v2-accent` and `--v2-hm-hot` to `--v2-bad`
-(`console4.css` L745, `svg.heatmap`). Tinted backgrounds and shadows likewise
+(`console.css`, `svg.heatmap`). The projected-standing tokens
+(`--v2-projected`, `--v2-projected-soft`, `--v2-projected-line`,
+`--v2-projected-fill`, `--v2-projected-op`, `--v2-projected-dash`) derive the
+in-flight "not yet committed" treatment from `--v2-caution` the same way. Tinted backgrounds and shadows likewise
 use `color-mix(in srgb, var(--v2-…) <pct>%, transparent)` so they stay
 theme-correct in light and dark. **Never** introduce a raw hex into a mark or
 component — derive it from a token.
@@ -182,75 +185,86 @@ component — derive it from a token.
 
 ## 3. Typography
 
-Typography is a **separate axis** from colour. A typeface-mode picker swaps the
-family tokens via `[data-t-type]` on the root; the default is **Technical**.
+Typography is a **separate axis** from colour. A typeface picker stamps one of
+twelve face ids on the root as `[data-t-type]`; the default is
+`google-sans-mono`.
 
 ### 3.1 The three modes
 
-| id | voice | body | data / mono | headings | display |
-| --- | --- | --- | --- | --- | --- |
-| `editorial` | typeset, literary reading serif | Source Serif 4 | Source Serif 4 | Source Serif 4 | Source Serif 4 |
-| `technical` **(default)** | console technical — all-mono mixture | iA Writer Mono (prose) | JetBrains Mono (code) | iA Writer Mono | iA Writer Mono |
-| `display` | punchy headline | Space Grotesk (geometric) | JetBrains Mono | Archivo Narrow (condensed) | Space Grotesk |
+The picker groups its twelve faces under three **modes**, four faces each
+(`TYPE_OPTIONS` in `ui.js`). Each face sets a heading voice, a prose voice, and
+a data/code voice:
 
-**Technical is a mono *mixture* along a prose↔code axis:** a warm humanist prose
-mono (**iA Writer Mono**) for body / headings / publication, and a crisp code
-mono (**JetBrains Mono**) for data / labels / axis text / code. It reads as
-prose-mono everywhere except data and code.
+| mode | voice | faces (heading face; + the body/data face where it differs) |
+| --- | --- | --- |
+| `technical` **(default)** | console technical | **Google Sans Mono** (default) · Source Sans 3 + Source Code Pro · Inconsolata · Ubuntu + Ubuntu Mono |
+| `editorial` | typeset, literary reading serif | Fraunces · Bitter · Literata · Domine |
+| `display` | punchy headline | Archivo Narrow + Space Grotesk · Hanken Grotesk · Barlow Condensed + Space Grotesk · Bricolage Grotesque |
+
+An editorial face routes every role — data included — to its serif, so data
+and prose share one face. A display face sets headings in a condensed or
+grotesque display face and the body in a geometric grotesque.
 
 ### 3.2 The token map
 
-The CSS resolves the modes through intermediate `--n-font-*` families and exposes
-the two tokens the marks read — `--v2-sans` (body) and `--v2-mono` (all data,
-labels, axis text, code) — plus `--n-font-head` (headings) and `--n-font-paper`
-(publication body). From `console4.css` L432–L476:
+The marks read two tokens — `--v2-sans` (body) and `--v2-mono` (all data,
+labels, axis text, code) — plus `--n-font-head` (headings, big numerals) and
+`--n-font-paper` (the publication body). Each `[data-t-type]` rule in
+`console.css` sets all four to literal font stacks. The unconditional default
+on `#console-root` is Google Sans Mono in every role, so a root with no
+`data-t-type` still lands on the default voice:
 
 ```css
 #console-root {
-  --n-font-base:       "Open Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-  --n-font-mono-real:  "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
-  --n-font-prose-mono: "iA Writer Mono", "iA Writer Mono S", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  --n-font-serif:      "Source Serif 4", Georgia, "Times New Roman", serif;
-  --n-font-display:    "Archivo Narrow", "Space Grotesk", "Open Sans", system-ui, sans-serif;
-  --n-font-geo:        "Space Grotesk", "Segoe UI", system-ui, sans-serif;
-
   /* the brand wordmark pins to a FIXED mono, independent of the user's choice */
-  --v2-brand-mono:     "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  --v2-brand-mono: "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
 
-  /* Technical (DEFAULT): prose mono body, code mono data */
-  --v2-sans:      var(--n-font-prose-mono);
-  --v2-mono:      var(--n-font-mono-real);
-  --n-font-head:  var(--n-font-prose-mono);
-  --n-font-paper: var(--n-font-prose-mono);
+  /* DEFAULT (Google Sans Mono): all four roles */
+  --v2-sans:      'Google Sans Mono', 'Noto Sans Mono', ui-monospace, monospace;
+  --v2-mono:      'Google Sans Mono', 'Noto Sans Mono', ui-monospace, monospace;
+  --n-font-head:  'Google Sans Mono', 'Noto Sans Mono', ui-monospace, monospace;
+  --n-font-paper: 'Google Sans Mono', 'Noto Sans Mono', ui-monospace, monospace;
+}
+/* a face that pairs two families: head/prose Source Sans 3, data/code Source Code Pro */
+#console-root[data-t-type="source-sans-3"] {
+  --v2-sans:      'Source Sans 3', system-ui, sans-serif;
+  --v2-mono:      'Source Code Pro', ui-monospace, monospace;
+  --n-font-head:  'Source Sans 3', system-ui, sans-serif;
+  --n-font-paper: 'Source Sans 3', system-ui, sans-serif;
 }
 ```
 
-The picker re-points the four exposed tokens per mode:
+| token | set from the option's | which surface |
+| --- | --- | --- |
+| `--v2-sans` | prose face | body text |
+| `--v2-mono` | data / code face | data / labels / axis / code |
+| `--n-font-head` | heading face | `.dn-h1`, big numerals |
+| `--n-font-paper` | prose face | the publication body |
 
-| token | `editorial` | `technical` | `display` | which surface |
-| --- | --- | --- | --- | --- |
-| `--v2-sans` | serif | prose-mono | geo (Space Grotesk) | body text |
-| `--v2-mono` | serif | code-mono (JetBrains) | code-mono | data / labels / axis / code |
-| `--n-font-head` | serif | prose-mono | display (Archivo Narrow) | `.dn-h1`, big numerals |
-| `--n-font-paper` | serif | prose-mono | geo | the ACM-style publication body |
+The font stacks match the ones in the [typeface study](typeface-study/README.md)
+the picker was chosen from.
 
 ### 3.3 Self-hosted vs loaded
 
-- **Technical's two monos are self-hosted woff2** under
+- **Two monos are self-hosted woff2** under
   `src/zicato/dashboard/static/fonts/` — `iAWriterMonoS-Regular/Bold.woff2` and
   `JetBrainsMono-Regular/Bold.woff2` — declared with `@font-face` +
-  `font-display: swap` (`console4.css` L39–L58). **The default mode never touches
-  a CDN**: a blocked network never affects the page.
-- **Editorial's serif + Display's families load from Google Fonts** — the only
-  external dependency — injected in `console.js` `ensureFonts()` with
-  `display=swap`: `Open Sans`, `Source Serif 4` (optical-size axis `8..60`),
-  `Space Grotesk`, `Archivo Narrow`. Every stack lists a system fallback so a
-  slow/blocked font never breaks layout.
+  `font-display: swap` at the top of `console.css`. JetBrains Mono backs the
+  fixed brand mono (`--v2-brand-mono`).
+- **The twelve picker faces load from Google Fonts** — the only external
+  dependency — injected by `console.js` `ensureFonts()` with `display=swap`
+  and a preconnect to the font origins. Every stack lists a system fallback,
+  so a slow or blocked font never breaks layout; with the network blocked, the
+  default face falls back to Noto Sans Mono or the system monospace.
 
 ### 3.4 Type scale and weights
 
-Base size `calc(13px * var(--dt-font-scale, 1))` (`--dt-font-scale: 1.04`), all
-sizing tuned by the page-scale pill (§4). Representative sizes from `console4.css`:
+Base size `calc(13.5px * var(--dt-font-scale, 1))`. `--dt-font-scale` is the
+text-only multiplier the **S/M/L** size control stamps on the root (`small`
+1.15, the default · `medium` 1.3 · `large` 1.45, `FONTSIZE_OPTIONS` in
+`ui.js`); the page scale (§4.4) zooms text and figures together on top of it.
+SVG figure text is sized by `svg.js`, so figures do not grow with the size
+control. Representative sizes from `console.css`, before the multiplier:
 
 | element | class | size / weight |
 | --- | --- | --- |
@@ -283,7 +297,7 @@ letters can inherit `currentColor` while the dot takes `--zicato-accent`. See
 ### 4.1 The spacing baseline (cozy — the one permanent rhythm)
 
 **Cozy** is the single permanent spacing rhythm, baked unconditionally onto the
-root (`console4.css` L489–L502). The page-scale pill is the sizing control.
+root in `console.css`. The page scale (§4.4) is the sizing control.
 
 | token | value | role |
 | --- | --- | --- |
@@ -297,7 +311,7 @@ root (`console4.css` L489–L502). The page-scale pill is the sizing control.
 | `--dt-card-gap` | `18px` | card grid gap |
 | `--dt-card-pad` | `16px` | card inner padding |
 | `--dt-reel-scale` | `1.18` | vertical scale of the round-timeline spine |
-| `--dt-font-scale` | `1.04` | global font-size multiplier |
+| `--dt-font-scale` | `1` (the shell stamps the chosen size over it) | global text-size multiplier (§3.4) |
 
 Radii: panels `4px`, cards/buttons `5px`, pills `8–11px` (full-round), hovercard
 `6px`. Hairlines are always `1px solid var(--v2-rule)` (or `--v2-rule-soft` for a
@@ -306,37 +320,43 @@ hairline stays a hairline under the page-zoom.
 
 ### 4.2 Grid & containment
 
-- **Fluid detail pane.** `.dn-viewhost { width:100%; max-width: min(100%, 2200px) }`
+- **Fluid detail pane.** `.dt-viewhost { width:100%; max-width: min(100%, 2400px) }`
   — fills the available width; only a generous cap guards prose line-length on
   ultra-wide monitors. Bigger diagrams on bigger screens.
 - **Containment guarantee.** No panel ever scrolls horizontally or lets a child
   escape. Figures are fit-to-width (`width:100%` + a `viewBox`); a table wider
   than its pane carries its *own* contained overflow via `.dn-table-scroll`, never the
-  panel. (`console4.css` L630–L638, L937–L941.)
+  panel.
 - **Body split.** `.dt-body` is a 3-track grid: `var(--dt-rail) · 0 · minmax(0,1fr)`
   — a sticky tree sidebar, a zero-width draggable resize handle (`.dt-rail-handle`,
   hit-area widened by negative margins), and the reflowing detail pane.
 
 ### 4.3 Top-bar anatomy (`.dt-topbar`)
 
-Sticky, blurred, hairline-bottomed (`console4.css` L1274; assembled in
-`shell.js` L509). Left → right:
+Sticky and hairline-bottomed, assembled in `shell.js` `mountShell`. Left →
+right:
 
 1. **`.dt-back`** — the `↑ up` control. Navigates *up the selection hierarchy*
-   (candidate → generations → epoch → environment) rather than browser-back. Disabled
+   (candidate → rounds → epoch → environment) rather than browser-back. Disabled
    state `.dt-back-off`.
 2. **`.dt-brand`** — the inline-SVG mark (`.dt-brand-mark`) + the inline-SVG
    wordmark (`.dt-brand-name`, `zıcato`) + a `.dt-brand-tag` tag reading
-   `console`.
+   `console` + a stacked "research preview" note (`.dt-respreview`).
 3. **`.dt-crumbs`** — breadcrumb trail (mono, faint), `.dt-crumb` links +
    `.dt-crumb-sep`.
 4. `.dt-topbar-spacer` (flex spacer).
-5. **`.dt-nav-build`** — a `⚙ settings` entry (opens read-only contract and model
+5. **`.dt-nav-exec`** — the liveness-gated `execution ↗` link into the
+   harmonograf meta-loop session; empty when no harmonograf server is
+   reachable.
+6. **`.dt-nav-logs`** — a `☰ log` entry into the operator-log pane (`#/logs`).
+7. **`.dt-nav-build`** — a `⚙ settings` entry (opens read-only contract and model
    configuration plus editable appearance preferences).
-6. **Colour swatch dropdown** (`.dt-cd`, §6) and the **typeface switch**
-   (`.dt-type-switch`, 3 inline buttons).
-7. **`.dt-scale-pill`** — the page-scale slider (§4.4).
-8. **`.dt-status`** — the status pill (§4.5).
+8. **Colour swatch dropdown** (`.dt-cd`, §6.8). The typeface picker, the text
+   size, the page scale and the side-panel width live in Settings →
+   Appearance.
+9. **`.dt-loopctl`** — the pause/resume and skip-round controls, rendered only
+   while the loop is live and the workspace is writable.
+10. **`.dt-status`** — the status pill (§4.5).
 
 > **Note — there is no command palette.** Nothing under `static/js/**`
 > implements one. Navigation is via the tree sidebar
@@ -344,34 +364,41 @@ Sticky, blurred, hairline-bottomed (`console4.css` L1274; assembled in
 > dock it from the top bar and theme it with the dropdown tokens (`.dt-cd-list`
 > bg `--v2-panel`, border `--v2-rule`, options on `--v2-rule-soft` hover).
 
-### 4.4 The page-scale pill (`.dt-scale-pill`)
+### 4.4 The page scale
 
-The sole sizing control: a native range input (`.dt-scale-range`,
-≈70 %–150 % in 5 % steps, default 100 %) + a `%` readout + a `⟲` reset button.
-It applies page-wide via `zoom` on the app root (`shell.applyScale`), which
-**reflows** (not a transform) so the page re-wraps at the scaled size and never
-clips. Persisted under `zicato.console.scale`. The slider thumb is `--v2-accent` with a
-`--v2-paper` ring; focus ring `2px --v2-accent`.
+The page-sizing control is a native range input in Settings → Appearance
+(`.dn-set-range`, 70 %–150 % in 5 % steps, default 100 %) + a `%` readout
+(`.dn-set-readout`) + a `⟲` reset button (`.dn-set-reset`). It applies
+page-wide via `zoom` on the app root (`shell.applyScale`), which **reflows**
+(not a transform) so the page re-wraps at the scaled size and never clips.
+Persisted under `zicato.console.scale`. Focus ring `2px --v2-accent`.
 
 ### 4.5 The status pill (`.dt-status`)
 
-A connection dot + a connection word, plus a **RUN badge** that lights up for any
-active tournament structure (`shell.js` L489):
+A connection dot + a connection word, plus ONE liveness pill (`.dt-run-state`)
+that reads `● <STATE> · <structure · phase> · <N units>`, or
+`· last seen Ns ago` when the heartbeat has frozen (`shell.js` `mountShell`,
+`livestatus.runStateLabel`):
 
 ```html
-<span class="dt-status dt-connected">       <!-- or .dt-running -->
-  <span class="dt-status-dot"></span>        <!-- flat→good (connected)→caution (running) -->
-  <span class="dt-status-text">connected</span>
-  <span class="dt-run-badge" aria-live="polite">   <!-- shown only when .dt-running -->
-    <span class="dt-run-pulse" aria-hidden="true"></span>
+<span class="dt-status dt-connected">          <!-- + .dt-running while a run is live -->
+  <span class="dt-status-dot"></span>           <!-- flat → good (connected) → caution (running) -->
+  <span class="dt-status-text"></span>          <!-- empty (hidden) while the socket is healthy -->
+  <span class="dt-run-state dt-rs-on dt-rs-live" aria-live="polite">
+    <span class="dt-rs-dot dt-status-dot" aria-hidden="true"></span>
+    <span class="dt-rs-text">LIVE</span>        <!-- LIVE / STALLED / SETTLED / DEAD -->
     <span class="dt-run-label">racing · rung 0</span>
     <span class="dt-run-count">3 in flight</span>
+    <span class="dt-status-stale"></span>       <!-- "last seen Ns ago" when frozen -->
   </span>
 </span>
 ```
 
-The pulse dot (`.dt-run-pulse`) is the **only** keyframe animation in the chrome
-— a 1.6s expanding box-shadow ring (`@keyframes dt-run-pulse`), disabled under
+The four states key on the orchestrator progress cursor rather than a
+heartbeat timestamp, and speak the colour roles by direction: LIVE = good,
+STALLED = caution, SETTLED = calm ink (a clean end), DEAD = bad (gone without
+settling). Only the LIVE dot pulses (`@keyframes dt-run-pulse`, a 1.6s
+expanding box-shadow ring), and the pulse is disabled under
 `prefers-reduced-motion`. The `LIVE` pill (`.dt-live-pill`) and the structure
 pill (`.dt-structure-pill`, `structure: Racing · 3 rungs`) ride in the view
 header rather than the top bar.
@@ -388,7 +415,7 @@ dependency-free helper layer (`svgEl`, `scale`, `extent`, `fmt`).
 ### 5.1 Stroke & ink conventions
 
 These hold for **every** mark (drawn from the `.dn-*` / `.ezn-*` rules in
-`console4.css`):
+`console.css`):
 
 | convention | concrete value | where |
 | --- | --- | --- |
@@ -398,9 +425,8 @@ These hold for **every** mark (drawn from the `.dn-*` / `.ezn-*` rules in
 | a pending / racing edge | `stroke: var(--v2-accent); stroke-dasharray: 4 3` (never red) | `.ezn-edge-neutral` |
 | good / bad mark | `fill`/`stroke: var(--v2-good)` / `var(--v2-bad)` | `.dn-dot.dn-good`, `.dn-glyph-fail` |
 | node dot radius | `r: 2.2–4.5` (champion bigger than challenger) | `bumps` 4.5 and 3.5, sparkline endDot 2.2 |
-| band fill | soft token mix, ~18–20% | `color-mix(in srgb, var(--v2-accent) 18%, transparent)` (`.dn-funnel-band`) |
-| ribbon fill-opacity | `0.32` idle → `0.55` hover | `.dn-sankey-ribbon` |
-| line caps/joins (chrome glyphs) | `stroke-linecap:"round"`, `stroke-linejoin:"round"` | brand mark, `structureGlyphSvg` |
+| soft fill | a token mixed toward transparent, ~12–18% | `color-mix(in srgb, var(--v2-accent) 18%, transparent)` (`.dt-node.dt-sel`) |
+| line caps/joins (chrome glyphs) | `stroke-linecap:"round"`, `stroke-linejoin:"round"` | brand mark |
 | status glyph aspect | a **fixed 1:1 `viewBox`** overlay so a stretched cell never shears it | `outcomeGlyph`, `sparkbar` verdict |
 
 **Fit-to-width is mandatory:** every figure SVG carries `width:"100%"`, an
@@ -409,7 +435,7 @@ fixed pixel width that exceeds the pane, and no pan/zoom**. A figure that must
 stretch its bars uses `preserveAspectRatio:"none"` but then puts any glyph that
 must stay round into a separate 1:1 overlay (see `sparkbar`).
 
-**Shared semantic glyphs** (one source of truth, `svg.js` L21):
+**Shared semantic glyphs** (one source of truth, exported from `svg.js`):
 
 ```js
 export const CROWN = { current: '♛', former: '♔' };
@@ -423,7 +449,9 @@ lower loss, bad = above / higher loss**.
 
 The word-sized trend mark. Note: `width:"100%"`, the `viewBox`, the
 pen-up/pen-down path for gaps, and the end-dot coloured good/bad by direction
-(`svg.js` L98):
+(`svg.js`, abridged; the `responsive` and `intrinsic` options pick the
+full-width hero or the intrinsic-width sizing described in
+[`js/CONTRACTS.md`](../../src/zicato/dashboard/static/js/CONTRACTS.md) §4a):
 
 ```js
 export function sparkline(opts) {
@@ -459,7 +487,7 @@ export function sparkline(opts) {
 A horizontal-bar tenure chart — **directly the model for an execution timeline**:
 one row per entity, a bar spanning the rounds it held, round-axis ticks along the
 top, the current item in `--v2-accent` + `♛`, former items dim ink + `♔`
-(`svg.js` L2019):
+(`svg.js`, abridged):
 
 ```js
 export function reignGantt(opts) {
@@ -504,25 +532,25 @@ Takeaways for any new timeline: **faint dashed/thin gridlines** (`0.6` width,
 that lifts to `1` on hover, the **one emphasis** carried by `--v2-accent`, and a
 `hov()` hovercard on each bar.
 
-### 5.5 The figure catalogue
+### 5.4 The figure catalogue
 
 The full inventory of figures (purpose-mapped) is documented in
 [CONSOLE-DESIGN-LANGUAGE.md §4.1](CONSOLE-DESIGN-LANGUAGE.md). The language-level
 point: each is a small, single-purpose, fit-to-width SVG honouring §5.1. Build
-new figures from the same vocabulary — bands narrow at a cut, lanes converge at a
+new figures from the same vocabulary — a lane ends at a cut, lanes converge at a
 match, dots sit relative to a reference rule, the spine is the one accent line.
 
-### 5.6 The hovercard (hover-for-detail)
+### 5.5 The hovercard (hover-for-detail)
 
 Hover-for-detail is first-class. `hovercard.js` mounts a **singleton** card
 *inside* `#console-root`, so it inherits the live per-theme tokens
 (`--v2-panel` bg, `--v2-ink` text, `--v2-rule` border, mono face). Every mark
 calls `hov(node, tip)`. Crucially it is a **transient overlay outside the
-digest-gated render** (§7) — show/hide only toggles `.dn-hovercard-on`, so it can
-never trigger a repaint loop. It is `pointer-events:none` (never steals hover),
-viewport-flipped/clamped, keyboard-accessible (`role="tooltip"` via
-`aria-describedby`), and collapses its fade under `prefers-reduced-motion`
-(`console4.css` L1102–L1133).
+digest-gated render** (§7) — showing and hiding it only toggles the singleton
+`.dn-hovercard`'s visibility, so it can never trigger a repaint loop. It is
+`pointer-events:none` (never steals hover), viewport-flipped/clamped,
+keyboard-accessible (`role="tooltip"` via `aria-describedby`), and collapses
+its fade under `prefers-reduced-motion`.
 
 ---
 
@@ -536,7 +564,7 @@ All scoped under `#console-root`; all token-only.
 | --- | --- | --- |
 | primary action / themed link-button | `a.dn-linkbtn` | mono, `1px solid var(--v2-accent)`, transparent → on hover fills `--v2-accent` with `--v2-paper` text |
 | up / back | `.dt-back` | mono, `1px solid var(--v2-rule)`, hover → accent fill |
-| icon button (reset) | `.dt-scale-reset` | 17px square, `⟲`, hover → accent fill |
+| icon button (reset) | `.dn-set-reset` | `⟲`, hover → accent fill |
 
 ```html
 <a class="dn-linkbtn" href="#/e/epoch-3">open transcript →</a>
@@ -557,7 +585,8 @@ Do not: leave a link unstyled.
 `.dn-promoted` (good), `.dn-rejected` (bad), `.dn-deferred` (caution),
 `.dn-baseline` (rule), `.dn-pending` (**accent** — an in-flight candidate is
 neutral, never red), `.dn-live` (good + soft fill). Smaller chips: `.dn-chip`
-(8px-radius, lowercase) with `.dn-chip-live` / `-open` / `-closed`.
+(8px-radius, lowercase) with `.dn-chip-live` (caution) / `-open` (good) /
+`-closed` (faint).
 
 ### 6.3 Cards
 
@@ -586,7 +615,7 @@ get `.dn-num` (`text-align:right; tabular-nums`). The champion row tints
 
 ### 6.5 Popovers / tooltips
 
-The mark-level hovercard is §5.6. For richer board-status popovers, the same card
+The mark-level hovercard is §5.5. For richer board-status popovers, the same card
 hosts a titled body: `.dn-hc-body` > `.dn-hc-title` + `.dn-hc-row` +
 `.dn-hc-link`. The lifecycle DAG's `?` info badge (`.ezn-dag-info`) and the gate
 node (`.ezn-gate-node { cursor: help }`) open the full how-to in the hovercard
@@ -611,8 +640,8 @@ strip.
   headers (Technical · Editorial · Display), each over four real faces (twelve
   total), every option a true type specimen. The popover also carries an
   **S/M/L** font-size segmented control (`FONTSIZE_OPTIONS`), orthogonal to the
-  page-scale pill. One shared instance is used identically by the top bar and
-  Settings → Appearance.
+  page scale. It lives in Settings → Appearance; the colour dropdown appears
+  both there and in the top bar.
 
 The theme + typeface persist to `localStorage` (`zicato.console.theme`,
 `zicato.console.typeface`; the size as `zicato.console.fontsize`) and drive the same
@@ -632,7 +661,7 @@ re-dispatch wiping and rebuilding a panel every tick, flashing the screen, losin
 scroll position, and destroying hovercard/focus state.
 
 The mechanism is `gatedSwap(host, digest, build)` in
-[`ui.js` L81](../../src/zicato/dashboard/static/js/ui.js):
+[`ui.js`](../../src/zicato/dashboard/static/js/ui.js):
 
 ```js
 export function gatedSwap(host, digest, build) {
@@ -641,9 +670,10 @@ export function gatedSwap(host, digest, build) {
   // a view computes `digest` over ONLY its structural/content data —
   // timestamps and heartbeat fields are EXCLUDED.
   if (host.getAttribute('data-t-digest') === next && host.firstChild) return false; // ← no-op
+  const built = build();          // build first, so a throwing builder leaves the old DOM
   clearChildren(host);
-  const built = build();
-  for (const n of (Array.isArray(built) ? built : [built])) { if (n) host.appendChild(n); }
+  const nodes = Array.isArray(built) ? built : [built];
+  for (const n of nodes) { if (n) host.appendChild(n); }
   host.setAttribute('data-t-digest', next);
   return true;
 }
@@ -660,7 +690,7 @@ The discipline in full:
   keeps its scroll position.
 - **The host clears only on a real selection change** (a `~cmp` compare change
   counts as a selection change).
-- **The hovercard is outside the gated render** (§5.6) — toggling a class never
+- **The hovercard is outside the gated render** (§5.5) — showing it never
   repaints a figure.
 
 ### 7.2 Transitions & reduced motion
@@ -669,9 +699,11 @@ The discipline in full:
   `animation: …infinite`** for structure. Live state animates *values /
   positions* (GPU-friendly `transform` / `opacity` / `width`); digest-gating
   governs *structure*.
-- The **only** keyframe animations are the status-pill pulse (`dt-run-pulse`),
-  and the in-flight-count pulse — all gated behind
-  `@media (prefers-reduced-motion: reduce)` to instant.
+- The keyframe animations are the liveness pulse (`dt-run-pulse`, on the
+  run-state dot, the live hero and band dots, and the in-flight count), the
+  projected-row pulse (`dt-proj-pulse`), and two one-shot entry fades
+  (`dt-live-fade`, `dt-ticker-in`). Every one is switched off under
+  `@media (prefers-reduced-motion: reduce)`.
 - Theme/colour transitions are `background 0.18s ease, color 0.18s ease` on the
   root; hovercard fade is `120ms`, also reduced-motion-aware.
 
@@ -679,25 +711,23 @@ The discipline in full:
 
 ## 8. Iconography
 
-- **Structure glyphs** — 24×24 line-art, `currentColor`, `stroke-width:1.6`,
-  round caps (§5.4). One per tournament structure.
 - **The brand mark** — a single continuous stroke (golden-spiral scroll → string
   → pluck → damped-sine sparkline → bridge tick), `stroke:currentColor`,
-  `stroke-width:2.4`, round caps; the one accent dot at the pluck vertex fills
+  `stroke-width:5.0`, round caps; the one accent dot at the pluck vertex fills
   `var(--zicato-accent)`. The canonical asset:
 
 ```svg
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="71 35 229 75" role="img" aria-label="zicato">
-  <g fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+  <g fill="none" stroke="currentColor" stroke-width="5.0" stroke-linecap="round" stroke-linejoin="round">
     <path d="M94,52.5 … L104,80 L150,80 L170,102 L190,80 Q206,56 222,80 Q236,102 250,80 Q261,68 272,80 L292,80"/>
     <path d="M292,66 L292,94"/>                           <!-- the bridge tick -->
   </g>
-  <circle cx="170" cy="102" r="3.2" fill="var(--zicato-accent, #2FA46A)"/>
+  <circle cx="170" cy="102" r="5.5" fill="var(--zicato-accent, #2FA46A)"/>
 </svg>
 ```
 
   (full path in [docs/brand/zicato-mark.svg](../brand/zicato-mark.svg) /
-  `shell.js` `_MARK_PATH`).
+  `shell.js` `_MARK_SPIRAL_PATH` and `_MARK_BRIDGE_PATH`).
 - **Favicon vs mark.** The full golden-spiral mark is glorious at lockup/180px
   but muddies at 16px, so the **tab favicon** is a simplified `z` + green
   plucked-note (`docs/brand/zicato-favicon.svg`); the full mark stays for the
@@ -713,20 +743,21 @@ See [docs/brand/README.md](../brand/README.md) for the asset table and usage.
   ink/accent nudges exist to hold it (§2.4). Verify a new surface in both a light
   and a dark theme.
 - **Focus rings.** A consistent solid `2px solid var(--v2-accent)` outline with a
-  small `outline-offset` on every interactive control (`:focus-visible`):
-  `.dt-cd-trigger`, `.dt-scale-range`, `.dt-rail-handle`, `.dn-set-*`, and every
-  focusable SVG mark (`.dn-*-lane:focus-visible`, `.dn-reigngantt-row:focus-visible`).
+  small `outline-offset` on interactive controls (`:focus-visible`):
+  `.dt-cd-trigger`, `.dn-set-range`, `.dt-rail-handle`, and focusable SVG marks
+  (`.dn-duelflow-lane:focus-visible`, `.dn-reigngantt-row:focus-visible`).
 - **Skip link.** `index.html` ships `<a class="skip-link" href="#main-content">`
-  (visually hidden until focused, then pinned top-left — `style.css` L50).
-- **`prefers-reduced-motion: reduce`** — disables every pulse/typing animation
-  and the hovercard fade (multiple `@media` blocks in `console4.css`).
+  (visually hidden until focused, then pinned top-left — `.skip-link` in
+  `style.css`).
+- **`prefers-reduced-motion: reduce`** — disables every pulse animation, the
+  entry fades and the hovercard fade (several `@media` blocks in `console.css`).
 - **`prefers-color-scheme`** — the brand assets adapt automatically: the mark
   strokes `currentColor` (dark-on-light / light-on-dark) and READMEs use
   `<picture>` with light/dark sources. The dashboard's theme is an explicit
   user choice (sixteen themes), but the brand never needs recolouring.
 - **Roles & labels.** Figures are `role="img"` with an `aria-label`; the
-  hovercard is `role="tooltip"` wired via `aria-describedby`; the status badge is
-  `aria-live="polite"`; interactive marks are keyboard-activatable
+  hovercard is `role="tooltip"` wired via `aria-describedby`; the run-state
+  pill is `aria-live="polite"`; interactive marks are keyboard-activatable
   (Enter/Space → click, `svg.js` `clickable`).
 
 ---

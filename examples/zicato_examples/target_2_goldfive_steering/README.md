@@ -95,7 +95,8 @@ zicato epoch register \
 > `epoch register` accepts it with a notice. Each run verifies that every
 > tree loaded from the generation snapshot, through a resolution assert
 > at load time and the post-run record in
-> `generations/{gen}/harness_load.json`. See RUN.md §1.
+> `generations/{gen}/harness_load.json`. See
+> [RUN.md §1](./RUN.md#1-workspace-setup).
 
 The adapter walks the goldfive source tree for `# zicato:mutable`
 annotations, or the equivalent file-level marker, and produces one
@@ -107,24 +108,33 @@ source root for the duration of the child generation's runs.
 
 ## Running
 
+[`RUN.md`](./RUN.md) gives the full command sequence. Two things beyond
+the files in this directory are needed before a round can open: a
+`proposer` block in `.zicato/config.json`, and a `goldfive` object in
+the scoring contract (the ADK adapter runs under Goldfive, and the
+example's `scoring.json` does not carry one). RUN.md adds both. The
+epoch then opens from the example's contract:
+
 ```
 zicato epoch new goldfive-steering-e0 \
   --board examples/zicato_examples/target_2_goldfive_steering/board.jsonl \
   --brief examples/zicato_examples/target_2_goldfive_steering/rubric.md \
-  --scoring examples/zicato_examples/target_2_goldfive_steering/scoring.json
+  --scoring <copy of scoring.json with "goldfive": {} added>
 
 zicato evolve
 ```
 
 `zicato evolve` then:
 
-1. Snapshots goldfive's source tree as the seed generation.
+1. Records goldfive's source tree as the seed generation.
 2. Runs the board against that snapshot, producing a baseline scoreline.
-3. Asks the proposer for a hypothesis and a patch set against the
-   mutation ids the proposer brief prefers: judge prompts, threshold
-   knobs, and the refine template.
-4. Materializes a child snapshot, runs the board against it, and settles
-   the tournament.
+3. Asks the proposer for a hypothesis and an edit against the mutation
+   ids the proposer brief prefers: judge prompts, threshold knobs, and
+   the refine template. `scoring.json` carries no `tournament` block, so
+   each round fields several challengers under the default racing
+   structure.
+4. Materializes each child generation, runs the board against it, and
+   settles the tournament.
 
 ## Reading the outcomes
 
@@ -145,9 +155,12 @@ pass-rate buckets together, and no single scalar answers it.
 
 ## Files in this directory
 
+- `README.md` — this file; `RUN.md` — the end-to-end walkthrough.
 - `board.jsonl` — 10 entries: 5 adversarial, 2 clean, 3 ordinary.
 - `predicates.py` — Python-side outcome predicates for the three kinds.
 - `rubric.md` — the proposer brief: the preferred and forbidden edit
   surface, plus style guidance.
 - `scoring.json` — the epoch's scoring weights.
 - `agent_under_test.py` — the small LlmAgent the ordinary entries run.
+- `mocks.py` — deterministic `target` and `evaluation` callables for the
+  walkthrough.

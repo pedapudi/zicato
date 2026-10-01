@@ -14,7 +14,7 @@
 > application.
 
 This document is the source of truth for the **Console** dashboard interface —
-the layout that won the dashboard bake-off and is the sole shipping front end.
+the dashboard's sole front end.
 It states in one place the design language that
 [CONSOLE-CHANGELOG.md](CONSOLE-CHANGELOG.md) records round by round and that
 [DASHBOARD-VARIANTS.md](DASHBOARD-VARIANTS.md) catalogues across the
@@ -36,22 +36,22 @@ it is still in flight**. The aesthetic stance that follows from that job:
 
 - **Graphical and interactive over tabular and static.** The primary surfaces
   are SVG figures — funnels, ladders, brackets, bump charts, dot-plots,
-  sankeys — every one of which fits its pane and responds to hover and click.
+  slopegraphs — every one of which fits its pane and responds to hover and click.
   Tables exist (the candidate roster, the publication, the mutation matrix) but
   they support the figures rather than leading.
 - **A dense observatory for a power user.** The default skin (`css/console.css`)
   is dense and data-ink-maximal, on the `monokai` palette. The single permanent
   spacing baseline is **cozy**; the operator tunes the fit with a page-wide
-  **scale** pill.
-- **A console technical aesthetic.** Monospace data, a `CONSOLE` chrome
-  brand, terminal-derived colour palettes, and a chess/tournament metaphor
+  **scale** control in Settings → Appearance.
+- **A console technical aesthetic.** Monospace data, a `console` tag beside
+  the top-bar wordmark, terminal-derived colour palettes, and a chess/tournament metaphor
   (crowns, the champion-gate, ladders and brackets) give the surface a
   coherent terminal-and-tournament voice. See §8 for the lineage of these
   choices.
 
 Console is self-contained: the entry `console.js`, the modules under `js/`, and
-the stylesheet `css/console.css`, with the data spine in `js/core/*`. Exactly
-one UI loads at a time.
+the stylesheet `css/console.css`, with the data spine in `js/core/*`. It is
+the only UI the dashboard loads.
 
 ## 2. The six-colour ROLE system
 
@@ -153,8 +153,7 @@ the Gogh lineage in full.
 
 Typography is a separate axis from colour: a **typeface** picker swaps the
 family tokens via the `[data-t-type]` attribute on the root. It is a **grouped
-popover** (`typefacedropdown.js`), and one shared instance serves both the top
-bar and Settings → Appearance. It carries three **mode** headers — **Technical
+popover** (`typefacedropdown.js`) in Settings → Appearance. It carries three **mode** headers — **Technical
 (default) · Editorial · Display** — each over **four** real faces, twelve in
 all. Every option row is a true micro-specimen rendered in its own faces. The
 three voices differ across the whole surface, body text included, so a switch
@@ -167,18 +166,19 @@ is immediately recognizable. Representative faces per mode:
 | `display` | a punchy headline voice | Archivo Narrow + Space Grotesk · Hanken Grotesk · Barlow Condensed · Bricolage Grotesque |
 
 Alongside the face picker the popover carries an **S/M/L font-size** segmented
-control (`FONTSIZE_OPTIONS`); `applyFontSize` fans the choice out across every
-live picker instance (top bar ↔ Settings) so the size stays in lockstep, and it
-is orthogonal to the page-scale pill.
+control (`FONTSIZE_OPTIONS`). `applyFontSize` stamps a text-only multiplier
+(`--dt-font-scale`) and syncs every live picker instance; it is orthogonal to
+the page scale, which zooms figures and text together.
 
-The CSS resolves the chosen face through intermediate `--n-font-*` families and
-exposes two tokens the marks read: **`--v2-sans`** (body) and **`--v2-mono`**
-(all data, labels, axis text, code), plus `--n-font-head` (headings) and
-`--n-font-paper` (the publication body). An editorial face routes *everything* —
+Each `[data-t-type]` rule sets the four font tokens to literal stacks: the
+two the marks read, **`--v2-sans`** (body) and **`--v2-mono`** (all data,
+labels, axis text, code), plus `--n-font-head` (headings) and `--n-font-paper`
+(the publication body). An editorial face routes *everything* —
 including the mono token — to its serif, so data and prose share one face; a
 display face gives the body a geometric grotesque and the headings a condensed
-display face. Google Fonts is loaded in `console.js` with `display=swap` and
-system fallbacks — the only external dependency.
+display face. The twelve faces load from Google Fonts in `console.js` with
+`display=swap` and system fallbacks — the only external dependency; the two
+self-hosted monos under `fonts/` back the fixed brand mono.
 
 (There is no separate sans typeface: Technical already carries a sans body, and
 the `sans` id normalises to Technical.)
@@ -194,8 +194,9 @@ the same thing everywhere.
 
 | renderer (`svg.*` unless noted) | purpose |
 | --- | --- |
-| `survivalFunnel` | the **racing epoch hero** — the field flowing `N → N/2 → … → 1 → champion-gate`, each rung a trapezoid stage whose width ∝ surviving field; survivors ride inside the band (`↑`), eliminated competitors peel off as labelled dead-end branches (`✕`). |
-| `racingLadder` | the per-rung **successive-halving ladder** on Match-ups — one column per rung escalating to a trailing champion-gate, each runner's Δ-vs-champion right-aligned, a persistent v0 pace line at Δ=0. |
+| `survivalFunnel` | the **racing epoch hero** — a dot ladder of the field flowing `N → N/2 → … → 1 → champion-gate`: each rung is a column of dots, one per competitor entering it, and splines carry each survivor's dot to its next-rung position as the field converges. A cut drops a small `✕` after its last dot and grows no further spline; every competitor is named once at its left-edge entry row (survivors `↑`, cuts dimmed), and the winner's splines carry the accent end to end into the crowned gate. |
+| `racingScalarTrack` | the racing field on a **shared scalar axis** — one track per rung, each competitor a marker at its scalar, survivors kept and cut candidates drawn hollow, the champion as a dashed accent benchmark line and the cut threshold as a dashed caution tick. Queued, in-flight, projected and settled markers each have their own treatment. |
+| `gauntletFieldBars` | the gauntlet field against the **fixed champion standard** — one bar per challenger from the champion line to its own scalar, coloured by outcome, with the promote gate (champion − margin) as a dashed accent threshold. |
 | `swissLadder` | the swiss **standings ladder** — a column per round, accumulating Copeland points (win 1 / draw ½), the leader flowing into a champion-gate. |
 | `swissOverview` | the swiss epoch-overview centerpiece — a **standings bump chart** (one line per competitor, y = rank, lines cross as the leader emerges) over a **ranked Copeland-point bar**. |
 | `elimRadial` | the elim figure EVERYWHERE (epoch hero, Match-ups, live hero) — the **radial bracket**: rounds are concentric rings narrowing to a centre champion seat, one spoke per competitor; a spoke's surviving segments read good, the ring it was eliminated at ends with `✕` (bad), the champion's spoke dashes into the crowned seat (`♛`). Double-elim puts the winners' bracket on the upper arc and the losers' on the lower, split by a dashed equator; a winners'→losers' drop is a rim-hugging transfer arc. Outcome + round on hover. |
@@ -211,7 +212,10 @@ the same thing everywhere.
 | `genDots` | a proportional row of pass/fail/timeout glyphs for a trellis cell. |
 | `valueBars` | per-judge losses as horizontal bars. |
 | `pairedSlopegraph` | a per-board **slopegraph** — champion value → challenger value, one line per entry, coloured by improved / regressed / flat. |
-| `sankey` / `layoutSankey` | the causal-flow **Tufte sankey**: `patch → per-board drift → gate`. |
+| `radarSilhouette` | the candidate against the champion across the axes the gate weighs — scalar, pass rate, and each per-judge drift — outer is better. |
+| `diversityMatrix` | the field-diversity grid: one column per challenger, one row per mutation site, a filled square where that challenger touched that site. |
+| `calibrationTrend` | the proposer's prediction calibration across the lineage, reading the served latest fraction. |
+| `trajectoryStrip` | one imported trace as a strip, drawn from the server's precomputed strip model (see [TRAJECTORY-UI.md](TRAJECTORY-UI.md)). |
 | `lifecycleDag` (`dag.js`) | one candidate's life as a cause→effect summary: `parent → patch → board fan → Σ → gate → terminal`. |
 | `proposingTracker` | the field forming — one row per minted challenger (`vN ✓ applied` / `vN ✗ rejected`), the seed of the live hero. |
 
@@ -227,12 +231,12 @@ Every figure above honours this table:
 
 | convention | meaning | where set |
 | --- | --- | --- |
-| `↑` | this competitor **survives** the rung / round — the winner's lane **continues** | funnel, ladder runners, elim-radial spokes, duel-flow lanes |
-| `✕` | this competitor was **cut** — the loser's lane **terminates** | funnel dead-end branches, ladder, elim-radial spokes, duel-flow lanes |
+| `↑` | this competitor **survives** the rung / round — the winner's lane **continues** | funnel rail names, swiss ladder, elim-radial spokes, duel-flow lanes |
+| `✕` | this competitor was **cut** — the loser's lane **terminates** | funnel cut marks, swiss ladder, elim-radial spokes, duel-flow lanes |
 | `○` | this competitor is **pending** (still racing, undecided) | duel-flow lanes |
 | `♛` | the **current champion** (the crowned survivor of the gate) | gate labels, round-timeline spine, reign-gantt bar, tree badge, candidate / board / publication accents |
 | `♔` | a **former champion** — the displaced incumbent / a transient round-leader before the gate decides | swiss ladder, bump chart, standings |
-| reference rule | a Δ-vs-champion baseline at Δ=0; **good = below / lower loss, bad = above / higher loss** | dot-plot `dn-ref-rule`, racing ladder v0 pace line |
+| reference rule | a Δ-vs-champion baseline at Δ=0; **good = below / lower loss, bad = above / higher loss** | dot-plot `dn-ref-rule`, the racing track's champion benchmark line |
 | hover-for-detail | a **styled, theme-aware hovercard** (`hovercard.js`) replaces the native SVG `<title>` tooltip — every mark calls `hov(node, tip)` | `svg.js`, `dag.js` |
 | fit-to-width | `width:100%` + a `viewBox` + `preserveAspectRatio`; **no fixed pixel width that exceeds the pane, no pan/zoom** | every figure |
 | proportional 1:1 glyphs | status glyphs (`✓ ✕ ⏱ ○`, verdict triangles) render in a **fixed 1:1-aspect overlay SVG** so a stretched cell never shears them into ovals | `outcomeGlyph`, `genDots`, `sparkbar` |
@@ -246,10 +250,10 @@ Four further conventions hold within this grammar:
   across the funnel, ladders, bump chart, standings, and the tree legend. *(The
   glyphs have one definition — `svg.js` exports `CROWN = { current: '♛', former:
   '♔' }` and every emitter imports it, so the rule cannot drift. See §9.)*
-- **Survival-funnel cut labels: the connector leads INTO the label.** A cut
-  competitor's dead-end branch drops from the band's lower edge and stops a few
-  pixels *left* of its name (`H${labelX - 4}`) — the connector points into the
-  label and never runs a line through the text (no strikethrough).
+- **Survival-funnel names sit on a rail, never on a line.** Each competitor
+  is named once, at its left-edge entry row; a cut is a `✕` in the gap after
+  its last dot, so no spline or connector ever runs through a label (no
+  strikethrough).
 - **Match-ups collapse to a single section.** The swiss/racing/elim detail lives
   in one Match-ups section and is not duplicated elsewhere; the epoch overview
   shows a compact at-a-glance figure with a *"See Match-ups →"* link into the
@@ -293,8 +297,8 @@ Scorecard rates use the `dn-stat` idiom, redundancy and conflict read as one
 faint inline sentence, and evidence appears as inline x-ray links. Metadata
 collapses to a caption, the one pill is the adjudication verdict, and
 navigation rides the routes and the tree. The lens carries no internal rail and
-no per-row tags. See BOARD-REFLECTION.md §"UI — the Instrument lens" and dev-guide ch. 09
-§9.7.7.
+no per-row tags. See [BOARD-REFLECTION.md](BOARD-REFLECTION.md#ui--the-instrument-lens)
+and [dev-guide §9.7.7](../dev-guide/09-dashboard-and-query.md#977-the-console-grammar-discipline--reuse-grammars-dont-invent-chrome).
 
 ## 5. Layout and interaction principles
 
@@ -303,9 +307,9 @@ no per-row tags. See BOARD-REFLECTION.md §"UI — the Instrument lens" and dev-
   aggregate-scores table, the mutation matrix) carry their *own* contained
   overflow (`.dn-table-scroll`) so a wide table scrolls within its box and never
   pushes the page sideways.
-- **The page-wide SCALE pill.** The sole sizing control is a draggable,
-  keyboard-accessible range slider (`.dt-scale-pill` / `.dt-scale-range`) over
-  ≈70 %–150 % in 5 % steps, default 100 %, with a `⟲` reset button. It applies
+- **The page-wide SCALE control.** The page-sizing control is a keyboard-
+  accessible range slider in Settings → Appearance (`.dn-set-range`) over
+  70 %–150 % in 5 % steps, default 100 %, with a `⟲` reset button. It applies
   page-wide via `zoom` on the app root (`shell.applyScale`), which **reflows**
   the page rather than transforming it, so the page re-wraps at the scaled size
   and never clips.
@@ -318,14 +322,16 @@ no per-row tags. See BOARD-REFLECTION.md §"UI — the Instrument lens" and dev-
   diagrams on bigger monitors, still tidy on small ones.
 - **The data-model TREE sidebar ↔ detail-view router.** A persistent left tree
   (`tree.js`) mirrors the real zicato hierarchy — `Environment → Epoch →
-  {Generations → <gen>, Boards → <entry>, Mutation surface, Publication}` — and
+  {Rounds → Round <n> → <gen>, Boards → <entry>, Evals, Instrument (→ Traces
+  when the epoch has reflections), Mutation surface, Publication}` — and
   drives a single detail pane. Routes are bare-prefixed (`#/`, `#/e/<epoch>`,
   `#/e/<epoch>/gen/<gen>`, …); the **`#/` path is the tree path**, so a cold
   deep-link hydrates both the open branches and the detail. The rail is a
-  resizable left side-panel (a draggable `.dt-rail-handle`, persisted under
-  `zicato.console.rail`), distinct from the page-scale pill.
+  resizable left side-panel (a draggable `.dt-rail-handle`, also set from a
+  width slider in Settings → Appearance, persisted under
+  `zicato.console.rail`), distinct from the page scale.
 - **The "up" control.** A top-left **`↑ up`** control navigates *up the
-  selection hierarchy* (the parent route): candidate → generations → epoch →
+  selection hierarchy* (the parent route): candidate → rounds → epoch →
   environment, a compare split collapsing to the bare candidate first. It
   **navigates** (changes the route) and lets the normal dispatch repaint the
   destination into the main detail pane; it never renders into the sidebar.
@@ -390,11 +396,11 @@ poll*. `live.js` owns one persistent `LiveController` patched in place on every
   terminal node reads racing / competing / in bracket / at gate per the
   structure — never a hardcoded "racing" for a non-racing candidate.
 - **The hero "bloom".** During the proposing phase the hero leads with the
-  proposing tracker, which shows the field forming. The moment the field is
-  applied and the tournament starts running, `buildLiveRoundModel` seeds
-  zero-point standings from the applied competitors, so the hero **blooms**
-  from the tracker into the live standings ladder. The tracker is the *seed* of
-  the ladder, and the same competitors carry across.
+  proposing tracker, which shows the field forming. The moment the tournament
+  publishes its competitors, `buildLiveModel` (`tournament_model.js`) builds the
+  live standings from the served `/api/active-tournament` record, so the hero
+  **blooms** from the tracker into the live standings. The tracker is the
+  *seed* of the standings, and the same competitors carry across.
 - **The proposing tracker — honest field shape.** `proposingTracker` reads the
   field's shape honestly: *"N proposed · k applied"*, and a field that minted
   **zero** applied challengers reads *"— all rejected"* — never an empty/idle
@@ -433,9 +439,9 @@ Tufte's analytical-design principles map directly onto the figures:
   information architecture.** The epoch overview is the macro read (a compact funnel / bump / mini-
   bracket); Match-ups and the candidate page are the micro read. The colour
   roles layer the good/bad/accent signal cleanly off the neutral ink ground.
-- **The causal-flow Sankey → `sankey` (`patch → per-board drift → gate`).** A
-  Tufte-style flow whose band widths carry the causal magnitude from the patch,
-  through the per-board drift, to the gate — label ≠ value, by discipline.
+- **Cause and effect → the lifecycle DAG (`parent → patch → board fan → Σ →
+  gate → terminal`).** One candidate's life reads left to right as a causal
+  chain from the patch, through the per-board results, to the gate.
 
 ### 8.2 Gogh terminal colour schemes
 
@@ -472,13 +478,12 @@ tournament structure. (The champion/challenger vs parent/child terminology is in
 - **Which crown glyph a champion takes.** The single rule is `♛` for the
   current champion and `♔` for a former champion. The crown glyphs have one
   definition: `svg.js` exports `CROWN = { current: '♛', former: '♔' }`. Every
-  emitter imports it — the `svg.js` funnel, ladder, elim-radial and duel-flow
-  gate labels, the `waterfall` / `reignGantt` / `roundTimeline` crowns,
+  emitter imports it — the `svg.js` funnel, swiss ladder, elim-radial and
+  duel-flow gate labels, the `waterfall` / `reignGantt` / `roundTimeline` crowns,
   `views/structure.js` gate notes, legends and standings, the `live.js`
   activity feed, `tree.js` badges, the `dag.js` terminal, and `views/epoch.js`
   overview captions. No site emits `♚`.
 - **Which token names carry the typeface families.** The marks read two tokens,
-  `--v2-sans` and `--v2-mono`, fed by the intermediate `--n-font-serif` /
-  `--n-font-display` / `--n-font-geo` families that `[data-t-type]` routes into
-  them. There are no `--v2-serif` or `--v2-display` tokens. The system is as
-  documented in §3.
+  `--v2-sans` and `--v2-mono`, which each `[data-t-type]` rule sets to literal
+  font stacks alongside `--n-font-head` and `--n-font-paper`. There are no
+  `--v2-serif` or `--v2-display` tokens. The system is as documented in §3.

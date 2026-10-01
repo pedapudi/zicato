@@ -25,12 +25,12 @@ This document covers:
 - Why the index exists and what it is *not* (§1).
 - The discipline: files canonical, index derived, dual-write +
   full rebuild (§2).
-- The full schema — thirteen tables (§3).
+- The full schema — thirteen tables plus a version mirror (§3).
 - `zicato repair index` / `zicato repair generations` — the rebuild
   commands (§4).
 - Self-healing: the index maintains itself (§5).
 - Where SQLite is and is NOT used in zicato (§6).
-- The Rust supervisor's read path via `rusqlite` (§7).
+- The readers: the dashboard service and the Rust supervisor (§7).
 
 ## 1. Why an index
 
@@ -39,7 +39,7 @@ This document covers:
 The filesystem layout in
 [EPOCHS-AND-JOURNALING.md §2](EPOCHS-AND-JOURNALING.md#2-storage-layout)
 is excellent for the operator's per-artifact loop: open one
-`experiment.json`, read one `journal.md`, `cat` one `loss.json`.
+`experiment.json`, read one `gen_score.json`, `cat` one loss file.
 It is poor for any question that ranges across many artifacts.
 
 Consider these operator questions:
@@ -56,7 +56,7 @@ Consider these operator questions:
 
 Every one of these is a `GROUP BY` / `JOIN` over data that lives
 scattered across `epochs/*/generations/*/experiment.json`,
-`epochs/*/generations/*/runs/*/loss.json`, and
+`epochs/*/generations/*/runs/*/seed-*/loss.*.json`, and
 `epochs/*/generations/*/gen_score.json`. Answering them by
 file-walk means: enumerate every generation directory, open and
 parse every JSON file, hold the union in memory, and filter.
@@ -109,15 +109,17 @@ The cost of the cross-run question drops from
   from the filesystem. Nothing is lost.
 - **Not a write target for orchestration logic.** The
   orchestrator never *reads back* a decision from the index. The
-  tournament gate reads `gen_score.json`; the resume protocol
-  reads `experiment.json`; the proposer reads `patterns/*.json`.
-  All of those are files. The index serves *views*; control flow
-  never reads it.
+  tournament gate reads the loss files and `gen_score.json`; the
+  resume protocol reads `experiment.json` and the round records; the
+  pattern detectors read the champion's loss and events files. All of
+  those are files. The index serves *views* and the proposer's
+  advisory experiment memory (§5); no gate or promotion decision
+  reads it.
 - **Not a replacement for the filesystem layout.** `ls`, `cat`,
   `grep`, `git diff` on `.zicato/` all still work and are still
-  the operator's first-class interface. The index is additive.
-- **Not per-run event storage.** Run telemetry is `events.jsonl`,
-  one file per run. The index holds *reduced* per-run features
+  the operator's primary interface. The index is additive.
+- **Not per-run event storage.** Run telemetry is one events file per
+  measurement (`events.{purpose}.r{draw}.jsonl`). The index holds *reduced* per-run features
   (the `LossProfile` projection), never raw events. See §6.
 
 **The filesystem is canonical and human-legible; the index is derived
@@ -131,8 +133,10 @@ The index is only safe if four rules hold without exception.
 ### 2.1 Files are canonical
 
 Every fact has a single canonical home: a file under
-`.zicato/`. `experiment.json` is the canonical Experiment.
-`loss.json` is the canonical LossProfile. `gen_score.json` is
+`.zicato/`. `experiment.json` is the canonical Experiment. The
+per-measurement loss file
+(`runs/{entry_id}/seed-{seed}/loss.{purpose}.r{draw}.json`, called
+`loss.json` below) is the canonical LossProfile. `gen_score.json` is
 the canonical generation score. `lineage.json` is the canonical
 cross-epoch directed acyclic graph of generations. The index never
 holds a fact that did not come from one of these files.
@@ -143,28 +147,28 @@ file lands first; the table is downstream.
 
 ### 2.2 The index is derived and fully rebuildable
 
-`zicato repair index` (§4) drops every table and reconstructs the
-whole database by walking the filesystem. This is the
+`zicato repair index` (§4) builds a fresh database by walking the
+filesystem and publishes it over the old one. This is the
 correctness backstop:
 
-- If the index is ever suspected stale or corrupt, `reindex`
-  fixes it — no manual repair.
+- If the index is ever suspected stale or corrupt,
+  `zicato repair index` fixes it — no manual repair.
 - If the supported schema or projection semantics change, `ensure_index`
   rebuilds the incompatible database from canonical records. Incremental
   writers refuse incompatible indexes and never add columns in place.
 
 - If an operator hand-edits a file under `.zicato/epochs/`
-  (e.g. fixes a malformed `experiment.json`), `reindex` brings
-  the index back in line.
+  (e.g. fixes a malformed `experiment.json`), `zicato repair index`
+  brings the index back in line.
 
 A rebuild is `O(total artifacts)` file reads — the same cost as
 *one* cross-run file-walk, paid once, after which every query is
 indexed. For a large workspace (multiple epochs, hundreds of
-generations) a full reindex takes seconds rather than minutes.
+generations) a full rebuild takes seconds rather than minutes.
 
 ### 2.3 The orchestrator dual-writes live
 
-Waiting for an explicit `reindex` after every round would leave
+Waiting for an explicit rebuild after every round would leave
 the dashboard's analytics stale mid-epoch. So the orchestrator
 **dual-writes**: whenever it writes a canonical file, it also
 writes the corresponding index rows, in the same logical step.
@@ -179,13 +183,13 @@ write generations/v5/gen_score.json                    ── canonical
         ▼
 upsert into index.db:
    experiments(v5, ...)            ── derived
-   runs(v5--*, ...)                ── derived
-   loss_profiles(v5--*, ...)       ── derived
-   judge_losses(v5--*, ...)        ── derived
+   runs(v5 measurements, ...)      ── derived
+   loss_profiles(v5 selected, ...) ── derived
+   judge_losses(v5 measurements)   ── derived
    tournaments(v4 vs v5, ...)      ── derived
         │
         ▼
-broadcast SSE 'round_finished'  (dashboard reads index)
+dashboard SSE stream notices the change (dashboard reads index)
 ```
 
 The dual-write is **not transactional across the file and the
@@ -197,8 +201,8 @@ operations. The ordering rule makes this safe:
 
 If the orchestrator crashes between the two, the index is
 *behind* the filesystem — never *ahead*. A behind index is
-self-healing: the next `reindex` (or the resume protocol's
-reindex-on-restart, §4.4) catches it up. An ahead index — a
+self-healing: the heal at the next `evolve` start (§5.3), or an
+explicit `zicato repair index`, catches it up. An ahead index — a
 row referencing a file that was never written — would be a
 phantom, and the ordering rule makes that impossible.
 
@@ -208,10 +212,10 @@ a round's rows.
 
 ### 2.4 Single writer
 
-Only the orchestrator (`zicato evolve`, and the one-shot
-subcommands `analyze` / `tournament` when run standalone) writes
-`index.db`. The Rust supervisor opens the database **read-only**
-(§7). `zicato repair index` / `zicato repair generations` are writers,
+Only the orchestrator (`zicato evolve`, and the advanced commands
+that settle measurements standalone, such as `zicato tournament run`)
+writes `index.db`. The Python dashboard service and the Rust
+supervisor open the database **read-only** (§7). `zicato repair index` / `zicato repair generations` are writers,
 expected to run off the happy path while no `evolve` is in flight;
 they are not part of the live loop. SQLite's own file locking plus
 the write-ahead-log posture (§7) are the concurrency backstop, consistent
@@ -228,12 +232,12 @@ supported `SCHEMA_VERSION` is **15**, which includes, among others, the
 `ingest_cursors` self-heal table (§5.2). That module is the contract;
 this section documents it.
 
-The index has **thirteen tables**. Nine mirror the artifact
-hierarchy: `epochs` → `generations` → `experiments` → `patches`, and
-`generations` → `runs` → `loss_profiles` / `metric_counts` /
-`judge_losses`, with `tournaments` as the per-round comparison record.
-The remaining four are `reflections`, `judge_scorecards`,
-`pareto_frontier`, and `ingest_cursors` (§5.2). `ingest_cursors` is the one table that is not a
+The index has **thirteen tables**, plus the `schema_meta` version
+mirror. Nine mirror the artifact hierarchy: `epochs` → `generations` →
+`experiments` → `patches`, and `generations` → `runs` → `loss_profiles` /
+`metric_counts` / `judge_losses`, with `tournaments` as the comparison
+record. The remaining four are `reflections` and `judge_scorecards`
+(§3.10), `pareto_frontier` (§3.11), and `ingest_cursors` (§5.2). `ingest_cursors` is the one table that is not a
 projection of a canonical file: it records *what the workspace
 looked like* when each epoch was last projected, so divergence is
 detectable without re-deriving every row.
@@ -256,16 +260,18 @@ detectable without re-deriving every row.
       └────────────────┘    └────────────────┘
 
 ┌──────────────┐
-│ tournaments  │   one row per round: parent vs child, gate verdict
-└──────────────┘
+│ tournaments  │   one crowning row per challenger, plus one field row
+└──────────────┘   per multi-candidate tournament
 ```
 
 All `*_id` columns are the same string identifiers used in the
 filesystem layout (`epoch_id` is the epoch directory name,
 `generation_id` is `v0` / `v1` / ..., `entry_id` is the board entry
-id, and `run_id` is the per-run `{generation_id}--{entry_id}`
-synthetic id). This makes any index row trivially traceable back to
-its canonical file.
+id). `run_id` is the measurement's runtime identifier,
+`{seed-qualifier}.{purpose}.r{draw}.{sha256}` (from
+`zicato.core.workspace.run_id_for_unit`), where the hash covers the
+epoch, generation, and entry ids. The run's coordinates therefore
+trace any index row back to its canonical file.
 
 Schema versioning is stamped two ways by `apply_schema`: the SQLite
 `PRAGMA user_version` (the authoritative source, readable from any
@@ -313,8 +319,8 @@ surfaces — never by the gate or the selection path.
 
 ### 3.3 `experiments`
 
-One row per `experiment.json` (i.e. one per generation except
-the `v0` baseline, which has no experiment).
+One row per readable `experiment.json`, including the synthetic seed
+marker a `v0` baseline carries.
 
 | Column | Type | Source |
 |---|---|---|
@@ -355,31 +361,30 @@ One row per `patches/{patch_id}.json` file.
 Patch *content* (`new_content`, `new_numeric`, `new_enum`) is **not**
 indexed: it can be large and is never a query key. An operator
 inspecting patch content opens the canonical
-`patches/{patch_id}.json` file (or runs `zicato show`). The index holds
+`patches/{patch_id}.json` file. The index holds
 only what gets filtered or joined on.
 
 ### 3.5 `runs`
 
-One row per `runs/{entry_id}/` directory — i.e. one per
-(generation × board entry).
+One row per measurement: every loss file under a generation's
+`runs/{entry_id}/seed-{seed}/`, whatever its purpose, draw, or seed.
 
 | Column | Type | Source |
 |---|---|---|
-| `run_id` | TEXT PK | the synthetic `{generation_id}--{entry_id}` run id |
+| `run_id` | TEXT PK | the measurement's runtime identifier (§3) |
 | `epoch_id` | TEXT | (FK) |
 | `generation_id` | TEXT | (FK → `generations`) |
 | `entry_id` | TEXT | board entry id |
-| `started_at` | TEXT | run start |
-| `ended_at` | TEXT | run end |
-| `aborted` | INTEGER | `loss.json` — 1 if `RunAborted` |
-| `runtime_ms` | INTEGER | `loss.json` |
-| `tournament_id` | TEXT | (FK → `tournaments`) — the round this run belonged to |
+| `started_at` | TEXT | `LossProfile.started_at` |
+| `ended_at` | TEXT | `LossProfile.ended_at` |
+| `aborted` | INTEGER | 1 if `LossProfile.wall_clock_budget_exceeded` |
+| `runtime_ms` | INTEGER | `LossProfile.runtime_ms` |
+| `tournament_id` | TEXT NULL | (FK → `tournaments`) — `{epoch_id}:{parent}->{generation}` from the generation's `experiment.json`; NULL when the generation has no parent |
+| `match_id` | TEXT NULL | the matchup the run executed within (e.g. `rung0_m2`, `racing-final`); NULL outside a tagged matchup |
 
-Primary key is `run_id` (the `{generation_id}--{entry_id}`
-synthetic id). The "which side of the tournament" distinction is
-carried by the run's generation: the parent and child generations
-each get their own run row, and `tournament_id` ties both to the
-round they were scored in. `idx_runs_tournament` indexes that association. The harmonograf
+Primary key is `run_id`. The "which side of the tournament"
+distinction is carried by the run's generation, and `tournament_id`
+ties a challenger's runs to the round it was scored in. `idx_runs_tournament` indexes that association. The harmonograf
 drill-down join key is the run's `adk_session_id`; the reducer stamps
 it into `loss.json`, and no index column holds it. See
 [TOURNAMENT.md §5](TOURNAMENT.md#5-the-harmonograf-split) and §6
@@ -387,73 +392,96 @@ below.
 
 ### 3.6 `loss_profiles`
 
-One row per `loss.json` — the reduced per-run feature vector.
+The reduced per-run feature vector, for the one measurement per
+(generation × board entry) that scoring selects: tournament draw 0 at
+the seed the generation's `gen_score.json` records, with execution
+evidence. Other purposes, draws, and seeds stay in `runs`,
+`metric_counts`, and `judge_losses` for audit.
 
 | Column | Type | Source |
 |---|---|---|
-| `run_id` | TEXT PK | (FK → `runs`) — the `{generation_id}--{entry_id}` id |
+| `run_id` | TEXT PK | (FK → `runs`) — the measurement's runtime identifier |
 | `epoch_id` | TEXT | (FK) |
 | `generation_id` | TEXT | (FK) |
 | `entry_id` | TEXT | board entry id |
 | `drift_loss` | REAL | `LossProfile.drift_loss` |
-| `pass_fail` | INTEGER NULL | `LossProfile.pass_fail` (NULL when the entry's `expectations` list is empty) |
+| `pass_fail` | INTEGER NULL | `LossProfile.pass_fail` (NULL when the entry has no `expectation`) |
 | `runtime_ms` | INTEGER | `LossProfile.runtime_ms` |
 | `wall_clock_budget_exceeded` | INTEGER | 1 if the run exhausted its wall-clock budget |
-| `loss_json` | TEXT (JSON) | the full `LossProfile`, verbatim — the per-kind counts, escalations, plan revisions, etc. that get no dedicated column live here |
-| `tournament_id` | TEXT | (FK → `tournaments`) — the round |
+| `loss_json` | TEXT (JSON) | the full `LossProfile`, verbatim — the metric counts, plan revisions, and other fields that get no dedicated column live here |
+| `tournament_id` | TEXT NULL | (FK → `tournaments`) — the round |
+| `match_id` | TEXT NULL | `LossProfile.match_id` |
+| `cached` | INTEGER | 1 when the profile was served from the unit cache |
+| `source_epoch`, `source_run` | TEXT | the epoch and run whose measurement a cached profile reuses |
+| `abort_cause` | TEXT NULL | why the run aborted: budget exhaustion or an infrastructure cause |
 
 Primary key `run_id` (matching `runs`). This table is the
 scoring-side projection; the per-entry A/B grid in
 [TOURNAMENT.md §4.2](TOURNAMENT.md#42-per-entry-ab-grid) joins the
 parent and child generations' `loss_profiles` rows on `entry_id`.
 Features the `LossProfile` carries but that are not promoted to
-their own column (`escalations`, `plan_revisions`,
-`task_failure_ratio`, `human_intervention_required`, the per-kind
-counts) are recoverable from `loss_json` with `json_extract`; the
-drift counts are *also* unpivoted into `metric_counts` (§3.7) for
-`GROUP BY`-able access. `idx_loss_tournament` indexes the tournament association.
+their own column (`plan_revisions`, `task_failure_ratio`, `score`,
+`metrics`, the metric counts) are recoverable from `loss_json` with
+`json_extract`; the metric counts are *also* unpivoted into
+`metric_counts` (§3.7) for `GROUP BY`-able access. `idx_loss_tournament` indexes the tournament association.
 
 ### 3.7 `metric_counts`
 
-The drift counts, unpivoted into one row per
-(run × drift kind), (run × severity), and (run × custom judge).
-The `LossProfile` carries `drift_counts_by_kind`,
-`drift_counts_by_severity`, and `drift_counts_by_judge` as
-dicts; storing them unpivoted makes them `GROUP BY`-able.
+The run's named measurements, one row per `MetricCount` the
+`LossProfile` scores (`LossProfile.scoring_metrics()`): every drift
+observation under the `drift:` namespace, including custom-judge drift
+as `drift:custom:<judge_name>`, plus the `cost:`, `output:`, and
+`schema:` values the reducer derives. Storing them unpivoted makes them
+`GROUP BY`-able.
 
 | Column | Type | Source |
 |---|---|---|
-| `run_id` | TEXT | (FK → `runs`) — the `{generation_id}--{entry_id}` id |
-| `namespace` | TEXT | which dict the row came from: the drift-kind, severity, or custom-judge bucket |
-| `name` | TEXT | e.g. `DRIFT_KIND_CONFABULATION_RISK`, or a custom judge's `judge_name` |
-| `severity` | TEXT | the severity bucket (`INFO` / `WARNING` / `CRITICAL`) where applicable |
-| `count` | REAL | the count |
+| `run_id` | TEXT | (FK → `runs`) |
+| `namespace` | TEXT | the metric name's prefix without its colon, e.g. `drift` or `cost` |
+| `name` | TEXT | the full metric name, e.g. `drift:confabulation_risk` or `drift:custom:cite-before-metric` |
+| `severity` | TEXT | the drift severity (`info` / `warning` / `critical`); empty for non-drift metrics |
+| `count` | REAL | the measured value |
 
 No primary key declared; the table is reached by `run_id` (the
 `idx_metric_run` index) and aggregated. The drift-kind heatmap on the
 dashboard's epoch view
 ([DASHBOARD.md §4.4](DASHBOARD.md#44-the-epoch-level)) is a
 `SUM(count) GROUP BY name` over this table joined to `runs` for the
-round; the custom-judge `namespace` rows give the same view sliced
-by `judge_name` rather than by `DriftKind`. The per-judge weighted
+round; the `drift:custom:<judge_name>` rows give the same view sliced
+by judge rather than by `DriftKind`. The per-judge weighted
 loss is also materialised in its own table — `judge_losses` (§3.9).
 
 ### 3.8 `tournaments`
 
-One row per round — the parent-vs-child comparison record.
+Two kinds of row share this table:
+
+- A **crowning row** per resolved challenger, from its
+  `experiment.json` outcome, keyed `{epoch_id}:{parent}->{child}`. It
+  describes that challenger's crowning duel against the champion.
+- A **field row** per tournament with three or more competitors, from
+  the round's `tournaments/field-{first_challenger}.json` snapshot, keyed
+  `{epoch_id}:field:{first_challenger}`. It leaves the parent and child
+  columns empty and carries the whole field's pairings and standings.
 
 | Column | Type | Source |
 |---|---|---|
-| `tournament_id` | TEXT PK | the round's stable id |
+| `tournament_id` | TEXT PK | the stable id above |
 | `epoch_id` | TEXT | (FK) |
-| `parent_generation_id` | TEXT | the reigning champion's id |
-| `child_generation_id` | TEXT | the challenger's id |
-| `decision` | TEXT | `promote` or `reject` |
-| `parent_scalar` | REAL | parent's tournament scalar |
-| `child_scalar` | REAL | child's tournament scalar |
+| `parent_generation_id` | TEXT | the reigning champion's id (empty on a field row) |
+| `child_generation_id` | TEXT | the challenger's id (empty on a field row) |
+| `decision` | TEXT | `promoted`, `rejected`, or `deferred` |
+| `parent_scalar`, `child_scalar` | REAL NULL | NULL: the outcome records only the delta; the absolute scalars are in each generation's `gen_score.json` |
 | `delta_scalar` | REAL | child − parent |
 | `rejection_reason` | TEXT NULL | gate's reason if rejected |
 | `ran_at` | TEXT | when the round was scored |
+| `structure` | TEXT | the tournament structure (`racing`, `gauntlet`, …) |
+| `structure_params_json` | TEXT (JSON) | the structure's params (field rows) |
+| `competitors_json` | TEXT (JSON) | the competing generation ids |
+| `rounds_json` | TEXT (JSON) | the match-by-match record |
+| `standings_json` | TEXT (JSON) | the field's standings (field rows) |
+| `field_status_json` | TEXT (JSON) | each competitor's field status (field rows) |
+| `champion_eval_mode` | TEXT | how the champion side was evaluated: `full`, `fast`, or `fast-degraded` |
+| `champion_run_ref` | TEXT NULL | the champion generation's workspace-relative directory |
 
 Primary key `tournament_id`. This is the table that backs the
 tournament bracket and the per-matchup detail in
@@ -472,7 +500,7 @@ breakdown that the scoring layer's `per_judge_weights` produces
 |---|---|---|
 | `run_id` | TEXT | (FK → `runs`) — the `{generation_id}--{entry_id}` id |
 | `judge_name` | TEXT | the custom judge's `name` |
-| `weighted_loss` | REAL | `raw_loss × weight` — the judge's contribution to `drift_loss` |
+| `weighted_loss` | REAL | `raw_loss × weight` — the judge's contribution to the `judge:` channel |
 | `raw_loss` | REAL | the judge's unweighted loss |
 | `weight` | REAL | the `per_judge_weights` weight applied |
 
@@ -483,29 +511,57 @@ raw per-judge *counts*, `judge_losses` carries the per-judge
 attribution panels read this table directly rather than
 re-deriving the weighting from counts × weights.
 
+### 3.10 `reflections` and `judge_scorecards`
+
+The board-reflection projection
+([BOARD-REFLECTION.md](BOARD-REFLECTION.md)). `reflections` holds one
+row per reflection directory under `epochs/{e}/reflections/`, keyed on
+`reflection_id`: the epoch, creation time, mode, whether the run
+executed, the headline reliability numbers
+(`noise_floor_max_abs_delta`, `decision_flip_p`), the finding and judge
+counts, and the corpus-wide TP/FP/FN/TN/ambiguous tally as
+`verdict_counts_json`. `judge_scorecards` holds one row per
+(reflection × judge) from that reflection's `scorecards.json`: the
+confusion counts, `precision`, `recall`, `f1`, `severity_accuracy`,
+`disagreement_rate`, `kappa` (the scorecard's `self_consistency_kappa`),
+`exercised`, and `redundant_with_json`. Primary keys are
+`reflection_id` and `(reflection_id, judge_name)`.
+
+### 3.11 `pareto_frontier`
+
+The projection of an epoch's canonical `epochs/{e}/pareto_frontier.json`
+record: one row per frontier member and one per retirement, with the
+admission and retirement rounds, the retirement reason, the champion at
+the time, the generation's scalar, and its per-axis values
+(`axis_values_json`, `beats_champion_on_json`). The primary key is
+`(epoch_id, generation_id, status, round_retired)`, because one
+generation can be admitted, retired when it is crowned, and admitted
+again. An unreadable record is skipped with a warning and leaves the
+epoch's existing rows in place (§5.1).
+
 ## 4. `zicato repair index`
 
 `zicato repair index` rebuilds `index.db` from the filesystem. It is
 the correctness backstop for the whole index design. It is an
 advanced / off-the-happy-path command — `zicato evolve` keeps the
 index current via the live dual-write, so an operator reaches for
-`reindex` only to repair a behind-or-corrupt index.
+it only to repair a behind-or-corrupt index.
 
 ```
 zicato repair index [--workspace <path>]
 ```
 
 `--workspace` is the **only** flag (default `.zicato`). There is no
-`--epoch` and no `--verify` — `reindex` always rebuilds the whole
+`--epoch` and no `--verify` — the command always rebuilds the whole
 workspace.
 
 It is not the *routine* path. `zicato evolve` builds an absent index
 and heals a diverged one at its own start (§5), so an operator reaches
-for `reindex` only in the situations §5.4 names.
+for the command only in the situations §5.4 names.
 
 ### 4.1 Behaviour
 
-`reindex`:
+`zicato repair index`:
 
 1. Acquires the workspace writer lease after delegated workers finish.
 2. Creates a private SQLite file with the supported schema.
@@ -517,8 +573,9 @@ for `reindex` only in the situations §5.4 names.
 
 ```
 $ zicato repair index
-[reindex] workspace: /home/op/myagent/.zicato
-[reindex] indexed 2 epochs, 13 generations, 130 runs
+Rebuilt index at /home/op/myagent/.zicato/index.db.
+  2 epochs, 13 generations, 12 experiments indexed.
+  130 runs, 26 loss profiles, 410 metric counts, 12 tournaments indexed.
 ```
 
 ### 4.2 One supported schema
@@ -549,18 +606,17 @@ values. Ratings and other index tables remain unchanged. Repeating the
 repair makes no changes, and canonical files are read only. Use
 `zicato repair index` to rebuild the complete projection.
 
-### 4.4 Reindex on resume
+### 4.4 The index after a crash
 
-The resume protocol (see [ROBUSTNESS.md §2.6](ROBUSTNESS.md#26-atomic-writes-and-resume-markers)
-and [RUNTIME.md](RUNTIME.md)) brings the index current as one of
-its first steps when `zicato evolve` restarts after a crash.
-Because the index can only ever be *behind* the filesystem
-(§2.3), the restart catch-up is purely additive: the orchestrator
-re-derives (via the incremental `ingest_*` path, or a full
-`reindex`) any rows for rounds that completed on disk but crashed
-before their index write. The resume protocol then proceeds against the
-canonical files; the index is brought current only so the dashboard's
-analytics are correct from the first server-sent-events frame after
+When `zicato evolve` restarts after a crash (the resume protocol is in
+[ROBUSTNESS.md §2.6](ROBUSTNESS.md#26-atomic-writes-and-resume-markers)
+and [RUNTIME.md](RUNTIME.md)), its start-of-invocation `ensure_index` and
+`heal_index` (§5.3) bring the index current. Because the index can only
+ever be *behind* the filesystem (§2.3), the catch-up re-projects the
+epochs whose canonical records changed after their last complete
+projection. The resume protocol proceeds against the canonical files;
+the index is brought current so the dashboard's analytics and the
+proposer's experiment memory are correct from the first round after
 restart.
 
 ## 5. Self-healing: the index maintains itself
@@ -623,13 +679,13 @@ def _build_index_atomically(workspace_root: Path, target: Path) -> None:
     # 4. os.replace({target}.{pid}.{uniq}.tmp, target)
 ```
 
-**Two properties of that sequence are load-bearing.**
+**Two properties of that sequence carry its safety.**
 
 *Each build owns a unique scratch path.* Builds and repairs acquire the
 workspace writer lease, or validate the invocation's supplied handle. A
 competing invocation cannot enter the build. Scratch names remain unique so
 an interrupted builder's files cannot be mistaken for an active build. The
-scratch sweep only reclaims files whose recorded process is no longer alive.
+scratch sweep only reclaims files whose recorded process has exited.
 
 *The outgoing sidecars are cleared BEFORE the rename rather than after
 it.* A write-ahead log (WAL) left beside a database it does not belong
@@ -715,7 +771,7 @@ Each is compared against the matching **workspace** signal:
 `generations/*/runs/*/`, and the other three against themselves as
 they were at the last projection.
 
-**The `Stamped from` column is the load-bearing one.** A cursor is
+**The `Stamped from` column is the one that matters.** A cursor is
 useful only when it says something the workspace does not already say.
 
 *Index-stamped, where a 1:1 counterpart exists.* `experiments_count`
@@ -914,7 +970,7 @@ invocation is still writing canonical records.
 
 ### 5.4 What still requires `zicato repair index`
 
-Routine reindexing is automatic. Three situations still call for
+Routine index maintenance is automatic. Three situations still call for
 the explicit command:
 
 - **Manual edits outside the canonical writer APIs.** Changing values or
@@ -947,7 +1003,7 @@ cross-cutting** layer, and *only* there. Source trees go to git;
 event capture goes to JSONL. The index never absorbs either —
 it projects *from* them. A run's `events.jsonl` is reached from
 its index row by reconstructing the path from the run coordinate
-(`{epoch}/generations/{gen}/runs/{entry}/events.jsonl`); the
+(`{epoch}/generations/{gen}/runs/{entry}/seed-{seed}/events.{purpose}.r{draw}.jsonl`); the
 harmonograf drill-down uses the run's `adk_session_id` (in
 `loss.json`). The index holds the *reduced* features rather than the
 events.
@@ -976,67 +1032,60 @@ event path); `index.db` is an analytical index (a derived view,
 never in the event path). The two are not interchangeable: zicato
 uses the JSONL sink for capture and the SQLite index for views.
 
-## 7. The Rust supervisor reads the same `index.db`
+## 7. Readers of `index.db`
 
-The Rust supervisor binary (see [RUNTIME.md](RUNTIME.md) §3,
-[DASHBOARD.md](DASHBOARD.md)) serves the live dashboard. The
-dashboard's tournament-detail analytics — the hypothesis ledger,
-the mutation heat map, the cost panel — are the cross-run
-aggregates from §1.1. The supervisor answers them by querying
-`.zicato/index.db` directly, via the **`rusqlite`** crate.
+Two processes read the index, and neither writes it:
+
+- **The Python dashboard service** (`zicato.dashboard`, spawned by
+  `zicato evolve` or run as `zicato dashboard`) serves the console. Its
+  query layer (`zicato.query`) opens `index.db` read-only through
+  `query/_sqlite.py` (a SQLite URI with `mode=ro`).
+- **The Rust supervisor** (`crates/supervisor`, see
+  [RUNTIME.md](RUNTIME.md) §3) opens it read-only through the
+  **`rusqlite`** crate (`index_db.rs`, `SQLITE_OPEN_READ_ONLY`). `zicato
+  evolve` spawns the supervisor with `--no-dashboard`, so there it runs
+  only the watchdog and `/statusz`; the supervisor's own dashboard routes,
+  and their index queries, serve only when an operator runs the binary
+  without that flag.
 
 ```
-┌────────────────────────────┐         ┌───────────────────────────┐
-│  zicato evolve (Python)    │         │ zicato-supervisor (Rust)  │
-│  ───────────────────────   │         │ ────────────────────────  │
-│  dual-writes index.db      │         │ opens index.db read-only  │
-│  (sqlite3, read-write)     │         │ via rusqlite              │
-│  canonical-file-first      │         │ SQLITE_OPEN_READ_ONLY     │
-└─────────────┬──────────────┘         └─────────────┬─────────────┘
-              │                                      │
-              │ writes                        reads  │
-              ▼                                      ▼
-        ┌─────────────────────────────────────────────────┐
-        │            .zicato/index.db (SQLite)            │
-        └─────────────────────────────────────────────────┘
+┌────────────────────────────┐   ┌───────────────────────────┐   ┌───────────────────────────┐
+│  zicato evolve (Python)    │   │ dashboard service (Python)│   │ zicato-supervisor (Rust)  │
+│  dual-writes index.db      │   │ query layer, mode=ro      │   │ rusqlite, READ_ONLY       │
+│  canonical-file-first      │   │                           │   │ (dashboard mode only)     │
+└─────────────┬──────────────┘   └─────────────┬─────────────┘   └─────────────┬─────────────┘
+              │ writes                   reads │                         reads │
+              ▼                                ▼                               ▼
+        ┌───────────────────────────────────────────────────────────────────────────┐
+        │                        .zicato/index.db (SQLite)                          │
+        └───────────────────────────────────────────────────────────────────────────┘
 ```
 
-Properties of the supervisor's read path:
+Properties of the read path:
 
-- **Read-only handle.** The supervisor opens the database with
-  `SQLITE_OPEN_READ_ONLY`. It is structurally incapable of
-  writing the index. The single-writer rule (§2.4) is enforced
-  by the open mode rather than by convention alone.
-- **WAL mode.** The orchestrator opens the database in
-  write-ahead-log mode (`PRAGMA journal_mode=WAL`). WAL lets the
-  supervisor's reads proceed concurrently with the
-  orchestrator's writes without either blocking the other — the
+- **Read-only handles.** Both readers open the database read-only, so
+  the single-writer rule (§2.4) is enforced by the open mode rather than
+  by convention alone.
+- **WAL mode.** Writers open the database in write-ahead-log mode
+  (`PRAGMA journal_mode=WAL`). WAL lets reads proceed concurrently with
+  the orchestrator's writes without either blocking the other — the
   reader sees a consistent snapshot as of its last completed
   transaction.
-- **No SSE-driven query storm.** The supervisor does not query
-  the index on every inotify event. It queries when a dashboard
-  panel that needs an aggregate is first opened, and re-queries
-  on the `round_finished` SSE trigger (rounds are minutes
-  apart). Per-entry live status still comes from the
-  `.zicato/runtime/` state files (which change every second);
-  the index is for the *settled* cross-run views.
+- **Settled views only.** Per-entry live status comes from the
+  `.zicato/runtime/` state files (which change every second); the
+  index serves the *settled* cross-run views.
 - **Graceful absence.** If `index.db` does not exist (a fresh
-  workspace, or one where `reindex` has never run), the
-  supervisor degrades: the live panels driven by
-  `.zicato/runtime/` still render; the analytical panels show a
-  "run `zicato repair index`" placeholder. The dashboard never hard-
-  fails on a missing index.
+  workspace, or one where no index has been built), the readers
+  degrade: the live panels driven by `.zicato/runtime/` still render,
+  and the analytical panels show an empty state. The dashboard never
+  hard-fails on a missing index.
 
-Why the supervisor reads the index rather than walking the
-filesystem itself: the supervisor is kept simple
-and LLM-free (see [ROBUSTNESS.md §2.4](ROBUSTNESS.md#24-the-orchestrator-watchdog-the-rust-supervisor)).
-Re-implementing the JSON-walk-and-aggregate logic in Rust would
-duplicate the projection rules that the Python dual-write
-already encodes, and the two would inevitably drift. Reading the
-shared `index.db` means the projection logic lives in one
-place (the Python dual-write), and the supervisor consumes
-its output. The schema in §3 is the contract between the two
-processes.
+Why the readers query the index rather than walking the filesystem: the
+projection rules live in one place (the Python ingest in
+`zicato.index.ingest`), and every reader consumes their output.
+Re-implementing the JSON-walk-and-aggregate logic in each reader would
+duplicate those rules, and the copies would drift. The schema in §3 is
+the contract between the writer and its readers.
 
 ## 8. Cross-references
 
@@ -1049,7 +1098,7 @@ processes.
 | The `LossProfile` shape the index projects | [TELEMETRY.md](TELEMETRY.md), [SCORING.md §2](SCORING.md#2-the-metric-channels) |
 | `experiment.json` / `gen_score.json` the index derives from | [EPOCHS-AND-JOURNALING.md §3](EPOCHS-AND-JOURNALING.md#3-the-experiment) |
 | The tournament analytics the index backs | [TOURNAMENT.md §4](TOURNAMENT.md#4-tournament-detail-analytics) |
-| The supervisor binary that reads the index | [RUNTIME.md](RUNTIME.md), [DASHBOARD.md](DASHBOARD.md) |
+| The dashboard service and supervisor binary that read the index | [DASHBOARD.md](DASHBOARD.md), [RUNTIME.md](RUNTIME.md) |
 | `zicato repair index` in the CLI reference | [CLI.md](CLI.md) |
 | The workspace lock the heal/build rule defers to | [RUNTIME.md](RUNTIME.md) |
 | The component map placing the index in the meta-loop | [ARCHITECTURE.md](ARCHITECTURE.md) |

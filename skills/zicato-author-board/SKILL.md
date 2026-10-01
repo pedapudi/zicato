@@ -18,11 +18,15 @@ under `.zicato/epochs/{epoch_id}/board.jsonl`. Sibling skills:
 [BOARD-AUTHORING.md](../../docs/design/BOARD-AUTHORING.md),
 [EMULATOR.md](../../docs/design/EMULATOR.md).
 
-> The real on-disk schema is canonical. Some prose in BOARD-FORMAT.md is stale:
-> the field is **`expectation`** (singular, one object) — NOT `expectations`
-> (list); judges use **`mode`/`body`** — NOT `kind`/`criterion`; `disable_drift`
-> tokens are short lowercase goldfive `DriftKind` values like `user_steer` —
-> NOT `DRIFT_KIND_*`. Mirror the working example rather than the prose.
+> Three spellings trip authors: the field is **`expectation`** (singular, one
+> object), never `expectations` (list); judges use **`mode`/`body`**, never
+> `kind`/`criterion`; `disable_drift` tokens are short lowercase goldfive
+> `DriftKind` values like `user_steer`, never `DRIFT_KIND_*`. The loader
+> refuses the wrong judge and drift-kind spellings, but it **ignores** an
+> `expectations` key silently, leaving the entry scored on drift alone. Mirror
+> the working example
+> (`examples/zicato_examples/target_1_presentation/board.jsonl`) and confirm
+> each entry's `expectation=yes|no` column in `zicato board list`.
 
 ## The `board_meta` header (optional, must be line 1)
 
@@ -144,8 +148,9 @@ the score is `zicato-tune-scoring`.
 ## `judges` — PROCESS checks (in-run)
 
 A tuple of process judges watching the reasoning stream live. A violation emits
-a goldfive `custom` drift identified by the judge `name` and feeds the
-**drift-loss** side (NOT pass-rate). Fields:
+a goldfive `custom` drift identified by the judge `name` and is scored in the
+scalar's **`judge:` channel** (not pass-rate, and not the `drift:` channel).
+Fields:
 
 - `name` — stable slug (lowercase alphanumerics, `_`, `-`); board-unique. This
   is goldfive's `judge_name` and the key `per_judge_weights` uses in
@@ -198,7 +203,8 @@ single run's session.
 
 ```sh
 PY=$ZICATO/.venv/bin/python   # ZICATO is your zicato checkout
-# List + re-validate every entry in the current epoch's board:
+# List + re-validate every entry in the current epoch's board (one line per
+# entry: id, kind, budget, weight, tags, expectation=yes|no):
 $PY -m zicato.cli board list --workspace .zicato
 # Append ONE entry from a JSON file (validated eagerly; rejects bad/duplicate id):
 $PY -m zicato.cli board add  --workspace .zicato path/to/entry.json
@@ -214,7 +220,7 @@ no `--force` flag on these commands.
 The board is frozen per epoch. Do not hand-edit a live board mid-epoch:
 changing it changes the evaluation contract and degrades the in-progress
 pattern history and round counter. The supported path is to let `evolve`
-auto-roll — it hashes the contract (board + brief + scoring + harness identity)
+auto-roll — it hashes the contract (board + brief + scoring + harness identity + proposer)
 and, when it has drifted, closes the current epoch and opens a fresh one before
 running (`--no-auto-epoch` to error on drift instead). To roll on purpose,
 edit the live `board.jsonl` then run `evolve`, or `zicato epoch new`. See

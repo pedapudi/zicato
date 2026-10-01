@@ -24,23 +24,24 @@ exists so that never depends on a human noticing a suspicious number again.
 ```
 
 Real flags only: `zicato health` exposes `--workspace` and `--epoch`. (There
-is no `--round` / `--format json` — the design doc now documents their
-absence too. If you need the raw report, read
+is no `--round` / `--format json`. If you need the raw per-round report, read
 `.zicato/epochs/{epoch}/health/round_{N}.json` directly.)
 
-It prints one line per firing detector — `[SEVERITY] detector_code:` a
-one-sentence summary, then its `detail` keys (including a `recommendation`).
-With no findings the loop has signal.
+It prints a `HEALTHY` / `UNHEALTHY` headline, then one line per firing
+detector — `[SEVERITY] detector_code:` a one-sentence summary — followed by
+its `detail` keys (including a `recommendation`). With no findings the loop
+has signal.
 
 ## The detectors the CLI runs
 
 Thresholds come from the workspace `config.json`'s `health` block
-(`HealthConfig`, `config.py`); defaults in parentheses. The pre-flight /
+(`HealthConfig`, `zicato/core/settings.py`); defaults in parentheses. The pre-flight /
 noise-floor / mutated-tree-import findings below are sourced from the same
 persisted workspace records the orchestrator's per-round assessment reads —
 `zicato.health.inputs` (`epoch_preflight_record`, `epoch_noise_floor_inputs`,
-`epoch_tree_import_gaps`, `workspace_preflight_gate`) — so the CLI and a live
-round now see the identical finding set for anything already written to disk.
+`epoch_tree_import_gaps`, `workspace_preflight_gate`, and the settlement and
+optional-failure readers) — so the CLI and a live round see the identical
+finding set for anything already written to disk.
 
 | Detector | Severity | Fires when |
 |---|---|---|
@@ -50,17 +51,22 @@ round now see the identical finding set for anything already written to disk.
 | `no_expectations` | `info` | more than `no_expectations_fraction` (0.5) of board entries carry no expectation — the pass/fail half is mostly absent |
 | `dead_judge` | `warning` | a board-declared judge's `custom:<name>` drift never appears in ANY run of the epoch AND it recorded no call failures, so the judge contributes no coverage |
 | `judge_erroring` | `warning` | a board-declared judge's callable RAISED (`LossProfile.judge_errors` counts invocations/errors/last type) — the same silence as `dead_judge`, but the fix is the named `judge` engine (or inherited `evaluation` engine), NOT the board. Its missing drift made the round's scalar better than the evidence supports |
-| `stalled_loop` | `warning` | `stalled_rejects` (3) consecutive generations were `rejected` — the proposer isn't finding improvements; the L5 breaker is about to or has fired |
+| `stalled_loop` | `warning` | `stalled_rejects` (3) consecutive generations were `rejected` — the proposer isn't finding improvements; `evolve --max-consecutive-rejections` (default 3) is about to stop the loop, or has |
 | `generalization_gap` | `warning` / `critical` | the champion's `holdout_loss - train_loss` **widened** since the first measured generation AND reached `generalization_gap_warn` (0.05) / `_crit` (0.15) — board memorization; critical recommends rolling the epoch |
-| `refresh_cadence` | `info` | evaluated generations reached `overfitting.max_generations_per_contract` (unset by default) — the contract has been mined enough |
+| `refresh_cadence` | `info` | evaluated generations reached `experimental.max_generations_per_contract` in `scoring.json` (unset by default) — the contract has been mined enough |
 | `placebo_promoted` | `critical` | a random-baseline placebo challenger was **promoted** — a no-op won a tournament, so gate discrimination is broken and recent wins are suspect |
 | `margin_below_noise_floor` | `info` gate ON / `warning` gate OFF | `promote_margin` sits inside the measured A/A noise floor |
 | `preflight_signal_below_floor` | `critical` **only** under `runtime.preflight_gate="refuse"`, else `warning` | pre-flight verdict `refuse` — the measured signal is at/below the noise floor. The one pre-flight finding that can hard-stop a run, because it is the one measured honestly. Gate-aware on purpose: this re-fires from the persisted record every round, and two criticals in a row would stop a run the operator explicitly set to `"warn"` |
 | `preflight_inert_probe` | `warning` | every probed mutation point left the scalar exactly at the champion mean while the A/A draws varied — the achievable signal is UNMEASURED because the probe was inert |
 | `preflight_saturated_contract` | `warning` | pre-flight verdict `warn` — zero spread across every probe including a knowingly degraded tree (the `1.000000` signature) |
-| `preflight_margin_above_achievable` | `warning`, never gating | `promote_margin` ≥ the measured DEGRADATION signal — how far the scalar fell when a mutation point was destroyed. That does not bound how far a challenger can improve (issue #119), and the probe degrades ONE point so it under-reports even the movement it measures. Check the margin rather than conclude that the run is null |
+| `preflight_margin_above_achievable` | `warning`, never gating | `promote_margin` ≥ the measured DEGRADATION signal — how far the scalar fell when a mutation point was destroyed. That does not bound how far a challenger can improve, and the probe degrades ONE point so it under-reports even the movement it measures. Check the margin rather than conclude that the run is null |
 | `preflight_margin_below_floor` | `warning` | the margin window's lower bound fails — margin inside the floor |
 | `tree_never_imported` | `warning`, one per (generation, tree) | no unit of a generation ever imported a mutable tree, so **mutations to it cannot have been under test** — the board scored code the loop never changed. Read `generations/<gen>/harness_load.json` |
+| `outcome_summarizer_failed` | `warning` | the configured `outcome_summarizer_spec` raised or returned a non-mapping; the round continued without its marginals |
+| `optional_operation_failed` | `warning` | an optional subsystem failed and was skipped; the finding names the operation and exception type |
+| `settlement_index_repair_required` | `warning` | a round settled but its analytical-index projection failed; `zicato repair index` rebuilds and acknowledges it |
+| `settlement_receipt_corrupt` | `warning` | a retained round-settlement record is unreadable or invalid; inspect it before running another round |
+| `on_promote_hook_delivery_unknown` | `warning` | a process stopped before an adapter's post-promotion hook delivery could be confirmed; reconcile the adapter's external state by hand |
 
 The placebo arm is split out of the optimization stream before the other
 detectors run, so an always-rejected control never reads as a stall or a
@@ -68,7 +74,7 @@ flat-scoring window.
 
 ## Findings only the per-round report carries
 
-Two findings stay orchestrator-only because their inputs are live-round
+Four findings stay orchestrator-only because their inputs are live-round
 state with no persisted workspace record for the CLI to read after the
 fact — a later `zicato health` invocation cannot reconstruct them:
 
@@ -76,6 +82,8 @@ fact — a later `zicato health` invocation cannot reconstruct them:
 |---|---|---|
 | `infra_outage` | `warning` | the round deferred on `runtime.infra_abort_round_threshold` — the endpoint rather than the loop is failing |
 | `round_token_clipped` | `warning` | `runtime.max_tokens_per_round` clipped the round; the verdict rests on partial coverage |
+| `attributable_entry_regression` | `warning` | a PROMOTED duel still regressed specific entries on their own evidence |
+| `on_promote_hook_failed` | `warning` | an adapter's post-promotion hook raised or timed out; the champion advanced but the adapter's external state did not |
 
 `detect_noisy_judge` (`warning` per judge whose test–retest disagreement
 exceeds 0.25) is not part of `assess_loop_health` at all — it is reached via
@@ -90,7 +98,7 @@ exceeds 0.25) is not part of `assess_loop_health` at all — it is reached via
 | Exit code | When |
 |---|---|
 | `0` | report produced; the worst finding is `info` or **`warning`** (or there are none) — only `critical` exits non-zero |
-| `1` | a **`critical`** finding is present (`raise SystemExit(1)`, `cli/commands/health.py:268`) — the "do not trust the lineage" signal |
+| `1` | a **`critical`** finding is present (`raise SystemExit(1)` at the end of `health_cmd` in `zicato/cli/commands/health.py`) — the "do not trust the lineage" signal |
 | `1` | usage / configuration error too (no active epoch, unreadable board) — these raise `click.ClickException`, which also exits `1` |
 
 **There is no distinct "degenerate" exit code.** The shipped
@@ -135,11 +143,12 @@ contract-level fixes:
 For unattended runs you do not need a flag: `zicato evolve` **stops itself**
 after `_DEGENERATE_HEALTH_STOP_THRESHOLD` (2) *consecutive* rounds whose
 health assessment carried a `critical` finding, so a degenerate epoch doesn't
-burn the rest of the budget. This is `DegenerateHealthPolicy`
-(`evolve/loop.py:295`), enabled by the `stop_on_degenerate_health` argument,
-**true by default** (`evolve/loop.py:375`); a non-critical round resets the
-streak. The loop halts cleanly — state fully written — and the terminal round
-records `stop_reason == "degenerate_health"` (`cli/commands/evolve.py:1001`).
+burn the rest of the budget. This is `DegenerateHealthPolicy` in
+`zicato/evolve/loop.py`, enabled by the `stop_on_degenerate_health` argument of
+`evolve_n_rounds`, **true by default**; a non-critical round resets the streak.
+The loop halts cleanly — state fully written — with stop reason
+`degenerate_health`, which the `evolve` command names in its closing
+summary.
 
 Only `critical` findings advance the streak, so warnings — including every
 `preflight_*` finding under the default `preflight_gate="warn"`, every
@@ -164,10 +173,11 @@ report) — see [zicato-watch-dashboard](../zicato-watch-dashboard/SKILL.md).
   `--format`; there is no `--stop-on-degenerate` evolve flag — degenerate-stop
   is on by default and needs no flag.
 - Don't promise the operator a finding `zicato health` cannot print:
-  `infra_outage` and `round_token_clipped` are live-round-only (no persisted
-  reader), so they live in the per-round report exclusively. Every other
-  finding — including the `preflight_*` family, `margin_below_noise_floor`,
-  and `tree_never_imported` — now reaches the CLI too, from the same
-  persisted records.
+  `infra_outage`, `round_token_clipped`, `attributable_entry_regression` and
+  `on_promote_hook_failed` are live-round-only (no persisted reader), so they
+  live in the per-round report exclusively. Every other finding — including
+  the `preflight_*` family, `margin_below_noise_floor`, and
+  `tree_never_imported` — reaches the CLI too, from the same persisted
+  records.
 - Never launch a live `evolve` to test health — read the on-disk
   `epochs/{epoch}/health/round_{N}.json` reports instead.

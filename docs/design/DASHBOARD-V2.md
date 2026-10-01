@@ -1,7 +1,7 @@
 # Two-mode dashboard specification
 
-> **Status: superseded. Retained for the design requirements it states.**
-> Neither front end this document names is in the repository. The
+> **Status: a superseded specification, written 2026-05-30. Retained for the
+> design requirements it states.** Neither front end this document names is in the repository. The
 > entity-page dashboard it argues against and the two-mode dashboard it
 > specifies were both removed from `main` on 2026-06-02 and preserved at
 > the git tag `dashboard-v1-v2-archive-2026-06-02`. The single shipping

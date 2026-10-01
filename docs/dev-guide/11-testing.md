@@ -36,7 +36,7 @@
 > | V6 | the clear-global-state-on-both-sides rule | **Autouse fixtures isolate process-global state on BOTH sides** (clear before AND after) so a test neither inherits nor bequeaths a pin. |
 > | V7 | the provenance-scoped-reaper rule | **The dashboard reaper selects by workspace provenance and never signals its own process group.** A provenance-blind reaper once group-killed an innocent concurrent evolve (`12-bug-casebook.md` case 5). |
 > | V8 | the parity-green-on-unchanged-behaviour rule | **Every parity gate is GREEN on unchanged behaviour; a RED gate is information.** A golden is re-captured only with a stated behavioural reason, and a re-capture never bakes an unrelated sibling change. |
-> | V9 | the contracts-are-lint rule | **The library never imports a driver; the query layer stays dashboard-free; the retired private paths stay retired.** The import linter (`lint-imports`) and `ruff` catch these as violations; no pytest test does. |
+> | V9 | the contracts-are-lint rule | **The library never imports a driver; the query layer stays dashboard-free; the retired private paths stay retired.** `tools/check_imports.py` (which runs import-linter over the declared and role-derived contracts) and `ruff` catch these as violations; no pytest test does. |
 > | V10 | the exit-code-is-the-node-signal rule | **A node suite's real signal is the PROCESS EXIT CODE rather than the tail line.** The served joins a suite renders are recorded endpoint responses (§11.9.3). |
 
 ---
@@ -45,7 +45,9 @@
 
 | File / tool | What it is |
 |---|---|
-| `tests/conftest.py` | the suite root: `sys.path` pin + the six autouse fixtures (config-pin isolation, mutation-syntax-table isolation, worker-permit redirection, the default-proposer text-shim, the harmonograf launch stub, the provenance-scoped dashboard reaper) |
+| `tests/conftest.py` | the suite root: `sys.path` pin, the `slow`-tier deselection hook, the three autouse fixtures (mutation-syntax-table isolation, the harmonograf launch stub, the provenance-scoped dashboard reaper), and the `mock_dashboard_spawn` fixture |
+| `tests/_dashboard_spawn.py` | `FakeDashboardProc` and `install_spawn_mock`, the non-spawning dashboard stand-in behind `mock_dashboard_spawn` |
+| `tests/_foe_support.py`, `tests/_fake_foe.py`, `tests/_foe_stand_in_proposer.py` | the stand-in proposal runtime every round-running fixture workspace declares (§11.2.2) |
 | `tests/_contract_pins.py` | `pin_deterministic` / `deterministic_weights` — the deterministic scripted-test knob pins |
 | `tests/_workspace_support.py` | the builders a read-side test composes its `.zicato/` fixture from — paths off `WorkspaceLayout`, `index.db` off `zicato.index.schema`, so a fixture cannot re-spell either. A new read-side test uses these instead of hand-writing DDL or joining `"epochs"` into a path; the module docstring states the default and the two cases that fall outside it |
 | `tests/_subprocess_worker_support.py` | module-level importable adapters + callables the worker subprocess resolves by dotted path (the worker-boundary test support) |
@@ -54,12 +56,15 @@
 | `tests/test_decision_procedure_power.py` | **the power oracle** — the operating characteristics of the decision procedure under seeded noise |
 | `tests/test_genstore_conformance.py` | the cross-backend `GenerationStore` conformance suite + the session-template fixtures |
 | `tests/test_conftest_dashboard_reaper.py` | the reaper's regression pins (provenance scoping + no self-group-kill) |
-| `tools/parity.sh` | the behavior-preserving refactor gates (PYTEST / CONTRACT-HASH / CLI-HELP / REINDEX-DUMP / eight MOCK-GOLDEN lanes / MYPY) |
+| `tools/parity.sh` | the behavior-preserving refactor gates (PYTEST / CONTRACT-HASH / CLI-HELP / REINDEX-DUMP / MOCK-GOLDEN with eight lanes / MYPY) |
 | `tools/parity/lib/*.py` | the gate helpers: `contract_hash.py`, `cli_help.py`, `normalize.py`, `mock_evolve_capture.py`, `test_mock_golden.py`, `test_reindex_golden.py` |
 | `tools/parity/golden/` | the committed golden baselines |
-| `pyproject.toml` | `[tool.pytest.ini_options]` (markers, `addopts`), `[tool.zicato.importlinter]` (the five contracts), `[tool.ruff.lint...banned-api]` (the TID251 bans) |
+| `pyproject.toml` | `[tool.pytest.ini_options]` (markers, `addopts`), `[tool.zicato.namespace_roles]` (the role inventory), `[tool.zicato.importlinter]` (the three declared contracts), `[tool.ruff.lint...banned-api]` (the TID251 bans) |
+| `tools/verify.py` | the shared check plan every Makefile target and CI step invokes (§11.11) |
+| `tools/affected_tests.py` | the import-graph test selector behind `make test-affected` (§11.1.2) |
+| `tools/check_imports.py` | the import-boundary check: role inventory, role-derived contracts, and the declared contracts (§11.8.1) |
 | `Makefile` | the targets (`test` = both tiers / `test-fast` = the default tier / `node-test` / `lint` / `import-lint` / `typecheck` / `check`) |
-| `.github/workflows/ci.yml` | the pull-request jobs (Python 3.12 running the DEFAULT tier, dashboard JavaScript, parity, and the Rust supervisor) |
+| `.github/workflows/ci.yml` | the pull-request and `main` push jobs: line budget, prose lint, dashboard JavaScript, Python 3.12 style/types/imports/DEFAULT tier, parity with the installed-supervisor check, and the Rust supervisor |
 | `.github/workflows/slow-tier.yml` | the `slow` tier on pull requests and on demand |
 | `src/zicato/dashboard/static/test/run-all.mjs` | the Node behaviour-suite runner (exit-code-honest) |
 
@@ -96,7 +101,7 @@ also runs the slow tests on demand from the Actions tab.
 addopts = "-n 4 -m 'not node and not cascade_oc'"
 markers = [
     "node: shells out to the standalone Node test harness (run via `make node-test`)",
-    "slow: one test measured at 15 s or more (statistical characterizations and end-to-end simulations); deselected ONLY by a bare `pytest` (see tests/conftest.py) — naming a file or a test runs it, `-m slow` runs the tier alone, and `make test` and CI run both tiers",
+    "slow: one test measured at 15 s or more ALONE (`-n0`; statistical characterizations and end-to-end simulations); deselected ONLY by a bare `pytest` (see tests/conftest.py) — naming a file, a test or a `-k` keyword runs it, `-m slow` runs the tier alone, and `make test` and tools/parity.sh run both tiers",
     "integration: crosses a process or network boundary (worker subprocesses, live servers, git subprocesses); retain the real operations that establish the tested behavior",
     "cascade_oc: the opt-in evaluation-cascade OC measurement suite (CASCADE.md §4); EXCLUDED from the default run via addopts — run with `-m cascade_oc`",
 ]
@@ -278,16 +283,21 @@ collecting the application suite.
 
 ## 11.2 The autouse fixtures — `tests/conftest.py`
 
-Five autouse fixtures shape every test.
+Three autouse fixtures shape every test.
 
-- **Two isolate shared resources.** `_isolate_mutation_syntax_table`
-  restores built-in mutation syntax so a workspace's additional file types do
-  not affect later tests. `_isolate_host_worker_permits` selects a session
-  directory so tests and an operator's concurrent run use separate pools.
-- **Two replace production defaults** that would otherwise require optional
-  dependencies or real I/O (§11.2.2). Each fixture lists the modules that
-  exercise the real path and skip its replacement.
-- **One cleans up dashboard servers** at session end (§11.2.3).
+- **`_isolate_mutation_syntax_table`** restores the built-in mutation syntax
+  table on both sides of each test, so a workspace's additional file types do
+  not affect later tests.
+- **`_stub_harmonograf_launch`** replaces the evolve loop's harmonograf
+  auto-launch with a no-op, so a loop test takes the JSONL-only telemetry
+  path instead of starting a real server. The modules named in
+  `_REAL_HARMONOGRAF_LAUNCH_MODULES` exercise the real launch and skip the
+  replacement.
+- **`_reap_leaked_dashboards`** cleans up dashboard servers at session end
+  (§11.2.3).
+
+The proposal runtime is not a fixture: each fixture workspace declares it in
+its own `config.json` (§11.2.2).
 
 ### 11.2.1 Invocation configuration isolation
 
@@ -312,7 +322,7 @@ and `tests/_foe_support.stand_in_proposer_block` writes it:
         json.dumps(
             {
                 ...,
-                "proposer": stand_in_proposer_block(tmp_path / "foe"),
+                "proposer": stand_in_proposer_block(tmp_path / "foe", **proposer),
             }
         )
     )
@@ -350,16 +360,17 @@ workspace rather than scripting turns:
 > calls into a mock; a test that asserts on what the model saw reads the
 > `user` of that same record, never a patched renderer. The evaluation
 > callable still serves the critique, the recombination merge and the
-> analyzer, so `make_aux_responder([])` is the ordinary spelling for a
-> round that needs none of those.
+> analyzer. `tests/_orchestrator_harness.py` declares an
+> `evaluation_call_llm` that raises on any call, so a round that needs none
+> of those fails loudly if one happens.
 
-> ⚠️ TRAP — these two fixtures are why an evolve/orchestrator test runs with
-> no `google-adk` and no real model traffic. If you write a test that needs
-> the ADK default agent or the real harmonograf launch, add
-> your module to the matching opt-out `frozenset` — do NOT monkeypatch around
-> the fixture inside your test (a fixture-fighting monkeypatch is fragile and
-> hides which path you actually exercise). The opt-out list IS the registry of
-> "tests that use the real thing".
+> ⚠️ TRAP — the stand-in proposal runtime and the harmonograf launch stub
+> are why an evolve/orchestrator test runs with no real model traffic and no
+> live telemetry server. If you write a test that needs the real harmonograf
+> launch, add your module to `_REAL_HARMONOGRAF_LAUNCH_MODULES` — do NOT
+> monkeypatch around the fixture inside your test (a fixture-fighting
+> monkeypatch is fragile and hides which path you actually exercise). The
+> opt-out set IS the registry of "tests that use the real launch".
 
 ### 11.2.3 The provenance-scoped dashboard reaper
 
@@ -467,9 +478,9 @@ class FakeDashboardProc:
     never starting a real OS process. ...
     """
 ```
-— `tests/conftest.py`, `FakeDashboardProc`
+— `tests/_dashboard_spawn.py`, `FakeDashboardProc`
 
-The fake also publishes a fake `runtime/dashboard.json` endpoint file so the
+`install_spawn_mock` also publishes a fake `runtime/dashboard.json` endpoint file so the
 CLI's bound-port readback resolves IMMEDIATELY instead of polling the full
 fallback timeout — the real server would write that file once it bound a
 port, so the fake short-circuits the wait. Any CLI test that runs `evolve`
@@ -621,7 +632,13 @@ a loop that reaches the right number by the wrong path is still broken:
 ```python
         types = [e.type for e in events]
         assert types == (
-            ["round_opened", "proposal_attempted", "experiment_minted", "patches_applied"]
+            [
+                "round_opened",
+                "proposal_attempted",
+                "proposal_episode_settled",
+                "experiment_minted",
+                "patches_applied",
+            ]
             + ["unit_completed"] * (2 * BOARD_SIZE)
             + ["gate_evaluated", "decision_recorded", "round_closed"]
         ), f"round {round_index}: {types}"
@@ -637,10 +654,14 @@ a loop that reaches the right number by the wrong path is still broken:
 - **Per-unit `loss.json` for the final champion:** the exact per-run
   numbers the floor is built from (one info-severity drift frame, 4/5
   predicates passing), asserted entry by entry.
-- **Index uniqueness:** the `runs` table keeps every generation's rows
-  (`per_gen == {gid: BOARD_SIZE for gid in ("v0","v1","v2","v3")}`,
-  `4 * BOARD_SIZE` unique run ids) — the pin against reused run ids, which
-  would let a later generation's rows overwrite an earlier one's.
+- **Index uniqueness and measurement purposes:** the `runs` table keeps
+  every generation's rows (`per_gen == {"v0": 7 * BOARD_SIZE, "v1":
+  BOARD_SIZE, "v2": BOARD_SIZE, "v3": BOARD_SIZE}`, `10 * BOARD_SIZE` unique
+  run ids). The champion `v0` also carries its calibration and contract
+  pre-flight measurements, so the purposes count as `4 * BOARD_SIZE`
+  tournament, `5 * BOARD_SIZE` calibration and `BOARD_SIZE` pre-flight rows.
+  This pins against reused run ids, which would let a later generation's
+  rows overwrite an earlier one's.
 - **Loop health:** no `degenerate_scoring` / `non_differentiating_entry`
   finding in any round (a planted-defect design that stopped differentiating
   generations would trip those).
@@ -660,12 +681,14 @@ the gauntlet oracle.
 > visible, reviewable claim. A change that passes the unit suite but breaks
 > this oracle broke the end-to-end contract.
 
-> ⚠️ TRAP — this oracle uses the example's skills-only proposer dir
-> (`EXAMPLE_DIR / "proposer"`), which selects the REAL skill-composed
-> text-shim proposer (a `dir:*` spec flows through the real
-> `build_proposer_agent`), so it does NOT depend on the conftest
-> default-proposer pin. Do not "simplify" it to the bare default — the point
-> is that a real, disk-resolved proposer drives the real loop.
+> ⚠️ TRAP — this oracle declares the stand-in proposal runtime with
+> `stand_in_proposer_block(..., contents=policies)`, so each candidate's
+> episode writes the scripted policy from `mocks.GAUNTLET_POLICIES` (or
+> `RACING_POLICIES`), and its contract carries the example's proposer skills
+> directory (`EXAMPLE_DIR / "proposer"`). Every round therefore runs a real
+> proposal episode through the production runtime. Do not replace the
+> episode with a patched proposal function — the point is that the real
+> proposal path drives the real loop.
 
 ### 11.4.2 The decision-procedure power harness
 
@@ -792,12 +815,16 @@ importable adapter because each must survive the process crossing:
 | Adapter | Behaviour it forces | What it tests |
 |---|---|---|
 | `StubAdapter` | `run(entry, sinks, config)` without emitted events | the happy path, no goldfive dependency |
+| `CompletingAdapter` | returns a completed `RunResult` with output and a two-turn transcript, and records one judge call when a judge-I/O sink rides the config | result capture and the worker-bound judge-I/O sidecar |
+| `CaptureBlockedAdapter` / `LossBlockedAdapter` | obstruct the capture writes or the authoritative `loss.json` publication after prior artifacts are archived | a failed publication cannot leave a partial or stale measurement |
+| `ArtifactWritingAdapter` | writes files with run-time names into the supplied scratch tree | post-run graders receive the captured artifact inventory |
 | `SnapshotWritingAdapter` | writes runtime output INTO the mounted snapshot | per-run checkout isolation — the write must land in a discarded per-run copy, never the canonical snapshot |
 | `SleepingAdapter` | a BLOCKING `time.sleep` that wedges the worker's own event loop | forces the PARENT's `wait_for` + SIGTERM/SIGKILL escalation (the cooperative budget can't fire) |
 | `CooperativeAdapter` | a CANCELLABLE `asyncio.sleep` | the worker's own cooperative budget fires and it self-aborts, exit 0 |
 | `EmittingThenSleepingAdapter` | emits one `run_started` frame then sleeps to cancellation | the terminal-event fix leaves a `run_aborted` frame on disk |
 | `AbortingAdapter` | returns an aborted `RunResult` (a simulated crash) | the reducer's not-completed penalty (without it a near-instant crash scores `drift_loss == 0.0`) |
-| `ConfigProbeAdapter` | records the WORKER process's resolved typed config to `config_probe.json` | the invocation overlay crossed the subprocess boundary through the serialized configuration |
+| `ConfigProbeAdapter` | returns the WORKER process's resolved configuration value (`aux.call_timeout_s`) as its `final_output` | the invocation overlay crossed the subprocess boundary through the serialized configuration |
+| `NestedContextProbeAdapter` | starts a nested process that reads `inherited_runtime_context()` and returns it | a target's own child processes inherit the worker's runtime context |
 
 `make_sigterm_ignoring_adapter` is the sharpest example of why these live at
 module level: it installs a `SIGTERM`-ignoring handler INSIDE the worker
@@ -933,10 +960,10 @@ behaviour turns a gate RED (the parity-green-on-unchanged-behaviour rule):
 ```
 — `tools/parity.sh` (header)
 
-The script reports a separate verdict for each of thirteen gates: the full
-test suite, three golden diffs (the contract hash, the CLI help text, the
-index dump), the eight mock-evolve lanes of §11.7.5, and the mypy error
-count. The sections below take them in that order, one kind at a time.
+The script reports a separate verdict for each of six gates: the full test
+suite, three golden diffs (the contract hash, the CLI help text, the index
+dump), MOCK-GOLDEN (the eight mock-evolve lanes of §11.7.5 in one pytest
+session), and mypy. The sections below take them in that order.
 
 `make parity` invokes the shared golden check with `--skip PYTEST,MYPY`.
 The complete plan owns those Python-suite and type-check results separately.
@@ -1098,26 +1125,27 @@ the lane would capture the full-mode path under a fast-mode name — the
 goldens record `champion_eval_mode: "fast"`, which is the assertion that it
 did not.
 
-`tools/parity.sh` selects a lane with `pytest -k <lane name>`, so no lane
-name may be a substring of another. The lane table lives in
-`tools/parity/lib/mock_evolve_capture.py`; adding a lane there and a
-entry in the gate table in `tools/parity.sh` is the wiring — plus,
-for a structure the example does not yet declare, a `scoring.<structure>.json`
-beside the others in the example directory.
+`tools/parity/lib/test_mock_golden.py` parametrizes both of its tests over
+the lane table, so pytest names each lane in its node id and a failure names
+the configuration that moved. Select one lane with `-k <lane name>`; no lane
+name may be a substring of another. The lane table (`LANES`) lives in
+`tools/parity/lib/mock_evolve_capture.py`; adding a lane there, with its
+golden file name and `epoch_name`, is the wiring — plus, for a structure the
+example does not yet declare, a `scoring.<structure>.json` beside the others
+in the example directory.
 
-The capture below is written for the racing lane, and generalises over all
-three axes:
+The capture module states what it runs and what it compares:
 
 ```python
-"""Deterministic mock-evolve capture for the parity oracle (MOCK-GOLDEN gate).
+"""Capture deterministic tournament execution for comparison with saved results.
+
+The presentation example supplies the board, scoring contract, annotated source,
+and deterministic proposer. Test adapters supply measured results without paid
+model calls. Each configuration executes the real propose, apply, tournament,
+holdout confirmation, and promotion sequence.
 ...
-Unlike the unit suite, this exercises the full orchestrated path —
-propose N challengers off v0, apply the real proposer patches against the
-real mutation markers, run the racing rungs + cuts on board slices, crown
-a survivor through the champion gate, and persist the whole audit — and
-freezes the EXACT serialized bytes of every decision artifact. A refactor
-that changes any loss, any scalar, any decision, any id, any structural
-field, or any serialization detail moves these bytes and fails the gate.
+Only timestamps, temporary paths, dates, and generated identifiers are normalized.
+Scores, predicates, decisions, and match results must match the saved JSON.
 """
 ```
 — `tools/parity/lib/mock_evolve_capture.py` (module docstring)
@@ -1126,9 +1154,11 @@ field, or any serialization detail moves these bytes and fails the gate.
 field / round-log event / serialization detail changes. **Update:**
 `ZICATO_PARITY_UPDATE=1` (all lanes), or `-k <lane>` for one.
 The capture lives OUTSIDE `tests/`, so that conftest's autouse fixtures do
-not fire; it replicates the two it needs — pinning the default proposer to
-the text shim and neutering the harmonograf launch — so the captured
-behaviour matches what the unit suite asserts.
+not fire; it replicates the one it needs — neutering the harmonograf launch.
+The proposal runtime needs no fixture: the example workspace declares the
+stand-in runtime in its own `config.json`, as every other fixture workspace
+does. The capture also pins the epoch-id date, because the epoch id salts the
+holdout split.
 
 ### 11.7.6 The masking discipline (why goldens don't flap)
 
@@ -1142,7 +1172,7 @@ silently changes a REAL field still surfaces as a diff:
 ```python
 """Shared normalization for parity goldens.
 ...
-The masking is deliberately narrow: only fields that are known to be
+The masking is narrow: only fields that are known to be
 non-deterministic by construction are touched. A refactor that silently
 changes a real field will still surface as a diff.
 """
@@ -1175,15 +1205,16 @@ only reviewable if the re-capture contains ONLY the change under review.
 > means an operator's epoch would spuriously roll; a MOCK-GOLDEN red means a
 > loss / scalar / decision moved; a REINDEX-DUMP red means the index
 > projection changed. Read the diff before you reach for `--update` — the
-> question is always "is the new behaviour correct?", and only if the answer
+> question is always "is the changed behaviour correct?", and only if the answer
 > is a justified yes do you re-capture.
 
 ---
 
 ## 11.8 The import contracts + the TID251 bans
 
-Two static gates keep the architecture from eroding: the import-linter
-contracts (`make import-lint`) and the ruff TID251 banned-api list.
+Two static gates keep the architecture from eroding: the import contracts
+(`make import-lint`, which runs `tools/check_imports.py`) and the ruff TID251
+banned-api list.
 Neither is a pytest test — a violation reds the linter, so they run in
 `make check` and CI.
 
@@ -1195,7 +1226,12 @@ role. Library code cannot import the CLI or dashboard. Primitives and execution
 code cannot import coordination code; primitives may import only primitives.
 Packages with mixed responsibilities retain their declared library role.
 
-The explicit import-linter contracts add narrower restrictions:
+`tools/check_imports.py` derives three contracts from the roles (library
+code cannot import drivers; execution code cannot import coordination code or
+drivers; primitives cannot import the rest of the library), checks that the
+root `zicato` facade reaches no driver, and hands the result to import-linter.
+The explicit contracts in `[tool.zicato.importlinter]` add narrower
+restrictions:
 
 | Source | Forbidden dependency |
 | --- | --- |
@@ -1228,7 +1264,7 @@ ignore; everyone else goes through the public `zicato.storage` face.
 
 ### 11.8.3 Reading a violation
 
-A `lint-imports` failure names the contract and the offending import chain;
+A `make import-lint` failure names the contract and the offending import chain;
 a TID251 failure names the banned symbol and its `.msg` (the move
 instruction). Both tell you the fix directly.
 
@@ -1242,7 +1278,7 @@ instruction). Both tell you the fix directly.
 > that is a design decision rather than a lint fix.
 
 > ⚠️ TRAP — pre-commit lints only CHANGED files, but CI runs `ruff check .`
-> and `lint-imports` over the WHOLE tree. A cross-module edge you add can pass
+> and `tools/check_imports.py` over the WHOLE tree. A cross-module edge you add can pass
 > your local pre-commit (it only saw your one file) and red in CI (which sees
 > the contract over the whole graph). Run `make import-lint` and `uv run ruff
 > check .` before pushing a structural change. A `known-first-party` isort
@@ -1484,13 +1520,14 @@ change to the counters discards.
 `.line-budget.json` contains hard limits without an allowance. Keep the three
 independent one-line-overage assertions in `tests/test_line_budget.py`: each
 proves that one limit fails at `limit + 1` while the other two are unchanged.
-Three fixture tests beside them pin the split the logic count makes — a Python
+Four fixture tests beside them pin the split the logic count makes — a Python
 file whose docstring and comment lines count in `production` and not in
-`production_logic`, a JavaScript file with line and block comments, and a Rust
+`production_logic`, a JavaScript file with line and block comments, a Rust
 file carrying doc comments, a nested block comment, a block comment that ends
 before code on the same line, a `#[cfg(test)]` module with nested braces, and
-string literals holding braces, one of them unbalanced — and one more pins
-that every path in `EXCLUDED_FROM_BUDGET` is tracked in the tree.
+string literals holding braces, one of them unbalanced, and a file type with
+no counter that keeps its raw count — and one more pins that every path in
+`EXCLUDED_FROM_BUDGET` is tracked in the tree.
 Run:
 
 ```bash
@@ -1592,7 +1629,7 @@ touched.
 ### 11.12.2 Never weaken an assertion — pin or justify
 
 When a test goes red, there are exactly two honest responses: fix the code,
-or — if the new behaviour is CORRECT — update the assertion to the new value
+or — if the changed behaviour is CORRECT — update the assertion to the changed value
 WITH a measured justification. Loosening an assertion (widening a tolerance,
 deleting a check, changing `==` to `>=`) to make red go green is destroying
 the test's coverage.
@@ -1841,10 +1878,7 @@ with the same observable semantics. This module is the canonical contract:
 a backend that passes every test here is a drop-in for any zicato domain
 routed through the storage seam.
 
-Adding a third backend (the v0+1 git backend) is a one-line change —
-append a :class:`BackendSpec` to ``BACKENDS`` describing how to build a
-started backend for the test; the parametrised ``backend`` fixture does
-the rest.
+...
 """
 ```
 — `tests/test_storage_conformance.py` (module docstring)
@@ -1877,8 +1911,9 @@ def backend(request, tmp_path: Path):
 Every test takes `backend` and asserts an observable semantic — a missing
 record reads `None`, a write-then-read round-trips, a write replaces the
 prior value, the atomic-write contract holds (07-runtime-and-durability.md
-§7.3). The `StorageBackend` contract that the file backend, the in-memory
-backend, and the planned git backend must ALL satisfy is this file.
+§7.3). This file is the `StorageBackend` contract that the file backend, the
+in-memory backend, and any backend added later must ALL satisfy; a new backend
+is one more `BackendSpec` in `BACKENDS`.
 
 The generation-store conformance suite (§11.6) is the same pattern over a
 DIFFERENT seam — parametrised on `{directory, git}`, asserting the
@@ -1922,13 +1957,13 @@ reads identically either way (09-dashboard-and-query.md §9.2.1):
 def test_current_champion_is_the_reigning_not_the_first_promotion(tmp_path):
     # A lineage that promotes TWICE — v1 then v3. The bug returned v1
     # (first promoted); the fix returns v3 (reigning = last promoted).
-    workspace = _fixture_with_two_promotions(tmp_path, promoted=["v1", "v3"])
-    view = build_epoch_view(WorkspacePaths(workspace / ".zicato"))
+    workspace, epoch_id = _fixture_with_two_promotions(tmp_path, promoted=["v1", "v3"])
+    view = build_epoch_view(WorkspacePaths(workspace / ".zicato"), epoch_id)
     assert view["current_champion"] == "v3"   # reigning, not "v1"
 ```
 
 **Step 2 — Prove it fails with the fix reverted.** `git stash` the fix (or
-check out the pre-fix source for `_current_champion`), run the test, SEE IT
+check out the pre-fix source for `zicato.query.promoted_head.current_champion`), run the test, SEE IT
 RED (it returns `"v1"`), then restore the fix and see it green. If it passes
 on the buggy code, your fixture does not distinguish the bug — a
 single-promotion lineage would do that. Fix the fixture until the
@@ -1949,10 +1984,10 @@ subsystem, at the layer the bug lives at:
 
 **Step 4 — Assert the ROOT invariant rather than only the symptom.** The
 champion-scan case showed as a wrong champion in one payload. Its root is two
-dashboard doctrines — server-computes-client-renders and the champion is the
-reigning spine end (09-dashboard-and-query.md, doctrines `DQ1` and `DQ10`):
-the server computes and the client renders, so the client must not re-derive;
-and the reigning champion is the spine END. Assert the
+dashboard doctrines (09-dashboard-and-query.md, doctrines `DQ1` and `DQ10`):
+execution records decisions and the dashboard presents them, so the client
+must not re-derive a champion; and `current_champion` is the most recent
+champion named by a committed round. Assert the
 invariant so the test catches the bug's return through a DIFFERENT surface as
 well as the one that broke.
 
@@ -2010,11 +2045,11 @@ class _SleepingSession:
     own cooperative ``asyncio.wait_for`` budget CANNOT fire. That is what
     forces the PARENT's ``wait_for`` + SIGTERM/SIGKILL escalation (and,
     in production, the supervisor) to be the layer that stops the run —
-    exactly the wedged-run scenario the L3 layer exists for.
+    ...
     """
 
-    async def run(self, entry: Any, sink_path: Path) -> None:
-        del entry, sink_path
+    async def run(self, entry: Any, sinks: Any, config: Any) -> None:
+        del entry, sinks, config
         time.sleep(3600.0)
 ```
 — `tests/_subprocess_worker_support.py`, `_SleepingSession`
@@ -2036,16 +2071,19 @@ stays in the default tier.
 own wait (the worker's budget + the parent's grace + a margin) so a genuine
 hang fails the test rather than wedging the suite. And it must assert the
 process, the temp checkout, and any child are gone at the end — the
-`checkout_ephemeral` conformance tests are the model (`assert list(
-_isolated_tempdir.iterdir()) == []` after cleanup; §11.6). A test that
+`checkout_ephemeral` conformance tests in
+`tests/test_genstore_conformance.py` are the model: their `_isolated_tempdir`
+fixture redirects the temporary directory so cleanup can be asserted
+(§11.6). A test that
 leaks a real subprocess or a `ztw-snap-*` tree is a test that will flake the
 NEXT test under xdist.
 
 **Step 5 — Prove the boundary crossing rather than only the outcome.** If the
 test is about something crossing INTO the worker (an invocation configuration value), read
-it back from INSIDE the worker. `ConfigProbeAdapter` writes the worker's
-resolved `load_config()` view to `config_probe.json`, so the test proves the
-value crossed via the args file with NO env var involved (§11.5). Asserting
+it back from INSIDE the worker. `ConfigProbeAdapter` returns the worker's
+resolved configuration value as the run's `final_output`, so the test proves
+the value crossed via the argument file with NO environment variable involved
+(§11.5). Asserting
 the outcome alone can pass for the wrong reason.
 
 **Verify**
@@ -2127,11 +2165,11 @@ where to ADD) a test, by concern.
 | the CLI surface is canonical | `tools/parity/lib/cli_help.py` (regen: `--update`) |
 | the index projection is pure | `tools/parity/lib/test_reindex_golden.py` |
 | the whole end-to-end audit bytes | `tools/parity/lib/test_mock_golden.py` + `mock_evolve_capture.py` |
-| the library/driver + query-dashboard-free contracts | `pyproject.toml [tool.zicato.importlinter]` → `make import-lint` |
+| the role inventory, library/driver, and query-dashboard-free contracts | `pyproject.toml [tool.zicato.namespace_roles]` + `[tool.zicato.importlinter]` → `tools/check_imports.py` → `make import-lint` |
 | the retired private paths stay retired | `pyproject.toml [tool.ruff...banned-api]` → `uv run ruff check` |
 | the digest / no-op / DOM-identity render discipline | `src/zicato/dashboard/static/test/*.test.mjs` → `make node-test` |
 | the node suite renders what the endpoints serve | `tests/_console_scenarios.py` + `tests/test_dashboard_endpoint_table.py` → `static/test/recorded.mjs` |
-| the whole thing, reproducibly, in Python, JavaScript, and Rust | `.github/workflows/ci.yml` (default Python tier + dashboard JavaScript + `cargo test`) and `.github/workflows/slow-tier.yml` (statistical and end-to-end oracles) |
+| the whole thing, reproducibly, in Python, JavaScript, and Rust | `.github/workflows/ci.yml` (line budget, prose, default Python tier, parity, dashboard JavaScript, Rust) and `.github/workflows/slow-tier.yml` (statistical and end-to-end oracles), both through `tools/verify.py` |
 
 `make check` runs the complete verification plan, including parity and
 both oracle suites. `make check-fast` runs the iteration selection.

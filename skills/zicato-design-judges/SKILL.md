@@ -26,7 +26,7 @@ It is the design-principles sibling of
 | When evaluated | post-hoc, after the run finishes | in-flight, while the run unfolds |
 | Asks | "is the *product* right?" | "is the *process* clean?" |
 | Cardinality | zero or one per entry | zero or more per entry |
-| Scoring axis | **pass-rate** dimension | **drift-loss** dimension (emits `custom` drift) |
+| Scoring axis | **pass-rate** term | the **`judge:` channel**: each judge's `custom` drift becomes its own `judge:<name>` metric |
 | Reads | `final_output` or `conversation_end` | the live reasoning / event stream |
 
 The rule: assert on the **product** with an `expectation`; assert on the *way
@@ -123,10 +123,9 @@ matcher backed by a **scorer** callable may return a *continuous* score — a
 float in `[0.0, 1.0]` (an F1, a similarity, a partial-credit rubric) — and an
 optional `metrics` decomposition (e.g. `{"precision": .., "recall": ..}`). The
 matcher clamps the score to `[0,1]` and records it on `ExpectationResult.score`
-(and `metrics`), while `passed` keeps a thresholded bit for display/back-compat.
-A plain `bool` matcher leaves `score=None`, and the reducer then derives the
-score as `1.0`/`0.0` from `passed`, so a binary board is byte-identical to the
-pre-score behaviour. Both `score` and `metrics` are carried out to `loss.json`
+(and `metrics`), while `passed` keeps a display bit (`score > 0.0`). A plain
+`bool` matcher leaves `score=None`, and the reducer then derives the score as
+`1.0`/`0.0` from `passed`. Both `score` and `metrics` are carried out to `loss.json`
 (see [`zicato-read-telemetry`](../zicato-read-telemetry/SKILL.md)); they feed the
 proposer's failure-mode profile. The *scalar/drift scoring formula* over these
 numbers is owned by [`zicato-tune-scoring`](../zicato-tune-scoring/SKILL.md) —
@@ -135,8 +134,9 @@ verdict* rather than the weights.
 
 ## How drift telemetry becomes loss
 
-The scalar's drift-loss half is a weighted sum over the run's **drift counts**,
-bucketed by `(kind, severity)`. zicato consumes goldfive's drift taxonomy as
+The scalar's `drift:` channel is a weighted sum over the run's **drift
+counts**, bucketed by `(kind, severity)` and recorded in the loss record's
+`metric_counts` as `drift:<kind>`. zicato consumes goldfive's drift taxonomy as
 its loss signal — the registered kinds include `tool_error`, `plan_divergence`,
 `looping_reasoning`, `looping_tool_call`, `intent_divergence`, `off_topic`,
 `confabulation_risk`, `hallucination_suspected`, `schema_violation`,
@@ -149,14 +149,14 @@ Two sources of drift:
    kinds during a run. Suppress benign ones board-wide with `disable_drift`
    (see [`zicato-design-boards`](../zicato-design-boards/SKILL.md)).
 2. **Your custom judges** — every custom judge emits the *single* `custom`
-   kind on violation, attributed to its `judge_name`. The reducer folds this
-   into a `custom:<judge_name>` bucket so the analyzer can answer "which judge
-   drove this run's loss" — but the aggregate `drift_loss` sums all judges into
-   one scalar.
+   kind on violation, attributed to its `judge_name`. The reducer records it
+   as `drift:custom:<judge_name>` and EXCLUDES it from `drift_loss`; it is
+   scored instead in the `judge:` channel, one `judge:<judge_name>` metric per
+   judge, so the analyzer can answer "which judge drove this run's loss".
 
 The per-run severity-weighted sum for a judge is
 `sum(severity_weights[c.severity] * c.count)`, then multiplied by the judge's
-weight. Design implication: a judge's *severity* and its *per-judge weight*
+weight; the loss record carries it as `per_judge_loss[]`. Design implication: a judge's *severity* and its *per-judge weight*
 both scale its loss, multiplicatively — set severity by *kind of badness*
 (critical = qualitatively unacceptable) and per-judge weight by *which judge
 matters most this epoch*.
@@ -167,13 +167,13 @@ matters most this epoch*.
 |---|---|---|
 | `severity_weights` | severity (`info`/`warning`/`critical`) | how much worse a critical is than an info (default `1 / 3 / 10`); a missing key scores `0.0` |
 | `per_kind_weights` | first-class `DriftKind` token | up-weighting the *built-in* drift kinds that matter for this harness; stacks multiplicatively with severity |
-| `per_judge_weights` | judge `name` | telling *custom judges apart* — they all share the `custom` kind, so `per_kind_weights["custom"]` can't distinguish them; this is the only per-judge lever |
+| `per_judge_weights` | judge `name` | telling *custom judges apart* — they all share the `custom` kind, and a `per_kind_weights` entry for `custom` is refused; this is the only per-judge lever |
 | `default_judge_weight` | — | the fallback multiplier for a custom judge absent from `per_judge_weights` (default `1.0`) |
-| `namespace_weights` | namespace prefix (`drift:`, `cost:`, `rubric:`, `schema:`, …) | the multi-objective scalar — signed coefficients turning each namespace's per-run mean into a scalar component (positive = higher-is-worse for drift/cost/schema; negative = higher-is-better for rubric quality; zero = tracked but not optimized) |
+| `namespace_weights` | namespace prefix (`drift:`, `judge:`, `cost:`, `rubric:`, `schema:`, …) | the multi-objective scalar — signed coefficients turning each namespace's per-run mean into a scalar component (positive = higher-is-worse for drift/judge/cost/schema; negative = higher-is-better for rubric quality; zero = tracked but not optimized) |
 
 The two layers compose: a custom judge's contribution is
 `severity_weights[severity] × per_judge_weights[name] (or default_judge_weight)`,
-and the `drift:` namespace coefficient then scales the aggregate drift term
+and the `judge:` namespace coefficient then scales the aggregate judge term
 into the multi-objective scalar. Decide *what to measure and at what severity*
 here; pick the *numbers* in
 [`zicato-tune-scoring`](../zicato-tune-scoring/SKILL.md).
@@ -192,7 +192,8 @@ model-form engine does not turn them into tool-using sessions or grant
 repository tools. That narrow protocol is intentional: a judge should return a bounded
 verdict, and an adjudicator should audit a frozen evidence package. A future
 agentic auditor would be a separate implementation with a declared, read-only
-tool surface and explicit visibility policy rather than an engine substitution.
+tool surface and explicit visibility policy rather than an engine substitution;
+none exists.
 
 For channel-emitting backends, the opt-in reasoning-aware `call_llm` adapter
 returns answer content only and may make one bounded reasoning-disabled
@@ -215,7 +216,7 @@ before it's counted), so design them to stand alone. Default is `false`
 
 ## Smells
 
-- A judge that never fires (no `custom:<name>` bucket ever populated) is dead
+- A judge that never fires (no `drift:custom:<name>` count ever populated) is dead
   weight — it adds no discrimination. Either the criterion is unreachable or
   the behavior never occurs; cut it or sharpen the criterion. Cross-ref the
   `dead_judge` detector in

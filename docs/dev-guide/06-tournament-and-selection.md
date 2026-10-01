@@ -54,27 +54,27 @@ owns it, and the selection layer only *reads* its verdict.
 | `src/zicato/tournament/runner.py` | Tournament entry points, regression gate orchestration and `TournamentResult` | — |
 | `src/zicato/tournament/worker_execution.py` | Isolated evaluation workers, permits, progress and cleanup | — |
 | `src/zicato/tournament/structure.py` | Published elimination results for tournament diagrams | — |
-| `src/zicato/tournament/scheduling.py` | The board-unit schedulers: `_run_replicated`, `_schedule_board_units`, `_run_board_units_full` / `_run_board_units_fast`, `_run_unit_cache_first` (the cache-first choke point), `_run_full_board_unit`, `_IncrementalScorer`, `_effective_unit_semaphore`, `_token_budget_spent` | 1196 lines |
-| `src/zicato/tournament/unit_cache.py` | The per-unit loss cache + provenance: `_unit_loss_path`, `_resolve_cached_unit`, `_persist_unit_loss`, `_skipped_unit_loss`, `_average_losses`, `_UnitProvenance` | 288 lines |
-| `src/zicato/tournament/worker_transport.py` | The process boundary: `adapter_worker_spec`, `_role_worker_spec` + `_callable_dotted_path`, `scrubbed_worker_env` + `_api_key_env_names`, `_configuration_spec`, `_checkout_run_snapshot`, `_aborted_loss_profile`, `_weights_spec`, `_entry_to_dict`, the `_stamp_*` context threaders, `_terminate_worker` | 923 lines |
-| `src/zicato/_tournament_worker.py` | The subprocess worker: the args-file protocol (`_load_args`), `_build_adapter`, `_drive_session`, `_evaluate_expectation`, the config re-pin, the abort provenance stamp, `main` | 838 lines |
-| `src/zicato/tournament/gate.py` | `evaluate_gate` (the three rungs), `GateOutcome`, `holdout_confirms`, `diff_size_evidence`, the tolerance constants | 566 lines |
-| `src/zicato/selection/strategy.py` | The `SelectionStrategy` ABC + the value types (`Contestant`, `Matchup`, `MatchupResult`, `SelectionDecision`, `Standing`, `RoundRecord`, `MatchRecord`), `pending_match_record`, `rung_for_match_id` | 564 lines |
-| `src/zicato/selection/driver.py` | `resolve_tournament` (the structure-agnostic walk), `confirm_promotion_with_evidence` (the BT defer→replicate→inconclusive loop) | 400 lines |
-| `src/zicato/selection/registry.py` | `STRATEGY_REGISTRY`, `make_strategy`, `default_replicates_for` | 110 lines |
-| `src/zicato/selection/strategies/*.py` | `gauntlet` (164), `racing` (467), and the `ChampionGateStrategy` base | — |
-| `src/zicato/selection/experimental/*.py` | `single_elim` (413), `double_elim` (474), `swiss` (413) — admitted only by `experimental.tournament_structures` | — |
-| `src/zicato/selection/evidence_gate.py` | The Bradley–Terry pre-gate: `evidence_verdict`, `MIN_CREDIBLE_DUELS`, `read_promote_confidence_threshold`, `rating_block` | 438 lines |
-| `src/zicato/selection/resolve.py` | The cycle-robust winner resolvers (propose-only): `condorcet_check`, `smith_set`, `ranked_pairs`, `copeland_order`, `resolve_leader`, `build_matrix` | 383 lines |
-| `src/zicato/selection/dead_letter.py` | `InconclusiveRecord`, `record_inconclusive`, `read_inconclusive`, `list_inconclusive` | 122 lines |
-| `src/zicato/evolve/placebo.py` | `build_placebo_experiment`, `derive_placebo_snapshot`, `placebo_round_due`, `PLACEBO_HYPOTHESIS_MARKER` | 220 lines |
-| `src/zicato/evolve/field.py` | The round facade: `_open_field_round` and the four phase calls | 123 lines |
-| `src/zicato/evolve/field_candidates.py` | `assemble_candidate_field`, `CandidateField`, the proposing publish, the empty-field settlement, the placebo slot | 383 lines |
-| `src/zicato/evolve/field_execution.py` | `execute_field_tournament`, `run_field_matchup`, `request_field`, `publish_live_structure`, `record_inconclusive_duel`, `FieldExecution` | 556 lines |
-| `src/zicato/evolve/gate.py` | `resolve_field_verdict`, `_confirm_crowning_on_holdout`, `_apply_field_overrides`, `_integrity_block_reason`, `_resolve_round_champion_mode` | 549 lines |
-| `src/zicato/evolve/settlement.py` | `settle_field_round` and its four private steps, `RoundSettlement`, `ordered_promotions` | 719 lines |
-| `src/zicato/evolve/settlement_recovery.py` | the retained field-settlement receipt, validation, ordered idempotent replay, index status, hook-delivery status, startup recovery | 874 lines |
-| `src/zicato/evolve/propose_apply.py` | `_mint_placebo_challenger`, `_maybe_run_placebo_arm_gauntlet`, `_propose_and_apply_challenger` | 775 lines |
+| `src/zicato/tournament/scheduling.py` | The board-unit schedulers: `_run_replicated`, `_schedule_board_units`, `_run_board_units_full` / `_run_board_units_fast`, `_run_unit_cache_first` (the cache-first choke point), `_run_full_board_unit`, `_IncrementalScorer`, `_effective_unit_semaphore`, `_token_budget_spent` | 1397 lines |
+| `src/zicato/tournament/unit_cache.py` | The per-unit loss cache + provenance: `_unit_loss_path`, `_resolve_cached_unit`, `_persist_unit_loss`, `_skipped_unit_loss`, `_average_losses`, `_UnitProvenance`, attempt records and loss history | 755 lines |
+| `src/zicato/tournament/worker_transport.py` | The process boundary: `adapter_worker_spec`, `scrubbed_worker_env` + `_api_key_env_names`, `_configuration_spec`, `_checkout_run_snapshot`, `_aborted_loss_profile`, `_weights_spec`, `_entry_to_dict`, the `_stamp_*` context threaders, `_terminate_worker` | 816 lines |
+| `src/zicato/_tournament_worker.py` | The subprocess worker: the args-file protocol (`_load_args`), `build_adapter`, `_resolve_role_call_llm`, `_drive_session`, `_evaluate_expectation`, the runtime-settings reconstruction, the abort provenance stamp, `main` | 1186 lines |
+| `src/zicato/tournament/gate.py` | `evaluate_gate` (the three rungs), `GateOutcome`, `holdout_confirms`, `diff_size_evidence`, the tolerance constants | 1123 lines |
+| `src/zicato/selection/strategy.py` | The `SelectionStrategy` ABC + the value types (`Contestant`, `Matchup`, `MatchupResult`, `SelectionDecision`, `Standing`, `RoundRecord`, `MatchRecord`), `pending_match_record`, `rung_for_match_id` | 574 lines |
+| `src/zicato/selection/driver.py` | `resolve_tournament` (the structure-agnostic walk), `confirm_promotion_with_evidence` (the BT defer→replicate→inconclusive loop) | 479 lines |
+| `src/zicato/selection/registry.py` | `STRATEGY_REGISTRY`, `make_strategy`, `default_replicates_for` | 148 lines |
+| `src/zicato/selection/strategies/*.py` | `gauntlet` (167), `racing` (473), and the `ChampionGateStrategy` base (340) | — |
+| `src/zicato/selection/experimental/*.py` | `single_elim` (265), `double_elim` (333), `swiss` (352) — admitted only by `experimental.tournament_structures` | — |
+| `src/zicato/selection/evidence_gate.py` | The Bradley–Terry pre-gate: `evidence_verdict`, `MIN_CREDIBLE_DUELS`, `read_promote_confidence_threshold`, `rating_block` | 434 lines |
+| `src/zicato/selection/resolve.py` | The cycle-robust winner resolvers (propose-only): `condorcet_check`, `smith_set`, `ranked_pairs`, `copeland_order`, `resolve_leader`, `build_matrix` | 356 lines |
+| `src/zicato/selection/dead_letter.py` | `InconclusiveRecord`, `record_inconclusive`, `read_inconclusive`, `list_inconclusive` | 157 lines |
+| `src/zicato/evolve/placebo.py` | `build_placebo_experiment`, `derive_placebo_snapshot`, `placebo_round_due`, `is_placebo_experiment` | 226 lines |
+| `src/zicato/evolve/field.py` | The round facade: `_open_field_round` and the four phase calls | 112 lines |
+| `src/zicato/evolve/field_candidates.py` | `assemble_candidate_field`, `CandidateField`, the proposing publish, the empty-field settlement, the placebo slot | 458 lines |
+| `src/zicato/evolve/field_execution.py` | `execute_field_tournament`, `run_field_matchup`, `request_field`, `publish_live_structure`, `record_inconclusive_duel`, `FieldExecution` | 549 lines |
+| `src/zicato/evolve/gate.py` | `resolve_field_verdict`, `_confirm_crowning_on_holdout`, `_apply_field_overrides`, `_integrity_block_reason`, `_resolve_round_champion_mode` | 575 lines |
+| `src/zicato/evolve/settlement.py` | `settle_field_round` and its four private steps, `RoundSettlement`, `ordered_promotions` | 750 lines |
+| `src/zicato/evolve/settlement_recovery.py` | `commit_field_settlement`, `replay_field_settlement`, `recover_field_settlements`, `record_promotion_hook_delivery`, the derived-index refresh status | 257 lines |
+| `src/zicato/evolve/propose_apply.py` | `_mint_placebo_challenger`, `_maybe_run_placebo_arm_gauntlet`, `_propose_and_apply_challenger` | 815 lines |
 
 Two facts about the file layout matter before you edit anything:
 
@@ -95,7 +95,7 @@ follow the lifecycle steps the execution plan serves
 so a round's code and a round's served tree name the same steps.
 
 ```
-evolve_once (orchestrator.py)
+evolve_once (evolve/round_entry.py)
  ├─ PreparedRound
  └─ evolve_field_round (evolve/field.py)          # facade over the phases below
       ├─ assemble_candidate_field                 # propose + apply
@@ -135,8 +135,10 @@ pointer contradicts.
 The gauntlet is the one-matchup case of this topology:
 `GauntletStrategy` schedules exactly one champion-versus-challenger matchup.
 It uses the same driver, canonical runner, and evidence gate as every wider
-structure, and the same settlement steps afterwards (persist the outcome, the
-lineage entry, the champion marker, and the journal record). Field width one
+structure, and the same settlement steps afterwards: one settlement record
+commits the candidate outcomes, the primary promotion, the tournament
+structure, and the gate explanations, and readers derive lineage status, the
+reigning champion, and the journal from that record. Field width one
 differs in two rules, both stated in `evolve/field_candidates.py`: a
 single slot that exhausted its proposer retries settles as a
 validation-rejection round, and the random-baseline placebo arm runs as a
@@ -184,8 +186,8 @@ measurement with the same draw number.
 | `contract_preflight` | Contract probes, including degraded source variants |
 | `candidate_screen` | Candidate screening and its confirmation before a veto |
 | `evidence_confirmation` | Independent paired evidence after finalist selection |
-| `board_reflection` | Evaluation used to revise the board |
-| `eval_synthesis_admission` | Evaluation used to admit synthesized tasks |
+| `board_reflection` | Evaluation that informs board revision |
+| `eval_synthesis_admission` | Evaluation that decides whether synthesized tasks are admitted |
 
 `MeasurementDraw.offset(i)` advances the draw by `i` while preserving purpose
 and seed. Add a supported purpose when introducing another evaluation owner;
@@ -329,15 +331,26 @@ unaveraged.**
 ```python
         out[entry_id] = _replace(
             profiles[0],
+            measurement=profiles[0].measurement if n == 1 else None,
+            source_measurements=...,  # every folded draw, in slot order
+            execution_started=(
+                False
+                if any(p.execution_started is False for p in profiles)
+                else profiles[0].execution_started
+            ),
             drift_loss=mean_drift,
+            task_failure_ratio=math.fsum(float(p.task_failure_ratio) for p in profiles) / n,
+            not_completed=any(p.not_completed for p in profiles),
+            runtime_ms=round(sum(p.runtime_ms for p in profiles) / n),
             pass_fail=majority_pass,
-            score=_mean_over_present([p.score for p in profiles]),
+            score=_mean_outcome(profiles),
             metrics=_mean_metrics(profiles),
             metric_counts=_mean_metric_counts(profiles),
             tokens_spent=round(sum(p.tokens_spent for p in profiles) / n),
             output_chars=round(sum(p.output_chars for p in profiles) / n),
             schema_failures=round(sum(p.schema_failures for p in profiles) / n),
             per_judge_loss=_mean_per_judge_loss(profiles),
+            judge_errors=_sum_judge_errors(profiles),
         )
 ```
 — `src/zicato/tournament/scoring.py`, `average_replicate_losses`
@@ -357,7 +370,10 @@ Three design choices that matter for the gate:
   decides the duel. `entry_score` reads `score` BEFORE `pass_fail`, and the
   reducer populates `score` whenever an expectation fired, since a bool matcher
   yields `1.0` or `0.0` too. An unfolded `score` would therefore leave
-  `mean_score`, the whole outcome term of the scalar, computed from the first requested draw alone;
+  `mean_score`, the outcome term of the scalar, computed from the first
+  requested draw alone. `_mean_outcome` averages each replicate's
+  `entry_score` rather than the raw field, so an aborted replicate
+  (`score=None`, `pass_fail=False`) counts as `0.0` instead of abstaining;
 - the **strict**-majority vote (`true_count * 2 > len`) keeps a flaky entry
   from "passing" on a coin flip: a 1-of-2 split resolves to `False`. This vote
   is display-only for the scalar, because `entry_score` returns the folded
@@ -386,24 +402,27 @@ weight in the gate and is not folded into the contract hash.
 
 The worker boundary is the most subtle part of the tournament, and the part most
 easily broken with no visible symptom. Every tournament run executes in its
-**own OS process** — a `python -m zicato._tournament_worker` subprocess — for three
-reasons stated in the transport module's header:
+**own OS process** — a `python -m zicato._tournament_worker` subprocess — for the
+reasons the worker module states:
 
 ```python
-# Every tournament run now executes in its OWN OS process: a
-# ``python -m zicato._tournament_worker`` subprocess. The motivation is
-# hard-enforcement of the per-run wall-clock budget. A run wedged inside
-# the orchestrator process used to be un-killable without killing the
-# whole ``evolve``; isolated in a subprocess it can be SIGTERM'd then
-# SIGKILL'd by this parent — and, independently, by the supervisor
-# watchdog keyed on the worker's own pid in ``active_runs/{run_id}.json``.
-#
-# A free side benefit: the Python-module-caching problem (two
-# generations' source loaded into one interpreter, ``sys.modules``
-# handing back the wrong one) disappears — each worker imports exactly
-# one generation snapshot and then exits.
+This module is the subprocess-worker robustness layer. A wedged board-entry
+run holds the interpreter, so running it inside the orchestrator process
+would make killing the whole ``evolve`` invocation the only way to stop it.
+Isolating each run as its own subprocess is what lets a per-run wall-clock
+budget be hard-enforced:
+
+* the parent (:func:`zicato.tournament.worker_execution._run_single`) wraps the
+  worker in :func:`asyncio.wait_for` and escalates SIGTERM -> SIGKILL,
+* an independent supervisor watchdog can SIGKILL a worker whose
+  :attr:`zicato.runtime.state.ActiveRun.deadline` has passed — keyed on
+  the worker's own pid — without ever touching the orchestrator.
 ```
-— `src/zicato/tournament/worker_transport.py`
+— `src/zicato/_tournament_worker.py` (module docstring)
+
+The same isolation removes a module-caching hazard: each worker imports one
+generation snapshot and exits, so `sys.modules` never holds two generations'
+source in one interpreter.
 
 The boundary is a JSON args file the parent writes and the worker re-parses.
 Nothing but JSON-serializable data crosses it. Six sub-contracts make that work
@@ -413,10 +432,10 @@ boundary-safe run turns into an opaque failure.
 
 ### 6.3.1 Closures are rejected — module-level callables only
 
-The worker re-imports the harness / LLM callables from dotted paths. A callable
-must therefore be a re-importable object; a closure cannot be. `_callable_dotted_path`
-refuses one *at spawn time* with a clear error rather than letting the worker
-fail opaquely:
+The worker re-imports the harness factory and any dotted-path LLM callable. A
+callable must therefore be a re-importable object; a closure cannot be.
+`_callable_dotted_path` refuses one *at spawn time* with a clear error rather
+than letting the worker fail opaquely:
 
 ```python
 def _callable_dotted_path(fn: Any) -> str:
@@ -434,13 +453,14 @@ def _callable_dotted_path(fn: Any) -> str:
         )
     return f"{module}:{qualname}"
 ```
-— `src/zicato/tournament/worker_transport.py`, `_callable_dotted_path`
+— `src/zicato/import_path.py`, `_callable_dotted_path`
 
 This is **the importable-worker-callable rule**. The `<locals>` check is the
-guard: a closure's `__qualname__` contains `<locals>`. `_run_single` catches the
-`ValueError` and records the run as `prepare_failed`, an infra abort that the
-cache-only-budget-exhaustion rule keeps out of the cache, so a mis-wired
-proposer callable degrades one run instead of crashing the tournament.
+guard: a closure's `__qualname__` contains `<locals>`. `_run_single` builds the
+role documents (§6.3.4) inside its preparation step, catches the `ValueError`,
+and records the run as `prepare_failed`. That infra abort is kept out of the
+cache under the cache-only-budget-exhaustion rule, so a mis-wired callable
+degrades one run instead of crashing the tournament.
 
 **The reset() pattern for module state.** Because a callable is imported fresh
 in a bare interpreter, it cannot carry per-round state through a closure. Any
@@ -549,10 +569,11 @@ reachability. Setup checks validate callable signatures without invoking grading
 hooks. An optional summarizer failure during execution logs and persists a
 warning while the round continues without its extra marginals.
 
-### 6.3.3 The adapter spec — `worker_spec()` wins, ADK is the fallback shape
+### 6.3.3 The adapter spec — every adapter declares `worker_spec()`
 
-A harness adapter is serialized by `adapter_worker_spec`, and the resolution order is
-the extensibility contract for non-ADK harnesses:
+A harness adapter is serialized by `adapter_worker_spec`. The adapter must
+expose a `worker_spec()` method returning a dict; there is no inferred
+fallback shape:
 
 ```python
     worker_spec = getattr(adapter, "worker_spec", None)
@@ -562,32 +583,18 @@ the extensibility contract for non-ADK harnesses:
             return _validated_adapter_worker_spec(adapter, spec)
         raise ValueError(...)
 
-    name = getattr(adapter, "name", None)
-    entrypoint = getattr(adapter, "_entrypoint", None)
-    if name != "adk" or not entrypoint:
-        raise ValueError(...)
-    trees = [str(Path(p)) for p in getattr(adapter, "mutable_trees", []) or []]
-    return {
-        "kind": "adk",
-        "entrypoint": str(entrypoint),
-        "mutable_trees": trees,
-        "integrations": ["goldfive"],
-    }
+    raise ValueError(f"adapter {adapter!r} must expose worker_spec() for subprocess execution")
 ```
 — `src/zicato/tournament/worker_transport.py`, `adapter_worker_spec` (abridged)
 
-The order is:
-
-- If the adapter exposes a `worker_spec()` method, its dict is validated and
-  returned. An optional `integrations` value must be a JSON list of unique,
-  trimmed, non-empty strings. The adapter still owns the reconstructible
-  shape, and this is the hook §6.15 uses.
-- Otherwise the ADK shape is recognized by `name == "adk"` plus the private
-  `_entrypoint` attribute and the public `mutable_trees` list. Its worker spec
-  declares `integrations: ["goldfive"]` because integration selection is an
-  adapter capability rather than an inference from `kind`. Any adapter can
-  make the same declaration in its own `worker_spec()`; Goldfive is not tied
-  to the ADK reconstruction shape.
+`_validated_adapter_worker_spec` checks the optional `integrations` value: it
+must be a JSON list of unique, trimmed, non-empty strings. The adapter owns the
+reconstructible shape, and this is the hook §6.15 uses. The built-in
+`ADKHarnessAdapter.worker_spec()` returns
+`{"kind": "adk", "entrypoint": …, "mutable_trees": […], "integrations": ["goldfive"]}`.
+Integration selection is an adapter capability rather than an inference from
+`kind`, so any adapter can make the same declaration in its own
+`worker_spec()`; Goldfive is not tied to the ADK reconstruction shape.
 
 Declaring the capability makes the frozen `RuntimeConfig.goldfive` JSON mapping
 and its named endpoint credentials available to the worker. The adapter must
@@ -597,72 +604,73 @@ defaults, canonicalization, optional-backend checks, and runtime construction
 to Goldfive's public `RuntimeConfigDocument`. A declaration alone does not wrap
 the target or install ADK behavior.
 
-If neither path applies, `adapter_worker_spec` raises `ValueError` and `_run_single`
-records the run as `prepare_failed`. The worker reconstructs from the spec via
-`_build_adapter`, which understands two `kind`s:
+An adapter without `worker_spec()`, or one whose method returns a non-dict,
+raises `ValueError`, and `_run_single` records the run as `prepare_failed`. The
+worker reconstructs the adapter with `build_adapter`, a thin alias for
+`zicato.adapter_factory.make_adapter_from_spec`, which understands two `kind`s:
 
 ```python
     kind = spec.get("kind")
     if kind == "adk":
-        from zicato.adapters.adk import ADKHarnessAdapter
-        entrypoint = str(spec["entrypoint"])
-        raw_trees = spec.get("mutable_trees") or []
-        trees = [Path(t) for t in raw_trees] if raw_trees else None
-        return ADKHarnessAdapter(entrypoint=entrypoint, mutable_trees=trees)
+        return _build_adk(spec)
     if kind == "import":
-        factory = _import_callable(str(spec["factory"]))
-        return factory(*spec.get("args", []))
-    raise ValueError(f"worker cannot reconstruct adapter kind {kind!r}")
+        return _build_import(spec)
+    raise ValueError(f"cannot reconstruct adapter kind {kind!r} from a worker spec")
 ```
-— `src/zicato/_tournament_worker.py`, `_build_adapter`
+— `src/zicato/adapter_factory.py`, `make_adapter_from_spec`
 
-The `"import"` shape (`{"kind": "import", "factory": "module:callable", "args": […]}`)
+The `"import"` shape
+(`{"kind": "import", "factory": "module:callable", "args": […], "options": {…}}`)
 is the generic non-ADK path: a module-level factory dotted path, called with
-optional positional `args`. The example harness (§6.15) uses this shape. Note
-the round-trip: the factory path is re-imported, so — by the same rule as
-§6.3.1 — the factory must be a module-level callable, and its `args` must be
-JSON-serializable.
+optional positional `args` and keyword `options`. `_build_import` binds both
+against the factory's signature before calling it. The example harness (§6.15)
+uses this shape. The factory path is re-imported, so — by the same rule as
+§6.3.1 — the factory must be a module-level callable, and its `args` and
+`options` must be JSON-serializable.
 
-### 6.3.4 The role worker spec — dotted vs models_role
+### 6.3.4 The role documents — one `models_role` shape per role
 
-Each LLM role (target / evaluation / judge) is serialized by `_role_worker_spec`
-into one of two shapes:
-
-```python
-    spec = models.role(role)
-    if not spec.is_empty:
-        return {"models_role": spec.to_worker_spec()}
-    return {"dotted": _callable_dotted_path(fallback_callable)}
-```
-— `src/zicato/tournament/worker_transport.py`, `_role_worker_spec`
-
-- `{"dotted": "module:qualname"}` — an unconfigured role: the resolved
-  callable's re-importable path (subject to the closure check of §6.3.1).
-- `{"models_role": {…}}` — the selected named engine's secret-free spec. The
-  worker resolves role inheritance before transport. It then re-resolves the
-  engine with `resolve_text_call_llm` in its own interpreter, reading any
-  `api_key_env` from the worker's OWN `os.environ`. That is how a model-spec
-  role reaches the worker at all, since its resolved callable is a **closure**
-  and cannot cross the boundary. The worker side:
+Each LLM role (target, evaluation, judge, user emulator) crosses the boundary as
+a JSON role document. `_run_single` takes the captured
+`RuntimeConfig.execution_roles` bytes when present and otherwise builds them
+with `execution_roles_for_runtime`:
 
 ```python
-    dotted = spec.get("dotted")
-    if dotted:
-        return _import_callable(str(dotted))
-    raw_role = spec.get("models_role")
-    if isinstance(raw_role, dict):
-        from zicato.models_config import resolve_text_call_llm, role_spec_from_dict
-        return resolve_text_call_llm(role_spec_from_dict(raw_role), role=role)
+        captured = getattr(fn, "__zicato_worker_role__", None)
+        if captured is not None:
+            roles[role] = json.loads(captured)
+            continue
+        document = declared.get(role, {})
+        dotted = document.get("models_role", {}).get("call_llm")
+        if dotted and _import_call_llm(dotted, role=role) is fn:
+            roles[role] = document
+        else:
+            roles[role] = {"models_role": {"call_llm": _callable_dotted_path(fn)}}
 ```
-— `src/zicato/_tournament_worker.py`, `_resolve_role_call_llm` (tail)
+— `src/zicato/models_config.py`, `execution_roles_for_runtime` (loop body)
 
-This is how a role escapes the closure ban: a role whose live callable is a
-closure is transported as its *declarative spec* and rebuilt on the far side.
-The user-emulator role crosses by the same path, so an explicit smaller emulator
+Every document has the form `{"models_role": {…}}`, optionally with a
+`"transport"` object:
+
+- A callable resolved from a model spec carries a `__zicato_worker_role__`
+  attribute holding its secret-free spec (`model`, `endpoint`, `api_key_env`,
+  and any captured native-client transport). That spec crosses verbatim. The
+  resolved callable is a **closure** and could not cross the boundary any
+  other way.
+- Any other callable crosses as `{"models_role": {"call_llm": "module:qualname"}}`,
+  subject to the closure check of §6.3.1. A role with no callable of its own
+  uses the evaluation callable.
+
+The worker resolves each document with `_resolve_role_call_llm`, which
+delegates to `resolve_worker_role(spec, role=role, lazy=True)`. A `call_llm`
+spec is imported directly. A model spec is rebuilt in the worker's own
+interpreter on first call, reading any `api_key_env` from the worker's OWN
+`os.environ`, so credential values never cross in the arguments. The
+user-emulator role crosses by the same path, so an explicit smaller emulator
 engine cannot collapse back onto the evaluation engine in a subprocess.
 
-A reasoning-aware callable (`zicato.reasoning`) follows the dotted branch when
-it is operator-provided. Define it with the module-level decorator form, so that
+A reasoning-aware callable (`zicato.reasoning`) follows the `call_llm` branch
+when it is operator-provided. Define it with the module-level decorator form, so that
 `_callable_dotted_path` sees the decorated name rather than an inner closure,
 and the worker imports that name. The wrapper's raw backend must expose separate answer
 and private-reasoning channels plus a real reasoning-control switch; flattened
@@ -676,11 +684,14 @@ The scoring weights cross through a single serde:
 ```python
     Thin delegator to :meth:`ScoringWeights.to_json` — the SINGLE,
     field-enumerating serde shared by this writer and the worker's reader
-    ... Replacing the former hand-aligned field
-    list with one ``dataclasses.fields()``-driven serde means adding a field
-    can no longer silently desync the worker into scoring under defaults — the
-    documented ``per_judge_weights`` / ``pass_rate_monotonicity_scope`` /
-    ``drift_kind_aggregation`` desync class.
+    (:func:`zicato._tournament_worker._weights_from_args`, which delegates to
+    :meth:`ScoringWeights.from_json`). One ``dataclasses.fields()``-driven
+    serde on both ends is what stops a newly added field from silently
+    desyncing the worker into scoring under defaults, the way a hand-aligned
+    field list did for ``per_judge_weights`` /
+    ``pass_rate_monotonicity_scope`` / ``drift_kind_aggregation``. Every
+    field, including the nested config dataclasses, crosses the boundary
+    automatically.
 ```
 — `src/zicato/tournament/worker_transport.py`, `_weights_spec`
 
@@ -757,23 +768,31 @@ ephemeral checkouts.
 
 The worker checks that the loss and events paths identify the same measurement
 and that the top-level record agrees with those paths and the runtime seed.
-It stamps the validated measurement into the entry context before these
-execution steps:
+It then runs these execution steps:
 
-1. Re-pin config (§6.3.2), export the scratch dir.
-2. `validate_board_entry(args["entry"])`, resolve the three role callables.
-3. **Write `active_runs/{run_id}.json` with the worker's OWN pid** +
-   `pid_start_time` + `pgid` + `snapshot_path`. This is what the subprocess
-   worker boundary buys: the run's worker pid, rather than the orchestrator's,
-   lands here, so the supervisor can SIGKILL this one run by this one pid
-   (08-supervisor.md §"pid-safety").
-4. Start the `RunHeartbeatBeater` daemon thread — it bumps `last_progress`
-   every ~3s and keeps beating through GIL-releasing LLM waits, so the
+1. Create the scratch directory, validate the entry with
+   `validate_board_entry(args["entry"])`, stamp the validated measurement into
+   the entry context, and archive any prior artifacts at the measurement's
+   paths (§6.2.2).
+2. **Write `active_runs/{run_id}.json` with the worker's OWN pid** +
+   `pid_start_time` + `pgid` + `snapshot_path`, plus the parent's
+   `producer_pid` and `producer_start_time`. The run id comes from
+   `runtime_context.run`: the parent is its one producer. This is what the
+   subprocess worker boundary buys: the run's worker pid, rather than the
+   orchestrator's, lands here, so the supervisor can SIGKILL this one run by
+   this one pid (08-supervisor.md §"pid-safety").
+3. Start the `RunHeartbeatBeater` daemon thread — it bumps `last_progress`
+   every 3s and keeps beating through GIL-releasing LLM waits, so the
    supervisor's staleness watchdog does not false-positive on a slow model call.
+4. Resolve the role callables (§6.3.4). Resolution follows the active-run write
+   and heartbeat start, so a slow backend import cannot leave a live worker
+   unregistered. Build the worker's `RuntimeConfig` from the validated
+   `ResolvedConfiguration` (§6.3.2) and the resolved roles.
 5. Build sinks (`JSONLPersistenceSink` + optional harmonograf), stamping the
-   latter with epoch, tournament, matchup, generation, entry, side, purpose, and draw labels for filtered operator navigation; build the
-   adapter, `session = adapter.load(snapshot_root)`. `load` fails CLOSED when a
-   MUTABLE TREE could not be what runs (issue #110): every registered tree's
+   latter with epoch, tournament, matchup, generation, entry, side, purpose,
+   and draw labels for filtered operator navigation; build the adapter with
+   `build_adapter`, then `session = adapter.load(snapshot_root)`. `load` fails
+   CLOSED when a MUTABLE TREE could not be what runs: every registered tree's
    top-level name must resolve under `snapshot_root` — already imported, or
    `find_spec`-resolvable there — and an entrypoint that lives inside a tree
    must have its `module.__file__` under it too. (An entrypoint outside every
@@ -789,7 +808,8 @@ execution steps:
    — the first of three defence lines (§6.4).
 7. Close the sinks, then call `capture_run_artifacts(scratch_dir, loss_path)`.
    Capture sorts relative paths, copies only regular files without following
-   symlinks, hashes the bytes, atomically replaces the measurement's artifact tree, and writes its manifest. It attaches the resulting `ArtifactSet` to
+   symlinks, hashes the bytes, atomically replaces the measurement's artifact
+   tree, and writes its manifest. It attaches the resulting `ArtifactSet` to
    `RunResult` before `evaluate_expectation`, so a predicate can grade
    arbitrary produced files. Capture is bounded at 1,000 files and 100 MiB per
    run; skipped entries and truncation are explicit manifest data.
@@ -814,26 +834,41 @@ the result.
 ## 6.4 `_run_single` — the run lifecycle
 
 `worker_execution._run_single` spawns a worker and reads its `LossProfile`.
-It owns permits, progress, cancellation and cleanup. Its execution sequence
-records abort causes at these boundaries:
+It owns permits, progress, cancellation and cleanup. A `_WorkerResources`
+value holds the permit, checkout, process, captured start time, process group,
+and protocol files until the worker's process group has exited. Its execution
+sequence records abort causes at these boundaries:
 
-1. **Ephemeral checkout** of the generation's snapshot (§6.3.6); a failure here
-   → `prepare_failed`.
-2. **Serialize** the args file (entry + adapter spec + role specs + weights +
+1. **Permit and ephemeral checkout.** Acquire the host-wide worker permit, then
+   check out the generation's snapshot (§6.3.6); a checkout failure →
+   `prepare_failed`.
+2. **Serialize** the args file (entry + adapter spec + role documents + weights +
    resolved configuration and runtime context + the ephemeral `snapshot_root`/`scratch_dir`). A serialization
-   failure (a closure, a non-ADK adapter with no `worker_spec`) → `prepare_failed`.
+   failure (a closure, an adapter with no `worker_spec`) → `prepare_failed`.
 3. **Spawn** `python -m zicato._tournament_worker <args>` with
    `start_new_session=True` (the worker leads its own process group, so the
-   supervisor can group-kill grandchildren) and the composed env (§6.3.2).
+   supervisor can group-kill grandchildren) and the composed env (§6.3.2). A
+   spawn failure → `prepare_failed`.
 4. **Wait**, bounded by `budget + _PARENT_BUDGET_GRACE_S` (30s).
-5. **On parent timeout**, request a supervisor kill and wait; escalate as a
-   last resort. → `parent_kill`.
+5. **On parent timeout**, run `_stop_worker`: request a supervisor kill, wait
+   for the process group to exit, and fall back to the parent's own bounded
+   termination. → `parent_kill`.
 6. **On clean exit**, read the result file → the `LossProfile`. A worker that
    exited non-zero (`nonzero_exit:{code}`), vanished (`gone_no_result`), or
-   wrote an unreadable loss (`result_unreadable`) is ALSO an aborted run.
-7. **Always clean up**: discard the checkout, remove temp files, clear any
-   kill-request marker, remove a leaked `active_runs` file, fold the loss into
-   the live tournament record.
+   wrote an unreadable or mismatched loss (`result_unreadable`) is ALSO an
+   aborted run.
+7. **Release only after confirmed exit.** In `finally`, stop a still-running
+   worker group, then release the permit, discard the checkout, remove the
+   protocol files, clear the kill-request marker, and remove a leaked
+   `active_runs` file, and fold the loss into the live tournament record. When
+   termination cannot be confirmed, the resources stay registered for
+   `retry_worker_cleanup`, and the run logs an error instead of releasing them.
+
+Cancellation follows the same path. A cancelled run waits for its bounded
+teardown before it re-raises, and a repeated cancellation cannot interrupt
+that wait. `drain_worker_cleanup` retries every retained worker for a workspace
+until all are released; the invocation keeps its workspace writer until the
+drain finishes.
 
 ### 6.4.1 The three-line kill defence, and delegating to the supervisor
 
@@ -842,37 +877,45 @@ case — it delegates to the supervisor, the single escalator, to avoid a
 parent↔supervisor race over the same pid:
 
 ```python
-        except TimeoutError:
-            killed_by_parent = True
-            log.warning(
-                "run %s exceeded budget+grace (%.0fs); requesting supervisor kill", ...)
-            if rt is not None:
-                state_mod, _ = rt
-                try:
-                    state_mod.request_worker_kill(workspace_root, run_id)
-                except Exception as exc:
-                    log.debug("run %s: kill-request write failed: %s", run_id, exc)
-            try:
-                await asyncio.wait_for(proc.wait(), timeout=config.supervisor_kill_wait_s)
-            except TimeoutError:
-                log.warning(
-                    "run %s: supervisor did not reap the worker within %.0fs; "
-                    "parent escalating as a last resort", ...)
-                await _terminate_worker(proc)
+async def _stop_worker(resources: _WorkerResources, supervisor_wait_s: float) -> bool:
+    """Delegate termination, then use bounded fallback if the group remains alive."""
+    if resources.processes_gone():
+        return True
+    rt = _runtime_state()
+    if rt is not None:
+        try:
+            rt[0].request_worker_kill(resources.workspace_root, resources.run_id)
+        except Exception as exc:  # noqa: BLE001 — fallback still owns termination
+            log.debug("run %s: kill-request write failed: %s", resources.run_id, exc)
+    deadline = time.monotonic() + supervisor_wait_s
+    while time.monotonic() < deadline:
+        if resources.processes_gone():
+            return True
+        await asyncio.sleep(min(0.05, max(0, deadline - time.monotonic())))
+    assert resources.proc is not None
+    if resources.start_time is None or resources.pgid is None:
+        return False
+    return await _terminate_worker(
+        resources.proc, expected_start_time=resources.start_time, pgid=resources.pgid
+    )
 ```
-— `src/zicato/tournament/worker_execution.py`, `_run_single`
+— `src/zicato/tournament/worker_execution.py`, `_stop_worker`
 
 The three lines of defence, in order:
 
 1. The worker's own cooperative `asyncio.wait_for(budget)`, which aborts the run
    cleanly with a budget-exceeded loss.
 2. The parent's `wait_for(budget + 30s)`, then a supervisor kill request, then a
-   bounded `supervisor_kill_wait_s` wait (default 20s).
+   bounded `supervisor_kill_wait_s` wait (default 20s) for the process group
+   to exit.
 3. The parent's own last-resort `_terminate_worker` (SIGTERM → 5s grace →
-   SIGKILL). It fires ONLY after the whole supervisor window has elapsed with
-   the worker still alive, so it never races a healthy supervisor.
+   SIGKILL, through `zicato.runtime.process.terminate_process`). It fires ONLY
+   after the whole supervisor window has elapsed with the group still alive,
+   so it never races a healthy supervisor. It signals only a process whose
+   captured start time and process group still match; without that identity
+   it returns `False` and the resources stay retained.
 
-See 08-supervisor.md §"The kill-request single-escalator handshake" for the
+See 08-supervisor.md §"Delegated termination and bounded fallback" for the
 other half.
 
 ### 6.4.2 The abort-cause decision tree
@@ -911,14 +954,15 @@ should abort a tournament; if one does, that is the bug.
 | Observation (log line) | Level | What happened | Owner |
 |---|---|---|---|
 | `run … exceeded budget+grace (Ns); requesting supervisor kill` | WARNING | the worker's own cooperative budget did not fire; the parent asks the supervisor to escalate | `_run_single` |
-| `run …: supervisor did not reap the worker within Ns; parent escalating as a last resort` | WARNING | no supervisor attached (ad-hoc run) or it died; the parent's own SIGTERM→grace→SIGKILL fired | `_run_single` |
+| `run …: worker group termination is unconfirmed; retaining process …, permit, checkout, and protocol files for retry_worker_cleanup` | ERROR | neither the supervisor nor the parent's bounded fallback confirmed that the worker group exited; the resources stay owned until a retry confirms exit | `_run_single` |
 | `run …: worker gone with no result file (supervisor kill or crash); recording aborted run` | INFO | `gone_no_result` — the supervisor SIGKILLed a wedged worker past its deadline; a normal aborted run | `_run_single` |
 | `run …: worker exited N; recording aborted run` | INFO | `nonzero_exit:N` — the worker process crashed; an aborted run rather than a tournament crash | `_run_single` |
-| `run … could not be prepared for a subprocess: …` | WARNING | `prepare_failed` — a closure-local callable (§6.3.1), a non-ADK adapter with no `worker_spec`, or a disk-full checkout | `_run_single` |
-| `run …: worker result loss.json unreadable: …` | WARNING | `result_unreadable` — the worker "finished" but its `loss.json` was corrupt; aborted | `_run_single` |
-| `run …/… rN aborted by infra (…); NOT caching — re-running will re-attempt the unit` | INFO | an infra abort was NOT persisted, under the cache-only-budget-exhaustion rule — the next need is a correct MISS | `_run_unit_cache_first` |
+| `run … could not be prepared for a subprocess: …` | WARNING | `prepare_failed` — a closure-local callable (§6.3.1), an adapter with no `worker_spec`, or a disk-full checkout | `_run_single` |
+| `run … could not spawn its worker subprocess: …` | WARNING | `prepare_failed` — the subprocess could not be started | `_run_single` |
+| `run …: worker loss record unreadable: …` | WARNING | `result_unreadable` — the worker "finished" but its loss record was corrupt or named a different measurement; aborted | `_run_single` |
+| `run …/… {purpose} draw N aborted by infrastructure (…); not caching — re-running will re-attempt the unit` | INFO | an infra abort was NOT persisted, under the cache-only-budget-exhaustion rule — the next need is a correct MISS | `_run_unit_cache_first` |
 | `matchup …: evaluation budget reached; skipped …` | WARNING | The token budget or matchup deadline prevents further measurements; unstarted attempts are recorded. | `_run_board_units_full`, `_run_board_units_fast` |
-| `evidence pre-gate: replicate duel returned an already-audited draw (matchup_id …) — not appended …` | WARNING | the Bradley–Terry duplicate guard fired, under the distinct-draws-only rule — a replicate runner returned a duplicate draw | `confirm_promotion_with_evidence` |
+| an `EvidenceAttempt` whose `eligibility` is `duplicate` or `repeated_measurement` (no log line; recorded in the evidence attempts) | — | the Bradley–Terry duplicate guard fired, under the distinct-draws-only rule — a replicate runner returned a repeated matchup or draw, which consumed budget but did not enter the fit | `confirm_promotion_with_evidence` |
 | `random-baseline placebo … was PROMOTED by the gate …` | WARNING | the placebo alarm — the gate promoted a no-op; the CRITICAL `placebo_promoted` health finding will fire; the champion pointer was NOT advanced, under the placebo-never-crowns rule | `_maybe_run_placebo_arm_gauntlet` |
 
 > ✅ ALWAYS treat a new tournament failure you introduce as a *logged, aborted
@@ -1103,14 +1147,21 @@ drop by at least `promote_margin`:
             verdict = (
                 f"insufficient improvement: loss fell by only "
                 f"{improvement:.6f} ...")
-        return GateOutcome(decision=TournamentDecision.REJECTED, reason=verdict, ...)
+        verdict += _parsimony_decomposition(parent_agg, child_agg, weights, delta_scalar)
+        return finish(
+            decision=TournamentDecision.REJECTED,
+            reason=verdict,
+            ...)
 ```
 — `src/zicato/tournament/gate.py`, `evaluate_gate`
 
 The reason distinguishes a child that improved-but-not-enough (`insufficient
 improvement`) from one that got outright worse (`challenger regressed`), and
-always states the real child-minus-parent delta. `promote_margin`'s default
-(`DEFAULT_PROMOTE_MARGIN = 0.01`) is calibrated above the measured A/A noise
+always states the real child-minus-parent delta. When the opt-in parsimony
+term moved against the challenger, `_parsimony_decomposition` appends how much
+of the delta that term contributed. `finish` builds the `GateOutcome` and its
+rule-by-rule explanation. `promote_margin`'s default (`0.01`, declared on
+`ScoringWeights`) is calibrated above the measured A/A noise
 floor (04-evaluation-statistics.md §4). The supervisor's promotion-gate notary
 re-derives this rung out of band (08-supervisor.md §"Promotion gatekeeping").
 
@@ -1148,12 +1199,19 @@ the win must also *confirm* on the holdout — the challenger merely must not
 regress:
 
 ```python
-    if child_scalar - parent_scalar > weights.promote_margin:
+    margin = effective_holdout_margin(weights)
+    ...
+    if child_scalar - parent_scalar > margin:
         return (
             f"holdout_not_confirmed: holdout loss rose by "
             f"{child_scalar - parent_scalar:.6f} ...")
 ```
 — `src/zicato/tournament/gate.py`, `_holdout_confirms`
+
+`effective_holdout_margin` returns `holdout_margin` when the operator set one
+and `promote_margin` otherwise. The pass-rate check on the holdout tolerates up
+to `holdout_entry_regression_budget` regressed entries. Incomplete holdout
+execution or a non-finite holdout number is also `holdout_not_confirmed`.
 
 The asymmetry is intentional: the holdout is never asked to clear the margin in
 the *improving* direction, so a train-measured win that merely holds flat on the
@@ -1395,7 +1453,8 @@ evidence confirmation. Candidate access and matchup execution are injected, so
 the driver is fully unit-testable with synthetic stubs:
 
 ```python
-    champion, challengers = await request_field(strategy.field_size())
+    planned_candidates = strategy.field_size()
+    champion, challengers = await request_field(planned_candidates)
     strategy.seed(champion, list(challengers))
     while not strategy.resolved():
         batch = strategy.next_matchups()
@@ -1403,7 +1462,7 @@ the driver is fully unit-testable with synthetic stubs:
             break
         if on_progress is not None:
             on_progress(strategy)
-        results = await asyncio.gather(*(run_matchup(m) for m in batch))
+        results = await gather_owned(*(run_matchup(m) for m in batch))
         for result in results:
             strategy.record_result(result)
 
@@ -1416,7 +1475,7 @@ the driver is fully unit-testable with synthetic stubs:
 — `src/zicato/selection/driver.py`, `evaluate_tournament`
 
 Two facts a strategy author relies on: **(1)** a batch runs under
-`asyncio.gather` — a Swiss round or racing rung returns multiple matchups and
+`gather_owned` (§6.5.6) — a Swiss round or racing rung returns multiple matchups and
 they run concurrently; the cross-matchup concurrency cap is a single shared
 `unit_semaphore` threaded inside `run_matchup` (§6.5) rather than the driver's
 concern.
@@ -1752,7 +1811,8 @@ rating/Bradley–Terry layer (§6.11) sits above it.
 
 ## 6.13 The placebo duel
 
-The placebo arm (`evolve/placebo.py`, wired in `orchestrator.py`) is the
+The placebo arm (`evolve/placebo.py`, wired in `evolve/field_candidates.py` and
+`evolve/propose_apply.py`) is the
 random-baseline control of the anti-overfitting program
 (`docs/design/OVERFITTING.md`). Every Nth round
 (`experimental.random_baseline_every_n`, default off) the orchestrator fields ONE
@@ -1773,7 +1833,7 @@ minting are untouched, and its lineage record is ALWAYS a dead branch:
 ```python
         # Lineage: ALWAYS a dead branch. Even a (pathological) promoted
         # verdict never advances the champion pointer — the arm measures
-        # the gate; the alarm is the health finding, not a crowning.
+        # the gate; the alarm is the health finding rather than a crowning.
         append_to_lineage(
             workspace_root,
             epoch_id,
@@ -1781,17 +1841,17 @@ minting are untouched, and its lineage record is ALWAYS a dead branch:
             parent_id=parent_id,
         )
 ```
-— `src/zicato/orchestrator.py`, `_maybe_run_placebo_arm_gauntlet`
+— `src/zicato/evolve/propose_apply.py`, `_maybe_run_placebo_arm_gauntlet`
 
 On a multi-challenger field the placebo enters as one extra slate slot (id
-`v{base_n + field_n}`) and flows through the unchanged strategy + gate, but the
+`v{base_n + field_size}`, added by `_append_placebo_arm`) and flows through the unchanged strategy + gate, but the
 same rule holds: it never crowns. The whole arm is best-effort — any failure
 never aborts the round.
 
 ### 6.13.2 The placebo is filtered out of the optimization stream
 
 A placebo experiment's hypothesis `core_idea` is prefixed with
-`PLACEBO_HYPOTHESIS_MARKER = "[placebo:random-baseline]"`, and the loop-health
+`PLACEBO_HYPOTHESIS_MARKER = "[placebo:random-baseline]"` (`zicato.core.experiment`), and the loop-health
 detectors split it out so an always-rejected control fielded every Nth round is
 never read as a stall, a flat-scoring window, or a mined-out contract:
 
@@ -1802,7 +1862,7 @@ never read as a stall, a flat-scoring window, or a mined-out contract:
     findings: list[HealthFinding] = []
     findings.extend(detect_degenerate_scoring(experiments, health))
     ...
-    findings.extend(detect_placebo_promoted(placebo_experiments))
+    findings.extend(detect_placebo_promoted(placebo_experiments, promote_margin, noise_floor))
 ```
 — `src/zicato/health/diagnostics.py` (abridged)
 
@@ -2016,11 +2076,8 @@ environment. The example constructs frames directly on the proto so the
 **Step 5 — scratch-dir discipline.** A harness receives its run coordinates and
 scratch directory through `config.run_context`, a frozen `RunContext`. Write
 runtime artifacts under `config.run_context.scratch_dir`, outside the candidate
-source tree. `ZICATO_RUN_SCRATCH_DIR` remains a compatibility channel for target
-tools that cannot yet receive that context. Remove this variable after every
-shipped target and supported nested target process receives the equivalent
-explicit context and the subprocess regressions no longer require the variable.
-The isolated checkout also contains accidental writes beside candidate source;
+source tree. The run context is the only channel for the scratch path; the
+worker exports no environment variable for it. The isolated checkout also contains accidental writes beside candidate source;
 its cleanup removes those writes after the run.
 
 **Step 6 — stable measurement identity and noise.** Use

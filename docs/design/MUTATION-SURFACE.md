@@ -16,7 +16,7 @@ The contract covers:
   `HarnessAdapter.mutation_points()` protocol method.
 - The `zicato inspect mutations` audit CLI.
 - The applier's validator constraints.
-- The interaction with the proposer brief's `## Forbidden` list.
+- The interaction with the proposer brief's `## Forbidden edits` list.
 
 The argument for requiring annotation rather than allowing free-form edits
 lives in [RATIONALE.md](RATIONALE.md); this document is the contract.
@@ -97,8 +97,9 @@ the applier can rewrite.
 
 ### 2.2 File marker
 
-A file marker is a comment in the header region of a file (module
-docstring above, marker below, no statements before it). The `:file`
+A file marker is a comment conventionally placed in the header region of
+a file (module docstring above, marker below, no statements before it);
+the enumerator accepts it on any line outside a string literal (§3). The `:file`
 suffix attaches to the marker prefix rather than standing as a separate
 `file` word:
 
@@ -439,22 +440,35 @@ and the proposer would have no way to refer back to it.
 
 ## 5. The `HarnessAdapter.mutation_points()` protocol
 
-The `HarnessAdapter` protocol exposes mutation-point enumeration:
+The `HarnessAdapter` protocol (`zicato.adapters.base`) exposes
+mutation-point enumeration beside loading:
 
 ```python
 from typing import Protocol
 
 class HarnessAdapter(Protocol):
-    async def run_entry(self, entry: BoardEntry, *, sinks: list[EventSink]) -> RunResult:
+    name: str
+    run_output_names: tuple[str, ...]
+
+    def mutable_subpaths(self, generation_root: Path) -> list[Path]:
         ...
 
-    def mutation_points(self) -> list[MutationPoint]:
-        """Walk every registered source root and return every annotated
-        mutation point. Idempotent; safe to call multiple times per
-        round.
+    def load(self, generation_root: Path) -> RunnableHarness:
+        ...
+
+    def mutation_points(self, source_roots: list[Path] | None = None) -> list[MutationPoint]:
+        """Enumerate every annotated mutation point under source_roots,
+        or under the adapter's construction-time mutable trees when
+        source_roots is None.
         """
         ...
 ```
+
+`load` returns a `RunnableHarness` whose `run(entry, sinks, config)`
+executes one board entry. `mutable_subpaths` names the sub-trees of a
+generation snapshot that enumeration walks. The applier passes explicit
+`source_roots` to re-enumerate a fresh generation snapshot before it
+applies patches.
 
 ### Walking multiple source roots
 
@@ -478,7 +492,7 @@ importable package name (`agent_package` above). The snapshot copies each root
 under its basename and prepends the snapshot to `sys.path`, which resolves
 top-level names only. A root whose basename Python cannot use as a module name
 could therefore never be shown to have run from the snapshot, so `register`
-refuses it (issue #110). The entrypoint itself may sit inside a root or
+refuses it. The entrypoint itself may sit inside a root or
 outside all of them; the second shape is the dependency case, where zicato
 mutates a package the harness imports. Every root is verified per run in
 either shape — see [DOGFOOD-TARGETS.md](DOGFOOD-TARGETS.md) §2.4.
@@ -548,16 +562,22 @@ per experiment. It runs in two phases.
 **Pre-apply** (`validate_patches`, before the patch set is written —
 so a malformed batch is refused as a whole rather than half-applied):
 
-| Code | Check | Constraint | Why |
-|---|---|---|---|
-| `P1` | the target id resolves | Each patch's `mutation_id` resolves to an enumerated `MutationPoint`. | A patch that targets nothing cannot be applied. |
-| `P2` | the operation matches its payload | The `op` matches its payload: `replace` carries `new_content`, `set_numeric` carries `new_numeric`, `set_enum` carries `new_enum`, and no foreign payload field is set. | Catches a malformed proposer response before it touches disk. |
-| `P3` | the operation suits the point kind | The `op` is compatible with the target point's `kind`: `replace` works on `span`, `file`, or `code`; `set_numeric` / `set_enum` require a `span` point (they locate a constant after the marker). | A file-level or region rewrite has no single constant to retarget. Since the text pass emits only `file` / `code` points, this is also what stops a `set_numeric` landing in a YAML file. |
-| `P4` | the target id is unique across the surface | Every `mutation_id` a patch targets resolves to exactly ONE point across the whole surface. | The Python pass, the text pass, and the manifest bridge are independent; an id declared twice would otherwise resolve last-write-wins. |
+| Check | Constraint | Why |
+|---|---|---|
+| the target id resolves | Each patch's `mutation_id` resolves to an enumerated `MutationPoint`. | A patch that targets nothing cannot be applied. |
+| the operation matches its payload | The `op` matches its payload: `replace` carries `new_content`, `set_numeric` carries `new_numeric`, `set_enum` carries `new_enum`, and no foreign payload field is set. | Catches a malformed proposer response before it touches disk. |
+| the operation suits the point kind | The `op` is compatible with the target point's `kind`: `replace` works on `span`, `file`, or `code`; `set_numeric` / `set_enum` require a `span` point (they locate a constant after the marker). | A file-level or region rewrite has no single constant to retarget. Since the text pass emits only `file` / `code` points, this is also what stops a `set_numeric` landing in a YAML file. |
+| the target id is unique across the surface | Every `mutation_id` a patch targets resolves to exactly ONE point across the whole surface. | The Python pass, the text pass, and the manifest bridge are independent; an id declared twice would otherwise resolve last-write-wins. |
+
+Pre-apply errors are prose strings that name the patch; unlike the
+post-apply errors below, they carry no check-code prefix.
 
 A standalone helper, `check_forbidden_ids`, rejects any patch whose
 `mutation_id` is in an operator-supplied forbidden set — the
-mechanical enforcement behind the proposer brief's `## Forbidden` list.
+mechanical enforcement behind the proposer brief's `## Forbidden edits`
+list. The brief parser reads that list only under a heading whose text is
+`Forbidden edits` (case-insensitive, any depth), from backticked or
+quoted ids in bullet lines ([EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) §7).
 
 **Post-apply** (`validate_post_apply`, after the candidate snapshot is
 written — the tournament refuses to promote a snapshot with any
@@ -675,7 +695,7 @@ blocking policy.
 
 ## 7. The `zicato inspect mutations` CLI
 
-The audit command carries the help text `Advanced: audit the mutable
+The audit command's short help reads `Advanced: audit the mutable
 surface the proposer may change`. It resolves the registered adapter from
 the workspace, enumerates `mutation_points()`, and renders the result.
 `zicato evolve`
@@ -684,21 +704,22 @@ an operator audit what the proposer is allowed to change.
 
 ```
 $ zicato inspect mutations
-[span]   researcher_instruction
-         agent.py:18-18
-         "You research the user's question by ..."
+id                                kind   lines        file                                      preview
+-------------------------------------------------------------------------------------------------------
+researcher_instruction            span   18-18        agent.py                                  You research the user's question by ...
+researcher_description            span   38-38        agent.py                                  Performs literature lookup and source aggregation.
+presentation_agent_prompts        file   1-42         prompts.py                                """Specialist prompts for the presentation agent.""" # zicato:mutable:file id="pre…
 
-[span]   researcher_description
-         agent.py:38-38
-         "Performs literature lookup and source aggregation."
-
-[file]   presentation_agent_prompts
-         prompts.py (entire file)
-
-[span]   outline_prompt   required_placeholders={section_count}
-         prompts.py:24-24
-         "Outline the presentation in three sections: ..."
+Total: 3 mutation point(s)  [file=1, span=2]  ~44 mutable line(s)
 ```
+
+Each file path is shown relative to its source root. `--show full`
+replaces the one-line preview with the indented full content. `--format
+json` prints `{"points": [...], "summary": {"total", "by_kind",
+"mutable_lines"}}`; each point carries `id`, `kind`, `file`,
+`source_root`, `line_start`, `line_end`, `content_hash`, `metadata`, and
+either `preview` or, under `--show full`, `content`. A surface with no
+points prints `(no mutation points found)`.
 
 Flags:
 
@@ -708,7 +729,7 @@ Flags:
 | `--id <glob>` | Filter mutation points by id glob, e.g. `--id 'researcher_*'`. |
 | `--kind span\|file\|code` | Restrict the listing to one mutation kind. |
 | `--show preview\|full` | Truncate content previews (`preview`, the default) or dump full content (`full`). |
-| `--format table\|json` | Output format: human-readable `table` (default) or `json` (the full `MutationPoint` shape). |
+| `--format table\|json` | Output format: human-readable `table` (default) or `json` (the shape described above). |
 
 There is no `--root` flag; the listing always covers every registered
 source root. Use the id glob (`--id`) to narrow it to a subset.
@@ -722,7 +743,7 @@ The intended workflow is:
    against the surface they just confirmed.
 
 `zicato inspect mutations` is also the right place to confirm the exact id
-spellings before adding one to the proposer brief's `## Forbidden`
+spellings before adding one to the proposer brief's `## Forbidden edits`
 list — the forbidden-id check (`check_forbidden_ids`) matches on the
 literal id, so the operator can copy the id straight out of the
 listing.

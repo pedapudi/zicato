@@ -39,7 +39,7 @@ on a wide pane, scaling every glyph and label ~3× with it. Never a `max-height`
   capped scale** (§3.4 — a long agent answer is a wider mark; a terse user
   prompt a narrower one, but no single turn may take more than a quarter of the
   lane). This is the `sparkbar` / staircase convention (word-sized marks on a
-  shared baseline, `svg.js:792`) applied to turns instead of losses.
+  shared baseline, `svg.js` `sparkbar`) applied to turns instead of losses.
   **Bounded rather than filled, and this is load-bearing.** A mark is a bar of at most **40 % of
   the lane height**, straddling a **mid-lane baseline** — a user turn rises
   above it, an agent turn drops below it (that side is the alternation you read
@@ -71,38 +71,41 @@ on a wide pane, scaling every glyph and label ~3× with it. Never a `max-height`
 - **The budget ground** — a shaded region behind the lanes whose fill ∝ the
   fraction of the cost ceiling the trace reached
   (`max(tokens/MAX_TOKENS, llm_calls/MAX_LLM_CALLS)`, clamped to 1.0), tinted
-  `--v2-caution-soft`; a trace that crossed a ceiling shades the whole ground
-  and flags `over: true`, so the cost budget is read as an area rather than
-  a number.
+  `--v2-caution` at a low fill-opacity (`.dn-strip-budget`, 0.16; 0.30 with
+  `.dn-strip-budget-over`); a trace that crossed a ceiling shades the whole
+  ground and flags `over: true`, so the cost budget is read as an area rather
+  than a number.
 - **The episode overlay** (~24 px) — each mined episode is a **bracketed span**
   drawn over the strip with its kind glyph: a **signal** episode anchors to its
   matching signal tick (`anchor: "signal"`); the **behavioral** episode (a
   clean conversation) brackets the whole lane (`anchor: "lane"`, `x0:0 → x1:1`).
-  The bracket carries the episode's tone + glyph; **clicking an episode focuses
-  its suggestion, and clicking a suggestion focuses its episode** — the
-  provenance chain (trace region → episode → suggestion) made visible. This is
-  the whole point of the surface: you can *trace a drafted board entry back to
-  the region of foreign behaviour that motivated it*.
+  The bracket carries the episode's tone + glyph. The detail view lists each
+  episode beside the ids of the suggestions drafted from it, and **clicking an
+  episode focuses it on the strip and in the conversation** — the provenance
+  chain (trace region → episode → suggestion) made visible. This is the whole
+  point of the surface: you can *trace a drafted board entry back to the region
+  of foreign behaviour that motivated it*.
 
 ### 1.2 The reused grammar (name the primitives — no new vocabulary)
 
 The strip invents **no new colour vocabulary and no new figure** — it composes
-the shipped primitives. Named, so a sibling cannot re-implement the fit math
-(the "one bug, ~30 times" clip family the primitives already killed,
-`svg.js:157`):
+the shipped primitives, drawn by `svg.trajectoryStrip`. Named, so a sibling
+cannot re-implement the fit math — a hand-rolled label fit is how text ends up
+clipped at the viewBox edge:
 
 | need | reused primitive (`svg.js`) |
 | --- | --- |
-| size a turn mark / label to its box without clipping the viewBox | `fitInto` / `fitLabel` / `edgeText` + `textPx` / `CHAR_EM` (`:173`–`:238`) — the ONE mono char-width model |
-| the word-sized mark-on-a-baseline lane | the `sparkbar` staircase convention (`:792`) |
-| a per-point trend, where a strip degrades to a scalar sparkline | `sparkline` (`:408`, its `markers` / `minSpan` flags for a few-mark trace) |
-| fit-to-width, no pan/zoom | the `applyResponsive` / `viewBox` contract (`:253`, design-language §4.2) |
-| the crown / status glyphs, defined ONCE | `CROWN` (`:21`) and the shared `↑ ✕ ○ ⏱` mark table (design-language §4.2) |
+| size a turn mark / label to its box without clipping the viewBox | `fitInto` / `fitLabel` / `edgeText` + `textPx` / `CHAR_EM` — the ONE mono char-width model |
+| the word-sized mark-on-a-baseline lane | the `sparkbar` staircase convention |
+| a per-point trend, where a strip degrades to a scalar sparkline | `sparkline` (its `markers` / `minSpan` flags for a few-mark trace) |
+| fit-to-width, no pan/zoom | the `applyResponsive` / `viewBox` contract (design-language §4.2) |
+| the crown / status glyphs, defined ONCE | `CROWN` and the shared `↑ ✕ ○ ⏱` mark table (design-language §4.2) |
 | the transient hovercard for a mark's detail | `hov(node, tip)` → `hovercard.js` (design-language §4.3) — outside the digest-gated render |
-| the stable figure-opts digest for gating | `digestOpts` (`:89`) |
+| the stable figure-opts digest for gating | `digestOpts` (`trajectoryStripDigest` folds the strip model through it) |
 
-Colour is **only** the six ROLE tokens + the secondary set (design-language
-§2): `--v2-ink` / `--v2-ink-soft` (turns), `--v2-bad` (error/abort), `--v2-caution`
+The design-language section numbers in this document refer to
+[`CONSOLE-DESIGN-LANGUAGE.md`](CONSOLE-DESIGN-LANGUAGE.md). Colour is **only**
+the six ROLE tokens + the secondary set (design-language §2): `--v2-ink` / `--v2-ink-soft` (turns), `--v2-bad` (error/abort), `--v2-caution`
 (retry/budget), `--v2-accent` (the focused episode/suggestion highlight — the
 *one* structural highlight, used sparingly). No hardcoded hex, no new token.
 
@@ -184,14 +187,17 @@ trace/suggestion, or a malformed record degrades to a same-shape payload with
 `found: false` — never a raise, never a fabricated number.
 
 **Which endpoint idiom serves them.** All three do blocking file I/O (reading
-`imported/*.json` + `suggestions.json`), so each is declared
-`off_event_loop=True` in the read-endpoint table (`endpoints.py`,
-`READ_ENDPOINTS`) — the reads run in the threadpool and never stall the event
-loop — behind an `_is_safe_id` degrade. The three routes are:
+`imported/*.json` + `suggestions.json`). Each is a row of the read-endpoint
+table (`endpoints.py`, `READ_ENDPOINTS`), whose handlers run every reader in
+the threadpool so the reads never stall the event loop, behind an
+`_is_safe_id` degrade. The three routes are:
 `GET /api/reflection/{reflection_id}/traces`,
 `GET /api/reflection/{reflection_id}/trace/{trace_id}`,
 `GET /api/reflection/{reflection_id}/suggestion/{suggestion_id}/provenance`.
-Exported from `zicato.query.__init__`.
+Exported from `zicato.query.__init__`. The Traces view reads the first two;
+the provenance route has an accessor in `js/data.js`
+(`suggestionProvenance`) but no view calls it, so it serves direct HTTP
+callers.
 
 ### 3.1 `build_trace_list(paths, reflection_id) -> dict` — copy verbatim
 
@@ -287,7 +293,7 @@ Exported from `zicato.query.__init__`.
     "kind": "trajectory_bootstrap", "dialect": "adk_events",
     "trace_id": "trace-ab12cd34", "source_file": "prod-run-01.jsonl"
   },
-  "admission_viz": {                    // render-ready admission marks (BT-whisker/pip vocab)
+  "admission_viz": {                    // render-ready admission marks; no console view draws them
     "measured": true,                   // false when synthesis ran plan-mode (no probe)
     "evidence_tier": "probed",          // "probed" (spent) | "planned" (unmeasured)
     "flip": { "measured": true, "rate": 0.2, "runs": 5, "over_ceiling": false, "ceiling": 0.25 },
@@ -348,8 +354,10 @@ byte-stable). It is the one place the render math lives. The shape is the
   `(k+1)/(n+1)` — `positioned: false` (aggregate, no real position).
 - **Budget.** `fill = round(min(1.0, max(tokens/MAX_TOKENS, llm_calls/MAX_LLM_CALLS)), 4)`;
   `over = tokens >= MAX_TOKENS or llm_calls >= MAX_LLM_CALLS`; `shaded = fill > 0`.
-  (`MAX_TOKENS` / `MAX_LLM_CALLS` mirror the `mining` module constants locally —
-  the query layer cannot import `mining`, per the dashboard-free rule above.)
+  (`MAX_TOKENS` / `MAX_LLM_CALLS` are `trace_view`'s private `_MAX_TOKENS` =
+  100,000 and `_MAX_LLM_CALLS` = 50, which mirror the `mining` module constants
+  locally because the query layer does not import `mining`, the engine that
+  reads back through it.)
 - **Episodes.** A **signal** episode (`imported_signal`) anchors to its matching
   signal tick: `x0/x1` = the tick's `x ± 0.05` (clamped `[0,1]`),
   `anchor: "signal"`. The **behavioral** episode (`imported_behavioral`) spans
@@ -390,7 +398,7 @@ hand-authored mock shapes.** A fixture generator makes this possible:
   the ambiguous + the malformed file — the same real-shaped fixtures
   TRAJECTORY-BOOTSTRAP.md §9 pins), runs the **REAL** pipeline —
   `import_trajectories` → `write_imported_traces` → `mine_episodes` →
-  `synthesize` (mechanical tiers, no LLM) → `write_suggestions` — then calls the
+  `synthesize` (mechanical tiers, no language model) → `write_suggestions` — then calls the
   **REAL** `build_trace_list` / `build_trace_detail` /
   `build_suggestion_provenance` and writes their payloads verbatim as JSON
   fixtures under `src/zicato/dashboard/static/test/fixtures/trace_view/`
@@ -404,9 +412,8 @@ hand-authored mock shapes.** A fixture generator makes this possible:
 
 The readers, the pure `build_strip_model`, and the pure helpers are in
 `src/zicato/query/trace_view.py`, exported from `zicato.query.__init__`. The
-three endpoints sit in the reflection-endpoints block, each wrapping its
-reader in `run_in_threadpool` behind an `_is_safe_id` degrade, and are routed
-in `server.py`. The Traces view is `views/traces.js`, drawing the strip from
+three endpoints are rows of the reflection block of `READ_ENDPOINTS` in
+`endpoints.py`, which `server.py` binds. The Traces view is `views/traces.js`, drawing the strip from
 the `svg.js` primitives. The fixture generator and the captured fixtures back the
 node render tests of §4.1.
 

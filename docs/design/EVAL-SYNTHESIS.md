@@ -69,10 +69,11 @@ point** (TELEMETRY-DIALECTS.md §1: "`LossProfile` is the convergence point …
 everything downstream reads `LossProfile` and NEVER knows which dialect
 produced it"). The miner therefore binds to `LossProfile` rather than to a
 dialect's raw event shape — a `goldfive` run and an `adk_events` run both fold to the
-same `LossProfile`, so one binding covers both dialects. Concretely it reuses **`reflection.corpus.ObservationRun`** (`corpus.py:90`).
-`ingest_lineage` builds that record at `corpus.py:460` from the persisted
-loss, result, and judge-capture files for each eligible measurement, and it carries the
-fields a failure needs:
+same `LossProfile`, so one binding covers both dialects. Concretely it reuses
+**`reflection.corpus.ObservationRun`**. `reflection.corpus.ingest_lineage`
+builds those records from the persisted loss, result, and judge-capture
+files for each eligible measurement, and they carry the fields a failure
+needs:
 
 | Failure kind | `ObservationRun` binding (verified) |
 |---|---|
@@ -95,16 +96,16 @@ outranks one grounded in a truncated preview.
 
 ### (b) JUDGE-DISAGREEMENT episodes — reflection's adjudicated corpus
 
-**Source (verified):** `reflection.adjudicator.JudgeAdjudication` records
-(`adjudicator.py:142`) at `adjudication/{judge_name}/{run_ref}.json`
-(`workspace.reflection_adjudication_path`), read via
-`adjudicator.read_adjudication` (`adjudicator.py:597`). An **in-run judge vs
+**Source (verified):** `reflection.adjudication.JudgeAdjudication` records
+at `adjudication/{judge_name}/{run_ref}.json`
+(`core.workspace.reflection_adjudication_path`), read via
+`reflection.adjudication.read_adjudication`. An **in-run judge vs
 meta-judge flip** is a non-agreeing verdict:
 
-- `verdict == "FP"` (`VERDICT_FP`, `adjudicator.py:103`) — the judge
+- `verdict == "FP"` (`VERDICT_FP`) — the judge
   **fired**, the independent meta-judge adjudicated the transcript **clean**.
   The judge's criterion is too loose; the episode seeds a **rubric revision**.
-- `verdict == "FN"` (`VERDICT_FN`, `adjudicator.py:104`) — the judge stayed
+- `verdict == "FN"` (`VERDICT_FN`) — the judge stayed
   **silent**, the meta-judge found the failure **exhibited**. The board has a
   real failure no judge catches; the episode seeds a **regression entry** or
   a **new judge** drafted from the missed span.
@@ -123,19 +124,19 @@ the **eval-view discrimination binding** (the MATCHUP-RECORD source, NOT
 `run_id`, one row per `(gen, entry)`, so same-`match_id` pairs never exist).
 
 - **Churn** = a mutation point the proposer keeps rewriting across the
-  lineage. Bound to the applied-patch history: `_read_epoch_experiments`
-  (`epoch_view.py:230`) collects each generation's `patches/*.json` keyed by
-  `mutation_id` (`epoch_view.py:269`, stamped onto `record["patches"]`). A
+  lineage. Bound to the applied-patch history:
+  `query.epoch_view._read_epoch_experiments` collects each generation's
+  `patches/*.json` keyed by `mutation_id`, stamped onto
+  `record["patches"]`. A
   `mutation_id` rewritten in N generations has churn N. (The current mutable
   surface — `HarnessAdapter.mutation_points()`, MUTATION-SURFACE.md §5 — is
   the optional enrichment when a live adapter is resolvable; the patch
   history is the endpoint-free binding and the primary source.)
 - **Discrimination** — whether any board entry separates two candidates. Bound to
-  `query.eval_view.build_eval_health` (`eval_view.py:1197`), whose `dead`
-  list is entries with **zero** discrimination over the reign's settled
-  matchups (read via `build_matchup_grid` per matchup — the durable
-  matchup records, `_discrimination_by_entry`, `eval_view.py:693`), above the
-  `_MIN_DISCRIMINATION_COMPARISONS = 3` honesty threshold (`eval_view.py:68`).
+  `query.eval_view.build_eval_health`, whose `dead` list is entries with
+  **zero** discrimination over the reign's settled matchups (read from the
+  durable matchup records by `_discrimination_by_entry`), above the
+  `_MIN_DISCRIMINATION_COMPARISONS = 3` honesty threshold.
 
 A `mutation_id` with churn ≥ threshold whose instrument has **no
 discriminating entry** (the board cannot tell whether those rewrites help) is
@@ -146,10 +147,10 @@ lineage ids) + the dead entry list.
 ### (d) UNRESOLVED-CLAIM types — the hypothesis calibration ledger
 
 **Source (verified):** `tournament.detail.hypothesis_ledger(db_path,
-epoch_id)` (`detail.py:943`) → `list[HypothesisGrade]`, each carrying
+epoch_id)` → `list[HypothesisGrade]`, each carrying
 `movements: tuple[MovementGrade, ...]`. A **claim nothing measures** is a
 `MovementGrade` the proposer predicted but the outcome **never recorded**.
-`_grade_movement` (`detail.py:1133`) is where this shows: `actual is None`
+`tournament.detail._grade_movement` is where this shows: `actual is None`
 yields a grade with `actual_from is None and actual_to is None`, carrying the
 comment *"the proposer predicted a movement the outcome never recorded."* The
 predicted `metric_name` names a channel for which the board has no entry and
@@ -167,7 +168,7 @@ never re-enters the proposer envelope, §7.)
   separate candidates is a saturated channel → seeds a **harder variant** (a
   perturbation that restores discrimination).
 - **Gap-detector firings** — `health.diagnostics.detect_generalization_gap`
-  (`diagnostics.py:607`) over the epoch's experiments: a widening
+  over the epoch's experiments: a widening
   holdout-vs-train gap is board memorization (OVERFITTING.md §6/§7). A gap
   firing is a **board-wide** demand for harder variants and rotation rather
   than one entry's → seeds harder-variant demand across the train slice, and
@@ -344,11 +345,19 @@ known-answer test with zero live spend.
 ## 6. Surfaces
 
 `zicato inspect reflection suggest` mines episodes, synthesizes artifacts,
-and runs admission. Live probes require authorization to spend evaluation
-budget. `--no-probe` mines, synthesizes, and validates artifacts without those
-probes; its output must remain explicitly unmeasured.
+and runs admission. The live admission probes run only under `--probe`,
+which authorizes spending champion budget; without it (the default) the
+command mines, synthesizes, and validates artifacts, and its output
+remains explicitly unmeasured. Model-drafted synthesis runs only under
+`--allow-llm`; the default is mechanical synthesis. `--reflection <id>`
+attaches the suggestions to an existing reflection instead of minting a
+new one, `--from-trajectories <dir>` also mines imported foreign agent
+traces ([TRAJECTORY-BOOTSTRAP.md](TRAJECTORY-BOOTSTRAP.md)), and `--json`
+prints the raw suggestion records.
 
-The command writes `suggestions.json` in a reflection directory. A suggestion
+The command writes `suggestions.json` in a reflection directory, beside
+`findings.json` when the reflection has one, and `zicato inspect
+reflection report` renders them. A suggestion
 retains its proposed artifact, provenance, admission results, and structured
 operation description. These reports preserve evidence for operator review.
 The operator can use an accepted artifact when authoring the next contract.
@@ -383,10 +392,12 @@ never raw suggestions.
 - **Model-drafted synthesis is evaluation-metered and needs a live endpoint.**
   Drafting a judge criterion, rewriting a rubric, or drafting a coverage entry
   from a model spends **`evaluation_call_llm`** budget — the rubric-grader and
-  emulator channel, never the target callable. For live use it needs the same
-  operator go-ahead as reflection's adjudication.
-- **The live admission probes need the same go-ahead** — §5. The fixture and
-  mock tier is free and covers the whole pipeline.
+  emulator channel, never the target callable. It runs only under
+  `--allow-llm`, and for live use it needs the same operator go-ahead as
+  reflection's adjudication.
+- **The live admission probes need the same go-ahead** and the `--probe`
+  flag — §5. The fixture and mock tier is free and covers the whole
+  pipeline.
 
 Mechanical synthesis mines episodes and validates artifacts without model
 calls. Model drafting and live admission probes require an explicit operator
@@ -418,7 +429,8 @@ whether a cold workspace yields no fabricated episodes.
 ## 9. The episode extractor
 
 `src/zicato/reflection/mining.py`. Pure extraction functions per §2 kind + one
-orchestrating `mine_episodes(paths, epoch_id) -> list[MinedEpisode]`:
+orchestrating `mine_episodes(paths, epoch_id=None, *, imported_traces=())
+-> list[MinedEpisode]`:
 
 - **`MinedEpisode`** — a frozen, slotted dataclass. It identifies the
   episode with `episode_id` (a content-stable sha256), `episode_type` (the
@@ -457,4 +469,4 @@ real `HypothesisGrade`) — never a synthetic shape the pipeline cannot emit.
 | The board entry + judge schema the drafts obey | [`BOARD-FORMAT.md`](BOARD-FORMAT.md) |
 | The mutable surface + `mutation_points()` | [`MUTATION-SURFACE.md`](MUTATION-SURFACE.md) |
 | The rotation / holdout split the contamination rule binds to | [`OVERFITTING.md`](OVERFITTING.md) |
-| Measurement purposes, local draws, seeds, and artifact separation | dev-guide `01-orientation.md` §4, G7; [`CASCADE.md`](CASCADE.md) §6 |
+| Measurement purposes, local draws, seeds, and artifact separation | [dev-guide `01-orientation.md`](../dev-guide/01-orientation.md#g7--measurement-identity-separates-purposes-and-independent-draws), [`CASCADE.md`](CASCADE.md) |

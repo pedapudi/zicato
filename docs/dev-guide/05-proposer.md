@@ -33,35 +33,46 @@
 >    base class handles all three (rejected-round journaling, narrower fields).
 > 6. **Byte-identical-at-default.** Every optional channel renders the empty
 >    string / omits its section when unused, so a contract that does not opt in
->    produces byte-identical prompts (and an unchanged contract hash).
+>    produces byte-identical prompts.
 
 ---
 
 ## 5.0 Map of the subsystem
 
-| File | What lives there | Approx. size |
-|---|---|---|
-| `src/zicato/proposer/agent.py` | `ProposerContext` (the frozen call-time bundle), the `ProposerAgent` protocol, `build_proposer_agent` (the resolver) | — |
-| `src/zicato/proposer/foe_agent.py` | `FoeProposerAgent` — one Foe episode per candidate: the host tools, the episode lifecycle, the outcome-to-experiment conversion, the contract identity | — |
-| `src/zicato/proposer/foe_request.py` | `build_request` — the ONE request builder, for the loop and the CLI: the charter, the sanctioned tool list, the hypothesis schema, `render_evidence` / `render_task` | — |
-| `src/zicato/proposer/foe_config.py` | The typed `proposer` block (binary, budget, model, viewer) and the refusals for a removed runtime's configuration | — |
-| `src/zicato/proposer/foe_scratch.py` | The disposable working copy, and the projection that reads it back as a patch set over the declared mutation points | — |
-| `src/zicato/proposer/external.py` | The seam that NAMES an implementation and HASHES it — `external_proposer_config`, `resolve_external_spec` | — |
-| `src/zicato/proposer/proposer.py` | The four episode outcomes (`ProposerError`, `ProposerBlocked`, `ProposerExhausted`) and `ExperimentValidator` | — |
-| `src/zicato/proposer/prompts.py` | Block renderers and visibility policy; restricted patterns use the numeric projection in `pattern_feedback.py` | — |
-| `src/zicato/proposer/structured.py` | `EXPERIMENT_JSON_SCHEMA`, `parse_experiment_json` (two-pass validation), `extract_json_object` (5-stage salvage), `ExperimentParseError`, `PostApplyValidationError` | 880 lines |
-| `src/zicato/proposer/best_of_n.py` | `BestOfNProposerAgent` (slate sampling, screen, revise, critique, heuristic, `_mount_chosen`), `CandidateScreenResult`, `ScreenRunner`, `wrap_with_proposer_quality` | 1743 lines |
-| `src/zicato/proposer/hints.py` | `EDIT_CLASS_HINTS`, `FAILURE_MODE_HINTS`, `hint_for_slot`, `dominant_failure_mode` — the per-slot slate diversifier | 256 lines |
-| `src/zicato/proposer/tools.py` | `mutation_usage` (a host tool) and `grep_mutable`, the sandboxed search behind it | — |
-| `src/zicato/proposer/tool_context.py` | `ProposerToolContext`, `bind_proposer_tool_context` — the contextvar seam both host tools read | — |
-| `src/zicato/proposer/brief.py` | `ProposerBrief` / `load_brief` / `enforce_forbidden` — the operator's `brief.md` parser | 217 lines |
-| `src/zicato/proposer/skills.py` | `resolve_proposer_spec`, `load_proposer_skills`, `normalize_skill_body`, `parse_frontmatter` | 169 lines |
-| `src/zicato/core/proposer.py` | `ProposerSpec` / `ProposerSkill` — the hash-ready proposer identity types | — |
-| `src/zicato/epoch/screen.py` | The candidate-screen engine (`run_candidate_screen`, `select_screen_entries`, `ScreenPanel`) | 468 lines |
-| `src/zicato/analyzer/process_exemplars.py` | The four-rule redaction machine (§5.8.3) for the opt-in process-exemplar channel | 678 lines |
-| `src/zicato/index/query.py` | `prior_experiments_for_epoch` (experiment memory), `mutation_point_track_record` (fertility map) | — |
-| `src/zicato/epoch/round_log.py` | The round-log event vocabulary the propose step emits into | 974 lines |
-| `src/zicato/evolve/` | The wiring, spread across the round pipeline: `propose_apply.py` (`_propose_child`, `_propose_and_apply_challenger`), `round_context.py` (`_build_candidate_screen_runner`, `_build_candidate_history`, `_build_recombination_pair`), `decision_support.py` (`_render_failure_profile`, `_render_process_exemplars_block`, `_render_loss_summary`), `ingest.py` (`_load_prior_experiments`, `_load_mutation_track_records`). `src/zicato/orchestrator.py` is a 14-line re-export facade over `evolve_once` / `evolve_n_rounds` | — |
+| File | What lives there |
+|---|---|
+| `src/zicato/proposer/agent.py` | `ProposerContext` (the frozen call-time bundle), the `ProposerAgent` protocol, `build_proposer_agent` (the resolver) |
+| `src/zicato/proposer/foe_agent.py` | `FoeProposerAgent` — one Foe episode per candidate: the host tools, the episode lifecycle, the outcome-to-experiment conversion, the contract identity |
+| `src/zicato/proposer/foe_request.py` | `build_request` — the ONE request builder, for the loop and the CLI: the charter, the sanctioned tool list, the hypothesis schema, `render_evidence` / `render_task` |
+| `src/zicato/proposer/foe_config.py` | The typed `proposer` block (binary, budget, model, viewer) and the refusals for a removed runtime's configuration |
+| `src/zicato/proposer/foe_scratch.py` | The disposable working copy, and the projection that reads it back as a patch set over the declared mutation points |
+| `src/zicato/proposer/episode_process.py` | `EpisodeProcess` — owns the host wait task and the episode's process group until shutdown is confirmed |
+| `src/zicato/proposer/episode_export.py` | Foe's static HTML export, written beside a settled episode's log |
+| `src/zicato/proposer/input_capture.py` | The durable capture of every rendered proposer input (§5.5.1) |
+| `src/zicato/core/proposer_config.py` | `ProposerDeclaration`, `FoeBudget`, `FoeModelRole` — the declared `proposer` block's typed fields and defaults |
+| `src/zicato/proposer/external.py` | The seam that NAMES an implementation and HASHES it — `external_proposer_config`, `resolve_external_spec` |
+| `src/zicato/proposer/proposer.py` | The three failure classes for the four episode endings (`ProposerError`, `ProposerBlocked`, `ProposerExhausted`) and `ExperimentValidator` |
+| `src/zicato/proposer/prompts.py` | Block renderers, the band and bucket vocabulary, the recombination merge prompt |
+| `src/zicato/proposer/pattern_feedback.py` | `PatternFeedback` — the numeric projection restricted pattern feedback renders |
+| `src/zicato/proposer/structured.py` | `EXPERIMENT_JSON_SCHEMA`, `parse_experiment_json` (two-pass validation), `extract_json_object` (5-stage salvage), `ExperimentParseError`, `PostApplyValidationError` |
+| `src/zicato/proposer/best_of_n.py` | `BestOfNProposerAgent` (slate sampling, screen, revise, critique, heuristic, `_mount_chosen`), `CandidateScreenResult`, `ScreenRunner`, `wrap_with_proposer_quality` |
+| `src/zicato/proposer/hints.py` | `EDIT_CLASS_HINTS`, `FAILURE_MODE_HINTS`, `hint_for_slot`, `dominant_failure_mode` — the per-slot slate diversifier |
+| `src/zicato/proposer/tools.py` | `mutation_usage` (a host tool) and `grep_mutable`, the sandboxed search behind it |
+| `src/zicato/proposer/validate.py` | `validate_patches` (a host tool) — structure, application, static checks, and the harness load probe over a scratch copy |
+| `src/zicato/proposer/_load_probe.py` | The subprocess entry point for the load probe |
+| `src/zicato/proposer/tool_context.py` | `ProposerToolContext`, `bind_proposer_tool_context` — the contextvar seam both host tools read |
+| `src/zicato/proposer/brief.py` | `ProposerBrief` / `load_brief` / `enforce_forbidden` — the operator's `brief.md` parser |
+| `src/zicato/proposer/skills.py` | `resolve_proposer_spec`, `load_proposer_skills`, `normalize_skill_body`, `parse_frontmatter` |
+| `src/zicato/core/proposer.py` | `ProposerSpec` / `ProposerSkill` — the hash-ready proposer identity types |
+| `src/zicato/proposer/recombine.py` | `RecombinationPair`, `mint_recombined_experiment` — the pure minter for the recombination slot (§5.6.11) |
+| `src/zicato/proposer/genealogy.py` | `sample_genealogy` — the pure sampler for the genealogy channel (§5.6.13) |
+| `src/zicato/proposer/calibration.py` | `sample_calibration` — the pure sampler for the prediction-calibration channel |
+| `src/zicato/proposer/scorecard.py` | The per-epoch proposer scorecard read from round logs (`zicato proposer scorecard`) |
+| `src/zicato/epoch/screen.py` | The candidate-screen engine (`run_candidate_screen`, `select_screen_entries`, `ScreenPanel`) |
+| `src/zicato/analyzer/process_exemplars.py` | The four-rule redaction machine (§5.8.3) for the opt-in process-exemplar channel |
+| `src/zicato/index/query.py` | `prior_experiments_for_epoch` (experiment memory), `mutation_point_track_record` (fertility map) |
+| `src/zicato/epoch/round_log.py` | The round-log event vocabulary the propose step emits into |
+| `src/zicato/evolve/` | The wiring, spread across the round pipeline: `propose_apply.py` (`_propose_child`, `_propose_and_apply_challenger`), `round_context.py` (`_build_candidate_screen_runner`, `_build_candidate_history`, `_build_recombination_pair`), `decision_support.py` (`_render_failure_profile`, `_render_process_exemplars_block`, `_render_loss_summary`), `ingest.py` (`_load_prior_experiments`, `_load_mutation_track_records`). `src/zicato/orchestrator.py` is a 14-line re-export facade over `evolve_once` / `evolve_n_rounds` |
 
 Orchestrator call topology, per round:
 
@@ -72,24 +83,24 @@ evolve_once (evolve/round_entry.py)
  ├─ _render_failure_profile(TRAIN losses, weights)          # banded block or ""
  ├─ _render_process_exemplars_block(...)                    # redacted block or ""
  ├─ _build_candidate_screen_runner(...)                     # closure or None
- ├─ _load_prior_experiments(...)                            # memory digest or []
- └─ propose site(s):
-     gauntlet: _propose_child(proposer_agent, ProposerContext(...))
-     field:    _propose_and_apply_challenger × field_size   # (also via _propose_child)
-                └─ prior_experiments = prior + tuple(siblings)   # in-flight cohort
+ └─ evolve_field_round (evolve/field.py) → assemble_candidate_field
+     ├─ _load_prior_experiments(...)   (evolve/candidate_batch.py)   # digest or []
+     └─ _propose_and_apply_challenger × strategy.field_size()   # 1 for gauntlet
+          └─ _propose_child(proposer_agent, ProposerContext(...))
+               └─ prior_experiments = prior + tuple(siblings)   # in-flight cohort
 ```
 
 The agent itself is built ONCE per evolve invocation:
 `build_proposer_agent(spec, proposer_path, external_config)` wrapped by
 `wrap_with_proposer_quality(inner, weights.proposer_quality)`.
 
-> ⚠️ TRAP — a new `ProposerContext` field must be threaded at BOTH propose sites.
-> `_propose_child` (`src/zicato/evolve/propose_apply.py`) is the single shared
-> context-builder both pipelines call, so that a new field cannot reach one
-> path only. If you add a field, add it to `_propose_child`'s signature and
-> to BOTH of its callers (the gauntlet inline block and
-> `_propose_and_apply_challenger`), or the field silently defaults on one
-> pipeline.
+> ⚠️ TRAP — a new `ProposerContext` field must reach the one context builder.
+> Every structure, the one-challenger gauntlet included, proposes through
+> `_propose_and_apply_challenger` → `_propose_child`
+> (`src/zicato/evolve/propose_apply.py`), which is the single place a
+> `ProposerContext` is constructed in the loop. If you add a field, add it to
+> `_propose_child`'s signature and thread it from
+> `_propose_and_apply_challenger`, or the field silently takes its default.
 
 ---
 
@@ -105,8 +116,9 @@ and the viewer policy. An epoch's `proposers/<name>/` directory says
 into the contract. The directory holds nothing executable.
 
 `external_proposer_config` (`src/zicato/proposer/external.py`) reads the
-first, `resolve_proposer_spec` (`skills.py`) reads the second, and
-`resolve_external_spec` joins them into a hash-ready `ProposerSpec`.
+first; `resolve_proposer_spec` (`skills.py`) reads the second and, given the
+first, hands both to `resolve_external_spec`, which joins them into a
+hash-ready `ProposerSpec`.
 `build_proposer_agent` (`agent.py`) turns that spec into a runnable
 agent:
 
@@ -261,41 +273,43 @@ folded to counts), **REDACTED** (mechanically scrubbed content), **SANITIZED**
 | Field | Type / default | Who SETS it | Who READS it | Envelope class |
 |---|---|---|---|---|
 | `epoch_id` | `str` | orchestrator (resolved epoch) | prompt-independent: lineage coordinate for the minted `Experiment`; tools context; insights lookup | MACHINERY (never rendered into the prompt body) |
-| `parent_generation_id` | `str` | orchestrator (current champion) | `Experiment.parent_generation_id`; `_resolve_generation_root` for the tools; meta-loop events | MACHINERY |
-| `new_generation_id` | `str` | orchestrator (`_next_generation_id`, or the resume plan's reused id) | `Experiment.generation_id`; `Experiment.id = f"exp_{epoch}_{gen}"` | MACHINERY |
+| `parent_generation_id` | `str` | orchestrator (current champion) | `Experiment.parent_generation_id`; the tool context's `generation_id`; meta-loop events | MACHINERY |
+| `new_generation_id` | `str` | orchestrator (`next_generation_id`, or the resume plan's reused id) | `Experiment.generation_id`; `Experiment.id = f"exp_{epoch}_{gen}"` | MACHINERY |
 | `patterns` | `tuple[Pattern, ...]` | orchestrator: `detect_patterns` over the **TRAIN slice only** | `render_pattern_block` (prompt), `_targets_observed_failure` (best-of-N heuristic), exemplar anchors | Under `restrict_visibility`, only declared measurements, severity, known metric labels, and mutation references render; **train-only** |
 | `mutations` | `tuple[MutationPoint, ...]` | orchestrator: `enumerate_mutations` over the adapter's mutable trees | `render_mutation_block` (prompt), `parse_experiment_json` cross-checks, the tool context (`mutation_usage`'s id check, `validate_patches`' pre-image guard) | IDENTITY-FREE (code spans, unrelated to the board split) |
 | `brief_text` | `str` | orchestrator: `load_brief(brief.md).text` | `instruction_sections` → the episode's `70-brief` section (spliced verbatim) | IDENTITY-FREE (operator-authored) |
 | `current_loss_summary` | `str` | orchestrator: `_render_loss_summary(TRAIN losses)` — one line: `drift_loss_mean=… over N runs, pass_rate=…` | user prompt `## Current loss summary` | AGGREGATED (board-wide means only; train-only) |
 | `aux_call_llm` | `(system, user, model) -> Awaitable[str]` | orchestrator from `RuntimeConfig` | the best-of-N **critic** and the LLM recombination merge. NEVER the proposal episode | MACHINERY |
-| `model` | `str = ""` | orchestrator: `workspace_config["evaluation_model"]` | forwarded to `aux_call_llm`; the collusion smell-test. NOT the episode's model, which the `proposer` block names | MACHINERY |
+| `model` | `str = ""` | orchestrator: the evaluation role's model (`load_models_config(...).evaluation.model`) | forwarded with `aux_call_llm` calls (the critic and the LLM merge) unless an ensemble role names its own model. NOT the episode's model, which the `proposer` block names | MACHINERY |
 | `max_retries` | `int = 2` | orchestrator (`max_proposer_retries`) | the episode's `verify_retries`: how many turns of verifier findings it gets before ending blocked | MACHINERY |
 | `forbidden_ids` | `tuple[str, ...] = ()` | orchestrator: `brief.forbidden_ids` (parsed from `# Forbidden edits` bullets) | `enforce_forbidden` after the episode; re-checked post-propose by `check_patch_manifest_and_forbidden` | IDENTITY-FREE |
 | `workspace_root` | `Path \| None = None` | orchestrator | the host tools' context root; where the episode log and the input capture land; `None` ⇒ the capture is a no-op | MACHINERY |
+| `writer` | `WorkspaceLock \| None = None` | orchestrator (the round's workspace writer); the agent binds one through `workspace_writer` when absent | the episode's workspace writes (active-run records, capture) | MACHINERY |
+| `generation_root` | `Path \| None = None` | orchestrator: the parent generation's materialized snapshot, a REQUIRED argument of `_propose_child` | the episode's read grant, the working copy's source, the tool context; an episode with none raises `ProposerError` (`_require_generation_root`) | MACHINERY |
+| `mutation_policy` | `MutationPolicy \| None = None` | orchestrator: the policy captured over the parent source, the mutation snapshot, and the forbidden ids | the projection, `validate_patches`, and the final application guard; `None` ⇒ the agent captures one itself | MACHINERY |
 | `validate_experiment` | `ExperimentValidator \| None = None` | orchestrator: `build_post_apply_validator(...)` (`src/zicato/evolve/round.py`) | the agent, after the episode; best-of-N `_mount_chosen` / `_revalidate` — the shared hook is what mounts the canonical `next_id` tree | MACHINERY |
 | `scratch_validator_factory` | `Callable[[], tuple[ExperimentValidator, Callable[[], None]]] \| None = None` | orchestrator: `build_scratch_validator_factory(...)` (`src/zicato/evolve/round.py`) | best-of-N only: one `(validate, cleanup)` lease per slate slot, each over its OWN disjoint scratch tree, so the slate can gather. `None` ⇒ the wrapper falls back to `validate_experiment` and runs the slate serially | MACHINERY |
 | `meta_loop_emitter` | `MetaLoopEmitter \| None = None` | orchestrator (one per `evolve_n_rounds`) | `proposer_call_started`/`proposer_call_completed` bookends, one pair per EPISODE | MACHINERY (telemetry, best-effort) |
-| `custom_judge_names` | `frozenset[str] \| None = None` | orchestrator: `_declared_custom_judge_names(board, weights)` (board `JudgeSpec.name` ∪ `per_judge_weights` keys) | `parse_experiment_json` (drift-metric validation) ONLY — permissive by design, including zero-weight judges, so the prompt-side priority filter can never turn an accepted movement into a burned retry; the prompt vocabulary comes from `metric_priorities` | IDENTITY-FREE (judge names are contract identity rather than board-entry identity) |
+| `custom_judge_names` | `frozenset[str] \| None = None` | orchestrator: `_declared_custom_judge_names(board, weights)` (board `JudgeSpec.name` ∪ `per_judge_weights` keys) | `parse_experiment_json` (drift-metric validation) ONLY — permissive by design, including zero-weight judges, so the prompt-side priority filter can never turn an accepted movement into a rejected proposal; the prompt vocabulary comes from `metric_priorities` | IDENTITY-FREE (judge names are contract identity rather than board-entry identity) |
 | `prior_experiments` | `tuple[PriorExperiment, ...] = ()` | orchestrator: `_load_prior_experiments` (+ the field loop appends in-flight `siblings`) | `render_prior_experiments_block` (prompt); `recent_prediction_accuracy` (best-of-N calibration) | BANDED under `restrict_visibility` (Δscalar bucketed; accuracy always banded); curated + capped at 12 (§5.10) |
 | `restrict_visibility` | `bool = False` (context default) — **default-ON in production** via `weights.overfitting.restrict_proposer_visibility` | orchestrator from the contract | `render_evidence` → `render_pattern_block(restrict=…)`, `_render_prior_experiment_line(restrict=…)`; the best-of-N critic renders the SAME evidence | MACHINERY (the envelope switch itself) |
-| `failure_profile` | `str = ""` | orchestrator: `_render_failure_profile(TRAIN losses, weights)` — pre-rendered, **already banded** | spliced as `## Failure-mode profile`; `hint_for_slot` parses its stable line shapes for the dominant mode | BANDED + AGGREGATED (every number through `_band_rate`/`_band_quality`; board-anonymous by construction) |
+| `failure_profile` | `str = ""` | orchestrator: `_render_failure_profile(TRAIN losses, weights)` — pre-rendered, **already banded** | spliced as `## Failure-mode profile`; `hint_for_slot` parses its stable line shapes for the dominant mode | BANDED + AGGREGATED (every number through `band_rate`/`_band_quality`; board-anonymous by construction) |
 | `metric_priorities` | `str = ""` | orchestrator: `render_metric_priorities_block(build_metric_priorities(board, weights, losses))` — pre-rendered, **already banded** | replaces the flat vocabulary inside `## Valid expectation targets`; also threaded into the recombination merge prompt | BANDED (within-channel weight ratios only — the raw coefficients are the objective function and stay orchestrator-side, §5.8) |
 | `process_exemplars` | `str = ""` | orchestrator: `_render_process_exemplars_block` — **opt-in** (`experimental.process_exemplars > 0`), best-effort | spliced as `## Process exemplars` directly after the failure profile; also fed to the critic | REDACTED (the four redaction rules, §5.8.3); train-only; empty at default |
 | `sample_hint` | `str = ""` | the **best-of-N wrapper** (`replace(ctx, sample_hint=hint_for_slot(i, n, profile))`) — never the orchestrator | `render_evidence` → `## Edit-class hint (this sample)` at the very top | IDENTITY-FREE (static instruction strings only) |
 | `slot_index` | `int \| None = None` | the **best-of-N wrapper** (`replace(ctx, slot_index=sample)` in `_run_one_slot`) — never the orchestrator | the input capture (§5.5.1), the episode log's directory name, and the task's `## This episode` block, which is what tells one slot's episode from a sibling's | MACHINERY |
 | `revise_feedback` | `str = ""` | the **best-of-N wrapper**, only on the ONE all-vetoed revise re-sample (`_render_revise_feedback`) | `render_evidence` → `## Why the previous attempt was set aside`, at the top of the task | AGGREGATED (composed solely of counts-only screen reason strings + static text) |
-| `mutation_track_records` | `Mapping[str, MutationTrackRecord] \| None = None` | orchestrator: `_load_mutation_track_records` (best-effort index read, `{}` on failure) | `render_mutation_block(track_records=…)` — one banded advisory line per manifest entry; the `mutation_track_record` tool renders the same shape | BANDED + AGGREGATED ("experiments touching this point"; Δscalar bucketed; never causal) |
-| `round_event_emitter` | `Callable[[str, dict], None] \| None = None` | orchestrator: `_RoundLogEmitter.emit` | best-of-N wrapper via `_emit_round_event` (guarded — a raising emitter never fails a propose) | MACHINERY |
-| `screen_candidates` | `ScreenRunner \| None = None` | orchestrator: `_build_candidate_screen_runner` — ONE closure per round, only when `screen_entries > 0 AND best_of_n > 1` | best-of-N wrapper: `_screen_slate`, `_screen_replacement` | MACHINERY (its OUTPUT strings are AGGREGATED counts-only by the `CandidateScreenResult.reason` contract) |
+| `mutation_track_records` | `Mapping[str, MutationTrackRecord] \| None = None` | orchestrator: `_load_mutation_track_records` (best-effort index read, `{}` on failure) | `render_mutation_block(track_records=…)` — one banded advisory line per manifest entry | BANDED + AGGREGATED ("experiments touching this point"; Δscalar bucketed; never causal) |
+| `round_event_emitter` | `Callable[[str, dict, Mapping \| None], None] \| None = None` — called as `(type_token, fields, scope)` | orchestrator: `_RoundLogEmitter.emit` | best-of-N wrapper via `_emit_round_event` (guarded — a raising emitter never fails a propose) | MACHINERY |
+| `screen_candidates` | `ScreenRunner \| None = None` | orchestrator: `_build_candidate_screen_runner` — ONE closure per round, only when `screen_entries > 0 AND best_of_n > 1` (both hold at the defaults) | best-of-N wrapper: `_screen_slate`, `_screen_replacement` | MACHINERY (its OUTPUT strings are AGGREGATED counts-only by the `CandidateScreenResult.reason` contract) |
 | `recombine_pair` | `RecombinationPair \| None = None` | orchestrator: `_build_recombination_pair` — ONE selection per round at the screen-builder site, only when `experimental.recombine AND best_of_n > 1`; `_recombine_pair_for_slot` threads it to the FIELD's slot-0 challenger only | best-of-N wrapper: the last slate slot mints its patch union (§5.6.11) instead of sampling the LLM | MACHINERY (carries counts + patches + hypothesis TEXT only — entry ids never leave the builder; the improved/regressed sets are intersected with the current TRAIN board inside `_build_recombination_pair` and discarded) |
+| `calibration` | `CalibrationSummary \| None = None` | orchestrator: `sample_calibration` over the reign's graded hypotheses, only when `experimental.calibration_feedback > 0` | `render_evidence` → `render_calibration_block` → `## Prediction calibration`, above the experiment-memory block | BANDED (hit/miss verdicts + aggregate counts; whole-candidate outcomes only; `None` at default) |
 | `genealogy` | `tuple[GenealogyItem, ...] = ()` | orchestrator: `_build_candidate_history` samples once from shared experiment and ranking reads, only when `experimental.genealogy > 0`; ALL best-of-N slots (and the critic) see the SAME items | `render_evidence` → `render_genealogy_block` → spliced as `## Candidate genealogy` directly above `## What's already been tried` (§5.6.13) | BANDED + REDACTED (whole-candidate outcomes through `_bucket_scalar_delta`; proposer-authored core ideas + capped diff excerpts; NO entry ids, NO per-entry results, NO exact deltas — candidate genealogy, never board data; empty at default) |
 
 > ✅ ALWAYS give a new `ProposerContext` field a default that renders
 > byte-identically when unset. That is not a style preference — it is the
 > compatibility contract that lets every standalone caller (tests, the CLI
-> `propose` command) keep producing identical tasks, and it keeps the
-> contract hash honest (an absent channel adds nothing to any canonical
-> form).
+> `propose` command) keep producing identical tasks.
 
 > ⛔ NEVER put raw per-entry material on the context "for the agent to filter
 > later." The context IS the envelope boundary on the agent side: everything on
@@ -366,7 +380,7 @@ file it wrote, and does not have to be re-sent the round's whole evidence.
 | a patch set that fails the linter (post-apply checks) | `validate_patches`, via `zicato.proposer.validate` | one finding per problem | a turn; past the retries, blocked |
 | a hypothesis predicting no movement | the runtime, at the value boundary (`HYPOTHESIS_SCHEMA`'s `anyOf`) | the schema violation | a turn |
 | a hypothesis naming an undeclared judge | `parse_experiment_json`, after the episode | — | `ProposerError` |
-| a patch touching a forbidden id | `enforce_forbidden`, after the episode | — | `ProposerError` |
+| a patch touching a forbidden id, or a whole-file replacement that changes a forbidden nested point | `validate_patches` and the projection, via the captured `MutationPolicy` | one finding per offending patch | a turn; past the retries, `ProposerBlocked("edit-outside-mutation-point")` |
 | a patch that breaks the child snapshot | the post-apply hook, after the episode | — | `ProposerError` |
 | the episode outliving its wall clock | the host holding the pipe | the cancel | `ProposerExhausted("seconds")` |
 | the binary dying, or a transport error | `foe.Handle.wait` | — | `ProposerError` |
@@ -380,8 +394,8 @@ Moving one across that line changes what a round costs.
 > BECAUSE the runtime checks the returned value at the boundary: a
 > hypothesis the runtime accepts and `parse_experiment_json` then rejects
 > costs the whole episode rather than one turn. If you add a rule to the
-> parser, ask whether the schema can carry it — `foe/docs/config.md` lists
-> the subset the runtime enforces.
+> parser, ask whether the schema can carry it — Foe's configuration
+> documentation lists the subset the runtime enforces.
 
 ### 5.3.2 `revise_feedback` seeding
 
@@ -394,26 +408,32 @@ call it is `""` and the block is omitted.
 ### 5.3.3 The post-apply validation hook (`validate_experiment`)
 
 The hook type is `ExperimentValidator = Callable[[Experiment],
-Awaitable[list[str]]]` — non-empty list ⇒ retryable failure. In production the
+Awaitable[list[str]]]` — a non-empty list is a failure. In production the
 orchestrator supplies `build_post_apply_validator`
-(`src/zicato/evolve/round.py`), which per attempt:
+(`src/zicato/evolve/round.py`), which per call:
 
+0. checks the patches against the captured `MutationPolicy`
+   (`policy.check_patches`: parent unchanged, patches valid against the
+   manifest, no forbidden id) and returns any findings; when the same patches
+   were already derived and the tree still matches, it reuses that tree;
 1. beats the `applying:round_{n}:{next_id}` heartbeat phase;
 2. `genstore.derive_generation(...)` — copies the parent tree and applies the
    candidate's patch set **all-or-nothing** into the FIXED child snapshot
    coordinate, clearing any stale child tree from a prior attempt (a
    `derive_generation` `ValueError` — e.g. a patch that leaves a `.py` file
-   unparseable — is returned as a single retryable finding, never raised);
+   unparseable — is returned as a single finding, never raised);
 3. records the derived tree in the caller's `last_child_snapshot["path"]` slot
    — the tree the tournament later mounts, so no second apply is needed;
 4. runs `zicato.mutation.validator.validate_post_apply` and returns findings.
 
-Why this exists: without the hook a destructive patch (a dropped import, a
-vanished `# zicato:mutable` marker, broken syntax) costs an entire wasted
-tournament round — applied, validated, and rejected with no retry. The hook
-makes it cost **one bounded retry** with the concrete
-validator strings fed back. The retry budget is **shared** with parse-error
-retries, so the per-round wall-clock stays bounded.
+Why this exists: the episode's own `validate_patches` already applies the
+patch set and runs the post-apply checks on a scratch copy, so a destructive
+patch (a dropped import, a vanished `# zicato:mutable` marker, broken syntax)
+normally costs one turn inside the episode. The hook is the final guard at the
+canonical coordinate: it derives the tree the tournament mounts and re-checks
+it. `FoeProposerAgent` runs it once, after the episode; a finding there raises
+`ProposerError` ("patches failed post-apply validation: …") and the round is
+rejected rather than retried, because the episode has already ended.
 
 > ⚠️ TRAP — the hook derives into the SAME on-disk child coordinate every
 > attempt (that is what makes retries idempotent), so `next_id`'s tree is a
@@ -464,7 +484,8 @@ Each episode emits a paired `proposer_call_started` /
 `proposer_call_completed` on the meta-loop session when an emitter is
 wired (`invocation_id` correlates the pair; the completed outcome carries
 how the episode ended: `"completed"`, `"blocked:{code}"`,
-`"exhausted:{limit}"`, `"timeout"`, `"error:Failed"`). One episode is one
+`"exhausted:{limit}"`, `"timeout"`, `"cancelled"`, `"error:Failed"`, or
+`"failed"` when the episode never started). One episode is one
 call from this side — the turns inside it are Foe's transcript — so the
 pair brackets the episode rather than a model request. Every emit is
 guarded: a misconfigured emitter cannot regress the proposer. The episode
@@ -480,15 +501,18 @@ ending (§5.1.3). `ProposerBlocked` and `ProposerExhausted` subclass it, so
 every consumer below keeps working for all three. Consumers, all of which
 you must keep working if you touch the shape:
 
-- the gauntlet path folds it into a **rejected round**
-  (`_rejected_proposer_experiment` + `_persist_rejected_round` — a clean
-  append-only journal entry, never a crashed loop);
-- the field path drops the slot and runs a **narrower field**, publishing the
+- a one-candidate field (the gauntlet) folds it into a **rejected round**
+  (`_rejected_proposer_experiment` + `_persist_rejected_round`, called from
+  `evolve/field_candidates.py` — a clean append-only journal entry, never a
+  crashed loop);
+- a wider field drops the slot and runs a **narrower field**, publishing the
   full `attempt_reasons` list to the dashboard's proposing tracker
   (`_short_reject_reason` / `_trim_reason` in
   `src/zicato/evolve/propose_apply.py`);
-- the best-of-N wrapper re-raises the LAST inner error when the whole slate
-  failed, so single-sample call sites see the identical contract;
+- the best-of-N wrapper raises ONE `ProposerError` carrying every slot's
+  attempts, each prefixed `slot {i}: `, when the whole slate failed, so
+  single-sample call sites see the identical contract and no slot's evidence
+  is dropped;
 - `_propose_child` emits one `proposal_attempted` round-log event **per failed
   attempt** off `exc.attempts`, plus one `proposal_episode_settled` carrying
   `exc.outcome`'s kind, code and message, before re-raising. The ENDING is
@@ -506,15 +530,14 @@ should crash an evolve loop; if one does, that is the bug.
 | `proposer failed after N attempt(s): …` in a rejected round's journal entry | the episode produced no experiment; the trail says which of the four endings and why | gauntlet: `_persist_rejected_round`; the round journals `rejected` |
 | `attempt k: schema violation at hypothesis/modulating: …` | shape failure at pass 1 — a hypothesis the runtime's own schema did not catch | §5.4.2 |
 | `attempt k: patch[0]: unknown mutation_id '…'` | the model targeted an id not in the manifest — usually it hallucinated a plausible-sounding id or reused one from the memory digest that the current manifest does not carry | §5.4.3; also re-checked post-propose by `check_patch_manifest_and_forbidden`, which RAISES `ValueError` (a hard error — by then the proposer already validated, so a stale id means the manifest changed under the round) |
-| `attempt k: patches violate proposer-brief forbidden-edits list: …` | the brief's `# Forbidden edits` section named the id; the retry feedback names the offending ids | §5.3.1 row 4 |
-| `attempt k: patches failed post-apply validation: …` | the patch applied but broke the snapshot (dropped import / marker / syntax); `derive_generation` or `validate_post_apply` findings fed back | §5.3.3 |
+| `Patch '…': mutation_id '…' is in the forbidden set and may not be patched` (inside the episode) / `proposer-emitted patches violate forbidden_ids: …` (after it) | the brief's `# Forbidden edits` section named the id. Inside the episode it is a verifier finding; after the episode `check_patch_manifest_and_forbidden` raises `BadPatchSetError` (a `ValueError`) and stops the round | §5.3.1; §5.3.7 |
+| `attempt k: patches failed post-apply validation: …` | the patch passed the episode's verifier but broke the derived child snapshot (dropped import / marker / syntax); the round is rejected with the `derive_generation` or `validate_post_apply` findings | §5.3.3 |
 | `attempt k: derive_generation rejected the patch set: …` | `apply_patches`' own post-apply syntax gate raised `ValueError` — surfaced as a single finding rather than crashing the loop | `build_post_apply_validator` step 2 |
 | `proposal episode for … outlived its Ns budget; cancelling pid …` (WARNING) | the episode ignored the deadline Foe was given, so the host that holds the pipe ended it; the round sees `ProposerExhausted("seconds")` | §5.3.4 |
 | `blocked (no-groundable-mutation-point): …` in a rejected round | the episode's verifier was never satisfied, or it reported a block itself; NO tournament budget was spent | §5.1.3 |
 | `multi-challenger field: proposer could not produce a valid challenger for …; the field runs without it` (WARNING) | one field slot exhausted its budget; the strategy resolves over a narrower field; the dashboard shows the slot `rejected` with full `attempt_reasons` | `_propose_and_apply_challenger` |
 | `candidate screen failed (…); selecting unscreened` (DEBUG) | the guarded screen degrade — runner raised or returned a malformed result; selection proceeded byte-identically to an unscreened round | §5.6.2 clause 3 |
 | `screen-informed revise produced no replacement (…); degrading to critic-over-all` (DEBUG) | the `"unavailable"` revise outcome; nothing to restore — the failed revise wrote only its own scratch tree | §5.6.4 |
-| `proposer agent model '…' equals the evaluation model string; …` (WARNING) | the collusion smell test — advisory, operator responsibility | §5.1 |
 | `prior_experiments_for_epoch skipped for …` / `mutation_point_track_record skipped …` (DEBUG) | best-effort index reads degraded; the prompt omits the section / manifest renders unannotated | §5.10.1 |
 | `process-exemplar extraction skipped: …` (DEBUG) | the opt-in exemplar channel failed best-effort; prompt renders without the section | §5.8.3 |
 
@@ -536,26 +559,29 @@ Two specially-named sections carry structured signal:
 
 | Section heading (case-insensitive, `#`–`######` accepted) | Effect | Extraction rules |
 |---|---|---|
-| `# Forbidden edits` | HARD: any mutation id mentioned in a bullet is refused by the proposer (`enforce_forbidden`) and re-checked by the runner before applying | bullets are `-`/`*`/`+`; backticked tokens win; if a bullet has none, single- then double-quoted tokens are accepted (editors that strip backticks); order of appearance preserved, de-duplicated |
+| `# Forbidden edits` | HARD: any mutation id mentioned in a bullet is refused inside the episode (the captured `MutationPolicy`) and re-checked by the runner before applying | bullets are `-`/`*`/`+`; backticked tokens win; if a bullet has none, single- then double-quoted tokens are accepted (editors that strip backticks); order of appearance preserved, de-duplicated |
 | `# Preferred edits` | SOFT hint only — the proposer is encouraged to look there first, never constrained | same extraction; surfaced as `ProposerBrief.preferred_ids` |
 
 `enforce_forbidden(patches, forbidden_ids)` is **strict equality** on
 `Patch.mutation_id` — globbing is intentionally unsupported ("operators who
 want to forbid a family of ids should enumerate them"). It returns
 human-readable error strings, one per offending patch (empty list = clean),
-which the engines feed back verbatim on retry.
+which the recombination slot's mint and merge paths check before
+validating.
 
 The FULL brief text — everything outside the two structured sections included
 — passes verbatim into the system prompt, so free-form operator prose reaches
 the model.
 
 > ⚠️ TRAP — the forbidden check is enforced in THREE places by design:
-> (1) inside both proposer engines per attempt (retryable feedback), (2)
-> post-propose by `check_patch_manifest_and_forbidden` (hard `ValueError` —
-> defense in depth against an agent implementation that skipped step 1), and
-> (3) the mutation validator's own `check_forbidden_ids` before apply. Do not
-> remove any layer because "another one already checks" — each guards a
-> different caller.
+> (1) inside the episode, where `validate_patches` and the projection apply
+> the captured `MutationPolicy` (retryable findings; the recombination slot
+> uses `enforce_forbidden` for the same purpose), (2) post-propose by
+> `check_patch_manifest_and_forbidden` (hard `BadPatchSetError` — defense in
+> depth against an agent implementation that skipped step 1), and (3) the
+> post-apply hook's own `policy.check_patches` before it derives the child
+> tree. Do not remove any layer because "another one already checks" — each
+> guards a different caller.
 
 ### 5.3.8 Skills and `ProposerSpec` resolution
 
@@ -611,11 +637,15 @@ there is nothing for the fingerprint to move on.
 
 ## 5.4 The structured-output schema and two-pass validation
 
-The proposer must emit ONE JSON object with exactly two top-level keys:
+An experiment document is ONE JSON object with exactly two top-level keys:
 `"hypothesis"` and `"patches"`. `parse_experiment_json`
-(`src/zicato/proposer/structured.py`) lifts a raw model response into a typed
-`Experiment`, or raises `ExperimentParseError` with a message engineered for
-the retry prompt.
+(`src/zicato/proposer/structured.py`) lifts such a document into a typed
+`Experiment`, or raises `ExperimentParseError` with a message naming what to
+fix. A proposal episode returns only the hypothesis, as a value the runtime
+has already checked against `HYPOTHESIS_SCHEMA`; `FoeProposerAgent` pairs it
+with the projected patches and serializes the pair, so the salvage stages
+below matter for the free-text responses the LLM recombination merge
+(`_merge_recombined`) parses.
 
 ### 5.4.1 Salvage first: `extract_json_object`
 
@@ -637,8 +667,7 @@ JSON-ish blob inside a `<think>` block cannot be mistaken for the answer.
 A dangling `{` still yields nothing — unbalanced garbage is
 rejected. An empty response and a salvage miss get **different** error
 messages (`"empty response: …"` vs `"could not extract a JSON object …"`), so
-the repair prompt can target the failure mode (the empty case triggers the
-"skip all reasoning" variant, §5.3.1).
+the recorded error names the failure mode.
 
 ### 5.4.2 Schema and cross-checks
 
@@ -679,7 +708,7 @@ verdict, and explanatory note. Journal readers require the format the writer
 emits, including explicit nullable lifecycle fields. They reject string outcomes,
 decision aliases, numeric strings, and malformed complete records.
 
-### 5.4.6 The prediction-accuracy grading loop
+### 5.4.4 The prediction-accuracy grading loop
 
 Predictions are graded **after** an experiment settles, then fed back to
 future proposals as an advisory calibration signal. The full loop:
@@ -726,15 +755,17 @@ the episode block plus `render_evidence`. Sections in top-to-bottom order:
 | 0 | `## This episode` — both tree roots, and the candidate (and slate slot) being produced | always | `render_episode_block` |
 | 1 | `## Why the previous attempt was set aside` | `revise_feedback` non-empty (§5.3.2) | `_render_revise_feedback` |
 | 2 | `## Edit-class hint (this sample)` | `sample_hint` non-empty (a best-of-N slot) | `hint_for_slot` |
-| 3 | `## Recent telemetry insights` | insights file exists for the epoch | `load_latest_insights` |
+| 3 | `## Recent telemetry insights` | `ProposalEvidence.insights` non-empty; `evidence_from_context` never sets it, so loop episodes omit it | — |
 | 4 | `## Failure-mode profile (this round, aggregate — train slice)` | `failure_profile` non-empty | `render_failure_mode_profile` |
 | 5 | `## Process exemplars (train slice — redacted event windows)` + the redaction-contract banner | `process_exemplars` non-empty (opt-in) | `render_process_exemplars` |
-| 6 | `## What's already been tried (this epoch — avoid repeating failures, build on wins)` | `prior_experiments` non-empty | `render_prior_experiments_block` |
-| 7 | `## Current loss summary` | always | `current_loss_summary` |
-| 8 | `## Valid expectation targets` | always | `render_metric_targets_block` — the priority-ordered body from `metric_priorities` when the caller supplied one, else the flat membership list |
-| 9 | `## Patterns observed (advisory…)` | always (`"(no patterns detected …)"` when empty) | `render_pattern_block` |
-| 10 | `## Mutation points (only these may change)` | always (`"(no mutation points available)"` when empty) | `render_mutation_block` (+ optional per-point track-record lines) |
-| 11 | "Change the working copy now, verify it, and return your hypothesis." | always | `render_task` |
+| 6 | `## Candidate genealogy (this reign — in-context evolution)` + banner | `genealogy` renders non-empty (opt-in, §5.6.13) | `render_genealogy_block` |
+| 7 | `## Prediction calibration (this reign — your own settled hypotheses)` + banner | `calibration` renders non-empty (opt-in) | `render_calibration_block` |
+| 8 | `## What's already been tried (this epoch)` + "Avoid repeating failures; build on wins." | `prior_experiments` non-empty | `render_prior_experiments_block` |
+| 9 | `## Current loss summary` | always (`"(no loss summary)"` when empty) | `current_loss_summary` |
+| 10 | `## Valid expectation targets (what a predicted movement may reference)` | always | `render_metric_targets_block` — the priority-ordered body from `metric_priorities` when the caller supplied one, else the flat membership list |
+| 11 | `## Patterns observed (advisory; address none, some, or all)` | always | `render_pattern_block` |
+| 12 | `## Mutation points (only these may change)` | always | `render_mutation_block` (+ optional per-point track-record lines); paths re-addressed to the working copy by `rebase_mutations` |
+| 13 | "Change the working copy now, verify it, and return your hypothesis." | always | `render_task` |
 
 The INSTRUCTIONS are a different document, and a hashed one:
 `instruction_sections` returns the charter (`CHARTER_SECTIONS` — what a
@@ -771,7 +802,7 @@ Two rendering rules worth internalizing:
 ### 5.5.1 Reading back what the proposer saw
 
 The renderers are pure, but the channels they render from (patterns, the loss
-summary, the prior-experiment digest, genealogy, calibration, the retry
+summary, the prior-experiment digest, genealogy, calibration, the revise
 feedback) are assembled per round and not otherwise persisted, so a past
 round's prompt cannot be re-derived from the workspace. Every proposer LLM
 call therefore writes its rendered input verbatim to
@@ -820,16 +851,17 @@ Four properties to preserve when touching this:
 
 - **Capture runs BEFORE the call.** The attempt that times out is the one
   whose input matters; the response path never runs for it.
-- **The write is best-effort and never raises** (DEBUG log, round continues),
-  and the reader tolerates an absent file and an unparseable FINAL line. An
-  unparseable interior line raises — under the append-only writer only the
+- **The write is best-effort and never raises** (DEBUG log, round continues).
+  The reader tolerates an absent file and skips an undecodable final append
+  only when it lacks a newline; a malformed newline-terminated row raises,
+  including the last one — under the append-only writer only an unterminated
   tail can be torn.
 - **The append is one `os.write()` on an `O_APPEND` fd under a process-local
   lock** keyed by path, because a best-of-N slate has several writers and a
   buffered text write is several syscalls. Do not route this through
   `StorageBackend.append_jsonl`: it skips the outer→inner `.zicato/` descent
   and its append is unlocked and buffered.
-- **Capture is unconditional.** The file is a new at-rest location for
+- **Capture is unconditional.** The file is an additional at-rest location for
   board-derived content beside `brief.md` and `mutations.json`, and exposes
   nothing to the proposer that the proposer did not already receive, so the
   envelope of §5.8 is unaffected. It is not free: one proposal record against
@@ -859,7 +891,7 @@ copy. That is what makes the slate genuinely independent — nothing is
 carried between slots but the edit-class hint that tells them apart — and
 what lets `_gather_slate` run them concurrently without a shared session to
 serialize on. Fork slates, where a runtime branches one warm session into
-N, are deliberately not built here (issue #301).
+N, are not built.
 
 The full `propose` flow when N > 1:
 
@@ -868,12 +900,16 @@ outcomes = await _gather_slate(ctx, n)     # N slots CONCURRENTLY, each with
                                            # sample_hint=hint_for_slot(i, N, …)
                                            # and its OWN scratch tree (§5.3.3a)
 for outcome in outcomes:                   # deterministic pass, SLOT order
-    emit proposal_attempted {errors, slot_index}   # every slot that failed
+    stage proposal_attempted {errors, slot_index}  # every slot with errors
     candidates.append(outcome.candidate)           # failures narrow the slate
-    emit candidate_sampled {i, n}
+    stage candidate_sampled {i, n[, recombined]}
 if slate empty: raise one ProposerError carrying EVERY slot's attempts
-if len == 1: await _mount_chosen(candidates, 0, ctx); return it (no critique, no screen)
+emit the staged events
+if len == 1: await _mount_chosen(candidates, 0, ctx)
+             emit critique_selected {reason="sole_candidate"}; return it
 screen_results = await _screen_slate(candidates, ctx)      # GUARDED; None = unscreened
+if a recombined mint was sampled and not vetoed:           # §5.6.11
+    await _mount_chosen(…); emit critique_selected {reason="recombined"}; return it
 survivors = non-vetoed indices (all-vetoed → the ONE revise pass, §5.6.4)
 chosen, mode = selection (§5.6.6): sole-survivor | critique | heuristic
 await _mount_chosen(candidates, chosen, ctx)   # §5.6.5 — the one canonical derive
@@ -914,15 +950,17 @@ the mapping can never see a finer-grained number than the proposer itself does
 > module's "Visibility discipline (LOAD-BEARING)" docstring is the contract.
 
 A slot whose inner `propose` raises `ProposerError` simply **narrows the
-slate** (the error is remembered); an all-failed slate re-raises the real
-inner failure so callers see the identical single-sample contract.
+slate** (its errors are reported as a `proposal_attempted` event); an
+all-failed slate raises one `ProposerError` carrying every slot's attempts, so
+callers see the single-sample contract.
 
 ### 5.6.2 The candidate SCREEN — veto-first semantics
 
-Opt-in: `proposer_quality.screen_entries > 0` **AND** `best_of_n > 1`
-(a single sample has no slate to screen). When off — the default — the
-orchestrator does not even construct a screen callable
-(`_build_candidate_screen_runner` returns `None`) and no screen runs.
+Enabled when `proposer_quality.screen_entries > 0` **AND** `best_of_n > 1`
+(a single sample has no slate to screen). Both hold at the defaults
+(`screen_entries = 2`, `best_of_n = 3`). When either is off the orchestrator
+does not even construct a screen callable (`_build_candidate_screen_runner`
+returns `None`) and no screen runs.
 
 The semantics are strictly **VETO-FIRST**, and this is a load-bearing
 invariant with four clauses:
@@ -971,7 +1009,7 @@ Outcome classification per candidate, in order of precedence:
 |---|---|
 | unit infra-aborted (`is_infra_abort_cause`) | NO SIGNAL — an infra blip never vetoes |
 | unit budget-aborted (`BUDGET_ABORT_CAUSE` or clean budget-exceeded) | IMMEDIATE veto |
-| candidate fails a `baseline_pass_ids` entry | pass-flip → confirm re-run at 3001 → veto iff it flips twice |
+| candidate fails a `baseline_pass_ids` entry | pass-flip → confirm re-run at `candidate_screen` draw 1 → veto iff it flips twice |
 | everything else | clear; panel scalar aggregated over usable losses |
 
 > ⛔ NEVER put an entry id in a screen result string. `CandidateScreenResult
@@ -1116,7 +1154,7 @@ LLM call. Its user prompt = the SAME restricted round context the proposer saw
 the failure profile and the redacted exemplar block — + the
 compact candidate slate (`_render_candidate_slate`: index, core idea, targets,
 per-patch op + rationale, diff size — the proposer's own outputs, already
-inside the envelope) + the optional calibration note (§5.4.6) + the optional
+inside the envelope) + the optional calibration note (§5.4.4) + the optional
 counts-only `## Screen measurements` block. It answers with the integer index
 ALONE on the first line, then ONE sentence naming the bar clause that decided
 it; `_parse_critic_choice` returns `(index, rationale)`, scanning the first
@@ -1190,7 +1228,7 @@ screens/vetoes off the events, but the mode string is what a human greps for):
 | `screen_revise_survivor` | an all-vetoed slate was rescued by the ONE revise re-sample |
 | `screen_all_vetoed:critique` / `screen_all_vetoed:heuristic` | all-vetoed, revise UNAVAILABLE (inner proposer failed) — the step knowingly forwards a vetoed candidate; frequent occurrences mean the proposer cannot act on the veto feedback |
 | `screen_all_vetoed_after_revise:critique` / `…:heuristic` | all-vetoed AND the revise replacement was itself vetoed — the round's edits are systematically regressing the panel; look at the brief/mutation surface |
-| any of the above + `:revalidate-fallback` | the chosen candidate failed to re-derive and the last-validated one was returned instead — investigate: the parent tree changed mid-propose, or the applier is non-idempotent (this suffix should be near-zero in a healthy loop) |
+| `sole_candidate` | `n >= 2` slots were sampled and all but one failed; nothing chose, and the event records that degenerate basis |
 
 ### 5.6.7 What the critic must never see
 
@@ -1206,10 +1244,13 @@ the orchestrator-side flag threading.
 
 ### 5.6.8 One default round's propose step, end to end (worked trace)
 
-The full call sequence under stock defaults — no proposer dir,
-`best_of_n = 3`, `critique_enabled = true`, `screen_entries = 0`,
-`restrict_proposer_visibility = true`, `process_exemplars = 0` — annotated
-with the file that owns each step. Read this once before your first proposer
+The call sequence for ONE challenger under the default proposer settings —
+no proposer dir, `best_of_n = 3`, `critique_enabled = true`,
+`screen_entries = 2`, `restrict_proposer_visibility = true`,
+`experimental.process_exemplars = 0` — annotated with the file that owns each
+step. The default racing structure requests four challengers, and each runs
+this sequence through `_propose_and_apply_challenger`; the last bullet below
+covers what the field adds. Read this once before your first proposer
 change; every trap in this chapter appears in situ here.
 
 ```
@@ -1224,9 +1265,9 @@ per round (evolve_once, evolve/round_entry.py):
   train split = split_board(board, overfitting, seed=rotation_seed(…, epoch))
   patterns    = detect_patterns(TRAIN losses/entries/events)
   loss_summary, failure_profile ("" or banded block), process_exemplars=""
-  screen_candidates = None                       # screen_entries == 0
+  screen_candidates = _build_candidate_screen_runner(…)   # 2-entry train panel
   prior = _load_prior_experiments(root, epoch)   # ≤12 curated entries or []
-  next_id = _next_generation_id(…)               # e.g. "v7"
+  next_id = next_generation_id(…)                # e.g. "v7"
   beat "proposing:round_3:v7"
   validator = build_post_apply_validator(…, last_child_snapshot={})
   scratch   = build_scratch_validator_factory(…)   # per-slot leases
@@ -1249,8 +1290,11 @@ per round (evolve_once, evolve/round_entry.py):
       the working copy and the scratch lease are both removed
     slots 1, 2: … each into its own disjoint scratch tree
     post-gather pass, SLOT order: emit candidate_sampled {i, n:3} ×3
-    screen: None → unscreened
-    _select_best: critic call over aux_call_llm (restricted context + slate)
+    _screen_slate: each candidate on the rotating 2-entry train panel at
+      candidate_screen draw 0 (draw 1 confirms pass-flips);
+      emit candidate_screened ×3; say none is vetoed
+    _select_over → _select_best: critic call over the depth role
+      (ctx.aux_call_llm unless configured; restricted context + slate)
       → picks index 0
     _mount_chosen(candidates, 0, ctx):
       → validator(candidates[0]) derives generations/v7/…    ← THE invariant:
@@ -1259,9 +1303,11 @@ per round (evolve_once, evolve/round_entry.py):
     return candidates[0]
 
   back in evolve_once:
+    emit proposal_attempted{} / proposal_episode_settled{completed} /
+         experiment_minted / patches_applied          (_propose_child)
+  back in _propose_and_apply_challenger:
     check_patch_manifest_and_forbidden(experiment, mutations, brief.forbidden_ids)
     child_snapshot = last_child_snapshot["path"]   # now candidate 0's tree
-    emit proposal_attempted{} / experiment_minted / patches_applied
     → tournament (06-tournament-and-selection.md)
 ```
 
@@ -1274,37 +1320,41 @@ Points where the trace changes under non-default knobs:
 - a proposer dir with skills → the same agent, with an `80-skills` section
   in the episode's instructions and the skill bodies folded into the
   contract hash.
-- `screen_entries: 4` → after slot 2, `_screen_slate` runs each candidate on
-  the rotating 4-entry train panel at `candidate_screen` draw 0 (draw 1 confirms pass-flips);
-  `candidate_screened` × 3 events; survivors feed selection; all-vetoed
-  triggers the one revise.
+- `screen_entries: 0` → no screen closure is built; no `candidate_screened`
+  events, and selection runs over the whole slate. With screening on, a
+  vetoed candidate leaves the selection, and an all-vetoed slate triggers the
+  one revise.
 - a resume-in-place round → the propose step is SKIPPED entirely: the
   persisted experiment is re-validated once through the same hook (idempotent
-  re-derive) and reused verbatim — "the proposer is non-deterministic; a
-  fresh proposal would invalidate the persisted measurement cache"
-  (`evolve_once` step 6r).
-- the field path (`field_size > 1`) → `_propose_and_apply_challenger` per
-  slot; each success is persisted (`write_experiment` + index ingest +
+  re-derive) and reused verbatim. The unit cache key does not include the
+  patch set, and the proposer is non-deterministic, so a fresh proposal would
+  leave the cached measurements describing a different snapshot
+  (`src/zicato/runtime/resume.py`).
+- a field (`field_size > 1`, the default racing structure) →
+  `_propose_and_apply_challenger` per slot; each success is persisted (`write_experiment` + index ingest +
   `append_to_lineage(pending=True)`) BEFORE the next slot proposes, and the
   next slot's context carries the sibling as in-flight memory.
 
-### 5.6.9 `ProposerQualityConfig` — the knobs in one table
+### 5.6.9 The proposer-quality and experimental proposal knobs in one table
 
-`src/zicato/core/scoring_config.py` declares these settings. Their effective
+`src/zicato/core/scoring_config.py` declares these settings on
+`ProposerQualityConfig` (`proposer_quality.*`) and `ExperimentalConfig`
+(`experimental.*`). Their effective
 values, including defaults, are serialized and hashed with the complete scoring
 configuration. A changed value changes the contract; disabled prompt behavior
 is verified separately.
 
 | Knob | Default | Effect | Inert when |
 |---|---|---|---|
-| `best_of_n` | `3` | slate size per propose step; `1` = a single sample, no critique, no wrapper object | — |
-| `critique_enabled` | `true` | the one cheap aux-LLM critic pass over the slate; `false` = deterministic heuristic only | `best_of_n == 1` |
-| `screen_entries` | `0` (OFF) | tryout-panel size per candidate; `> 0` builds the per-round screen closure | `best_of_n == 1` (no slate to screen) |
-| `screen_veto_only` | `false` | `true` suppresses BOTH screen tiebreak feeds (critic block + heuristic key) — the screen can only disqualify | `screen_entries == 0` |
-| `process_exemplars` | `0` (OFF) | max redacted event windows spliced into the prompt per round | — |
-| `recombine` | `false` (OFF) | the mechanical recombination slot (§5.6.11): the last slate slot MINTS the patch union of two rejected complementary challengers instead of sampling the LLM; cost-neutral (the mint replaces the slot's propose call) | `best_of_n == 1` (no slate slot to mint into) |
-| `recombine_merge` | `"mechanical"` | how the slot composes the union (§5.6.11): `"mechanical"` mints the disjoint concatenation (no LLM call, `n−1` calls); `"llm"` issues one merge call and RELAXES disjointness so an OVERLAPPING pair can be merged (substitutes the slot's sample call, `n` calls) | `recombine` off (accept-and-inert) |
-| `genealogy` | `0` (OFF) | the genealogy channel (§5.6.13): up to N candidate-lineage items (champion's promoted spine + diverse rejected reign candidates, banded outcomes) spliced into the prompt for in-context evolution; render-side only (cost meter untouched) | — |
+| `proposer_quality.best_of_n` | `3` | slate size per propose step; `1` = a single sample, no critique, no wrapper object | — |
+| `proposer_quality.critique_enabled` | `true` | the one cheap aux-LLM critic pass over the slate; `false` = deterministic heuristic only | `best_of_n == 1` |
+| `proposer_quality.screen_entries` | `2` | tryout-panel size per candidate; `> 0` builds the per-round screen closure; `0` turns screening off | `best_of_n == 1` (no slate to screen) |
+| `proposer_quality.screen_veto_only` | `false` | `true` suppresses BOTH screen tiebreak feeds (critic block + heuristic key) — the screen can only disqualify | `screen_entries == 0` |
+| `experimental.process_exemplars` | `0` (OFF) | max redacted event windows spliced into the prompt per round | — |
+| `experimental.recombine` | `false` (OFF) | the mechanical recombination slot (§5.6.11): the last slate slot MINTS the patch union of two rejected complementary challengers instead of sampling the LLM; cost-neutral (the mint replaces the slot's propose call) | `best_of_n == 1` (no slate slot to mint into) |
+| `experimental.recombine_merge` | `"mechanical"` | how the slot composes the union (§5.6.11): `"mechanical"` mints the disjoint concatenation (no LLM call, `n−1` calls); `"llm"` issues one merge call and RELAXES disjointness so an OVERLAPPING pair can be merged (substitutes the slot's sample call, `n` calls) | `recombine` off (accept-and-inert) |
+| `experimental.genealogy` | `0` (OFF) | the genealogy channel (§5.6.13): up to N candidate-lineage items (champion's promoted spine + diverse rejected reign candidates, banded outcomes) spliced into the prompt for in-context evolution; render-side only (cost meter untouched) | — |
+| `experimental.calibration_feedback` | `0` (OFF) | the prediction-calibration channel: the reign's settled hypotheses graded hit/miss, spliced as `## Prediction calibration` | — |
 
 And the sibling knobs this chapter leans on:
 `overfitting.restrict_proposer_visibility` (default `true` — the §5.8 master
@@ -1327,17 +1377,23 @@ consumed by the wrapper. Frozen + slotted.)
 | `candidate_passes` | candidate's panel passes | counts only |
 | `confirmed` | `True` iff the veto survived the confirm re-run (flipped twice) | immediate budget-abort vetoes carry `False` |
 
-And the interposition seam, verbatim — note there is NO wrapper object at all
-in the default-off case:
+And the interposition seam, condensed — note there is NO wrapper object at
+all when `best_of_n <= 1`:
 
 ```python
-# src/zicato/proposer/best_of_n.py
+# src/zicato/proposer/best_of_n.py — wrap_with_proposer_quality (condensed)
 def wrap_with_proposer_quality(
-    inner: ProposerAgent, config: ProposerQualityConfig
+    inner: ProposerAgent,
+    config: ProposerQualityConfig,
+    *,
+    experimental: ExperimentalConfig | None = None,
+    breadth_call_llm=None, depth_call_llm=None,   # ensemble roles; default ctx.aux_call_llm
+    breadth_model=None, depth_model=None,
+    propose_parallelism: int = 1,                 # the loop passes runtime.propose_parallelism (4)
 ) -> ProposerAgent:
     if config.best_of_n <= 1:
         return inner
-    return BestOfNProposerAgent(inner=inner, config=config)
+    return BestOfNProposerAgent(inner=inner, config=config, ...)
 ```
 
 ### 5.6.11 The mechanical recombination slot
@@ -1371,8 +1427,8 @@ soft-reject).
 2. **current reign** — `parent_generation_id == round-start champion` (the
    parent pointer IS the staleness guard; a promotion empties the pool);
 3. **non-placebo** — a random-baseline arm is never a real fix (marker check);
-4. **non-recombined parent** — no chains in v1 (keeps provenance one level
-   deep);
+4. **non-recombined parent** — no recombination chains (keeps provenance
+   one level deep);
 5. **pair not already tried** — dedup over persisted `recombined_from`
    frozensets (a round-SPENDING mint never re-mints; a vetoed, unpersisted one
    may retry);
@@ -1405,7 +1461,7 @@ input order — the shuffled-pool order-independence pin):
 **The mint + the `recombined` mode.** The minter applies patches A-then-B in
 ascending-gid order (order-independent under disjointness; fixed for byte-stable
 tests) with FRESH patch ids, `core_idea = "[recombined] {A[:80]} + {B[:80]}"`,
-`modulating` = the union of PATCH ids (manifest-valid by predicate 6), and a
+`modulating` = the sorted union of the patches' mutation ids (manifest-valid by predicate 6), and a
 counts-only `why` (envelope-clean). In the last slot the wrapper mints instead
 of sampling the LLM, still runs `enforce_forbidden` + the SAME validate hook,
 and a NON-VETOED mint is chosen with `selection_mode = "recombined"` — **no
@@ -1478,41 +1534,44 @@ tells consumers a mint happened — the mode is a contract-hash fact rather
 than a per-candidate one). Tests: `tests/test_recombine_engine.py` (predicate +
 ranking + order-independence + the relaxed-mode overlap ranking units),
 `tests/test_recombination_known_answer.py` (the two-marker mechanical OC
-full-loop: union minted round 3, `mode="recombined"`, promoted where
+full-loop: union minted round 3, `selection_mode="recombined"`, promoted where
 recombine-off stalls; `recombined_from == (v1, v2)`; the exact `n−1` aux-call
 cost-neutrality counter; pair-dedup),
 `tests/test_recombination_merge_known_answer.py` (the OVERLAP-pair `"llm"` OC:
 mechanical mode mints nothing on the shared-target fixture, `"llm"` merges +
 promotes, the `n`-call cost story, the garbage-response degrade).
 
-### 5.6.12 The `new_content` style contract (what the system prompt demands)
+### 5.6.12 The `new_content` contract for model-authored patches
 
-`SYSTEM_PROMPT_TEMPLATE` (`src/zicato/proposer/prompts.py`) binds the model to
-a formatting contract for `replace` payloads that downstream tooling relies
-on. If you touch the template, preserve all of these — each maps to a real
-consumer:
+A proposal episode never writes `new_content`: it edits the working copy, and
+the projection reads each changed point back in the applier's unit (§5.1.2).
+The one path where a model authors patch text directly is the LLM
+recombination merge, and `MERGE_SYSTEM_PROMPT_TEMPLATE`
+(`src/zicato/proposer/prompts.py`, rendered by `render_merge_system_prompt`)
+binds that response to the rules downstream tooling relies on:
 
-- for a **span** point, `new_content` is ONLY the inner replacement text of
-  the one string literal — no function signature, no `import` lines, no
-  `# zicato:mutable` marker, no other mutation points ("the harness owns the
-  literal's quoting and indentation"). Violations drop imports/markers and
-  the post-apply validator rejects the patch — one burned retry each;
-- prose longer than ~120 chars must be broken into 80–100-char lines with
-  real `\n` — "long unbroken single-line prompts are unreadable in the
-  patch-diff view and are a known reviewer-friction point";
-- break at natural boundaries, never mid-placeholder (`{agent_list}`) or
-  mid-identifier; no leading/trailing blank line; no indentation (the applier
-  re-anchors indentation when it splices);
-- the response's first character MUST be `{` and last MUST be `}` — the
-  clean path of `extract_json_object` depends on well-behaved output staying
-  cheap.
+- the response is ONE JSON object and nothing else; its first character MUST
+  be `{` and its last MUST be `}`, so the clean path of `extract_json_object`
+  handles it;
+- the object conforms to `EXPERIMENT_JSON_SCHEMA`, embedded verbatim so the
+  prompt and the parser cannot drift;
+- every `mutation_id` appears in the listed manifest and not in the brief's
+  forbidden-edits list, and `expected_metric_movements` holds at least one
+  prediction named `drift:<kind>`, `judge:<name>`, or another measured
+  namespace;
+- for a `replace` on a **span** point, `new_content` is ONLY the replacement
+  text of the one string literal — no signature, no `import` line, no
+  `zicato:mutable` marker, no other mutation point ("the harness owns the
+  literal's quoting and indentation"). A violation drops imports or markers,
+  and the post-apply validator rejects the merge, which degrades the slot to
+  a fresh sample.
 
 ---
 
 ### 5.6.13 The genealogy channel
 
 Opt-in (`experimental.genealogy > 0`; default `0` = OFF — byte-identical
-propose path when off). The in-context analogue of AlphaEvolve's prompt
+propose path when off). The in-context analogue of an evolutionary prompt
 sampler: it feeds the proposer a redacted view of the current reign's
 candidate LINEAGE so the LLM can evolve IN CONTEXT — extend a promoted line
 or re-frame a rejected idea — reaching even the pure-drift-side complementary
@@ -1606,7 +1665,7 @@ Events the propose step emits, **in required order** within one propose:
 
 | # | Event | Emitted by | Payload | Notes |
 |---|---|---|---|---|
-| 1..N | `candidate_sampled` | best-of-N wrapper, deterministic post-gather pass in SLOT order | `{i, n}` (`revise: false`); scope `{generation_id}` | a failed slot contributes a `proposal_attempted{errors, slot_index}` instead, so a sibling's success never discards its evidence (issue #141) |
+| 1..N | `candidate_sampled` | best-of-N wrapper, deterministic post-gather pass in SLOT order | `{i, n}` (`revise: false`; `recombined: true` for a recombination mint); scope `{generation_id}` | a failed slot contributes a `proposal_attempted{errors, slot_index}` instead, so a sibling's success never discards its evidence |
 | N+1..2N | `candidate_screened` | `_screen_slate`, one per candidate AFTER the whole slate settled | `{index, vetoed, confirmed, screen_summary{entries_screened, baseline_passes, candidate_passes, reason}, revise: false}`; scope `{generation_id}` | counts-only by the `reason` contract; absent entirely for an unscreened round |
 | (opt) | `candidate_sampled` `{i: N, n, revise: true}` then `candidate_screened` `{index: N, …, revise: true}` | the ONE all-vetoed revise pass | the replacement's index is one past the original slate; both carry scope `{generation_id}` | additive fields with defaults — a log written without them decodes identically |
 | last | `critique_selected` | the wrapper, after `_mount_chosen` | `{index, reason: selection_mode, slate: [{index, core_idea, mutation_ids}], rationale}`; scope `{generation_id}` | `index` is the FINAL slate index; both transports fill `slate`, and `rationale` is non-empty only when a critic chose. Emitted only once the chosen candidate's tree is mounted, so the event and the artifact cannot disagree |
@@ -1614,17 +1673,20 @@ Events the propose step emits, **in required order** within one propose:
 Then, from `_propose_child` (outside the wrapper):
 
 - on success: `proposal_attempted` (empty `errors` — one settled attempt;
-  per-attempt fidelity lives in the failure path), `experiment_minted`
+  per-attempt fidelity lives in the failure path),
+  `proposal_episode_settled` `{kind: "completed"}`, `experiment_minted`
   `{experiment_id}`, `patches_applied` `{generation_id}` (the validate hook
   derived + validated the tree before the successful return, so the patches
   ARE applied by then);
 - on `ProposerError`: one `proposal_attempted` `{errors: (msg,)}` **per failed
-  attempt** off `exc.attempts`, then the error re-raises.
+  attempt** off `exc.attempts`, then one `proposal_episode_settled` carrying
+  the ending's kind, code and message, then the error re-raises.
 
 The fold (`fold_round_record`) reduces these into
 `ProposalSession{attempts, errors, candidates_sampled, candidates_screened,
-screen_vetoes, critique_index, critique_reason, experiment_ids}` — the shape
-the dashboard and loop health read.
+screen_vetoes, recombined_sampled, critique_index, critique_reason,
+experiment_ids, episode_outcomes}` — the shape the dashboard, loop health, and
+the proposer scorecard read.
 
 Every one of those events travels with a `RoundEventScope` — the log-wide
 coordinate envelope (07-runtime-and-durability.md §7.10.2) — on the emitter's
@@ -1680,7 +1742,7 @@ the flag because there is nothing to reveal even when it is off.
 | **Model outputs** | answers to copy | the exemplar field allowlist (`run_completed` / `task_completed` / `task_progress` summaries "ARE model output"); outcome marginals carry rates only |
 | **Anything holdout** | the holdout exists to detect memorization; showing it defeats the design | the orchestrator computes EVERY proposer input from the TRAIN slice (`split_board` + `rotation_seed`, step 4 of `evolve_once`); the exemplar extractor intersects pattern-named entries with `train_entry_ids` and "cannot widen the slice it is given"; `select_screen_entries` is handed the train board only |
 | **Raw per-entry outcomes** (which entry passed/failed, per-entry scores) | the response surface to climb entry-by-entry | losses reach the proposer only through aggregates: the one-line loss summary, the banded failure profile, pattern counts |
-| **Exact Δscalar / exact rates** (under the default posture) | the round-over-round response surface — lets the proposer climb the BOARD rather than true quality | `_bucket_scalar_delta` (improved/flat/regressed; flat band = 0.01 = the default promote margin), `_band_rate` (~10% steps), `_band_quality` (thirds) |
+| **Exact Δscalar / exact rates** (under the default posture) | the round-over-round response surface — lets the proposer climb the BOARD rather than true quality | `_bucket_scalar_delta` (improved/flat/regressed; flat band = 0.01 = the default promote margin), `band_rate` (~10% steps), `_band_quality` (thirds) |
 
 ### 5.8.2 The permitted channels, one by one
 
@@ -1691,15 +1753,15 @@ enforcing code, and the test that pins it.
 |---|---|---|---|---|
 | Detector **patterns** | declared kind, severity, measurements, known metric labels, affected **mutation** ids | typed numeric projection; summaries constructed from permitted fields; diagnostic ids and text omitted; entries counted; findings sorted by rendered content | `render_pattern_block(restrict=True)` → `PatternFeedback.from_pattern` (`src/zicato/proposer/pattern_feedback.py`) | `tests/test_proposer_prompts.py`, `tests/test_proposer_best_of_n.py`; real outputs from every built-in detector |
 | **Experiment memory** | per-experiment verdict + bucketed Δscalar + targeted ids + core idea | `Δscalar=improved/flat/regressed` under restrict; cross-contract entries carry NO delta at all | `_render_prior_experiment_line(restrict=…)`, `_bucket_scalar_delta` | `tests/test_proposer_prior_experiments_block.py` |
-| **Failure-mode profile** | banded recall/precision decomposition, banded failure-mode rates, banded pass-rate/score | every number through `_band_rate` / `_band_quality`; summary object carries marginal rates only (no id/question/output token) | `render_failure_mode_profile` + `aggregate_outcome_marginals` (`src/zicato/analyzer/outcome_marginals.py`) | `tests/test_outcome_marginals.py`, `tests/test_proposer_prompts.py` |
+| **Failure-mode profile** | banded recall/precision decomposition, banded failure-mode rates, banded pass-rate/score | every number through `band_rate` / `_band_quality`; summary object carries marginal rates only (no id/question/output token) | `render_failure_mode_profile` + `aggregate_outcome_marginals` (`src/zicato/analyzer/outcome_marginals.py`) | `tests/test_outcome_marginals.py`, `tests/test_proposer_prompts.py` |
 | **Operator outcome-marginals hook** | extra named banded rates (`- <name>: ~N% of runs`) | `run_operator_summarizer` sanitizes: numeric-only values, names filtered — the operator hook's output "cannot leak" | `src/zicato/analyzer/outcome_marginals.py::run_operator_summarizer` | `tests/test_outcome_marginals.py` |
 | **Process exemplars** (opt-in) | redacted event windows: relative offsets, case names, allowlisted fields, `task-N` tokens | the four redaction rules (§5.8.3) | `src/zicato/analyzer/process_exemplars.py` | `tests/test_process_exemplars.py` (per-rule adversarial fixtures), `tests/test_process_exemplars_e2e.py` |
 | **Outcome marginals under the sanitizer** | folded into the failure profile above | banding + board-anonymity by construction | as above | as above |
-| **Fertility annotations** (mutation track records) | one advisory line per manifest point: `touched:N promoted:K/N Δscalar[best:… median:… worst:…] recent/stale (…; not causal)` | counts are experiment-level aggregates; deltas bucketed via `_bucket_scalar_delta`; recency a coarse flag; the HONESTY label ("experiments touching this point … not causal") is mandatory | `render_mutation_track_annotation`; the tool twin in `src/zicato/proposer/tools.py::mutation_track_record` | `tests/test_mutation_track_record.py` |
+| **Fertility annotations** (mutation track records) | one advisory line per manifest point: `touched:N promoted:K/N Δscalar[best:… median:… worst:…] recent/stale (…; not causal)` | counts are experiment-level aggregates; deltas bucketed via `_bucket_scalar_delta`; recency a coarse flag; the HONESTY label ("experiments touching this point … not causal") is mandatory | `render_mutation_track_annotation` | `tests/test_mutation_track_record.py` |
 | **Static hints** | the per-slot edit-class hint | static instruction strings only — nothing to transform | `src/zicato/proposer/hints.py` (docstring contract) | `tests/test_proposer_hints.py` |
 | **Loss summary** | one line of board-wide means | aggregation (mean drift loss, pass rate over N entries) | `_render_loss_summary` (`src/zicato/evolve/decision_support.py`) | `tests/test_orchestrator.py` |
 | **Screen feedback** (revise + critic block) | counts-only veto/clear summaries | the `CandidateScreenResult.reason` counts-only contract; `_render_screen_note` / `_render_revise_feedback` compose only from it | `src/zicato/epoch/screen.py::_summarize`, `src/zicato/proposer/best_of_n.py` | `tests/test_candidate_screen.py`, `tests/test_proposer_best_of_n.py` |
-| **Telemetry insights** | the analyzer's LLM-summarized markdown | produced by the analyzer (`src/zicato/analyzer/`) over the same round artifacts, under its own discipline | `load_latest_insights` | `tests/test_analyzer_insights.py` |
+| **Telemetry insights** | the analyzer's LLM-summarized markdown, when `ProposalEvidence.insights` is set | produced by the analyzer (`src/zicato/analyzer/`) over the same round artifacts, under its own discipline. `evidence_from_context` does not set the field, so loop episodes carry no insights section | `render_evidence` | `tests/test_analyzer_insights.py` |
 | **Mutation manifest** | full code-span content | code identity rather than board identity — unrelated to the split, and left untouched | `render_mutation_block` | — |
 
 ### 5.8.3 Process exemplars: the R1–R4 redaction rules
@@ -1718,8 +1780,8 @@ the leakage budget is ≤ `cap` windows per (champion, pattern-set) state.
 |---|---|---|---|
 | **R1 — default-deny field allowlist** | every payload case not in `_FIELD_POLICY` renders as a bare case marker (offset + case name, NO fields): the window's SHAPE survives, its content does not. Listed cases enumerate `keep` (closed-vocabulary/structural/harness identity), `truncate` (free process text), `anonymize` (per-window id tokens), `plan_structure` (plans as `"N tasks, M edges"` counts — no titles) | `_CasePolicy`, `_FIELD_POLICY`, `_redact_event` | `run_started` (its `goal_summary` IS the task prompt), `run_completed`/`task_completed`/`task_progress`, and every LLM-call bookend are UNLISTED by design and must render field-less |
 | **R2 — window-local anonymization** | task/invocation ids map to `task-1`, `task-2`, … **rebuilt per window** — "the same task keeps failing" stays visible inside a window, but nothing correlates across windows, rounds, or back to the board; entry ids are never emitted; offsets are anchor-relative (`0`), never absolute sequence numbers (absolute positions could fingerprint an entry) | `_WindowAnonymizer`, `ExemplarEvent.offset` | the same raw id in two windows gets independent tokens |
-| **R3 — free-text truncation** | `truncate`-class fields capped at 160 chars, head 120 / tail 24 joined by ` … `; runs AFTER R4 so a scrubbed text can never re-form an identity string across the split | `_truncate_free_text` | a long drift `detail` keeps its head+tail, elided middle |
-| **R4 — the identity corpus + scrub** | every DROPPED string value across the WHOLE file (≥ 12 chars — `_MIN_SCRUB_LEN`, so enum-ish strings don't mangle text) is substring-scrubbed out of every KEPT free-text value, longest-first; identity TOKENS (entry id, run/session/event ids, every raw task/invocation id) are scrubbed at ANY length on word boundaries; replacement is `[withheld]` | `_identity_corpus`, `_scrub_identity` | a drift detail that QUOTES the task prompt verbatim loses the quote mechanically — the defense-in-depth behind R1 |
+| **R3 — free-text truncation** | `truncate`-class fields capped at `FREE_TEXT_LIMIT_CHARS` (160) chars, head 120 / tail 24 joined by ` … `; runs AFTER R4 so a scrubbed text can never re-form an identity string across the split | `truncate_free_text` (`src/zicato/analyzer/redaction.py`) | a long drift `detail` keeps its head+tail, elided middle |
+| **R4 — the identity corpus + scrub** | every DROPPED string value across the WHOLE file (≥ 12 chars — `MIN_SCRUB_LEN`, so enum-ish strings don't mangle text) is substring-scrubbed out of every KEPT free-text value, longest-first; identity TOKENS (entry id, run/session/event ids, every raw task/invocation id) are scrubbed at ANY length on word boundaries; replacement is `[withheld]` (`WITHHELD`) | `_identity_corpus` (`process_exemplars.py`), `scrub_identity` (`src/zicato/analyzer/redaction.py`) | a drift detail that QUOTES the task prompt verbatim loses the quote mechanically — the defense-in-depth behind R1 |
 
 Two more structural guarantees: the extractor only ever reads
 measurement event files of the caller-supplied `train_entry_ids` under the
@@ -1729,10 +1791,11 @@ the slice it is given"; and drift-kind/severity enum wire forms are normalized
 to the canonical lowercase strings so the block speaks the pattern block's
 vocabulary.
 
-The channel is **opt-in and off by default** (`proposer_quality
-.process_exemplars = 0`), and the scaffold does not set it: the screen is
-evaluation-side, but exemplars widen the proposer-visibility channel, so the
-operator opts in under the design doc's §5 harm-detection runbook. A non-zero
+The channel is **opt-in and off by default**
+(`experimental.process_exemplars = 0`; a positive value is the window cap,
+`DEFAULT_EXEMPLAR_CAP = 2` being the extractor's own default): exemplars widen
+the proposer-visibility channel, so the operator opts in under the design
+doc's §5 harm-detection runbook. A non-zero
 cap rolls the epoch. Extraction is best-effort — any failure renders `""` and
 the round proceeds untouched (`_render_process_exemplars_block` wraps it in
 `best_effort`).
@@ -1756,16 +1819,16 @@ degrade). The split mechanics are `zicato.board.split`
 - the best-of-N **critic** (§5.6.7) — same renderer, same flags;
 - the **hint conditioner** (§5.6.1) — parses the rendered banded profile;
 - the **revise feedback** — counts-only screen reasons;
-- the read-only **tools** (§5.9) — the mutable snapshot, the journal, the
-  insights, and the banded track record; a tool-using proposer "learns
-  nothing the annotated manifest would not already show."
+- the **host tools** (§5.9) — `mutation_usage` reads only the parent
+  snapshot, and `validate_patches` consumes no board data and runs no board
+  entry.
 
 ### 5.8.6 Bands and buckets — the exact vocabulary
 
 | Function | Input | Output vocabulary | Notes |
 |---|---|---|---|
 | `_bucket_scalar_delta` | experiment-level Δscalar (loss; negative = improvement) | `improved` / `flat` / `regressed` | flat band `±0.01` = the default promote margin, so a within-noise move reads `flat` |
-| `_band_rate` | fraction of runs `[0,1]` | `none` / `~10%` … `~90%` / `~all` | nearest-10% rounding; a tiny-but-nonzero rate clamps UP to `~10%` so "rarely" never reads "never" |
+| `band_rate` | fraction of runs `[0,1]` | `none` / `~10%` … `~90%` / `~all` | nearest-10% rounding; a tiny-but-nonzero rate clamps UP to `~10%` so "rarely" never reads "never" |
 | `_band_quality` | quality mean `[0,1]` | `low (~0.3)` / `medium (~0.6)` / `high (~0.9)` | thirds split |
 | `_band_prediction_accuracy` | accuracy `[0,1]` | `low` / `medium` / `high` | ALWAYS applied, restrict or not |
 
@@ -1861,16 +1924,20 @@ raises a clear `RuntimeError` ("proposer tools may only be called from within
 a bound proposer tool context") rather than returning a misleading empty
 result.
 
-`ProposerToolContext` carries four things:
+`ProposerToolContext` carries:
 
 - `workspace_root` — where `validate_patches` resolves the declared static
   checks and the load probe.
 - `generation_root` — the PARENT snapshot `grep_mutable` walks and
-  `validate_patches` re-enumerates a draft against. It is resolved via the
-  generation store's pure path math in `_resolve_generation_root`.
+  `validate_patches` re-enumerates a draft against. The orchestrator resolves
+  it and threads it on `ProposerContext.generation_root`.
 - `mutations` — the round's manifest tuple.
 - `epoch_id` and `generation_id` — the round's coordinates. No tool resolves
   anything from either one.
+- `static_checks` and `adapter_configuration_json` — the declared static
+  checks and the adapter configuration the load probe needs.
+- `forbidden_ids` and `mutation_policy` — the brief's forbidden set and the
+  captured `MutationPolicy` the verifier checks patches against.
 
 ### 5.9.2 The tools
 
@@ -1924,17 +1991,17 @@ applier writes only what an id covers.
 > in `zicato/proposer/tool_context.py` (so reaching `_active_context` does not
 > pull a sibling module's whole closure into the property being proved).
 
-**The pre-image guard is the only reader of `MutationPoint.content_hash`.**
-The enumerator writes the field, the CLI and the dashboard render it, and the
-applier does not read it — despite that field's docstring having long claimed
-otherwise. The structural check in `validate_patches` is the one check that reads it: it
-compares `content_hash` between the manifest bound on the tool context (what
-the proposal was drafted against) and a fresh enumeration of the parent
-snapshot, so a point rewritten under the proposer is caught while a fix is
-still cheap.
-`tests/test_proposer_validate.py::test_content_hash_has_exactly_one_reader`
-pins that this stays the ONLY comparison site; plenty of mentions with zero
-readers is how a docstring's claim goes unchecked.
+**The pre-image guard lives in the mutation policy.** The enumerator writes
+`MutationPoint.content_hash`, the CLI and the dashboard render it, and the
+applier does not read it. `MutationPolicy.capture`
+(`src/zicato/mutation/policy.py`) compares each declared point's key —
+id, kind, file, line range, content, `content_hash`, and metadata — with a
+fresh enumeration of the parent snapshot, and refuses a missing, malformed,
+or stale snapshot. `validate_patches` reaches that comparison through the
+policy bound on the tool context, so a point rewritten under the proposer is
+caught while a fix is still cheap. `tests/test_proposer_validate.py` pins it
+(`test_stale_pre_image_is_caught`,
+`test_pre_image_guard_rejects_a_stale_parent_even_outside_the_patch`).
 
 ### 5.9.3 What of the tool surface folds into the contract hash
 
@@ -1961,9 +2028,10 @@ saying nothing about how the proposer reasons.
 > ⚠️ TRAP — a new tool's OUTPUT must be inside the envelope (§5.8.7's
 > checklist applies to tool outputs exactly as to task channels), and its
 > DESCRIPTION is model-visible and hashed. The `mutation_usage` host tool is
-> the worked precedent on both counts: it emits the same banded shape the
-> manifest annotation does, and its description lives in one module-level
-> constant so rewording it is a deliberate act.
+> the worked precedent on both counts: it reads only the parent snapshot, so
+> it carries no board data, and its description lives in one module-level
+> constant (`MUTATION_USAGE_DESCRIPTION`) so rewording it is a deliberate
+> act.
 
 ---
 
@@ -1990,7 +2058,7 @@ stays a pure prompt-assembler and never reads the index itself).
   off first); then `deferred` if budget remains;
 - `modulating` ids lifted from `hypothesis_json` (empty tuple on any decode
   failure — never raise);
-- `prediction_accuracy` graded per row (§5.4.6);
+- `prediction_accuracy` graded per row (§5.4.4);
 - the read is **best-effort end to end**: a missing `zicato.index` module, a
   never-built database, any exception ⇒ `[]` at debug level
   (`_load_prior_experiments`) and the prompt simply omits the section.
@@ -2032,7 +2100,6 @@ Enabling it is subject to the rules enforced in
 | curation mirrors same-epoch in miniature | promoted newest-first, then recent rejections, then deferred, bounded by the leftover budget |
 
 Tests: `tests/test_index_prior_experiments.py` (curation/cap/cross-epoch),
-`tests/test_proposer_prior_experiments.py` +
 `tests/test_orchestrator_prior_experiments.py` (threading + sibling
 injection), `tests/test_proposer_prior_experiments_block.py` (rendering +
 banding).
@@ -2050,9 +2117,10 @@ as a host tool.
    `src/zicato/proposer/tools.py`. Signature: JSON-friendly positional args,
    `-> str`. First line of the body: `ctx = _active_context()` — never accept
    the context as a parameter (the agent is constructed once; §5.9.1). The
-   docstring is model-facing (the tool's description is built from it, and
-   Foe HASHES that description): state what it returns, what raises, and the
-   caps — and know that rewording it rolls the epoch.
+   model-facing description is a module-level constant in
+   `src/zicato/proposer/foe_request.py` (step 6), and Foe HASHES it: state
+   what the tool returns, what raises, and the caps — and know that rewording
+   it rolls the epoch.
 2. **Sandbox every read.** Anything that touches the snapshot delegates to
    `grep_mutable` (the `mutation_usage` precedent — `re.escape` plus the
    existing containment guard and match cap for free) or resolves under
@@ -2122,7 +2190,7 @@ content with its own design doc).
    `src/zicato/index/query.py`. It must be a pure function of train-slice
    inputs, deterministic (no RNG/clock) so re-presentation leaks nothing new,
    and it returns `""` (or `{}`/`[]`) for every no-data/knob-off state.
-3. **Band every number** with the §5.8.6 vocabulary — reuse `_band_rate` /
+3. **Band every number** with the §5.8.6 vocabulary — reuse `band_rate` /
    `_band_quality` / `_bucket_scalar_delta` from
    `src/zicato/proposer/prompts.py`; do not invent new band edges without a
    reason you can defend in the design doc.
@@ -2161,7 +2229,7 @@ content with its own design doc).
      intersect-with-train behaviour is the model).
 9. **Verify**:
    ```bash
-   uv run pytest tests/test_proposer_prompts.py tests/test_proposer_proposer.py \
+   uv run pytest tests/test_proposer_prompts.py tests/test_proposer_foe_agent.py \
        tests/test_proposer_best_of_n.py tests/test_epoch_contract.py \
        tests/test_contract_serializer_completeness.py -x -q
    uv run pytest tests/ -q -k "your_channel_name"
@@ -2181,7 +2249,10 @@ content with its own design doc).
 - 04-evaluation-statistics.md §5 — the Ladder budget that governs holdout
   queries; the slice everything in §5.8 hangs off is
   `docs/design/OVERFITTING.md` §3.
-- 01-orientation.md §4, G7 — measurement identity and purpose separation; 06-tournament-and-selection.md §6.3 — why screening uses ephemeral trees and phantom generation directories.
+- 01-orientation.md §4, G7 — measurement identity and purpose separation;
+  06-tournament-and-selection.md §6.1.1 — measurement purposes, including why
+  screen draws evaluate altered source under an existing generation's
+  identity.
 - 07-runtime-and-durability.md §7.6.1 — the `proposing:`/`applying:`/
   `screening:` phases the propose step beats.
 - 09-dashboard-and-query.md §9.11 — how the server-projected pipeline stepper
@@ -2221,7 +2292,7 @@ touches. (Full definitions: `src/zicato/core/patterns.py`,
 **`Experiment`** — the proposer's output (also the journal's record):
 `id` (`exp_{epoch}_{gen}`), `epoch_id`, `generation_id`,
 `parent_generation_id`, `proposed_at` (UTC ISO), `hypothesis`
-(`HypothesisSpec`, §5.4.4), `patches` (frozen tuple of `Patch`), `outcome`
+(`HypothesisSpec`, §5.4.3), `patches` (frozen tuple of `Patch`), `outcome`
 (`None` until the tournament settles), `round_index` (stamped by
 `_propose_child` from the EVOLVE round — the authoritative birth round;
 the proposer's default is 0).
@@ -2249,7 +2320,7 @@ that episode:
 - the mutation manifest is enumerated from the parent generation's own
   SNAPSHOT (the tree the episode edits), the patterns come from
   `--patterns-from <file>` or fresh detectors, and the brief from the
-  epoch's `brief.md` (falling back to `rubric.md` when only that exists);
+  epoch's `brief.md` (a missing brief is an error);
 - the round's per-round DERIVED channels are absent — the failure-mode
   profile, the metric priorities, the process exemplars, the genealogy
   sample and the calibration record. Each is computed by a round from the
@@ -2308,7 +2379,7 @@ Where to add (and what will catch) a regression, by concern:
 | exemplar redaction rules (adversarial fixtures) + threading | `tests/test_process_exemplars.py`, `tests/test_process_exemplars_e2e.py` |
 | outcome marginals + operator-hook sanitizer | `tests/test_outcome_marginals.py` |
 | memory digest curation/cap/cross-epoch | `tests/test_index_prior_experiments.py` |
-| memory threading + siblings + orchestrator wiring | `tests/test_orchestrator_prior_experiments.py`, `tests/test_proposer_prior_experiments.py` |
+| memory threading + siblings + orchestrator wiring | `tests/test_orchestrator_prior_experiments.py` |
 | fertility map | `tests/test_mutation_track_record.py` |
 | restrict-visibility flag threading | `tests/test_orchestrator_overfitting.py` |
 | round-log schema/fold + emission ordering | `tests/test_round_log.py`, `tests/test_round_log_emission.py` |

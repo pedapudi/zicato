@@ -13,8 +13,8 @@ later.
 | Target | Example directory | What still has to land | What it forces |
 |---|---|---|---|
 | A presentation agent — a multi-agent tree from harmonograf's reference set | `examples/zicato_examples/target_1_presentation/` | nothing; it runs on the shipped stack | nothing extra; it exercises the whole stack end to end |
-| goldfive's own steering layer | `examples/zicato_examples/target_2_goldfive_steering/` | nothing; the synthetic board-entry runner ships in `zicato/synthetic/` | mutation across two source trees; a loss signal that is not drift |
-| zicato applied to itself | none; not built | nested zicato instances, and a curated benchmark of labeled proposer inputs and ideal outputs (§3.4) | recursion guards across nested instances |
+| goldfive's own steering layer | `examples/zicato_examples/target_2_goldfive_steering/` | wiring the synthetic drift checks into grading (§2.5.2, §2.5.3); the synthetic board-entry runners ship in `zicato/synthetic/` | mutating a library outside the workload's tree, through a declared manifest; a loss signal that is not drift |
+| zicato applied to itself | none; not built | nested zicato instances with separate workspaces, mutation markers in zicato's own prompts, and a curated benchmark of labeled proposer inputs and ideal outputs (§3.4–§3.6) | recursion guards across nested instances |
 
 The examples tree carries two further directories that this document does
 not specify. `examples/zicato_examples/target_0_convergence/` is the
@@ -128,14 +128,14 @@ what calibrates the scoring weights against.
 
 ### 1.6 What the presentation agent leaves untested
 
-- Mutation across two source trees. Its mutation surface lives entirely
-  in one tree.
+- Mutation of a library outside the workload's own tree. Its mutation
+  surface lives entirely in one tree.
 - A loss signal other than drift. Here the drift signal is the loss.
 - Nested zicato instances. The loop runs once, against one harness.
 - The `synthetic_*` board kinds. Its board is single-turn and
   multi-turn-emulated, all real user-shaped prompts.
 
-The steering target covers two-tree mutation, the non-drift loss, and the
+The steering target covers library mutation, the non-drift loss, and the
 synthetic board kinds. Zicato applied to itself covers nesting.
 
 ## 2. Target 2 — goldfive's steering layer
@@ -143,25 +143,26 @@ synthetic board kinds. Zicato applied to itself covers nesting.
 ### 2.1 What it is
 
 The system under test is **goldfive itself**, and within it the steering
-layer: the `Steerer` protocol's default implementation, the LLM-judge
-prompts, the intervention ladder thresholds, and the plan-revision
-strategy. The agent under test is some other agent — the presentation
-agent above serves — **wrapped by goldfive**. The worked example is
-`examples/zicato_examples/target_2_goldfive_steering/`.
+layer: its judge and planner prompts and its numeric drift thresholds.
+The agents under test are other agents **wrapped by goldfive**. The
+worked example, `examples/zicato_examples/target_2_goldfive_steering/`,
+uses a small agent of its own for ordinary entries and goldfive's testkit
+agents (`goldfive.testkit.adversarial`) for the synthetic entries of
+§2.5; the presentation agent above could serve as the workload
+equally.
 
 The setup looks like:
 
 ```
 zicato
    │
-   └─ system under test = (presentation agent) wrapped by (goldfive,
-                                                       under
-                                                       optimization)
+   └─ system under test = (workload agent) wrapped by (goldfive,
+                                                    under
+                                                    optimization)
 ```
 
 zicato proposer proposes patches to **goldfive's** prompts and thresholds.
-The presentation agent is the workload that exercises goldfive's
-steering.
+The workload agent exercises goldfive's steering.
 
 ### 2.2 Why steering quality resists direct measurement
 
@@ -179,57 +180,62 @@ truth about when drift should have fired.
 
 ### 2.3 The mutation surface
 
-The markers are annotated in goldfive's own source rather than in
-zicato. The shipped design admits that:
-`HarnessAdapter.mutation_points()` returns a list over a list of source
-roots, even though a single-tree target registers one root. The steering
-target registers two:
+The mutation surface lives in goldfive's own source tree rather than in
+zicato. The example registers one mutable tree, the `goldfive` package
+directory of a goldfive checkout, and keeps its entrypoint outside that
+tree. `HarnessAdapter.mutation_points()` walks a list of source roots, so
+a target that also mutates its workload registers that package as a
+second root.
 
-- `path/to/presentation_agent_package/` (the workload — unchanged).
-- `path/to/goldfive/goldfive/` (the steerer — the actual mutation
-  target).
-
-Mutation points in goldfive include:
+goldfive declares its surface in `goldfive/optimization/manifest.toml`
+rather than with `# zicato:mutable` markers. The manifest bridge
+(`zicato.synthetic.manifest_bridge`,
+[MUTATION-SURFACE.md](MUTATION-SURFACE.md) §5) turns each manifest entry
+into a mutation point: prompt entries point at the markdown copies under
+`goldfive/optimization/prompts/`, and numeric entries point at a
+module-level attribute. The goldfive revision zicato pins declares 61
+entries, for example:
 
 | Mutation point id | What it controls |
 |---|---|
-| `goldfive.steerer.refine_prompt` | The system prompt for the LLM-driven `LLMPlanner.refine`. |
-| `goldfive.judge.goal_drift_prompt` | The judge prompt for the goal-drift classifier. |
-| `goldfive.judge.reasoning_prompt` | The judge prompt for the three-state reasoning judge. |
-| `goldfive.steerer.intervention_thresholds` | The (drift_kind, severity, occurrence_count) → ladder level mapping. |
-| `goldfive.steerer.reflective_check_prompt` | The reflective self-progress check prompt. |
+| `refine_system_prompt` | The system half of `LLMPlanner.refine`, applied on autonomous drifts. |
+| `goal_drift_system_prompt` | The system prompt for the goal-drift classifier. |
+| `reasoning_judge_system_prompt` | The system prompt for the reasoning judge. |
+| `reflective_check_system_prompt` | The reflective self-progress check prompt. |
+| `off_topic_distance_threshold` | The cosine-distance threshold above which a reasoning block is flagged off-topic. |
 
-These are checked into goldfive's source as `# zicato:mutable`
-markers. The dependency runs one way: goldfive does not depend on
-zicato, and the markers are inert Python comments to goldfive's runtime.
+The dependency runs one way: goldfive does not depend on zicato, and the
+manifest is goldfive's public inventory of what an optimizer may
+change.
 
 ### 2.4 The CLI surface for cross-repo registration
 
-`zicato epoch register` accepts repeated `--mutable-tree` flags:
+`zicato epoch register` accepts repeated `--mutable-tree` flags. The
+example registers one:
 
 ```
-zicato epoch register --adk presentation_agent_package.agent:root_agent \
-    --mutable-tree path/to/presentation_agent_package \
-    --mutable-tree path/to/goldfive/goldfive
+zicato epoch register \
+    --adk zicato_examples.target_2_goldfive_steering.agent_under_test:agent \
+    --mutable-tree <goldfive checkout>/goldfive
 ```
 
 `--adk` is a DOTTED MODULE PATH, never a filesystem path. Each registered
 root's BASENAME must be the importable package name — above, that is
-`presentation_agent_package` and `goldfive`. The snapshot copies each root
-under its basename, and the loader prepends only the snapshot root to
-`sys.path`, which resolves top-level names alone. A root whose basename
-Python cannot name as a module could therefore never be shown to have run
-from the snapshot, so `register` refuses it (issue #110).
+`goldfive`. The snapshot copies each root under its basename, and the
+loader prepends only the snapshot root to `sys.path`, which resolves
+top-level names alone. A root whose basename Python cannot name as a
+module could therefore never be shown to have run from the snapshot, so
+`register` refuses it.
 
-The entrypoint may live inside one of those roots, as above, or outside all
-of them. The steering target uses the second shape: mutate `goldfive` and
+The entrypoint may live inside one of the roots or outside all of them.
+The steering target uses the second shape: mutate `goldfive` and
 drive it from a harness module that imports it. Either way every registered
 root is verified per run, rather than the entrypoint's root alone. `load`
 asserts that each root's top-level name resolves inside the generation
 snapshot, and after each unit the worker records which roots were imported
-in `generations/{gen}/harness_load.json`. In the two-root example above, a
-round that mutates `goldfive` but whose units never import it raises the
-`tree_never_imported` loop-health WARNING instead of scoring a no-op.
+in `generations/{gen}/harness_load.json`. A round that mutates `goldfive`
+but whose units never import it raises the `tree_never_imported`
+loop-health WARNING instead of scoring a no-op.
 
 The first registered root is conventionally the package containing the
 agent factory; additional roots are added with repeated
@@ -239,8 +245,10 @@ registered root and concatenates the results.
 ### 2.5 The loss model that replaces drift
 
 This is the architectural change the steering target forces. Drift cannot
-be the loss, so something else must be. The steering loss has four terms,
-described in the four subsections below.
+be the loss, so something else must be. The steering target measures four
+properties, described in the four subsections below; all four reach the
+scalar through the ordinary pass/fail term and the metric channels of
+[SCORING.md](SCORING.md).
 
 #### 2.5.1 Outcome predicates on real entries
 
@@ -257,9 +265,8 @@ The `synthetic_adversarial` board-entry kind wires a **known-bad agent**
 in place of the real workload — an agent built to loop, hallucinate, or
 refuse. The expectation is that drift fires, of the right kind.
 
-The `synthetic_adversarial` kind and its discriminant fields already ship
-in the `BoardEntry` type; the runner that executes them lands with the
-steering target. The entry shape is:
+The `synthetic_adversarial` kind, its discriminant fields, and its runner
+(`zicato.synthetic.run_adversarial_entry`) ship. The entry shape is:
 
 ```json
 {
@@ -276,34 +283,42 @@ steering target. The entry shape is:
 `BoardEntry.validate` requires a `synthetic_adversarial` entry to
 carry `input`, a non-empty `adversarial_agent_spec`, and a non-empty
 `required_drift_kinds`, each kind validated against the registered drift
-kind set. The entry passes when every kind in `required_drift_kinds`
-fires, and fails when the steerer missed one.
+kind set. The intended rule is that the entry passes when every kind in
+`required_drift_kinds` fires and fails when the steerer missed one.
+`zicato.synthetic.expectations.evaluate_required_drift` implements that
+rule, but no runner, reducer, or grader calls it, and the example's
+adversarial predicate (`required_drift_fired`) always passes. Recall is
+therefore not measured until an expectation applies the rule.
 
-The synthetic agent's source lives in the operator's project rather than
-in zicato. `adversarial_agent_spec` is a dotted path the adapter resolves
-at run time. A small library of known-bad agents — looping,
-confabulating, refusing, off-topic — gives the operator a starting set.
+The synthetic agent's source lives outside zicato.
+`adversarial_agent_spec` is a dotted path resolved at run time by
+`zicato.synthetic.resolve_adversarial_agent`. goldfive's testkit
+(`goldfive.testkit.adversarial`) supplies a starting set of known-bad
+agents: `LoopingAgent`, `HallucinatingAgent`, `RefusingAgent`,
+`WanderingAgent`, and `RunawayDelegationAgent`.
 
 #### 2.5.3 Specificity via `synthetic_clean`
 
 The `synthetic_clean` board-entry kind wires a **known-good agent** that
-does its job without misbehaving. The entry passes when the drift count
-is zero or below a tolerance, and fails when drift fired with nothing to
-report.
-
-The `synthetic_clean` kind also ships in the `BoardEntry` type, where
-`validate` requires only `input`. The clean-run thresholds live in the
-entry's `context` map and in the steering loss model rather than as
-first-class discriminant fields:
+does its job without misbehaving. Its runner is
+`zicato.synthetic.run_clean_entry`, and `validate` requires only `input`.
+The runner's default agent is `goldfive.testkit.adversarial:CleanAgent`;
+an entry names a different one in `adversarial_agent_spec` or in
+`context["clean_agent_spec"]`. The intended rule is that a clean entry
+passes when no WARNING or CRITICAL drift fired, with INFO drift treated
+as observational. `zicato.synthetic.expectations.evaluate_no_drift`
+implements it, but nothing calls it; the example's clean predicate
+passes whenever the run was not aborted:
 
 ```json
 {
-  "id": "clean_summarisation",
+  "id": "clean_simple_summary",
   "kind": "synthetic_clean",
-  "input": "Summarise the attached three-paragraph brief.",
-  "wall_clock_budget_seconds": 180,
-  "context": {"max_drift_events": "0", "tolerated_drift_kinds": "new_work_discovered"},
-  "tags": ["clean", "specificity"]
+  "input": "Summarize this text in one sentence: The sun rose over the harbor and the fishing boats began to leave port.",
+  "adversarial_agent_spec": "goldfive.testkit.adversarial:CleanAgent",
+  "wall_clock_budget_seconds": 90,
+  "expectation": {"kind": "predicate", "spec": "zicato_examples.target_2_goldfive_steering.predicates:no_warning_or_critical_drift", "reads": "final_output"},
+  "tags": ["clean", "negative_control"]
 }
 ```
 
@@ -314,28 +329,19 @@ sensitivity in balance.
 
 #### 2.5.4 Cost from the goldfive event stream
 
-Goldfive's `GoldfiveLLMCallStart` / `GoldfiveLLMCallEnd` events carry
-per-call latency. A steerer that fires more judge calls per turn
-costs more. Loss term:
+A steerer that fires more judge calls per turn costs more. The cost
+reaches the scalar through the `cost:` and `latency:` metric channels,
+weighted by `namespace_weights` in `scoring.json`.
 
-```
-cost_units[run] = count of goldfive-lane LLM call ends in the run
-```
-
-The steering loss combines the four terms into one scalar:
-
-```
-loss[entry] = (1 - pass_fail) * outcome_weight
-            + adversarial_miss_count * adversarial_weight
-            + spurious_drift_count * specificity_weight
-            + cost_units * cost_weight
-```
-
-The operator tunes the weights. The shipped scoring infrastructure admits
-this loss shape, because the `LossProfile` type is open-ended on new
-fields and the per-kind weights live in `scoring.json`. Adding
-`outcome_weight`, `adversarial_weight`, `specificity_weight`, and
-`cost_weight` therefore leaves the schema intact.
+The example combines the four properties without any steering-specific
+scoring field. Ordinary, adversarial, and clean entries each carry a
+predicate expectation, so each enters the pass/fail term under
+`pass_weight`; recall and specificity carry signal only once their
+predicates apply the drift rules of §2.5.2 and §2.5.3. Its `scoring.json` weights the
+`drift:` channel at 0.3, below `pass_weight`, because on this target a
+drift count is a feature of the run rather than its loss. The operator
+tunes these weights; `scoring.json` rejects keys that `ScoringWeights`
+does not declare.
 
 ### 2.6 The degenerate optimum drift would reward
 
@@ -360,8 +366,8 @@ All five hold in the shipped design:
    separation: the goldfive under optimization must not share a model
    endpoint with zicato's evaluation work.
 2. **`mutation_points()` over a list of source roots.** Pinned in
-   [MUTATION-SURFACE.md](MUTATION-SURFACE.md) §5. A single-tree target
-   registers one root; the steering target registers two.
+   [MUTATION-SURFACE.md](MUTATION-SURFACE.md) §5. The same walk also
+   runs the manifest bridge that exposes goldfive's declared surface.
 3. **`BoardEntry.kind` carries the synthetic slots.**
    Pinned in [BOARD-FORMAT.md](BOARD-FORMAT.md) §6. `synthetic_adversarial`
    and `synthetic_clean` are members of the `BoardEntryKind` literal,
@@ -369,12 +375,12 @@ All five hold in the shipped design:
    Their runner is `zicato/synthetic/` (`run_adversarial_entry` and
    `run_clean_entry`), dispatched by `_tournament_worker.py` ahead of the
    adapter session, so the steering target needed no schema change.
-4. **`LossProfile` is open-ended on new fields.** Pinned in
-   [TELEMETRY.md](TELEMETRY.md). The cost, adversarial, and specificity
-   fields plug in.
+4. **Per-entry expectations grade any run.** Pinned in
+   [BOARD-FORMAT.md](BOARD-FORMAT.md) §3. Recall and specificity are
+   expressible as predicates over the run's drift events.
 5. **Scoring weights are configurable per project.** Pinned
-   in [SCORING.md](SCORING.md). Weights for the new loss terms drop
-   into `scoring.json`.
+   in [SCORING.md](SCORING.md). Lowering the `drift:` weight below
+   `pass_weight` stops the drift count from acting as the loss.
 
 Without those five commitments, the steering target would have forced a
 schema-breaking change. Each was cheap to make upfront.
@@ -463,27 +469,14 @@ Nested zicato instances must NOT cross-talk:
 - Outer zicato's runtime sees its own epochs / generations / patterns;
   inner zicato sees only its own.
 
-The shipped runtime config carries an `instance_id` that keys the
-workspace apart:
-
-```python
-@dataclass
-class RuntimeConfig:
-    instance_id: str = "default"
-    workspace_root: Path = Path(".zicato")
-    # ... other fields ...
-
-    @property
-    def instance_workspace(self) -> Path:
-        return self.workspace_root / "instances" / self.instance_id
-```
-
-When `instance_id == "default"`, which is what every target running today
-uses, the workspace path reduces to `.zicato/`. When `instance_id` is
-set, the workspace is keyed under it.
+The runtime settings carry an `instance_id` (default `"default"`),
+which the workspace lock and heartbeat record. Workspaces are not yet
+keyed by it: `.zicato/instances/<id>/` does not exist, so nested
+instances need separate workspace roots, and deriving those roots from
+`instance_id` is part of what this target still requires.
 
 Recursion guards in the runner are easy to forget unless they are
-provided for in advance. The shipped design provides for three:
+provided for in advance. Three are needed:
 
 - The outer zicato's `target_call_llm` is the inner zicato's
   `evaluation_call_llm` plumbing. Strictly: when the outer zicato's
@@ -498,7 +491,7 @@ provided for in advance. The shipped design provides for three:
 
 ### 3.6 The mutation surface inside zicato
 
-Annotated in zicato's own code:
+The surface this target needs, none of which zicato's source marks yet:
 
 - `zicato.proposer.system_prompt` — the proposer's system prompt.
 - `zicato.analysis.system_prompt` — the analysis-pass system prompt.
@@ -530,8 +523,7 @@ ones establishes that the loop works before it is trusted on itself.
 
 ## 4. Commitments the shipped design already makes
 
-The following are pinned today because the steering target and
-zicato-on-itself are known to be coming:
+The following commitments admit the steering target and zicato-on-itself:
 
 | Commitment | Pinned in |
 |---|---|
@@ -539,9 +531,9 @@ zicato-on-itself are known to be coming:
 | `HarnessAdapter.mutation_points()` walks a list of source roots rather than a single tree. | [MUTATION-SURFACE.md](MUTATION-SURFACE.md) §5 |
 | `BoardEntry.kind` is string-typed against a registered set. | [BOARD-FORMAT.md](BOARD-FORMAT.md) §6 |
 | `LossProfile` is open-ended on new fields; weights live in per-epoch `scoring.json`. | [TELEMETRY.md](TELEMETRY.md) §3, [SCORING.md](SCORING.md) §2 |
-| Runtime config carries `instance_id`; workspace is keyed by it. | this document §3.5 |
+| Runtime settings carry `instance_id`, recorded in the lock and heartbeat; keying the workspace by it is unbuilt. | this document §3.5 |
 
-None of the five adds real cost today, and each prevents a schema break
+None of the five adds real cost, and each prevents a schema break
 later. The rule they follow is that the shipped surface should already
 admit the steering target and zicato-on-itself when either one arrives.
 
@@ -561,8 +553,8 @@ admit the steering target and zicato-on-itself when either one arrives.
 
 All three targets above share a property that does not hold in general:
 their evolved state is the mutable tree. Promote a generation, and the
-promoted snapshot plus the `current_generation` marker is the entire
-result. There is nothing else to update, which is why none of the three
+promoted snapshot plus the committed round record that names it is the
+entire result. There is nothing else to update, which is why none of the three
 needed a promotion hook.
 
 A target can be evolvable through a source tree while its *operative*
@@ -591,10 +583,16 @@ marker advance and the call, which loses the notification rather than
 repeating it. An idempotent write plus the reconcile below makes that
 window harmless.
 
-**2. Poll `lineage.json` (the fallback, and the answer for non-Python
-targets).** The promoted head is the last lineage entry with
-`promoted: true`; compare it against your own record of the last head
-you applied and reconcile the difference. This works from any language
+**2. Poll the committed round records (the fallback, and the answer for
+non-Python targets).** Each committed
+`epochs/<epoch>/rounds/<round_index>/field_settlement.json` names the
+round's `primary_promoted_generation_id`, which is null when the round
+held. The newest round that names a generation is the promoted head;
+Python readers get the same answer from the `promoted` flags that
+`zicato.epoch.lineage.load_lineage` returns. `lineage.json` on disk
+records ancestry only and does not carry the promotion. Compare the head
+against your own record of the last head you applied and reconcile the
+difference. This works from any language
 and any process, it is what the hook exists to make unnecessary rather
 than to forbid, and it remains the correct backstop even for targets
 that DO use the hook.

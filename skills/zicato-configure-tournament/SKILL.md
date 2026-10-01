@@ -100,11 +100,11 @@ The short map:
 
 | Situation | Structure | Cost note |
 |---|---|---|
-| One challenger per round; cheapest 1-vs-1 | **gauntlet** (default) | one duel, `replicates 2` by default → 2× a full board |
+| One challenger per round; cheapest 1-vs-1 | **gauntlet** | one duel, `replicates 2` by default → 2× a full board |
 | A field; you want a full RANKING | **swiss** (experimental: needs `experimental.tournament_structures = true`) | `rounds_n` pairings; `replicates 2` |
 | A field; you only need the single best | **single_elim** (experimental) | bracket depth; `replicates 2` |
 | Same, want a "second chance" vs an upset | **double_elim** (experimental) | **~3–4× single-elim** (losers'-bracket re-evals) — rarely earns it |
-| LARGE field, pick the best cheaply | **racing** | slice-culls via `eta` / `board_fraction`; the one structure that pins `replicates 1` (it replicates intrinsically via growing slices) |
+| A field, pick the best cheaply | **racing** (the recommended default) | slice-culls via `eta` / `board_fraction`; its constructor default is `replicates 1` (it replicates intrinsically via growing slices), and the recommended contract sets `replicates 2` explicitly |
 
 Two cross-cutting levers worth internalizing:
 
@@ -118,18 +118,23 @@ Two cross-cutting levers worth internalizing:
 
 ## 4. Recommended starting config
 
-**Check what you already have first.** `zicato init` scaffolds the operator's
-live `scoring.json` next to the workspace, writing it only when it is absent and
-never clobbering an existing one. The scaffold spells out the full recommended
-contract: racing with `field_size 4`, `eta 2`, `board_fraction 0.4` and
-`replicates 2`; the Bradley–Terry evidence gate enabled explicitly at threshold
-`0.8` with a 32-replicate budget; and a 2-entry pre-tournament screen. That is the shipped recommendation for a new workspace —
-read it before replacing it.
+**Check what you already have first.** `zicato init` writes the operator's
+live `scoring.json` next to the workspace only when it is absent, and writes it
+empty (`{}`). An empty scoring file resolves to the full recommended contract:
+racing with `field_size 4`, `eta 2`, `board_fraction 0.4` and `replicates 2`;
+the Bradley–Terry evidence gate at threshold `0.8` with a 32-replicate budget;
+and a 2-entry pre-tournament screen (`proposer_quality.screen_entries`). Print
+what the workspace resolves to before replacing it:
 
-**Start at gauntlet** when you want the cheapest thing that can evolve at all,
-and adopt a field-structure once the proposer actually emits multiple challengers
-worth comparing. Overwriting the scaffold with the line below is a deliberate
-step *down* from the recommendation — it drops the evidence gate and the screen:
+```sh
+.venv/bin/zicato inspect config --effective --workspace .zicato | grep 'scoring\.\(tournament\|proposer_quality\)'
+```
+
+**Drop to gauntlet** when you want the cheapest thing that can evolve at all,
+and return to a field structure once the proposer emits multiple challengers
+worth comparing. The line below is a deliberate step *down* from the
+recommendation — it fields one challenger and drops the evidence gate (the
+screen still runs unless `proposer_quality.screen_entries` is set to `0`):
 
 ```jsonc
 // scoring.json — the minimal contract (gauntlet, one challenger, one duel)
@@ -143,10 +148,10 @@ step *down* from the recommendation — it drops the evidence gate and the scree
     --mode fast
 ```
 
-When a real field exists and a single duel is too noisy, escalate to a field
-structure via `--tournament-structure` + `--tournament-param KEY=VALUE` (writes
-into `scoring.json` before the contract hash; auto-rolls the epoch — derive the
-exact flags from `zicato evolve --help`). Example: race eight candidates:
+To reshape the field from the command line, use `--tournament-structure` and
+`--tournament-param KEY=VALUE` (written into `scoring.json` before the contract
+hash; auto-rolls the epoch — derive the exact flags from `zicato evolve
+--help`). Example: race eight candidates:
 
 ```sh
 .venv/bin/zicato evolve --workspace .zicato --rounds 4 \
@@ -186,8 +191,10 @@ wall_clock ≈ board_runs × per_entry_budget ÷ parallelism
   racing = its rung count (each rung on a fraction of the board, so racing's
   *effective* board cost is far below the naive product).
 - `replicates` multiplies directly (~N× per duel). **Left unset, it defaults
-  per structure** (from `selection.registry`): the noise-aware base default is
-  `2` — gauntlet, swiss, and both elim brackets — and only `racing` pins `1`.
+  per structure** (each strategy class's `_default_replicates` in
+  `zicato/selection/`): the noise-aware base default is `2` — gauntlet, swiss,
+  and both elim brackets — and only `racing` defaults to `1`. The recommended
+  contract pins `2` for racing explicitly.
   So even a plain gauntlet already costs ~2× a single duel before you touch the
   knob; pin `"replicates": 1` explicitly for the historical single-run duel (a
   deterministic harness can). The cost estimator reads those same
@@ -208,7 +215,7 @@ wall_clock ≈ board_runs × per_entry_budget ÷ parallelism
   rungs) and `final_rung_budget_seconds` (the crowning duel only) bound a
   single duel's wall-clock: once spent it stops launching board units and
   records the rest as budget-exceeded (a partial aggregate). Unset = uncapped
-  (byte-identical to before). Reach for it when a racing run's final rung is the
+  (no cap). Reach for it when a racing run's final rung is the
   thing blowing the wall-clock estimate.
 
 Sanity-check the estimate before launching; runtime far above it means
@@ -244,32 +251,30 @@ existing run artifacts, never launch a live loop to test):
 
 ```sh
 EP=$(cat .zicato/current_epoch)
-GENS=.zicato/epochs/$EP/generations
+E=.zicato/epochs/$EP
 
-# prior_experiments carries over: every settled experiment this epoch has an
-# outcome with a Δscalar — round 2+ proposing on an empty list means memory is dead.
-jq -r '.generation_id as $g | .outcome
-       | if . == null then "\($g)\t(unsettled)"
-         else "\($g)\tdecision=\(.tournament_decision)\tΔscalar=\(.scalar_score_delta)"
-         end' "$GENS"/*/experiment.json
+# prior_experiments carries over: every settled candidate has a recorded outcome
+# with a Δscalar, one field_settlement.json per round — round 2+ proposing on an
+# empty history means memory is dead.
+for r in $(ls "$E"/rounds | sort -n); do
+  jq -r --arg r "$r" '.candidates[] | "round \($r)\t\(.generation_id)\tdecision=\(.outcome.tournament_decision)\tΔscalar=\(.outcome.scalar_score_delta)"' \
+     "$E/rounds/$r/field_settlement.json" 2>/dev/null
+done
 
 # the hypotheses the proposer recorded — confirm round 2's idea reacts to round 1's outcome:
-jq -r '.generation_id as $g | "\($g)\t\(.hypothesis.core_idea)\tmodulating=\(.hypothesis.modulating|join(","))"' \
-   "$GENS"/*/experiment.json
-
-# Δscalar trend across the lineage (negative = improving):
-for e in "$GENS"/*/experiment.json; do
-  jq -r 'select(.outcome!=null) | "\(.outcome.scalar_score_delta)\t\(.generation_id)"' "$e"
-done | sort -k2
+jq -r '"\(.round_index)\t\(.generation_id)\t\(.hypothesis.core_idea)\tmodulating=\(.hypothesis.modulating|join(","))"' \
+   "$E"/generations/*/experiment.json | sort -n
 
 # the analyzer's per-round insight digest (what gets fed back as `insights`):
-ls .zicato/epochs/$EP/insights/ 2>/dev/null && cat .zicato/epochs/$EP/insights/latest.md
+ls "$E"/insights/ 2>/dev/null
 ```
 
-The experiment-memory record fields keyed above are real: `experiment.json`
-carries `hypothesis.{core_idea,modulating,...}` and `outcome.{tournament_decision,
-scalar_score_delta,...}`; the digest fed to the proposer is the `PriorExperiment`
-shape (`core_idea`, `modulating`, `decision`, `scalar_score_delta`) — see
+The fields keyed above are the recorded ones: `experiment.json` carries
+`hypothesis.{core_idea,modulating,...}` and `round_index`; each round's
+`field_settlement.json` carries `candidates[].outcome.{tournament_decision,
+scalar_score_delta,...}`; the digest fed to the proposer is the
+`PriorExperiment` shape (`core_idea`, `modulating`, `decision`,
+`scalar_score_delta`) — see
 [EXPERIMENT-MEMORY.md](../../docs/design/EXPERIMENT-MEMORY.md) and
 [`zicato-design-experiment`](../zicato-design-experiment/SKILL.md).
 
@@ -290,8 +295,8 @@ shape (`core_idea`, `modulating`, `decision`, `scalar_score_delta`) — see
 
 Cross-check with the automated degeneracy detectors —
 [`zicato-diagnose-health`](../zicato-diagnose-health/SKILL.md): a `stalled_loop`
-or `degenerate_scoring` critical finding (`zicato health` exits `1` — the
-design-doc `9` is not implemented) confirms a structurally non-evolving loop.
+or `degenerate_scoring` finding (`zicato health` exits `1` on any critical
+finding) confirms a structurally non-evolving loop.
 
 ## When to use / when not to use
 

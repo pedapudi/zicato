@@ -34,10 +34,14 @@ the fact.
 ## Call sequence
 
 1. Call once with reasoning enabled and `thinking_tokens` as the ceiling.
-2. Return non-empty `content` unchanged.
-3. If and only if the backend reports `answer_status="exhausted"`, call once
+2. Return `content` unchanged when it holds any non-whitespace text.
+3. If `content` is empty and the backend reported
+   `answer_status="complete"`, raise `EmptyModelContent` without a second
+   call.
+4. If and only if the backend reports `answer_status="exhausted"`, call once
    more with reasoning disabled and the smaller `answer_tokens` ceiling.
-4. Return fallback content, or raise `EmptyModelContent` if it is still empty.
+5. Return fallback content, or raise `EmptyModelContent` (naming the finish
+   reason when one was reported) if it is still empty.
 
 There is exactly one fallback. Cancellation, timeouts, and backend exceptions
 propagate normally. The adapter owns no mutable per-call state, so concurrent
@@ -45,7 +49,9 @@ use is safe.
 
 ## Backend example
 
-Use decorator form for a callable that crosses tournament worker boundaries.
+`ReasoningCallConfig` defaults to `thinking_tokens=32_768` and
+`answer_tokens=4_096`; both must be at least 1. Use decorator form for a
+callable that crosses tournament worker boundaries.
 The decorated module-level name remains importable in a fresh worker process:
 
 ```python
@@ -101,8 +107,12 @@ never lost silently.
 
 ## Scope
 
-This adapter covers text consumers such as proposers, judges, emulators, and
-analysis passes when their configured callable opts in. Native agent runtimes
+This adapter covers text consumers such as judges, emulators, analysis
+passes, and the best-of-N critique and merge calls when their configured
+callable opts in. No zicato call site wraps a callable itself; the operator
+applies the decorator to their own backend. The proposal episode's model
+calls are made by Foe's own model client ([PROPOSER.md](PROPOSER.md) §2.9)
+and do not pass through `CallLLM`. Native agent runtimes
 that execute tool calls through their own model objects need equivalent controls
 at that native boundary; flattening them through `CallLLM` would discard tool
 capabilities and is not a supported shortcut.

@@ -1,10 +1,13 @@
 # zicato reimplementation roadmap
 
-> **Status: a plan.** This document holds a behavior-preserving refactoring
-> roadmap for `src/zicato/` and the target data model and storage design that
-> roadmap aims at. Sections that record work already built say so in place.
-> For the system as it stands, read the development guide under
-> `docs/dev-guide/`.
+> **Status: a plan, partly delivered.** This document holds a
+> behavior-preserving refactoring roadmap for `src/zicato/` and the target
+> data model and storage design that roadmap aims at. The figures in
+> *Context* and the line references in the phase descriptions are the
+> census taken when the plan was written.
+> [Delivery status](#delivery-status) records which steps shipped and which
+> did not, as checked against the code. For the system as it stands, read
+> the development guide under `docs/dev-guide/`.
 > Companion to [`ARCHITECTURE.md`](ARCHITECTURE.md), [`STORAGE.md`](STORAGE.md),
 > and [`TOURNAMENT-DATA-MODEL.md`](TOURNAMENT-DATA-MODEL.md).
 
@@ -24,8 +27,8 @@ behavior-preserving and merges only when the full test suite + golden-output
 parity checks pass. There is no long "red" period and parity is guaranteed at
 every commit.
 
-Scope: a staged roadmap and target design to pick from later. Nothing here is
-implemented yet.
+Scope: a staged roadmap and target design to pick from. See
+[Delivery status](#delivery-status) for what has been implemented.
 
 ### The cross-cutting signal
 
@@ -57,6 +60,43 @@ observability and delivery — each reached the same seven conclusions.
    unwired 340-LOC control protocol, duplicate `telemetry/scoring.py`, an
    abandoned dashboard preview page, and shims that tolerate older on-disk key
    spellings.
+
+---
+
+## Delivery status
+
+Verified against the code in this repository. "Shipped" means the step's
+outcome is present; the shape may differ from the plan's wording.
+
+| Step | Status | Evidence in the tree |
+|---|---|---|
+| Parity harness | shipped | `tools/parity/` (golden captures), `make parity` |
+| Delete the stale root `zicato/` tree | shipped | no `zicato/` directory at the repository root |
+| Delete `telemetry/scoring.py` duplicate | not done | `telemetry/scoring.py` still defines `aggregate_generation_score` and is re-exported from `zicato.telemetry` |
+| Delete the dashboard preview page and variant indirection | shipped | only `dashboard/static/js/` and `css/console.css` remain |
+| Control protocol: wire or delete | wired | `runtime/control_consumer.py`, called from `evolve/loop.py`, `evolve/round_entry.py` and `evolve/gate.py`; the dashboard's `kill_runs` command has no consumer |
+| 1a `zicato/util/` primitives | partly | `util/iso_time.py` (`now_iso`), `util/best_effort.py`, `util/text.py`, `util/async_tasks.py`; no `llm_json.py`, `dotted_path.py` or `floats.py` (JSON extraction stays in `proposer/structured.py`, dotted imports in `zicato/import_path.py`) |
+| 1b one drift normalizer and one event reader | shipped | `core/drift_kinds.py` (`DriftKind`, `normalize_wire_drift_kind`); `telemetry/event_log.py` (`parse_event`, `read_event_log`) is the single `events.jsonl` reader |
+| 1c typed canonical-read layer; index as projection | partly | `workspace/layout.py` (`WorkspaceLayout`), `workspace/reads.py` (enumeration, board, loss and events reads); experiments decode in `epoch/journal.py`, scores in `tournament/scoring.py`; `index/ingest._drift_counts_from_events` is deleted |
+| 1d one storage seam and atomic writer | shipped | `storage/factory.py` (`workspace_backend`), `storage/_atomic.py`; `runtime/_atomic.py` and `backend_for` are deleted; `epoch/_storage.py` and `runtime/_storage.py` remain as key-namespace modules |
+| 2a split `core/types.py` | shipped | `core/board.py`, `loss.py`, `lineage.py`, `experiment.py`, `scoring_config.py`, `runtime.py`, `tournament.py` and others; `core/types.py` is a 226-line re-export module. `ScoringWeights` has nested groups (`proposer_quality`, `overfitting`, `experimental`) but not the `DriftScoring`/`PassScoring`/`RegressionGate` split |
+| 2b enums | partly | `StrEnum` types such as `TournamentDecision`, `ExpectationKind`, `OutputScope`, `JudgeMode`, `DriftKind` |
+| 2c one `best_effort` helper | shipped | `util/best_effort.py`; no failure counter surfaced in loop health |
+| 3a orchestrator → `evolve/` | shipped | `orchestrator.py` is a 14-line re-export; the round runs through one pipeline for every structure ([ROUND-PIPELINE.md](ROUND-PIPELINE.md)) |
+| 3b split `tournament/runner.py` | shipped | `worker_transport.py`, `worker_execution.py`, `scheduling.py`, `unit_cache.py`, `governance.py`; no `api.py` |
+| 3c split the dashboard state reader | shipped, relocated | the readers live in `src/zicato/query/` (with `query/_sqlite.py`), not `dashboard/readers/` |
+| 3d analyzer figures | partly | `analyzer/svg/` (`primitives.py`, `palette.py`, one module per figure family); no `report/markdown.py` |
+| 3e `adapters/adk.py` | not done | no `judge_runtime/judge_only.py`; `adapters/adk.py` is 1,841 lines |
+| 3f proposer split | not done | no `render.py`, `visibility.py` or `salvage.py` |
+| 3g mutation and index split | not done | no `mutation/literal_surgery.py`; `synthetic/manifest_bridge.py` stays; `index/ingest.py` is one 2,192-line module |
+| One HTML report generator (boundary cleanups) | shipped | `analyzer/report.py` |
+| Relocate `telemetry/harmonograf_supervisor.py` (boundary cleanups) | not done | still under `telemetry/` |
+| Finding 1: slate concurrency | shipped | `RuntimeConfig.propose_parallelism` (default 4), `GenerationStore.derive_scratch`, the ordered post-gather pass in `proposer/best_of_n.py` |
+| Finding 2: typed round pipeline | shipped | `evolve/generation_phase.PreparedRound`, `evolve/field.evolve_field_round`, `evolve/field_execution.run_field_matchup`; the gauntlet and the multi-challenger paths are one pipeline |
+| Finding 4: dual readers | partly | the Rust tournament and elimination views (`tournaments.rs`, `elim_states.rs`) are deleted; the schema-version pin (`expected_schema_version_is_pinned_to_python`) and the reader-parity tests remain |
+| Finding 5: log stream | shipped | `logging_stream.py` ([LOGGING.md](LOGGING.md)) |
+| Part II: `core/ids.py`, `core/enums.py`, typed `NewType` identifiers | not done | no such modules |
+| Part II: `workspace/readers.py` / `writers.py`, `index/project.py` | not done under those names | reads live in `workspace/reads.py`; the index projection stays in `index/ingest.py` |
 
 ---
 
@@ -339,10 +379,10 @@ was not behavior-preserving — fix before merge.
 
 # Structural findings — 2026-07 review
 
-> **Status unchanged: still plan-only / not-yet-implemented.** A structural
+> **Status: see [Delivery status](#delivery-status).** A structural
 > review (2026-07-12) revisited the god-object roadmap above against the
-> code as it stands today and produced five findings that *sharpen the
-> plan* — none is built. They compose with Part I: findings 1–3 refine
+> code as it stood then and produced five findings that *sharpen the
+> plan*. The *Observed* passages below describe the tree at that date. They compose with Part I: findings 1–3 refine
 > Phase 3a (the `orchestrator.py` split), finding 4 refines Phase 1c/4, and
 > finding 5 names an observability layer the whole pipeline emits into.
 >
@@ -665,8 +705,8 @@ relocation.
 ## Finding 3 — Configuration declarations and their consumers
 
 Scoring dataclasses own their field types, defaults, descriptions, persisted
-names, and constraints. `contract_knobs()` derives the configuration registry
-from those declarations. `core.configuration` supplies the complete serializer,
+names, and constraints. Constraints are field metadata (`KnobConstraint`),
+checked by `validate_knobs` (`core/constraints.py`). `core.configuration` supplies the complete serializer,
 strict decoder, and generated schema. All effective scoring values enter the
 contract hash; there is no default-value omission registry.
 

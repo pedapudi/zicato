@@ -7,16 +7,19 @@ the board and you have started a new epoch (see
 within an epoch are directly comparable because they all answer the
 exact same questions.
 
-A board is one JSONL file. Path:
-`.zicato/epochs/{epoch_id}/board.jsonl`. One entry per line. Lines are
-parsed lazily by the runner; schema-invalid lines fail at
-`zicato board add` time rather than at run time.
+A board is one JSONL file with one entry per line. The operator edits the
+live contract board — the path recorded under the `contract` key of the
+workspace's `config.json`, by default `board.jsonl` beside the `.zicato/`
+directory — and each epoch freezes a copy at
+`.zicato/epochs/{epoch_id}/board.jsonl`. The loader
+(`zicato.board.jsonl`) parses and validates every line when it reads the
+file, so a schema-invalid line fails at load time, before any run.
 
 This document specifies:
 
 - The common fields every entry carries.
-- The three entry kinds today (`single_turn`, `multi_turn_scripted`,
-  `multi_turn_emulated`) and the per-kind fields.
+- The three entry kinds the runner executes (`single_turn`,
+  `multi_turn_scripted`, `multi_turn_emulated`) and the per-kind fields.
 - The two evaluation facets an entry carries: an **outcome** check
   (`expectation` — a single `Predicate` / `Rubric`) and **process**
   checks (`judges` — `Judge`).
@@ -40,14 +43,14 @@ Every board entry carries the same envelope:
 
 | Field | Type | Required | Meaning |
 |---|---|---|---|
-| `id` | `string` | yes | Stable identifier; used as a directory name under `runs/`. Must be filesystem-safe (`[a-zA-Z0-9_-]+`). Globally unique within the board. |
+| `id` | `string` | yes | Stable identifier; used as a directory name under `runs/`, so it must be filesystem-safe (use `[a-zA-Z0-9_-]+`; the loader does not check the characters). Unique within the board; the loader rejects a duplicate. |
 | `kind` | `string` | yes | Discriminator. The kinds the runner executes are `"single_turn"`, `"multi_turn_scripted"`, and `"multi_turn_emulated"`. The set extends without a schema break — see §7. |
-| `wall_clock_budget_seconds` | `number` | yes | Hard ceiling for the WHOLE entry. Exceeded → run aborts and scores as worst-case. |
+| `wall_clock_budget_seconds` | `integer` | yes | Hard ceiling for the WHOLE entry, in whole seconds (the loader truncates a fractional value). Exceeded → run aborts and scores as worst-case. |
 | `weight` | `number` | no (default `1.0`) | Relative importance in scoring aggregation. |
-| `tags` | `list[string]` | no (default `[]`) | Operator labels; pattern detectors and diagnostic scorecards can slice by tag. |
+| `tags` | `list[string]` | no (default `[]`) | Operator labels. Two tags are reserved: `holdout` and `facet:{name}` (§1.4). |
 | `expectation` | `Expectation` | no (default absent) | A single **outcome** check — a `Predicate` / `Rubric` matcher run post-hoc on the run's output or transcript. Absent → drift-loss-only scoring for this entry. An entry carries **at most one** expectation. See §3. |
 | `judges` | `list[Judge]` | no (default `[]`) | **Process** checks — goldfive judges that watch the reasoning stream in-run. Empty → only goldfive's ambient built-in judges run. See §4. |
-| `context` | `object` | no | Opaque adapter-specific metadata. ADK adapters might use `{"attachments": [...], "session_state": {...}}`. Zicato never interprets the contents. |
+| `context` | `object` | no (default `{}`) | Opaque adapter-specific metadata with string values. ADK adapters might use `{"attachments": ..., "session_state": ...}`. Zicato never interprets the contents. |
 
 Plus the per-kind fields in §2.
 
@@ -93,8 +96,8 @@ a load error.
 ### 1.1 `id`
 
 The id is the canonical reference to this entry. Patterns cite by id;
-journal entries refer to entries by id; `runs/{entry_id}/events.jsonl`
-uses the id as a directory name. Once written, an id should never be
+journal entries refer to entries by id; `runs/{entry_id}/` uses the id
+as a directory name. Once written, an id should never be
 reused or renamed within an epoch — doing so silently invalidates the
 pattern history within that epoch. The CLI refuses to add an entry
 with a duplicate id.
@@ -110,11 +113,13 @@ For multi-turn entries the budget covers the WHOLE conversation —
 every turn the agent takes plus every turn the user (scripted or
 emulated) injects, plus every per-turn LLM call by the goldfive
 overlay. When the budget elapses, the adapter aborts the inner work
-and emits a `goldfive.v1.RunAborted` with `reason="wall_clock_budget"`.
-The reducer stamps `aborted=true` on the loss profile and the scoring
-treats abort as worst-case for the entry (in particular, `pass_fail`
-is `False` if the entry had an `expectation`; the drift loss
-contribution is a large constant).
+and emits a `goldfive.v1.RunAborted` with `reason="wall_clock_budget"`,
+and the harness returns a `RunResult` with `aborted=True`. The loss
+profile records `wall_clock_budget_exceeded=true` and
+`not_completed=true`, and the `failure:` channel charges the fixed
+`not_completed_weight` for it (see [SCORING.md](SCORING.md)). A run the
+parent kills without a result also records `pass_fail=False` when the
+entry has an `expectation`.
 
 The budget is in seconds for ergonomics; subsecond timing is not
 meaningful given goldfive's per-turn LLM-call latency floor.
@@ -131,10 +136,9 @@ denominator.
 
 ### 1.4 `tags`
 
-Operator labels. The pattern detectors slice by tag (e.g. "show me the
-drift counts on `[hard, multi-turn]` entries only"). Tags also let the
-rubric steer the proposer toward or away from certain slices. Most tags
-have no semantic meaning to zicato — they are operator strings.
+Operator labels. A proposer brief can name tags to steer the proposer
+toward or away from certain slices of the board. Most tags have no
+semantic meaning to zicato — they are operator strings.
 
 Two tags ARE reserved, and an operator must not use either as an
 ordinary label:
@@ -224,12 +228,12 @@ class RunResult:
     runtime_ms: int
     aborted: bool = False
     abort_reason: str = ""
+    artifacts: ArtifactSet | None = None  # files captured from the run's scratch directory
 ```
 
 For a single-turn entry `transcript` is a length-1 tuple matching
 `final_output`. The expectation on a single-turn entry defaults to
-`reads: "final_output"` and is evaluated against the `final_output`
-string. `Judge` process checks (§4) are unaffected by `reads` — they
+`reads: "final_output"`. `Judge` process checks (§4) are unaffected by `reads` — they
 watch the reasoning stream regardless of entry kind.
 
 ### 2.2 `multi_turn_scripted`
@@ -267,9 +271,9 @@ not in `transcript`, because the entry already carries the scripted
 user turns.
 
 A transcript-scoped expectation is authored with
-`reads="conversation_end"` (the `OutputScope.TRANSCRIPT` enum value)
-and is evaluated against the whole transcript; see
-[BOARD-AUTHORING.md](BOARD-AUTHORING.md) §2.2.
+`reads="conversation_end"` (the `OutputScope.TRANSCRIPT` enum value);
+§3.6 states which matchers read the whole transcript, and
+[BOARD-AUTHORING.md](BOARD-AUTHORING.md) §2.2 shows the authoring call.
 
 ### 2.3 `multi_turn_emulated`
 
@@ -322,9 +326,9 @@ format here covers only the entry shape.
 
 An entry's `expectation` is its **outcome** check: a single matcher
 run post-hoc, after the run terminates, against the run's *product* —
-the final output or the whole transcript. It is evaluated in the loss
-reducer, which records its result as `pass_fail: bool` on the loss
-profile. An entry with no `expectation` has `pass_fail = None` and
+the final output or the whole transcript. The tournament worker
+evaluates it once the run ends, and the loss reducer records its result
+as `pass_fail: bool` on the loss profile. An entry with no `expectation` has `pass_fail = None` and
 contributes to drift-loss only.
 
 `expectation` is a **single object** rather than a list — a board
@@ -338,7 +342,7 @@ The expectation object has three fields and no others:
 |---|---|---|---|
 | `kind` | `ExpectationKind` enum | yes | One of the five values below. |
 | `spec` | `string` | yes | A single string field, matcher-specific (see each kind). Carried as one string so the discriminated union round-trips through JSON without nested objects. |
-| `reads` | `OutputScope` enum | no | Which slice of the run the matcher is evaluated against — `"final_output"` (the default) or `"conversation_end"`. Applies to every kind. |
+| `reads` | `OutputScope` enum | no | Which slice of the run the expectation declares it reads — `"final_output"` (the default) or `"conversation_end"`. See §3.6 for how each matcher uses it. |
 
 ### 3.1 `predicate`
 
@@ -371,8 +375,10 @@ as JSON would invite injection.
 
 ### 3.2 `expected_text`
 
-Exact-string match on the run result (or transcript end-text). Case-
-sensitive, whitespace-significant. Built with `Predicate.contains(...)`.
+Substring containment on the run's `final_output`: the expectation
+passes when `spec` occurs anywhere in it. Case-sensitive,
+whitespace-significant; an empty `spec` fails. Built with
+`Predicate.contains(...)`.
 
 ```json
 {
@@ -386,7 +392,7 @@ known.
 
 ### 3.3 `regex`
 
-A Python `re`-flavour regex on the run result. Built with
+A Python `re`-flavour regex on the run's `final_output`. Built with
 `Predicate.regex(...)`.
 
 ```json
@@ -402,21 +408,17 @@ anchor, include `^` / `$` explicitly.
 
 ### 3.4 `json_schema`
 
-A JSON-schema validation. The run result is parsed as JSON, then
-validated against the schema. Schema-invalid → pass fails. Non-JSON
-output → pass fails. Built with `Predicate.schema(...)`.
+A JSON-schema validation. The run's `final_output` is parsed as JSON,
+then validated against the schema with `jsonschema`. Schema-invalid →
+pass fails. Non-JSON output → pass fails. The schema travels as a JSON
+document encoded in the `spec` string, like every `spec`; a `spec` that
+is not valid JSON fails the expectation. Built with
+`Predicate.schema(...)`, which writes the schema with sorted keys.
 
 ```json
 {
   "kind": "json_schema",
-  "spec": {
-    "type": "object",
-    "required": ["summary", "citations"],
-    "properties": {
-      "summary": {"type": "string"},
-      "citations": {"type": "array", "items": {"type": "string"}}
-    }
-  }
+  "spec": "{\"properties\": {\"citations\": {\"items\": {\"type\": \"string\"}, \"type\": \"array\"}, \"summary\": {\"type\": \"string\"}}, \"required\": [\"summary\", \"citations\"], \"type\": \"object\"}"
 }
 ```
 
@@ -424,10 +426,11 @@ Useful for structured-output agents where the contract is JSON.
 
 ### 3.5 `rubric`
 
-An LLM-graded outcome check. The grader reads the output (or
-transcript), scores it on a numeric scale against an operator-supplied
-criterion, and the expectation passes iff the score meets a
-threshold. Built with `Rubric.score(...)`.
+An LLM-graded outcome check. The grader reads the whole transcript
+when the run produced more than one assistant turn, and `final_output`
+otherwise; it scores that text on a numeric scale against an
+operator-supplied criterion, and the expectation passes iff the score
+meets a threshold. Built with `Rubric.score(...)`.
 
 ```json
 {
@@ -441,12 +444,13 @@ The `spec` is a JSON document (encoded as a string, like every
 `spec`) carrying the rubric criterion text, the `scale` `(lo, hi)`
 bounds, and the `threshold` (`null` for an advisory rubric that
 always passes and records its score for inspection). The `reads`
-field is an `OutputScope` enum value — `"final_output"` (grade the
-final output) or `"conversation_end"` (grade the whole transcript).
+field is an `OutputScope` enum value; §3.6 states its effect.
 
-The grader runs through **`evaluation_call_llm`**, never the target
-callable — the model grading the output must not be the model that
-produced it. This is enforced; see [EMULATOR.md](EMULATOR.md).
+The grader runs through the judge callable — `evaluation_call_llm`
+unless the workspace's `models.judge` block configures a separate
+one — and never through the target callable: the model grading the
+output must not be the model that produced it. See
+[EMULATOR.md](EMULATOR.md).
 
 A `rubric` is still an **outcome** check — it reads a finished
 product. The in-run check that watches the *reasoning* is the `Judge`
@@ -456,9 +460,9 @@ check.
 
 ### 3.6 `reads` semantics
 
-`reads` selects which slice of the run the expectation matches
-against. It is an `OutputScope` enum value and applies to every
-expectation kind. There is no separate `fires_on` field: a board file
+`reads` declares which slice of the run the expectation is about. It
+is an `OutputScope` enum value and every expectation kind carries it.
+There is no separate `fires_on` field: a board file
 whose expectation carries the key `fires_on` is rejected at load with
 a message naming `reads` as the replacement, so a stale board fails
 loudly instead of loading with an unread setting.
@@ -468,11 +472,22 @@ loudly instead of loading with an unread setting.
 | `"final_output"` (`OutputScope.FINAL`) | The agent's final reply string. | The agent's reply on the LAST turn only. |
 | `"conversation_end"` (`OutputScope.TRANSCRIPT`) | (Not valid; rejected by `BoardEntry.validate` — a single-turn entry cannot read the full transcript.) | The whole transcript. |
 
-`reads` defaults to `"final_output"`. There is no per-kind default at
-the schema level: the field always defaults to `"final_output"`, and
-operators set `"conversation_end"` explicitly on a multi-turn entry
-whose contract spans turns. Setting `"conversation_end"` on a
-single-turn entry is rejected at validation time.
+The matchers apply `reads` as follows:
+
+- `expected_text`, `regex`, and `json_schema` always test the run's
+  `final_output`, whatever `reads` says.
+- `predicate` receives the whole `RunResult` (both `final_output` and
+  `transcript`); the callable chooses what to read.
+- `rubric` grades the whole transcript whenever the run produced more
+  than one assistant turn, and `final_output` otherwise.
+
+`reads` still matters: it is validated against the entry kind, written
+to the board file, and hashed into the evaluation contract, so it
+records the operator's intent for the check. `reads` defaults to
+`"final_output"` for every kind; operators set `"conversation_end"`
+explicitly on a multi-turn entry whose contract spans turns. Setting
+`"conversation_end"` on a single-turn entry is rejected at validation
+time.
 
 ## 4. Process checks: the `judges` list
 
@@ -492,7 +507,7 @@ Every judge object has four fields and no others:
 
 | Field | Type | Required | Meaning |
 |---|---|---|---|
-| `name` | `string` | yes | Stable, board-unique, slug-like identifier (lowercase alphanumerics, underscores, hyphens; starts with an alphanumeric). Becomes goldfive's `judge_name`; `ScoringWeights.per_judge_weights` keys on it. |
+| `name` | `string` | yes | Stable, slug-like identifier (lowercase alphanumerics, underscores, hyphens; starts with an alphanumeric — the `Judge` factories enforce the pattern). Unique within the entry; the loader rejects a duplicate. Becomes goldfive's `judge_name`; `ScoringWeights.per_judge_weights` keys on it. |
 | `mode` | `JudgeMode` enum | yes | `"inline"` (natural-language criterion) or `"python"` (dotted path to a process-judge callable). |
 | `body` | `string` | yes | The criterion text when `mode` is `"inline"`; a dotted import path to a Python process-judge callable when `mode` is `"python"`. The Python body itself lives in project source, never in the board JSON. |
 | `severity` | `DriftSeverity` enum | yes | `"info"` / `"warning"` / `"critical"` — the goldfive severity an adverse verdict is reported at; controls how heavily a violation weighs in the drift loss. |
@@ -515,12 +530,13 @@ An `inline`-mode judge, as it appears on the wire:
 
 A violated judge (either mode) emits a drift event of kind `custom`
 (`DriftKind.CUSTOM`), **identified by the judge's `name`** carried as
-`judge_name`. The reducer attributes it under `custom:<judge_name>` in
-the run's `drift_counts`, and keys the per-judge breakdown on
-`judge_name`. Because every custom judge emits the same `custom` drift
-kind, the `judge_name` is the discriminator — two judges on a board
-are told apart by name rather than by kind. This is why `name` must be
-stable and board-unique.
+`judge_name`. The reducer records it as the metric
+`drift:custom:<judge_name>` in the run's `metric_counts`, and records
+the judge's weighted loss as a `per_judge_loss` row keyed on
+`judge_name`; scoring charges it in the `judge:` channel. Because every
+custom judge emits the same `custom` drift kind, the `judge_name` is
+the discriminator — two judges on a board are told apart by name
+rather than by kind. This is why `name` must be stable.
 
 The emit path is specified in [ARCHITECTURE.md](ARCHITECTURE.md)
 §4.6.1 and [TELEMETRY.md](TELEMETRY.md).
@@ -571,21 +587,24 @@ When the budget elapses mid-run, the adapter is responsible for:
 The reducer treats `aborted` runs as worst-case. The exact loss
 contribution is in [SCORING.md](SCORING.md).
 
-## 6. Tag-based pattern slicing
+## 6. Tags and pattern detectors
 
-Pattern detectors slice loss profiles by tag. A few examples:
+Pattern detectors (`zicato.patterns.detectors`) receive the board-entry
+catalog alongside the loss profiles, so a detector can group runs by tag
+or kind. The shipped detectors group by metric, entry, task, and agent
+rather than by tag. Examples of what they report:
 
-- `drift_concentration_by_kind` produces patterns like "
-  `confabulation_risk` fires 14 times across entries tagged
-  `[multi-turn]` and 0 times on entries tagged `[single-turn]`".
-- `tag_slice_regression` produces patterns like "pass-rate on entries
-  tagged `[hard]` dropped from 0.75 to 0.5 between v3 and v4".
-- `multi_turn_memory_failure` produces patterns like "agent re-asked
-  the user's name on 4 of 6 entries tagged `[multi-turn,
-  long-conversation]`".
+- `drift_metric_frequency` — "drift kind `confabulation_risk` fires in
+  40% of runs across 6 entries".
+- `hot_task` / `hot_agent` — one task id or agent name drifts
+  disproportionately often within an entry.
+- `multi_turn_memory_failure` — the agent re-asked something the
+  simulated user had already answered, across several multi-turn
+  entries.
 
 The detector set is open-ended. Tags are the operator's lever for
-making the proposer attend to specific slices of the board.
+slicing the dashboard's facet views (§1.4) and for naming board slices
+in the proposer brief.
 
 ## 7. Forward-compatibility: the `kind` discriminator
 
@@ -640,14 +659,16 @@ When the reserved kinds are brought online, this document grows a
 
 ## 8. Validation
 
-`zicato board add ENTRY_PATH` appends **one** validated board entry
-read from a JSON file to the current epoch's `board.jsonl`. Validation
-is eager, and a failure raises rather than dropping the entry
-silently. The validator
-(`BoardEntry.validate` / `validate_board_entry`) checks:
+The loader and `zicato board add ENTRY_PATH` (which appends **one**
+validated entry read from a JSON file to the current epoch's frozen
+`board.jsonl`) validate eagerly; a failure raises rather than dropping
+the entry silently. The validator
+(`BoardEntry.validate` / `validate_board_entry`, plus the loader in
+`zicato.board.jsonl`) checks:
 
-1. `id` is present; `wall_clock_budget_seconds` is `> 0`; `weight` is
-   `>= 0`.
+1. `id`, `kind`, and `wall_clock_budget_seconds` are present;
+   `wall_clock_budget_seconds` is `> 0`; `weight` is `>= 0`; no two
+   entries share an `id`.
 2. `kind` is one of the recognised tokens.
 3. Per-kind discriminant fields are present and the wrong-kind fields
    are absent (e.g. a `single_turn` entry must set `input` and must
@@ -655,11 +676,14 @@ silently. The validator
 4. The `expectation`, if any, has a recognised `kind`, a `spec`, and a
    `reads` value that is valid for the entry kind (a single-turn entry
    may not read the full transcript).
-5. Each judge in `judges`, if any, has a stable board-unique slug
-   `name`, a recognised `mode` (`inline` / `python`), a `body`, and a
-   `severity` that resolves to a `DriftSeverity` member.
+5. Each judge in `judges`, if any, has a `name` unique within the
+   entry, a recognised `mode` (`inline` / `python`), a `body`, and a
+   `severity` that resolves to a `DriftSeverity` member. The `Judge`
+   factories enforce the slug pattern for `name`; the loader does not.
 6. Any `disable_drift` token on the `board_meta` header resolves to a
-   `DriftKind` member.
+   `DriftKind` member, `judge_only` is a JSON boolean, and the header is
+   the first line.
+7. No expectation carries the removed `fires_on` key.
 
 `zicato board list` walks the board and re-validates as it renders.
 
@@ -677,18 +701,24 @@ changes the contract. Protection is enforced by **`evolve`'s
 contract-hash auto-epoching** rather than by a `--force` flag on the
 `board` subcommands:
 
-- `evolve` resolves the evaluation contract (board + proposer brief +
-  scoring + the registered system-under-test identity), hashes it, and
-  compares it to the current epoch. When the hash has drifted — for
-  instance because you ran `board add` / `board remove`, or hand-edited
-  `board.jsonl` — `evolve` **closes the current epoch and opens a fresh
-  one** before running. You do not run `epoch new` by hand.
+- `evolve` resolves the live evaluation contract (the live board, the
+  proposer brief, the scoring configuration, the registered
+  system-under-test identity, and the proposer), hashes it, and compares
+  it to the current epoch. When the hash has drifted because the live
+  `board.jsonl` was edited, `evolve` **closes the current epoch and
+  opens a fresh one** before running. You do not run `epoch new` by
+  hand.
 - Pass `--no-auto-epoch` to make a drifted contract a hard error
   instead of rolling the epoch, or `--epoch ID` to pin an explicit
   epoch and skip the check.
+- `board add` and `board remove` edit the selected epoch's **frozen**
+  copy, which then differs from the contract hash that epoch
+  recorded. A later run on that epoch refuses to start until the frozen
+  file is restored, so these commands suit inspection and repair of a
+  frozen board rather than routine authoring.
 
-So the workflow is simply: edit the board (via `board add` / `remove`
-or by hand), then run `zicato evolve`; it notices the contract changed
+So the workflow is: edit the live board (by hand or with the Python
+builder), then run `zicato evolve`; it notices the contract changed
 and rolls the epoch for you. See
 [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) for why epochs are
 designed this way.

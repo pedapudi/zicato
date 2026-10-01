@@ -25,8 +25,8 @@ gate.
 
 Multi-agent systems are the founding and primary use case — a coordinator
 plus specialists, a deep sub-agent tree, a single LLM (Large Language
-Model) agent, any shape — and the only shipped concrete adapter targets
-Google's Agent Development Kit (ADK). The loop itself is not
+Model) agent, any shape — and the only shipped framework-specific adapter
+targets the Agent Development Kit (ADK). The loop itself is not
 agent-specific: it needs an adapter it can reconstruct and drive, one or more
 mutable source trees, and a board that scores each run. When you are changing
 zicato's code, assume the target is "some tree of files with an
@@ -103,8 +103,10 @@ current set. `evolve` orchestrates the whole
 loop: it is a thin CLI shell over `evolve_n_rounds`
 (`src/zicato/evolve/loop.py`) which calls `evolve_once`
 (`src/zicato/evolve/round_entry.py`, re-exported as
-`zicato.orchestrator.evolve_once`) up to N times. Chapter 02 walks one round
-end to end.
+`zicato.orchestrator.evolve_once`) up to N times. Both entry points hold the
+workspace lock and validate the workspace before any model call, then delegate
+to private bodies (`_evolve_n_rounds`, `_evolve_once`) that run under that
+ownership. Chapter 02 walks one round end to end.
 
 ### 1.3 The CLI and dashboard use the library
 
@@ -117,7 +119,8 @@ keep importing `zicato` cheap, including command help. Two drivers use it:
 
 Library packages cannot import either driver. The CLI may launch the dashboard;
 the dashboard cannot import the CLI. Namespace roles and import contracts in
-`pyproject.toml` enforce these boundaries through `make import-lint`.
+`pyproject.toml` enforce these boundaries through `make import-lint`
+(`tools/check_imports.py`; §3 lists the rules).
 
 ---
 
@@ -177,18 +180,18 @@ resolves to a glossary heading.
 | [placebo](../design/VOCABULARY.md#placebo-arm) | `placebo_round_due`, `PLACEBO_HYPOTHESIS_MARKER` | `src/zicato/evolve/placebo.py`, `src/zicato/core/experiment.py` |
 | [experiment](../design/VOCABULARY.md#experiment) / [hypothesis](../design/VOCABULARY.md#hypothesis) / [outcome](../design/VOCABULARY.md#outcome) | `Experiment`, `HypothesisSpec`, `OutcomeRecord` | `src/zicato/core/experiment.py` |
 | [experiment memory](../design/VOCABULARY.md#experiment-memory) | `PriorExperiment`, `EXPERIMENT_MEMORY_MAX_ENTRIES` | `src/zicato/core/experiment.py` |
-| [journal](../design/VOCABULARY.md#journal) | `append_journal_entry` | `src/zicato/epoch/journal.py` |
+| [journal](../design/VOCABULARY.md#journal) | `read_journal`, `render_journal` | `src/zicato/epoch/journal.py` |
 | [lineage](../design/VOCABULARY.md#lineage) | `append_to_lineage`, `load_lineage` | `src/zicato/epoch/lineage.py` |
 | [RoundLog](../design/VOCABULARY.md#round-log) | `RoundLog`, `fold_round_record` | `src/zicato/epoch/round_log.py` |
 | [index](../design/VOCABULARY.md#analytical-index) | `rebuild_index` | `src/zicato/index/` |
 | [heartbeat / progress log](../design/VOCABULARY.md#heartbeat) | `HeartbeatBeater` / `progress_log` | `src/zicato/runtime/heartbeat.py`, `src/zicato/runtime/progress_log.py` |
-| [control protocol](../design/VOCABULARY.md#control-protocol) | `claim_gate_override`, `claim_skip_round`, … | `src/zicato/runtime/control_consumer.py` |
+| [control protocol](../design/VOCABULARY.md#control-protocol) | `claim_field_gate_overrides`, `claim_skip_round`, `block_while_paused`, … | `src/zicato/runtime/control_consumer.py` |
 | [crash resume](../design/VOCABULARY.md#resume) | `prepare_resume`, `ResumePlan` | `src/zicato/runtime/resume.py` |
 | [deferral](../design/VOCABULARY.md#deferral) | `DEFERRED_INFRA_DECISION` | `src/zicato/evolve/round_api.py` (re-exported from `zicato.orchestrator`) |
 | [adapter](../design/VOCABULARY.md#adapter) | `HarnessAdapter` | `src/zicato/adapters/` |
 | [runtime knobs](../design/VOCABULARY.md#runtime-configuration) | `RuntimeConfig`, `RoundTokenLedger` | `src/zicato/core/runtime.py` |
 | [round outcome](../design/VOCABULARY.md#round) | `EvolveRoundOutcome` | `src/zicato/evolve/round_api.py` (re-exported from `zicato.orchestrator`) |
-| worker boundary | `_callable_dotted_path`, `_weights_spec` | `src/zicato/tournament/worker_transport.py` |
+| worker boundary | `_callable_dotted_path`, `_weights_spec` | `src/zicato/import_path.py`, `src/zicato/tournament/worker_transport.py` |
 | record-format guard | `RECORD_FORMAT_VERSION`, `check_record_format` | `src/zicato/epoch/_storage.py` |
 
 ### 2.1 The container hierarchy: workspace → epoch → round → generation → run
@@ -197,11 +200,12 @@ resolves to a glossary heading.
 persists for one target: `config.json` (the registration record —
 adapter, ADK entry point when applicable, mutable trees, and model roles),
 `current_epoch` marker,
-`lineage.json`, `index.db`, `epochs/`, `runtime/`, `repo/` (the git
-generation store). Path math is owned by `WorkspaceLayout` in
-`src/zicato/workspace/` (typed canonical reads, the single
-epoch-enumeration authority) and the per-generation path helpers in
-`src/zicato/core/workspace.py`. The filesystem is canonical and the index
+`lineage.json`, `index.db`, `epochs/`, `runtime/`, `logs/`, `repo/` (the git
+generation store). `WorkspaceLayout` in `src/zicato/workspace/layout.py`
+declares every artifact location once; `src/zicato/core/workspace.py`,
+`zicato.runtime.paths`, `zicato.query.paths.WorkspacePaths`, and the storage-key
+helpers all resolve through it. The rest of `src/zicato/workspace/` holds the
+typed canonical reads and the single epoch-enumeration authority. The filesystem is canonical and the index
 is derived from it (§4, the files-canonical rule).
 
 **epoch** — a sealed **evaluation contract** plus a **goal**; houses many
@@ -241,9 +245,7 @@ distinct axes carry the word, and this guide keeps them apart:
 - The **stage index** (`stage_index` on the selection layer's
   `RoundRecord`, `src/zicato/selection/strategy.py`) is the
   WITHIN-tournament axis: a bracket round, Swiss round, or racing rung
-  inside one evolve round. The persisted JSON key is `stage_index`;
-  readers also accept a `round_index` key in that position, so a
-  workspace whose stage records use that spelling still loads.
+  inside one evolve round. The persisted JSON key is `stage_index`.
 
 The unqualified word "round" in this guide always means the evolve round.
 
@@ -295,7 +297,7 @@ optional typed **expectation** and per-entry **judges**, plus
 
 **expectation** — the OUTCOME check graded after a run: `Expectation`
 (`src/zicato/core/board.py`) with `ExpectationKind` in
-`{text, regex, json_schema, predicate, rubric}`. A **predicate** is a
+`{expected_text, regex, json_schema, predicate, rubric}`. A **predicate** is a
 deterministic matcher (dotted-spec Python function; its *source* is
 hashed into the contract — see 03-contract-and-epochs.md §3.3,
 "Shared grading source identity"). A **rubric** is LLM-as-judge grading of the outcome.
@@ -313,7 +315,7 @@ strings) at severities info/warning/critical. Drift events are the raw
 material of zicato's loss.
 
 **proposer brief** — the operator's brief *to the proposer* (`brief.md`):
-the goal, constraints, and a `## Forbidden` section listing mutation ids
+the goal, constraints, and a `## Forbidden edits` section listing mutation ids
 the proposer must not touch. Parsed by `src/zicato/proposer/brief.py`;
 normalized (whitespace/line-ending-insensitive) into the contract hash by
 `_canon_brief`. The authored setting is `contract.brief_path`, which defaults
@@ -372,7 +374,10 @@ dotted-spec plugins). The exact arithmetic is chapter 04's subject.
 **gate** — the promote decision for one duel: `evaluate_gate`
 (`src/zicato/tournament/gate.py`) returns a `GateOutcome`. Three rules in
 order: scalar margin (`promote_margin`), pass-rate monotonicity
-(per-entry or aggregate scope), per-namespace monotonicity. The gate is
+(per-entry or aggregate scope), per-namespace monotonicity. An opt-in
+diff-complexity ceiling can veto a challenger before those rules, and when
+holdout aggregates are supplied a train-side promotion must also confirm on
+the holdout (chapter 04 §2 lists every rule). The gate is
 reused verbatim by every tournament structure — strategies never
 re-decide a duel.
 
@@ -428,11 +433,14 @@ Every selection strategy uses it for each scheduled duel.
 type: `TournamentResult`.
 
 **tournament structure / `SelectionStrategy`** — the per-epoch shape of
-competition: gauntlet (default) and racing, plus single_elim, double_elim and
+competition: racing and gauntlet, plus single_elim, double_elim and
 swiss under the `experimental.tournament_structures` opt-in.
-Configured as `ScoringWeights.tournament_structure`
-(`TournamentStructure`, `src/zicato/core/tournament.py`) so it folds into
-the contract hash. The strategy abstraction lives in
+Configured as `ScoringWeights.tournament_structure` (persisted as the
+`tournament` key; `TournamentStructure`, `src/zicato/core/tournament.py`) so
+it folds into the contract hash. A scoring document that omits the key gets
+`_default_tournament_structure`: racing with `field_size` 4, `eta` 2,
+`board_fraction` 0.4, `replicates` 2, and the evidence gate on
+(`promote_confidence_threshold` 0.8, 32 confirmation replicates). The strategy abstraction lives in
 `src/zicato/selection/` (`SelectionStrategy`, `evaluate_tournament`,
 `make_strategy`); it owns scheduling, bracket bookkeeping, and
 intra-tournament stopping — the gate stays the per-duel acceptance test.
@@ -453,22 +461,26 @@ champion pointer must agree — checked loudly in `evolve_field_round`
 
 **replicate** — one repeated evaluation of the same (generation, entry)
 under a distinct cache slot, which averages out noise. The per-duel
-`replicates` knob (structure param; default 2 for gauntlet/elim/swiss,
-1 for racing) averages paired runs before the gate. Production cache keys include generation, board entry, measurement purpose, local draw number, and base seed for both competitors. A missing
+`replicates` knob (structure param) averages paired runs before the gate.
+When the structure params leave it unset, the gauntlet, elimination and
+Swiss strategies default to 2 and racing to 1 (`_default_replicates`); the
+default racing structure above pins 2. Production cache keys include generation, board entry, measurement purpose, local draw number, and base seed for both competitors. A missing
 slot executes instead of replaying another replicate. The standalone
 `run_fast_mode` API compares the challenger against the champion's
 aggregate from earlier rounds. A `MeasurementDraw` records the purpose, local draw number, and base seed; each purpose numbers its draws independently (§4, G7).
 
-**evidence gate / pre-gate** — the opt-in Bradley–Terry confirmation of a
-crowning promote (`promote_confidence_threshold` structure param):
-defer → replicate → promote/inconclusive, with confidence intervals that
-must separate. `src/zicato/selection/evidence_gate.py` +
+**evidence gate / pre-gate** — the Bradley–Terry confirmation of a
+crowning promote, enabled by the `promote_confidence_threshold` structure
+param (the default racing structure sets it; a structure that omits it has
+no pre-gate): defer → replicate → promote/inconclusive, promoting only when
+the adjusted strength-difference interval lies above zero.
+`src/zicato/selection/evidence_gate.py` +
 `EvidencePreGate` / driver in `src/zicato/selection/driver.py`;
 inconclusive terminals land in the dead-letter queue
 (`src/zicato/selection/dead_letter.py`). It protects soundness rather
-than adding power. Separating the two confidence intervals takes roughly
-37 consecutive wins; `tests/test_decision_procedure_power.py` measures
-that requirement and 06-tournament-and-selection.md explains it.
+than adding power; 04-evaluation-statistics.md §6 states the rule and
+`tests/test_decision_procedure_power.py` measures its operating
+characteristics.
 
 **facet** — a named diagnostic slice of the board, declared by tagging
 entries `facet:{name}` (the second reserved tag after `holdout`).
@@ -510,12 +522,13 @@ health finding (gate discrimination is broken). Minted by
 (`src/zicato/evolve/propose_apply.py`); the marker constant
 `PLACEBO_HYPOTHESIS_MARKER` lives in `src/zicato/core/experiment.py`.
 
-**fast mode / `champion_eval_mode`** — `--mode fast` reuses the
-champion's cached per-board scalars instead of re-running the immutable
-champion. The champion side is skipped and replication is not: the
-challenger board still runs `replicates` times and folds. The resolved
-provenance (`"full"` / `"fast"` / `"fast-degraded"`) is journaled on the
-`OutcomeRecord`. It is RUNTIME provenance and never a contract input, so
+**fast mode / `champion_eval_mode`** — `--mode fast` resolves every
+matchup's board units cache-first for both competitors: a completed
+matching measurement is reused and only missing slots execute, and no
+requested replicate is synthesized by replaying another slot. `--mode full`
+remeasures both sides. The round's `champion_eval_mode` (`"full"` /
+`"fast"` / `"fast-degraded"`) is derived from the reigning champion's
+cached-versus-fresh unit tally and journaled on the `OutcomeRecord`. It is RUNTIME provenance and never a contract input, so
 flipping fast↔full does not roll the epoch.
 
 ### 2.5 The record side
@@ -543,8 +556,10 @@ experiment (`src/zicato/core/experiment.py`): deltas, the decision, the
 rejection reason, plus the additive runtime-evidence fields (holdout
 block, train/holdout loss + generalization gap, operator-override flags,
 evidence-gate resolution, structure/rank/match record,
-`champion_eval_mode`). Every added field carries a default, so a journal
-that lacks it deserializes unchanged.
+`champion_eval_mode`). The reader requires the same field set the writer
+emits (`_complete_fields` in `src/zicato/epoch/journal.py`): a stored
+outcome that lacks a declared field, or carries an unknown one, is refused
+rather than filled with defaults.
 
 **experiment memory** — the curated "## What's already been tried" digest
 the proposer sees: `PriorExperiment` entries (settled history via the
@@ -554,9 +569,11 @@ Assembled by `_load_prior_experiments` (`src/zicato/evolve/ingest.py`);
 opt-in cross-epoch transfer via `ExperimentalConfig.cross_epoch_memory`
 (same contract hash only). Design: `docs/design/EXPERIMENT-MEMORY.md`.
 
-**journal** — the append-only human narrative per epoch
-(`epochs/{epoch}/journal.md`), one `## vN — <core idea>` section per
-experiment (`append_journal_entry`, `src/zicato/epoch/journal.py`).
+**journal** — the human-readable narrative per epoch, one
+`## vN — <core idea>` section per experiment. No journal file is written:
+`read_journal` (`src/zicato/epoch/journal.py`) renders it on demand from the
+accepted experiment records and their committed outcomes, and the dashboard
+serves it at `/api/epoch/{epoch_id}/journal.md`.
 
 **lineage** — the cross-epoch directed acyclic graph of generations,
 held in one atomically rewritten `lineage.json`
@@ -619,8 +636,7 @@ rejection reason, both scalars and the delta, plus the health summary.
 ### 2.6 The workspace on disk
 
 You will spend a lot of time reading `.zicato/` trees. The canonical
-shape (assembled from `src/zicato/epoch/lifecycle.py`'s module docstring,
-`src/zicato/epoch/round_log.py`, and the workspace path helpers):
+shape, as `WorkspaceLayout` (`src/zicato/workspace/layout.py`) declares it:
 
 ```
 {project}/
@@ -631,11 +647,16 @@ shape (assembled from `src/zicato/epoch/lifecycle.py`'s module docstring,
     config.json                  # registration: adapter, mutable_trees,
                                  #   contract paths, models
     current_epoch                # marker file, single line = epoch id
-    lineage.json                 # the cross-epoch DAG (atomic rewrites)
+    lineage.json                 # the cross-epoch ancestry DAG (atomic rewrites)
     index.db                     # DERIVED SQLite index (rebuildable)
+    index-revisions/             # per-epoch change signals for index repair
+    logs/                        # one structured log stream per invocation
     repo/                        # the git generation store (default backend)
-    runtime/                     # heartbeat.json, active runs/tournament,
-                                 #   progress log, control files (EPHEMERAL)
+    runtime/                     # EPHEMERAL: lock.json, heartbeat.json,
+                                 #   dashboard.json, active_runs/,
+                                 #   active_tournament.events.jsonl,
+                                 #   progress.events.jsonl, inconclusive/,
+                                 #   control/, control_log/
     epochs/
       {epoch_id}/
         board.jsonl              # frozen board
@@ -644,20 +665,36 @@ shape (assembled from `src/zicato/epoch/lifecycle.py`'s module docstring,
         execution.json           # required captured execution bindings
         config.json              # EpochConfig (required hash, goal, measurements)
         contract_components.json # per-component sub-hashes (roll diagnosis)
-        current_generation       # the promoted-head marker
-        journal.md               # appended per experiment
+        baseline_seed.json       # where the seed generation came from
+        mutations.json           # the enumerated mutation surface
+        ladder_state.json        # the holdout-query budget
+        proposer_inputs.jsonl    # what each proposal was shown
         analysis.md / .html      # the (re)generated epoch report
         health/round_{N}.json    # per-round loop-health reports
-        insights/round_{N}.md    # analyzer output the proposer reads back
-        rounds/{N}/round_log.jsonl   # the durable per-round event log
+        insights/round_{NNNN}.md # analyzer output the proposer reads back
+        episodes/{vN}[-{slot}]/  # one proposal episode log per candidate
+        tournaments/field-{vN}.json  # durable tournament record
+        reflections/             # board-reflection runs
+        rounds/{N}/
+          round_log.jsonl        # the durable per-round event log
+          field_settlement.json  # the committed round record: every outcome,
+                                 #   the primary promotion, the tournament
         generations/
           {vN}/
-            experiment.json      # hypothesis + patches + outcome
+            experiment.json      # hypothesis + patch references
             patches/{id}.json    # one record per patch
-            gen_score.json       # cached aggregate (fast-mode reuse)
+            containment.json     # parent-bound byte-range evidence
+            gen_score.json       # cached aggregate (+ gen_score.history.jsonl)
             runs/{entry}/seed-{seed}/events.{purpose}.r{draw}.jsonl
             runs/{entry}/seed-{seed}/loss.{purpose}.r{draw}.json
+            runs/{entry}/seed-{seed}/result.{purpose}.r{draw}.json
 ```
+
+There is no promoted-head marker and no journal file. The champion is the
+primary promotion named by the most recent committed
+`rounds/{N}/field_settlement.json` (`recorded_champion` in
+`src/zicato/epoch/settlement_receipt.py`), or `v0` before any promotion;
+the journal is rendered from the experiment records.
 
 Two orientation rules fall straight out of this tree. First, the
 operator's live contract files sit in the project root NEXT TO
@@ -677,13 +714,26 @@ Layout: `src/zicato/` (the Python package, src-layout),
 `zicato-examples` distribution, uv workspace member), `skills/`
 (agent-driven operating workflows), `tools/parity/` (the
 behavior-preserving refactor oracle), `docs/design/` (the design corpus),
-`tests/` (2800+ tests).
+`tests/` (about 5,990 tests).
 
-Namespace roles in `pyproject.toml [tool.zicato.namespace_roles]` classify
-library and driver code. `tools/check_imports.py` derives the broad import
-boundaries from those roles; the explicit import-linter contracts cover narrower
-restrictions. `make import-lint` runs both. Every library package is forbidden
-from importing `zicato.cli` or `zicato.dashboard`.
+`pyproject.toml [tool.zicato.namespace_roles]` assigns every top-level
+module and package under `src/zicato/` one role: `primitive`,
+`execution`, `coordination`, `mixed_library`, or `driver` (`cli` and
+`dashboard` are the drivers). `tools/check_imports.py` refuses an
+unclassified or stale entry and derives three import-linter contracts from
+the roles:
+
+- library code (every non-driver role) cannot import a driver;
+- `primitive` and `execution` code cannot import `coordination` code or a
+  driver;
+- `primitive` code imports only other primitives.
+
+`mixed_library` packages make no execution-boundary claim. The explicit
+contracts under `[tool.zicato.importlinter]` add narrower rules: the
+dashboard cannot import the CLI, the query layer cannot import the
+dashboard, and `zicato.proposer.validate` has no import path to the board,
+judges, emulator, adapters, or tournament worker. `make import-lint` runs
+all of them.
 
 ### 3.1 The library packages (`src/zicato/…`)
 
@@ -700,18 +750,26 @@ becoming a core dependency.
 
 **`orchestrator.py`** — the stable integration import surface, and nothing
 else: fourteen lines re-exporting `evolve_once`, `evolve_n_rounds`,
-`ensure_epoch_for_contract`, and the round-result types from `evolve/`.
+`ensure_epoch_for_contract`, `EvolveRoundOutcome`, and
+`DEFERRED_INFRA_DECISION` from `evolve/`.
 Library callers and the CLI import from here, so the phase modules under
 `evolve/` can move without breaking them. Tests patch each collaborator on
 the module that owns it rather than on this one. Chapter 02 is the
 walkthrough.
 
 **`evolve/`** — the evolve-loop internals, one module per phase:
-`loop.py` (`evolve_n_rounds` plus the loop's stop policies — consecutive
-rejection, degenerate loop health, wall-clock budget),
-`round_entry.py` (`evolve_once`, one round), `epoching.py` (contract-hash
-auto-epoching), `round.py` (the shared propose-time seams
-`build_post_apply_validator` / `check_patch_manifest_and_forbidden`),
+`invocation.py` (`validated_invocation`: the workspace lock, publication
+recovery, configuration resolution, and the pre-spend workspace check that
+both public entry points share), `loop.py` (`evolve_n_rounds` plus the
+loop's stop policies — consecutive rejection, degenerate loop health,
+wall-clock budget), `round_entry.py` (`evolve_once`, one round's
+preparation), `generation_phase.py` (`PreparedRound`, `FieldRound`, and the
+champion/snapshot/next-id helpers), `field.py` plus `field_candidates.py`,
+`field_execution.py`, `gate.py`, and `settlement.py` (the four phases every
+round runs), `settlement_recovery.py` (committing an interrupted round
+record), `epoching.py` (contract-hash auto-epoching), `round.py` (the shared
+propose-time seams `build_post_apply_validator` /
+`check_patch_manifest_and_forbidden`),
 `lifecycle_services.py` (heartbeat/harmonograf/meta-loop plumbing),
 `placebo.py`, `containment.py` (diff containment mirroring the
 supervisor's Rust check), and `dashboard_projection.py` (the
@@ -726,21 +784,27 @@ load + the frozen-contract writes), `contract.py` (the hash),
 (the at-close retrospective; its HTML
 companion is rendered by `analyzer/report.py`), `round_log.py`, `screen.py`, `preflight.py`,
 `genstore.py` + `git_genstore.py` (the generation-tree seam), `gc.py`,
+`settlement_receipt.py` (the committed round record and the champion it
+names), `round_integrity.py` (per-round completeness read from the round
+logs),
 `_storage.py` (record-format guard + storage keys). Owns the
 `format_version` discipline (`RECORD_FORMAT_VERSION`).
 
 **`tournament/`** — scoring aggregation (`scoring.py`), the gate
 (`gate.py`), the runner (`runner.py` — `run_tournament`, `run_fast_mode`,
-`run_matchup`, `confirm_crowning_holdout`, and the documented test-suite
-monkeypatch anchor `_run_single`), the worker transport
-(`worker_transport.py` — wire specs, ephemeral checkouts, the
-module-level-callable rule), the unit cache, the Ladder (`ladder.py`),
+`run_matchup`, `confirm_crowning_holdout`), the board-unit schedulers
+(`scheduling.py`), the worker execution (`worker_execution.py` —
+`_run_single`, the documented test-suite monkeypatch anchor), the worker
+transport (`worker_transport.py` — wire specs, ephemeral checkouts, the
+scrubbed environment), the unit cache (`unit_cache.py`), the Ladder (`ladder.py`),
 A/A calibration (`calibration.py`), and tournament-detail analytics
 (`detail.py`).
 
 **`selection/`** — the structure layer: `strategy.py` (`SelectionStrategy`,
 `Contestant`/`Matchup`/`MatchupResult`/`SelectionDecision`/`Standing`),
-`registry.py` (`make_strategy`), the concrete strategies, `driver.py`
+`registry.py` (`make_strategy`), the concrete strategies (`strategies/`
+for gauntlet and racing, `experimental/` for the elimination and Swiss
+structures), `driver.py`
 (`resolve_tournament` + `EvidencePreGate` orchestration),
 `evidence_gate.py` (Bradley–Terry fit),
 `dead_letter.py`, `diversity.py` (`jaccard`). The gate is imported from
@@ -832,6 +896,25 @@ read back by the next round's proposer), the epoch analysis report
 (`analysis.md`/`analysis.html`), outcome marginals, and the
 process-exemplar extractor.
 
+**`reflection/`** — board reflection: measurement-system analysis of the
+evaluation contract itself (planning, corpus mining, adjudication,
+scorecards, findings, suggestions, and admission of synthesized board
+entries). Design: `docs/design/BOARD-REFLECTION.md`.
+
+**`check/`** — the pre-spend workspace gate. `require_workspace_valid`
+runs inside both public evolve entry points before any model call;
+`validators.py` holds every check and `reachability.py` the network probes
+that only `zicato evolve --dry-run` runs.
+
+**`example_workspace/`** — the template files `zicato init --example`
+copies into a new project. The runtime never imports them.
+
+**`driver_imports.py`, `logging_stream.py`, `reasoning.py`** —
+process-scoped imports for fixed drivers and isolated candidate snapshots;
+the per-invocation structured log stream under `.zicato/logs/`
+(`docs/design/LOGGING.md`); and the reasoning-aware wrapper around the
+answer-only `CallLLM` shape.
+
 **`query/`** — the read-only workspace query layer: one module per view,
 plus the events → `Transcript` reconstruction
 (`transcript_reconstruction.py`) the conversation views read through.
@@ -876,7 +959,7 @@ fixture factories for every core dataclass. Import in tests only.
 
 **`util/`** — dependency-free cross-cutting helpers, most importantly
 `best_effort` (the log-and-swallow context manager the round's
-non-critical writes all use) and `iso_time`.
+non-critical writes all use) and `now_iso`.
 
 **`_tournament_worker.py`** — the `python -m zicato._tournament_worker`
 subprocess entry point, the process boundary that isolates one run.
@@ -938,7 +1021,7 @@ refactor oracle: six gates (PYTEST, CONTRACT-HASH, CLI-HELP,
 REINDEX-DUMP, MOCK-GOLDEN, MYPY) diffing fresh artifacts against
 committed goldens; the green-gates rule (§4) requires them green.
 
-**`docs/design/`** — the design corpus (~40 documents). Start with
+**`docs/design/`** — the design corpus (about 60 documents). Start with
 `ARCHITECTURE.md`. Design docs can drift; code and `--help` are
 canonical. `docs/design/CLI.md` is hand-authored. This guide
 (`docs/dev-guide/`) cites design docs for *rationale* and code for
@@ -950,9 +1033,12 @@ the opt-in cascade measurement by marker, and the `slow` tier by a hook
 that fires only when nothing was named on the command line. Markers: `slow` (one test
 measured at 15 s or more), `integration` (crosses a process or network
 boundary, so its runtime IS its coverage), `node`, `cascade_oc`. The
-full suite is `uv run pytest -m "not node and not cascade_oc"`, which is
-what `make test` and CI run — note a command-line `-m` REPLACES the
-pyproject default rather than intersecting with it, hence both terms. See
+full suite is both tiers: `make test` runs the `python-default` and
+`python-slow` checks of `tools/verify.py`, which pass
+`-m "not node and not cascade_oc and not slow"` and
+`-m "slow and not node and not cascade_oc"`, and CI reports the two tiers
+as separate checks. A command-line `-m` REPLACES the pyproject default
+rather than intersecting with it, hence the repeated terms. See
 11-testing.md.
 
 ---
@@ -1094,18 +1180,23 @@ computed artifacts against committed goldens under
 `tools/parity/golden/`:
 
 ```
-#   PYTEST         the full test suite (2800+ tests) — the primary
-#                  behavioral characterization. Must pass.
+#   PYTEST         the full test suite — BOTH tiers, ~5990 tests — as the
+#                  primary behavioral characterization. Must pass. The
+#                  explicit -m below restates the pyproject selector minus
+#                  its `not slow` term, because a command-line -m REPLACES
+#                  that selector: a bare `pytest` here would silently gate
+#                  on the default tier alone and skip the thirteen
+#                  statistical and end-to-end tests the oracles live in.
 #   CONTRACT-HASH  the epoch contract hash (+ per-component hashes) for a
 #                  fixed fixture contract is byte-identical to the golden.
 #   CLI-HELP       `zicato --help` and every subcommand `--help` is
 #                  byte-identical to the golden.
 #   REINDEX-DUMP   the SQLite index, rebuilt from a fixture workspace and
 #                  dumped to stable text, is byte-identical to the golden.
-#   MOCK-GOLDEN    a deterministic, no-live-LLM racing mock evolve produces
-#                  gen_score.json / experiment.json / loss.*.json / lineage.json
-#                  artifacts byte-identical (after masking wall-clock noise)
-#                  to the golden.
+#   MOCK-GOLDEN    Eight deterministic tournament configurations in one pytest
+#                  session: racing and gauntlet with fresh or reused measurements,
+#                  two consecutive racing rounds, Swiss, and both elimination
+#                  formats. Every configuration retains its own saved results.
 #   MYPY           type checking must complete successfully.
 ```
 *(tools/parity.sh, header comment)*
@@ -1214,8 +1305,10 @@ can memorize. The anti-overfitting design (`docs/design/OVERFITTING.md`
 
 The best-of-N critic is inside the same envelope by construction — it is
 shown the very evidence the proposal episode was given, projected off the
-same context and rendered by the same `render_evidence`
-(`src/zicato/proposer/best_of_n.py` §"Overfitting discipline").
+same context by `evidence_from_context` and rendered by the same
+`render_evidence` (`src/zicato/proposer/foe_request.py`; the module
+docstring of `src/zicato/proposer/best_of_n.py`, "Overfitting discipline",
+states the rule).
 
 **Failure mode when broken.** The loop overfits the board: train scores
 climb, holdout confirmation starts flipping crowns
@@ -1253,7 +1346,7 @@ worker re-imports callables from `module:qualname` dotted paths built by
         )
     return f"{module}:{qualname}"
 ```
-*(src/zicato/tournament/worker_transport.py, `_callable_dotted_path`)*
+*(src/zicato/import_path.py, `_callable_dotted_path`)*
 
 A closure has `<locals>` in its `__qualname__` and cannot be re-imported;
 the transport surfaces that as a clear `ValueError` at spawn time,
@@ -1265,8 +1358,9 @@ scoring under defaults while the orchestrator believes otherwise — the
 `per_judge_weights` desync class (see 03-contract-and-epochs.md
 §"Serializer completeness" and 07-runtime-and-durability.md).
 
-**Verify:** tests that stub the worker use the documented anchor
-`worker_execution._run_single` (see `tests/_subprocess_worker_support.py`), and at
+**Verify:** tests that stub the worker patch the documented anchor
+`zicato.tournament.worker_execution._run_single` (see
+`tests/_orchestrator_harness.py`), and at
 least one test in your change exercises the REAL subprocess path if you
 touched anything on the wire.
 
@@ -1282,9 +1376,8 @@ end:
 
 - the SSE broker coalesces write bursts into a single `state_change`
   frame over a 250 ms window (`_COALESCE_WINDOW_S` in
-  `src/zicato/dashboard/sse.py`, whose comment records what it stops:
-  "this is what stops the old flashing / self-DoS where every file write
-  fanned out into a fresh wave of per-endpoint polls");
+  `src/zicato/dashboard/sse.py`), so the dashboard refreshes once per
+  burst rather than once per file write;
 - every frontend pane is digest-gated
   (`src/zicato/dashboard/static/js/livestatus.js`: "a steady heartbeat
   ping writes ZERO DOM"), with the same discipline in `tree.js`,
@@ -1334,8 +1427,9 @@ uv sync --all-extras        # always --all-extras; never bare uv sync
 make install-hooks          # pre-commit shim into .git/hooks/
 ```
 
-`uv sync --all-extras` installs zicato editable, all extras (adk,
-dashboard, dev), and the `zicato-examples` workspace member — the
+`uv sync --all-extras` installs zicato editable, every extra (`goldfive`,
+`goldfive-remote`, `goldfive-local-embedding`, `adk`, `dashboard`,
+`observability`, `all`, `dev`), and the `zicato-examples` workspace member — the
 examples MUST resolve as `zicato_examples.*` from anywhere, including
 inside spawned tournament worker subprocesses.
 
@@ -1376,16 +1470,18 @@ skeleton is:
 
 ```sh
 rm -rf /tmp/zicato-smoke-t0 && mkdir -p /tmp/zicato-smoke-t0 && cd /tmp/zicato-smoke-t0
-PY=<repo>/.venv/bin/python
+ZICATO=<your checkout>; PY=$ZICATO/.venv/bin/python
 
 # 1. Bootstrap the workspace.
 $PY -m zicato.cli init --workspace .zicato
 
-# 2. Declare the deterministic import-kind adapter + mutable tree +
-#    skills-only proposer dir into .zicato/config.json (RUN.md has the
-#    exact python snippet), copy the example board/brief/scoring next to
-#    the workspace, then:
-$PY -m zicato.cli evolve --rounds 3 ...   # per RUN.md — scripted, no LLM
+# 2. Declare the deterministic import-kind adapter, the mutable tree, the
+#    offline model engines, the Foe stand-in proposal runtime (built by
+#    tests/_foe_support.py, so this runs only from a repository checkout),
+#    and the proposer dir in .zicato/config.json (RUN.md has the exact
+#    python snippet); copy the example board/scoring and write a brief next
+#    to the workspace, then:
+$PY -m zicato.cli evolve --workspace .zicato --rounds 3 --mode full   # scripted, no model
 ```
 
 What you should observe — this IS the known answer:
@@ -1395,8 +1491,8 @@ What you should observe — this IS the known answer:
   `3.6`, the floor `1.2` at v3;
 - `epochs/{epoch}/generations/v{1,2,3}/experiment.json` each with one
   patch against mutation id `style_rules` and the right outcome;
-- `lineage.json` with v2 as a dead branch (`promoted: false`) and the
-  `current_generation` marker reading `v3`;
+- v2 reported as a dead branch (`promoted: false`) and `v3` as the
+  champion — both read from the committed round records;
 - one `epochs/{epoch}/rounds/{N}/round_log.jsonl` per round whose event
   sequence matches the canonical list in 02-architecture.md.
 
@@ -1407,8 +1503,9 @@ bisect before writing code.
 
 Read, in order:
 
-1. `src/zicato/evolve/round_entry.py` — `evolve_once`'s docstring and its
-   eight numbered steps.
+1. `src/zicato/evolve/round_entry.py` — `evolve_once`'s docstring, then the
+   numbered step comments (`# --- 1. …` through `# --- 5b. …`) in
+   `_evolve_once`.
 2. `src/zicato/epoch/contract.py` — the module docstring (the contract
    components and the canonicalization promise).
 3. `tests/test_convergence_known_answer.py` — top-of-file docstring plus
@@ -1466,23 +1563,28 @@ the code that exists because the mistake happened.
 > `epoch/lifecycle.py`, check what it drags in at import time.
 
 > ⚠️ **TRAP — patch a collaborator on the module that owns it.**
-> `evolve_n_rounds` (`src/zicato/evolve/loop.py`) imports `evolve_once`,
-> `ensure_epoch_for_contract`, and `block_while_paused` from their owning
-> phase modules inside the function body. An attribute set on the owning
-> module therefore takes effect at call time. `zicato.orchestrator` is an
-> import surface for callers rather than a seam registry, so a
-> `monkeypatch.setattr` aimed at it does not intercept the loop's calls.
-> Patch `zicato.evolve.round_entry.evolve_once` and its siblings instead.
+> The loop body `_evolve_n_rounds` (`src/zicato/evolve/loop.py`) imports
+> the private round body `_evolve_once` from `zicato.evolve.round_entry`,
+> `ensure_epoch_for_contract` from `zicato.evolve.epoching`, and
+> `block_while_paused` from `zicato.runtime.control_consumer` inside the
+> function body. An attribute set on the owning module therefore takes
+> effect at call time. `zicato.orchestrator` is an import surface for
+> callers rather than a seam registry, and the loop never calls the public
+> `evolve_once`, so a `monkeypatch.setattr` aimed at either does not
+> intercept the loop's rounds. Patch `zicato.evolve.round_entry._evolve_once`
+> and its siblings on their owners instead.
 
-> ⚠️ **TRAP — champion cache semantics differ by mode.** The champion is
-> immutable within an epoch, so its per-board units are cache-read by
-> default: `champion_force_fresh=False` on `run_tournament`
-> (`src/zicato/tournament/runner.py`), carried to the per-unit path as
-> `parent_force_fresh` (`src/zicato/tournament/scheduling.py`).
-> `--mode full` re-samples the champion as well, to draw fresh noise. A
-> crash-resumed round is the exception: it must cache-read, or resume
-> stops being nearly free. If you touch runner caching, read both
-> parameters' docstrings first.
+> ⚠️ **TRAP — cache semantics differ by mode.** Every production matchup
+> runs through `run_matchup` (`src/zicato/tournament/runner.py`), which
+> `run_field_matchup` (`src/zicato/evolve/field_execution.py`) calls with
+> `fast=prepared.fast_mode or candidates.resume_cache`. With `fast` set,
+> both competitors' board units are cache-first; without it (`--mode
+> full`), both sides are remeasured to draw fresh noise. A crash-resumed
+> round is the exception: it must cache-read even in full mode, or resume
+> stops being nearly free. The standalone `run_tournament` API expresses
+> the same policy per side (`champion_force_fresh`, carried to the per-unit
+> path as `parent_force_fresh` in `src/zicato/tournament/scheduling.py`).
+> If you touch runner caching, read those docstrings first.
 
 > ⚠️ **TRAP — generation ids restart at `v0` every epoch.** Anything
 > keyed by a bare generation id (an operator gate override, a cache, a
@@ -1493,12 +1595,13 @@ the code that exists because the mistake happened.
 > pending "promote v3" would otherwise fire on the NEW epoch's v3. Key
 > new artifacts by `(epoch_id, generation_id)` rather than by `vN` alone.
 
-> ⚠️ **TRAP — run ids must be stable per (generation, entry).** The
-> index's `runs` table keys on `run_id`. A harness that derives a run id
-> from the entry alone silently overwrites each generation's rows with
-> the next generation's. The convergence oracle pins the shape that
-> works: `conv-<generation>-<entry>`. If you write an adapter, derive run
-> ids from the full stable coordinate.
+> ⚠️ **TRAP — run ids must name the whole measurement.** The index's
+> `runs` table keys on `run_id`. A harness that derives a run id from the
+> entry alone silently overwrites each generation's rows with the next
+> generation's. `run_id_for_unit` (`src/zicato/core/workspace.py`) derives
+> the id from the seed, purpose, draw, and a hash of `(epoch, generation,
+> entry)`; the convergence harness uses it, and so should any adapter
+> that names its own runs.
 
 Where to next: 02-architecture.md for the round walkthrough,
 03-contract-and-epochs.md before touching ANY config surface,

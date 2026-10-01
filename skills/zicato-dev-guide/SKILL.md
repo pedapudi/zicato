@@ -12,9 +12,9 @@ recipe index. It is a *reference book rather than a tutorial*: read the Golden R
 every session, then jump to the chapter your task touches. Every claim there is
 grounded in the current code; every excerpt is verbatim from the file it names.
 
-> **When docs and code disagree, the code wins.** The guide was accurate when
-> written. If a symbol/path it names is gone, fix the guide in the same PR
-> (recipe 14) — never invent a symbol to match the prose. `docs/design/CLI.md`
+> **When docs and code disagree, the code wins.** If a symbol/path the guide
+> names is gone, fix the guide in the same PR — never invent a symbol to
+> match the prose. `docs/design/CLI.md`
 > is a *generated* doc; trust `zicato --help`.
 
 This skill is the doorway. It inlines the four things you must not skip even if
@@ -46,7 +46,7 @@ because breaking it caused a real failure.
 
 | You are changing… | Read | Key invariant namespace |
 |---|---|---|
-| the round pipeline / orchestrator seams | `02-architecture.md`, `13-recipes.md` recipe 9 | the extracted seams; never inline into the god-functions |
+| the round pipeline / orchestrator seams | `02-architecture.md`, `13-recipes.md` recipe 9 | the extracted round phases; never inline them back into one function |
 | a contract knob / epoch behavior | `03-contract-and-epochs.md` | contract invariants 1–8 (+ G6) |
 | scoring / the gate / replication / calibration / evidence gate / contract pre-flight | `04-evaluation-statistics.md` | statistics 1–10 (+ G7) |
 | how candidates are generated / what the proposer sees | `05-proposer.md` | proposer 1–6 (+ G8) |
@@ -54,7 +54,7 @@ because breaking it caused a real failure.
 | state files / storage / resume / the round log | `07-runtime-and-durability.md` | the persistence and crash-safety rules, **D1–D12** |
 | the Rust supervisor | `08-supervisor.md` | the out-of-band enforcement rules, **S1–S14** |
 | a reader / endpoint / view | `09-dashboard-and-query.md` | the dashboard/query doctrine, **DQ1–DQ15** (+ G10) |
-| contract preparation / a CLI flag / the public API | `10-cli-and-configuration.md` | configuration validation, publication, and public API behavior |
+| contract preparation / a CLI flag / the public API | `10-cli-and-configuration.md` | contract and library boundaries: typed edits, publication that launches no run, driver-independent library code |
 | tests | `11-testing.md` | the verification discipline, **V1–V10** |
 
 Cross-cutting **recipes** live in `13-recipes.md` (14 of them) and in the owning

@@ -12,8 +12,8 @@
 > — a bare `uv sync` deletes dev tooling from `.venv`). For the theory behind a
 > change class, each recipe cross-refs the owning chapter.
 >
-> **How to read a recipe.** Every recipe uses ONE fixed template so you always
-> know where to look:
+> **How to read a recipe.** Recipes 7 and 10 are short procedures; every other
+> recipe uses ONE fixed template so you always know where to look:
 >
 > | Section | What it gives you |
 > |---|---|
@@ -71,7 +71,8 @@ or "the judge panel has gone silent".
 | `src/zicato/health/diagnostics.py` | `assess_loop_health` | the run-list dispatch |
 | `src/zicato/health/diagnostics.py` | `__all__` | export it |
 | `src/zicato/health/__init__.py` | re-export | package surface |
-| `src/zicato/config.py` | `HealthConfig` | a new threshold, if any |
+| `src/zicato/core/settings.py` | `HealthConfig` | a new threshold, if any |
+| `src/zicato/evolve/round_reporting.py` | `_collect_epoch_health_inputs` | new inputs, if any |
 | `src/zicato/evolve/round_prepare.py` | `_assess_and_persist_loop_health` | new inputs, if any |
 | `tests/test_health_diagnostics.py` | per-detector test | pin it |
 
@@ -80,8 +81,9 @@ or "the judge panel has gone silent".
 1. **Write the detector as a pure function** in `diagnostics.py`:
    `def detect_<name>(...) -> list[HealthFinding]`. It takes already-loaded data
    (loss profiles, experiment dicts, the board) — never does I/O — and returns
-   zero or more findings. Each `HealthFinding` carries a stable `code`, a
-   `severity`, a one-line `summary`, and a structured `detail` dict:
+   zero or more findings. Each `HealthFinding` carries a stable `code` (add
+   yours to the list in the class docstring), a `severity`, a one-line
+   `summary`, and a structured `detail` dict:
 
    ```python
    # src/zicato/health/diagnostics.py — HealthFinding
@@ -112,8 +114,7 @@ or "the judge panel has gone silent".
        findings.extend(detect_non_differentiating_entry(losses_by_generation))
        findings.extend(detect_flat_drift_signal(losses_by_generation))
        ...
-       findings.extend(detect_token_budget_clip(token_clip))
-
+       findings.extend(detect_optional_failures(optional_failures))
        healthy = not any(finding.severity in ("warning", "critical") for finding in findings)
    ```
 
@@ -122,35 +123,35 @@ or "the judge panel has gone silent".
 4. **Export it.** Add the function name to `__all__` in `diagnostics.py` and
    re-export it from `src/zicato/health/__init__.py`.
 5. **Add a threshold only via `HealthConfig`.** If your detector needs a tunable
-   bound, add a typed field to `zicato.config.HealthConfig` (the `health` block
-   of `config.json`) and read it via `_resolve_health_config`. Never use a bare
+   bound, add a typed field to `HealthConfig` (`src/zicato/core/settings.py`,
+   re-exported as `zicato.config.HealthConfig`; the `health` block of
+   `config.json`) and read it via `_resolve_health_config`. Never use a bare
    constant an operator cannot change, and never an environment variable (see
    10-cli-and-configuration.md §10.10.2).
-6. **Thread new inputs through the orchestrator only if needed.** If your
-   detector needs a fact `assess_loop_health` is not already handed, add it to
-   `_collect_epoch_health_inputs` and `_assess_and_persist_loop_health` in
-   `orchestrator.py`, which writes the per-round report to
-   `epochs/{epoch}/health/round_{N}.json`.
+6. **Thread new inputs through the round only if needed.** If your detector
+   needs a fact `assess_loop_health` is not already handed, add it to
+   `_collect_epoch_health_inputs` (`src/zicato/evolve/round_reporting.py`) and
+   `_assess_and_persist_loop_health` (`src/zicato/evolve/round_prepare.py`),
+   which writes the per-round report to `epochs/{epoch}/health/round_{N}.json`.
 7. **Test it** in `tests/test_health_diagnostics.py`: a fixture that trips the
    detector (assert the finding's `code`/`severity`/`detail`), and a fixture
-   that does NOT (assert empty). If you touched the orchestrator threading, add
-   a case to `tests/test_orchestrator_health.py`.
+   that does NOT (assert empty). If you touched the round threading, add a case
+   to `tests/test_orchestrator_health.py`.
 
 **The five-slot evidence convention — a rendering conformance rule.**
 
-A detector's job does not end at detecting. Eleven operator-facing reports
-shared one complaint: zicato said something was wrong without saying what
-(issue #129). In each of them the surface held the numbers and printed a bare
-verdict.
+A detector's job does not end at detecting. An operator-facing message that
+says something is wrong without saying what, while the surface holds the
+numbers, is a defect.
 
-The rule binds on the renderer rather than on the data shape. Collection is
-already sound: `HealthFinding` sites populate `detail`, most of them with an
-explicit `detail["recommendation"]`, and `PracticeCheck` carries a structured
-`evidence` dict beside every verdict. Both known instances of the defect dropped
-that evidence at the last hop. `_summarise_loop_health` skipped `detail` because
-its text walker accepted only string attributes, and `_render_practice_section`
-never read `evidence`. Adding a third well-shaped field to a third dataclass would
-reproduce the defect rather than remove it.
+The rule binds on the renderer rather than on the data shape. The collected
+structures carry the evidence: `HealthFinding` sites populate `detail`, most of
+them with an explicit `detail["recommendation"]`, and `PracticeCheck` carries a
+structured `evidence` dict beside every verdict. Evidence is lost at the last
+hop, in the renderer. `summarize_loop_health` (`health/diagnostics.py`) and
+`_render_practice_section` (`cli/commands/reflect.py`) are the renderers the
+pins below cover. Adding another well-shaped field to another dataclass does
+not help when its renderer never reads it.
 
 The rule:
 
@@ -200,17 +201,16 @@ champion is never unseated, a workspace that never ran noise-floor calibration �
 needs that third verdict. Reporting the reassuring value in its place is worse
 than reporting nothing, because a reader takes it for an answer.
 
-**A gap this chapter records rather than closes.** Nothing in the workspace
-persists the number of rounds since the last promotion. Every surface that wants
-that number re-derives it from whatever it happens to hold — the promoted spine,
-the experiment list, the tournament rows — and each invents its own degradation
-when the derivation runs short. `optimization_trajectory` reports
-`plateaued=False` because the promoted spine is too short to plateau, and the
-dashboard's verdict gates on a measured noise floor that opt-in calibration may
-never have produced. Those two symptoms come from one missing field. Persisting
-the counter once, at the point a round settles, would make the whole class
-unrepresentable instead of patched per surface. That counter changes the epoch
-record's shape, which makes it a design change rather than a rendering fix.
+**A known gap.** Nothing in the workspace persists the number of rounds since
+the last promotion. Every surface that wants that number re-derives it from
+whatever it holds — the promoted spine, the experiment list, the tournament
+rows — and each handles a short derivation its own way.
+`optimization_trajectory` (`tournament/detail.py`) returns `plateaued` together
+with `plateau_measurable`, so that a spine too short to plateau reads as
+unmeasured rather than as improving. Persisting the counter once, at the point
+a round settles, would let every surface read one value. That counter changes
+the epoch record's shape, which makes it a design change rather than a
+rendering fix.
 
 **Traps.**
 
@@ -317,9 +317,10 @@ uv run ruff check src/zicato/patterns/ && uv run mypy src/zicato/patterns/
 ```
 
 **Definition of done.** The detector emits a stable-id `Pattern` on the failure
-condition, is registered in `ALL_DETECTORS` (or via `register_detector`), any new
-identity key is banded under restrict (proven by a test), and the two oracles
-pass.
+condition, is registered in `ALL_DETECTORS` (or via `register_detector`), its
+restricted feedback fields are declared in `proposer/pattern_feedback.py`, a
+test proves that a restricted request carries no identities, and the two
+oracles pass.
 
 ---
 
@@ -355,32 +356,32 @@ colon) whose weighted mean folds into the generation scalar.
    into the scalar. You usually do NOT edit `builtins.py` at all: adding a
    namespace changes data and weights rather than a seam.
 3. **Understand the scalar composition.** The generation scalar is
-   `builtin_scalar` building a `scalar_components` dict (`drift`, `pass`, each
-   namespace, `diff_complexity`) and summing it. **Term order in that dict is
-   load-bearing** — `tests/test_scoring_seams.py` pins the byte-identity of the
-   scalar, and reordering the sum changes float rounding:
+   `builtin_scalar` building a `scalar_components` dict (`pass`, then every
+   namespace in sorted order, `drift:` included, then `diff_complexity`) and
+   summing it with `math.fsum`. `aggregate_generation_score`
+   (`tournament/scoring.py`) carries the same composition, and
+   `tests/test_scoring_seams.py` pins both byte for byte against one reference
+   computation:
 
    ```python
    # src/zicato/scoring/builtins.py — builtin_scalar (the composition)
-       scalar_components: dict[str, float] = {
-           "drift": drift_component,
-           "pass": pass_component,
-       }
-       for ns, value in namespace_aggregates.items():
-           if ns == "drift:":
-               continue
+       pass_component = weights.pass_weight * (1.0 - mean_score)
+       scalar_components: dict[str, float] = {"pass": pass_component}
+       for ns in sorted(namespace_aggregates):
            component_name = ns[:-1] if ns.endswith(":") else ns
-           scalar_components[component_name] = value
+           scalar_components[component_name] = namespace_aggregates[ns]
        ...
-       return sum(scalar_components.values())
+       return math.fsum(scalar_components.values())
    ```
 
    A namespace folds in via that loop — no edit to `builtin_scalar` needed; the
    `diff_complexity` term is appended LAST and only when opted in, so at its
    default the scalar is byte-identical to the same sum without that term.
+   Two namespaces whose names differ only by the trailing colon collapse to one
+   component, so choose a prefix no existing namespace shares.
 4. **Monotonicity, if wanted.** To make the gate refuse a promotion that
    regresses your namespace, add your key to `ScoringWeights.namespace_monotonicity`
-   (a `{namespace: bool}` map). `tournament/gate.py::_regressed_namespaces`
+   (a `{namespace: bool}` map). `tournament/gate.py::regressed_namespaces`
    consumes it. See 04-evaluation-statistics.md §2 for the
    monotonicity scope semantics.
 5. **Contract editing and identity.** The typed operation
@@ -395,10 +396,13 @@ colon) whose weighted mean folds into the generation scalar.
 
 **Traps.**
 
-- ⚠️ **Reordering `scalar_components` breaks the byte-identity golden.** The sum
-  is order-sensitive at float precision; `test_scoring_seams.py` is the pin. Add
-  your term where the composition naturally places it and do not reorder the
-  existing terms.
+- ⚠️ **The scalar composition has two homes.** `builtin_scalar` and
+  `aggregate_generation_score` must stay byte-identical, and the sorted
+  namespace loop with `math.fsum` is what keeps the result independent of
+  insertion order and interpreter version. A term summed with the builtin
+  `sum` or a running float, or added to only one home, moves the parity
+  goldens; `test_scoring_seams.py` is the pin (04-evaluation-statistics.md
+  §1.2).
 - **Scalar equality does not establish configuration identity.** A zero-weighted
   namespace may leave the scalar unchanged while adding a key to the effective
   configuration. All configured values enter the hash; verify the changed
@@ -437,7 +441,7 @@ built-in kinds (`expected_text`, `regex`, `json_schema`, `predicate`, `rubric`).
 |---|---|---|
 | `src/zicato/core/board.py` | `ExpectationKind` | the wire token |
 | `src/zicato/board/matchers.py` | `_eval_<name>`, `evaluate_expectation` | the matcher + dispatch |
-| `src/zicato/board/predicates.py` (or `rubric.py`) | authoring factory | the operator-facing constructor |
+| `src/zicato/board/predicates.py` | a static method on `Predicate` or `Rubric` | the operator-facing constructor |
 | `tests/test_board_matchers.py` | test | pin it |
 
 **Steps.**
@@ -465,13 +469,14 @@ built-in kinds (`expected_text`, `regex`, `json_schema`, `predicate`, `rubric`).
    `aux_call_llm` like `_eval_rubric` does — and read the collusion warning
    below.
 3. **Add the dispatch arm.** `evaluate_expectation(expectation, result,
-   aux_call_llm=None)` coerces `ExpectationKind(expectation.kind)` and branches
+   aux_call_llm=None, aux_config=None)` coerces `ExpectationKind(expectation.kind)` and branches
    to one matcher; it raises `ValueError` on an unknown kind. Add
    `if kind is ExpectationKind.NUMERIC_RANGE: return _eval_<name>(...)` to the
    branch.
 4. **Add an authoring factory.** So operators can write the expectation, add a
-   constructor in `board/predicates.py` (or `rubric.py`) that compiles down to a
-   `core.Expectation` carrying your `kind` + its `spec` string. The board loader
+   static method to the `Predicate` (or `Rubric`) factory class in
+   `board/predicates.py` that returns a `core.Expectation` carrying your `kind`
+   + its `spec` string, as `Predicate.regex` does. The board loader
    then accepts the new wire token automatically (via the enum).
 5. **Test** in `tests/test_board_matchers.py`: one async test per branch — a
    passing case, a failing case, and (if scored) the score/metrics shape.
@@ -483,7 +488,14 @@ built-in kinds (`expected_text`, `regex`, `json_schema`, `predicate`, `rubric`).
   (`assert_distinct_callables`) exists so the thing being judged cannot also be
   the judge. If your matcher calls a model, it takes `aux_call_llm` (never the
   harness `call_llm`), in the same way `_eval_rubric` forwards to
-  `zicato.board.rubric.evaluate_rubric_judge`. See 03-contract-and-epochs.md §3.2.1 for the judge-collusion contract.
+  `zicato.board.rubric.evaluate_rubric_judge`. See the two-callable rule in
+  01-orientation.md §6 for the collusion contract.
+- ⚠️ **A new member invalidates older readers' caches.** Loss files store the
+  bare token, and a build that does not know it reads every affected unit as a
+  cache miss; on a budget-capped round the scheduler then overwrites the real
+  measurement with a synthetic skip. The `ExpectationKind` docstring states the
+  two acceptable paths: land a reserved member one release ahead, or decide
+  explicitly that rolling back past the change discards those units' evidence.
 - ⚠️ **An unknown kind must RAISE rather than fall through.**
   `evaluate_expectation` raising `ValueError` on an unrecognized token is the
   safety property — a
@@ -534,22 +546,24 @@ this recipe only when you need custom routing or a wire kind the maps lack.
    multiplier resolves through `_kind_multiplier(kind, weights)`:
 
    ```python
-   # src/zicato/telemetry/reducer.py — _kind_multiplier
-       is_custom, judge_name = split_judge_attributed_kind(kind)
-       if is_custom:
-           return weights.per_judge_weights.get(judge_name, weights.default_judge_weight)
+   # src/zicato/scoring/builtins.py — _kind_multiplier
        return weights.per_kind_weights.get(kind, 1.0)
    ```
 
    Stop here if a per-kind weight is all you need — the multiplier stacks
-   multiplicatively with the severity weight, so your kind's contribution becomes
+   multiplicatively with the severity weight, so your kind's contribution to
+   the `drift:` channel becomes
    `per_kind_weights[kind] × severity_weights[severity] × count`.
 2. **For a custom-judge consumer, route via `per_judge_weights`.** A
    custom-judge drift arrives as the kind `"custom:<judge_name>"` (built by
-   `_judge_attributed_kind`, split by `split_judge_attributed_kind`). Its loss is
-   surfaced by `compute_per_judge_loss(metric_counts, weights)`, weighted by
-   `per_judge_weights.get(name, default_judge_weight)`. To give a judge a
-   distinct weight, set `per_judge_weights["<judge_name>"]`.
+   `_judge_attributed_kind`, split by `split_judge_attributed_kind`). The
+   `drift:` channel excludes it (`is_judge_attributed_kind` in
+   `scoring/builtins.py`); its loss is surfaced by
+   `compute_per_judge_loss(metric_counts, weights)`, weighted by
+   `per_judge_weights.get(name, default_judge_weight)`, and scored in the
+   `judge:` channel. To give a judge a distinct weight, set
+   `per_judge_weights["<judge_name>"]`. `per_kind_weights["custom"]` is
+   rejected at contract load.
 3. **Only for a wire-int kind the maps lack** (goldfive added an integer the map
    does not know): add an entry to `_DRIFT_KIND_INT_TO_STR` in `reducer.py` AND
    append the member to the `DriftKind` mirror enum in `zicato.core.drift_kinds`,
@@ -568,12 +582,13 @@ this recipe only when you need custom routing or a wire kind the maps lack.
 
 **Traps.**
 
-- ⚠️ **The per-kind multiplier is duplicated on purpose.** `reducer.py` and
-  `scoring/builtins.py` each carry a `_kind_multiplier` — the builtins copy is
-  dependency-free because it runs on the per-generation scalar path. If you
-  change the multiplier's LOGIC (not just add a weight), change BOTH or the two seams
-  disagree. Adding a weight to `per_kind_weights` touches neither copy — that is
-  why zero-code weighting works.
+- ⚠️ **A judge-attributed kind must be charged in one channel only.**
+  `builtin_drift_loss` skips `custom` and `custom:<judge_name>` kinds because
+  `compute_per_judge_loss` charges them in the `judge:` channel. A drift
+  change that stops skipping them counts each judge event twice. The drift
+  formula lives once, in `scoring/builtins.py`, which has no dependency on the
+  reducer so the worker can import it; `compute_drift_loss` in the reducer
+  routes through it.
 - ⚠️ **A new wire-int kind added to only ONE of the two maps mis-normalizes.**
   The reducer's `_DRIFT_KIND_INT_TO_STR` and `core.drift_kinds` are a paired
   contract; a kind in one but not the other reads as `"custom"` (or raises) on
@@ -611,13 +626,13 @@ convergence oracle runs.
 | `.../predicates.py` | a new predicate fn | the check |
 | `.../board.jsonl` | a new entry | wire the predicate to a board unit |
 | `.../scoring.json` **and** `.../scoring.effective.json` | both oracles | keep both honest |
-| `.../mocks.py` | `_GAUNTLET_ROUNDS`, `_RACING_FIELD` | the deterministic proposer scripts |
-| `tests/test_convergence_known_answer.py` | `_expected_scalar`, `EXPECTED_*` | re-derive the floor |
+| `.../mocks.py` | `GAUNTLET_POLICIES`, `RACING_POLICIES` | the scripted per-candidate policies the stand-in proposer writes |
+| `tests/test_convergence_known_answer.py` | `BOARD_SIZE`, `_expected_scalar`, `EXPECTED_*` | re-derive the floor |
 
 **Steps.**
 
 1. **Add the defect token.** Append your token (e.g. `"passive-voice"`) to
-   `KNOWN_DEFECTS` in `harness.py`. The current set is
+   `KNOWN_DEFECTS` in `harness.py`. The shipped set is
    `("verbose-prose", "omit-summary", "skip-citations", "fabricate-metrics")`.
    The single mutation point is `STYLE_RULES` in `agent/policy.py` — a
    semicolon-separated token list; the proposer edits it by removing tokens.
@@ -636,11 +651,12 @@ convergence oracle runs.
 5. **Re-derive the known-answer floor.** The scalar is
    `tokens_remaining + (1 − passes/N)`, hand-computable. Adding an Nth entry
    changes the pass-fraction denominator, and each remaining token still
-   contributes +1.0 drift. Recompute `_expected_scalar` and the `EXPECTED_V0` /
-   `V1` / `V2` / `FLOOR` constants in `tests/test_convergence_known_answer.py`
-   (the current floor is `1.2`). Update the proposer scripts in `mocks.py`
-   (`_GAUNTLET_ROUNDS`, `_RACING_FIELD`) if your token changes the promote/reject
-   sequence.
+   contributes +1.0 drift. Update `BOARD_SIZE` and recompute the
+   `EXPECTED_V0` / `V1` / `V2` / `FLOOR` constants in
+   `tests/test_convergence_known_answer.py` (the shipped floor is `1.2`).
+   Update the scripted policies in `mocks.py` (`GAUNTLET_POLICIES`,
+   `RACING_POLICIES`) if your token changes the promote/reject sequence; each
+   policy is the absolute token list for one candidate.
 6. **Update BOTH oracles honestly.** `scoring.json` is the gauntlet oracle;
    `scoring.effective.json` is the racing oracle (evidence gate on, field 4).
    Both drive the same target — if your change alters the board or scoring, edit
@@ -656,11 +672,11 @@ convergence oracle runs.
   `scalar = tokens + (1 − passes/N)` and write down the arithmetic in the commit
   message — the way `RUN.md` narrates `v0=3.6 → v1=2.4 → v2=3.6(reject) →
   v3=1.2`.
-- ⚠️ **`mocks.py` callables must stay module-level.** The proposer/aux callables
-  are serialized as dotted paths and re-imported in the subprocess worker
-  (the module-level-callable rule, 01-orientation.md §4; 06-tournament-and-selection.md §6.3.1). A closure or a lambda
-  cannot cross the boundary — keep them
-  top-level functions and rewind counters via `reset`.
+- ⚠️ **`mocks.py` callables must stay module-level.** The `target_llm` and
+  `aux_llm` role callables are serialized as dotted paths and re-imported in
+  the subprocess worker (the module-level-callable rule, 01-orientation.md §4;
+  06-tournament-and-selection.md §6.3.1). A closure or a lambda cannot cross
+  the boundary — keep them top-level functions with no mutable state.
 - ⚠️ **The floor must remain a strict, hand-computable number.** The value of
   this target is that its answer is known exactly. If your token makes the
   outcome depend on noise, you have moved it out of the exact known-answer class
@@ -676,7 +692,7 @@ bash tools/parity.sh --only MOCK-GOLDEN                     # the deterministic 
 ```
 
 **Definition of done.** The new token drives its predicate, both oracles converge
-on the re-derived floor, `mocks.py` callables are module-level, the MOCK-GOLDEN
+on the re-derived floor, the `mocks.py` role callables are module-level, the MOCK-GOLDEN
 gate is green, and the convergence oracle passes with the new arithmetic
 documented in the commit.
 
@@ -729,7 +745,9 @@ is the contract pre-flight and the noise-floor calibration.
 | File | Symbol | Why |
 |---|---|---|
 | `src/zicato/epoch/<your_step>.py` | your measurement fn | the computation |
-| `src/zicato/orchestrator.py` | `_maybe_<your_step>` | the gated, best-effort, once-per-epoch call |
+| `src/zicato/evolve/round_prepare.py` | `_maybe_<your_step>` | the gated, best-effort, once-per-epoch call |
+| `src/zicato/evolve/round_entry.py` | `evolve_once` | call the step in the epoch-open sequence |
+| `src/zicato/query/loop_view.py` | `_EPOCH_OPEN_STEPS` | the phase label the dashboard shows |
 | `src/zicato/epoch/lifecycle.py` | `set_epoch_<field>`, `_config_to_dict`, `_config_from_dict` | persist the never-hashed field |
 | `tests/test_<your_step>.py` | test | pin "never rolls" |
 
@@ -737,7 +755,7 @@ is the contract pre-flight and the noise-floor calibration.
 
 1. **Write the measurement.** A pure-ish async function in `epoch/` that computes
    the datum from the champion snapshot + board (never mutating real lineage —
-   the pre-flight degrades the FIRST mutation point in an ephemeral
+   the pre-flight degrades each sampled mutation point in its own ephemeral
    `TemporaryDirectory`). Return a JSON-able report. If it draws replicates, use
    an explicit measurement purpose and a distinct local draw number for each independent sample. Pass the `MeasurementDraw` through runner arguments and task context, and preserve its seed in artifact paths. See 01-orientation.md §4, G7.
 2. **Add the additive, never-hashed epoch field.** In `lifecycle.py`, add a
@@ -757,7 +775,8 @@ is the contract pre-flight and the noise-floor calibration.
    `_maybe_calibrate_noise_floor`, wrapped in `best_effort(...)`. Gate on a
    `config.json` knob (e.g. `workspace_config.get("<your_step>")`); return early
    if unset, malformed, or if the epoch field is ALREADY set (fire exactly once
-   per epoch). Call it from `evolve_once`'s epoch-open sequence.
+   per epoch). Call it from `evolve_once`'s epoch-open sequence
+   (`src/zicato/evolve/round_entry.py`).
 4. **Stamp a phase while it runs.** An epoch-open step runs inside the round but
    ahead of propose→apply→run→gate, so the round's phase would stand over it —
    the shape a wedged round has. Take the `beater` and `round_index`, `_beat` your
@@ -775,10 +794,10 @@ is the contract pre-flight and the noise-floor calibration.
 **Traps.**
 
 - ⚠️ **The persisted field must NEVER be a contract input, or every epoch rolls.**
-  `contract_hash` is computed only in `new_epoch` from `ContractInputs`
-  (`board`, `brief`, `scoring`, `evaluator_revision`, `adapter`,
-  `mutable_trees`, `proposer`) —
-  your field is NOT among them. Add it as an *additive* config field written by
+  An epoch's `contract_hash` is fixed when `new_epoch` opens it, from
+  `ContractInputs` through `compute_contract_hash`, whose components are
+  `board`, `brief`, `scoring`, `evaluator_revision`, `adapter`,
+  `mutable_trees`, and `proposer` — your field is NOT among them. Add it as an *additive* config field written by
   `set_epoch_<field>`, and pin the hash-unchanged assertion. If your datum ever
   DOES belong in the hash, it is not an epoch-open measurement — it is a contract
   component, and it rolls the epoch (03-contract-and-epochs.md §3.7).
@@ -786,7 +805,7 @@ is the contract pre-flight and the noise-floor calibration.
   is unset before measuring, so a resumed or re-entered epoch does not re-measure
   (and re-spend the budget). Wrap it in `best_effort`: a measurement failure must
   never fail the round, the same discipline as the best-effort-round-log rule
-  (07-runtime-and-durability.md, invariant `D11`).
+  (07-runtime-and-durability.md §7.10.5, invariant `D11`).
 - ⚠️ **Persist measurements under the contract they evaluated.** An epoch-open
   measurement uses the selected epoch's champion and frozen inputs. A result
   computed from another candidate contract cannot populate that epoch's record.
@@ -815,14 +834,14 @@ pipeline only.
 
 **Files touched.**
 
-| Seam | Owns | RoundLog duty |
-|---|---|---|
-| `_propose_child` | builds the single `ProposerContext` both pipelines share; calls `proposer_agent.propose`; stamps `round_index` | emits `proposal_attempted`, `experiment_minted`, `patches_applied` (via `round_emitter`) |
-| field-settlement receipt replay | the recoverable write pipeline for resolved tournaments (outcomes + lineage + champion marker + journals + bracket + one reported derived-index refresh) | emits nothing; the caller emits `decision_recorded` / `round_closed` |
-| `_finalize_generation` | the direct outcome pipeline for terminal paths that never enter a tournament | emits nothing; the caller emits `decision_recorded` / `round_closed` |
-| `_round_epilogue` | the shared end-of-round tail (health assessment + decision analyzer + report regen) | no direct emission |
-| `_mint_challenger_field` | PURE — the field-diversity accept/soft-reject decision (`_FieldMintDecision`) | none (I/O-free) |
-| `_apply_field_overrides` | PURE — re-resolves field crowning under operator overrides | none (provenance goes to the field record) |
+| Seam | Module | Owns | RoundLog duty |
+|---|---|---|---|
+| `_propose_child` | `evolve/propose_apply.py` | builds the single `ProposerContext` both pipelines share; calls `proposer_agent.propose`; stamps `round_index` | emits `proposal_attempted`, `proposal_episode_settled`, `experiment_minted`, `patches_applied` (via `round_emitter`) |
+| field-settlement receipt replay (`commit_field_settlement`, `replay_field_settlement`) | `evolve/settlement_recovery.py` | the recoverable write pipeline for resolved tournaments (outcomes + lineage + champion marker + journals + bracket + one reported derived-index refresh) | emits nothing; the caller emits `decision_recorded` / `round_closed` |
+| `_finalize_generation` | `evolve/persist.py` | the direct outcome pipeline for terminal paths that never enter a tournament | emits nothing; the caller emits `decision_recorded` / `round_closed` |
+| `_round_epilogue` | `evolve/persist.py` | the shared end-of-round tail (health assessment + decision analyzer + report regen) | no direct emission |
+| `_mint_challenger_field` | `evolve/propose_apply.py` | PURE — the field-diversity accept/soft-reject decision (`_FieldMintDecision`) | none (I/O-free) |
+| `_apply_field_overrides` | `evolve/gate.py` | PURE — re-resolves field crowning under operator overrides | none (provenance goes to the field record) |
 
 **Steps.**
 
@@ -849,15 +868,15 @@ pipeline only.
    `_propose_child` emits the propose events; the DECISION site (the caller of
    `_finalize_generation`, e.g. `_persist_rejected_round`) emits
    `decision_recorded` / `round_closed`. Emission is best-effort (the
-   best-effort-round-log rule — 07-runtime-and-durability.md §7.10.4, invariant
+   best-effort-round-log rule — 07-runtime-and-durability.md §7.10.5, invariant
    `D11`): compute the payload OUTSIDE any `getattr` chain that could throw, and
    never let emission fail the round.
 5. **Keep the pure seams pure.** `_mint_challenger_field` and
    `_apply_field_overrides` return decisions (`_FieldMintDecision`, a tuple) and
    do NO I/O — that is what makes them unit-testable without a workspace. If your
    change needs to WRITE, it belongs in the caller rather than in the pure seam.
-6. **Test at the seam.** `tests/test_orchestrator_decomposition.py` monkeypatch-
-   calls the pure seams by name; add your case there. For the I/O seams, the two
+6. **Test at the seam.** `tests/test_orchestrator_decomposition.py` calls the
+   pure seams directly; add your case there. For the I/O seams, the two
    oracles exercise the full loop — a seam regression turns one of them red.
 
 **Traps.**
@@ -873,7 +892,8 @@ pipeline only.
   callable so the test exercises the real call path.
 - ⚠️ **RoundLog emission must never raise.** A round is authoritative in the
   canonical stores; the RoundLog is a durable trace, emitted best-effort (the
-  best-effort-round-log rule — 07-runtime-and-durability.md, invariant `D11`). A
+  best-effort-round-log rule — 07-runtime-and-durability.md §7.10.5, invariant
+  `D11`). A
   `getattr` in the payload that throws would fail the round
   through the emit path — mirror the defensive payload shapes already in place.
 
@@ -942,7 +962,7 @@ golden under `tools/parity/golden/` (only after you have justified the update).
    | `CONTRACT-HASH` | the epoch contract hash (+ per-component hashes) | a contract component (board / brief / scoring / evaluator revision / adapter / mutable trees / proposer) — the hash SHOULD move |
    | `CLI-HELP` | `zicato --help` + every subcommand `--help` | a command, flag, default, or help string |
    | `REINDEX-DUMP` | the SQLite index rebuilt from a fixture workspace | the index schema or an ingest projection |
-   | `MOCK-GOLDEN…` | a deterministic no-live-LLM mock evolve, one gate per (structure, mode, round count) lane | the loop's decision path, event ordering, or scoring — the gate name says which configuration moved |
+   | `MOCK-GOLDEN` | eight deterministic no-live-model mock evolve configurations (structure, mode, round count) in one pytest session, one golden file each | the loop's decision path, event ordering, or scoring — the failing pytest case names which configuration moved |
    | `MYPY` | successful type-checker completion | types or checker execution; fix the failure before proceeding |
    | `PYTEST` | the full suite | anything |
 
@@ -957,8 +977,8 @@ golden under `tools/parity/golden/` (only after you have justified the update).
    by `tools/parity/lib/normalize.py`) so only real content diffs. Re-capture:
 
    ```bash
-   ZICATO_PARITY_UPDATE=1 bash tools/parity.sh --only <GATE>   # re-capture that golden
-   git diff tools/parity/golden/                                # READ the diff before staging
+   bash tools/parity.sh --update --only <GATE>   # re-capture that golden
+   git diff tools/parity/golden/                  # READ the diff before staging
    ```
 
    Read the diff and confirm every changed line is a change you intended. Stage
@@ -967,13 +987,13 @@ golden under `tools/parity/golden/` (only after you have justified the update).
    surface you did not mean to change, the golden is right and your code is
    wrong. Revert the leak; do not re-capture to make it pass.
 5. **For `CLI-HELP`, also reconcile `CLI.md`.** A legitimate CLI change updates
-   both the help golden AND the hand-reconciled `docs/design/CLI.md`
+   both the generated help golden AND the hand-authored `docs/design/CLI.md`
    (10-cli-and-configuration.md §10.9).
 
 **Traps.**
 
 - ⚠️ **Re-capturing a golden you did not read is how a regression ships green.**
-  `ZICATO_PARITY_UPDATE=1` makes ANY red go green — that is the danger. Always
+  `--update` makes ANY red go green — that is the danger. Always
   `git diff tools/parity/golden/` and confirm each line. A blind re-capture
   converts a caught regression into a committed one.
 - **A failed `MYPY` gate requires successful type checking.** Inspect both
@@ -1013,10 +1033,10 @@ leaves its `tmp_path` workspace; a live run leaves `.zicato/`.)
 |---|---|---|
 | Round log | `epochs/{epoch}/rounds/{round}/round_log.jsonl` | the decision trail (typed events, gap-free `seq`) |
 | Measurement loss | `epochs/{epoch}/generations/{gen}/runs/{entry}/seed-{seed}/loss.{purpose}.r{draw}.json` | one board unit’s loss and measurement identity; a null seed uses `seed-none` |
-| Heartbeat | `.zicato/runtime/heartbeat.json` | the live PHASE (`proposing` / `screening:r{n}` / `tournament:…` / `holdout` / `gate`) |
-| Active runs | `.zicato/runtime/active_runs/{run_id}.json` | in-flight runs; one present-but-unsettled = a worker that never returned |
+| Heartbeat | `runtime/heartbeat.json` | the live PHASE (`proposing:round_{n}:{next_id}` / `applying:…` / `screening:r{n}` / `tournament:…`) |
+| Active runs | `runtime/active_runs/{run_id}.json` | in-flight runs; one present-but-unsettled = a worker that never returned |
 | Worker args | a temp file (`python -m zicato._tournament_worker <args-file>`) | the worker spec + `configuration` (ephemeral — cleaned in a `finally`) |
-| Journal + lineage | `epochs/{epoch}/journal…`, `lineage.json` | the journal contains only resolved experiments; lineage also contains applied, unresolved generations as `promoted=null` nodes (invariant `D8`) |
+| Experiments + lineage | `epochs/{epoch}/generations/{gen}/experiment.json`, `epochs/{epoch}/rounds/{round}/field_settlement.json`, `lineage.json` | the proposal file carries the hypothesis and patch references; a committed round's settlement records every candidate's outcome, and the experiment reader combines the two (the journal is rendered from the result); lineage also contains applied, unresolved generations as `promoted=null` nodes (invariant `D8`) |
 | Health report | `epochs/{epoch}/health/round_{N}.json` | the per-round `LoopHealth` findings |
 
 **Steps.**
@@ -1026,18 +1046,21 @@ leaves its `tmp_path` workspace; a live run leaves `.zicato/`.)
    by `round_log_path`). It is an append-only JSONL of typed events with a
    gap-free `seq`; fold it with `zicato.epoch.round_log.fold_round_record`. The
    event vocabulary (`EVENT_TYPES`): `RoundOpened`, `ProposalAttempted`,
-   `CandidateSampled`, `CandidateScreened`, `CritiqueSelected`,
-   `ExperimentMinted`, `PatchesApplied`, `ValidationFailed`, `UnitCompleted`,
-   `GateEvaluated`, `HoldoutReleased`, `EvidenceReplicated`, `DecisionRecorded`,
-   `RoundClosed`. A round that never reached `DecisionRecorded` tells you where
-   it stalled.
+   `ProposalEpisodeSettled`, `CandidateSampled`, `CandidateScreened`,
+   `CritiqueSelected`, `ExperimentMinted`, `PatchesApplied`, `HarnessLoaded`,
+   `ValidationFailed`, `UnitCompleted`, `GateEvaluated`, `HoldoutReleased`,
+   `EvidenceReplicated`, `DecisionRecorded`, `FrontierUpdated`, `RoundClosed`.
+   A round that never reached `DecisionRecorded` tells you where it stalled.
 2. **Read the measurement loss files.** Each entry’s run directory contains `seed-{seed}/loss.{purpose}.r{draw}.json`, with `seed-none` for a null seed. Verify that the recorded purpose, draw, and base seed agree with the path. Trace a wrong scalar to the measurements selected by the relevant score aggregation.
-3. **Read the heartbeat for the phase it died in.** `.zicato/runtime/heartbeat.json`
-   carries the live phase string — `proposing`,
-   `proposing:round_{n}:{next_id}`, `screening:r{n}`,
-   `tournament:round_{n}:{matchup_id}`, `holdout`, `gate`. A hang's heartbeat
-   phase names the step that wedged.
-4. **Read `active_runs/` for in-flight runs.** `.zicato/runtime/active_runs/{run_id}.json`
+3. **Read the heartbeat for the phase it died in.** `runtime/heartbeat.json`
+   carries the live phase string — `evolve_once:round_{n}`, the epoch-open
+   steps `evolve_once:calibrating_noise_floor:{done}/{total}` and
+   `evolve_once:contract_preflight:{done}/{total}`,
+   `proposing:round_{n}:{next_id}`, `applying:round_{n}:{next_id}`,
+   `screening:r{n}`, `tournament:round_{n}:{matchup_id}`,
+   `infra_backoff:round_{n}:{delay}s`, and `done:round_{n}:…`. A hang's
+   heartbeat phase names the step that wedged.
+4. **Read `active_runs/` for in-flight runs.** `runtime/active_runs/{run_id}.json`
    records each per-run state; a run present here but never settled is a worker
    that did not return.
 5. **Inspect the worker args file for the spawn.** The runner spawns `python -m
@@ -1045,9 +1068,11 @@ leaves its `tmp_path` workspace; a live run leaves `.zicato/`.)
    and the `configuration` (10-cli-and-configuration.md §10.10). It is a TEMP file cleaned up in a `finally`, so
    capture it during a hang (or from a crash that skipped cleanup) — it records
    what the worker was told to run.
-6. **Cross-check the journal + lineage.** The journal records only resolved
-   experiments. `lineage.json` additionally records applied, unresolved
-   challengers with `promoted=null` (07-runtime-and-durability.md, invariant
+6. **Cross-check the experiments + lineage.** The experiment reader combines
+   each generation's `experiment.json` with the committed round's
+   `field_settlement.json`, and the journal is rendered from the result
+   (`zicato.epoch.journal.read_journal`). `lineage.json` additionally records applied, unresolved challengers with
+   `promoted=null` (07-runtime-and-durability.md, invariant
    `D8`). A pending lineage node with no settlement receipt belongs to an
    interrupted tournament; resume either continues the supported
    single-challenger case or discards the whole unrecorded field. Source that
@@ -1058,8 +1083,8 @@ leaves its `tmp_path` workspace; a live run leaves `.zicato/`.)
 
 - ⚠️ **An absent round-log event does NOT mean the step did not happen.** RoundLog
   emission is best-effort (the best-effort-round-log rule —
-  07-runtime-and-durability.md §7.10.4, invariant `D11`) — the canonical stores
-  (measurement loss files, the journal, lineage)
+  07-runtime-and-durability.md §7.10.5, invariant `D11`) — the canonical stores
+  (measurement loss files, experiment records, lineage)
   stay authoritative. Corroborate a missing event against the canonical files
   before concluding the step was skipped.
 - ⚠️ **Read the requested measurement identity.** Purpose, local draw, and seed select a loss file. Copying another measurement into that path corrupts its provenance (12-bug-casebook.md §"Case 1"). Check that modified-source preflight and screening results are excluded when investigating a generation’s own-source evidence.
@@ -1127,8 +1152,10 @@ documented act with a stated reason.
    Never widen a bound just to make a flaky-looking test pass (see Traps).
 5. **Re-run the whole power file AND the convergence oracle.** Your change must
    leave EVERY other pinned number standing. If a second number moved, the commit
-   message must say exactly which and why that is honest — the `eb55266` commit
-   (updating "budget 48 → confirmed" expectations) is the model.
+   message must say exactly which and why that is honest. The message of commit
+   `eb55266` (the evidence-gate fix, 12-bug-casebook.md §"Case 8") is the model:
+   it states which pinned A/A and power numbers stayed unchanged and why, and
+   what the rewritten end-to-end test does and does not prove.
 6. **Document the move in the commit message.** Name the old number, the new
    number, the measured rates, and the reason. A pinned-number change with no
    justification is indistinguishable from a silently-widened bound.
@@ -1196,10 +1223,11 @@ task. Skills are the operator-facing counterpart to this guide's recipes.
    `zicato-evolve` ends with `ENFORCES the live-run gate`. That trailing invariant
    is what lets an agent pick the right skill and obey its guardrail.
 3. **Write the body.** After the frontmatter: an H1 title, prose instructions,
-   tables of keys/flags, code blocks, and a closing `## Reference` list linking
-   the relevant `docs/design/*.md` and sibling skills. Copy the structure of
-   `skills/zicato-tune-scoring/SKILL.md` (248 lines) or the shorter
-   `skills/zicato-evolve/SKILL.md` (127 lines).
+   tables of keys/flags, code blocks, and links to the relevant
+   `docs/design/*.md` and sibling skills (`zicato-evolve` gathers them in a
+   closing `## Reference` list). Copy the structure of
+   `skills/zicato-tune-scoring/SKILL.md` or the shorter
+   `skills/zicato-evolve/SKILL.md`.
 4. **Add the catalog row.** In `skills/README.md`, add a
    `| zicato-<verb-noun> | What it does |` row under the correct Tier table (Tier
    0 Foundations … Tier 6 Strategy).
@@ -1233,7 +1261,7 @@ grep -rilE "$pat" skills/zicato-<verb-noun>/           # must print nothing
 
 **Definition of done.** The skill directory holds a `SKILL.md` whose `name`
 matches the directory and whose one-line `description` states what/when/invariant,
-the body ends with a `## Reference` block, the catalog row is in `skills/README.md`,
+the body links its design docs and sibling skills, the catalog row is in `skills/README.md`,
 and nothing references a model vendor.
 
 ---
@@ -1255,7 +1283,7 @@ Each recipe's owning chapter carries the theory the recipe applies:
 - 01-orientation.md §4, G7 — measurement purposes, local draw numbers, seeds, and artifact separation for Recipes 8 and 13.
 - 07-runtime-and-durability.md §7.1 the files-canonical rule (invariant `D1`)
   and §7.11 supported record formats (invariant `D12`) — Recipe 7;
-  §7.10.4 the best-effort-round-log rule (invariant `D11`) — Recipes 9 and 12;
+  §7.10.5 the best-effort-round-log rule (invariant `D11`) — Recipes 9 and 12;
   §7.10 the durable round log — Recipe 12.
 - 04-evaluation-statistics.md §1.9 (the loop-health detectors over the
   measurement chain) — the layer Recipe 1's detector joins.

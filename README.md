@@ -61,7 +61,8 @@ zicato epoch close --workspace .zicato
 ```
 
 `evolve` prints the dashboard's URL as it starts, and one record per round when
-it finishes. The three rounds converge:
+it finishes. The three rounds converge (records abridged to the fields that
+matter here):
 
 ```json
 [{"parent_generation_id": "v0", "proposed_generation_id": "v1",
@@ -96,7 +97,7 @@ Every file the scaffold wrote is a template. In the order they matter:
 The example's proposer is a script in `example_wiring/proposer.py`, bound
 through `runtime.proposer_agent`. A project that wants zicato's own proposer
 declares a `proposer` block naming a Foe binary instead —
-[`PROPOSER.md`](docs/design/PROPOSER.md) covers both doors.
+[`PROPOSER.md`](docs/design/PROPOSER.md) covers both.
 
 For wiring your own system under test rather than editing the example, the
 `zicato-bootstrap` skill ([`skills/zicato-bootstrap/SKILL.md`](skills/zicato-bootstrap/SKILL.md))
@@ -128,20 +129,20 @@ rewrite the harness".
 ## Status
 
 Alpha. Design and surface are under active iteration — the public API will
-break. The first reference adapter targets Google ADK. The design is
-**framework-agnostic at its core**:
+break. The design is **framework-agnostic at its core**:
 the `HarnessAdapter` protocol asks only for `load`, `mutable_subpaths`, and
 `mutation_points`, and the loaded harness only for
 `run(entry, sinks, config) -> RunResult` — nothing in it mentions agents. A
 workspace declares a non-ADK harness with `adapter.kind = "import"`, which
-imports an operator-supplied `module:callable` factory. Shipped concrete
-adapters are ADK-only so far; LangChain and plain-callable adapters land
-after it.
+imports an operator-supplied `module:callable` factory. The one built-in
+concrete adapter is the Google ADK adapter (`adapter.kind = "adk"`); every
+other system under test goes through `kind = "import"`.
 
-The worked example is `examples/zicato_examples/target_0_convergence`: a
-deterministic policy adapter with **no LLM anywhere**, whose mutable surface
-is a module-level string constant, driven through `kind = "import"`. The
-whole loop — propose, apply, run, reduce, gate — runs against it in CI.
+Two worked examples use no LLM anywhere: the project `zicato init --example`
+writes, and `examples/zicato_examples/target_0_convergence`. Each is a
+deterministic policy adapter whose mutable surface is a module-level string
+constant, driven through `kind = "import"`. The loop — propose, apply, run,
+reduce, gate — runs against both in CI.
 
 **Goldfive is an optional integration.** `pip install zicato[goldfive]`
 installs its event runtime for any harness adapter that declares the
@@ -178,9 +179,13 @@ in-run judges.
 
 ## Model-agnostic
 
-zicato calls LLMs only through a narrow `call_llm(system, user, model) -> str`
-callable supplied by the caller. No vendor SDK is imported by the library
-itself; bring whatever model you want.
+zicato makes its own model requests (judges, the user emulator, the closing
+analysis) through a narrow async `call_llm(system, user, model) -> str`
+callable. A `config.json` engine names that callable by dotted path, or names
+a model string that the optional `adk` extra resolves through ADK. The core
+library imports no model-vendor SDK; bring whatever model you want. The
+proposer runs as its own process, configured by the `proposer` block
+([`PROPOSER.md`](docs/design/PROPOSER.md)).
 
 ## How the hidden holdout protects promotion
 
@@ -238,26 +243,26 @@ The full design lives under [`docs/design/`](docs/design/). Read
 - [`docs/design/ARCHITECTURE.md`](docs/design/ARCHITECTURE.md) — top-level: what zicato is, the meta-loop diagram, every component, the cadence comparison against goldfive and harmonograf.
 - [`docs/design/MUTATION-SURFACE.md`](docs/design/MUTATION-SURFACE.md) — annotated mutation points: span, region, and file markers in Python and in any allowlisted text file, AST resolution, the `MutationPoint` shape, validator constraints, the `zicato inspect mutations` audit CLI.
 - [`docs/design/BOARD-FORMAT.md`](docs/design/BOARD-FORMAT.md) — JSONL board entry schema: common fields, the three entry kinds (single-turn, multi-turn scripted, multi-turn emulated), the five expectation kinds.
-- [`docs/design/EPOCHS-AND-JOURNALING.md`](docs/design/EPOCHS-AND-JOURNALING.md) — epoch lifecycle, the `Experiment` artifact (hypothesis + patches + outcome), `journal.md` and the closing analysis pass, cross-epoch lineage.
+- [`docs/design/EPOCHS-AND-JOURNALING.md`](docs/design/EPOCHS-AND-JOURNALING.md) — epoch lifecycle, the `Experiment` artifact (hypothesis + patches + outcome), the journal rendered from experiment records, the closing analysis pass, cross-epoch lineage.
 - [`docs/design/TELEMETRY.md`](docs/design/TELEMETRY.md) — capturing goldfive's `goldfive.v1.Event` stream via its `JSONLPersistenceSink`, the post-run reducer, the `LossProfile` shape, the emulator's `zicato:emulator` audit lane.
 - [`docs/design/SCORING.md`](docs/design/SCORING.md) — the weighted drift-loss formula, the pass-rate side, the tournament promotion gate (margin on drift + strict monotonicity on pass-rate), fast mode.
 - [`docs/design/GOLDFIVE-CONFIG.md`](docs/design/GOLDFIVE-CONFIG.md) — how an adapter opts into Goldfive, how Zicato delegates schema and runtime construction to Goldfive, and how named credential variables cross the worker boundary without entering contract files.
 - [`docs/design/OVERFITTING.md`](docs/design/OVERFITTING.md) — why repeated adaptive evaluation overfits a fixed board, how the train/holdout split works, what one holdout query means, and how the Ladder query budget limits feedback from the hidden slice.
-- [`docs/design/TOURNAMENT.md`](docs/design/TOURNAMENT.md) — the competition model: the king-of-the-hill gauntlet (champion vs successive challengers), the dashboard Tournament view (bracket + per-matchup detail), the tournament-detail analytics (verdict transparency, per-entry A/B grid, hypothesis ledger, optimization trajectory, mutation heat map, cost), and the harmonograf split — execution view vs competition view.
-- [`docs/design/SELECTION.md`](docs/design/SELECTION.md) — the decision theory under the tournament: how reinforcement-learning gating, racing, and bracket schedulers make the champion-versus-challenger decision; why zicato's gauntlet is a degenerate elitist iterated race; why brackets (single and double elimination, Swiss) are the wrong primitive here; and the ordered path to replication-based racing (a paired significance gate, winner's-curse confirmation, a trust-region step bound). Diagrams and cited sources.
+- [`docs/design/TOURNAMENT.md`](docs/design/TOURNAMENT.md) — the competition model: the king-of-the-hill gauntlet (champion vs successive challengers) and its place among the configurable structures, the dashboard Tournament view (bracket + per-matchup detail), the tournament-detail analytics (verdict transparency, per-entry A/B grid, hypothesis ledger, optimization trajectory, mutation heat map, cost), and the harmonograf split — execution view vs competition view.
+- [`docs/design/SELECTION.md`](docs/design/SELECTION.md) — the decision theory under the tournament: how reinforcement-learning gating, racing, and bracket schedulers make the champion-versus-challenger decision; why racing is the default structure and the gauntlet a degenerate elitist iterated race; why brackets (single and double elimination, Swiss) are the wrong primitive here and sit behind an experimental opt-in; and the replication, evidence-gate, and holdout-confirmation machinery around every crowning. Diagrams and cited sources.
 - [`docs/design/EMULATOR.md`](docs/design/EMULATOR.md) — the multi-turn user emulator: the two-callable rule (hard error on identity match), sealed context construction, answer-leak heuristic, audit-trail spans.
 - [`docs/design/DOGFOOD-TARGETS.md`](docs/design/DOGFOOD-TARGETS.md) — the three targets zicato is aimed at in order (a presentation agent, then goldfive's steering layer, then zicato itself) and the design commitments each one forces before it can be attempted.
 - [`docs/design/RUNTIME.md`](docs/design/RUNTIME.md) — `.zicato/runtime/` state file layout, the two processes `zicato evolve` auto-spawns (a Rust watchdog supervisor on :7920 and a separate Python dashboard service on :7892), heartbeat protocol, signal escalation, single-writer concurrency model.
 - [`docs/design/DASHBOARD.md`](docs/design/DASHBOARD.md) — the live browser console: epoch and tournament views, execution traces, read-only contract and model settings, appearance controls, HTTP and event-stream APIs, and operator run controls.
 - [`docs/design/CONVERSATION-EXECUTION.md`](docs/design/CONVERSATION-EXECUTION.md) — the inline execution outline beneath conversation turns: explicit agent branches, turn-scoped tool observations, fidelity rules, live digest behavior, and the boundary with the full Harmonograf trace.
-- [`docs/design/PROPOSER.md`](docs/design/PROPOSER.md) — the proposer as a first-class contract input: the default tool-using ADK agent (skill-composed is the explicit opt-in), the read-only proposer tool registry, the board-anonymized train-slice-only failure-mode feedback channel (`outcome_summarizer_spec`), and why a proposer/skills change rolls the epoch.
+- [`docs/design/PROPOSER.md`](docs/design/PROPOSER.md) — the proposer as an evaluation-contract input: the Foe proposal runtime declared by the `proposer` block (one episode per candidate), the `runtime.proposer_agent` binding for an operator's own class, the proposer directory's skills, and why a proposer change rolls the epoch.
 - [`docs/design/ROBUSTNESS.md`](docs/design/ROBUSTNESS.md) — the six-layer defense model (per-call timeouts → structured cancellation → the subprocess worker boundary → the orchestrator watchdog → the consecutive-bad circuit breaker → atomic writes plus resume markers), what each layer catches, failure-mode tables, and the GIL discussion that makes subprocess isolation load-bearing.
 - [`docs/design/LOOP-HEALTH.md`](docs/design/LOOP-HEALTH.md) — loop-health diagnostics: detecting a running-but-meaningless loop (a degenerate, toothless evaluation), the five detectors and severities, the `LoopHealth` report, the `zicato health` CLI, and how the orchestrator surfaces critical findings.
-- [`docs/design/STORAGE.md`](docs/design/STORAGE.md) — the pluggable `StorageBackend` (file and memory backends) and the `GenerationStore` protocol with both directory and git backends shipping; the directory-snapshot layout; the three-storage-concerns split; and the operator git CLI that remains on the roadmap (`zicato repo` / `log` / `diff` / `show` / `bisect` / `blame`, `workspace migrate-to-git`).
-- [`docs/design/ANALYTICAL-INDEX.md`](docs/design/ANALYTICAL-INDEX.md) — the `.zicato/index.db` SQLite analytical index: why cross-run views are queries rather than file walks, the files-canonical and index-derived discipline, `zicato repair index`, and the fourteen-table schema (`SCHEMA_VERSION` 14, including the visibility-rating `generations.elo*` columns).
+- [`docs/design/STORAGE.md`](docs/design/STORAGE.md) — the mechanism behind each kind of persisted data, the pluggable `StorageBackend` (file and memory backends), and the `GenerationStore` protocol with its git backend (the `zicato init` default) and directory-snapshot fallback. The private generation repository is read with ordinary Git commands; there is no `zicato repo` command family.
+- [`docs/design/ANALYTICAL-INDEX.md`](docs/design/ANALYTICAL-INDEX.md) — the `.zicato/index.db` SQLite analytical index: why cross-run views are queries rather than file walks, the files-canonical and index-derived discipline, `zicato repair index`, and the schema: thirteen tables plus the `schema_meta` version stamp (`SCHEMA_VERSION` 15, including the visibility-rating `generations.elo*` columns).
 - [`docs/design/CLI.md`](docs/design/CLI.md) — full CLI reference: every subcommand, every flag, exit codes, scripting hints.
 - [`docs/design/RATIONALE.md`](docs/design/RATIONALE.md) — the "why" behind every major decision: annotated mutation points, per-epoch contract, mandatory hypothesis, collusion-proof emulator, drift taxonomy as features.
-- [`docs/design/VOCABULARY.md`](docs/design/VOCABULARY.md) — glossary of load-bearing terms (epoch, generation, run, round, experiment, hypothesis, outcome, loss profile, pattern, tournament, lineage, rubric).
+- [`docs/design/VOCABULARY.md`](docs/design/VOCABULARY.md) — the alphabetical glossary: every term a user surface uses (epoch, generation, run, round, experiment, hypothesis, outcome, loss profile, pattern, tournament, lineage, rubric, and the rest), each with an instance and a link to the document that covers it.
 
 ## Brand
 

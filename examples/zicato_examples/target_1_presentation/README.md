@@ -5,7 +5,9 @@ web_developer, reviewer, debugger) taken into this repository and
 annotated with mutation markers, with a board, a proposer brief,
 predicates, and scoring weights beside it. Pointing `zicato evolve` at
 this directory runs the whole loop; [`RUN.md`](./RUN.md) gives the
-commands.
+commands. The agent tree runs on a real model (`ZICATO_TARGET_1_MODEL`),
+so a command-line run is a live run; the tests exercise the example with
+no model.
 
 The pieces:
 
@@ -15,36 +17,46 @@ The pieces:
 - Pass/fail predicates (`predicates.py`) the board entries reference by
   dotted path.
 - The proposer brief (`rubric.md`) the proposer reads each round.
-- Scoring weights (`scoring.json`) that hydrate into
-  `zicato.core.types.ScoringWeights`.
+- Scoring contracts (`scoring.json` and one per alternative tournament
+  structure) that load into `zicato.core.types.ScoringWeights`.
+- Deterministic model callables (`mocks.py`), process-judge factories
+  (`judges.py`), and scoring plugins (`scoring.py`).
 
 ## Directory layout
 
 ```
 target_1_presentation/
   README.md                 — this file
+  RUN.md                    — the end-to-end commands
   agent/
     __init__.py             — re-exports root_agent + build_agent_tree
     agent.py                — the agent tree, annotated with
                               # zicato:mutable markers
-  board.jsonl               — 7 board entries
+  board.jsonl               — 7 board entries behind a board_meta header
   rubric.md                 — the proposer brief
   predicates.py             — pass/fail predicates referenced by entries
-  scoring.json              — seed ScoringWeights (gauntlet, the default)
+  judges.py                 — deterministic process-judge factories
+  mocks.py                  — deterministic target and evaluation callables
+  scoring.py                — operator-owned scoring plugins a contract
+                              can reference by dotted path
+  scoring.json              — the gauntlet contract
   scoring.racing.json       — same weights + a racing tournament block
-                              (non-gauntlet structure; see RUN.md)
+  scoring.single_elim.json  — same weights + the experimental
+  scoring.double_elim.json    structures, each with
+  scoring.swiss.json          experimental.tournament_structures = true
 ```
 
-Two scoring contracts ship side by side. `scoring.json` carries no
-`tournament` block, so it runs the default **gauntlet** (one challenger
-per round). `scoring.racing.json` adds a `tournament` block selecting the
-**racing** (successive-halving) structure — a four-challenger field that
-the strategy races on escalating board slices before the survivor faces
-the champion through the unchanged promote gate.
+`scoring.json` selects the **gauntlet** (one challenger per round) in its
+`tournament` block; a contract with no `tournament` block would run
+racing, the default. `scoring.racing.json` selects the **racing**
+(successive-halving) structure — a four-challenger field that the
+strategy races on escalating board slices before the survivor faces the
+champion through the unchanged promote gate. The three remaining files
+select the experimental elimination and Swiss structures.
 
-**The contract separates a challenger from its champion.** Both scoring
-files carry `per_judge_weights` for the declared inline judges
-(`no_fabricated_numbers`, `incorporates_feedback`,
+**The contract separates a challenger from its champion.** Every scoring
+file carries `per_judge_weights` for the declared judges
+(`file_findability`, `no_fabricated_numbers`, `incorporates_feedback`,
 `audience_appropriate`), so a firing process judge moves the scalar.
 Three facts make a researcher-instruction mutation visible in the score:
 
@@ -58,8 +70,7 @@ Three facts make a researcher-instruction mutation visible in the score:
   reducer, and the scoring weights.
 
 `tests/test_example_target_1_discriminates.py` proves this end to end.
-[`RUN.md`](./RUN.md) documents the mechanism and the remaining gap in
-the live stack (the `LLMPlanner` passthrough), and gives two recipes for
+[`RUN.md`](./RUN.md) documents the mechanism and gives two recipes for
 running the racing structure — point `evolve` at `scoring.racing.json`,
 or pass the `--tournament-structure racing` flags.
 `tests/test_example_target_1_racing.py` runs it end to end with no live
@@ -223,7 +234,7 @@ beyond plain OUTCOME expectations:
 
 [`RUN.md`](./RUN.md) carries the end-to-end recipes: the gauntlet loop,
 the racing structure, what the run leaves on disk, and how to swap in
-real models. This section covers the two ways to read the example
+real models. Each of those runs calls the agent tree's model. This section covers the two ways to read the example
 without running the loop.
 
 ### 1. Static inspection
@@ -244,12 +255,12 @@ with open('examples/zicato_examples/target_1_presentation/board.jsonl') as f:
         print(e['kind'], e['id'], 'weight=', e.get('weight', 1.0))
 "
 
-# ScoringWeights round-trip
+# ScoringWeights round-trip through the configuration reader
 python -c "
 import json
-from zicato.core.types import ScoringWeights
+from zicato.core.scoring_config import scoring_weights_from_dict
 with open('examples/zicato_examples/target_1_presentation/scoring.json') as f:
-    print(ScoringWeights(**json.load(f)))
+    print(scoring_weights_from_dict(json.load(f)))
 "
 ```
 
@@ -270,7 +281,7 @@ Seven test modules cover this example, all under `tests/`:
 Run them with:
 
 ```bash
-pytest tests/test_example_target_1_*.py -v
+uv run pytest tests/test_example_target_1_*.py -v
 ```
 
 ## Measurement mode — running the board as an instrument

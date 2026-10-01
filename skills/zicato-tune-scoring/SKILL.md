@@ -77,18 +77,35 @@ The shipped example (`examples/zicato_examples/target_1_presentation/scoring.jso
     "confabulation_risk": 2.0,
     "looping_reasoning": 1.5
   },
+  "per_judge_weights": {
+    "file_findability": 2.0,
+    "no_fabricated_numbers": 3.0,
+    "incorporates_feedback": 1.5,
+    "audience_appropriate": 1.5
+  },
   "plan_revision_weight": 0.5,
   "promote_margin": 0.01,
   "pass_rate_monotonicity": true,
-  "pass_rate_monotonicity_scope": "per_entry"
+  "tournament": {
+    "structure": "gauntlet",
+    "params": {}
+  },
+  "proposer_quality": {
+    "screen_entries": 0
+  }
 }
 ```
+
+An empty `scoring.json` (`{}`, what `zicato init` writes) is also valid: every
+key takes its default. `zicato inspect config --effective --workspace .zicato`
+prints the resolved value of every key, and `zicato inspect config
+scoring.<key>` explains one.
 
 ## Every key (defaults from `ScoringWeights`)
 
 | Key | Default | Meaning |
 |---|---|---|
-| `pass_weight` | `1.0` | Coefficient on the `(1 - pass_rate)` term — the scalar's one non-channel term. |
+| `pass_weight` | `1.0` | Coefficient on the `(1 - mean_score)` miss term over the entries that carry an expectation — the scalar's one non-channel term. |
 | `severity_weights` | `{"info":1.0,"warning":3.0,"critical":10.0}` | Per-severity multipliers (lowercase keys). Missing key → `0.0` (non-scoring). |
 | `per_kind_weights` | `{}` (uniform) | Per-`DriftKind` multipliers. Keys are short lowercase tokens — `confabulation_risk`, `looping_reasoning`, `intent_divergence`, … Stacks multiplicatively with `severity_weights`. |
 | `per_judge_weights` | `{}` | Per-custom-judge multipliers keyed on the judge `name`, INSIDE the `judge:` channel. All custom judges share the `custom` drift kind, so this is the only way to weight them apart. Retiring one judge is `{name: 0.0}` here; retiring the whole channel is `namespace_weights: {"judge:": 0.0}`. |
@@ -101,21 +118,25 @@ The shipped example (`examples/zicato_examples/target_1_presentation/scoring.jso
 | `pass_rate_monotonicity_scope` | `"per_entry"` | Granularity when the rule is on: `"per_entry"` rejects if ANY champion-passed entry flips to fail (invariant/regression boards); `"aggregate"` rejects only if the OVERALL pass-rate drops (sampled evaluation boards). |
 | `namespace_weights` | `{"drift:":1.0,"judge:":1.0,"failure:":1.0,"runtime:":0.0,"cost:":0.001,"latency:":0.0001,"rubric:":-1.0,"output:":0.0,"schema:":5.0}` | The per-CHANNEL coefficients — every measured signal rides this map. The SIGN encodes the channel's "worse" direction — positive = higher is worse, negative = higher is better (rubric), `0.0` = tracked but not optimised. An explicit mapping REPLACES the defaults wholesale, so a channel you omit scores at `0.0`; `"failure:"` must be present and > 0 or the contract is rejected at load. |
 | `namespace_monotonicity` | `{"drift:":false,"rubric:":true,"schema:":true}` | Per-namespace gate guards. A `true` namespace rejects any child that moved in that namespace's worse direction, even when the combined scalar improves. **Default-on for `rubric:` and `schema:`** — see the gate section. |
-| `diff_complexity_weight` | `0.0` (off) | Opt-in parsimony/MDL term: adds `weight * (added + removed + patches)` to the challenger's scalar, biasing toward the smaller, more general edit. At `0.0` the scalar term is absent; the configured value still participates in the contract hash. |
-| `diff_complexity_ceiling` | `0.0` (off) | Opt-in parsimony CEILING — a hard gate rule rather than a loss nudge. Any `<= 0` is off; above that, a challenger whose diff complexity exceeds it is rejected outright. |
+| `experimental.diff_complexity_weight` | `0.0` (off) | Opt-in parsimony/MDL term: adds `weight * (added + removed + patches)` to the challenger's scalar, biasing toward the smaller, more general edit. At `0.0` the scalar term is absent; the configured value still participates in the contract hash. |
+| `experimental.diff_complexity_ceiling` | `0.0` (off) | Opt-in parsimony CEILING — a hard gate rule rather than a loss nudge. `0` is off; above that, a challenger whose diff complexity exceeds it is rejected outright. |
 
 (The dataclass also carries an optional `regression_gate_enabled` /
-`regression_test_command` test-suite gate; leave it off unless the snapshot
-ships its own suite. The train/holdout split, tournament structure, and
-proposer-quality knobs also live on `ScoringWeights` — see
-`zicato-configure-tournament` and OVERFITTING.md for those.)
+`regression_test_command` / `regression_timeout_s` test-suite gate; leave it
+off unless the snapshot ships its own suite. The `tournament` block (structure
+and evidence gate), the `overfitting` train/holdout split, `proposer_quality`,
+the other `experimental` features, `telemetry_dialect`, `goldfive`,
+`mutation_surface` and the two `block_on_*` promotion re-checks also live in
+`scoring.json` — see `zicato-design-tournament-structure`,
+`zicato-configure-tournament`, `zicato-design-proposer` and OVERFITTING.md.)
 
 ## `per_judge_weights` and `default_judge_weight`
 
 A custom judge (a board entry's `judges`, authored with `name`/`mode`/`body`/
 `severity` — see `zicato-author-board`) emits the single `custom` drift kind on
-violation. `per_kind_weights["custom"]` therefore weights *every* custom judge
-identically. When one judge's violation should count for more, key
+violation, and that drift is scored in the `judge:` channel rather than the
+`drift:` channel. A `per_kind_weights` entry for `custom` is therefore refused
+at load. When one judge's violation should count for more, key
 `per_judge_weights` on the judge `name`:
 
 ```json
@@ -134,7 +155,7 @@ MUST match the `name` field on the board's judges exactly.
 A child replaces the parent only when EVERY applicable rule holds. Rule 1 is
 unconditional, Rules 2 and 3 are default-on, Rule 0 is opt-in:
 
-- **Rule 0 — diff-complexity ceiling** (opt-in, `diff_complexity_ceiling > 0`):
+- **Rule 0 — diff-complexity ceiling** (opt-in, `experimental.diff_complexity_ceiling > 0`):
   a structural admissibility veto applied *before* the scoring rules, so an
   over-budget edit is rejected naming the ceiling rather than a scoring
   near-miss (`diff_complexity_ceiling: diff complexity 14 exceeds ceiling 10`).
@@ -165,11 +186,20 @@ unconditional, Rules 2 and 3 are default-on, Rule 0 is opt-in:
   an otherwise-winning challenger. Turn a namespace off in
   `namespace_monotonicity` if you mean to allow that trade.
 
-One more veto sits *after* those four rules: with the default-on train/holdout
-split (`overfitting.enabled`, boards of `>= 6` entries), a win the train slice
-measured must also not regress on the holdout, or it flips to
-`holdout_not_confirmed`. The holdout is never asked to clear `promote_margin` in
-the improving direction — merely holding flat confirms.
+Two more checks sit *after* those four rules:
+
+- With the default-on train/holdout split (`overfitting.enabled`; a
+  `holdout`-tagged entry, or a hash split once the board reaches
+  `min_board_size_for_split`, default 6 entries), a win the train slice
+  measured must also not regress on the holdout, or it flips to
+  `holdout_not_confirmed`. The holdout is never asked to clear
+  `promote_margin` in the improving direction — merely holding flat confirms.
+- When the `tournament` params set `promote_confidence_threshold` (the
+  recommended contract sets `0.8`), the evidence gate must confirm a crowning
+  promotion: it spends up to `promote_confidence_replicates` extra draws of
+  the crowning pair and requires the fitted probability that the challenger is
+  stronger to clear the threshold. A promotion it cannot confirm within the
+  budget is not made. See `zicato-design-tournament-structure`.
 
 ## Non-linear shapes — the transform registry
 
@@ -197,15 +227,13 @@ Two slots take a transform:
 ```
 
 - **`pass_transform`** reshapes the pass/miss term `(1 - mean_score)`.
-  `{"op":"pow","exponent":2.0}` is the **replacement for the retired
-  `pass_exponent`** field — express `pass_exponent=2` as this (a stray
-  `pass_exponent` key is rejected at load rather than silently dropped). Absent /
-  `linear` = today's plain linear miss.
+  `{"op":"pow","exponent":2.0}` squares the miss term (there is no
+  `pass_exponent` key; the loader refuses it as an unknown field). Absent / `linear`
+  = the plain linear miss.
 - **`drift_kind_aggregation`** reshapes, per drift KIND, how that kind's *count*
-  aggregates into drift loss. An absent kind = `linear` = today's
+  aggregates into drift loss. An absent kind = `linear` =
   `severity × kind_weight × count`. `{"looping_reasoning":{"op":"harmonic"}}`
-  opts THIS contract — and no other — into the harmonic looping curve (it used
-  to be an unconditional core special-case for everyone).
+  opts THIS contract — and no other — into the harmonic looping curve.
 
 One `op` per slot — no pipelines. Specs are **validated fail-fast at contract
 load**: an unknown op, a missing/non-finite/typo'd param, or a `clip` with
@@ -289,7 +317,7 @@ the side it fell outside of. Every one of these is a WARNING; none stops a run:
   how much the champion has left to LOSE — while a promotion needs movement the
   other way. The two are unrelated in general, and a champion sitting near the
   failing end has little left to break and plenty to gain, so improvement
-  headroom is **UNMEASURED** (issue #119). Worth checking the margin against
+  headroom is **UNMEASURED**. Worth checking the margin against
   what a real fix is worth; NOT evidence the run is null. The signal is also a
   single-point lower bound (one mutation point per probe), so a margin
   set above single-point reach on purpose — recombination unions two sub-margin
@@ -303,18 +331,18 @@ the side it fell outside of. Every one of these is a WARNING; none stops a run:
 The recommended margin is **2.5 × `delta_std`** — the standard deviation of the
 A/A `delta_scalar`, the exact quantity the gate thresholds. Do NOT scale
 `max_abs_delta` instead: it is a *range* statistic that grows without bound in
-the draw count, so more calibration draws would inflate the recommendation
-(issue #112). `delta_std` sharpens with more draws, which is the direction a
-recommendation should move.
+the draw count, so more calibration draws would inflate the recommendation.
+`delta_std` sharpens with more draws, which is the direction a recommendation
+should move.
 
-### The holdout has its own margin (issue #118)
+### The holdout has its own margin
 
 `promote_margin` is calibrated against the TRAIN slice. When the split is
 active, a promotion must also survive the holdout confirmation on a **smaller**
-slice, whose scalar moves in coarser `1/N` steps — and sharing one knob left
-real board shapes (the default 12-train / 6-holdout split with one holdout
-entry flipping) with **no promotable margin at all**. Two contract fields split
-the bounds. Both effective values, including defaults, participate in the
+slice, whose scalar moves in coarser `1/N` steps. One shared knob leaves some
+real board shapes (a 12-train / 6-holdout split with one holdout entry
+flipping) with **no promotable margin at all**. Two contract fields split the
+bounds. Both effective values, including defaults, participate in the
 contract hash:
 
 | Field | Default | Set it when |

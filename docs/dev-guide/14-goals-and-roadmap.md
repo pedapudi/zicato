@@ -1,7 +1,7 @@
 # 14 — Goals and Roadmap
 
 > **Covers:** the goal and its operational definition of "effective"; the
-> current proof state (what is proven without a model endpoint, and what
+> proof state (what is proven without a model endpoint, and what
 > awaits a serving endpoint); the endpoint-gated backlog as the operator's
 > runbook, with per-item preconditions, commands, measurements, and gate
 > criteria; the deferred register with its reasoning frozen; the discipline
@@ -44,7 +44,8 @@ guards against is **a loop that runs convincingly while proving nothing**.
 Two such results are on record. A live run produced a null: every probe
 scored identically, the `1.000000` saturation signature. A noise-blind
 default gate, once measured, promoted a challenger identical to its champion
-in a third of seeded trials (04-evaluation-statistics.md §3.1, fact #1). A
+in at least a quarter of seeded trials, the bound the power harness pins
+(04-evaluation-statistics.md §3.1, fact #1). A
 harness that cannot separate improvement from noise reports progress it has
 not made.
 
@@ -170,11 +171,11 @@ demonstration:
 
 The escalation ladder (§1.2) ends at **zicato evolving zicato**, and the whole
 soundness program exists so that rung can be attempted safely. The design
-already carries the seam: `RuntimeConfig.instance_id` "distinguishes nested
-instances when an outer zicato is optimizing an inner zicato"
-(`src/zicato/core/runtime.py`), so workspaces, event streams, and lineage are
-keyed per instance rather than colliding. Carrying the seam is not the same as
-being ready to use it.
+already carries the identifier: `RuntimeSettings.instance_id`
+(`src/zicato/core/settings.py`) "distinguishes nested instances when an outer
+zicato is optimizing an inner zicato", and the workspace lock records it.
+Keying workspaces, event streams, and lineage per instance is not built.
+Carrying the identifier is not the same as being ready to use it.
 
 Rung 3 is last for one reason: **you do not point a self-improvement loop at
 its own decision procedure until that procedure's operating characteristics
@@ -202,7 +203,7 @@ for rung 3.
 
 ---
 
-## 2. The current proof state
+## 2. The proof state
 
 ### 2.1 Proven endpoint-free (machine-checked in CI, standing)
 
@@ -216,12 +217,12 @@ byte, and nulls the harness can measure.
 | The full loop converges to a known answer through real workers, git backend, no stubs | `tests/test_convergence_known_answer.py` plus the convergence example's `RUN.md` CLI walkthrough |
 | The gate rejects a strictly-worse child (negative control) | round 2 of the same oracle |
 | The A/A noise floor is measurable: the deterministic harness measures 0.0 and the σ=0.22 harness measures approximately the analytic 0.663 | `test_aa_null_calibration_measures_the_noise_floor`; calibration end-to-end test |
-| An under-margined, un-gated procedure promotes pure noise in 20 of 60 A/A trials; the evidence-gated procedure promotes none | `test_margin_below_noise_floor_without_evidence_gate_is_unsound`, `test_aa_effective_contract_false_promotion_rate_is_zero` |
-| The Bradley–Terry gate is a soundness device (confidence intervals separate only after about 37 unbroken wins); replication is the power device (at 32 replicates, effects at half the noise floor reach about 3σ) | power harness (04-evaluation-statistics.md §3.1, facts #2–#3) |
-| Evidence replicates are independent draws at reserved slots; canonical slots are never touched; duplicate draws are refused | `test_evidence_replicates_are_independent_draws`, `test_full_mode_evidence_loop_never_touches_canonical_slots` — the pins for the evidence-gate slot-reuse case (`12-bug-casebook.md` case 8) |
+| An under-margined, un-gated procedure promotes pure noise in at least 15 of 60 A/A trials (the pinned bound); the evidence-gated procedure promotes none | `test_margin_below_noise_floor_without_evidence_gate_is_unsound`, `test_aa_effective_contract_false_promotion_rate_is_zero` |
+| Bradley–Terry confirmation is the soundness device (it compares the fitted strength difference with zero, with covariance and a planned-comparison correction); replication is the power device (at 32 replicates, effects at half the noise floor reach about 3σ) | power harness (04-evaluation-statistics.md §3.1, facts #2–#3) |
+| Confirmation draws are independent measurements under their own purpose; tournament measurements are never touched; repeated draws are refused | `test_evidence_replicates_are_independent_draws`, `test_full_mode_evidence_loop_never_touches_canonical_slots` — the pins for the evidence-gate slot-reuse case (`12-bug-casebook.md` case 8) |
 | The candidate screen vetoes a broken candidate deterministically (none of 12 forwarded, against all 12 forwarded unscreened), and under noise its false-veto rate is close to the square of the per-run flip rate | screen operating-characteristic tests in the power harness |
 | Seeded noise crosses the real subprocess-worker boundary intact (reproducible, side-independent, replicate-independent) | `test_noisy_adapter_seeded_draws_cross_the_worker_boundary` |
-| Each of the twelve documented bugs is pinned by a regression test that fails with the fix stashed | 12-bug-casebook.md, per case |
+| The documented bugs are pinned by regression tests that fail with the fix reverted | 12-bug-casebook.md, each case's "Where the guard lives" section |
 
 ### 2.2 What awaits the endpoint
 
@@ -257,7 +258,7 @@ mean:
 | Failure | What it means |
 |---|---|
 | decision sequence ≠ `[promoted, rejected, promoted]` | the gate's yes/no changed — a scoring, reducer, or gate-threshold regression |
-| a child scalar ≠ its `EXPECTED_*` | the scalar path drifted (a reducer, a weight default, or a worker-boundary desync — compare the `per_judge_weights` desync class, 03-contract-and-epochs.md §3.5) |
+| a child scalar ≠ its `EXPECTED_*` | the scalar path drifted (a reducer, a weight default, or a worker-boundary desync — compare the serializer-completeness class, 03-contract-and-epochs.md §3.5) |
 | the negative control (v2) stops regressing | the harness or the scoring path stops separating the worse candidate; the instrument itself is broken |
 
 **The operating-characteristics oracle**
@@ -363,7 +364,7 @@ chapter:
   with the reasoning stated — or the live wiring is broken, which makes it a
   casebook entry. The endpoint-free proof is never weakened to accommodate a
   live anecdote.
-- **The honest status line updates with the lists.** It currently reads "the
+- **The honest status line updates with the lists.** It reads "the
   mechanism is proven under seeded noise; production noise is only modeled"
   (§2.2). As live items land that sentence changes, but only as far as the
   audited evidence supports, and no commit message or report may claim more
@@ -400,9 +401,9 @@ output, so every candidate scores the same.
 > agent executes, never an agent initiative.
 
 > ✅ ALWAYS launch live evolve runs with the dashboard enabled (the default)
-> and report the printed URL (default `http://127.0.0.1:7892`; do not pass
-> `--dashboard-bind` unless the operator asks) in your first status message,
-> before the first round settles. The operator watches the bracket live; a
+> and report the printed URL (default `http://127.0.0.1:7892`, set with
+> `--dashboard-port`; the dashboard binds `127.0.0.1` only) in your first
+> status message, before the first round settles. The operator watches the bracket live; a
 > run whose URL was never reported is a run the operator cannot supervise.
 
 ### Item 1 — live convergence on the deterministic convergence example
@@ -414,20 +415,23 @@ output, so every candidate scores the same.
   handed. This is the first live evidence that the propose step generates
   signal.
 - **Preconditions:**
-  - a serving endpoint named by the workspace's `target` and `evaluation`
-    model engines. The convergence example's own harness stays deterministic
-    and only the proposer and evaluation side goes live, which isolates the
-    proposer as the single changed variable;
+  - a Foe `proposer` block in `.zicato/config.json` that names a real model
+    and its credential, in place of the scripted stand-in RUN.md installs
+    (`stand_in_proposer_block`). The convergence harness never calls a model,
+    so the `target` and `evaluation` engines can keep the example's offline
+    `call_llm` mocks; the proposer is then the single changed variable;
   - the workspace bootstrapped as
     `examples/zicato_examples/target_0_convergence/RUN.md` steps 1–4 specify
-    (init, adapter block, contract publish, and a `zicato inspect mutations`
-    check that reports exactly one id, `style_rules`);
+    (init; the adapter, model-engine, proposer, and proposer-dir blocks in
+    `config.json`; the board/scoring/brief publish; and a
+    `zicato inspect mutations` check that reports exactly one id,
+    `style_rules`);
   - operator go-ahead recorded.
-- **Commands** (the RUN.md flow, live aux callable substituted):
+- **Commands** (the RUN.md flow, a live proposer block substituted):
 
   ```bash
   zicato init --workspace .zicato
-  # …RUN.md steps 2–3 (adapter block, board/scoring/brief publish)…
+  # …RUN.md steps 2–3 (config.json blocks, board/scoring/brief publish)…
   zicato inspect mutations --workspace .zicato          # expect: style_rules only
   zicato evolve --workspace .zicato --rounds 3 --mode full
   # report the printed Dashboard: http://127.0.0.1:7892 URL immediately
@@ -475,11 +479,12 @@ output, so every candidate scores the same.
   1. A live target endpoint and a live evaluation endpoint, so instruction
      content reaches the measured behavior.
   2. `zicato board preflight` returns a verdict of `ok` against that setup.
-     A `warn` means the board cannot out-signal its own noise — the
-     saturation pathology, whose signature is every probe scoring
-     `1.000000` — so the run would not be interpretable. A `refuse` means
-     live noise swamps the probe, and the noise-floor calibration of item 3
-     must come first.
+     A `warn` means every probe scored identically — the saturation
+     pathology, whose signature is every probe scoring `1.000000` — so the
+     run would not be interpretable. An `inert` means the probes moved
+     nothing while the A/A draws varied, so the signal is unmeasured. A
+     `refuse` means the measured signal is at or below the noise floor, and
+     the noise-floor calibration of item 3 must come first.
   3. Item 1 (live convergence) and item 3 (the real noise floor) complete, so
      a working live proposer and a measured floor to set the margin against
      both exist.
@@ -487,8 +492,9 @@ output, so every candidate scores the same.
 - **Commands:**
 
   ```bash
-  zicato board preflight --workspace .zicato   # gate: verdict ok
-  zicato board audit --workspace .zicato       # persist the live floor
+  LIVE="--harness-call-llm <live target dotted path> --auxiliary-call-llm <live evaluation dotted path>"
+  zicato board preflight --workspace .zicato $LIVE   # gate: verdict ok
+  zicato board audit --workspace .zicato $LIVE       # persist the live floor
   zicato evolve --workspace .zicato --rounds <N>
   # dashboard URL reported; watch the picky-stakeholder entry specifically
   ```
@@ -496,7 +502,7 @@ output, so every candidate scores the same.
 - **What to measure:** pre-flight signal vs floor before/after the fix;
   per-round scalar movement vs the measured floor; the generalization gap
   (train vs holdout) across the run; which mutation points the proposer
-  touches (the fertility view); drift-kind movements vs the hypotheses'
+  touches (the mutation-point fertility map); drift-kind movements vs the hypotheses'
   predictions (the calibration diagnostic).
 - **Gate criteria:** pre-flight `ok` is the hard entry gate; a completed run
   with ≥1 promotion whose holdout confirmation released (not withheld);
@@ -516,10 +522,11 @@ output, so every candidate scores the same.
 - **Commands:**
 
   ```bash
-  zicato board audit --workspace .zicato --runs 5      # K=5 default; raise for noisy harnesses
+  LIVE="--harness-call-llm <live target dotted path> --auxiliary-call-llm <live evaluation dotted path>"
+  zicato board audit --workspace .zicato --runs 5 $LIVE   # K=5 default; raise for noisy harnesses
   # floor persists onto the epoch record (config.json noise_floor, never hashed)
   # optionally wire the epoch-open hook: config.json "calibrate_noise_floor": 5
-  zicato board preflight --workspace .zicato           # floor + degradation signal + verdict
+  zicato board preflight --workspace .zicato $LIVE        # floor + degradation signal + verdict
   ```
 
 - **What to measure:** `max_abs_delta` and `delta_std`; the per-draw scalars
@@ -527,8 +534,8 @@ output, so every candidate scores the same.
   ratio; whether `margin_below_noise_floor` fires against the shipped
   margin.
 - **Gate criteria:** a nonzero, stable floor (a 0.0 floor on a live LLM
-  harness means the stamp/plumbing is broken — see bug #3, never "good
-  news"); an explicit operator decision recorded for the margin: either
+  harness means the stamp/plumbing is broken — see the A/A false-zero-floor
+  case, `12-bug-casebook.md` case 3 — never "good news"); an explicit operator decision recorded for the margin: either
   `promote_margin` raised above the floor, or the evidence gate enabled with
   a budget priced by the contract estimator. This item's output is a
   *contract change decision*, and contract changes roll the epoch — say so.
@@ -577,7 +584,7 @@ output, so every candidate scores the same.
   ```bash
   # Publish the racing contract, then:
   zicato evolve --workspace .zicato --rounds <N>
-  # dashboard URL reported; the racing ladder + evidence cockpit are the views to watch
+  # dashboard URL reported; watch the structure view's racing rungs and the candidate view's Bradley–Terry block
   ```
 
 - **What to measure:** rung survival patterns (does rung-0 halving cut the
@@ -592,7 +599,8 @@ output, so every candidate scores the same.
   regression suites double as live monitors here); every crowning's journal
   evidence self-consistent; dead-letter rate acknowledged by the operator as
   an acceptable hold rate rather than silently zero (a zero dead-letter rate
-  with a real proposer and a 38-ish budget would itself be suspicious —
+  with a real proposer and the default 32-draw confirmation budget would
+  itself be suspicious —
   see 04-evaluation-statistics.md §6).
 
 ### Item 6 — screened-vs-unscreened live economics
@@ -605,12 +613,12 @@ output, so every candidate scores the same.
   run budgets approved (this is an A/B over *runs*, the most expensive item
   here); operator go-ahead for both arms.
 - **Commands:** two matched evolve campaigns on the same target and round
-  budget, one with `proposer_quality.screen_entries: 2` (the scaffold
-  value), one with `0` — note this is a contract change, so the arms are
+  budget, one with `proposer_quality.screen_entries: 2` (the default), one
+  with `0` — note this is a contract change, so the arms are
   separate epochs by construction:
 
   ```bash
-  # arm A: screening on (scaffold default); arm B: screen_entries: 0
+  # arm A: screening on (the default); arm B: screen_entries: 0
   zicato evolve --workspace .zicato --rounds <N>
   ```
 
@@ -621,7 +629,8 @@ output, so every candidate scores the same.
   cost.
 - **Gate criteria:** a written comparison of cost-per-accepted-improvement.
   The decision this gates is the *default posture* of screening in
-  scaffolded contracts (currently ON in scaffolds, OFF in code defaults) —
+  scaffolded contracts (on by default: `screen_entries` defaults to 2, and
+  `zicato init` scaffolds an empty `scoring.json` that inherits it) —
   keep, strengthen, or demote, with the measured economics attached.
 
 ### Standing rules for every backlog item
@@ -654,17 +663,19 @@ Item 4 (judge test–retest) ── informs Item 2's judge weights
 |---|---|---|
 | 1 — target_0 live convergence | operator go-ahead only | the cheapest first live signal; nothing depends on it *first*, but everything downstream assumes a proposer that works |
 | 3 — real A/A floor | a live harness for the target | a margin decision without a measured floor is guesswork; every later gate-criterion reads against this number |
-| 2 — target_1 dogfood | Items 1 + 3, AND the mock-null fix | uninterpretable while the harness is a structural null (a `1.000000` saturation, §3 Item 2) — the run would measure the mock rather than the loop |
+| 2 — target_1 dogfood | Items 1 + 3, AND a pre-flight verdict of `ok` on the live setup | uninterpretable while the harness is a structural null (a `1.000000` saturation, §3 Item 2) — the run would measure the harness's blind spot rather than the loop |
 | 4 — judge test–retest | a live aux endpoint; ideally a settled live transcript | a synthetic judge can't tell you a live judge's self-consistency; feeds Item 2's `per_judge_weights` |
 | 5 — racing × BT × best-of-N | Items 1 + 3 | the composed stack under a real proposer's output distribution is meaningless without a working proposer and a real floor to size the budget |
 | 6 — screened economics | Item 5 running stably | a cost-per-accepted-improvement A/B needs a stable pipeline and two approved run budgets — the most expensive item, last |
 
-The dependency that trips people up: **Item 2 before its mock-null fix is the
+The dependency that trips people up: **Item 2 before a pre-flight `ok` is the
 single most tempting early run** (the presentation agent is the "real" dogfood),
 and it is the run most likely to produce a confident null. The pre-flight
-(`zicato board preflight`, verdict `ok`) is the hard entry gate, so the
-structural null cannot be run past accidentally. Treat a `warn` verdict as "the
-null is still here," not "close enough."
+(`zicato board preflight`, verdict `ok`) is the entry gate for this item, and
+the operator holds it: evolve's own epoch-start pre-flight stops a run only on
+a `refuse` verdict under `runtime.preflight_gate = "refuse"` (the default is
+`"warn"`), so a saturated `warn` verdict never stops a run by itself. Treat a
+`warn` verdict as "the null is still here," not "close enough."
 
 > ✅ ALWAYS check an item's precondition list before proposing its run — and if a
 > precondition item has not produced an *audited* result, the dependent run is
@@ -682,17 +693,17 @@ canonical store that an existing surface already reads.
 |---|---|---|
 | A/A noise floor (Item 3) | `config.json` `noise_floor` (never hashed — 03-contract-and-epochs.md §3.6) | evolve-start margin check; loop-health detector |
 | pre-flight verdict (Item 2 gate) | `config.json` `preflight` (never hashed) | `detect_preflight_verdict` health finding |
-| per-round scalar / gate decision | `experiment.json` `outcome` + `journal.md` | dashboard lineage; epoch report |
-| generalization gap (Item 2) | `OutcomeRecord.train_loss` / `holdout_loss` / `generalization_gap` on `experiment.json` | gap detector; dashboard board-status |
-| evidence-gate resolution (Item 5) | `OutcomeRecord.evidence` (rating block + ci_history) | evidence cockpit view |
+| per-round scalar / gate decision | `rounds/{round}/field_settlement.json` (the experiment reader combines it with `experiment.json`; the journal is rendered from the result) | dashboard lineage; epoch report |
+| generalization gap (Item 2) | `OutcomeRecord.train_loss` / `holdout_loss` / `generalization_gap`, recorded in the round's settlement | gap detector; dashboard board-status |
+| evidence-gate resolution (Item 5) | `OutcomeRecord.evidence` (rating block + ci_history) | the candidate view's Bradley–Terry pre-gate block |
 | inconclusive dead-letters (Item 5) | `runtime/inconclusive/*.json` | operator inspects the hold rate |
 | best-of-N selection modes (Item 5) | the round log `round_log.jsonl` (`critique_selected.reason`) | proposal-session fold; 05-proposer.md §5.7 |
-| which mutation points the proposer touches (Item 2) | the fertility view over the index (mutation track records) | dashboard fertility surface |
+| which mutation points the proposer touches (Item 2) | the mutation-point fertility map over the index (`zicato.index.query`, per-point track records) | the proposer's request; the dashboard mutations view |
 | judge test–retest (Item 4) | the `zicato board judges --test-retest` report | operator; `per_judge_weights` decision |
 
 Two operating rules ride on this map. First, the **dashboard is on and its URL
 reported before the first round settles** (§3's standing rule 2; default
-`http://127.0.0.1:7892`) — the racing ladder and evidence cockpit are the live
+`http://127.0.0.1:7892`) — the racing rungs and the Bradley–Terry block are the live
 views for Items 5–6, and a run whose URL was never surfaced is one the operator
 cannot supervise. Second, a measurement that would need a *new* file is a signal
 you are measuring the wrong thing: if the instrument that already exists cannot
@@ -700,7 +711,7 @@ surface it, either extend that instrument (with its own test) or the measurement
 is not the one the item asked for.
 
 > ⚠️ TRAP — a **zero** dead-letter rate on Item 5 with a real proposer and a
-> ~38-run evidence budget is itself suspicious (§3 Item 5 gate
+> 32-draw confirmation budget is itself suspicious (§3 Item 5 gate
 > criteria; 04-evaluation-statistics.md §6). Some crownings *should* land
 > inconclusive under real noise; a rate of exactly zero suggests the pre-gate is
 > forcing promotions rather than holding them — the exact second-door failure §6
@@ -756,12 +767,12 @@ proposal (see §5).
 
 | ID | Deferred item | Frozen reasoning | Un-deferral trigger |
 |---|---|---|---|
-| D1 | **Physical wheel split** (`zicato-lib` / `zicato-cli` / `zicato-dashboard` as separate distributions) | The boundary already exists and is CI-enforced *inside one distribution*: zero core→driver imports, the 37-name lazy facade (`src/zicato/__init__.py`), `dashboard/readers` hoisted to `zicato/query`, import-linter contracts in CI. Separate wheels add real hazards — the `python -m zicato._tournament_worker` and `-m zicato.dashboard` spawns cross a shared namespace; the `_bin/` supervisor binary can be force-included by only one wheel — and the benefit (independent installs) has no consumer. The enforced single-distribution boundary is also the hard prerequisite of the split, so nothing is lost by waiting. | An **external library consumer** actually exists (someone imports zicato-as-library without the CLI/dashboard). The `zicato-examples` uv-workspace member is the working packaging precedent to copy. |
+| D1 | **Physical wheel split** (`zicato-lib` / `zicato-cli` / `zicato-dashboard` as separate distributions) | The boundary already exists and is CI-enforced *inside one distribution*: zero core→driver imports, the twelve-name lazy facade (`__version__` plus eleven lazily resolved exports in `src/zicato/__init__.py`), the workspace readers in `zicato/query`, import-linter contracts in CI. Separate wheels add real hazards — the `python -m zicato._tournament_worker` and `-m zicato.dashboard` spawns cross a shared namespace; the `_bin/` supervisor binary can be force-included by only one wheel — and the benefit (independent installs) has no consumer. The enforced single-distribution boundary is also the hard prerequisite of the split, so nothing is lost by waiting. | An **external library consumer** actually exists (someone imports zicato-as-library without the CLI/dashboard). The `zicato-examples` uv-workspace member is the working packaging precedent to copy. |
 | D2 | **Hybrid numeric/enum parameter search** (dedicated search over `new_numeric` / `new_enum` mutation ops instead of LLM-proposed values) | Value depends on surface composition, and every current target is **text-dominant** (instruction spans, prompt bodies). Building a numeric optimizer with no numeric-heavy surface to validate on produces untested machinery — the exact "asserted by hope" failure the doctrine forbids. | A real target shows a **numeric-heavy mutable surface** (thresholds, budgets, weights as first-class mutation points) where per-round LLM proposals demonstrably waste rounds vs a line search. |
 | D3 | **Critic calibration from RoundLog** (tune the best-of-N critic against its own historical pick quality) | Needs **accumulated live logs** to calibrate against — RoundLog emission shipped (schema + fold in `epoch/round_log.py`, wired through the evolve seams), but the log corpus is empty of live rounds. Calibrating a critic on synthetic rounds teaches it the synthetic distribution. | Live runs from §3 accumulate enough RoundLog history that pick-vs-outcome joins have statistical power (state the N in the un-deferral proposal). |
 | D4 | **Portfolio / quality-diversity search** (maintaining a population of diverse champions rather than a single lineage head) | Architectural: it changes what "champion" means across the lineage, journal, dashboard, and gate — every consumer of the promoted spine. It is a design change rather than a knob, and needs its **own design pass** with the protected-incumbent and server-authority invariants renegotiated explicitly. Bolting a population onto the single-champion data model would commit the shared-mutable-state lesson (many logical artifacts on one physical slot, `12-bug-casebook.md`) on purpose. | An operator-level need for diversity preservation (e.g. measured premature convergence on a live target), and a design note that survives review. |
-| D5 | **Screen baseline hardening at extreme σ** | The screen's champion-passing baseline is the parent's replicate-0 canonical measurement — the same baseline the promote gate itself trusts. At extreme harness noise (the Tier-2 σ=0.22 world) a noisy baseline can admit a truly-failing entry to the panel as "champion-passing"; that failure mode belongs to the *baseline measurement* rather than to the confirm rule, and no single-confirm rule can reach a 2% false-veto rate there anyway (σ² is already 4.8%). The documented upgrade — a **paired champion-baseline re-run at base 3000 under the real champion id** — is designed but unbuilt, because a contract that noisy is outside the usable regime the pre-flight would wave through. | A live floor measurement (Item 3) showing a *usable* contract whose noise still makes screen false-vetoes material in practice; then build the paired-baseline upgrade per the design note in the screen test docstrings (`tests/test_decision_procedure_power.py` §candidate-screen). |
-| D6 | **Per-run worktree pool** (pre-warmed ephemeral checkouts to amortize the admin-lock window) | The measured cost says no: per-add 6.4–28 ms serial, 14–41 ms *total* under 16-way contention (benchmark frozen in `git_genstore.py::checkout_ephemeral`'s docstring and commit `e91fe1f`), 3–18× faster than the copytree it replaced. A pool adds shared mutable state, because a pool is by construction a shared-slot design (the shared-mutable-state lesson, `12-bug-casebook.md`), to shave milliseconds nobody has observed in a profile. The rejected `git archive` alternative is likewise frozen in the same docstring. | Checkout cost visibly shows in a live-run profile (Item 5's wall-clock measurements are where it would surface). |
+| D5 | **Screen baseline hardening at extreme σ** | The screen's champion-passing baseline is the parent's tournament draw-0 measurement — the same baseline the promote gate itself trusts. At extreme harness noise (the σ=0.22 seeded-noise world) a noisy baseline can admit a truly-failing entry to the panel as "champion-passing"; that failure mode belongs to the *baseline measurement* rather than to the confirm rule, and no single-confirm rule can reach a 2% false-veto rate there anyway (σ² is already 4.8%). The documented upgrade — a **paired champion-baseline re-run under the candidate-screen measurement purpose and the real champion id** — is designed but unbuilt, because a contract that noisy is outside the usable regime the pre-flight would wave through. | A live floor measurement (Item 3) showing a *usable* contract whose noise still makes screen false-vetoes material in practice; then build the paired-baseline upgrade per the design note in the screen test docstrings (`tests/test_decision_procedure_power.py` §candidate-screen). |
+| D6 | **Per-run worktree pool** (pre-warmed ephemeral checkouts to amortize the admin-lock window) | The measured cost says no: 6.4–19 ms per serial add, 14–41 ms *total* for 16 concurrent adds (benchmark frozen in `git_genstore.py::checkout_ephemeral`'s docstring and commit `e91fe1f`), 3–18× faster than the directory backend's copytree. A pool adds shared mutable state, because a pool is by construction a shared-slot design (the shared-mutable-state lesson, `12-bug-casebook.md`), to shave milliseconds nobody has observed in a profile. The rejected `git archive` alternative is likewise frozen in the same docstring. | Checkout cost visibly shows in a live-run profile (Item 5's wall-clock measurements are where it would surface). |
 
 > ⚠️ TRAP: an entry in the register can still ship. If your work needs a
 > deferred capability, the correct move is an un-deferral proposal that
@@ -800,7 +811,8 @@ proposals demonstrably waste rounds vs a line search." A valid un-deferral
 proposal would:
 
 - **Quote that entry's reasoning** and confirm it still holds structurally (the applier's
-  `set_numeric` / `set_enum` ops exist — 05-proposer.md §5.4.3 —
+  `set_numeric` / `set_enum` ops exist — `PatchOpKind` in `core/mutation.py`;
+  05-proposer.md §5.4.2 —
   so the *mechanism* is there; only the *search* was deferred).
 - **Show a measurement of the trigger:** a shipped target whose mutation manifest is
   ≥ N numeric points (thresholds, budgets, weights as first-class mutation
@@ -958,7 +970,7 @@ named test that fails today and passes after.
   suite and the decision-procedure power suite. Check disabled feature behavior
   and complete configuration identity separately. A behaviorally inert setting
   still participates in the contract hash.
-- **Regression tests fail with the fix stashed** — the fail-with-the-fix-stashed
+- **Regression tests fail with the fix reverted** — the fail-with-the-fix-reverted
   lesson (12-bug-casebook.md), demonstrated on each test rather than assumed.
 - **Per-branch vendor scan** before any push or PR: no model-vendor names,
   ids, or trailers anywhere in the diff or commit messages. This rule has no
@@ -992,8 +1004,8 @@ endorse starting the work.
 
 1. **Premise (cited).** The gauntlet resolves a duel by scalar delta and the
    racing structure by rung survival; the evidence gate adds a Bradley–Terry
-   *confidence* threshold (`ScoringWeights`,
-   03-contract-and-epochs.md §3.5). A separate winner-resolution pass turns a set
+   *confidence* threshold (the `promote_confidence_threshold` tournament
+   structure parameter). A separate winner-resolution pass turns a set
    of pairwise results into an ordering under a social-choice rule:
    `resolve_leader` dispatches to Ranked Pairs or Copeland over a Smith-pruned
    margin matrix, for a strategy's internal leader selection and never for the
@@ -1045,8 +1057,8 @@ leads with the code has skipped the parts that decide whether it should exist.
 ### 5.8 The fixes-first cadence, worked
 
 "Fixes first" (§5.5) is the cadence rule most often skipped under time pressure,
-and it has a precise shape worth spelling out because every bug in
-12-bug-casebook.md was found *while building a feature* — the feature exposed the
+and it has a precise shape worth spelling out because most bugs in
+12-bug-casebook.md were found *while building a feature* — the feature exposed the
 bug, and the discipline is to land the fix independently before the feature that
 found it.
 
@@ -1057,12 +1069,12 @@ The shape, using the casebook's pattern as the template:
    the fix ships FIRST, on its own branch, before the feature. It is independently
    valuable — a bug fix stands alone — and it keeps the feature PR reviewable (a
    reviewer is not asked to distinguish "the fix" from "the feature" in one diff).
-   Each of the program's two fix PRs led the work that found it (§5.5).
-2. **The regression test must fail with the fix stashed.** This is the
-   fail-with-the-fix-stashed lesson
+2. **The regression test must fail with the fix reverted.** This is the
+   fail-with-the-fix-reverted lesson
    (12-bug-casebook.md §"The meta-lessons"): a regression test that passes whether
-   or not the fix is present pins nothing. *Demonstrate* the failure — stash the
-   fix, watch the test go red, restore it, watch it go green. A test asserted to
+   or not the fix is present pins nothing. *Demonstrate* the failure — revert the
+   fix's source to the base revision and confirm the revert with `git diff`,
+   watch the test go red, restore the fix, watch it go green. A test asserted to
    catch a bug it never saw fail is a test that will silently rot.
 3. **Then the feature stacks behind the fix**, single-concern, with a stated
    dependency order (§5.5). Module moves / facade work sequence LAST so files do
@@ -1082,7 +1094,7 @@ buried in an unrelated feature diff.
 > "It would have caught the bug" is a hypothesis, and watching it fail makes it a
 > demonstrated one. The most common way a regression test rots is being written against
 > a codebase where the bug is already fixed, so it is green from birth and pins the
-> wrong invariant (or none). Stash, red, restore, green — every time.
+> wrong invariant (or none). Revert, red, restore, green — every time.
 
 ### 5.9 Docs land with the change
 
@@ -1134,10 +1146,10 @@ make an autonomous loop safe to leave running.
 
 **No vendor coupling.** Nothing in git references the model vendor — no
 names, no model-id strings, no commit trailers. Mechanically: every LLM touch
-goes through the `CallLLM` callable seam (`(system, user, model) -> str`,
+goes through the `CallLLM` callable seam (an async `(system, user, model) -> str`,
 dotted-path importable so it crosses the worker boundary), and model
 selection lives in operator-owned config (`models_config.py`)
-— never in code, never in examples, never in mocks ("The mocks NEVER
+— never in code, never in examples, never in mocks ("The mocks never
 reference any specific model vendor" is written into the example sources).
 This is both a portability property and a durable repo rule; the per-branch
 vendor scan enforces it.
@@ -1250,7 +1262,7 @@ refusal is a statement of what the system guarantees.
 | add a runtime tuning knob | 03-contract-and-epochs.md §3.12 | the choose-which table — a scoring rule mis-filed as runtime silently breaks comparability |
 | propose a live run | this chapter §3 (the item's preconditions) + §3.9 | the operator's per-run go-ahead — never an agent initiative |
 | re-open a deferred item | this chapter §4.1 | the frozen reasoning — engage it, don't re-derive it |
-| fix a bug a feature exposed | 12-bug-casebook.md (the class) | this chapter §5.5/§5.8 — fixes-first, and the test must fail with the fix stashed |
+| fix a bug a feature exposed | 12-bug-casebook.md (the class) | this chapter §5.5/§5.8 — fixes-first, and the test must fail with the fix reverted |
 
 ### 7.2 A reading order for a new contributor
 

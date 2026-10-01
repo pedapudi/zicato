@@ -125,7 +125,7 @@ distinguishing the candidates from their parents.
 
 **Signal.** Looks at the most-recent `scoring_window` (default 3)
 experiments that carry a tournament outcome. When *every* one of them
-has `|scalar_score_delta|` below `scoring_epsilon` (default `1e-6`),
+has `|scalar_score_delta|` at or below `scoring_epsilon` (default `1e-6`),
 the loop is spinning on a flat loss surface. Severity is always
 **`critical`** — a degenerate scorer wastes every round's wall-clock.
 The detector is silent until at least `scoring_window` evaluated
@@ -227,7 +227,7 @@ steerer both swallow the exception; goldfive emits no
 writes no `custom:<judge_name>` count. Without the separate error
 count, a broken judge reads as one that never fired, which routes the
 operator into a board audit, and its missing drift makes the
-generation's scalar better than the evidence supports (issue #121).
+generation's scalar better than the evidence supports.
 
 **Signal.** zicato's judge boundary counts invocations and errors per judge
 name for the worker process
@@ -349,12 +349,25 @@ one severity or stay silent; `generalization_gap` and
 | `placebo_promoted` | `critical` | a random-baseline placebo challenger (item 7 of [OVERFITTING.md](OVERFITTING.md) §12) was promoted, which means the gate has stopped discriminating |
 | `preflight_signal_below_floor` | `critical` under `runtime.preflight_gate="refuse"`, else `warning` | the contract pre-flight verdict is `refuse` (the measured signal did not clear the measured A/A noise floor) |
 
-Further detectors ship without appearing in the table above:
-`margin_below_noise_floor` at `info` or `warning`, and `infra_outage`,
-`token_budget_clip`, `tree_never_imported`, and
-`on_promote_hook_failed` at `warning`. None of them emits `critical`.
-`assess_loop_health` in `health/diagnostics.py` is the authoritative
-full detector list.
+Further findings ship without appearing in the table above.
+`margin_below_noise_floor` fires at `info` when the evidence gate is on
+and at `warning` otherwise. Each of the following fires at `warning`:
+
+- the other pre-flight verdicts: `preflight_inert_probe`,
+  `preflight_saturated_contract`, `preflight_margin_above_achievable`, and
+  `preflight_margin_below_floor`;
+- run and round conditions: `infra_outage`, `round_token_clipped`,
+  `tree_never_imported`, and `attributable_entry_regression`;
+- post-promotion and settlement records: `on_promote_hook_failed`,
+  `on_promote_hook_delivery_unknown`, `settlement_index_repair_required`,
+  and `settlement_receipt_corrupt`;
+- optional work that failed: `outcome_summarizer_failed` and
+  `optional_operation_failed` ([ERROR-HANDLING.md](ERROR-HANDLING.md)).
+
+None of them emits `critical`. `assess_loop_health` in
+`health/diagnostics.py` is the authoritative full detector list. The
+`noisy_judge` detector in the same module is not part of the loop
+assessment; `zicato board judges` and board reflection call it.
 
 The three severities mean:
 
@@ -425,23 +438,26 @@ Fields:
 | `epoch_id` | The epoch this report describes. |
 | `healthy` | `True` iff no finding has `warning` or `critical` severity. Purely-`info` findings do not flip it to `False`. |
 | `checked_at` | ISO-8601 UTC timestamp of when the assessment ran. |
-| `findings` | Every `HealthFinding` produced by every detector, in detector order (`degenerate_scoring`, `non_differentiating_entry`, `flat_drift_signal`, `no_expectations`, `stalled_loop`, `generalization_gap`, `refresh_cadence`). A detector may emit more than one finding (`non_differentiating_entry` emits one per dead entry). |
+| `findings` | Every `HealthFinding` produced by every detector, in the order `assess_loop_health` runs them (`degenerate_scoring`, `non_differentiating_entry`, `flat_drift_signal`, `no_expectations`, the judge detectors, `stalled_loop`, `generalization_gap`, `refresh_cadence`, then the noise-floor, pre-flight, placebo, and operational findings of §3.9). A detector may emit more than one finding (`non_differentiating_entry` emits one per dead entry). |
 | `findings[].code` | The detector's stable symbolic identifier (§3). |
 | `findings[].severity` | `info` / `warning` / `critical`. |
 | `findings[].summary` | One-line human-readable rendering for terminal output. |
 | `findings[].detail` | Structured specifics — entry ids, generation ids, the numbers that tripped the detector, and (where the detector offers one) a `recommendation`. JSON-friendly so the report round-trips. |
 
-The `LoopHealth` dataclass has no `round` or `overall` field. It is
-keyed to an epoch, and the aggregate health signal is the boolean
-`healthy` rather than a maximum-severity enumeration. A finding carries
-its fix inside `detail.recommendation` where it has one, and there is
-no dedicated `remedy` field.
+The report is keyed to an epoch, and the aggregate health signal is the
+boolean `healthy` rather than a maximum-severity enumeration. A finding
+carries its fix inside `detail.recommendation` where it has one.
 
 When the orchestrator runs the assessment each round it persists the
-report to `epochs/{epoch}/health/round_{N}.json` (the per-round JSON
-the orchestrator writes adds the `round` it was computed at as an
-envelope). `zicato health` recomputes the assessment live rather than
-reading these files back.
+report to `epochs/{epoch}/health/round_{N}.json`, with `N` unpadded. The
+persisted report adds four fields: `round` (the round index),
+`assessed_at`, `summary` (the one-line summary the round outcome
+carries), and `has_critical`. Reading a saved report checks that
+`healthy`, `has_critical`, and the file's epoch and round agree with its
+findings and location, and refuses a report that disagrees. The
+dashboard's health response reads the newest saved report; `zicato
+health` recomputes the assessment live rather than reading these files
+back.
 
 ## 5. The `zicato health` CLI
 
@@ -550,8 +566,8 @@ current epoch's state fully written, and the stop reason is recorded as
 `degenerate_health`.
 
 This early-stop is on by default: it is the
-`stop_on_degenerate_health` parameter of the orchestrator's
-`run_evolve_loop`, which defaults to `True`. There is no `zicato evolve
+`stop_on_degenerate_health` parameter of `evolve_n_rounds`
+(`zicato.evolve.loop`), which defaults to `True`. There is no `zicato evolve
 --stop-on-degenerate` command-line flag; the behaviour is the
 orchestrator default and cannot be toggled from the command line. The
 separate `--max-consecutive-rejections` flag, default 3, is the

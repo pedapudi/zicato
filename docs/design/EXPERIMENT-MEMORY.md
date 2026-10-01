@@ -1,6 +1,6 @@
 # Experiment memory — feeding the proposer prior outcomes
 
-> **Status. SHIPPED** (default-on). This document specifies candidate
+> **Status. Implemented** (on by default). This document specifies candidate
 > *generation* — what the proposer sees before it writes a hypothesis. It
 > does not change selection, scoring, or the tournament structure. Every
 > claim below is reconciled against `src/zicato/proposer/`,
@@ -36,7 +36,7 @@ is scoped to one evaluation contract, and how it reaches the prompt.
 ## 1. Why the proposer needs settled history
 
 The proposal episode's task is assembled from several channels (see
-`zicato.proposer.foe_request.render_evidence`). Four of them describe the
+`zicato.proposer.foe_request.render_evidence`). Three of them describe the
 round's present state:
 
 - `current_loss_summary` — a one-line digest of the *current champion's*
@@ -45,10 +45,6 @@ round's present state:
 - `patterns` — the detector output for the current generation
   (`zicato.patterns.detectors.detect_patterns`), rendered under
   `## Patterns observed`.
-- `insights` — the decision-telemetry analyzer's markdown for the
-  epoch, rendered under `## Recent telemetry insights` (loaded by
-  `zicato.analyzer.load_latest_insights` when `workspace_root` is
-  supplied).
 - `failure_profile` — the bucketed, board-anonymized **outcome-marginal
   failure-mode profile**
   (`zicato.evolve.decision_support._render_failure_profile` →
@@ -61,8 +57,15 @@ round's present state:
   marginal-not-joint, holdout-integrity guarantees as the rest of the
   proposer feed.
 
-Each of those four describes the champion's current state and the most
-recent round's observations. None of them carries the **settled
+`ProposalEvidence` also declares an `insights` field, rendered under
+`## Recent telemetry insights` when non-empty. `evidence_from_context`
+does not populate it, so a proposal episode never receives that
+section. The decision-telemetry analyzer writes its insight files under
+the epoch's `insights/` directory, and `zicato.analyzer.load_latest_insights`
+can read them, but no caller passes them to the proposer.
+
+Each of the three channels describes the champion's current state and the
+most recent round's observations. None of them carries the **settled
 history** — "round 3 already tried tightening the researcher's
 instruction and it was rejected for a pass-rate regression", or "round 5
 tightened the coordinator's routing and it promoted with Δscalar +0.12".
@@ -171,7 +174,7 @@ adaptive-generation direction.
 ### 3.1 The source: the `experiments` table
 
 The settled history is read from the analytical index
-(`.zicato/index.db`), **not** by re-parsing `journal.md` markdown or
+(`.zicato/index.db`), **not** by re-parsing the rendered journal or
 walking every `experiment.json`. The index already projects the
 fields experiment memory needs into a relational shape that a single
 indexed `SELECT` answers, and the loop dual-writes it each round
@@ -289,15 +292,14 @@ or malformed hash.
 ### 3.5 Where it lands in the prompt, and the rendered shape
 
 The digest reaches the proposer as a `## What's already been tried`
-section of the episode's task, alongside `## Recent telemetry insights`,
-`## Current loss summary`, and `## Patterns observed` (see
-`render_evidence`). `render_prior_experiments_block` in
-`zicato.proposer.prompts` renders it at one line per experiment, to keep
-the prompt small:
+section of the episode's task, alongside `## Current loss summary` and
+`## Patterns observed` (see `render_evidence`).
+`render_prior_experiments_block` in `zicato.proposer.prompts` renders it
+at two short lines per experiment, to keep the prompt small:
 
 ```
-## What's already been tried (this epoch — avoid repeating failures, build on wins)
-
+## What's already been tried (this epoch)
+Avoid repeating failures; build on wins.
 Already promoted (build on these — the direction worked):
 - v5 PROMOTED Δscalar=+0.120  [coordinator.routing]
     Add a budget hint to the coordinator routing so it stops re-routing on revision turns.
@@ -315,7 +317,7 @@ Proposed this round, not yet evaluated (diversify away from these):
     Tighten the researcher instruction to forbid uncited claims.
 ```
 
-The framing line reads **"avoid repeating failures, build on wins"**
+The framing line reads **"Avoid repeating failures; build on wins."**
 rather than "only do X". The section advises; it does not constrain. The
 proposer may re-propose a rejected direction when it has reason to
 believe something changed, such as a fresh pattern or a different
@@ -325,7 +327,7 @@ choice rather than an accident.
 When no prior experiments exist (the baseline round, or the first
 challenger of a field with no settled history), the helper returns the
 empty string and the section is omitted entirely, in the same way as the
-insights and pattern blocks. The empty string is the proposer-side
+pattern block. The empty string is the proposer-side
 sentinel for "skip this section".
 
 ## 4. Risks and limits
@@ -415,28 +417,31 @@ Cross-contract transfer (§3.4) rides on the same reader. With
 `same_contract=False` entries with `scalar_score_delta=None`, capped to
 whatever budget the same-epoch entries leave. The operator-facing knob is
 `experimental.cross_epoch_memory` on the frozen contract, threaded through
-`_load_prior_experiments` at both the gauntlet and the multi-challenger
-call sites; the renderer gives cross-contract entries their own
-epoch-tagged block after the same-epoch blocks.
+`_load_prior_experiments` by `produce_candidate_batch`; the renderer gives
+cross-contract entries their own epoch-tagged block after the same-epoch
+blocks.
 
 ### 5.3 Prompt rendering — `zicato/proposer/prompts.py`
 
 - `render_prior_experiments_block(prior, *, restrict=False) -> str`
-  produces the compact three-block render of §3.5 (promoted, rejected,
-  in-flight) and returns `""` when `prior` is empty. It groups by
-  `decision` and renders `same_contract=False` entries without their
-  Δscalar. The `restrict` flag carries the proposer-visibility discipline
-  of [`OVERFITTING.md`](OVERFITTING.md) §11, so the block obeys the same
-  leakage restriction as the pattern block.
+  produces the compact render of §3.5 and returns `""` when `prior` is
+  empty. It groups by `decision` into up to five blocks in this order:
+  promoted, rejected, deferred, in-flight, and cross-epoch entries. It
+  renders `same_contract=False` entries without their Δscalar, labelled
+  `<epoch_id>::<generation_id>`. The `restrict` flag carries the
+  proposer-visibility discipline of [`OVERFITTING.md`](OVERFITTING.md)
+  §11: it coarsens each Δscalar to `improved`, `flat`, or `regressed`,
+  so the block obeys the same leakage restriction as the pattern block.
+  A graded experiment's prediction accuracy always renders as a
+  `low`, `medium`, or `high` band.
 - `ProposalEvidence` carries a
   `prior_experiments: tuple[PriorExperiment, ...] = ()` field. When it is
-  non-empty `render_evidence` prepends the `## What's already been tried`
-  section; when it is empty the section is omitted, mirroring the
-  `insights`-block conditional. In the assembled task the section sits
-  immediately above the core loss/pattern/mutation body, below the round's
-  aggregate signals (`## Recent telemetry insights` and
-  `## Failure-mode profile`) and below the genealogy and
-  prediction-calibration channels when those are present. Settled history
+  non-empty `render_evidence` adds the `## What's already been tried`
+  section; when it is empty the section is omitted. In the assembled task
+  the section sits immediately above the core loss/pattern/mutation body,
+  below the round's aggregate signal (`## Failure-mode profile`) and
+  below the genealogy and prediction-calibration channels when those are
+  present. Settled history
   therefore reads as the last framing the proposer sees before the
   current-state body.
 - `render_prior_experiments_block` is listed in the prompts module's
@@ -445,24 +450,25 @@ epoch-tagged block after the same-epoch blocks.
   task context and never part of the hard schema — which also means it
   never enters the proposer's contract fingerprint.
 
-### 5.4 Proposer wiring — `zicato/proposer/foe_agent.py`
+### 5.4 Proposer wiring — `zicato/proposer/agent.py` and `zicato/proposer/foe_agent.py`
 
-- `ProposerContext` carries
+- `ProposerContext` (`zicato.proposer.agent`) carries
   `prior_experiments: tuple[PriorExperiment, ...] = ()` — the settled
   digest, assembled by the caller. Passing it explicitly, rather than
   reading the index inside the proposer, keeps the proposer free of that
   filesystem dependency and lets the caller inject the round's in-flight
   siblings (§2.2) into the same list.
-- `evidence_from_context` projects the field onto `ProposalEvidence`
+- `evidence_from_context` (`zicato.proposer.foe_agent`) projects the field onto `ProposalEvidence`
   rather than re-deriving it, so what the orchestrator assembled is what
   the episode is shown and the projection cannot widen it.
 
 ### 5.5 Loading the digest and threading it through the field
 
 - `_load_prior_experiments(workspace_root, epoch_id, *,
-  cross_epoch=False) -> list[PriorExperiment]` in `zicato/evolve/ingest.py`
-  calls `prior_experiments_for_epoch(_index_db_path(workspace_root),
-  epoch_id)` inside a best-effort `try/except`. A missing or stale index
+  cross_epoch=False, writer=None) -> list[PriorExperiment]` in
+  `zicato/evolve/ingest.py` refreshes the epoch's index projection under
+  the invocation's writer, then calls `prior_experiments_for_epoch`
+  inside a best-effort `try/except`. A missing or stale index
   never aborts a round: the failure is logged at debug level and the
   function returns `[]`, mirroring `_ingest_experiment_into_index`.
 - **Candidate batch (`produce_candidate_batch` in
@@ -478,8 +484,9 @@ epoch-tagged block after the same-epoch blocks.
   `_propose_and_apply_challenger` takes a `prior_experiments` keyword and
   threads it onto the `ProposerContext` its episode runs from.
 - **The standalone propose command** (`zicato/cli/commands/propose.py`)
-  loads the digest the same way, so `zicato proposer propose` sees the
-  section the loop sees.
+  loads the same-epoch digest the same way, so `zicato proposer propose`
+  sees the section the loop sees; it does not apply
+  `experimental.cross_epoch_memory`.
 
 ### 5.6 The tests
 
@@ -496,8 +503,7 @@ epoch-tagged block after the same-epoch blocks.
   Empty input returns `""` and the section is omitted from the rendered
   evidence; the promoted, rejected, and in-flight groups render as in
   §3.5; `same_contract=False` entries render without a Δscalar and in
-  their own separated block; the section lands between the telemetry
-  insights and the loss summary.
+  their own separated block; the section lands above the loss summary.
 - **`tests/test_orchestrator_prior_experiments.py`** — the field loop, read
   end to end off the workspace's durable proposer-input capture. Siblings
   accumulate, so challenger k's task contains the in-flight core ideas of
@@ -508,8 +514,8 @@ epoch-tagged block after the same-epoch blocks.
 
 The index schema (`index/schema.py` — `experiments` already carries every
 column), `index/ingest.py`, the episode's instructions, the scalar and the scoring,
-the promote gate, the tournament structures, the dashboard, and
-`journal.md` rendering are all unchanged. The contract-hash and
+the promote gate, the tournament structures, the dashboard, and the
+journal renderer do not read the digest. The contract-hash and
 auto-epoching machinery is read-only here: the reader scopes by
 `epoch_id`.
 

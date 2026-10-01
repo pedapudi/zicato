@@ -1,5 +1,10 @@
 # zicato racing-funnel visualization study
 
+> **Status: a dated design study (2026-07-10), kept as a record.** The
+> decision below shipped: `survivalFunnel` draws the dot ladder with a
+> bracket rail of names. For the figure as it stands, read
+> [CONSOLE-DESIGN-LANGUAGE.md §4.1](../CONSOLE-DESIGN-LANGUAGE.md#41-the-figures).
+
 A single standalone, self-contained, theme-adaptive study page comparing **four
 visual grammars for the racing `survivalFunnel` figure**, all rendered on the
 identical served tournament model (field of 8 · rungs 8→4→2→1 · winner `g3` →

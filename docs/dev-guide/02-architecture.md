@@ -1,8 +1,8 @@
-# 02 — Architecture: one round, end to end, twice
+# 02 — Architecture: one round, end to end
 
-> **Covers:** the process topology · `evolve_n_rounds` (the loop, its circuit breakers, resume, control protocol) · `evolve_once` step by step on the **gauntlet** path · the **multi-challenger field** path through `evolve_field_round` · the canonical RoundLog event sequence · the data-type flow table (who constructs, who consumes, where persisted) · the extracted-seam inventory and the seam rule · where the Rust supervisor sits.
+> **Covers:** the process topology · `evolve_n_rounds` (invocation ownership, the loop, its circuit breakers, resume, control protocol) · `evolve_once` round preparation step by step · the shared field pipeline every tournament structure runs through `evolve_field_round` · the canonical RoundLog event sequence · the data-type flow table (who constructs, who consumes, where persisted) · the extracted-seam inventory and the seam rule · where the Rust supervisor sits.
 > **Prerequisites:** chapter 01 (vocabulary, Golden Rules).
-> **Invariants introduced:** [round-steps-live-in-seams] [epoch-cumulative-round-numbering] [train-selects-holdout-confirms] [outcomes-then-invariant-then-lineage] [crowning-invariant] [single-round-semaphore] [deferral-is-not-rejection] [late-binding-through-orchestrator] [progress-seq-advances-on-transitions-only] [best-effort-vs-load-bearing]
+> **Invariants introduced:** [round-steps-live-in-seams] [epoch-cumulative-round-numbering] [train-selects-holdout-confirms] [validate-the-decision-before-committing-it] [crowning-invariant] [single-round-semaphore] [deferral-is-not-rejection] [patch-the-owning-module] [progress-seq-advances-on-transitions-only] [best-effort-vs-load-bearing]
 
 This chapter walks one evolve round as the code in this tree runs it. The
 round pipeline is a set of named seams under `src/zicato/evolve/`. Read the
@@ -15,8 +15,9 @@ needs an erratum.
 
 `docs/design/ROUND-PIPELINE.md` specifies the seam contract. The prepare
 phase creates an immutable
-`zicato.evolve.generation_phase.RoundSession`; that module also owns champion,
-snapshot, next-id, and mutable-tree coordinates. Import those operations from
+`zicato.evolve.generation_phase.PreparedRound`, which `evolve_field_round`
+wraps in a `FieldRound`; that module also owns the champion, snapshot,
+next-id, and mutable-tree helpers. Import those operations from
 their owner directly — the orchestrator holds no forwarding seams for them.
 The gauntlet and field drivers each expose one ordered asynchronous entry
 point; supporting concerns live in owner modules under 1,000 lines. Do not
@@ -71,27 +72,43 @@ OS process) and why the dashboard can render a run that already crashed.
 
 `evolve_n_rounds` lives in `src/zicato/evolve/loop.py` and is exported from
 `zicato.orchestrator`. Its signature is stable, and the CLI's `zicato evolve`
-is a thin shell over it. Loop collaborators are imported from their owning
-modules; tests patch those owners directly.
+is a thin shell over it. The public function only opens
+`validated_invocation` (`src/zicato/evolve/invocation.py`) and hands the
+resulting `InvocationContext` to the private loop body `_evolve_n_rounds`.
+`evolve_once` has the same shape: it opens its own `validated_invocation`
+and delegates to `_evolve_once`. The loop body calls `_evolve_once`
+directly, so a multi-round invocation acquires ownership and validates the
+workspace once. Loop collaborators are imported from their owning modules
+inside the function body; tests patch those owners directly.
 
 ### 2.1 Startup, in order
 
 1. **Stop-reason plumbing.** `stop_reason_out` (optional caller list)
    receives exactly one symbolic terminal string: `"completed"`,
    `"consecutive_rejections"`, `"degenerate_health"`,
-   `"wall_clock_budget_between_rounds"`, or
-   `"wall_clock_budget_mid_round"`.
-2. **Mandatory workspace gate.** The loop calls
-   `zicato.check.require_workspace_valid(...)` before auto-epoching or any
-   model call. It checks the live contract when no explicit epoch is pinned,
-   reconstructs the adapter through the same worker-spec seam as tournament
-   workers — under the same environment a worker would be given — and
-   enumerates the adapter-scoped snapshot under the contract's mutation
-   syntax. `evolve_once` gates itself the same way, because it is exported
-   and spends a full round on its own; the loop passes it
-   `workspace_checked=True` so a multi-round invocation pays once. Library
-   callers and the CLI therefore share the same spend boundaries;
-   `--dry-run` runs the same validators before exiting.
+   `"preflight_refused"`, `"wall_clock_budget_between_rounds"`, or
+   `"wall_clock_budget_mid_round"`. `rounds <= 0` returns immediately
+   with `"completed"`.
+2. **Ownership first — `validated_invocation`.** Before any validation or
+   execution write it acquires the workspace lock
+   (`acquire_workspace_lock(workspace_root, instance_id)`,
+   `src/zicato/runtime/lock.py`) — two concurrent orchestrators must not
+   share a workspace. Under the lock it finishes any interrupted contract
+   or epoch publication (`recover_contract_publication`,
+   `recover_epoch_publication`), reads the workspace `config.json` once,
+   resolves the invocation's configuration (`resolve_configuration`), and
+   resolves an already-running harmonograf endpoint if one is configured
+   or recorded.
+3. **Mandatory workspace gate.** Still inside `validated_invocation`, and
+   before auto-epoching or any model call, `zicato.check.require_workspace_valid`
+   runs: against the live contract (`live_contract=True`) when no epoch is
+   pinned, or through `InvocationContext.select_epoch` against the pinned
+   epoch's captured `execution.json`. It reconstructs the adapter through
+   the same worker-spec path as tournament workers — under the same
+   environment a worker would be given — and enumerates the adapter-scoped
+   snapshot under the contract's mutation syntax. Library callers and the
+   CLI therefore share the same spend boundary; `--dry-run` runs the same
+   validators before exiting.
 
    The gate makes no model call, which is what keeps it mandatory: a check
    needing the network would refuse every offline workspace, every fixture,
@@ -101,7 +118,7 @@ modules; tests patch those owners directly.
    `evolve --dry-run` alone, after the offline validators have passed. It
    sends one short fixed request per configured `models.<role>`, building
    each role's callable through `models_config.lazy_text_call_llm`, the same
-   seam `_tournament_worker._resolve_role_call_llm` uses, so whatever
+   path `_tournament_worker._resolve_role_call_llm` uses, so whatever
    authentication the spec implies (a named `api_key_env`, or the ambient
    credentials a keyless endpoint spec relies on) is exercised rather than
    assumed. Each role is bounded by `ROLE_TIMEOUT_S` and reported on its own
@@ -116,7 +133,7 @@ modules; tests patch those owners directly.
    likely intended — a stale tree path, a span marker binding to no
    literal, a board whose entries mostly carry no expectation — is
    advisory: reported and logged, never a refusal, because those
-   workspaces run correctly today. The severity of a code is fixed in
+   workspaces still produce valid measurements. The severity of a code is fixed in
    `check.validators.ADVISORY_CODES`.
 
    The board-coverage advisory (`no_expectations`) is the one finding the
@@ -127,38 +144,54 @@ modules; tests patch those owners directly.
    read by both the validator and `health.diagnostics`. The gate says it
    before the first round is paid for; the health report says it again
    once rounds have run.
-3. **Contract-hash auto-epoching, ONCE.** When `epoch_id is None` and
-   `auto_epoch` is true, `_orch.ensure_epoch_for_contract(...)` resolves
-   (and, on drift, rolls) the epoch; the resolved id is pinned for every
-   round of this invocation so the loop never re-rolls mid-flight. An
-   explicit `epoch_id` skips auto-rolling entirely — an explicit target
-   always wins. (Mechanics: 03-contract-and-epochs.md §"epoch lifecycle".)
-4. **Workspace lock.** `acquire_workspace_lock(workspace_root,
-   instance_id)` — two concurrent orchestrators must not share a
-   workspace. Released in the `finally`.
-5. **Conservative crash-resume reconciliation, ONCE.**
-   `prepare_resume(workspace_root, epoch_id)`
-   (`src/zicato/runtime/resume.py`) runs right after the lock and before
-   any new work. It clears stale runtime state from a prior dead evolve.
-   If that prior run died mid-tournament with completed board units on
-   disk, it returns a `ResumePlan` that resumes that generation in place.
-   On ANY ambiguity it discards the partial generation. A clean workspace
-   yields the no-op plan; the plan is consumed by the FIRST round only
+4. **Runtime binding.** `_evolve_n_rounds` builds the `RuntimeConfig`
+   once (`make_runtime_config`, then `bind_runtime_to_epoch` when an epoch
+   is already selected) and records which callable serves each model role
+   (`execution_roles_for_runtime`). It then installs the invocation's
+   structured log stream under `.zicato/logs/`.
+5. **Crash-resume reconciliation, then contract-hash auto-epoching, ONCE.**
+   When `epoch_id is None`, `prepare_resume` (`src/zicato/runtime/resume.py`)
+   first reconciles the CURRENT epoch under the lock, so contract drift
+   cannot close it or seed a new epoch from its promoted head while a
+   receiptless field is still on disk. `ensure_epoch_for_contract` then
+   resolves (and, on drift, rolls) the epoch; its `before_contract_roll`
+   hook discards an in-place resume that the roll would make incomparable.
+   If the resolved epoch differs from the one reconciled, `prepare_resume`
+   runs again on the new epoch. The resolved id is pinned for every round
+   of this invocation so the loop never re-rolls mid-flight. An explicit
+   `epoch_id` skips auto-rolling entirely — an explicit target always wins
+   — and is reconciled directly. (Mechanics: 03-contract-and-epochs.md
+   §3.8, "The epoch lifecycle".)
+
+   `prepare_resume` clears stale runtime state from a prior dead evolve. If
+   that prior run died mid-tournament with completed board units on disk,
+   it returns a `ResumePlan` that resumes that generation in place. On ANY
+   ambiguity it discards the partial generation. A clean workspace yields
+   the no-op plan; the plan is consumed by the FIRST round only
    (`resume_plan = None` after round one).
-6. **Progress log cleared.** `progress_log.clear_log(...)` so this
+6. **Epoch binding.** `invocation.select_epoch(epoch_id)` binds the
+   verified epoch (and re-runs the workspace gate against its captured
+   execution contract). The contract's mutation syntax table is installed
+   (`install_syntax_table`), dialect-capability warnings are logged, and
+   the effective concurrency is logged.
+7. **Index preflight.** `index_preflight` rebuilds or heals the derived
+   index from canonical records, best-effort, after recovery has finished
+   all canonical writes and before proposer memory reads the index.
+8. **Progress log cleared.** `progress_log.clear_log(writer)` so this
    invocation's `seq` starts from 1 — "a stale tail must never read as
-   live progress". Then `HeartbeatBeater(workspace_root, instance_id,
-   interval_s=2.0)` starts.
-7. **Harmonograf + meta-loop emitter.**
-   `_orch._resolve_or_launch_harmonograf(...)` returns the console URL
-   plus a shutdown handle (auto-launched in-process unless the workspace
+   live progress".
+9. **Harmonograf, meta-loop emitter, heartbeat.**
+   `_resolve_or_launch_harmonograf(...)` returns the console URL plus a
+   shutdown handle (auto-launched in-process unless the workspace
    configures an external URL); `_build_meta_loop_emitter_safe(...)`
    builds the goldfive emitter for zicato's OWN LLM calls (proposer,
-   judges, analyzer) — degraded installs get a no-op emitter. Both are
-   torn down in the `finally` block, emitter first (a sink flushing to
-   the console wants the server still up).
-8. **First genuine transition.** `LOOP_START` appended to the progress
-   log; its `seq` stamped onto the heartbeat.
+   judges, analyzer) — degraded installs get a no-op emitter. Then
+   `HeartbeatBeater(workspace_root, instance_id, interval_s=2.0)` is
+   created. Each registers its teardown on the invocation's resource stack
+   (§2.5).
+10. **First genuine transition.** `LOOP_START` is appended to the progress
+    log through `_record_progress`, and its `seq` is stamped onto the
+    heartbeat.
 
 > ⚠️ **TRAP** — the progress log's monotonic `seq` advances ONLY on
 > genuine transitions (`LOOP_START`, `ROUND_START`, `PROPOSE`,
@@ -166,7 +199,8 @@ modules; tests patch those owners directly.
 > `SETTLED`/`STOPPED`), never on the heartbeat timer. A reader
 > distinguishes "slow but alive between transitions" from "stalled" by
 > whether `seq` moves. If you add a loop phase, append a
-> transition for it via `_append_progress_seq`; if you make the heartbeat
+> transition for it via `_record_progress` (or `_beat(..., progress=…)`);
+> if you make the heartbeat
 > bump `seq`, you have destroyed the liveness signal.
 
 ### 2.2 The three stop policies + the infra deferral
@@ -203,9 +237,9 @@ class ConsecutiveRejectionPolicy:
 |---|---|---|---|
 | `ConsecutiveRejectionPolicy` | `max_consecutive_rejections` rejected rounds in a row (default 3) | on | the proposer is stuck; the operator should inspect the brief/patterns before spending more LLM calls |
 | `DegenerateHealthPolicy` | `_DEGENERATE_HEALTH_STOP_THRESHOLD = 2` consecutive CRITICAL loop-health rounds | on (`stop_on_degenerate_health=True`) | two CRITICAL rounds in a row means the loop is producing no usable signal (e.g. degenerate scoring); one could be a transient |
-| `WallClockBudgetPolicy` | total elapsed ≥ `max_wall_clock_seconds` | off (`None` = unbounded) | enforced BOTH between rounds (clean stop) and within a round (`asyncio.wait_for` with the *remaining* budget; the cancelled round becomes a synthetic `"wall_clock_budget"` rejection via `_budget_aborted_outcome`) |
+| `WallClockBudgetPolicy` | total elapsed ≥ `max_wall_clock_seconds` | off (`None` = unbounded) | enforced BOTH between rounds (clean stop) and within a round (`asyncio.timeout` with the *remaining* budget; only expiry of that deadline turns the cancelled round into a synthetic `"wall_clock_budget"` rejection via `_budget_aborted_outcome` — any other timeout propagates) |
 
-The within-round guard is an `asyncio.wait_for` — the per-call and
+The within-round guard is an `asyncio.timeout` — the per-call and
 per-budget timeout layer of the robustness stack — so it pre-empts only
 *cooperative* async work. A round wedged in a blocking call is NOT killed
 here; killing it is the job of the subprocess worker boundary (§5) and of
@@ -221,8 +255,9 @@ circuit (see §3.10) — bypasses both streak-counting stop policies:
 > *(src/zicato/evolve/loop.py, the deferral branch comment)*
 
 Instead the loop backs off exponentially (`infra_backoff_base_s`
-doubling to `infra_backoff_cap_s`, knobs read once per invocation via
-`_infra_backoff_knobs`), re-runs `prepare_resume` so the deferred
+doubling to `infra_backoff_cap_s`, both read once per invocation from the
+resolved runtime configuration; no sleep follows the final round), re-runs
+`prepare_resume` so the deferred
 generation resumes in place if any unit completed, and continues.
 
 > ⛔ **NEVER** map a new "the round could not be judged" condition onto
@@ -249,7 +284,7 @@ def _epoch_round_base(workspace_root: Path, epoch_id: str | None) -> int:
     collides the new field with the prior invocation's rounds in one bucket
     (the "v9 lands in Round 0 next to v1–v4" bug). Returns
     ``max(persisted round_index) + 1``, or ``0`` for a fresh / unreadable epoch
-    (the historical behaviour for a brand-new epoch, where the first round is 0).
+    (the answer for a brand-new epoch, whose first round is 0).
 
     A PARENTLESS generation is skipped: the epoch's seed is CARRIED (copied from
     the registered trees, or from a rolled predecessor's promoted head), never
@@ -289,95 +324,119 @@ Before scheduling each round, in this order
    blocks scheduling until the operator clears it.
 2. `claim_skip_round(...)` — a STALE skip flag between rounds is drained
    as a no-op (there is no in-flight round to abort); a LIVE skip is
-   claimed at the top of `evolve_once` instead, aborting that round
+   claimed in `_evolve_once` instead (§3.1), aborting that round
    cleanly.
 3. `claim_rubric_replacement(...)` — an operator-provided new proposer
    brief is a CONTRACT EDIT, never a silent in-place patch:
-   `_apply_rubric_replacement` writes the payload to the LIVE brief path
-   (the same one `resolve_contract_inputs` hashes) and re-runs
-   `ensure_epoch_for_contract`, which rolls the epoch. The rolled id is
-   re-pinned for all subsequent rounds.
+   `_apply_rubric_replacement` waits for worker cleanup, publishes the
+   payload to the LIVE brief through the typed contract operations
+   (`operations.set_brief` then `operations.apply` under the invocation's
+   writer), and re-runs `ensure_epoch_for_contract`, which rolls the epoch.
+   The loop binds the rolled epoch with
+   `invocation.select_epoch(epoch_id, intentional_roll=True)` and re-pins it
+   for all subsequent rounds.
 
 After each round, best-effort: the epoch-report refresh
 (`regenerate_in_progress_html`, which delegates to the analyzer's
 deterministic regeneration) so file:// readers see the latest lineage
 without the dashboard.
 
-### 2.5 Teardown — the order of the `finally` block
+### 2.5 Teardown — the invocation's resource stack
 
 Whatever way the loop exits (completed, breaker, budget, exception,
-Ctrl-C), the `finally` in `evolve_n_rounds` runs, in this order:
+Ctrl-C), `validated_invocation` closes the invocation. Teardown is an
+`AsyncExitStack` (`InvocationContext.resources`) that unwinds in reverse
+registration order, and cleanup is shielded so a second cancellation cannot
+cut it short:
 
-1. `_mark_run_terminal(workspace_root)` — the defensive terminal-state
-   write: flip any lingering active-tournament envelope out of
-   `phase="running"` so a normally-ended run never reads as a live
-   tournament, even inside the heartbeat freshness window (a SIGKILL
-   still cannot self-clean; the frontend freshness gate covers that
-   residue).
-2. `beater.stop()` — the heartbeat task ends; the file stops advancing.
-3. `release_workspace_lock(lock)` — another orchestrator may now start.
-4. meta-loop emitter `close()` — BEFORE the harmonograf shutdown,
-   because a sink flushing its final buffer to the gRPC console wants
-   the server still up. Best-effort.
+1. `drain_worker_cleanup(workspace_root)` — worker ownership finishes first:
+   no board-unit subprocess outlives the invocation that spawned it.
+2. `_mark_run_terminal(writer)` — the defensive terminal-state write: flip
+   any lingering active-tournament envelope out of `phase="running"` so a
+   normally-ended run never reads as a live tournament, even inside the
+   heartbeat freshness window (a SIGKILL still cannot self-clean; the
+   frontend freshness gate covers that residue).
+3. `beater.stop()` — the heartbeat task ends; the file stops advancing.
+4. meta-loop emitter `close()` — BEFORE the harmonograf shutdown, because a
+   sink flushing its final buffer to the gRPC console wants the server
+   still up.
 5. `harmonograf_handle.shutdown()` — unconditional, so a crashed evolve
-   still tears the embedded server down. Best-effort.
+   still tears the embedded server down.
+6. The driver-import scope closes.
+7. `_repair_index` — a final best-effort `index_preflight` projects the
+   settled records after every producer has closed; a failure logs that
+   index repair is required and leaves canonical records authoritative.
+8. The structured log stream closes, so diagnostics cover the final
+   projection attempt.
+9. `release_workspace_lock(writer)` — another orchestrator may now start.
 
-> ⚠️ **TRAP** — if you add a resource with loop lifetime, register its
-> teardown in this block, and choose its position with care. Anything
-> that writes to the harmonograf console goes before step 5. Anything
-> that touches workspace files goes before step 3, because the lock is
-> the mutual exclusion. Anything the dashboard reads as "live" goes
-> before step 2, or it will briefly read as alive-and-frozen.
+> ⚠️ **TRAP** — if you add a resource with invocation lifetime, register
+> its teardown on `invocation.resources` at the point where it is created,
+> and choose that point with care: the stack unwinds in reverse. Anything
+> that writes to the harmonograf console must close before the server
+> shuts down. Anything that touches workspace files must close before the
+> lock is released, because the lock is the mutual exclusion. Anything the
+> dashboard reads as "live" must close before the heartbeat stops, or it
+> will briefly read as alive-and-frozen.
 
 ---
 
 ## 3. `evolve_once` — round preparation and dispatch
 
-`evolve_once` (`src/zicato/evolve/round_entry.py`) prepares one round. It loads
-and freezes the evaluation inputs, constructs the configured selection
-strategy, and passes a typed `PreparedRound` to the shared evaluation and
-settlement pipeline in `src/zicato/evolve/field.py`. The gauntlet is the
-one-candidate strategy. Every strategy uses the same execution tail.
+`evolve_once` (`src/zicato/evolve/round_entry.py`) is the public one-round
+entry point; the loop calls its body `_evolve_once` under the loop's own
+invocation. `_evolve_once` prepares one round: it binds the epoch's frozen
+evaluation inputs, constructs the configured selection strategy, and passes
+a typed `PreparedRound` to the shared evaluation and settlement pipeline in
+`src/zicato/evolve/field.py`. The gauntlet is the one-candidate strategy.
+Every strategy uses the same execution tail. The numbered `# --- N. …`
+comments in `_evolve_once` are the step names this section uses.
 
 ```
-evolve_once ─┬─ claim_skip_round (safe abort point)
-             ├─ load workspace config, board metadata, scoring, and brief
-             ├─ resolve proposer and best-of-N policy
-             ├─ open RoundLog with the frozen contract hash
-             ├─ build adapter, RuntimeConfig, and per-round token ledger
-             ├─ ensure the baseline and resolve the champion
-             ├─ run optional A/A calibration and contract pre-flight
-             ├─ enumerate mutation points and analyze champion losses
-             ├─ split train and holdout entries
-             ├─ build proposer context, screen, genealogy, and calibration inputs
-             ├─ make_strategy(weights.tournament_structure)
-             ├─ construct PreparedRound
-             └─ evolve_field_round(prepared, resume_plan)
+_evolve_once ─┬─ select the epoch; bind its captured execution contract (step 1)
+              ├─ claim_skip_round (safe abort point, step 0)
+              ├─ board, scoring, brief, proposer spec from the execution contract
+              ├─ open RoundLog with the frozen contract hash (step 0b)
+              ├─ build adapter, RuntimeConfig, per-round token ledger;
+              │  wrap the proposer with best-of-N
+              ├─ ensure the baseline and resolve the champion (step 2)
+              ├─ A/A calibration, contract pre-flight, margin check,
+              │  replicates in effect (steps 2a–2c)
+              ├─ enumerate mutation points (step 3)
+              ├─ split train/holdout; patterns, loss summary, failure profile,
+              │  process exemplars (steps 4–5a)
+              ├─ screen runner, candidate history, calibration summary
+              ├─ make_strategy(...) and construct PreparedRound (step 5b)
+              └─ evolve_field_round(prepared, resume_plan)
 
 evolve_field_round  (a facade; each line below is one named phase function)
-             ├─ assemble_candidate_field   produce the batch, settle an empty field
-             ├─ execute_field_tournament   open the records, drive the strategy
-             ├─ resolve_field_verdict      holdout, integrity checks, overrides
-             └─ settle_field_round         record, commit, close, and summarise
-                  ├─ _record_field_tournament   frontier row, envelope, durable record
-                  ├─ _build_field_settlement    one OutcomeRecord per challenger
-                  ├─ _commit_field_settlement   commit round, refresh derived index
-                  └─ _close_field_round         placebo control, epilogue, summary
+              ├─ assemble_candidate_field   produce the batch, settle an empty field
+              ├─ execute_field_tournament   open the records, drive the strategy
+              ├─ resolve_field_verdict      holdout, integrity checks, overrides
+              └─ settle_field_round         record, commit, publish, and close
+                   ├─ _build_field_settlement      one OutcomeRecord per challenger
+                   ├─ _commit_field_settlement     commit the round record, promotion hook
+                   ├─ _publish_field_observations  frontier row, settled live envelope
+                   └─ _close_field_round           placebo control, epilogue, summary
 ```
 
 ### 3.1 Step 0 — the skip safe point
 
-A pending `skip_round` control flag aborts the round before any proposer
-call or tournament write: `_skipped_round_outcome` fabricates a
-rejection-shaped outcome and the loop moves on. The flag is consumed
-(archived to `control_log/`) so it fires once.
+Once the epoch is resolved and bound, and before any proposer call or
+tournament write, a pending `skip_round` control flag aborts the round:
+`_skipped_round_outcome` fabricates a rejection-shaped outcome and the loop
+moves on. The flag is consumed (archived to `control_log/`) so it fires once.
 
 ### 3.2 Step 1 — workspace, contract artifacts, proposer
 
-`load_current_board_with_meta` returns `(board, disable_drift,
-judge_only)` — the board-level meta rides everywhere the board goes.
-`load_current_scoring` and `load_current_brief` complete the frozen
-contract view.
+The round resolves its epoch (the explicit id, else the invocation's bound
+execution contract, else the `current_epoch` marker) and calls
+`invocation.select_epoch`, which returns the `EpochExecutionContract` the
+round reads everything from. Nothing is re-read from the live contract
+files: `execution_contract.board_with_meta` returns `(board, disable_drift,
+judge_only)` — the board-level meta rides everywhere the board goes — and
+`execution_contract.scoring`, `.brief`, and `.proposer_spec` complete the
+frozen contract view.
 
 One subtlety computed right here and threaded far:
 `_declared_custom_judge_names(board, weights)` — the union of every
@@ -390,20 +449,20 @@ no judge declares. Forget to thread it into a new propose
 site and every hypothesis touching a custom judge starts bouncing with
 "unknown drift kind".
 
-Then the epoch's proposer is resolved ONCE per invocation:
+The epoch's proposer is resolved once per round from the captured spec:
 
-- `load_epoch(...)` → the frozen `proposer_path` off `EpochConfig`;
-- `resolve_proposer_spec(proposer_path)` reads the skill files once —
-  never inside the retry loop;
-- `build_proposer_agent(spec, proposer_path=...)` yields the
-  `ProposerAgent` (built-in single-shot when `proposer_path is None`);
-- `wrap_with_proposer_quality(agent, weights.proposer_quality)`
-  interposes the best-of-N + critique wrapper. A contract pinning
-  `best_of_n: 1` gets the agent back UNCHANGED — the single-sample
-  path.
+- `build_proposer_agent(execution_contract.proposer_spec,
+  external_config=execution_contract.external_proposer)` yields the
+  `ProposerAgent` (05-proposer.md §5.1 lists what it can return);
+- after the `RuntimeConfig` is built (§3.4),
+  `wrap_with_proposer_quality(agent, weights.proposer_quality, …)`
+  interposes the best-of-N + critique wrapper, routing slate sampling to
+  the breadth callable and critique to the depth callable the config
+  carries. A contract pinning `best_of_n: 1` gets the agent back
+  UNCHANGED — the single-sample path.
 
-Both the gauntlet and the field path reuse this same agent, so a
-configured proposer's skills shape every challenger identically.
+Every candidate slot in the round reuses this same agent, so a configured
+proposer's skills shape every challenger identically.
 
 ### 3.3 Step 0b — the durable RoundLog opens
 
@@ -413,23 +472,23 @@ configured proposer's skills shape every challenger identically.
 frozen contract hash:
 
 ```python
-round_log = _RoundLogEmitter(workspace_root, resolved_epoch_id, round_index)
-round_log.emit("round_opened", {"contract_hash": _epoch_cfg.contract_hash or ""})
+    round_log = _RoundLogEmitter(workspace_root, resolved_epoch_id, round_index)
+    round_log.emit("round_opened", {"contract_hash": _epoch_cfg.contract_hash or ""})
 ```
-*(src/zicato/evolve/round_entry.py, `evolve_once` step 0b)*
+*(src/zicato/evolve/round_entry.py, `_evolve_once` step 0b)*
 
 The event vocabulary is CLOSED and typed — one frozen dataclass per
 transition, registered in `EVENT_TYPES`
 (`src/zicato/epoch/round_log.py`): `round_opened`, `proposal_attempted`,
-`candidate_sampled`, `candidate_screened`, `critique_selected`,
-`experiment_minted`, `patches_applied`, `validation_failed`,
-`unit_completed`, `gate_evaluated`, `holdout_released`,
-`evidence_replicated`, `decision_recorded`, `round_closed`. Unknown
-tokens read back as raw envelopes so a newer writer's log still folds on
-an older reader. The log is append-only, single-writer, `seq` gap-free,
-and torn-tail tolerant (an unparseable LAST line is a crash artifact and
-skipped; an unparseable INTERIOR line raises — someone bypassed the
-writer).
+`proposal_episode_settled`, `candidate_sampled`, `candidate_screened`,
+`critique_selected`, `experiment_minted`, `patches_applied`,
+`harness_loaded`, `validation_failed`, `unit_completed`, `gate_evaluated`,
+`holdout_released`, `evidence_replicated`, `decision_recorded`,
+`frontier_updated`, `round_closed`. An unknown token reads back as a raw
+envelope (typed payload `None`) rather than failing the fold. The log is
+append-only, single-writer, `seq` gap-free, and torn-tail tolerant (an
+unparseable LAST line is a crash artifact and skipped; an unparseable
+INTERIOR line raises — someone bypassed the writer).
 
 > ✅ **ALWAYS** emit a RoundLog event when you add a round step that
 > makes or records a decision. The RoundLog is the round's
@@ -437,18 +496,21 @@ writer).
 > `fold_round_record`, to the dashboard forensics, and to anyone debugging
 > the round later.
 
-### 3.4 Steps 1c–1d — structure, adapter, runtime config, token ledger
+### 3.4 Structure, adapter, runtime config, token ledger
 
-`tournament_spec = weights.tournament_structure` — read off the loaded
-(frozen) weights so it is in lockstep with the contract hash. Adapter and
-`RuntimeConfig` come from the factories
-(`adapter_factory.make_adapter_from_config`,
-`runtime_factory.make_runtime_config`). When
-`config.max_tokens_per_round > 0`, a fresh `RoundTokenLedger` is minted
+`tournament_spec = weights.tournament_structure` — read off the frozen
+weights so it is in lockstep with the contract hash. The adapter comes from
+`adapter_factory.make_adapter_from_config` over the execution contract's
+adapter configuration. The `RuntimeConfig` is the invocation's (built once
+by the loop, §2.1 step 4), or `runtime_factory.make_runtime_config` for a
+standalone `evolve_once`; `bind_runtime_to_epoch` binds it to the epoch's
+captured execution roles. The round then records the settings in force,
+with each value's source, onto the heartbeat (`effective_settings`).
+When `config.max_tokens_per_round > 0`, a fresh `RoundTokenLedger` is minted
 and rebound onto the config via `dataclasses.replace` — every scheduler
-seam that already receives the config (full/fast schedulers, the screen,
-evidence replicate duels) shares one tally with zero signature changes;
-knob off (default 0) binds nothing.
+seam that already receives the config (the board-unit schedulers, the
+screen, evidence replicate duels) shares one tally with zero signature
+changes; knob off (default 0) binds nothing.
 
 The optional `ScoringWeights.goldfive` object follows a separate path. It is
 frozen contract data rather than a runtime knob. The worker exposes it as
@@ -464,15 +526,26 @@ construction to Goldfive's `RuntimeConfigDocument` API.
 trees if the epoch has no generations yet (byte-for-byte copy of the
 operator's source; on a contract roll it seeds from the previous epoch's
 promoted head via the roll-seed marker — see 03-contract-and-epochs.md).
-`current_generation` reads committed round records and returns the primary
-generation from the most recent promotion, or `v0` before any promotion.
-The parent `Generation` is constructed with `promoted=True`.
+A resumed round keeps the parent its persisted experiment recorded;
+otherwise `generation_phase.current_generation` returns the primary
+generation from the most recent committed promotion, or `v0` before any
+promotion. The parent `Generation` is constructed with `promoted=True`.
 
-Then two idempotent, opt-in epoch-open measurements, each persisted onto
-`EpochConfig` (never hashed): `_maybe_calibrate_noise_floor`
-(config.json `"calibrate_noise_floor": K` — K champion draws under the `calibration` purpose) and `_maybe_contract_preflight` (`"contract_preflight": K` — A/A floor plus degradation signal against a degraded copy under the `contract_preflight` purpose; recommend-only). On round 0 only,
+Then two idempotent epoch-open measurements, each persisted onto
+`EpochConfig` (never hashed). `_maybe_calibrate_noise_floor` is opt-in
+(config.json `"calibrate_noise_floor": K` — K champion draws under the
+`calibration` purpose). `_maybe_contract_preflight` runs unless
+`runtime.preflight_gate` is `"off"`: an A/A floor plus the degradation
+signal against a degraded copy, under the `contract_preflight` purpose.
+Its verdict warns by default; under `preflight_gate="refuse"` a refuse
+verdict raises `PreflightRefusedError`, which stops the loop with
+`"preflight_refused"` before any round spends budget. On round 0 only,
 `_warn_margin_below_noise_floor` warns when `promote_margin` sits inside
-the measured floor.
+the measured floor. `_resolve_replicates_in_effect` then fixes the
+replicate count every duel of the epoch runs — the contract's pinned
+value, else the smallest count whose minimum detectable effect at the
+measured floor is within `promote_margin`, else the structure's default —
+and stamps it, with its source, onto the effective-settings record.
 
 Both measurements are SERIAL and front-loaded: K draws, each a full pass
 over the board, before the round's first duel (the pre-flight adds one
@@ -487,11 +560,12 @@ the first draw.
 
 ### 3.6 Steps 3–5 — mutations, the split, patterns, the proposer's view
 
-`enumerate_mutations(_resolve_mutable_trees(adapter, parent_snapshot))` —
-zero mutation points is a hard `RuntimeError` ("did the adapter declare
-its mutable_trees?"). `mutation.inventory.write_mutation_inventory` writes
-the enumeration atomically. The round retains best-effort publication: a
-snapshot failure is logged and does not abort execution.
+`enumerate_mutations(generation_phase.mutable_trees(adapter,
+parent_gen.snapshot_root))` — zero mutation points is a hard `RuntimeError`
+("did the adapter declare its mutable_trees?").
+`write_mutation_inventory` publishes the enumeration to the epoch's
+`mutations.json`, best-effort: a publication failure is logged and does not
+abort execution.
 
 Then the anti-overfitting boundary — worth reading verbatim because
 every downstream proposer input flows through it:
@@ -499,7 +573,7 @@ every downstream proposer input flows through it:
 ```python
     # --- 4. Patterns ---
     # The proposer + detectors + loss summary see the TRAIN slice ONLY
-    # (OVERFITTING.md §11 #1, §12 #1): the holdout's per-entry behaviour is
+    # (OVERFITTING.md §11.1, §12 #1): the holdout's per-entry behaviour is
     # never surfaced to the proposer, so it cannot be memorized. When the
     # board is too small to split (the default-safe degrade), the train
     # slice IS the full board and every downstream artifact is byte-
@@ -507,22 +581,28 @@ every downstream proposer input flows through it:
     # spans) is unrelated to the split and is left untouched.
     from zicato.board.split import rotation_seed, split_board  # noqa: PLC0415
 
+    # Thread the epoch id as the rotation seed (OVERFITTING.md §12 #6) so the
+    # holdout slice is stable within this epoch but rotates across epochs.
+    # ``rotation_seed`` returns ``None`` (the unseeded, byte-identical split)
+    # when ``rotate_holdout`` is off.
     train_seed = rotation_seed(weights.overfitting, resolved_epoch_id)
     train_ids, _holdout_ids = split_board(board, weights.overfitting, seed=train_seed)
 ```
-*(src/zicato/evolve/round_entry.py, `evolve_once` step 4 — excerpt)*
+*(src/zicato/evolve/round_entry.py, `_evolve_once` step 4 — excerpt)*
 
 Everything the proposer will see is computed from the TRAIN slice only:
 `_load_parent_losses` (the champion's per-entry loss profiles),
 `detect_patterns` over a `DetectorInput` of those losses + train entries
-+ events paths, `_render_loss_summary`, `_render_failure_profile`
-(bucketed outcome marginals; empty slice renders the EMPTY string — the
-"omit this section" sentinel), and `_render_process_exemplars_block`
-(opt-in, redacted, best-effort, empty string when off/failed). The
-restricted-visibility envelope (`01-orientation.md §4`) is enforced here,
-at computation time, rather than only at prompt-render time.
++ events paths, `build_metric_priorities` and its banded render (what the
+contract scores, without the raw weights), `_render_loss_summary`,
+`_render_failure_profile` (bucketed outcome marginals; empty slice renders
+the EMPTY string — the "omit this section" sentinel), and
+`_render_process_exemplars_block` (opt-in, redacted, best-effort, empty
+string when off/failed). The restricted-visibility envelope
+(`01-orientation.md §4`) is enforced here, at computation time, rather
+than only at prompt-render time.
 
-### 3.7 Step 5a′ — the screen-runner closure
+### 3.7 Step 5a′ — the screen-runner closure and candidate history
 
 `_build_candidate_screen_runner` returns `None` — and therefore no screen
 callable even exists on the propose path — unless the contract opts in
@@ -533,14 +613,25 @@ holdout is never eligible), so every propose site this round screens on
 the same panel. The closure also stamps a `screening:r{round}` heartbeat
 phase, so the stall detector attributes the wall-clock honestly.
 
+`_build_candidate_history` assembles the opt-in recombination pair and
+genealogy items, and `_build_calibration_summary` the opt-in banded
+critic-calibration summary (`experimental.calibration_feedback`); each is
+`None` or empty when its knob is off.
+
 ### 3.8 Step 5b — structure dispatch
 
 ```python
-    strategy = make_strategy(tournament_spec, board_ids=[e.id for e in train_board])
-    prepared = PreparedRound(..., strategy=strategy)
+    strategy = make_strategy(
+        tournament_spec,
+        board_ids=[e.id for e in train_board],
+        replicates=replicate_setting.replicates,
+        noise_floor_delta_std=replicate_setting.delta_std,
+        experimental=weights.experimental,
+    )
+    prepared = generation_phase.PreparedRound(..., strategy=strategy, ...)
     return await evolve_field_round(prepared, resume_plan=resume_plan)
 ```
-*(src/zicato/evolve/round_entry.py, `evolve_once` step 5b — excerpt)*
+*(src/zicato/evolve/round_entry.py, `_evolve_once` step 5b — excerpt)*
 
 Board-aware structures (racing) get the train entry ids as default
 `board_ids`; board-agnostic ones ignore them. All field widths use the same
@@ -548,10 +639,16 @@ evaluation and settlement function.
 
 ### 3.9 Step 6 — propose (or resume)
 
-`produce_candidate_batch` mints generation ids from `next_generation_id` and
-requests `strategy.field_size()` candidates. A one-candidate resume may reuse
-the plan's `resume_generation_id`; a fresh id would orphan completed measurement files. The proposer's post-apply validation hook is built by the
-shared seam:
+`assemble_candidate_field` (`src/zicato/evolve/field_candidates.py`) asks
+`produce_candidate_batch` (`src/zicato/evolve/candidate_batch.py`) for
+`strategy.field_size()` candidates; ids are minted from
+`next_generation_id`. A one-candidate resume may reuse the plan's
+`resume_generation_id`; a fresh id would orphan completed measurement files.
+Each slot runs `_propose_and_apply_challenger`
+(`src/zicato/evolve/propose_apply.py`, §4.2), which first captures the
+parent's `MutationPolicy` (the permitted mutation points and forbidden ids)
+and writes it under the parent's `mutation-policies/`. The proposer's
+post-apply validation hook is built by the shared seam:
 
 - `build_post_apply_validator` (`src/zicato/evolve/round.py`) — the
   `validate_experiment` hook the proposer agent calls on EVERY attempt:
@@ -585,7 +682,7 @@ concatenates this settled digest with the round's in-flight siblings
 (decision `"in_flight"`) so challenger k diversifies away from
 challengers 0..k−1.
 
-**The resume short-circuit (step 6r).** When the plan resumes in place
+**The resume short-circuit.** When the plan resumes in place
 for exactly this generation, the persisted experiment is reused verbatim
 rather than re-proposed — the proposer is non-deterministic, and a fresh
 proposal would invalidate the on-disk unit cache. The SAME validate hook
@@ -600,11 +697,15 @@ N `candidate_sampled`
 draws (each slot with a distinct edit-class hint), the optional guarded
 screen (`candidate_screened` events; veto-first; one bounded revise
 re-sample if all-vetoed), `critique_selected`, then the validate hook.
-On success `_propose_child` emits `proposal_attempted` (empty errors),
+`_propose_child` then runs the validate hook once more itself: a returned
+experiment does not prove that a custom proposer called the hook, or that
+the returned patches are the ones it checked. On success it emits
+`proposal_attempted` (empty errors), `proposal_episode_settled{completed}`,
 `experiment_minted`, `patches_applied`, and stamps the authoritative
 evolve `round_index` onto the experiment. On `ProposerError`, one
-`proposal_attempted{errors}` per failed attempt is emitted and the error
-propagates to the rejected tail.
+`proposal_attempted{errors}` per failed attempt plus one
+`proposal_episode_settled{kind, code, message}` recording how the episode
+ended are emitted, and the error propagates: the slot is rejected (§4.2).
 
 **What the proposer sees — the `ProposerContext` inventory.** Every
 input crossing into the propose step is enumerated here because this is
@@ -625,6 +726,12 @@ envelope argument written down. The fields as `_propose_child` populates them
 | `prior_experiments` | `_load_prior_experiments` (+ in-flight siblings on the field path) | banded Δscalar under restriction; capped at 12 |
 | `mutation_track_records` | `_load_mutation_track_records` (index; best-effort `{}`) | per-mutation-point fertility counts — no entries |
 | `custom_judge_names` | `_declared_custom_judge_names` | names only |
+| `metric_priorities` | `build_metric_priorities` + `render_metric_priorities_block` | banded priorities; raw weights never cross |
+| `genealogy`, `recombine_pair` | `_build_candidate_history` (opt-in) | lineage summaries and a parent pair — no entries |
+| `calibration` | `_build_calibration_summary` (opt-in) | banded, aggregate counts of the proposer's own past predictions |
+| `workspace_root`, `writer`, `generation_root`, `mutation_policy` | the round's workspace owner, the parent snapshot, the captured `MutationPolicy` | where the episode's working copy comes from and what it may touch |
+| `scratch_validator_factory` | `build_scratch_validator_factory` | a private scratch tree per slate slot |
+| `sample_hint`, `slot_index`, `revise_feedback` | set per slot by the best-of-N wrapper | edit-class hint, slot number, counts-only veto or validation feedback |
 | `aux_call_llm`, `model`, `max_retries` | runtime plumbing | — |
 | `validate_experiment` | `build_post_apply_validator` | the retryable apply+validate hook |
 | `restrict_visibility` | `weights.overfitting.restrict_proposer_visibility` | the envelope master switch (default on) |
@@ -688,7 +795,7 @@ single inner `propose` with NO critique and NO extra work):
    `last_child_snapshot["path"]` for the caller. There is no shared
    tree to fall back to, so an unexpected finding here (the parent tree
    changed underneath the slate) raises the standard `ProposerError`.
-   Both pipelines are covered e2e by
+   Every field width is covered e2e by
    `tests/test_best_of_n_tree_integrity.py`.
 
 > ⛔ **NEVER** decouple "the experiment we persist" from "the tree we
@@ -697,48 +804,38 @@ single inner `propose` with NO critique and NO extra work):
 > `_mount_chosen`, because that derive is the only thing that makes
 > tree and record agree.
 
-### 3.10 Steps 7–10a — manifest check, rejected tail, the tournament, the infra circuit
+### 3.10 Manifest check, the rejected tail, the matchup, the infra circuit
 
-`check_patch_manifest_and_forbidden` (`src/zicato/evolve/round.py`)
-cross-checks every patch's `mutation_id` against the re-enumerated
-manifest and the brief's `## Forbidden` ids — `RuntimeError` on either.
+After a candidate returns, `check_patch_manifest_and_forbidden`
+(`src/zicato/evolve/round.py`) cross-checks every patch's `mutation_id`
+against the re-enumerated manifest and the brief's `## Forbidden edits` ids and
+raises `BadPatchSetError` (a `ValueError`) on either.
 
-If validation failed (or the proposer exhausted retries),
-`_persist_rejected_round` is the tail. The experiment is written with a
+If the only slot of a one-candidate field exhausted its proposer retries,
+`_settle_field_that_produced_nothing` (`src/zicato/evolve/field_candidates.py`)
+settles the round through `_persist_rejected_round`
+(`src/zicato/evolve/persist.py`). The experiment is written with a
 rejected `OutcomeRecord` whose reason is symbolic
 (`"validation_failed: …"` vs `"proposer_retries_exhausted: …"`) and
 folded through `_finalize_generation` with NO lineage entry, because the
 generation never earned one. `validation_failed` and `decision_recorded`
 land on the RoundLog. `_round_epilogue` still runs, minus the analyzer
 that this tail skips, so a stuck loop surfaces on the dashboard even when
-nothing ever reaches a tournament.
+nothing ever reaches a tournament. A field whose every failed attempt was a
+transport failure defers instead (`deferred_infra_proposer_outage`): the
+endpoint failed, and the proposer produced nothing to judge. Wider
+all-failed fields settle as
+described in §4.2.
 
-Otherwise: `write_experiment` persists the experiment with
-`outcome=None` (the index dual-write folds it in so the dashboard sees
-the in-progress generation), and the duel runs:
-
-- **fast mode with a cache** — `run_fast_mode` against
-  `_load_historical_aggregate` (the champion's cached `gen_score.json`).
-  First round of a fresh epoch has no cache: fast degrades to one full
-  A/B round that seeds it — which is what makes `--mode fast` safe as a
-  default.
-- **full mode** — `run_tournament` with the noise knobs threaded:
-  `replicates=strategy.replicates()` (per-duel replication, averaged
-  before the gate; default 2 for the gauntlet), `child_diff_size` (the
-  opt-in parsimony term; absent at weight 0), and the cache
-  semantics captured in one load-bearing expression:
-
-```python
-            champion_force_fresh=(not fast_mode) and resumed_experiment is None,
-            ...
-            force_fresh=resumed_experiment is None,
-```
-*(src/zicato/evolve/round_entry.py, `evolve_once` step 10 — excerpt)*
-
-`--mode full` re-samples BOTH sides for noise; a resumed round
-cache-reads both sides so the interrupted round's completed units are
-HITs and resume stays nearly free. (Full semantics: `run_tournament`'s
-docstring, `src/zicato/tournament/runner.py`.)
+Otherwise each applied challenger is persisted (§4.2) and the strategy's
+matchups run. Every scheduled matchup, the gauntlet's single duel included,
+goes through `run_field_matchup` (`src/zicato/evolve/field_execution.py`),
+which calls `run_matchup` (`src/zicato/tournament/runner.py`) on the train
+board with the matchup's `replicates`, both sides' diff sizes (the opt-in
+parsimony term), and `fast=prepared.fast_mode or candidates.resume_cache`.
+It caches both sides' aggregates to `gen_score.json` (with a
+`gen_score.history.jsonl` line per write) unless `cache_scores=False`, and
+emits the matchup's units and gate verdict onto the RoundLog.
 
 **The aggregate dict — the shape everything downstream reads.** Both
 sides of every duel are reduced by `aggregate_generation_score`
@@ -773,17 +870,20 @@ right candidates and is applied in both modes. Round-level
 `champion_eval_mode` is derived only from the reigning champion's unit
 provenance: `full`, `fast`, or `fast-degraded`.
 
-**Step 10a — the endpoint-outage circuit.** This runs BEFORE anything
-downstream consumes the duel. When `config.infra_abort_round_threshold >= 1`
-and `_count_infra_aborted_runs(tournament_result)` reaches that threshold,
-`_defer_round_infra_outage` settles the round as `deferred_infra`. The
-counter counts `is_infra_abort_cause` losses — worker crashes and kills,
-never genuine budget exhaustion — and a cache-reused unit can never
-contribute to it. The deferral caches no `gen_score.json` (a
-mostly-aborted aggregate would poison fast mode), routes nothing to the
-strategy, and writes no outcome, lineage, or journal entry, so the
-experiment stays un-outcomed on disk, exactly the shape `prepare_resume`
-reconciles. The health report carries the `infra_outage` WARNING.
+**The endpoint-outage circuit.** This runs inside `run_field_matchup`,
+BEFORE anything downstream consumes the matchup. When
+`config.infra_abort_round_threshold >= 1`, the round's running
+`_count_infra_aborted_runs` tally across its matchups is checked after each
+one; reaching the threshold raises `_InfrastructureRoundDeferred`, and
+`execute_field_tournament` settles the round through
+`_defer_round_infra_outage` as `deferred_infra`. The counter counts
+`is_infra_abort_cause` losses — worker crashes and kills, never genuine
+budget exhaustion — and a cache-reused unit can never contribute to it.
+The tripping matchup caches no `gen_score.json` (a mostly-aborted aggregate
+would poison fast mode), nothing further is routed to the strategy, and no
+outcome or journal entry is written, so the round's experiments stay
+un-outcomed on disk, exactly the shape `prepare_resume` reconciles. The
+health report carries the `infra_outage` WARNING.
 
 ### 3.11 Tournament evaluation, evidence, integrity, and overrides
 
@@ -807,8 +907,8 @@ Each additional confirmation requires an independent measurement from both
 sides. A resumed request may reuse its matching completed measurement;
 replaying that measurement must not add another observation to the fit.
 The measurement identity rule is in `01-orientation.md §4`, G7.
- Non-separating CIs within
-the budget leave the champion standing: the decision goes terminally
+A verdict still unconfirmed when the replicate budget is spent leaves the
+champion standing: the decision goes terminally
 inconclusive, the duel is recorded to the
 dead-letter queue (`record_inconclusive`), and the journaled `evidence`
 block carries the rating CIs plus the full `ci_history` trail. Each
@@ -825,69 +925,76 @@ snapshots); (b) gate-contradiction re-derivation
 default OFF, so the default posture matches the supervisor's alarm-only
 stance.
 
-**10c — the operator gate override.** `claim_gate_override(workspace,
-next_id)` at the one safe point (gate settled, nothing persisted). An
-override is NEVER a silent flip: `operator_override` +
+**Operator gate overrides.** `resolve_field_verdict` claims them with
+`claim_field_gate_overrides(workspace, field_candidate_ids)` at its one safe
+point (evaluation settled, nothing persisted); §4.4 describes the
+re-resolution. An override is NEVER a silent flip: `operator_override` +
 `operator_override_reason` are stamped onto the `OutcomeRecord`, and a
 forced reject carries `"operator override: …"` in `rejection_reason`.
 
-### 3.12 Steps 11–16 — persist, placebo, epilogue
+### 3.12 Persist, placebo, epilogue
 
-The `OutcomeRecord` is assembled with every runtime-evidence field: deltas,
-structure, the runner's `champion_eval_mode`, holdout evidence, train and
-holdout loss, the generalization gap, and the statistical-evidence block. A
-resolved tournament records every candidate outcome and the complete tournament
-in one round record. Committing that record publishes all outcomes and the
-primary promoted generation together. Readers derive experiment outcomes,
-lineage status, the champion, and the journal from the committed record.
-Index refresh follows publication. A validation or proposal failure before
-tournament execution uses `_finalize_generation` to record the rejection
-directly in the proposal file and refresh its index row.
+`_build_field_settlement` assembles one `OutcomeRecord` per applied
+challenger with every runtime-evidence field: deltas, structure, the
+round's `champion_eval_mode`, holdout evidence, train and holdout loss, the
+generalization gap, and the statistical-evidence block. A resolved
+tournament records every candidate outcome and the complete tournament in
+one round record, `rounds/{round}/field_settlement.json`. Committing that
+record publishes all outcomes and the primary promoted generation together.
+Readers derive experiment outcomes, lineage status, the champion, and the
+journal from the committed record. Index refresh follows publication. A
+validation or proposal failure before tournament execution uses
+`_finalize_generation` to record the rejection directly in the proposal
+file and refresh its index row.
 
 A rejected generation remains visible in lineage and `zicato epoch list`.
 The champion changes only when a committed round names a primary promotion.
 The RoundLog event `decision_recorded` carries the structure, reason, override
 flags, parent id, and promoted ids.
 
-**The holdout block and the generalization fields.** When the runner
-consulted a holdout, `TournamentResult.holdout` carries the
+**The holdout block and the generalization fields.** When holdout
+confirmation ran for the crowning challenger, the verdict carries the
 Ladder-mediated evidence block — a plain JSON dict with the stable shape
-documented at `holdout_record` (`src/zicato/tournament/ladder.py`) and
+built by `holdout_record` (`src/zicato/tournament/ladder.py`) and
 journaled verbatim under `OutcomeRecord.holdout`:
 
 | Key | Meaning |
 |---|---|
-| `confirmed` | `True`/`False`/`None` — the released confirmation bit (`None` when the Ladder withheld a release) |
+| `confirmation_status` | `satisfied`, `failed`, `incomplete`, or `disabled` — only a released confirmation satisfies the candidate |
+| `reason` | why the status holds; never reveals an unreleased negative result |
+| `confirmed` | `True`/`False`/`None` — the confirmation bit (a withheld release may repeat a historical value) |
 | `train_scalar` / `holdout_scalar` | the crowning duel's two slice scalars |
-| `ladder_released` | whether the release rule fired this round |
-| `ladder_budget_total` / `ladder_budget_remaining` | the per-epoch holdout-query budget state |
+| `holdout_consulted` / `ladder_released` | whether the holdout was queried, and whether the release rule fired |
+| `ladder_budget_total` / `ladder_budget_before_query` / `ladder_budget_remaining` / `ladder_query_reserved` | the per-epoch holdout-query budget accounting |
 | `threshold` | the train-improvement bar the release rule applied |
 
-Alongside it, `_generalization_fields` pairs the child's TRAIN-slice
-scalar (the score that gated it) with its HOLDOUT-slice scalar into
-`train_loss`, `holdout_loss`, and `generalization_gap`. That
-holdout-slice scalar is `TournamentResult.holdout_child_scalar`,
-decoupled from the Ladder's release semantics so the gap is measurable
-whenever a holdout exists. A positive gap means the holdout scored worse
-than the train slice, the memorization signature the health detector
-reads off the champion lineage. All of these are RUNTIME evidence, never
-contract inputs.
+Alongside it, `_generalization_fields_from_scalars`
+(`src/zicato/evolve/decision_support.py`) pairs the crowning challenger's
+TRAIN-slice scalar (the score that gated it) with its HOLDOUT-slice scalar
+into `train_loss`, `holdout_loss`, and `generalization_gap`. The
+holdout-slice scalar is decoupled from the Ladder's release semantics, so
+the gap is measurable whenever a holdout exists. A positive gap means the
+holdout scored worse than the train slice, the memorization signature the
+health detector reads off the champion lineage. All of these are RUNTIME
+evidence, never contract inputs.
 
-**13b — the placebo arm.** `_maybe_run_placebo_arm_gauntlet` runs one
-EXTRA scheduled duel on the opt-in cadence
-(`experimental.random_baseline_every_n`): champion vs a
-semantics-preserving no-op copy of itself. It runs BEFORE the health
-assessment so a promoted placebo raises its CRITICAL finding in THIS
-round's report; it never advances the champion.
+**The placebo arm.** On the opt-in cadence
+(`experimental.random_baseline_every_n`) a wider field carries one
+placebo challenger inside its slate (§4.2). A one-challenger field has no
+room for it, so `_close_field_round` runs
+`_maybe_run_placebo_arm_gauntlet` — one EXTRA duel, champion vs a
+semantics-preserving no-op copy of itself — after settlement and BEFORE
+the health assessment, so a promoted placebo raises its CRITICAL finding
+in THIS round's report. The placebo never advances the champion.
 
-**14–16 — `_round_epilogue`.** The shared end-of-round tail — loop-health
+**`_round_epilogue`.** The shared end-of-round tail — loop-health
 assessment persisted to `epochs/{epoch}/health/round_{N}.json` (CRITICAL
 no-signal warning to stderr), the decision-telemetry analyzer (writes
-`insights/round_{N}.md` for the NEXT round's proposer, grounded in the
-real mutation-id list so the LLM cannot hallucinate targets), and the
-epoch analysis report regeneration. The gauntlet and multi-challenger
-paths both call this one tail, so a new epilogue step can never land on one
-pipeline only. Every step is best-effort by contract.
+`insights/round_{NNNN}.md` for the NEXT round's proposer, grounded in the
+real mutation-id list so the model cannot hallucinate targets), and the
+epoch analysis report regeneration. Every settled round and the rejected
+tail call this one tail, so a new epilogue step can never land on one path
+only. Every step is best-effort by contract.
 
 Final heartbeat (`PROMOTE`/`REJECT` progress transition),
 `round_closed`, and the `EvolveRoundOutcome` returns.
@@ -935,10 +1042,15 @@ structure's scheduling shape
 
 | Structure | `field_size` | Shape | Key params |
 |---|---|---|---|
-| `gauntlet` | 1 | one champion-vs-challenger duel; promote-on-gate | `replicates` (default 2) |
+| `gauntlet` | 1 | one champion-vs-challenger duel; promote-on-gate | `replicates` (unset: 2) |
 | `single_elim` / `double_elim` (experimental) | bracket | challenger-vs-challenger nodes (winner = `lower_scalar_id()`), then champion-gate crowning | `field_size`, `replicates` |
 | `swiss` (experimental) | N | `rounds_n` swiss pairings, then crowning | `field_size`, `rounds_n`, `replicates` |
-| `racing` | N | escalating board-slice rungs cut the field (`board_subset` per rung); a rung CUTS, it does not crown; final full-train crowning duel | `field_size`, `eta`, `board_fraction`, optional `matchup_budget_seconds`, `promote_confidence_threshold`/`promote_confidence_replicates` |
+| `racing` | N | escalating board-slice rungs cut the field (`board_subset` per rung); a rung CUTS, it does not crown; final full-train crowning duel | `field_size`, `eta`, `board_fraction`, `replicates` (unset: 1), optional `matchup_budget_seconds`, `promote_confidence_threshold`/`promote_confidence_replicates` |
+
+A scoring document that omits the tournament block gets racing with
+`field_size` 4, `eta` 2, `board_fraction` 0.4, `replicates` 2,
+`promote_confidence_threshold` 0.8, and `promote_confidence_replicates` 32
+(`_default_tournament_structure`, `src/zicato/core/tournament.py`).
 
 All structures end the same way: ONE crowning champion-gate duel whose
 `GateOutcome` decides promotion — which is why the holdout confirmation
@@ -949,9 +1061,9 @@ and the evidence pre-gate bolt onto "the crowning matchup" uniformly.
 Internal matchups — the gauntlet duel, Swiss rounds, elimination nodes, and
 racing rungs — score on the train slice when holdout confirmation is active.
 The holdout is never consumed to pick the leader. Empty holdout means train is
-the full board. Fast gauntlet evaluation retains its documented whole-board
-behavior and skips holdout confirmation; full gauntlet evaluation uses the
-shared train-selects, holdout-confirms procedure.
+the full board. Every structure and both evaluation modes use the same
+train-selects, holdout-confirms procedure; fast mode only lets the holdout
+confirmation reuse completed measurements.
 
 ### 4.2 Minting the field
 
@@ -967,23 +1079,31 @@ a proposer attempt fails before deriving a snapshot. For each of the
    dashboard's proposing tracker shows each slot enter the field live;
 2. builds the same `build_post_apply_validator` hook and calls the same
    `_propose_child`;
-3. on `ProposerError`: returns `None` plus a `"rejected"` status carrying
-   the FULL per-attempt failure list (`attempt_reasons`) — a failed slot
-   narrows the field, never crashes the round;
-4. on success: `write_experiment` (outcome=None) + index dual-write,
-   and — critically — a PENDING lineage append:
+3. on `ProposerError`: returns a `CandidateAttempt` with no challenger,
+   a `"rejected"` status carrying the FULL per-attempt failure list
+   (`attempt_reasons`), and the error itself — a failed slot narrows the
+   field, never crashes the round;
+4. on success: `check_patch_manifest_and_forbidden`, then — critically —
+   a PENDING lineage append BEFORE the experiment is written, then
+   `write_experiment` (outcome=None), the containment manifest
+   (`write_containment_manifest`, the parent-bound byte-range evidence),
+   and the index dual-write:
 
 ```python
-    # The creation-time write is PENDING (promoted=null), NOT a dead branch
-    # (promoted=False). The challenger has applied a snapshot but has not
-    # been crowned or cut — it is still racing. ``promoted=False`` reads as
-    # REJECTED, so a False default would render an in-flight racer as a dead
-    # branch on /api/lineage while it is mid-tournament. Pending → null →
-    # the dashboard maps it to "racing"; the settle-time append flips it to
-    # the resolved bool.
+    # Lineage is the creation commit marker. Write the pending node before
+    # experiment.json so recovery can identify every applied field sibling
+    # without inferring membership from directory order. A crash after this
+    # marker can discard the complete field; a crash before it leaves source
+    # that no canonical record names, which startup prunes through the store
+    # (:func:`zicato.runtime.resume._discard_unrecorded_source`).
     append_to_lineage(workspace_root, epoch_id, child_gen, parent_id=parent_id, pending=True)
+    write_experiment(workspace_root, epoch_id, next_id, experiment)
 ```
 *(src/zicato/evolve/propose_apply.py, `_propose_and_apply_challenger` — excerpt)*
+
+The pending node reads as `promoted=null` ("racing" on the dashboard), never
+`false`: a challenger that applied but has not been crowned or cut is not a
+dead branch. The committed round record supplies its settled decision.
 
 **Field diversity.** The accept/soft-reject verdict is PURE
 (`_mint_challenger_field` → `_FieldMintDecision`), separated from its
@@ -998,22 +1118,27 @@ persistence I/O so the branches are unit-testable:
   `"in_flight"`) is appended to `siblings` so challenger k sees the
   hypotheses of challengers 0..k−1 and can diversify away from them.
 
-A soft-rejected slot is not just dropped: `_persist_soft_reject` writes a
-terminal REJECTED outcome onto its already-persisted `experiment.json`
-(reason `"field_diversity_duplicate: …"` / `"field_diversity_overlap:
-overlap 0.xxx with sibling vN exceeds diversity_tolerance 0.yyy"`) so
-the canonical record and the lineage tree agree with the live hero —
+A soft-rejected slot is not just dropped: `_persist_soft_reject`
+(`src/zicato/evolve/candidate_batch.py`) writes a terminal REJECTED
+outcome onto its already-persisted `experiment.json` (reason
+`field_diversity_duplicate` or `field_diversity_overlap`, followed by the
+detail), marks its lineage node rejected, and refreshes its index row, so
+the canonical record, the lineage tree, and the live dashboard view agree —
 never a stale "pending".
 
-An all-failed field returns a clean rejection-shaped
+An all-failed field settles in `_settle_field_that_produced_nothing`. A
+trail made only of transport failures defers (`deferred_infra`); a
+one-candidate field whose slot exhausted its retries takes the rejected
+tail (§3.10); any other all-failed field returns a clean rejection-shaped
 `EvolveRoundOutcome` ("multi-challenger field: no challenger applied
-cleanly") — after persisting the field-status so the dashboard reads
-"N proposed · 0 applied", and after `decision_recorded` +
-`round_closed`.
+cleanly", plus a per-slot failure breakdown) — after persisting the
+field-status so the dashboard reads "N proposed · 0 applied", and after
+`decision_recorded` + `round_closed`.
 
-**The placebo slot.** On the opt-in cadence, ONE extra slot is appended
-LAST, and it flows through the unchanged strategy and gate like any
-challenger. It is appended after the all-failed early return, so a
+**The placebo slot.** On the opt-in cadence, a field wider than one gets
+ONE extra slot appended LAST (`_append_placebo_arm`), and it flows through
+the unchanged strategy and gate like any challenger (a one-challenger field
+runs its placebo as a separate duel instead, §3.12). It is appended after the all-failed early return, so a
 fully-failed field keeps its rejection-shaped outcome, and appended last
 so sibling diversity and `first_challenger_id` are untouched.
 
@@ -1091,19 +1216,19 @@ contract reads a shared local:
 - **`publish_live_structure`** (`on_progress`) — every scheduled batch
   republishes the live envelope with settled rounds + the in-flight round
   (`winner: null, pending: true`) + standings-so-far, through the SAME
-  `_serialise_rounds`/`_serialise_standings` the settle path uses, with
-  the runner's authoritative per-lane `projected` map overlaid
-  (`_overlay_projected_live_progress` /
-  `_overlay_projected_standings`). This is what lets the bracket exist
-  DURING the run instead of "being seeded" until settle. Best-effort.
+  `_serialise_rounds`/`_serialise_standings` the settle path uses. This is
+  what lets the bracket exist DURING the run instead of "being seeded"
+  until settle. Best-effort.
 - **`make_evidence_replicate_duel` + `record_inconclusive_duel`** (only when
   `promote_confidence_threshold` is set) — the evidence pre-gate's extra
   crowning-pair duels with distinct local draws under `evidence_confirmation` (with `cache_scores=False` so a single-draw aggregate never overwrites the round-scored `gen_score.json`), and the dead-letter record + `evidence_replicated`
   trail for an unresolved crowning.
 
-**Durable record opens BEFORE resolution.** `_open_field_tournament`
-writes `tournaments/field-{…}.json` in `in_progress` state as soon as the
-field is minted (issue #16): the runtime `active_tournament` envelope is
+**Durable record opens BEFORE resolution.** `_open_tournament_envelopes`
+publishes the live envelope, appends the `TOURNAMENT_START` progress
+transition, and calls `_open_field_tournament`, which writes
+`tournaments/field-{first challenger}.json` in `in_progress` state as soon
+as the field is minted: the runtime `active_tournament` envelope is
 EPHEMERAL (cleared on crash, overwritten next round); only the durable
 record is queryable by the index and external consumers. The settle write
 upserts the same `tournament_id` to `settled` — open + settle compose
@@ -1119,8 +1244,9 @@ shape; the I/O is the injected `confirm_fn =
 confirm_crowning_holdout`): a `promoted` crowning duel must ALSO confirm
 on the holdout through the shared Ladder machinery and per-epoch
 `ladder_state.json` budget. A released
-non-confirmation flips the crowning promote to a holdout reject — the
-champion stands, `reason_override` carries the cause. The champion side
+non-confirmation flips the crowning promote to a holdout reject, and a
+withheld or incomplete confirmation defers it — either way the champion
+stands and `reason_override` carries the cause. The champion side
 is resolved defensively (left by convention, but a right-seeded champion
 still confirms correctly), and the crowning challenger's TRAIN scalar is
 paired with its HOLDOUT scalar so the generalization gap is measured on
@@ -1189,7 +1315,7 @@ whose delivery is unknown.
 (champion side against the leader that reached the gate) rather than from
 `_first_aggregate_for`'s standings average or a child-defaults-to-parent
 fallback. Either of those reports delta 0.0 on a rejection even when the
-gate measured a real regression (issue #10). On a rejection,
+gate measured a real regression. On a rejection,
 `proposed_generation_id` names the LEADING challenger the reason is about
 rather than an arbitrary `applied[0]`.
 
@@ -1197,12 +1323,12 @@ rather than an arbitrary `applied[0]`.
 
 ## 5. Inside one board unit — the worker anatomy
 
-Both pipelines bottom out in the same primitive: `_run_single`
-(`src/zicato/tournament/runner.py`) runs ONE entry under ONE generation
-in an isolated subprocess. This is the subprocess worker boundary — the
-robustness layer that contains a wedged or pathological evaluation — and
-the documented monkeypatch anchor the test suite stubs
-(`tests/_subprocess_worker_support.py` swaps exactly
+Every matchup bottoms out in the same primitive: `_run_single`
+(`src/zicato/tournament/worker_execution.py`) runs ONE entry under ONE
+generation in an isolated subprocess. This is the subprocess worker
+boundary — the robustness layer that contains a wedged or pathological
+evaluation — and the documented monkeypatch anchor the test suite stubs
+(`tests/_orchestrator_harness.py` swaps exactly
 `worker_execution._run_single`). Its docstring is the sequence contract:
 
 ```python
@@ -1224,14 +1350,16 @@ the documented monkeypatch anchor the test suite stubs
     5. On parent timeout: SIGTERM -> (grace) -> SIGKILL the worker, then
        synthesise an aborted :class:`LossProfile`.
 ```
-*(src/zicato/tournament/runner.py, `_run_single` docstring — excerpt)*
+*(src/zicato/tournament/worker_execution.py, `_run_single` docstring — excerpt)*
 
 Steps 6–7 complete the contract: a worker that exited non-zero, OR a
 missing/corrupt result file (e.g. the SUPERVISOR SIGKILLed a wedged
 worker), is ALSO an aborted run — not a crash; the tournament continues
-to the next entry either way. Cleanup always runs: the ephemeral
-checkout, the temp args/result files, and the worker's `active_runs`
-record if the kill prevented self-removal.
+to the next entry either way. Cleanup releases the spawn permit, the
+ephemeral checkout, and the protocol files only after the worker's
+process group has exited; cancellation waits through that bounded
+teardown, and a termination that cannot be confirmed retains ownership for
+`retry_worker_cleanup`.
 
 Unpack the load-bearing pieces:
 
@@ -1250,9 +1378,11 @@ file — the entry (`_entry_to_dict`, with the board-level
 `disable_drift`/`judge_only` stamped onto entry context by
 `_stamp_disable_drift`/`_stamp_judge_only`), the adapter spec
 (`adapter_worker_spec` — the same `config.json` block the factory reconstructs
-from), the LLM roles as dotted paths (`_role_worker_spec` →
-`_callable_dotted_path`, the module-level-callable rule), and the FULL
-scoring weights
+from), the model roles as the captured execution-role documents
+(`config.execution_roles`, or `execution_roles_for_runtime` in
+`src/zicato/models_config.py`, which names a runtime callable by
+`_callable_dotted_path` — the module-level-callable rule), the selected
+operational settings (`_configuration_spec`), and the FULL scoring weights
 (`_weights_spec` → `ScoringWeights.to_json`). Seam 1 scoring
 (per-run drift reduction, including any `drift_reducer` plugin and
 `drift_kind_aggregation` transform) runs INSIDE the worker, which is why
@@ -1317,13 +1447,13 @@ supervisor's staleness logic). The emitted vocabulary:
 | `evolve_once:round_{N}` | round scheduled (loop side) |
 | `evolve_once:calibrating_noise_floor:{done}/{K}` | the epoch-open A/A calibration, restamped per settled draw |
 | `evolve_once:contract_preflight:{done}/{total}` | the epoch-open contract pre-flight, restamped per settled A/A draw and degraded probe (`total` is the ceiling — an early-settling verdict ends below it) |
-| `proposing:round_{N}:{vX}` | before the proposer call (both paths) |
+| `proposing:round_{N}:{vX}` | before each candidate slot's proposer call |
 | `screening:r{N}` | the candidate screen's panel runs |
-| `applying:…` | inside `build_post_apply_validator` per attempt |
-| `tournament:round_{N}:{vX}` / `tournament:round_{N}:{matchup_id}` | duel start (gauntlet / per-matchup) |
+| `applying:round_{N}:{vX}` | inside `build_post_apply_validator` per attempt |
+| `tournament:round_{N}:{matchup_id}` | each scheduled matchup's start |
 | `deferred_infra:round_{N}:{vX}` | the infra deferral tail |
 | `infra_backoff:round_{N}:{delay}s` | the loop's backoff sleep |
-| `done:round_{N}:{vX}:{decision}` / `done:round_{N}:{tournament_id}:{decision}` | round settled |
+| `done:round_{N}:{tournament_id}:{decision}` / `done:round_{N}:{vX}:rejected` | round settled / the rejected tail |
 | `after_round_{N}:{decision}` | loop-side post-round stamp |
 | `evolve_n_rounds:done` / `evolve_n_rounds:budget_exhausted` | terminal |
 
@@ -1332,17 +1462,19 @@ the TRUE liveness signal): `LOOP_START`, `ROUND_START`, `PROPOSE`,
 `TOURNAMENT_START`, `TOURNAMENT_SETTLE`, `PROMOTE`/`REJECT`, terminal
 `SETTLED` (completed) / `STOPPED` (budget or breaker — still a CLEAN
 end; a STALLED run is a frozen `seq` with no terminal event). `_beat`
-couples planes 1 and 2: passing `progress=` appends the transition and
-stamps its `seq` onto the same heartbeat update.
+couples planes 1 and 2: passing `progress=` (with the `progress_writer`
+that owns the workspace) appends the transition and stamps its `seq` onto
+the same heartbeat update.
 
 **Plane 3 — durable traces**: the RoundLog (§8), the live
 `ActiveTournament` envelope + the durable `tournaments/field-*.json`
-record (§4.3), the health report
-(`epochs/{e}/health/round_{N}.json`), the analyzer insights, and the
-journal.
+record (§4.3), the committed round record
+(`rounds/{N}/field_settlement.json`), the health report
+(`epochs/{e}/health/round_{N}.json`), and the analyzer insights. The
+journal is rendered from the experiment records rather than written.
 
-The teardown path is part of this surface: `_mark_run_terminal` (in the
-loop's `finally`) flips any lingering active-tournament envelope out of
+The teardown path is part of this surface: `_mark_run_terminal` (on the
+invocation's resource stack, §2.5) flips any lingering active-tournament envelope out of
 `phase="running"` so a normally-ended run never reads as a live
 tournament — a SIGKILL still cannot self-clean, which the frontend's
 heartbeat-freshness gate covers.
@@ -1356,19 +1488,19 @@ what it leaves on disk, and the invariant that makes the outcome safe.
 
 | Failure | Detection point | What the round does | Durable footprint | Invariant |
 |---|---|---|---|---|
-| Proposer's working copy does not read back as a valid patch set | the episode's `validate_patches` completion rule | the findings go back to the model, up to `max_proposer_retries` turns | `proposal_episode_settled{kind, code}` | the repair is inside the episode; a spent budget ends it blocked |
-| Patch set fails post-apply validation on every retry | `build_post_apply_validator` → `ProposerError` | gauntlet: `_persist_rejected_round` (reason `proposer_retries_exhausted: …`); field: the slot narrows the field | rejected `experiment.json` + `validation_failed` + `decision_recorded` (gauntlet); rejected field-status (field) | invalid proposals remain visible with their rejection reason |
-| Patch targets a forbidden / stale mutation id | `check_patch_manifest_and_forbidden` | `ValueError` propagates — a hard programming or contract error rather than a retryable one; the type is `ValueError` so that a bad patch set raises ONE exception class across the whole apply path (issue #83) | none beyond the raise | the hypothesis's `modulating` set is the ONLY thing patches may touch |
+| Proposer's working copy does not read back as a valid patch set | the episode's `validate_patches` completion rule | the findings go back to the model, up to `max_proposer_retries` turns | `proposal_episode_settled{kind, code, message}` | the repair is inside the episode; a spent budget ends it blocked |
+| Patch set fails post-apply validation on every retry | `build_post_apply_validator` → `ProposerError` | one-candidate field: `_persist_rejected_round` (reason `proposer_retries_exhausted: …`); wider field: the slot narrows the field | rejected `experiment.json` + `validation_failed` + `decision_recorded` (one candidate); rejected field-status (wider field) | invalid proposals remain visible with their rejection reason |
+| Patch targets a forbidden / stale mutation id | `check_patch_manifest_and_forbidden` | `BadPatchSetError` (a `ValueError`) propagates — a hard programming or contract error rather than a retryable one; a bad patch set raises ONE exception class across the whole apply path | none beyond the raise | the hypothesis's `modulating` set is the ONLY thing patches may touch |
 | One board run exceeds its wall-clock budget | worker cooperative budget → parent `wait_for` → supervisor deadline (three layers) | SIGTERM→grace→SIGKILL; synthesised aborted `LossProfile` (`BUDGET_ABORT_CAUSE`); scored worst-case for that entry | the aborted profile (tagged, never cache-persisted for infra causes) | the tournament continues; one entry cannot wedge a duel |
 | Worker crashes / result file missing or corrupt | `_run_single` step 6 | ALSO an aborted run — not a crash; continue | aborted profile with an infra `abort_cause` | `is_infra_abort_cause` distinguishes infra from genuine budget exhaustion |
 | Whole endpoint down (many infra aborts) | `_count_infra_aborted_runs` ≥ `infra_abort_round_threshold` (opt-in) | `_defer_round_infra_outage`: verdict discarded, nothing journaled, experiment left un-outcomed | `decision_recorded{deferred_infra}` + health `infra_outage` WARNING; NO gen_score caches | deferral ≠ rejection; resume reconciles the un-outcomed experiment |
 | Orchestrator dies mid-tournament | next invocation's `prepare_resume` | resume-in-place when self-consistent + ≥1 unit done (reuse experiment, cache-HIT done units); discard on ANY ambiguity | the interrupted round's partial units stay valid cache | "never score against a tree we cannot rebuild"; cold start is byte-identical |
-| Round would blow the invocation's total budget | `WallClockBudgetPolicy` via `asyncio.wait_for` | round cancelled; synthetic `wall_clock_budget` rejection; loop stops | the synthetic outcome in the return list | cooperative-only guard; the subprocess worker boundary and the supervisor cover wedges |
+| Round would blow the invocation's total budget | `WallClockBudgetPolicy` via `asyncio.timeout` | round cancelled; synthetic `wall_clock_budget` rejection; loop stops | the synthetic outcome in the return list | cooperative-only guard; the subprocess worker boundary and the supervisor cover wedges |
 | Holdout does not confirm a train win | `confirm_crowning_holdout` / `_confirm_crowning_on_holdout` | promote flipped to reject; champion stands; reason `holdout_not_confirmed` carried | `holdout_released{confirmed: false}` + the holdout block on the OutcomeRecord | train selects, holdout confirms; Ladder budget charged |
-| Evidence CIs never separate | the pre-gate's replicate budget exhausts | terminally inconclusive; champion stands | dead-letter record + `evidence_replicated` trail + journaled `evidence` block | a promotion needs evidence; noise cannot manufacture ~37 straight wins |
-| Settled bracket contradicts the champion pointer | the crowning-invariant checks | loud `RuntimeError` BEFORE lineage writes | the raise itself (nothing corrupt persisted) | outcomes-then-invariant-then-lineage ordering |
+| Evidence CIs never separate | the pre-gate's replicate budget exhausts | terminally inconclusive; champion stands | dead-letter record + `evidence_replicated` trail + journaled `evidence` block | a promotion needs confirmation draws whose adjusted strength-difference interval lies above zero |
+| Settled bracket contradicts the champion pointer | the crowning-invariant checks | loud `RuntimeError` BEFORE any canonical write | the raise itself (nothing corrupt persisted) | the complete decision is validated before it is committed |
 | Live-envelope / RoundLog / index / report write fails | each `best_effort(...)` wrapper | logged at debug, round unaffected | possibly-missing observational artifact | best-effort is for observational writes ONLY |
-| Operator forces a verdict | `claim_gate_override` / `claim_field_gate_overrides` at the safe points | verdict replaced, NEVER silently: `operator_override(_reason)` stamped | override provenance on record + RoundLog + field record | an override is always recorded and never a silent flip |
+| Operator forces a verdict | `claim_field_gate_overrides` at the verdict's safe point | verdict replaced, NEVER silently: `operator_override(_reason)` stamped | override provenance on record + RoundLog + field record | an override is always recorded and never a silent flip |
 
 ---
 
@@ -1377,74 +1509,90 @@ what it leaves on disk, and the invariant that makes the outcome safe.
 The convergence oracle pins the exact per-round event sequence for the
 deterministic gauntlet contract (best_of_n pinned to 1 ⇒ no
 `candidate_sampled`/`critique_selected`; 5-entry board below the split
-floor ⇒ no holdout events; pre-gate off ⇒ no `evidence_replicated`):
+floor ⇒ no holdout events; pre-gate off ⇒ no `evidence_replicated`; the
+import-kind adapter reports no harness-load provenance ⇒ no
+`harness_loaded`):
 
 ```python
         types = [e.type for e in events]
         assert types == (
-            ["round_opened", "proposal_attempted", "experiment_minted", "patches_applied"]
+            [
+                "round_opened",
+                "proposal_attempted",
+                "proposal_episode_settled",
+                "experiment_minted",
+                "patches_applied",
+            ]
             + ["unit_completed"] * (2 * BOARD_SIZE)
             + ["gate_evaluated", "decision_recorded", "round_closed"]
         ), f"round {round_index}: {types}"
 ```
 *(tests/test_convergence_known_answer.py, `test_gauntlet_converges_to_known_floor`)*
 
-For the 5-entry example: `round_opened` →
-`proposal_attempted` → `experiment_minted` → `patches_applied` → 10 ×
+For the 5-entry example: `round_opened` → `proposal_attempted` →
+`proposal_episode_settled` → `experiment_minted` → `patches_applied` → 10 ×
 `unit_completed` (one per (entry, side)) → `gate_evaluated` →
-`decision_recorded` → `round_closed`, with `seq` exactly `1..N` gap-free
-and `fold_round_record(events).complete` true. The racing test extends
-it: 4 × the proposal triplet (one per field slot), rung-by-rung
+`decision_recorded` → `round_closed` — 18 events, with `seq` running `1..18`
+gap-free and `fold_round_record(events).complete` true. The racing test
+extends it: four proposals (one per field slot), rung-by-rung
 `unit_completed` + `gate_evaluated`, and a `decision_recorded` whose
-provenance carries `structure: "racing"`, `promoted_generation_ids`, and
-`overrides: {}`.
+provenance carries `structure: "racing"`, `promoted_generation_id`,
+`promoted_generation_ids`, and `overrides: {}`.
 
 The fully-populated grammar (every optional feature on) per round is:
 
 ```
 round_opened{contract_hash}
-( proposal_attempted{errors}* )                       # failed attempts, if any
-  [ candidate_sampled{i,n,revise?} × best_of_n ]      # slate sampling
+( proposal_attempted{errors}*                          # failed attempts, if any
+  [ candidate_sampled{i,n,revise?,recombined?} × best_of_n ]   # slate sampling
   [ candidate_screened{index,vetoed,confirmed,…} × slate ]
   [ critique_selected{index,reason,slate,rationale} ]
-proposal_attempted{}  experiment_minted  patches_applied     # per applied challenger
+  proposal_attempted{}  proposal_episode_settled{kind,…}
+  experiment_minted  patches_applied ) × (field slots)  # per applied challenger
 [ validation_failed{findings} ]                        # the rejected tail only
 unit_completed{entry,replicate,side} × (units run)
+[ harness_loaded{generation_id,…} ]                    # per generation, when the adapter reports it
 gate_evaluated{rule_fired,decision} × (matchups)
 [ holdout_released{confirmed} ]
 [ evidence_replicated{ci_state} × refits ]
 decision_recorded{decision,provenance}
+[ frontier_updated{admitted,retired,…} ]               # when the Pareto frontier changed
 round_closed
 ```
 
 Use this grammar when adding events: a new event type goes into
 `EVENT_TYPES` + the `RoundEvent` union + `fold_round_record`
 (`src/zicato/epoch/round_log.py`), with a dataclass default for every
-field so pre-feature logs decode identically — the `CandidateSampled
-.revise` field is the worked example of an additive event field.
+field so a log written without the field decodes identically — the
+`CandidateSampled.revise` and `.recombined` fields are the worked examples
+of an additive event field.
 
 ### 8.1 A worked trace: round 1 of the convergence example
 
-Round 1 of `examples/zicato_examples/target_0_convergence` — the
-deterministic convergence recipe, chapter 01 §5.4 — made concrete. Setup:
-epoch freshly created from the pinned contract (`best_of_n: 1`,
-`replicates: 1`, no pre-gate; 5-entry board, below the split floor so
-train = full board); the seeded
-policy carries three defect tokens; the scripted proposer's first
-payload removes `omit-summary`.
+The first round (`round_index` 0) of
+`examples/zicato_examples/target_0_convergence` — the deterministic
+convergence recipe, chapter 01 §5.4 — made concrete. Setup: epoch freshly
+created from the pinned contract (gauntlet, `best_of_n: 1`,
+`replicates: 1`, `promote_confidence_threshold: null` so no pre-gate;
+5-entry board, below the split floor so train = full board); the seeded
+policy carries defect tokens; the scripted proposal's first policy
+(`GAUNTLET_POLICIES["v1"]` in the example's `mocks.py`) removes `omit-summary`.
 
 1. **Baseline.** `_ensure_baseline_snapshot` seeds `v0` from the
    registered `agent/` tree through the git genstore —
    `.zicato/repo/.git` now exists with `v0` tagged.
-   The `current_generation` reader returns `v0`.
-2. **Propose.** `_next_generation_id` mints `v1`. The scripted
-   `aux_llm` returns experiment `exp_{epoch}_v1`: hypothesis
+   `generation_phase.current_generation` returns `v0`.
+2. **Propose.** `next_generation_id` mints `v1`. The Foe stand-in's
+   episode writes the `v1` policy into its working copy, and the
+   projection reads it back as experiment `exp_{epoch}_v1`: hypothesis
    `modulating=("style_rules",)`, one `Patch` re-emitting the policy
    minus one token. The validate hook derives `v1`'s snapshot from
    `v0` + patch (git commit, tag `v1`), `validate_post_apply` passes.
    RoundLog so far: `round_opened`, `proposal_attempted{}`,
-   `experiment_minted{exp_…_v1}`, `patches_applied{v1}`.
-3. **Tournament.** `run_tournament` schedules 5 board units × 2 sides =
+   `proposal_episode_settled{completed}`, `experiment_minted{exp_…_v1}`,
+   `patches_applied{v1}`.
+3. **Tournament.** The gauntlet schedules one matchup; `run_field_matchup`
+   calls `run_matchup`, which runs 5 board units × 2 sides =
    10 subprocess workers (bounded by `parallelism`). Each worker
    checks out an ephemeral copy of its side's tree, runs the
    deterministic harness, and reduces to its measurement loss file: every v0 run
@@ -1462,16 +1610,16 @@ payload removes `omit-summary`.
    Lineage and journal readers derive their views from the committed record,
    and the index is refreshed afterward.
    `decision_recorded` and
-   `round_closed` complete the log — 17 events, `seq` 1..17.
-6. **Epilogue.** `health/round_1.json` written (no CRITICAL findings —
+   `round_closed` complete the log — 18 events, `seq` 1..18.
+6. **Epilogue.** `health/round_0.json` written (no CRITICAL findings —
    the planted defects differentiate, so `degenerate_scoring` stays
    silent); `analysis.html` regenerates; the loop's reject streak
    resets; round 2 begins against champion `v1`.
 
 Round 2 is the negative control: the scripted proposer ADDS a token,
 the gate measures `delta_scalar = +1.2`, rejects with a
-"challenger regressed" reason, lineage records `v2` as a dead branch —
-and the `current_generation` reader still returns `v1`. Every number above is
+"challenger regressed" reason, `v2` reads as a dead branch — and
+`current_generation` still returns `v1`. Every number above is
 asserted, to the float, in `test_gauntlet_converges_to_known_floor`.
 
 ---
@@ -1491,15 +1639,15 @@ types frozen (`frozen=True, slots=True`); state transitions go through
 | `LossProfile` (`core/loss.py`) | `drift_counts`, `pass_fail`, continuous `score`, `metric_counts` (namespaced), `runtime_ms`, `abort_cause`, `tokens_spent` | the reducer (`telemetry/reducer.py`) inside the worker path, per run | scoring aggregation, gate, detectors, screen, health, failure profile | `runs/{entry}/seed-{seed}/loss.{purpose}.r{draw}.json` (the per-unit cache reads it) + index `runs` table |
 | `GateOutcome` (`tournament/gate.py`) | `decision`, `reason` (names the rule that fired), `delta_scalar`, `delta_pass_rate` | `evaluate_gate` at the end of every duel | strategies (read, never re-decide), evidence gate, RoundLog `gate_evaluated`, OutcomeRecord deltas | inside `TournamentResult` / `MatchupResult`; not standalone |
 | `TournamentResult` (`tournament/runner.py`) | both aggregates, `outcome`, `per_entry_losses`, `champion_eval_mode`, `unit_provenance`, `holdout`, `holdout_child_scalar` | `run_matchup`; standalone debug APIs also return it | canonical matchup closure, infra counter, aggregate caching | aggregates cached as `gen_score.json`; the rest is projected into `MatchupResult` and `OutcomeRecord` |
-| `MatchupResult` (`selection/strategy.py`) | matchup id, left/right ids + aggs, `outcome`, `stage_index`, `bracket_slot` | `_run_matchup` from a `TournamentResult` | strategies (`record_result`), `SelectionDecision.matchups`, standings, match records | inside the durable field record (`_serialise_rounds`) |
+| `MatchupResult` (`selection/strategy.py`) | matchup id, left/right ids + aggs, `outcome`, `stage_index`, `bracket_slot` | `run_field_matchup` from a `TournamentResult` | strategies (`record_result`), `SelectionDecision.matchups`, standings, match records | inside the durable field record (`_serialise_rounds`) |
 | `SelectionDecision` (`selection/strategy.py`) | `promoted_generation_id`, `decision`, `reason`, `matchups`, `crowning_matchup_id`, `standings` | the strategy (`champion()`), re-written by holdout/override re-resolution into `effective_decision` | field tail (outcomes, lineage, envelopes), round summary | the settled field record + `ActiveTournament` |
 | `TournamentEvaluation` (`selection/driver.py`) | strategy decision plus optional `EvidenceResolution` | `evaluate_tournament` | holdout confirmation and settlement construction | not persisted directly; its parts enter the tournament and outcome records |
 | `CandidateBatch` (`evolve/candidate_batch.py`) | incumbent, requested width, applied challengers, rejected slots, field status, resume provenance | `produce_candidate_batch` | strategy seeding and round evaluation | experiments and soft rejections persist independently; the typed batch does not |
-| `RoundSettlement` (`evolve/settlement.py`) | effective decision, primary and additional promotions, candidate outcomes, champion scalar, evidence, tournament metadata | `evolve_field_round` after confirmation and overrides | construction of the replayable settlement receipt | its constituent facts remain in `rounds/{round}/field_settlement.json` after commit; the typed value does not persist |
+| `RoundSettlement` (`evolve/settlement.py`) | effective decision, primary and additional promotions, candidate outcomes, champion scalar, evidence, tournament metadata | `_build_field_settlement` after confirmation and overrides | construction of the replayable settlement receipt | its constituent facts remain in `rounds/{round}/field_settlement.json` after commit; the typed value does not persist |
 | `OutcomeRecord` (`core/experiment.py`) | decision + reason, deltas, `structure`/`final_rank`/`match_record`, `champion_eval_mode`, `holdout` block, `train_loss`/`holdout_loss`/`generalization_gap`, `operator_override(+reason)`, `evidence` | settlement construction plus rejected/soft-reject tails | journal, index, dashboard decision surface, gap detector | completed tournaments persist in committed round records; rejection before tournament execution uses `_finalize_generation` |
 | `PriorExperiment` (`core/experiment.py`) | `core_idea`, `modulating`, `decision` (incl. `"in_flight"`), banded delta, `same_contract`, `prediction_accuracy` | `_load_prior_experiments` (index) + the field loop (siblings) | the proposer's memory section | never persisted — a render-time projection |
-| `EvolveRoundOutcome` (`evolve/round_api.py`) | parent/child ids, decision (incl. `deferred_infra`), reason, scalars + delta, health summary/critical | every `evolve_once` return path | `evolve_n_rounds` stop policies, the CLI summary | not persisted (the journal/experiment carry the durable truth) |
-| `ResumePlan` (`runtime/resume.py`) | `classification`, `resumes_in_place`, `resume_generation_id`, `resume_experiment` | `prepare_resume` at loop start / after a deferral | `evolve_once` steps 6/6r, cache-read decisions | derived from the workspace; not persisted |
+| `EvolveRoundOutcome` (`evolve/round_api.py`) | parent/child ids, decision (incl. `deferred_infra`), reason, scalars + delta, health summary/critical | every `evolve_once` return path | `evolve_n_rounds` stop policies, the CLI summary | not persisted (the experiment and round records carry the durable truth) |
+| `ResumePlan` (`runtime/resume.py`) | `classification`, `resumes_in_place`, `resume_generation_id`, `resume_experiment` | `prepare_resume` at loop start / after a deferral | the parent choice (§3.5), the resume short-circuit (§3.9), cache-read decisions | derived from the workspace; not persisted |
 | `Standing` (`selection/strategy.py`) | `generation_id`, `rank`, `scalar`, wins/losses, `status`, `role` | the strategy's standings view | dashboard leaderboard, `final_rank` on OutcomeRecords | inside the settled field record |
 | `_AppliedChallenger` (`evolve/propose_apply.py`, private) | generation id + snapshot + experiment + `Generation` | `_propose_and_apply_challenger` | candidate batch, strategy seeding, settlement | not persisted (its parts are) |
 | `_CrowningHoldout` (`evolve/gate.py`, private) | post-holdout promoted id, reason override, holdout block, train/holdout scalar pair, champion-oriented `crowning_delta_scalar` | `_confirm_crowning_on_holdout` (pure) | override re-resolution, integrity block, OutcomeRecord stamping | not persisted (its parts are) |
@@ -1528,6 +1676,7 @@ The seams, and what each owns:
 
 | Seam | Home | Owns | Shared by |
 |---|---|---|---|
+| `validated_invocation`, `InvocationContext` | `evolve/invocation.py` | workspace ownership, publication recovery, configuration, the pre-spend gate, epoch binding, and ordered teardown | both public entry points |
 | `evolve_n_rounds` + stop policies | `evolve/loop.py` | the loop, circuit breakers, budget, backoff, control safe points, progress log lifecycle | (the loop itself) |
 | `ensure_epoch_for_contract`, `_create_epoch_from_contract`, `_promoted_head_snapshot`, component-hash bookkeeping | `evolve/epoching.py` | the roll-at-evolve-time decision (03 covers it) | loop start, rubric replacement |
 | `PreparedRound` construction | `evolve/round_entry.py`, type in `evolve/generation_phase.py` | frozen inputs shared by every field slot and matchup | every strategy |
@@ -1541,14 +1690,14 @@ The seams, and what each owns:
 | Round publication and recovery | `evolve/settlement_recovery.py` | validate and commit the complete round record, refresh the derived index, and retain external hook delivery status | every settled round and startup recovery |
 | `_finalize_generation` | `evolve/persist.py` | direct outcome and index write when no tournament settlement receipt exists | rejected tails before tournament execution |
 | `_round_epilogue` | `evolve/persist.py` | health + analyzer + report regeneration | every completed round plus rejected tail |
-| `_persist_rejected_round` | `evolve/persist.py` | one-candidate proposer-exhaustion tail | gauntlet candidate failure |
-| `_defer_round_infra_outage` | `evolve/decision_support.py` | deferral tail with no lineage or journal write | every strategy |
+| `_persist_rejected_round` | `evolve/persist.py` | one-candidate proposer-exhaustion tail | a one-candidate field whose slot failed |
+| `_defer_round_infra_outage` | `evolve/decision_support.py` | deferral tail with no outcome or journal write | every strategy |
 | `_mint_challenger_field`, `_apply_field_overrides`, `_confirm_crowning_on_holdout` | `evolve/propose_apply.py`, `evolve/gate.py` | diversity, overrides, and holdout re-resolution | every applicable round |
 | `_integrity_block_reason` | `evolve/gate.py` | opt-in diff-containment and gate-contradiction block | every strategy |
 | `_RoundLogEmitter`, `_emit_tournament_units`, `_emit_gate_evaluated` | `evolve/round_reporting.py` | best-effort RoundLog emission | every strategy |
-| lifecycle services (`_beat`, `_now_iso`, `_resolve_or_launch_harmonograf`, `_build_meta_loop_emitter_safe`, env restorer, launch handles) | `evolve/lifecycle_services.py` | heartbeat/harmonograf/emitter plumbing | loop and round pipeline |
+| lifecycle services (`_beat`, `_record_progress`, `_now_iso`, `_resolve_or_launch_harmonograf`, `_build_meta_loop_emitter_safe`, the no-op shutdown handle) | `evolve/lifecycle_services.py` | heartbeat/harmonograf/emitter plumbing | loop and round pipeline |
 | placebo minting + cadence | `evolve/placebo.py` + `_mint_placebo_challenger`/`_maybe_run_placebo_arm_gauntlet` | control arms | strategy-specific cadence through the shared tail |
-| dashboard projection (`_publish_active_tournament`, `_settle_active_tournament`, `_open_field_tournament`, `_serialise_rounds/standings`, overlays, `_mark_run_terminal`) | `evolve/dashboard_projection.py` | live-envelope and durable tournament-record writes | round pipeline + loop teardown |
+| dashboard projection (`_publish_active_tournament`, `_settle_active_tournament`, `_clear_active_tournament`, `_open_field_tournament`, `_serialise_rounds/standings`, `_mark_run_terminal`) | `evolve/dashboard_projection.py` | live-envelope and durable tournament-record writes | round pipeline + loop teardown |
 
 Two mechanical rules keep the seams honest:
 
@@ -1571,7 +1720,7 @@ Summary only — 08-supervisor.md is the deep dive.
 The supervisor (`crates/supervisor/`, binary `zicato-supervisor`,
 default `127.0.0.1:7920` — it walks a port range disjoint from the
 dashboard's 7892, so the two never contend) is a SEPARATE OS PROCESS spawned by
-`zicato evolve`. Its entire coupling to Python is read-only file I/O plus
+the `zicato evolve` command (`_maybe_spawn_supervisor`). Its entire coupling to Python is read-only file I/O plus
 signals:
 
 - **What it reads:** the `.zicato/runtime/` state files — `heartbeat.json`
@@ -1591,11 +1740,13 @@ signals:
   IN-BAND blocking twins live in Python
   (`_integrity_block_reason`, §3.11) so that the supervisor stays a pure
   observer.
-- **The handshake on kills:** the tournament parent waits
+- **The handshake on kills:** when a supervisor is reachable, the
+  tournament parent delegates termination of an over-budget worker by
+  writing a kill-request marker and waits up to
   `RuntimeConfig.supervisor_kill_wait_s` (default 20.0 s) for the
-  supervisor to escalate-kill an over-budget worker before falling back
-  to its own SIGTERM→grace→SIGKILL. The supervisor is the single
-  escalator when it is present; without one, that wait is the
+  supervisor to confirm the group is gone. If delegation does not confirm,
+  a bounded fallback signals the worker's captured process identity itself
+  (08-supervisor.md §8.10). Without a supervisor, that wait is the
   abort-latency floor (tests shrink it).
 
 > ⚠️ **TRAP** — if you add a new long-running worker kind, it must write
@@ -1625,7 +1776,7 @@ concurrency at the model endpoint.
   either unit is already present.
 - **A field round shares ONE semaphore.** The driver gathers a whole
   matchup batch concurrently; without the round-level
-  `round_unit_semaphore`, N concurrent matchups would each mint their
+  `unit_semaphore`, N concurrent matchups would each mint their
   own `Semaphore(parallelism)` and run `N × parallelism` units at once
   (§4.3). Any new evaluation channel inside a round must accept and use
   the caller's semaphore rather than mint its own.
@@ -1648,11 +1799,11 @@ private re-exports or reverse imports solely to preserve test patch locations:
 
 | Anchor | What stubbing it gives you | Used by |
 |---|---|---|
-| `orch.evolve_once` / `orch.ensure_epoch_for_contract` / `orch.block_while_paused` / `orch._resolve_or_launch_harmonograf` | loop-level tests with fabricated round outcomes | the evolve-loop tests |
-| `worker_execution._run_single` | in-process evaluation under the REAL scheduling/replicate/cache/gate machinery — "the test suite's documented monkeypatch anchor" | the power oracle, tournament tests, `tests/_subprocess_worker_support.py` |
+| `zicato.evolve.round_entry._evolve_once` / `zicato.evolve.epoching.ensure_epoch_for_contract` / `zicato.runtime.control_consumer.block_while_paused` / `zicato.evolve.lifecycle_services._resolve_or_launch_harmonograf` | loop-level tests with fabricated round outcomes — the loop body imports each from its owner at call time | the evolve-loop and invocation tests |
+| `zicato.tournament.worker_execution._run_single` | in-process evaluation under the REAL scheduling/replicate/cache/gate machinery — "the test suite's documented monkeypatch anchor" | the power oracle, tournament tests, `tests/_orchestrator_harness.py` |
 | `zicato.evolve.loop._sleep_for_backoff` | no real sleeps in backoff tests — "a seam so tests can stub it" | infra-circuit tests |
-| `orch.time` | the clock seam kept importable on the orchestrator (`import time  # noqa: F401 — kept as the ``orch.time`` clock seam`) | budget tests |
-| the conftest autouse pair | default-proposer text shim + harmonograf launch stub — the ONLY stubs the convergence oracle allows itself | everything |
+| `zicato.evolve.round_entry.time` | the clock seam `round_entry` keeps importable (`import time  # noqa: F401 — kept as the ``orch.time`` clock seam`) | budget tests |
+| the conftest autouse fixtures | mutation-syntax-table isolation, the harmonograf launch stub, and the session-scoped dashboard reaper — the only stubs the convergence oracle inherits | everything |
 
 > ✅ **ALWAYS** prefer the deterministic example harnesses
 > (`zicato_examples.target_0_convergence.harness`, its `NoisyPolicyAdapter`,
@@ -1667,12 +1818,12 @@ private re-exports or reverse imports solely to preserve test patch locations:
 
 ## 14. What to internalize before you edit
 
-1. **Two pipelines, shared seams.** Find the seam before you write a
-   line; §10's table is the map. If your step must run on both paths and
-   no seam fits, extract one and re-export it.
+1. **One pipeline, shared seams.** Find the seam before you write a
+   line; §10's table is the map. If your step must run for every strategy
+   and no seam fits, extract one into its owning phase module.
 2. **Every safe point is explicit.** Operator control claims happen at
-   named points (between rounds; step 0; step 10c; the field's
-   post-holdout claim). Do not add a control effect anywhere else — a
+   named points (between rounds; step 0; the verdict's post-holdout
+   override claim). Do not add a control effect anywhere else — a
    mid-tournament flag claim races the writes.
 3. **Commit the decision before updating derived views.** A completed
    tournament commits one round record containing all outcomes, tournament

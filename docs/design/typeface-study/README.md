@@ -1,5 +1,10 @@
 # zicato typeface study
 
+> **Status: a dated design study (2026-06-07), kept as a record.** Its
+> picker and its twelve finalist faces ship in Settings → Appearance; the
+> default is Google Sans Mono. For the typography as it stands, read
+> [DESIGN-LANGUAGE.md §3](../DESIGN-LANGUAGE.md#3-typography).
+
 A standalone, self-contained, theme-adaptive study page (`index.html` — open it
 in a browser) that explored and signed off the Console dashboard's typeface
 system: three typographic **modes**, a finalist set of faces per mode, and the
@@ -29,14 +34,14 @@ finalized options** (the curated final set is **4 per mode → 12 faces total**)
 The composer/study seeds these as the operator's pre-liked finalists
 (`INITIAL_LIKES` in `index.html`):
 
-| mode | finalists | notable picks |
-| --- | --- | --- |
-| Technical | T7, T9, T12, T14 | **T7 = Google Sans Mono** (all-mono, Noto Sans Mono fallback); **T12 = all-Inconsolata**; T9 = Source Sans 3 + Source Code Pro; T14 = Ubuntu + Ubuntu Mono |
-| Editorial | E5, E7, E8, E15 | E5 = Fraunces (old-style display serif); E7 = Bitter (slab); **E8 = Literata** (reading-optimized); E15 = Domine (screen body serif) |
-| Display | D2, D5, D12, D14 | D2 = Archivo Narrow + Space Grotesk (current); D5 = Bricolage Grotesque; D12 = Hanken Grotesk; D14 = Barlow Condensed + Space Grotesk |
+| mode | finalist faces (dashboard id — study grid label) |
+| --- | --- |
+| Technical | **Google Sans Mono** (`google-sans-mono` — T7; all-mono, Noto Sans Mono fallback); Source Sans 3 + Source Code Pro (`source-sans-3` — T9); **Inconsolata** (`inconsolata` — T12); Ubuntu + Ubuntu Mono (`ubuntu` — T14) |
+| Editorial | Fraunces (`fraunces` — E5; old-style display serif); Bitter (`bitter` — E7; slab); **Literata** (`literata` — E8; reading-optimized); Domine (`domine` — E15; screen body serif) |
+| Display | Archivo Narrow + Space Grotesk (`archivo-narrow` — the pairing in use before the study); Bricolage Grotesque (`bricolage-grotesque`); Hanken Grotesk (`hanken-grotesk`); Barlow Condensed + Space Grotesk (`barlow-condensed`) |
 
-> The study renders the full candidate set (15 options per mode: a CURRENT
-> pairing + T1–T14 / E1–E15 / D1–D15) so the finalists can be judged against
+> The study renders the full candidate set (15 options per mode: the pairing
+> in use before the study plus fourteen numbered alternatives) so the finalists can be judged against
 > everything that was considered; the table above is the curated short list.
 > **T4 = Roboto + Roboto Mono** is called out in the study as a notable
 > technical contender (see the iterations below).
@@ -75,13 +80,12 @@ pick: *"Picker style: B · Grouped popover (Console dt-cd idiom)"*.)
 - **The picker was trimmed** from dozens of options down to a small curated
   finalist set per mode (the data-driven `PICKER_FINALISTS` short list), so the
   control offers a manageable choice rather than the full candidate grid.
-- **The top-bar typeface control was later removed.** The picker no longer lives
-  in the dashboard top bar; it lives **only in Settings → Appearance**, behind a
-  **"research preview" banner** — typography is a settings-level preference, not
-  a primary toolbar control.
+- **The top-bar typeface control moved to Settings.** The picker lives **only in
+  Settings → Appearance**, because typography is a settings-level preference
+  rather than a primary toolbar control.
 
 ## Status
 
-The **grouped-popover picker (variant B)** and the **12 finalized faces** are now
-**live in the dashboard** (Settings → Appearance, research preview). This
-directory is the archived design record behind that work.
+The **grouped-popover picker (variant B)** and the **12 finalized faces** ship
+in the dashboard (Settings → Appearance). This directory is the archived design
+record behind that work.

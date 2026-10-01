@@ -1,14 +1,15 @@
 # 12 — The Bug Casebook: Twelve Bugs as Teaching Cases
 
 > **Covers:** twelve real bugs found and fixed in this repository, each as a
-> full case study — symptom, root cause with before/after code, why every
-> oracle missed it, the invariant class it defines, the fix, the
-> regression-test pattern that pins it, and the signs that you are about to
-> reintroduce it. Closes with the meta-lessons that generalize across all
+> case study — symptom, root cause with before/after code, the fix, where the
+> guard lives in the present code, and the signs that you are about to
+> reintroduce it. Most cases also explain why every oracle missed the bug,
+> name the invariant class it defines, and give the regression-test pattern
+> that pins it. Closes with the meta-lessons that generalize across all
 > twelve.
 >
 > **Prerequisites:** 04-evaluation-statistics.md (the noise doctrine, the
-> reserved replicate-base ledger, the unit cache), 03-contract-and-epochs.md
+> measurement purposes that separate evidence sources, the unit cache), 03-contract-and-epochs.md
 > §3.7 (computing the contract hash), 07-runtime-and-durability.md §7.4 (the
 > generation store), 11-testing.md §11.4 (the two oracles).
 >
@@ -19,7 +20,7 @@
 >    (one file, one worktree, one process group, one child-snapshot path),
 >    assume the last writer has silently replaced everyone else until you
 >    prove otherwise.
-> 2. **A regression test must fail with the fix stashed.** If you cannot show
+> 2. **A regression test must fail with the fix reverted.** If you cannot show
 >    the test failing against the buggy code, you have pinned nothing.
 > 3. **A deterministic contract that pins an interacting knob off is where
 >    bugs hide.** The countermeasure is adversarial tests that turn the knobs
@@ -31,11 +32,15 @@
 >    that re-derives a decision from raw parts will eventually disagree with
 >    the owner.
 
-Every case below is recoverable from this branch's git history: the commit
-hashes are real, `git show <hash>` reproduces every excerpt, and the fix
-commits' messages are themselves teaching documents. Read each case for the
-shape of the failure rather than for the particular lines of code it
-happened to occupy.
+Every case below is recoverable from the repository's git history: the
+commit hashes are real, and the fix commits' messages are themselves teaching
+documents. A BEFORE excerpt is `git show <hash>^:<path>` and an AFTER excerpt
+is `git show <hash>:<path>`, the code as the fix commit left it. Later
+refactors moved or reshaped several of those fixes, so each case ends with a
+**Where the guard lives** section that names the module, function, and test
+carrying the invariant in the present tree. Read each case for the shape of
+the failure rather than for the particular lines of code it happened to
+occupy.
 
 The tally, for orientation:
 
@@ -71,9 +76,9 @@ replicate 0 of each unit held some other replicate's draw.
 
 ### Root cause
 
-The per-unit cache scheme keys a board unit as
-`(generation_id, entry_id, replicate_index)` and maps replicate 0 to the
-canonical `runs/<entry>/loss.json` while r>0 maps to `loss.r<r>.json`
+At the fix commit, the per-unit cache scheme keyed a board unit as
+`(generation_id, entry_id, replicate_index)` and mapped replicate 0 to the
+canonical `runs/<entry>/loss.json` while r>0 mapped to `loss.r<r>.json`
 (`_unit_loss_path`, `src/zicato/tournament/unit_cache.py`). But the worker's
 own write path predated that scheme and always wrote to the canonical path:
 
@@ -141,16 +146,31 @@ the clobber is invisible.
 
 ### You are about to reintroduce this if…
 
-- you add a new writer of any `loss.json` / `gen_score.json` that computes
-  its own path with `loss_profile_path(...)` instead of `_unit_loss_path(...)`
-  with the entry's stamped replicate index;
-- you "simplify" `_unit_loss_path` by dropping the r>0 branch because "the
-  canonical file is right there";
+- you add a new writer of a loss profile or `gen_score.json` that computes
+  its own path with `loss_profile_path(...)` (which always names tournament
+  draw 0) instead of `_unit_loss_path(...)` with the entry's stamped
+  measurement draw;
+- you "simplify" `_unit_loss_path` by dropping the purpose, the draw, or the
+  seed from the path because "the tournament file is right there";
 - you add a re-scoring or repair pass that re-persists a profile without
-  carrying the replicate index it was drawn at;
-- you build a new evaluation that runs at replicate indices > 0 but lets the
-  worker write wherever it always wrote (check: does your index reach
-  `_run_single` via the entry stamp?).
+  carrying the measurement draw it was taken at;
+- you build a new evaluation that runs at draws other than tournament draw 0
+  but lets the worker write wherever it always wrote (check: does your draw
+  reach `_run_single` through `_stamp_measurement`?).
+
+### Where the guard lives
+
+`_run_single` (`src/zicato/tournament/worker_execution.py`) computes the
+worker's loss path with `_unit_loss_path`
+(`src/zicato/tournament/unit_cache.py`) from the entry's stamped
+`MeasurementDraw` (read back by `_entry_measurement`) and the workspace seed.
+The replicate index grew into a measurement identity of purpose, draw, and
+seed (`src/zicato/core/measurement.py`), so every loss file is named
+`<run dir>/seed-<seed>/loss.<purpose>.r<draw>.json` by
+`measurement_artifact_path`, and no file serves both as worker output and as
+another draw's cache slot. The regression test is
+`test_noisy_adapter_seeded_draws_cross_the_worker_boundary` in
+`tests/test_decision_procedure_power.py`.
 
 ---
 
@@ -258,6 +278,15 @@ in the permanent suite rather than be verified once by hand.
   shared worktree case (case 9), which is the same shared-registry mistake
   without a race.
 
+### Where the guard lives
+
+`_worktree_admin_lock` and `GitGenerationStore.checkout_ephemeral` in
+`src/zicato/epoch/git_genstore.py`; every `worktree prune`, `add`, and
+`remove` sequence in that module runs inside the lock. The 8-way contention case is
+`test_checkout_ephemeral_concurrent_same_generation_isolated` in
+`tests/test_genstore_conformance.py`, which runs against both generation-store
+backends.
+
 ---
 
 ## Case 3 — The A/A calibration's false-zero floor: the replicate index never reached the harness
@@ -347,9 +376,9 @@ any one identifier fails loudly and names the component.
 
 ### You are about to reintroduce this if…
 
-- you build a new out-of-tournament evaluation (§8 of
-  04-evaluation-statistics.md) that passes `replicate_index=` to the runner
-  but does not `_stamp_replicate_index` the board first;
+- you build a new out-of-tournament evaluation (04-evaluation-statistics.md
+  §8, measurement purposes) that passes `measurement=` to the runner but does
+  not `_stamp_measurement` the board with the same draw first;
 - you refactor the runner so the stamp and the key come from different
   variables or different call frames;
 - you test a stochastic instrument only against a deterministic harness — if
@@ -357,6 +386,20 @@ any one identifier fails loudly and names the component.
   output, your test is a tautology;
 - you see a suspiciously clean measurement (zero variance, perfect
   agreement) and ship it as good news without a positive control.
+
+### Where the guard lives
+
+`measure_noise_floor` (`src/zicato/tournament/calibration.py`) builds one
+`MeasurementDraw(MeasurementPurpose.CALIBRATION, draw)` per draw and passes
+that object both to `_stamp_measurement` (the board context the harness seeds
+from) and as the runner's `measurement=` cache key. The per-unit runner in
+`src/zicato/tournament/scheduling.py` re-stamps each entry from the key it
+caches under, and the contract pre-flight (`src/zicato/epoch/preflight.py`)
+stamps its degraded draws the same way under
+`MeasurementPurpose.PREFLIGHT`. The regression tests are
+`test_aa_null_calibration_measures_the_noise_floor` and
+`test_noisy_session_seed_derives_only_from_stable_identifiers` in
+`tests/test_decision_procedure_power.py`.
 
 ---
 
@@ -416,12 +459,13 @@ whenever the domain concept is the latest or last element of a chain.
 
 ### The fix
 
-`_current_champion` (`src/zicato/query/epoch_view.py`) walks the promoted
-spine server-side and stamps ONE `current_champion` pointer on the epoch
-payload, falling back to the parentless seed when nothing is promoted yet.
-`zicato/query/decisions.py` holds the one experiment-decision classifier. The
-gate breakdown ships structured `deciding_rule` / `margin` / `regressed_*`
-fields. The client's six re-derivations were **deleted** rather than repaired:
+At the fix commit, `_current_champion` (`src/zicato/query/epoch_view.py`)
+walked the promoted spine server-side and stamped ONE `current_champion`
+pointer on the epoch payload, falling back to the parentless seed when nothing
+was promoted yet. `zicato/query/decisions.py` held the one
+experiment-decision classifier. The gate breakdown shipped structured
+`deciding_rule` / `margin` / `regressed_*` fields. The client's six
+re-derivations were **deleted** rather than repaired:
 
 ```js
 // AFTER — src/zicato/dashboard/static/js/views/gens.js
@@ -447,11 +491,24 @@ consumers only for verbatim consumption.
   of reading `ep.current_champion` / the stamped `decision` / the structured
   gate verdict;
 - you parse a human-readable reason string to recover machine-readable facts
-  (the deleted `deriveGateExplain` recovered them with a regular expression
-  over the reason text);
+  (before the fix, `deriveGateExplain` in the candidate view recovered them
+  with a regular expression over the reason text; its present form reads the structured
+  `deciding_rule`, `margin`, and `regressed_*` fields);
 - your new payload omits a derived field "because the client can compute it";
 - your test fixtures only ever contain one promotion — add a two-promotion
   spine to any fixture that touches champion logic.
+
+### Where the guard lives
+
+`current_champion` (`src/zicato/query/promoted_head.py`) reads the champion
+from the committed settlement records (`recorded_champion` in
+`src/zicato/epoch/settlement_receipt.py`): the most recent primary promotion a
+committed round names, or the baseline before any promotion. The epoch reader
+(`src/zicato/query/epoch_view.py`) stamps it on the payload, and
+`src/zicato/dashboard/static/js/views/gens.js` reads `ep.current_champion`
+verbatim. The server-side pins are `test_current_champion_is_the_spine_end`
+and `test_current_champion_falls_back_to_the_seed` in
+`tests/test_dashboard_decision_surface.py`.
 
 ---
 
@@ -557,6 +614,21 @@ fires the signal and checks which process survived.
   SIGKILL rc=137 one second in is a kill rather than a hang, and that
   distinction changes which processes you suspect.
 
+### Where the guard lives
+
+`_maybe_spawn_dashboard` and `_maybe_spawn_supervisor` in
+`src/zicato/cli/commands/evolve.py` spawn their children with
+`start_new_session=True`. In `tests/conftest.py`, `_reap_leaked_dashboards`
+selects victims through `_session_dashboard_pids`, which keeps only
+dashboards whose `--workspace` argument (parsed by `_dashboard_workspace_arg`)
+lies inside the session's temp root. The pins are
+`test_group_kill_aimed_at_dashboard_child_cannot_reach_evolve` and
+`test_spawn_helpers_isolate_children_in_new_sessions` in
+`tests/test_evolve_supervisor_spawn.py`, and
+`test_reaper_never_signals_a_foreign_dashboard` and
+`test_reaper_kills_by_pid_when_child_shares_our_group` in
+`tests/test_conftest_dashboard_reaper.py`.
+
 ---
 
 ## Case 6 — Best-of-N tree mismatch (gauntlet): the shared child-slot re-derivation
@@ -576,28 +648,29 @@ candidate's hypothesis.
 
 ### Root cause
 
-Every slate sample's post-apply validation derives the SAME fixed child
-snapshot in place. The validator seam
+Before the fix, every slate sample's post-apply validation derived the SAME
+fixed child snapshot in place. The validator hook
 (`src/zicato/evolve/round.py::build_post_apply_validator`) is *designed* to
 clear and re-derive on retry:
 
 ```python
-# src/zicato/evolve/round.py — the shared child slot (unchanged, by design)
+# src/zicato/evolve/round.py — the shared child slot (abridged; by design)
         child = genstore.derive_generation(
             epoch_id=epoch_id,
             parent_generation_id=parent_id,
             child_generation_id=next_id,     # ONE fixed child id per round
             patches=list(candidate.patches),
+            enumeration_roots=policy.enumeration_roots,
         )
         ...
         last_child_snapshot["path"] = child
 ```
 
-Best-of-N runs this validator once **per slate sample** — N times against one
-`child_generation_id` — so after N samples the on-disk tree belongs to the
-LAST successfully-validated candidate. The selection step may pick an earlier
-one. The evolve pipeline then mounts `last_child_snapshot["path"]` while
-persisting the CHOSEN candidate's experiment. One mutable slot, the snapshot
+Best-of-N ran this validator once **per slate sample** — N times against one
+`child_generation_id` — so after N samples the on-disk tree belonged to the
+LAST successfully-validated candidate. The selection step could pick an
+earlier one. The evolve pipeline then mounted `last_child_snapshot["path"]`
+while persisting the CHOSEN candidate's experiment. One mutable slot, the snapshot
 for `next_id`, carried N logical artifacts, the candidate trees, and the last
 writer won.
 
@@ -634,7 +707,7 @@ fired only when the chosen candidate was not the last-validated one, and an
 unexpected finding fell back to the last-validated candidate, stamping
 `:revalidate-fallback` onto the selection mode. `_mount_chosen` (commit
 `8e010e8`) replaced it and removed the shared last-validated tree that the
-condition depended on. Every slate slot now validates into its own throwaway
+condition depended on. With it, every slate slot validates into its own throwaway
 scratch tree (`GenerationStore.derive_scratch`), so after selection the chosen
 candidate is UNCONDITIONALLY derived once into the round's real `next_id`,
 with no candidate to fall back to and a `ProposerError` on any finding. The
@@ -667,6 +740,22 @@ into that error).
 - your test asserts the returned experiment matches expectations but never
   reads the mounted snapshot's bytes.
 
+### Where the guard lives
+
+`BestOfNProposerAgent._mount_chosen` in `src/zicato/proposer/best_of_n.py`
+derives the chosen candidate into the round's `next_id` through
+`ctx.validate_experiment`, the hook `build_post_apply_validator`
+(`src/zicato/evolve/round.py`) builds. Slate slots validate into their own
+scratch trees through `GenerationStore.derive_scratch`. The hook skips the
+derive only when the tree already derived for the same patch set still has
+identical source files. The end-to-end pins are
+`test_gauntlet_mounts_the_chosen_candidate_tree` and
+`test_field_mounts_each_chosen_candidate_tree` in
+`tests/test_best_of_n_tree_integrity.py`; the wrapper pins include
+`test_chosen_earlier_candidate_rederives_its_child_tree` and
+`test_mount_failure_does_not_attempt_a_fallback` in
+`tests/test_proposer_best_of_n.py`.
+
 ---
 
 ## Case 7 — The field-path extension: same slot bug, plus the diversity misjudgment
@@ -690,9 +779,9 @@ behaviorally novel.
 ### Root cause
 
 The same slot aliasing as the gauntlet case (case 6). The field pipeline
-(`_propose_and_apply_challenger` → `_mint_challenger_field` in
-`src/zicato/orchestrator.py`) mounts the shared child snapshot per minted
-challenger while persisting the chosen experiment, and additionally feeds the
+(`_propose_and_apply_challenger` → `_mint_challenger_field`, then in
+`src/zicato/orchestrator.py`) mounted the shared child snapshot per minted
+challenger while persisting the chosen experiment, and additionally fed the
 chosen hypothesis to `_compute_field_diversity`. The diversity judgment is a
 *derived decision* over a record that did not describe the tree on disk, so
 the mismatch propagated one layer further than in the gauntlet before anything
@@ -744,6 +833,17 @@ artifact.
 - you cache a hypothesis signature keyed by generation id before the
   generation's tree is final.
 
+### Where the guard lives
+
+`_propose_and_apply_challenger` (`src/zicato/evolve/propose_apply.py`)
+produces each challenger through the same `_mount_chosen` derive as the
+gauntlet case (case 6). The field batch (`src/zicato/evolve/candidate_batch.py`)
+then calls `_mint_challenger_field`, which makes the diversity decision from
+`_diversity_signature` of each persisted experiment. The pin is
+`test_field_mounts_each_chosen_candidate_tree` in
+`tests/test_best_of_n_tree_integrity.py`, which asserts the signatures of
+the two racing challengers differ along with their mounted trees.
+
 ---
 
 ## Case 8 — Evidence-gate replicate-slot reuse: the soundness check was unsound as wired
@@ -762,8 +862,9 @@ could not separate them.
 
 ### Root cause
 
-Both `_replicate_duel` implementations (gauntlet confirm and multi-challenger
-field, `src/zicato/orchestrator.py`) omitted the replication parameters,
+Both `_replicate_duel` implementations of the time (gauntlet confirm and
+multi-challenger field, `src/zicato/orchestrator.py`) omitted the replication
+parameters,
 defaulting every evidence "replicate" to replicate slot 0 — the tournament's
 canonical slot — under one constant matchup id:
 
@@ -818,9 +919,11 @@ Three, stacked:
   "Run another duel" produces an independent sample only if every seam (cache
   slot, seed stamp, both sides) is explicitly fresh; the default path re-serves
   what already exists.
-- **Reserved index ranges** (the ledger, 04-evaluation-statistics.md §8):
-  out-of-tournament draws must live where tournament reads can never find
-  them and tournament writes can never be found by them.
+- **Separate identities for separate evidence sources** (reserved index
+  ranges at the fix commit; measurement purposes in the present code,
+  04-evaluation-statistics.md §8): out-of-tournament draws must live where
+  tournament reads can never find them and tournament writes can never be
+  found by them.
 - **A structural refusal outlives caller discipline:** the consumer of
   evidence, the driver's audit, must itself refuse duplicate data
   (`seen_matchup_ids`), because a future caller WILL get the wiring wrong
@@ -828,7 +931,7 @@ Three, stacked:
 
 ### The fix
 
-Four changes, at four seams:
+Four changes, at four places in the code (as the fix commit made them):
 
 - `EVIDENCE_REPLICATE_BASE = 4000` joins the reserved ladder, and a
   `replicate_base` parameter threaded `run_matchup → _run_replicated` puts
@@ -864,8 +967,9 @@ the noisy harness.
 
 ### You are about to reintroduce this if…
 
-- you write a new `run_matchup` caller for any extra/out-of-band duel and do
-  not pass a reserved `replicate_base` (grep the ledger first);
+- you write a new matchup runner caller for any extra or out-of-band duel and
+  do not pass a `first_measurement` under a purpose of its own (read
+  04-evaluation-statistics.md §8 before adding a purpose);
 - you mint matchup ids that do not encode the draw's identity — the audit
   guard is only as good as the id's uniqueness-per-draw;
 - you treat a fast-mode cache hit as "a sample" in any fit, mean, or CI;
@@ -873,6 +977,26 @@ the noisy harness.
   loop that produces partial/single-draw aggregates;
 - your new statistical loop's test suite is entirely deterministic (the
   pinned-knob lesson, which is the hole this bug lived in).
+
+### Where the guard lives
+
+One factory, `make_evidence_replicate_duel` in
+`src/zicato/selection/driver.py`, builds every confirmation duel; the field
+execution path (`src/zicato/evolve/field_execution.py`) wires it when the
+`promote_confidence_threshold` structure parameter is set. Confirmation draw
+j is `MeasurementDraw(MeasurementPurpose.CONFIRMATION, j)`, its matchup id is
+`confirmation:r{j}:{left}:{right}`, and it runs with `cache_scores=False`.
+The confirmation purpose replaced the reserved index 4000, so both sides'
+draws land in `loss.evidence_confirmation.r<j>.json` files and never in a
+tournament file. The confirm loop in the same module classifies each result
+before the fit: a repeated matchup id (`seen_matchup_ids`), a draw of another
+purpose, or a repeated measurement of either competitor (`seen_draws`) is
+refused while its budget still counts. The pins are
+`test_evidence_replicates_are_independent_draws` and
+`test_full_mode_evidence_loop_never_touches_canonical_slots` in
+`tests/test_decision_procedure_power.py`, and
+`test_pregate_drops_replicates_that_replay_an_audited_draw` in
+`tests/test_driver_evidence_pregate.py`.
 
 ---
 
@@ -959,6 +1083,19 @@ which catches any future re-split of the two representations.
   into every path that moves the authority;
 - you test store operations only through one access path (worker mount OR
   direct read) — agreement between paths is itself a contract.
+
+### Where the guard lives
+
+`GitGenerationStore.derive_generation` (`src/zicato/epoch/git_genstore.py`)
+removes the child's materialised worktree (`_worktree_path`) after moving
+the tag, and returns `materialize_snapshot`, the method named
+`snapshot_root` at the fix commit, which re-materialises from the moved tag.
+The standing pins run on the git backend through the best-of-N integrity
+end-to-end tests (`tests/test_best_of_n_tree_integrity.py`), which assert
+that committed and mounted trees agree. The store-level suites
+(`tests/test_git_genstore.py`, `tests/test_genstore_conformance.py`) do not
+contain a test that re-derives one child id with different patches and reads
+it back.
 
 ---
 
@@ -1058,6 +1195,15 @@ pin each one as a test dimension.
   (normalize in the hash, resolve in the serializer — they will disagree on
   the first symlink).
 
+### Where the guard lives
+
+`_canon_mutable_trees` in `src/zicato/epoch/contract.py`, pinned by
+`test_contract_hash_is_cwd_and_checkout_invariant` in
+`tests/test_epoch_contract.py`. The parity contract-hash gate
+(`tools/parity/lib/contract_hash.py`, golden
+`tools/parity/golden/contract_hash.json`) checks the hash of a fixed fixture
+contract; 11-testing.md §11.7.2 describes its checkout-independence check.
+
 ---
 
 ## Case 11 — `judge_view` opened the index in write mode on a read path
@@ -1096,6 +1242,13 @@ reader cannot take the write lock or create a journal.
 - you "just need a quick connection" and skip the `mode=ro` URI. The default
   is read-write, and a read handler must never hold a writable connection.
 
+### Where the guard lives
+
+`open_index_ro` (and its best-effort variant `open_index_ro_or_none`) in
+`src/zicato/query/_sqlite.py`. No reader under `src/zicato/query/` calls
+`sqlite3.connect` directly. No dedicated test asserts the read-only mode, so
+review is the guard for a new reader.
+
 ---
 
 ## Case 12 — The `elimFlow` guard family: client-side derivation over an under-specified payload
@@ -1111,8 +1264,8 @@ separating an elimination from a drop, and five guards against phantom `✕`
 eliminations. Each one was added to patch a different sighting of a malformed
 payload. Together they came to roughly 100 lines of client-side domain logic
 sitting behind an under-specified payload, which is a standing breach of the
-server-computes-client-renders rule (`09-dashboard-and-query.md`, doctrine
-`DQ1`).
+rule that execution records decisions and the dashboard only presents them
+(`09-dashboard-and-query.md`, doctrine `DQ1`).
 
 ### Root cause
 
@@ -1124,11 +1277,13 @@ copies drifted.
 
 ### The fix
 
-Tournament execution publishes each candidate's bracket progression with the
-ordered rounds and per-match losers. Both query services read that analysis
-from the live or completed tournament record. The radial diagram renders the
-recorded `gen_states` values. Publication tests use the same bracket fixtures
-as the browser tests, including a first double-elimination loss before the
+The fix commit moved the derivation to the servers. In the present code,
+tournament execution publishes each candidate's bracket progression with the
+ordered rounds and per-match losers. Both query services, the Python query
+layer and the supervisor's Rust reader, pass that analysis through from the
+live or completed tournament record. The radial diagram renders the recorded
+`gen_states` values. Publication tests use the same bracket fixtures as the
+browser tests, including a first double-elimination loss before the
 candidate's next match has been scheduled.
 
 ### You are about to reintroduce this if…
@@ -1139,6 +1294,18 @@ candidate's next match has been scheduled.
 - you add a client-side re-sort, de-duplication, or re-classification step
   "because the data comes in wrong". The data coming in wrong is the bug, and
   it lives on the server.
+
+### Where the guard lives
+
+`attach_elim_states` in `src/zicato/tournament/structure.py` computes
+`gen_states` and per-match losers. `src/zicato/tournament/records.py` applies
+it to completed tournament records and `src/zicato/runtime/state.py` to the
+live tournament state; `src/zicato/query/tournament_view.py` and
+`crates/supervisor/src/reader.rs` serve the result. The server-side pins are
+`test_tournament_structure_serves_the_elim_model`,
+`test_bracket_tournaments_carry_the_elim_model`, and
+`test_active_tournament_serves_the_elim_model` in
+`tests/test_dashboard_racing_and_rounds.py`.
 
 ---
 
@@ -1195,7 +1362,7 @@ test that runs both lives; "does the knob work?" is the smaller question. The
 power harness (04-evaluation-statistics.md §13) exists to make knob-ON
 statistical worlds cheap to build — use it.
 
-### M3 — the fail-with-the-fix-stashed lesson: a regression test must show the red state
+### M3 — the fail-with-the-fix-reverted lesson: a regression test must show the red state
 
 Every regression test in this chapter was validated by watching it fail against
 the buggy code: the process-group test fires the hostile signal; the
@@ -1207,12 +1374,20 @@ without the fix pins nothing, and it will stay green when the bug returns.
 Procedure, every time you fix anything:
 
 1. Write the test.
-2. `git stash` the fix (or revert the fix hunk).
+2. Revert the fix's source files to the base revision explicitly
+   (`git checkout <base> -- <paths>`) and confirm the revert with
+   `git diff --stat <base> -- src/`, which must print nothing. A `git stash`
+   stashes nothing when the fix is already committed, and the "red" run then
+   executes the fixed code.
 3. Run the test. **It must fail, and fail for the stated reason** (read the
    failure text — a test failing on an import error is not pinning your bug).
-4. Restore the fix; the test goes green.
+4. Restore the fix (`git checkout HEAD -- <paths>`); the test goes green.
 5. Only then commit, with the test and fix in one commit so `git show` on the
    fix is forever the executable spec of the bug.
+
+This procedure applies to behaviour changes that add tests. A refactor that
+moves or renames code proves itself by invariance (the same outputs before
+and after) instead; reverting a move mostly proves that imports break.
 
 Two corollaries. First, prefer testing *observable consequences* (who
 survived the signal, which bytes changed, which tree got mounted) over
@@ -1233,8 +1408,8 @@ writing:
 2. Which knobs does my change interact with, and which test runs my code with
    those knobs ON in a world where the interaction is observable? (the
    pinned-knob lesson)
-3. Does my regression test fail with my fix stashed, for the stated reason?
-   (the fail-with-the-fix-stashed lesson)
+3. Does my regression test fail with my fix reverted, for the stated reason?
+   (the fail-with-the-fix-reverted lesson)
 4. Is every identity my change constructs derived from intrinsic properties
    only? (the contract-hash case, case 10)
 5. Does any consumer of my change re-derive a truth some owner already

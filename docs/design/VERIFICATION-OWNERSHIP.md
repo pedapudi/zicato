@@ -26,7 +26,10 @@ the serial verification recipe live in the development guide.
 
 ## Completion evidence
 
-The simplification program records the complete verification ladder and the
-machine-produced line-budget report. Test reduction is acceptable only when
-the remaining test demonstrates the same behavior and assertions; lower line
-count alone is not evidence of redundancy.
+A change is complete when it passes the complete validation in
+[`docs/dev-guide/11-testing.md` §11.11](../dev-guide/11-testing.md#1111-complete-validation-before-merge)
+and the
+machine-produced line-budget report (`tools/line_budget.py`, ledger in
+[`LINE-BUDGET.md`](LINE-BUDGET.md)) agrees with the change. Test reduction is
+acceptable only when the remaining test demonstrates the same behavior and
+assertions; lower line count alone is not evidence of redundancy.

@@ -38,12 +38,16 @@ is sufficient. Engines may instead contain a `call_llm` import path, but a
 single engine cannot mix `call_llm` with `model`, `endpoint`, or
 `api_key_env`. An endpoint or credential name also requires `model`.
 
-A model-form proposer engine supplies both the text callable and model id, so
-the built-in native proposer, custom text proposers, and process-backed
-proposers all honor it. A `call_llm`-form proposer override can steer only
-custom/text proposers; native and process-backed proposers require a model id
-and retain the evaluation model. This capability distinction is explicit—no
-callable is silently translated into a native model.
+The proposal episode itself runs in the Foe runtime and takes its model from
+the `proposer.model` object of the workspace's `proposer` block (provider,
+model, and backend options), described in
+[PROPOSER.md](PROPOSER.md#the-configuration). The proposer roles in
+`models.roles` select the engines for the calls Zicato makes around that
+episode: best-of-N critique and the model-assisted recombination merge run
+on `proposer_review`. Each best-of-N sample receives the `proposer_generate`
+callable and model name on its proposal context; the Foe episode does not
+read them, so they reach only an operator-supplied proposer class bound
+through `runtime.proposer_agent`.
 
 ## Nouns
 
@@ -61,14 +65,16 @@ callable is silently translated into a native model.
   enabled it must be independent of the judge.
 - **User emulator**: plays the user in multi-turn board entries. It is often a
   good place for a smaller engine.
-- **Proposer**: creates candidate changes. It often benefits from a stronger
-  engine than routine evaluation.
-- **Proposer generate**: generates the best-of-N candidate alternatives.
-- **Proposer review**: critiques, selects, and revises candidates.
+- **Proposer**: the shared default for the two proposer roles below. The
+  proposal episode's own model is configured in the `proposer` block.
+- **Proposer generate**: the callable and model name supplied to each
+  best-of-N sample's proposal context.
+- **Proposer review**: critiques and selects among best-of-N candidates, and
+  performs the model-assisted recombination merge.
 
 ## Overrides
 
-Role values name engines. This configuration gives proposal work a strong
+Role values name engines. This configuration gives proposal review a strong
 engine while assigning a smaller engine to the user emulator:
 
 ```json
@@ -94,7 +100,8 @@ A proposer role resolves through this precedence:
 2. `proposer`;
 3. `evaluation`.
 
-For example, cheap sampling with strong critique is:
+For example, a strong critique engine with a smaller engine for the
+sampling context is:
 
 ```json
 {
@@ -114,15 +121,14 @@ Every other advanced role (`judge`, `adjudicator`, and
 |---|---|---|
 | Model-form `target` | Adapter receives a native model object when supported; text-only adapters receive the derived callable | Adapter-defined; native tool calling is preserved where supported |
 | `call_llm`-form `target` | Text callable | No native tool binding; a tool-requiring adapter rejects the text shim |
-| Model-form proposer | Model id plus derived text callable | Built-in native proposer and native proposer session use the model id; custom text proposer uses the callable |
-| `call_llm`-form proposer | Imported text callable | Custom/text proposer only; it cannot stand in for a native model or native proposer session |
+| Proposal episode | Foe runtime with the `proposer.model` selection | Foe owns the model call and its editing tools; `models.roles` does not select this model |
+| Model-form or `call_llm`-form proposer role | Text callable (plus model name for the model form) | Critique and recombination merge use it as a text call; an operator-supplied proposer class may consume the sampling context's callable |
 | Inherited role | Same engine and capability as its inheritance source | No conversion is attempted |
-| Judge / user emulator | Constrained text or structured call | Not a native proposer session merely because their engine is changed |
+| Judge / user emulator | Constrained text or structured call | Changing the engine does not change the call protocol |
 | Adjudicator | Constrained text or structured call, separate from the judge | Must be independently configured when adjudication is active; a judge cannot audit itself |
 
 Engine substitution selects a connection; it does not change a role's
-execution protocol. In particular, assigning a model to a judge, adjudicator,
-or user emulator does not turn that role into a native proposer session.
+execution protocol.
 
 ## Logical identity and transport
 

@@ -14,11 +14,10 @@ matters here more than elsewhere: without the noise floor described
 under "Establishing the noise floor" below, a promotion margin carries
 no information.
 
-## The two roles the binary plays
+## How the pieces divide the work
 
-Improving an agent with itself is not circular, because it decomposes
-into two instances of the same binary in different roles, and neither
-instance decides anything:
+The loop decomposes into four pieces, and none of them decides a
+promotion:
 
 - **Target** — the configuration package under `config_package/`,
   registered as a zicato mutable tree. It is markdown loaded at run
@@ -30,8 +29,9 @@ instance decides anything:
 - **Board** — coding tasks against a fixture repository, with typed
   predicate expectations. Fixed, versioned, and holdout-protected like
   any board.
-- **Proposer** — any configured proposer, frozen as part of the
-  contract. Its drafts are patches against the target snapshot.
+- **Proposer** — the workspace's configured proposal runtime (a Foe
+  `proposer` block), frozen as part of the contract. Its edits become
+  patches against the target snapshot.
 
 The gate alone decides what survives. Self-modification reduces to the
 ordinary sequence: propose, validate, duel, and promote under a
@@ -61,14 +61,16 @@ Two things are outside the surface by design:
   hold a comment, so it cannot hold a marker: a marked `settings.json`
   would not be JSON. This is a property of the format rather than a gap
   waiting on tooling, and `.json` is correspondingly absent from the
-  enumerator's `TEXT_FILE_SUFFIXES`. Evolving the knobs it holds would
-  mean a `.jsonc`-shaped file rather than a marker in this one.
+  built-in marker syntax table (`BUILTIN_SYNTAXES` in
+  `zicato/mutation/markers.py`). Evolving the knobs it holds would mean
+  a `.jsonc`-shaped file rather than a marker in this one.
 - **There is no `extensions/` directory.** TypeScript extensions are the
-  other half of a real configuration package, but the marker grammar's
-  `TEXT_COMMENT_LEADERS` covers `<!--` and `#` only, so a file commented
-  with `//` has no marker syntax. Adding that leader is one row in the
-  mutation syntax table. This example ships no `extensions/` directory
-  rather than one that silently enumerates nothing.
+  other half of a real configuration package. The built-in syntax table
+  covers `.md`, `.markdown`, `.txt`, `.yaml`, `.yml`, and `.toml` with
+  the `<!--` and `#` leaders; a `.ts` file needs a `mutation_surface`
+  entry in `scoring.json` that declares `//` as its comment leader. This
+  example declares none and ships no `extensions/` directory rather than
+  one that silently enumerates nothing.
 
 ## How one run works
 
@@ -120,22 +122,9 @@ and `--mode rpc --no-session` is appended to it. It follows the
 presentation target's `ZICATO_TARGET_1_MODEL` precedent: a target-local
 variable read at the point of use.
 
-The proposer side has its own separate knob. `runtime.pi_bin` on
-`ExternalProposerConfig`, read by
-`zicato.proposer.pi_agent.resolve_pi_bin`, configures the **proposer**;
-this adapter configures the **target**. The two roles keep separate
-knobs because the whole safety argument is that the same binary occupies
-two roles, and one knob naming both would erase the distinction the
-argument rests on.
-
-Version pinning is handled by procedure rather than by sharing a knob.
-The proposer resolves a pinned install
-(`integrations/pi/node_modules/.bin/pi`, at the version
-`integrations/pi/package.json` pins), and the operator recipe in RUN.md
-recommends pointing `ZICATO_TARGET_4_AGENT_BIN` at that same install by
-path. A bare `pi` on `PATH` remains available as the degraded
-alternative, and an operator who takes it records the version by hand.
-The result is one binary pin reached through two independent knobs.
+This variable configures the **target** only. The proposal runtime is
+configured separately, by the workspace's `proposer` block, so the
+binary under test and the proposer never share a knob.
 
 The binary's `--version` is probed once per load and recorded beside the
 run. A version change changes the system under test without changing the
@@ -200,10 +189,8 @@ whose `patch-discipline` skill told it otherwise routes around it.
 
 ## Related surfaces
 
-- The same binary can serve as an external **proposer**, sharing the
-  inclusion mechanism and the hygiene rules above.
-- Proposer self-improvement runs without boards aimed at the proposer.
-  The two compose: an evolved proposer can propose against this target
-  like any other.
-- Adding `//` to the marker grammar's comment leaders is what would
+- An operator-supplied proposer class bound through
+  `runtime.proposer_agent` can drive a round against this target like
+  any other ([`docs/design/PROPOSER.md`](../../../docs/design/PROPOSER.md)).
+- A `mutation_surface` entry for `.ts` in `scoring.json` is what would
   unblock an `extensions/` directory of TypeScript files.

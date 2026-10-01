@@ -1,5 +1,10 @@
 # Supervisor build cost measurement, 2026-09-05
 
+> **Status:** dated measurement record. The figures describe the stated
+> revision and host on 2026-09-05; they are not maintained against later
+> builds. The measurement tool (`tools/verification_cost.py`) and the
+> executable cache (`.supervisor-cache/`) it motivated are current.
+
 Python package preparation can dominate a focused test run. On the measured
 Linux host, installing the package and its dependencies took 65.07 seconds
 with an empty Cargo target directory. Reusing a verified supervisor executable

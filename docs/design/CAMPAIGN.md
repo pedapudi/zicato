@@ -1,5 +1,12 @@
 # The live measurement campaign — deciding the scaffold defaults with evidence
 
+> **Status.** Dated historical record. It holds the campaign design, the
+> executor runbook, and the results of the two valid runs reported on
+> 2026-07-31 and 2026-08-02. Numbers, costs, and defaults describe the
+> system as it was for those runs; check `zicato <command> --help` before
+> reusing a runbook command. **No live model run starts without the
+> operator's explicit go-ahead** (§6.0).
+
 Two completed feature campaigns are reported below. Their reports qualified no
 treatment. Raw per-cell data and exact source/contract archives are not linked,
 so the recorded aggregates have not been independently recomputed.

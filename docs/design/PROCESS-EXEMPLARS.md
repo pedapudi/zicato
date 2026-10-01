@@ -3,7 +3,7 @@
 > **Status.** Implemented. The channel comprises the extractor
 > (`zicato/analyzer/process_exemplars.py`), the opt-in contract knob
 > (`ExperimentalConfig.process_exemplars`, default **0 = off**), and the prompt
-> block in both proposer engines. This channel touches the overfitting boundary (OVERFITTING.md §11), so the
+> block in the proposal episode's evidence (`zicato/proposer/foe_request.py`). This channel touches the overfitting boundary (OVERFITTING.md §11), so the
 > redaction rules below are the normative contract: **every rule maps to a
 > mechanical function with its own test — there is no LLM redactor.**
 > Section 5 is the operator runbook for detecting harm.
@@ -34,7 +34,7 @@ mechanical redaction layer and rendered as a clearly-bounded prompt block.
 ## 2. What is extracted
 
 `extract_process_exemplars(workspace_root, epoch_id, patterns, cap=2, *,
-parent_generation_id, train_entry_ids)` — a pure read over the **current
+parent_generation_id, train_entry_ids, base_seed)` — a pure read over the **current
 champion's** (`parent_generation_id`) `events.jsonl` files, restricted to
 the **train slice** the caller passes (the orchestrator threads the same
 `split_board` / `rotation_seed` partition it already uses for the patterns,
@@ -45,7 +45,7 @@ For each detected pattern, **at most one** anchor event, found by kind:
 
 | pattern kind | anchor event |
 |---|---|
-| `drift_kind_frequency` / `drift:*` metric-frequency | first `drift_detected` whose (normalized) kind matches the pattern's drift kind |
+| `drift_metric_frequency` (any `*_metric_frequency` pattern whose metric is `drift:<kind>`) | first `drift_detected` whose (normalized) kind matches the pattern's drift kind |
 | `hot_agent` | first `drift_detected` whose `current_agent_id` matches the pattern's agent |
 | `hot_task` | first `task_failed` / `task_blocked` whose `task_id` matches the pattern's task |
 | `plan_revision_instability` | first `plan_revised` |
@@ -118,8 +118,9 @@ failing" stays visible while nothing correlates across windows, rounds, or
 to the board.
 
 **Rule R3 — free-text truncation.** Every T-class field is capped at
-`_FREE_TEXT_LIMIT_CHARS = 160` with head/tail elision: the first 120 and
-last 24 characters joined by ` … `. T-class fields are process narration
+`FREE_TEXT_LIMIT_CHARS = 160` with head/tail elision: the first 120 and
+last 24 characters joined by ` … ` (the constants live in
+`zicato/analyzer/redaction.py`). T-class fields are process narration
 authored by goldfive's own detectors, judges, and steerer rather than task
 or model text, which is why they are admitted at all.
 
@@ -128,7 +129,7 @@ every T-class value is scanned against an **identity corpus** built from
 the same run: the entry id, run/session ids, every raw task/invocation id,
 and **every D-class text value** (goal summaries, task descriptions,
 completion/output summaries, trigger inputs, judge details, raw model
-text). Any corpus string of ≥ `_MIN_SCRUB_LEN = 12` chars found verbatim
+text). Any corpus string of ≥ `MIN_SCRUB_LEN = 12` chars found verbatim
 inside a kept text — and any identity token of any length — is replaced by
 `[withheld]`. A drift detail that *quotes* the task prompt therefore loses
 the quote mechanically. The payload allowlist is the primary guarantee; the
@@ -170,11 +171,12 @@ withheld:
   rules. This channel changes what the prompt renders, and never how
   zicato evaluates.
 
-**The asymmetry with screening.** `screen_entries` ships scaffold-on
-because tryouts are evaluation-side: they consume board runs but reveal
-only a veto. `process_exemplars` is **not in the scaffold** and defaults to
-0 because it widens the proposer-visibility channel, the boundary this
-codebase guards most strictly. The operator opts in with the §5 runbook in
+**The asymmetry with screening.** `screen_entries` defaults to 2 because
+tryouts are evaluation-side: they consume board runs but reveal only a
+veto. `process_exemplars` defaults to 0 because it widens the
+proposer-visibility channel, the boundary this codebase guards most
+strictly. The `zicato init` scaffold (`zicato/example_workspace/scoring.json`)
+writes both keys explicitly at 0. The operator opts in with the §5 runbook in
 hand. The cap participates in the complete scoring configuration, including
 its zero default. Changing its effective value rolls the epoch because it
 changes the evidence available to the proposer.
@@ -225,8 +227,9 @@ silently.
 - **Threading:** the orchestrator extracts **best-effort** (an extraction
   failure logs and renders nothing — it can never abort a round) →
   `ProposerContext.process_exemplars: str` (pre-rendered block body, empty
-  = omit) → both engines splice a `## Process exemplars` section
-  **directly after the failure-mode profile block**, headed by a banner
+  = omit) → the proposal episode's evidence splices a
+  `## Process exemplars` section **directly after the failure-mode
+  profile block** (`zicato/proposer/foe_request.py`), headed by a banner
   restating the redaction contract. An empty block is omitted from the prompt.
   Prompt equality when disabled and complete configuration identity are
   separate test obligations.
@@ -239,12 +242,8 @@ Sample of the rendered block (redacted, anonymized, offsets relative):
 
 ```
 ## Process exemplars (train slice — redacted event windows)
-Redaction contract (docs/design/PROCESS-EXEMPLARS.md §3): entry ids and
-task text stripped, task ids anonymized per window, free text truncated,
-model outputs withheld. These show HOW a detected failure unfolds — never
-WHICH board entry it unfolded on.
-
-- exemplar 1/2 — pattern drift_kind_frequency (drift kind 'looping_tool_call'):
+Entry ids and task text are stripped, task ids are anonymized per window, and model outputs are withheld. These show HOW a detected failure unfolds, never WHICH board entry it unfolded on.
+- exemplar 1/2 — pattern drift_metric_frequency (drift kind 'looping_tool_call'):
     -3 plan_submitted plan=3 tasks, 2 edges
     -2 agent_invocation_started agent=researcher task=task-1
     -1 task_started task=task-1

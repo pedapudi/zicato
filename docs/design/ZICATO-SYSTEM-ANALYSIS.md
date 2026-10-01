@@ -1,18 +1,50 @@
 # zicato: intent, architecture, determinism, and the proposer
 
 > **Status.** A dated analysis of the codebase rather than a specification. It
-> records what the tree contained on the analysis date, with the reasoning
-> behind each finding. For the system as it stands, read the design documents
-> it cites and the development guide under `docs/dev-guide/`.
+> records what the tree contained on the analysis date (2026-07-01), with the
+> reasoning behind each finding. For the system as it stands, read the design
+> documents it cites, `docs/design/PROPOSER.md` for the proposer, and the
+> development guide under `docs/dev-guide/`.
 >
-> Several of its recommendations have since been adopted, and the passages
-> that made them record the outcome in place. Sampling diversity within a
-> best-of-N slate ships as the per-slot edit-class hint (`EDIT_CLASS_HINTS`
-> in `src/zicato/proposer/hints.py`, applied in
-> `src/zicato/proposer/best_of_n.py`), and the noise-aware defaults raised
-> `replicates` to 2 for every structure except racing
-> (`src/zicato/selection/strategies/`). For the proposer as it stands, read
-> `docs/design/PROPOSER.md`.
+> Its code quotes and `file:line` citations describe the tree of the analysis
+> date, and many do not resolve against the present tree. `src/zicato/orchestrator.py` is a short
+> facade over the round phases in `src/zicato/evolve/`; the dashboard readers
+> moved from `dashboard/readers/` to the `src/zicato/query/` package; the
+> selection knobs `params["rating"]` and `params["resolver"]` became
+> `experimental.standing_rating` and `experimental.resolver`; and the scoring
+> sums the analysis quotes from `src/zicato/scoring/builtins.py` now use
+> `math.fsum` over sorted namespaces, which makes the result independent of
+> summation order. Passages marked "since done" were annotated after the
+> analysis date; the disposition below supersedes them.
+>
+> **Disposition of the recommendations, checked against the tree on
+> 2026-09-26:**
+>
+> - Best-of-N with self-critique: adopted as the default (`best_of_n` 3,
+>   critique on).
+> - Hypothesis prediction accuracy: partly adopted. It is graded and shown to
+>   the proposer, and the heuristic slate selection in
+>   `src/zicato/proposer/best_of_n.py` prefers concrete predictions once the
+>   lineage's recent accuracy clears a trust bar. It never enters a gate.
+> - Diversity within a slate: the per-slot edit-class and strategy hints
+>   (`src/zicato/proposer/hints.py`) are built; per-slot decoding variation
+>   is not.
+> - Mutation tooling: the proposer runs as an external episode runtime with a
+>   closed tool list that includes `mutation_usage`; `read_parent_diff` was
+>   not built.
+> - Decomposing the large orchestration and endpoint functions: done. The
+>   round runs as named phases in `src/zicato/evolve/`, and
+>   `src/zicato/dashboard/endpoints.py` declares its read endpoints as data.
+> - Shared coercion helpers for the readers: done (`coerce_float` in the
+>   query package).
+> - Server-side decision surface: done for the recorded decisions, the
+>   settled tournament structures (including racing), and the round
+>   timeline (`/api/epoch/{id}/round-timeline`); readers use the committed
+>   round records rather than re-deriving decisions.
+> - Integrity blocking twins and diff-complexity regularization: built,
+>   default-off (`block_on_containment_violation`,
+>   `block_on_gate_contradiction`, `experimental.diff_complexity_weight`,
+>   `experimental.diff_complexity_ceiling`).
 
 _Analysis date: 2026-07-01. Every code snippet below is copied verbatim from
 the file named in its caption._
@@ -55,7 +87,7 @@ so the next generation goes less wrong.
 
 Multi-agent systems are the founding and primary use case — a coordinator +
 specialists, a deep sub-agent tree, a single LlmAgent, whatever shape — and the
-shipped reference adapter targets Google ADK. But nothing in the loop is
+shipped reference adapter targets ADK. But nothing in the loop is
 agent-specific. The contract asks for three things: an **entrypoint** the runner
 can drive, one or more **mutable trees** of source the proposer may edit, and a
 **board** of tasks with typed expectations. Anything that fits that shape can be
@@ -103,7 +135,7 @@ Across many runs of that system under test, zicato:
    not regress on pre-existing pass-rate.
 ```
 
-Two design commitments make this loop legible rather than a black-box optimizer. First, edits are confined to an **annotated mutation surface** — only spans/files the operator marked `# zicato:mutable` are editable, so the search is "improve these strings" and never "rewrite the agent" (`docs/design/RATIONALE.md:13-38`). Second, every proposal is a structured **Experiment = hypothesis + patches**, with the hypothesis (`core_idea`, `why`, `expected_metric_movements`, `risks`, …) recorded *before* the run and matched against actuals *after*, so the journal captures the proposer's reasoning as well as what scored (`docs/design/RATIONALE.md:82-107`). **Epochs** group generations under a frozen evaluation contract (board + proposer brief's `## Forbidden` list + scoring weights) so within-epoch comparison is precise while operator contract changes become explicit epoch boundaries (`docs/design/VOCABULARY.md:83-90`).
+Two design commitments make this loop legible rather than a black-box optimizer. First, edits are confined to an **annotated mutation surface** — only spans/files the operator marked `# zicato:mutable` are editable, so the search is "improve these strings" and never "rewrite the agent" (`docs/design/RATIONALE.md:13-38`). Second, every proposal is a structured **Experiment = hypothesis + patches**, with the hypothesis (`core_idea`, `why`, `expected_metric_movements`, `risks`, …) recorded *before* the run and matched against actuals *after*, so the journal captures the proposer's reasoning as well as what scored (`docs/design/RATIONALE.md:82-107`). **Epochs** group generations under a frozen evaluation contract (board + proposer brief's `## Forbidden edits` list + scoring weights) so within-epoch comparison is precise while operator contract changes become explicit epoch boundaries (`docs/design/VOCABULARY.md:83-90`).
 
 ### The three pluggable seams
 
@@ -123,7 +155,7 @@ src/zicato/core/runtime.py:19-26
 CallLLM = Callable[[str, str, str], Awaitable[str]]
 ```
 
-- **Framework-agnostic `HarnessAdapter`.** The system under test is a black box behind a small `runtime_checkable` Protocol pair — `RunnableHarness.run(entry, sinks, config)` plus adapter `load()` / `mutation_points()` / `mutable_subpaths()` (`src/zicato/adapters/base.py:40-146`). Google ADK is the first concrete adapter; plain-callable and LangChain are planned. The runner "doesn't care" what shape the agent is (`src/zicato/adapters/base.py:18`).
+- **Framework-agnostic `HarnessAdapter`.** The system under test is a black box behind a small `runtime_checkable` Protocol pair — `RunnableHarness.run(entry, sinks, config)` plus adapter `load()` / `mutation_points()` / `mutable_subpaths()` (`src/zicato/adapters/base.py:40-146`). ADK is the first concrete adapter; plain-callable and LangChain are planned. The runner "doesn't care" what shape the agent is (`src/zicato/adapters/base.py:18`).
 
 - **Pluggable record storage.** Record persistence goes through a `StorageBackend` ABC — a keyed, atomic JSON/JSONL store — so tests can substitute an in-memory backend and future record stores can be added without changing domain readers, while files stay canonical in production (`src/zicato/storage/base.py:1-10`). Generation source trees use the separate `GenerationStore` protocol. The derived SQLite analytical index is explicitly *not* a backend — it is a rebuildable read side, kept separate so store-of-record and index evolve independently (`src/zicato/storage/base.py:31-35`).
 

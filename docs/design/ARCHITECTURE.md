@@ -19,8 +19,8 @@ loop.
 
 Multi-agent systems are the founding and primary use case — a coordinator
 with specialists, a deep `sub_agents` tree, a single planning agent, an
-arbitrary callable that fronts a model — and the only concrete adapter
-shipped so far targets Google ADK. But the definition is not agent-shaped.
+arbitrary callable that fronts a model — and the only framework-specific
+adapter in the tree targets ADK agents. But the definition is not agent-shaped.
 The loop requires:
 
 * an **adapter** the worker can reconstruct and drive to produce an output;
@@ -35,8 +35,8 @@ structure, so nothing in the patch path inspects agent classes or role
 graphs: the enforced adapter contract is
 `("mutable_subpaths", "load", "mutation_points")`, and a `RunResult`
 carries strings. The markers are not Python-only either: a marker may sit
-in any allowlisted text file, so a markdown prompt or a YAML policy is
-first-class mutable surface (see
+in any allowlisted text file, so a markdown prompt or a YAML policy can be
+mutated in the same way as a Python string (see
 [MUTATION-SURFACE.md](MUTATION-SURFACE.md) §2.4). Shipped adapter factories are
 importable Python callables because a worker reconstructs them across a
 subprocess boundary. The system the loaded adapter drives does not need to be a
@@ -72,8 +72,8 @@ Across many runs of that system under test, zicato:
 The loop is self-improving in the sense that every promoted generation
 becomes the parent of the next round. Generations form a directed
 acyclic graph. **Epochs** group generations under a stable evaluation
-contract — the board, the proposer brief, and the scoring weights all
-hold steady — so
+contract — the board, the proposer brief, the scoring configuration,
+the system-under-test identity, and the proposer all hold steady — so
 generations within an epoch are directly comparable. Cross-epoch
 comparison is approximate by design, because the two epochs score
 generations under different contracts.
@@ -115,7 +115,7 @@ Installation profiles and their capability guarantees are specified in
 
 What that does *not* imply is that your target must be a goldfive
 application. The adapter protocol is framework-neutral — it
-asks for `load`, `mutable_subpaths`, and `mutation_points`, plus
+requires `load`, `mutable_subpaths`, and `mutation_points`, plus
 `run(entry, sinks, config) -> RunResult` on the loaded harness — and a
 workspace declares a non-ADK harness through `adapter.kind = "import"`.
 A target that emits no drift events is scored on its predicates, rubrics,
@@ -177,8 +177,8 @@ system under test's source. zicato is the only thing that does either.
   `call_llm(system: str, user: str, model: str) -> str` callable. The
   core never imports a vendor SDK.
 - Not framework-coupled. The system under test can be anything that exposes
-  a `HarnessAdapter`. Google ADK is the only adapter implemented in the
-  tree (`zicato/adapters/adk.py`); any other harness is registered
+  a `HarnessAdapter`. The ADK adapter is the only framework-specific adapter
+  in the tree (`zicato/adapters/adk.py`); any other harness is registered
   through the generic `adapter.kind = "import"` shape, which resolves a
   dotted path the operator supplies (`zicato/adapter_factory.py`).
 - Not a runtime steerer. Live runs go through goldfive (and
@@ -217,7 +217,7 @@ system under test's source. zicato is the only thing that does either.
    │   │ (.jsonl,     │    │                                │ │               │
    │   │  frozen      │    │   any system under test        │ │               │
    │   │  per epoch)  │    │   exposing:                    │ │               │
-   │   └──────┬───────┘    │     run_entry(entry) -> result │ │               │
+   │   └──────┬───────┘    │     load(root).run(entry, ...) │ │               │
    │          │            │     mutation_points() -> [...] │ │               │
    │          │            └─────────────┬──────────────────┘ │               │
    │          ▼                          │                    │               │
@@ -241,14 +241,14 @@ system under test's source. zicato is the only thing that does either.
    │                        │                                        │
    │                        ▼                                        │
    │              ┌────────────────────┐                             │
-   │              │  Pattern detectors │  aggregate across runs      │
-   │              │                    │  in the current epoch       │
+   │              │  Pattern detectors │  aggregate the champion's   │
+   │              │                    │  train-slice runs           │
    │              └─────────┬──────────┘                             │
    │                        │                                        │
    │                        ▼                                        │
    │              ┌────────────────────┐                             │
    │              │  Patch proposer    │  reads patterns + brief     │
-   │              │  (evaluation LLM)   │  emits Experiment           │
+   │              │  (Foe episode)     │  emits Experiment           │
    │              │                    │   = hypothesis + patches    │
    │              └─────────┬──────────┘                             │
    │                        │                                        │
@@ -262,14 +262,15 @@ system under test's source. zicato is the only thing that does either.
    │                        │                                        │
    │                        ▼                                        │
    │              ┌────────────────────┐                             │
-   │              │  Tournament        │  re-runs the WHOLE board    │
-   │              │  (default mode)    │  against parent + candidate │
-   │              │                    │  computes per-gen score     │
+   │              │  Tournament        │  measures champion and      │
+   │              │  (racing default)  │  challengers on the board;  │
+   │              │                    │  fast mode reuses cached    │
+   │              │                    │  units; per-gen score       │
    │              └─────────┬──────────┘                             │
    │                        │                                        │
    │                        ▼                                        │
    │              ┌────────────────────┐                             │
-   │              │  Promotion gate    │  margin on drift score      │
+   │              │  Promotion gate    │  margin on the scalar       │
    │              │                    │  AND strict monotonicity    │
    │              │                    │  on pre-existing pass-rate  │
    │              └─────────┬──────────┘                             │
@@ -288,9 +289,10 @@ system under test's source. zicato is the only thing that does either.
 
 The inner box is a single **round**. A round advances one generation
 within an epoch — `v3 → v4` — or rejects the proposal and stays at the
-parent. Many rounds happen within an epoch; an epoch is closed by the
-operator (or auto-closed on the next `epoch new`) and an analysis pass
-runs over its journal.
+parent. Many rounds happen within an epoch. An epoch closes when
+`evolve` rolls to a new one because the contract changed, when the
+operator runs `zicato epoch close`, or when `zicato epoch new` auto-closes
+its predecessor; an analysis pass then runs over its journal.
 
 ## 3. Cadence comparison
 
@@ -328,24 +330,30 @@ system-under-test author; zicato treats the adapter as the only handle on
 the system under test.
 
 **Consumes.** A registration. For example, `zicato epoch register --adk
-path:agent [--mutable-tree <path>]` records an ADK entry point. A generic
-import adapter records an importable factory and its construction arguments.
+module.path:agent_symbol [--mutable-tree <path>]` records an ADK entry point.
+A generic import adapter (`zicato epoch register --factory module:callable`)
+records an importable factory and its construction arguments.
 Every registration also records the source roots that contain mutation-point
 annotations.
 
-**Produces.** Two pieces of behaviour:
+**Produces.** The protocol (`zicato.adapters.base.HarnessAdapter`) has three
+required methods, whose names `REQUIRED_ADAPTER_METHODS` lists:
 
-- `async run_entry(entry: BoardEntry, *, sinks: list[EventSink]) -> RunResult`
-  — exercises the system under test against one board entry, with the
-  caller-supplied sinks attached. The adapter is responsible for
+- `mutable_subpaths(generation_root) -> list[Path]` — the sub-trees of one
+  generation snapshot that the proposer may edit.
+- `load(generation_root) -> RunnableHarness` — builds a harness bound to one
+  generation snapshot. Its `async run(entry, sinks, config) -> RunResult`
+  exercises the system under test against one board entry, with the
+  caller-supplied sinks attached. The harness is responsible for
   wrapping the system under test in `goldfive.wrap` (or
   `harmonograf_client.observe(goldfive.wrap(...))` when the operator
   wants harmonograf live), driving the entry's input (single-turn) or
-  conversation (multi-turn scripted / emulated), and returning a typed
-  `RunResult` shaped by the entry kind.
-- `mutation_points() -> list[MutationPoint]` — walks every registered
-  source root and returns every annotated mutation point (span, region,
-  and file markers, in `.py` and in any allowlisted text file; see
+  conversation (multi-turn scripted / emulated), forwarding
+  `config.target_call_llm` (never the evaluation callable), and returning
+  a `RunResult`.
+- `mutation_points(source_roots=None) -> list[MutationPoint]` — walks every
+  registered source root and returns every annotated mutation point (span,
+  region, and file markers, in `.py` and in any allowlisted text file; see
   [MUTATION-SURFACE.md](MUTATION-SURFACE.md)).
   The return value is a list because a target whose sources span several
   repositories needs multiple roots walked — evolving goldfive's own
@@ -358,9 +366,10 @@ annotations.
 - The adapter MUST emit a `goldfive.v1.RunStarted` and a single
   terminal event (`RunCompleted` or `RunAborted`) per entry. The
   zicato runner relies on this to bound the JSONL file per entry.
-- The adapter MUST exhaust the entry's `wall_clock_budget_seconds` on
-  itself — if the system under test runs over budget, the adapter aborts
-  the inner work and emits `RunAborted(reason="wall_clock_budget")`.
+- The harness MUST enforce the entry's `wall_clock_budget_seconds`
+  itself. If the system under test runs over budget, the harness aborts
+  the inner work and returns a `RunResult` with `aborted=True` and
+  `abort_reason="wall_clock_budget"` instead of raising.
 - The adapter MAY attach additional sinks for its own use (logging,
   in-process accumulators) but MUST NOT modify the sinks zicato
   supplied.
@@ -439,16 +448,21 @@ when the target supports a Python callback. See
 under test is evaluated against. One JSONL file at
 `.zicato/epochs/{epoch}/board.jsonl`. One entry per line.
 
-**Consumes.** Operator authoring (`zicato board add ...`,
-`zicato board remove ...`) — only between epochs. Within an epoch the
-board is frozen; mutation in-epoch is the easiest way to corrupt a
-lineage and is refused by the CLI.
+**Consumes.** The operator's live contract board — the `board.jsonl`
+path recorded under the `contract` key of `config.json` (by default
+beside the `.zicato/` directory), written by hand or with the Python
+builder. `zicato evolve` freezes a copy into each epoch it opens. The
+frozen copy must keep the bytes its epoch's contract hash recorded: an
+edited frozen board makes a run on that epoch refuse to start, so
+operators change the board by editing the live file and letting `evolve`
+roll the epoch.
 
-**Produces.** A typed `list[BoardEntry]` for the runner. Three entry
-kinds today (`single_turn`, `multi_turn_scripted`, `multi_turn_emulated`)
-with an open-ended `kind` discriminator, so a further kind (for example
-`synthetic_adversarial`, wanted for evolving goldfive's steering layer)
-drops in without schema breakage.
+**Produces.** A typed `list[BoardEntry]` for the runner. The runner
+executes three entry kinds (`single_turn`, `multi_turn_scripted`,
+`multi_turn_emulated`). The `kind` type also reserves
+`synthetic_adversarial` and `synthetic_clean` for evolving goldfive's
+steering layer, so those kinds can be brought online without a schema
+break.
 
 The full schema — the `expectations` (outcome) and `judges` (process)
 facets, wall-clock budget semantics, and the emulator contract — is
@@ -458,26 +472,30 @@ documented in [BOARD-FORMAT.md](BOARD-FORMAT.md) and
 
 ### 4.3 Runner
 
-**Responsibility.** The per-entry driver. Constructs a fresh
-`JSONLPersistenceSink(path=..., mode="write")` for each entry, calls
-`adapter.run_entry(entry, sinks=[the_sink, ...])`, awaits the terminal
+**Responsibility.** The per-entry driver. Each board unit (one
+generation on one board entry at one measurement draw) runs in its own
+`python -m zicato._tournament_worker` subprocess. The worker loads the
+generation through `adapter.load(...)`, constructs a fresh
+`JSONLPersistenceSink(path=..., mode="write")`, calls
+`run(entry, sinks, config)` on the loaded harness, awaits the terminal
 event, and closes the sink.
 
 **Consumes.** A `Generation` snapshot of the system-under-test source, a
 `BoardEntry`, the two configured `call_llm` callables
 (`target_call_llm` and `evaluation_call_llm` — see §4.10).
 
-**Produces.** A path to the just-written `events.jsonl`. Nothing more —
-the runner stays minimal, and loss computation happens in a
-separate reducer step.
+**Produces.** The just-written events file, which the reducer (§4.5)
+turns into a loss profile inside the same worker.
 
 **Contracts.**
 
 - `mode="write"` rather than `"append"`. The runner allocates a fresh
-  file per entry. Appending would silently corrupt run boundaries, and
-  the reducer relies on each file holding a single run.
-- One JSONL per `(epoch, generation, entry_id)`. Path:
-  `.zicato/epochs/{epoch}/generations/v{N}/runs/{entry_id}/events.jsonl`.
+  file per measurement. Appending would silently corrupt run boundaries,
+  and the reducer relies on each file holding a single run.
+- One events file per measurement. Path:
+  `.zicato/epochs/{epoch}/generations/v{N}/runs/{entry_id}/seed-{seed}/events.{purpose}.r{draw}.jsonl`,
+  where `{purpose}` names why the unit was measured and `{draw}` is its
+  replicate index (§6).
 - The runner does NOT process events incrementally. It hands the file
   to the reducer once the run terminates.
 
@@ -485,8 +503,10 @@ separate reducer step.
 
 **Responsibility.** Persist the system under test's `goldfive.v1.Event`
 stream verbatim. This is goldfive's job; zicato uses goldfive's
-`JSONLPersistenceSink` as-is. There is no zicato-specific EventSink
-primitive — the JSONL file is the wire-canonical record.
+`JSONLPersistenceSink`, wrapped only by `SequenceTrackingSink`, which
+records the last run id and sequence number without altering events.
+There is no zicato-specific EventSink primitive — the JSONL file is the
+wire-canonical record.
 
 **Why no custom sink.** A `ZicatoSink` would be a thin per-run-path
 wrapper over `JSONLPersistenceSink` and would couple zicato to the
@@ -500,34 +520,41 @@ spans on the `zicato:emulator` lane, are in
 
 ### 4.5 Loss reducer
 
-**Responsibility.** Read the per-entry `events.jsonl` after the run
+**Responsibility.** Read the run's events file after the run
 terminates, walk every event, and produce a typed `LossProfile` written
-to `loss.json` next to it.
+beside it as `loss.{purpose}.r{draw}.json`.
 
-**Consumes.** One `events.jsonl` (proto-canonical, via
-`replay_from_jsonl`). The `BoardEntry`'s `expectations` list — when
-non-empty, the reducer runs every outcome check against the
-appropriate slice of the run result and ANDs them into `pass_fail:
-bool`. (The entry's `judges` need no separate reducer step: a
-violated process judge already emitted a `DriftKind.CUSTOM` drift
-into the event stream, which the reducer counts like any other
-drift — see §4.6.1.)
+**Consumes.** One events file, read through the telemetry dialect the
+contract selects (`scoring.json`'s `telemetry_dialect`; the `goldfive`
+dialect replays it with `replay_from_jsonl`). The `BoardEntry`'s single
+`expectation`, when present: the reducer records its result, and
+`pass_fail` is that result. (The entry's `judges` need no separate
+reducer step: a violated process judge already emitted a
+`DriftKind.CUSTOM` drift into the event stream, which the reducer
+attributes to the judge by name — see §4.6.1.)
 
-**Produces.** `LossProfile` (Python dataclass, JSON-serializable):
+**Produces.** `LossProfile` (`zicato.core.loss`; a frozen dataclass with a
+canonical JSON codec). The principal fields:
 
 | Field | Type | Source |
 |---|---|---|
-| `drift_counts_by_kind` | `dict[str, int]` | count `DriftDetected` payloads bucketed by `kind` (custom-judge violations land under `DRIFT_KIND_CUSTOM`) |
-| `drift_counts_by_judge` | `dict[str, int]` | count `DRIFT_KIND_CUSTOM` payloads bucketed by `judge_name` — the per-judge breakdown |
-| `drift_counts_by_severity` | `dict[str, int]` | same, bucketed by `severity` |
-| `escalations` | `int` | count `DriftDetected` payloads with `lifecycle == ESCALATING` |
-| `plan_revisions` | `int` | count `PlanRevised` payloads |
-| `task_failure_ratio` | `float` | `TaskFailed` count / `TaskStarted` count |
-| `human_intervention_required` | `bool` | any `DRIFT_KIND_HUMAN_INTERVENTION_REQUIRED` emit |
-| `runtime_ms` | `int` | terminal event's `emitted_at` minus `RunStarted.started_at` |
-| `aborted` | `bool` | terminal event is `RunAborted` |
-| `drift_loss` | `float` | weighted scalar (see [SCORING.md](SCORING.md)) |
-| `pass_fail` | `bool \| None` | AND of the entry's `expectations`, or `None` when the list is empty |
+| `metric_counts` | `tuple[MetricCount, ...]` | every named measurement: drift observations as `drift:<kind>` with their severity (a custom judge's as `drift:custom:<judge_name>`), plus `cost:`, `output:`, `schema:` and other namespaced values |
+| `per_judge_loss` | `tuple[JudgeLoss, ...]` | each custom judge's weighted loss, keyed on `judge_name`; scored in the `judge:` channel |
+| `plan_revisions` | `int` | count of plan-revision events |
+| `task_failure_ratio` | `float` | failed tasks / started tasks |
+| `runtime_ms` | `int` | wall-clock duration of the run |
+| `wall_clock_budget_exceeded` | `bool` | the run hit its budget and was force-aborted |
+| `not_completed`, `abort_cause` | `bool`, `str \| None` | the run did not complete, and why (budget exhaustion or an infrastructure cause) |
+| `drift_loss` | `float` | weighted drift scalar (see [SCORING.md](SCORING.md)) |
+| `expectation_result` | `ExpectationResult \| None` | the outcome check's result, or `None` without an expectation |
+| `pass_fail` | `bool \| None` | derived from `expectation_result`; `None` when the entry has no expectation |
+| `score`, `metrics` | `float \| None`, `dict \| None` | a continuous per-entry outcome score and its optional decomposition |
+| `measurement` | `MeasurementDraw \| None` | which measurement purpose and replicate draw produced the profile |
+
+Multi-turn runs also carry `turns_completed`, `memory_failure_count`, and
+`context_loss_count`. Run coordinates (`run_id`, `entry_id`,
+`generation_id`, `epoch_id`, `match_id`) and cache provenance (`cached`,
+`source_epoch`, `source_run`) identify the measurement.
 
 The reducer runs **once per run** with full visibility. A sink has to
 decide what to record as each event arrives; a reducer reads the whole
@@ -540,26 +567,31 @@ See [TELEMETRY.md](TELEMETRY.md) for the full event-to-feature map and
 
 ### 4.6 Pattern detectors
 
-**Responsibility.** Aggregate `LossProfile`s across runs within the
-current epoch into patterns the proposer can act on. A pattern is a
-recurring shape (typed, named) rather than raw counts.
+**Responsibility.** Aggregate `LossProfile`s across runs into patterns
+the proposer can act on. A pattern is a recurring shape (typed, named)
+rather than raw counts.
 
-**Consumes.** Every `loss.json` written so far in the current epoch.
-The reset happens on epoch boundaries — patterns from epoch A do not
-flow into epoch B because the evaluation contract changed (see
+**Consumes.** Each round, the champion generation's loss profiles and
+events files for the board's train slice (holdout entries excluded),
+plus the board-entry catalog. Patterns are recomputed every round and
+never cross an epoch boundary, because the evaluation contract differs
+across epochs (see
 [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md)).
 
-**Produces.** A typed `list[Pattern]` for the proposer. Each pattern
-carries:
+**Produces.** A typed `list[Pattern]` (`zicato.core.patterns.Pattern`)
+for the proposer, from the detectors in `zicato.patterns.detectors`
+(`ALL_DETECTORS`). Each pattern carries:
 
-- `id` — stable identifier within the epoch
-- `kind` — symbolic name (`drift_concentration_by_kind`,
-  `tag_slice_regression`, `multi_turn_memory_failure`, etc.)
-- `evidence` — pointers to the contributing runs (epoch + generation +
-  entry id), structured so the proposer can include exact citations in
-  its hypothesis
-- `summary` — one-paragraph human-readable rendering
-- `tags` — the operator tags from the contributing board entries
+- `id` — a deterministic hash of kind, summary, and affected ids
+- `kind` — the detector's name for the shape: `drift_metric_frequency`,
+  `cost_metric_frequency`, `rubric_metric_frequency`, `hot_task`,
+  `hot_agent`, `plan_revision_instability`,
+  `multi_turn_memory_failure`, or `multi_turn_context_loss`
+- `summary` — one human-readable line
+- `detail` — a kind-specific string map, such as the metric name, its
+  frequency, and the affected entry ids
+- `affected_mutation_ids` — mutation points the proposer might target
+- `severity` — `info`, `warning`, or `critical`
 
 Pattern kinds intentionally lift goldfive's drift taxonomy as features
 (rather than redefining typed failure shapes). See
@@ -617,15 +649,16 @@ Judge.custom("cite-before-metric", "...")   ← board entry, judges=[...]
 goldfive evaluates the criterion against the live reasoning stream
         │  criterion violated
         ▼
-goldfive emits a JudgementEmitted with:
-        kind       = DriftKind.CUSTOM      ← every custom judge uses this kind
-        judge_name = "cite-before-metric"  ← the Judge's `name`, verbatim
-        severity   = the Judge's severity
+goldfive emits a DriftDetected of kind DriftKind.CUSTOM (every custom
+judge uses this kind) at the Judge's severity, paired with a
+JudgementEmitted carrying judge_name = "cite-before-metric" (the
+Judge's `name`, verbatim)
         ▼
-the run's events.jsonl captures it like any other drift event
+the run's events file captures both like any other drift event
         ▼
-the loss reducer (§4.5) counts it under DRIFT_KIND_CUSTOM and keys
-the per-judge breakdown on judge_name
+the loss reducer (§4.5) records the drift as the metric
+drift:custom:cite-before-metric and its weighted loss as a
+per_judge_loss row keyed on judge_name
 ```
 
 Every custom judge — `custom` or `python` — emits `DriftKind.CUSTOM`.
@@ -634,7 +667,9 @@ carried on the event as `judge_name`. So `judge_name` is the
 discriminator at every downstream stage: the reducer's per-judge
 counts, the journal, and `ScoringWeights.per_judge_weights` (which
 keys on `judge_name` — see [SCORING.md](SCORING.md) §2.2) all key on
-it. This is why a `Judge`'s `name` must be stable and board-unique.
+it. Custom-judge drift is scored in the `judge:` channel rather than in
+the drift term, so it is not counted twice. This is why a `Judge`'s
+`name` must be stable and unique within its entry.
 
 **Suppressing built-ins.** A board's `disable_drift` setting — a list
 of `goldfive.DriftKind` enum values — turns off the named *built-in*
@@ -663,9 +698,12 @@ hypothesis plus the patches that test it.
 
 - `list[Pattern]` from §4.6.
 - `.zicato/epochs/{epoch}/brief.md` — the operator's
-  steering document for the proposer. Read fresh every round; no
-  caching. Contains preferred targets, a mechanically-enforced
-  `## Forbidden` list of mutation-point ids, and style guidance. The name
+  steering document for the proposer. It is part of the frozen
+  evaluation contract: each round uses the brief captured with the
+  epoch's execution contract, and editing `brief.md` rolls the epoch.
+  Contains preferred targets, a mechanically-enforced
+  `## Forbidden edits` section whose bullets name mutation-point ids in
+  backticks or quotes, and style guidance. The name
   "brief" keeps this per-epoch steering document distinct from the
   per-entry `Rubric` outcome check (see
   [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) §7).
@@ -679,34 +717,42 @@ hypothesis plus the patches that test it.
   build on known wins, turning the memoryless hill-climb into a search
   that remembers what it already tried. Advisory context, scoped to
   the current contract; see [EXPERIMENT-MEMORY.md](EXPERIMENT-MEMORY.md).
-- The `evaluation_call_llm` (distinct by identity or model from
-  `target_call_llm` — see §4.10).
+- The proposal runtime. Every candidate is generated by one Foe episode
+  configured by the workspace's `proposer` block (see
+  [PROPOSER.md](PROPOSER.md)); the proposer is itself part of the
+  evaluation contract.
 
-**Produces.** An `Experiment`:
+**Produces.** An `Experiment`, whose proposer response must validate
+against `EXPERIMENT_JSON_SCHEMA` (`zicato.proposer.structured`):
 
 ```json
 {
   "hypothesis": {
     "core_idea": "<one sentence>",
-    "modulating": ["mp_id_1", "mp_id_2", ...],
+    "modulating": ["mp_id_1", "mp_id_2"],
     "why": "<the pattern observation>",
     "expected_metric_movements": [
-      {"metric_name": "drift:CONFABULATION_RISK", "direction": "down", "magnitude": "moderate"},
-      ...
+      {"metric_name": "drift:confabulation_risk", "direction": "decrease", "magnitude": "medium"}
     ],
-    "expected_pass_rate_delta": {"low": 0.0, "high": 0.1},
-    "risks": ["...", "..."]
+    "expected_pass_rate_delta": "<free text, e.g. +0 to +0.1>",
+    "risks": "<free text>"
   },
   "patches": [
-    {"mutation_point_id": "mp_id_1", "new_text": "..."},
-    ...
+    {"mutation_id": "mp_id_1", "op": "replace", "new_content": "...", "rationale": "..."}
   ]
 }
 ```
 
+`direction` is one of `decrease`, `increase`, `neutral`,
+`decrease_or_neutral`, `increase_or_neutral`; `magnitude` is one of
+`small`, `medium`, `large`. A patch's `op` is `replace` (with
+`new_content`), `set_numeric` (with `new_numeric`), or `set_enum` (with
+`new_enum`). On disk, `experiment.json` carries the hypothesis and the
+patch ids, and each patch is its own `patches/{patch_id}.json` (§6).
+
 The hypothesis fields are **mandatory and structured**. Schema-invalid
 proposer responses are rejected and the proposer is re-prompted.
-Writing the hypothesis BEFORE the run is the load-bearing decision
+Writing the hypothesis BEFORE the run is the decision
 that makes the journal interpretable later — without it, every entry
 in the journal reduces to "something changed, and here is the score
 delta".
@@ -725,21 +771,27 @@ before publishing the snapshot.
 **Consumes.** A parent `Generation`'s snapshot, the `Experiment`'s
 patches, the adapter's `mutation_points()` for ID resolution.
 
-**Produces.** A new snapshot under
-`.zicato/epochs/{epoch}/generations/v{N+1}/snapshot/` plus
-`patches_applied.json` recording what changed.
+**Produces.** A candidate generation source tree in the generation
+store (a commit in the workspace's private git repository by default,
+or `.zicato/epochs/{epoch}/generations/v{N+1}/snapshot/` under the
+directory backend; see [STORAGE.md](STORAGE.md)), plus one
+`patches/{patch_id}.json` per applied patch.
 
-**Validator constraints (every patch must pass all):**
+**Validator constraints** (`zicato.mutation.validator`; every patch must
+pass all):
 
-- The patched file still parses as valid Python (`ast.parse`).
-- Every imported name in the patched file resolves (no new
-  `NameError` on import).
-- The targeted mutation-point id resolves to a single location
-  after the patch, so a later generation can find it again.
-- For prompt templates, all required `{...}` placeholders that the
-  pre-patch text contained are preserved in the post-patch text.
-- The patch does NOT touch any mutation-point id that appears in the
-  proposer brief's `## Forbidden` list.
+- Before application, every patch targets an enumerated mutation point
+  with an `op` its payload and the point's kind support.
+- Every patched Python file still parses (`ast.parse`).
+- Top-level imports are preserved: a patch may add imports but not
+  remove them.
+- The targeted mutation-point id still resolves after the patch, so a
+  later generation can find it again.
+- Every placeholder a point declares in its `required_placeholders`
+  marker attribute is still present in the patched text.
+- The patch does NOT touch any mutation-point id that the proposer
+  brief's `## Forbidden edits` section names, including a forbidden
+  point nested inside a permitted one.
 
 Patches that fail validation are rejected; the proposer is informed
 and may re-propose, subject to the round's wall-clock budget for the
@@ -747,23 +799,28 @@ proposal step.
 
 ### 4.9 Tournament
 
-**Responsibility.** Compare the candidate generation against its parent
-on the whole board, produce a generation score for each, and apply the
-promotion gate.
+**Responsibility.** Compare the round's candidate generations against
+the champion on the board, produce a generation score for each, and
+apply the promotion gate.
 
-**Consumes.** Parent generation `vN` and candidate `vN+1`. The
-frozen-for-this-epoch `board.jsonl`. The scoring weights from
-`scoring.json`.
+**Consumes.** The champion generation and the round's challengers. The
+frozen-for-this-epoch `board.jsonl`. The scoring weights and the
+tournament structure from `scoring.json`. The default structure is
+`racing` with a field of four candidates, successive board slices, and
+independent confirmation draws before promotion
+([CONFIRMATION-POWER.md](CONFIRMATION-POWER.md)); `gauntlet` compares a
+single challenger with the champion. `single_elim`, `double_elim`, and
+`swiss` require the `experimental.tournament_structures` opt-in.
 
 **Produces.** Per-entry comparison rows, a generation score for each
-side, and a `tournament_decision` (`promote` | `reject`) with a
-human-readable reason.
+side, and a tournament decision (`promoted`, `rejected`, or `deferred`)
+with a human-readable reason.
 
-The default mode (rigorous tournament) re-runs the entire board against
-both generations. The fast mode (`zicato evolve --mode fast`) skips the
-A/B re-run and uses the candidate's score against the parent's
-historical score on the same board — less rigorous but much faster.
-Default is rigorous.
+`zicato evolve --mode fast` (the default) is cache-first: each board
+unit — one generation on one board entry at one replicate index — is
+evaluated at most once and its result is reused across pairings, rounds,
+and structures. `--mode full` bypasses the cache and evaluates every
+unit afresh on both sides.
 
 The full scalar, weights, and gate are in [SCORING.md](SCORING.md).
 
@@ -773,14 +830,18 @@ zicato is configured with **two** distinct `call_llm` callables:
 
 - `target_call_llm` — used by the system under test only (passed through
   `goldfive.wrap`'s `call_llm=` parameter; reaches the agent code).
-- `evaluation_call_llm` — used by everything zicato itself runs:
-  the patch proposer, the analysis pass, the multi-turn user emulator,
-  and the LLM grader behind any `rubric`-kind outcome check.
+- `evaluation_call_llm` — used by the evaluation side zicato itself
+  runs: the multi-turn user emulator, the analysis pass, and, unless the
+  workspace's `models.judge` block configures a separate judge callable,
+  the in-run judges and the LLM grader behind any `rubric`-kind outcome
+  check.
 
-**Hard rule at config time.** The two callables MUST differ by
-*callable identity* OR by an explicit `model=` override. If they do not
-differ, zicato refuses to start the run. The check is a hard error;
-there is no warn-and-continue path.
+**Hard rule at config time.** The two callables MUST be distinct objects
+(`zicato.core.workspace.assert_distinct_callables` compares them by
+identity). If they are the same callable, zicato refuses to start the
+run. The check is a hard error; there is no warn-and-continue path. Two
+distinct callables that reach the same endpoint pass the check, so
+choosing different models remains the operator's responsibility.
 
 The rule exists because *collusion is the risk*, rather than because
 vendor diversity is a goal in itself. If the same model is judging itself
@@ -808,13 +869,17 @@ SQLite sidecar — `.zicato/index.db` — that projects the canonical
 artifacts into a relational schema.
 
 **Consumes.** Every `gen_score.json`, `experiment.json`,
-`patches/*.json`, `runs/*/loss.json`, `lineage.json`, and committed
-`rounds/*/field_settlement.json` records in the workspace. Experiment and
-lineage readers incorporate the committed outcomes before index projection.
+`patches/*.json`, per-run loss file, `lineage.json`, committed
+`rounds/*/field_settlement.json` record, and board-reflection record in
+the workspace. Experiment and lineage readers incorporate the committed
+outcomes before index projection.
 
-**Produces.** Nine tables (`epochs`, `generations`,
+**Produces.** Twelve projection tables (`epochs`, `generations`,
 `experiments`, `patches`, `runs`, `loss_profiles`,
-`metric_counts`, `tournaments`, `judge_losses`).
+`metric_counts`, `tournaments`, `judge_losses`, `reflections`,
+`pareto_frontier`, `judge_scorecards`), an `ingest_cursors` table that
+records what each epoch's last projection saw, and a `schema_meta`
+table mirroring the schema version.
 Cross-run views — the dashboard's tournament analytics,
 loop-health detectors, the lineage queries — read the index
 instead of walking files.
@@ -850,9 +915,11 @@ operator reading the journal noticed.
 history.
 
 **Produces.** A typed `LoopHealth` report per round, written to
-`epochs/{epoch}/loop_health/round_{NNN}.json`. Five detectors
-(degenerate scoring, non-differentiating board entries, flat
-drift signal, no-expectations, stalled loop) emit findings with
+`epochs/{epoch}/health/round_{N}.json`. The detectors in
+`zicato.health.diagnostics` — among them degenerate scoring,
+non-differentiating board entries, flat drift signal, no expectations,
+dead and noisy judges, a stalled loop, a margin below the noise floor,
+and a failed `on_promote` hook — emit findings with
 `info` / `warning` / `critical` severities.
 
 **Contracts.**
@@ -889,9 +956,10 @@ analyzable, without the operator hand-writing the prose.
   not, what surface is still open, recommended focus for the next
   epoch.
 
-Closing is **manual primary** (`zicato epoch close`) with **auto-close
-on `epoch new`** as a fallback that emits a warning so operators
-notice they missed the manual step. See
+`zicato evolve` closes the current epoch whenever it rolls to a new one
+because the contract changed. An operator can also close one with
+`zicato epoch close`, and `zicato epoch new` auto-closes its predecessor
+with a warning. See
 [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md).
 
 ### 4.14 The CLI
@@ -905,7 +973,7 @@ else is advanced / debug tooling for driving one stage in isolation.
 | Subcommand | What it does |
 |---|---|
 | `zicato init` | Create a `.zicato/` workspace and scaffold the contract files. |
-| `zicato evolve [--rounds N]` | The orchestrator: one command, many rounds. Auto-epochs — hashes the evaluation contract (board + proposer brief + scoring + harness identity) and rolls a new epoch when any of it changed. This is the command an operator runs day to day. |
+| `zicato evolve [--rounds N]` | The orchestrator: one command, many rounds. Auto-epochs — hashes the evaluation contract (board + proposer brief + scoring + system-under-test identity + proposer) and rolls a new epoch when any of it changed. This is the command an operator runs day to day. |
 
 `zicato evolve` does internally what the advanced commands below do
 one stage at a time: register-aware setup, per-entry runs, pattern
@@ -918,23 +986,28 @@ automatically.
 
 | Subcommand | What it does |
 |---|---|
-| `zicato epoch register --adk path:agent --mutable-tree <path>` | Register a system under test via an adapter. |
-| `zicato board add/list/remove` | Edit the current epoch's board by hand. |
+| `zicato epoch register --adk module.path:agent_symbol --mutable-tree <path>` | Register a system under test via an adapter (`--factory module:callable` for a generic import adapter). |
+| `zicato board add/list/remove` | Inspect or hand-edit the current epoch's frozen board. |
+| `zicato board audit/preflight/judges` | Measure the board's noise floor, prove it can out-signal that noise, and check judge reliability. |
 | `zicato inspect mutations` | Audit the current mutation surface — every span, every file marker. |
 | `zicato proposer propose` | Run the proposer; emit one `Experiment`. |
 | `zicato tournament run PARENT CHILD` | Run the tournament between two generations in isolation. |
 | `zicato epoch new/close/list/switch/set-goal` | Manage epochs manually (the escape hatch from auto-epoching). |
+| `zicato epoch rounds` / `zicato epoch gc` | Verify that every round of an epoch produced a measurement; prune settled-rejected generation source trees. |
+| `zicato proposer scorecard` | Report per-epoch proposal quality and its trend. |
+| `zicato inspect setup` / `config` / `environment` / `logs` / `reflection` | Validate setup without model requests, explain configuration fields, list environment contracts, tail the operator log, and run board reflection. |
 | `zicato repair index` / `zicato repair generations` | Rebuild (or reconcile just the `generations` table of) the `.zicato/index.db` analytical index. |
 | `zicato health` | Report whether the evolve loop has real optimization signal (loop-health diagnostics). |
 | `zicato inspect telemetry` | (Re)run the decision-telemetry analyzer for an epoch. |
 | `zicato repair report` | Re-render an epoch's `analysis.md` / `analysis.html` from on-disk data. |
 | `zicato dashboard` | Serve the dashboard for an existing workspace (evolve auto-spawns it; this is the standalone form). |
-| `zicato repair-*` | Targeted index/file migration helpers (`repair-epoch-goals`, `repair-judge-losses`, `repair-tournament-fk`, `repair-v0-baseline`). |
+| `zicato repair v0-baseline` / `zicato repair generation-source-backend` | Backfill the synthetic `v0` experiment marker; record which generation-source backend wrote an existing workspace. |
 
 There is no standalone `zicato run`, `zicato analyze`, `zicato patch
 apply`, `zicato journal show`, or `zicato analysis show` in the shipped
 CLI; those stages run only inside `evolve` (the rendered report is
-produced/regenerated by `analyze-telemetry` / `regenerate-report`).
+produced or regenerated by `zicato inspect telemetry` and
+`zicato repair report`).
 
 The full reference for every subcommand is in [CLI.md](CLI.md).
 
@@ -947,7 +1020,7 @@ tail of rarer failures)
 and **observable** (a live operator view of in-flight rounds, a
 durable audit trail of override decisions).
 
-The runtime layer's substrate is the file tree under
+The runtime layer keeps its state in the file tree under
 `.zicato/runtime/` — a small set of single-writer state files
 that capture every important runtime fact on disk. No important
 state lives only in process memory. A crashed orchestrator
@@ -959,8 +1032,8 @@ files.
    ┌────────────────────────────────┐         ┌────────────────────────────┐
    │  zicato evolve (Python)        │  spawn  │  watchdog supervisor (Rust)│
    │  ───────────────────────────   ├────────►│  ────────────────────────  │
-   │  • acquires .zicato/runtime/   │         │  --no-dashboard mode:      │
-   │    lock.json (pid-based)       │         │  watches heartbeat.json +  │
+   │  • acquires the workspace      │         │  --no-dashboard mode:      │
+   │    writer lock (lock.json)     │         │  watches heartbeat.json +  │
    │  • writes heartbeat.json (2s)  │         │  active_runs/*.            │
    │  • runs each tournament run    │         │  Heartbeat-stale → flag    │
    │    in a subprocess worker,     │         │  orchestrator stalled.     │
@@ -990,9 +1063,16 @@ Three properties hold across the runtime layer:
    deterministic functions of file timestamps.
 3. **Single-writer per file.** Each state file has a single writing
    process — the orchestrator, the dashboard service, or one
-   tournament worker. No locking beyond the pid-based `lock.json`.
+   tournament worker. The only lock is the workspace writer lock
+   (`zicato.runtime.lock`): a kernel lock held on `runtime/lock.guard`
+   for the writer's lifetime, with a readable ownership record in
+   `runtime/lock.json`.
 
-**Supervisor-binary ownership.** The Rust watchdog binary splits along
+**Supervisor-binary ownership.** `evolve` spawns the watchdog with the
+supervisor's own `--no-dashboard` flag, so it supervises processes and
+serves `/statusz` without serving a UI. `zicato evolve --no-dashboard`
+spawns neither the dashboard service nor the watchdog. The Rust watchdog
+binary splits along
 the library/driver boundary. *Packaging* belongs to the root wheel: the
 hatchling build hook (`hatch_build.py`) compiles the crate and bundles
 the artifact at `zicato/_bin/zicato-supervisor`, so every wheel install
@@ -1016,9 +1096,8 @@ The full design lives in seven documents:
 | Directory-backed generation storage, and the git-backed generation store (§7 there) that gives blob deduplication plus `git log` / `git diff` / `git bisect` over generations | [STORAGE.md](STORAGE.md) |
 | The `.zicato/index.db` SQLite analytical index — schema, the files-canonical / index-derived discipline, `zicato repair index` | [ANALYTICAL-INDEX.md](ANALYTICAL-INDEX.md) |
 
-The runtime layer ships in stages (see [ROBUSTNESS.md](ROBUSTNESS.md)
-§4 and [RUNTIME.md](RUNTIME.md) §8 for the what-ships boundary).
-**Shipped today:**
+[ROBUSTNESS.md](ROBUSTNESS.md) §4 and [RUNTIME.md](RUNTIME.md) §8 state
+which runtime layers are in the build. **In the build:**
 
 * the per-call and per-budget timeouts (`asyncio.wait_for`), together
   with structured cancellation;
@@ -1035,7 +1114,7 @@ The runtime layer ships in stages (see [ROBUSTNESS.md](ROBUSTNESS.md)
   stream, and both sides of the control endpoints. The orchestrator
   consumes `control/` commands at safe points
   (`zicato.runtime.control_consumer`, called from `evolve/loop.py`,
-  `epoching.py`, `field.py`, `round_entry.py` and `gate.py`) and archives
+  `epoching.py`, `round_entry.py` and `gate.py`) and archives
   each consumed command into `control_log/`;
 * the conservative crash-resume protocol
   (`zicato.runtime.resume.prepare_resume`, called from `evolve/loop.py`),
@@ -1053,16 +1132,14 @@ specifies the git backend.
 
 Because each run crosses a process boundary, the run's inputs are
 serialised to a temp args file and rebuilt inside the worker. The
-`ScoringWeights` carried across that seam is written by
-`runner._weights_spec` and read back by
-`_tournament_worker._weights_from_args`. Those two must stay
-field-for-field in lock-step. A field present in the parent but missing
-from the reader is silently reset to its default in the subprocess,
-which desynchronises the worker's gate decision from the parent's.
-`per_judge_weights` (and `pass_rate_monotonicity_scope`) are carried
-across this boundary for
-that reason — so the worker's per-judge loss attribution and
-its gate-view match what the parent would have computed in-process.
+`ScoringWeights` carried across that boundary is written by
+`zicato.tournament.worker_transport._weights_spec` and read back by
+`zicato._tournament_worker._weights_from_args`. Both delegate to one
+serializer pair, `ScoringWeights.to_json` and `ScoringWeights.from_json`,
+which enumerate every declared field. A field added to `ScoringWeights`
+therefore crosses the boundary without a hand-maintained list, and the
+worker's per-judge loss attribution and gate view match what the parent
+would compute in-process.
 
 ## 6. Storage layout
 
@@ -1074,16 +1151,26 @@ configured at runtime, so workspaces never cross-talk.
 
 ```
 .zicato/
-  config.json                      # registered adapter, call_llm wiring, instance_id
+  config.json                      # registered adapter, contract paths, models, instance_id
+  current_epoch                    # marker naming the current epoch
+  lineage.json                     # cross-epoch generation DAG
+  index.db                         # derived SQLite analytical index (rebuildable)
+  index-revisions/                 # per-epoch revision markers the index heal compares
+  repo/                            # private git repository (default generation-source backend)
+  runtime/                         # heartbeat, writer lock, active runs, control files
+  logs/                            # structured operator-log streams
   epochs/
     {epoch_id}/
+      config.json                  # epoch id, name, goal, contract hash, closed state
       board.jsonl                  # frozen for this epoch
-      brief.md            # operator-edited; read fresh each round
-      scoring.json                 # weights + tournament thresholds
+      brief.md                     # proposer brief frozen for this epoch
+      scoring.json                 # effective scoring, including the tournament structure
+      execution.json               # captured execution settings
+      contract_components.json     # per-component contract hashes
       generations/
         v0/
-          snapshot/                # system-under-test source at this generation
-          experiment.json          # absent for v0 (the baseline)
+          snapshot/                # source tree (directory backend only)
+          experiment.json          # synthetic seed marker for the baseline
           runs/
             {entry_id}/
               seed-{seed}/         # seed-none when unseeded
@@ -1091,8 +1178,7 @@ configured at runtime, so workspaces never cross-talk.
                 loss.{purpose}.r{draw}.json
           gen_score.json
         v1/
-          snapshot/
-          experiment.json          # hypothesis + patch references
+          experiment.json          # hypothesis + patch ids + outcome
           patches/
             {patch_id}.json        # one file per patch
           runs/{entry_id}/seed-{seed}/
@@ -1103,13 +1189,14 @@ configured at runtime, so workspaces never cross-talk.
       rounds/
         {round_index}/
           field_settlement.json    # outcomes, tournament details, primary promotion
-      patterns/
-        round_{NNN}.json           # detector output, one per round
-      loop_health/
-        round_{NNN}.json           # loop-health report, one per round
-      analysis.md                  # generated at epoch close
-  index.db                         # derived SQLite analytical index (rebuildable)
-  lineage.json                     # cross-epoch generation DAG
+      tournaments/
+        field-{first_challenger}.json  # one tournament snapshot per round
+      health/
+        round_{N}.json             # loop-health report, one per round
+      episodes/                    # proposal episode logs, one directory per candidate
+      reflections/                 # board-reflection runs
+      pareto_frontier.json         # Pareto frontier record, when candidates were admitted
+      analysis.md                  # epoch report, refreshed each round and finalized at close
 ```
 
 `experiment.json` carries `patch_ids: [...]` and each patch lives in
@@ -1120,8 +1207,8 @@ write-order rationale.
 
 Every **canonical** artifact is a human-readable file — JSON, JSONL,
 or markdown. The storage design spends its budget on keeping a
-workspace debuggable with `ls` and `cat`, because the filesystem is the
-operator's first-class interface.
+workspace debuggable with `ls` and `cat`, because operators inspect the
+filesystem directly.
 
 The one non-text file is `.zicato/index.db` — the **analytical
 index**. It is *not* canonical: it is a derived, fully-rebuildable
@@ -1133,9 +1220,9 @@ filesystem stays the source of truth; the index is a sidecar. See
 
 ## 7. The harmonograf split: execution view vs competition view
 
-zicato and harmonograf both render a "view of a run", and the
-boundary between them is load-bearing: they are two linked
-tools rather than one merged interface.
+zicato and harmonograf both render a "view of a run". They are two
+linked tools rather than one merged interface, because they answer
+different questions.
 
 > **harmonograf is the execution view; the zicato dashboard is
 > the competition view. A per-run drill-down links them, and they
@@ -1181,14 +1268,14 @@ reimplemented without breaking the other.
 
 | Producer | Consumer | Contract |
 |---|---|---|
-| `HarnessAdapter` | `Runner` | `run_entry(entry, sinks=[...])` emits goldfive events to the supplied sinks; terminates with `RunCompleted` or `RunAborted`. |
-| `Runner` | `Loss reducer` | A path to one `events.jsonl` that is a complete run (one `RunStarted`, one terminal event). |
+| `HarnessAdapter` | `Runner` | `load(generation_root).run(entry, sinks, config)` emits goldfive events to the supplied sinks, terminates with `RunCompleted` or `RunAborted`, and returns a `RunResult`. |
+| `Runner` | `Loss reducer` | A path to one events file that is a complete run (one `RunStarted`, one terminal event). |
 | `Loss reducer` | `Pattern detectors` | One `LossProfile` JSON per run, schema in §4.5. |
-| `Pattern detectors` | `Patch proposer` | A `list[Pattern]` reset on epoch boundaries. |
+| `Pattern detectors` | `Patch proposer` | A `list[Pattern]` recomputed each round from the champion's train-slice runs. |
 | `Analytical index` (`experiments`) | `Patch proposer` | A capped `list[PriorExperiment]` for the current epoch (experiment memory) — settled verdicts + Δscalars + touched ids, scoped to the contract. Advisory; never gates. See [EXPERIMENT-MEMORY.md](EXPERIMENT-MEMORY.md). |
 | `Patch proposer` | `Applier` | An `Experiment` (schema in §4.7) with patches addressing valid mutation-point ids. |
 | `Applier` | `Tournament` | A candidate `Generation` snapshot that passes all validator constraints in §4.8. |
-| `Tournament` | `Journal + outcome` | A `tournament_decision` with score deltas. |
+| `Tournament` | `Journal + outcome` | A tournament decision (`promoted`, `rejected`, or `deferred`) with score deltas, committed in the round's `field_settlement.json`. |
 
 A reader can replace any single component with their own implementation
 as long as the contracts hold. That is what "framework-agnostic" means
@@ -1205,8 +1292,9 @@ It does not mean that every framework works on day one.
   `call_llm` callable; zicato makes no assumptions either way.
 - Per-turn intervention. zicato never acts inside a run; that is
   goldfive's domain.
-- A web UI. The CLI is the surface; harmonograf exists for the live
-  run view.
+- A within-run execution view. The zicato dashboard shows the
+  competition across runs; harmonograf provides the live view of one run
+  (§7).
 - Multi-tenant workspaces. There is one workspace per project,
   optionally keyed by `instance_id` when one zicato evolves a nested
   zicato instance.

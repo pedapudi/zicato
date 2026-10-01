@@ -25,12 +25,14 @@ Comma-separated and repeated selection options are supported.
 | **CONTRACT-HASH** | The epoch contract hash (+ per-component hashes) for a fixed fixture contract. An unchanged contract must never re-hash. | `compute_contract_hash` over the `target_1_presentation` example, diffed against `golden/contract_hash.json`. |
 | **CLI-HELP**      | The CLI surface: every command/subcommand `--help`. | Rendered in-process at 80 cols, diffed against `golden/cli_help.txt`. |
 | **REINDEX-DUMP**  | The SQLite analytical index — a pure projection of the workspace files. | Rebuild the index from a fixture workspace, `iterdump` to text, diff against `golden/reindex_dump.sql`. |
-| **MOCK-GOLDEN**   | A full deterministic, no-live-LLM racing evolve end to end. | Reuses the `test_example_target_1_racing` mocks; captures `gen_score.json` / `experiment.json` / `loss.json` / `lineage.json`, diffs against `golden/mock_evolve_racing.json`. |
+| **MOCK-GOLDEN**   | Eight deterministic, no-live-LLM evolve configurations end to end. | Reuses the `test_example_target_1_racing` workspace and mocks; captures generation scores and measurements, experiments and outcomes, round events, tournament structures, lineage and the current champion, and diffs each configuration against its `golden/mock_evolve_*.json`. |
 | **MYPY**          | Successful type checking. | `uv run mypy src/zicato/` must exit with status zero. |
 
-The mock captures have separate gates for racing and gauntlet in full and fast
+The eight MOCK-GOLDEN configurations are racing and gauntlet in full and fast
 mode, two consecutive racing rounds, Swiss, and single and double elimination.
-The gate table in `tools/parity.sh` owns their names and execution order.
+They run as one pytest session (`lib/test_mock_golden.py`), which names each
+configuration; the gate table in `tools/parity.sh` owns the gate names and
+execution order.
 
 Every checker failure includes its exit status in the report. Type checking has
 no golden to update: `--update` still requires successful checker completion.
@@ -39,10 +41,12 @@ substitute command runner, so its tests do not repeat the verification suites.
 
 ## In CI
 
-The `parity` job in `.github/workflows/ci.yml` runs `bash tools/parity.sh
---skip PYTEST` on Python 3.12 for every push to `main` and every pull
-request. The default tests run in `lint-and-test`; the statistical and end-to-end
-tests run in `.github/workflows/slow-tier.yml`. Both test results are required.
+The `parity` job in `.github/workflows/ci.yml` runs `tools/verify.py --only
+parity` on Python 3.12 for every push to `main` and every pull request; that
+check runs `bash tools/parity.sh --skip PYTEST,MYPY` (`make parity` runs the
+same locally). The Python suites and type checking have their own required
+checks: the default tests and mypy run in `lint-and-test`, and the statistical
+and end-to-end tests run in `.github/workflows/slow-tier.yml`.
 
 The gates are verified green across Python 3.11 and 3.12, `TZ` far from
 UTC, `LC_ALL=C`, a relocated `TMPDIR`, a non-tty stdout, and a checkout at
@@ -53,10 +57,11 @@ than no gate.
 
 REINDEX-DUMP and MOCK-GOLDEN share one deterministic source: the racing
 mock evolve driven by `lib/mock_evolve_capture.py`. It runs the *real*
-example contract (board + `scoring.racing.json` + annotated `agent/` tree +
-the example's `mocks.aux_llm` proposer) through `evolve_once` under the
-racing structure with the system under test + loss reducer mocked — exactly the
-fidelity `tests/test_example_target_1_racing.py` runs at. No live LLM, no
+example contract (board + `scoring.racing.json` + annotated `agent/` tree)
+through `evolve_n_rounds` under the racing structure. The test suite's Foe
+stand-in writes the proposals, `mocks.aux_llm` answers the evaluation calls,
+and a stub adapter supplies the measured results — exactly the fidelity
+`tests/test_example_target_1_racing.py` runs at. No live LLM, no
 network, no committed binary fixture to drift.
 
 ## Normalization
@@ -83,8 +88,8 @@ and serialization detail — is compared verbatim.
 
 ## Proving the oracle has teeth
 
-The harness was validated by injecting two deliberate behavior changes and
-confirming RED, then reverting:
+When the harness was introduced, it was validated by injecting two deliberate
+behavior changes and confirming RED, then reverting:
 
 1. A sign flip in the scalar **pass** component → caught by **PYTEST**
    (11 failures). The deterministic fixture's board is all-passing
@@ -103,6 +108,7 @@ The committed harness sits on clean code with all gates GREEN.
 ```
 tools/parity.sh                         # the runner
 tools/parity/lib/normalize.py           # shared field masking
+tools/parity/lib/goldendiff.py          # readable mismatch reports
 tools/parity/lib/contract_hash.py       # CONTRACT-HASH gate
 tools/parity/lib/cli_help.py            # CLI-HELP gate
 tools/parity/lib/mock_evolve_capture.py # deterministic mock-evolve engine

@@ -1,7 +1,8 @@
 # zicato-examples
 
 Worked targets for the [zicato](../README.md) self-improving harness —
-each one a complete agent tree that `zicato evolve` can be pointed at.
+each one a complete system under test that `zicato evolve` can be
+pointed at.
 This directory is its own installable distribution (`zicato-examples`);
 the importable package is `zicato_examples`.
 
@@ -14,7 +15,7 @@ end-to-end walkthroughs can import them as `zicato_examples.*`.
 
 Four targets, in ascending order of how much of the loop they exercise
 against real infrastructure. The directory names carry index numbers
-that mean nothing beyond ordering, and there is no third directory.
+that mean nothing beyond ordering, and there is no `target_3` directory.
 
 - **The convergence demo** (`zicato_examples/target_0_convergence/`) —
   a planted-defect target with no language model anywhere: the harness
@@ -23,8 +24,8 @@ that mean nothing beyond ordering, and there is no third directory.
   [`target_0_convergence/RUN.md`](zicato_examples/target_0_convergence/RUN.md).
 - **The presentation agent**
   (`zicato_examples/target_1_presentation/`) — a multi-agent
-  presentation tree driven end to end by `zicato evolve` with
-  deterministic mock models. See
+  presentation tree. The tests drive it with deterministic mock models;
+  a `zicato evolve` run calls the agent tree's real model. See
   [`target_1_presentation/RUN.md`](zicato_examples/target_1_presentation/RUN.md).
 - **The goldfive steering layer**
   (`zicato_examples/target_2_goldfive_steering/`) — drives the sibling

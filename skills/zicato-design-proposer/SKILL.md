@@ -1,6 +1,6 @@
 ---
 name: zicato-design-proposer
-description: Configure zicato's proposer — the agent that proposes each round's mutation. Covers the workspace's proposer block (runtime binary, episode budget, model), the generic proposer_generate/proposer_review stages around the slate, target isolation, and the proposer directory's skills. Editing the proposer or a skill ROLLS THE EPOCH, like editing the brief.
+description: Configure zicato's proposer — the agent that proposes each round's mutation. Covers the workspace's proposer block (runtime binary, episode budget, model), the operator-class seam, the proposer_quality slate knobs and the proposer/proposer_generate/proposer_review text roles around the slate, target isolation, and the proposer directory's skills. Editing the proposer or a skill ROLLS THE EPOCH, like editing the brief.
 ---
 
 # Designing a zicato proposer
@@ -50,11 +50,22 @@ managed-cloud endpoint can name its credentials file, project, and location.
 The options can be empty when Foe's stored login credential supplies them.
 
 `zicato init` writes that block already filled in except for `binary`, which
-is left as `/path/to/foe`. Foe searches no path for a binary — an episode's
-grants are absolute — so there is nothing sensible to guess, and until an
-operator names it the workspace has **not** said how it proposes: its
+is left as `/path/to/foe` (the `model` fields hold the placeholders
+`<model backend>` and `<model name>`). Foe searches no path for a binary — an
+episode's grants are absolute — so there is nothing sensible to guess, and
+until an operator names it the workspace has **not** said how it proposes: its
 contract still hashes (with no binary present) but a round refuses to open.
-`zicato check` names the field.
+`zicato inspect setup` (and `zicato evolve --dry-run`) names the field as
+`proposal_runtime_binary_unset`; a binary path that is not an executable file
+is refused the same way.
+
+**The operator-class seam.** A workspace may instead bind its own proposer
+class with `runtime.proposer_agent = "pkg.module:Class"` in `config.json` and
+omit the `proposer` block. The class implements the one-method proposer
+protocol and reports a contract identity that is hashed into the epoch.
+`zicato init --example` uses this seam for its scripted, model-free proposer
+(`example_wiring.proposer:OneDefectPerRound`). A class under zicato's own
+package that names a removed built-in proposer is refused.
 
 The episode reads the parent snapshot, edits a disposable copy of it, calls
 `validate_patches` until the copy reads back as a well-formed patch set, and
@@ -68,7 +79,7 @@ optional:
 
 | You want to… | What you ship |
 |---|---|
-| Steer HOW the proposer reasons — grounding rules, house style, a checklist | One or more `skills/*.md` under `proposers/<name>/`, registered with `register --proposer-path`. The bodies are rendered into the episode's instructions after the epoch's brief, and hashed. |
+| Steer HOW the proposer reasons — grounding rules, house style, a checklist | One or more `skills/*.md` under `proposers/<name>/`, registered with `zicato epoch register --proposer-path`. The bodies are rendered into the episode's instructions after the epoch's brief, and hashed. |
 | Change what the proposer may DO | Nothing here: that is the grants and the tool list, which are the runtime's contract rather than a directory's contents. |
 
 A proposer directory may **not** carry an executable `agent.py`. Custom
@@ -130,40 +141,53 @@ hashed.
 **THE MODEL RULE (load-bearing):** the episode's model **MUST differ from
 the target-side model.** It is named in the workspace's own `proposer` block
 rather than resolved from a `models.*` role, so the `is`-identity collusion
-guard does not cover it — model-distinctness is YOUR responsibility. A
-proposer scored on the same model it is mutating-and-judging risks collusion.
-zicato emits a soft WARNING on a discoverable match but does not hard-gate
-it; do not rely on the warning.
+guard between the `target` and `evaluation` callables does not cover it, and
+no check compares the two. Model-distinctness is YOUR responsibility: a
+proposer scored on the same model it is mutating-and-judging risks
+collusion.
 
 Foe resolves the endpoint and any credential from the model block and its
 stored login state. Zicato preserves provider-specific options without reading
 or forwarding a credential. It defines no credential environment variable.
 
-## The `proposer_quality` knobs (how it proposes, independent of the tier)
+## The proposal knobs in `scoring.json` (how it proposes)
 
-Whichever tier you pick, `scoring.json`'s `proposer_quality` block
-(`ProposerQualityConfig`) shapes the propose-step itself. It is part of the
+Two `scoring.json` blocks shape the propose-step itself. Both are part of the
 frozen contract, so every knob here **rolls the epoch**.
+
+`proposer_quality` (`ProposerQualityConfig`):
 
 | Knob | Default | What it does |
 |---|---|---|
-| `best_of_n` | `3` | Sample N candidate experiments per propose-step. Pin `1` for the historical single-sample proposer (scripted/mock proposers do). |
-| `critique_enabled` | `true` | The self-critique pass that selects the best of the slate. Sees ONLY the same restricted prompt context the proposer sees. |
-| `recombine` | `false` | Offer a recombination slot in the slate — union two prior patches instead of proposing fresh. |
-| `recombine_merge` | `"mechanical"` | `mechanical` unions the patches directly; `llm` spends one proposer review call. |
-| `genealogy` | `0` | Rounds of candidate-genealogy context handed to the proposer. Carries lineage only, never board data. |
-| `calibration_feedback` | `0` | Rounds of per-claim-type hit/miss/unresolved COUNTS — did its own predictions land — fed back into the prompt. |
-| `process_exemplars` | `0` | Number of process exemplars included. |
-| `screen_entries` / `screen_veto_only` | `0` / `false` | Pre-tournament candidate screening (tryouts); `zicato-tune-scoring` owns the values. |
+| `best_of_n` | `3` | Sample N candidate experiments per propose-step. `1` bypasses slate selection (the example project and scripted proposers pin it). |
+| `critique_enabled` | `true` | The critique call that selects the best of the slate; off, a heuristic selects. Sees ONLY the same restricted prompt context the proposer sees. Inert at `best_of_n: 1`. |
+| `screen_entries` | `2` | Training entries each slate candidate is screened on before selection; `0` disables screening. |
+| `screen_veto_only` | `false` | Use the screen only to veto candidates; when false, banded screening counts may also advise the selection. |
 
-### Base role, generic stages, and the slate
+`experimental` (opt-in proposal features; all off by default):
 
-`proposer` is the engine for the proposal process. It inherits `evaluation`.
-Two optional roles exist only for a zicato-managed best-of-N wrapper:
+| Knob | Default | What it does |
+|---|---|---|
+| `recombine` | `false` | Replace a slate slot with a combination of rejected candidates. |
+| `recombine_merge` | `"mechanical"` | `mechanical` composes a disjoint patch union; `llm` requests a merge. Inert while `recombine` is false. |
+| `genealogy` | `0` | Maximum candidate-ancestry examples added to each proposal. Carries lineage only, never board data. |
+| `calibration_feedback` | `0` | Maximum graded prediction examples — did its own predictions land — added to each proposal. |
+| `process_exemplars` | `0` | Maximum redacted training-event windows added to each proposal. |
+| `cross_epoch_memory` | `false` | Include prior-epoch experiment history under the same contract identity. |
 
-- `proposer_generate` runs the repeated candidate-generation calls.
-- `proposer_review` compares the structured slate, selects a candidate, and
-  performs a screen-triggered repair when necessary.
+### The text roles around the slate
+
+The Foe episode's model is the `proposer` block's `model`, never a
+`models.roles` entry. Three text roles serve the zicato-managed calls around
+the episodes:
+
+- `proposer` — the text engine handed to the proposal context, and the base
+  the two stage roles inherit. It inherits `evaluation`.
+- `proposer_generate` — the text callable each slate sample's context
+  carries. The Foe episode does not call it; an operator-supplied proposer
+  class that calls its context's text engine does.
+- `proposer_review` — the critique that compares the structured slate and
+  selects a candidate, and the screen-triggered revision.
 
 They resolve narrowly:
 
@@ -191,18 +215,17 @@ For example, generate alternatives economically but review them strongly:
 ```
 
 These are implementation stages rather than reasoning-effort settings. With
-`best_of_n: 4`, generate normally makes four calls; review normally makes one
+`best_of_n: 4`, the slate has four samples; review normally makes one
 selection call and zero or one repair call.
 
 Every slate slot is its own episode, in its own process, with its own
 working copy of the parent snapshot. Nothing is carried between slots but
 the edit-class hint that tells them apart, which is what makes the slate
-genuinely independent and lets the slots run concurrently. Zicato owns the
+samples independent and lets the slots run concurrently. Zicato owns the
 comparison, the screening and the chosen-tree mount around them.
 
 A slate whose slots share one warm session — a runtime branching one
-episode into several — is a different design and is not built
-(issue #301).
+episode into several — is a different design and is not built.
 
 An episode is not allowed to inspect or host a board. The proposer
 receives only the restricted, aggregated contract view; board entry
@@ -213,13 +236,12 @@ identities, prompts, holdout data and raw outcomes stay outside it.
 The proposal episode's model is named in the workspace's own `proposer`
 block. Its provider, model id, and options select the runtime's built-in model
 client. A `models.*` role cannot replace it, and a `call_llm`-form engine
-cannot express the tool calls an episode makes. Zicato rejects an incompatible
-override. See
+cannot express the tool calls an episode makes. See
 [`MODEL-CONFIG.md`](../../docs/design/MODEL-CONFIG.md).
 
 ## The failure-mode feedback channel (what every proposer reads)
 
-Independent of which tier you pick, the proposer's per-round input carries a
+The proposer's per-round input carries a
 compact **failure-mode profile** — a bucketed, board-anonymized,
 **train-slice-only** outcome-marginal block rendered into the prompt
 (`render_failure_mode_profile`, `zicato.proposer.prompts`). It tells the
@@ -233,21 +255,21 @@ marginal rates. Two invariants make it leakage-safe and contract-clean:
   construction and cannot leak the held-out slice (OVERFITTING.md §11.4).
 - **Banded, so it cannot memorize.** Every number is coarsened to a band, so no
   exact per-run value and no round-over-round response surface leaks. An empty
-  train slice (no runs) renders the EMPTY STRING — the proposer prompt stays
-  byte-identical to today when there is no outcome data.
+  train slice (no runs) renders the EMPTY STRING, so the prompt carries no
+  profile section when there is no outcome data.
 
 An operator can extend the marginals via the **`outcome_summarizer_spec`**
 hook on `ScoringWeights` (a dotted callable spec): it contributes extra
 marginals over the same train slice, each still bucketed and identity-free
-before it reaches the prompt (`orchestrator.py` `render_failure_mode_profile`
-wiring). It is a *scoring* field, so setting it rolls the epoch like any other
+before it reaches the prompt. It is a *scoring* field, so setting it rolls the epoch like any other
 contract change. This channel is on by default and needs no proposer-dir
 configuration; you only touch `outcome_summarizer_spec` to add custom marginals.
 
 ## Register it
 
-Point the workspace at the proposer dir with `register` (off the happy path —
-`evolve` resolves the contract itself, but `register` pins the path):
+Point the workspace at the proposer dir with `zicato epoch register` (off the
+happy path — `evolve` resolves the contract itself, but `epoch register` pins
+the path):
 
 ```sh
 .venv/bin/zicato epoch register \
@@ -258,9 +280,11 @@ Point the workspace at the proposer dir with `register` (off the happy path —
 
 This writes `contract.proposer_path` into `.zicato/config.json` (absolutised),
 which `evolve` reads back on every run. Derive the exact flag from
-`zicato epoch register --help` — the design CLI docs are known to drift. An absent
-`--proposer-path` leaves the epoch's proposer carrying no skills, which is a
-complete configuration — the charter and the epoch's brief steer it.
+`zicato epoch register --help`. An absent `--proposer-path` leaves the epoch's
+proposer carrying no skills, which is a complete configuration — the
+runtime's own instructions and the epoch's brief steer it. The
+`examples/zicato_examples/target_0_convergence/proposer/` directory is a
+working example with one skill.
 
 ## Editing the proposer rolls the epoch (same as editing the brief)
 
@@ -280,7 +304,7 @@ changed component `proposer`. A whitespace-only skill edit is a no-op. This is
 by design: a generation proposed by one agent (with one set of skills) and a
 generation proposed by a different agent are **not directly comparable**, so
 they must not share an epoch's lineage — exactly as editing the brief's
-`## Forbidden` set rolls the epoch. See
+`## Forbidden edits` set rolls the epoch. See
 [EPOCHS-AND-JOURNALING.md §10](../../docs/design/EPOCHS-AND-JOURNALING.md#10-contract-hash-auto-epoching)
 and `zicato-manage-epochs-and-rounds`.
 
@@ -294,13 +318,12 @@ and `zicato-manage-epochs-and-rounds`.
   checklist. What it may DO is the grants and the tool list, and those are
   the runtime's contract.
 - **Set the episode's model distinct from the target-side model.** It is
-  your responsibility rather than a hard gate; zicato logs a warning when
-  the two strings trivially match.
+  your responsibility; nothing checks it.
 - **Raising the episode budget rolls the epoch.** That is the intended
   reading: a proposer with twelve model calls investigates differently from
   one with three.
 - **Treat a skill edit like a brief edit** — it rolls the epoch, so batch
   proposer changes with your other contract edits.
 - **Never start a live `zicato evolve` to test a proposer without the
-  operator's explicit go-ahead.** Verify the spec resolves + the agent imports
-  via the test suite (the proposer-with-tools example, for instance) rather than a live run.
+  operator's explicit go-ahead.** Verify the configuration with
+  `zicato inspect setup` and the test suite rather than a live run.

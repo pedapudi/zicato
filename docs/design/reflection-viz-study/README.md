@@ -1,5 +1,12 @@
 # zicato inspect reflection-/instrument-lens visualization study
 
+> **Status: a dated set of design mockups (2026-06-10), kept as a record.**
+> Board reflection and its console surface, the Instrument lens
+> (`src/zicato/dashboard/static/js/views/instrument.js`), are built since;
+> the shipped lens follows the console grammar described in
+> [BOARD-REFLECTION.md](../BOARD-REFLECTION.md#ui--the-instrument-lens)
+> rather than these pages one for one.
+
 A set of standalone, self-contained, theme-adaptive study pages (one HTML file
 per reflection **surface**) that explore how the Console dashboard could draw
 **board reflection** — zicato's Measurement-System-Analysis layer for the
@@ -78,8 +85,8 @@ false-fired.
 ## Status
 
 These are **design mockups** preserved alongside the
-[`BOARD-REFLECTION.md`](../BOARD-REFLECTION.md) design note. Board reflection is a
-proposal — not yet implemented — so unlike the
-[tournament-viz study](../tournament-viz-study/README.md) (whose picks are shipped),
-nothing here is live. This directory is a visual companion to the design, to make
-the instrument-lens concept concrete.
+[`BOARD-REFLECTION.md`](../BOARD-REFLECTION.md) design note. When they were drawn,
+board reflection was a proposal with no implementation; this directory made the
+instrument-lens concept concrete. The console's Instrument lens has since shipped
+the bill of health, the practice review, the judge audit and the adjudication
+x-ray in the console's own grammar; the pages here are not live.

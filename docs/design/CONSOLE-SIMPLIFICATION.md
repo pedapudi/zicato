@@ -1,5 +1,15 @@
 # Console simplification proposal
 
+> **Status: a dated proposal record (2026-09-05); every proposal is
+> implemented.** The measurements and each proposal's closing **State**
+> sentence describe the code as of 2026-09-05. Two later removals (commit
+> `7f9152af`, 2026-09-07) change what some passages refer to: the builder
+> view with its `/builder/` routes and the `zicato.builder` package (§3.5),
+> and the terminal console under `src/zicato/tui/` (§1, §2.3) are
+> removed, so the console is the only reader of the routes. For the console
+> as it stands, read [CONSOLE-DESIGN-LANGUAGE.md](CONSOLE-DESIGN-LANGUAGE.md)
+> and [`js/CONTRACTS.md`](../../src/zicato/dashboard/static/js/CONTRACTS.md).
+
 This document is a proposal written on 2026-09-05. It describes intended changes
 to the console (the browser dashboard served by `zicato dashboard`) and the measurements
 behind them. The numbers in §1, §2.5, §2.6 and §2.8 are taken at commit
@@ -22,8 +32,10 @@ Every proposal keeps the constraints the console already carries:
   heartbeat writes zero DOM;
 - static files served by the Python endpoints, with no runtime node
   packages;
-- the import-linter contracts in `pyproject.toml`: the query layer imports
-  nothing from the dashboard, and the library imports no driver.
+- the import-boundary contracts under `[tool.zicato.importlinter]` in
+  `pyproject.toml`, checked by `tools/check_imports.py` (`make
+  import-lint`): the query layer imports nothing from the dashboard, and
+  the library imports no driver.
 
 The console may later move into its own distribution behind a declared read
 API. The proposals are compatible with that move and do not design it.
@@ -425,7 +437,7 @@ and `mutations.py` (806 lines: `build_mutation_index`,
 `zicato.epoch.genstore`, `zicato.epoch.journal` and
 `zicato.mutation.enumerator`; the query layer already imports
 `zicato.epoch.journal`, `zicato.epoch._storage`, `zicato.epoch.preflight`,
-`zicato.storage` and `zicato.workspace`, so nothing in the import-linter
+`zicato.storage` and `zicato.workspace`, so nothing in the import-boundary
 contracts keeps these two modules out of `zicato.query`. They are the only
 reader code under `src/zicato/dashboard/`; there is no second projection of
 the workspace beside `query/` (the snapshot and environment builders are
@@ -590,8 +602,10 @@ is the boundary a console distribution behind a read API needs.
 byte for byte; the endpoint golden gains seven probes and
 `tests/test_dashboard_endpoint_table.py` checks each row's degrade against
 its payload type. `tests/test_dashboard_filetree.py` and
-`tests/test_dashboard_mutations.py` move with the modules. `uv run
-lint-imports` proves the query layer still imports no driver.
+`tests/test_dashboard_mutations.py` move with the modules. `make
+import-lint` (`tools/verify.py --only import-boundaries`, which runs
+`tools/check_imports.py`) proves the query layer still imports no
+driver.
 
 **Depends on.** Nothing. It is a prerequisite for declaring the read API.
 

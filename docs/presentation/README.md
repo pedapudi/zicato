@@ -23,6 +23,21 @@ founding and primary use case, so they carry the worked examples throughout.
 9. The modular proposer · 10. Overfitting defenses · 11. Operate it (Console) ·
 12. Closing.
 
+Three slides do not match the shipped system and need revising:
+
+- **Slide 8** labels the gauntlet as a default and shows `swiss`,
+  `single_elim` and `double_elim` beside it. Racing is the one default
+  structure, and the other three run only under the
+  `experimental.tournament_structures` opt-in
+  ([`SELECTION.md`](../design/SELECTION.md)).
+- **Slide 9** shows a skill-composed default proposer and a custom
+  `agent.py` agent. The shipped proposer is a Foe proposal runtime
+  declared by the workspace's `proposer` block, and a proposer directory
+  that carries an `agent.py` is refused
+  ([`PROPOSER.md`](../design/PROPOSER.md)).
+- **Slide 11** advertises 14 themes and a tournament builder with a chat
+  copilot. The console ships 16 themes and no builder.
+
 ## Sources
 
 `slides/slide-NN.svg` are the **only** source (1280×720, self-contained: JetBrains
@@ -30,6 +45,6 @@ Mono [SIL OFL] and FreeMono [GPL] embedded as base64 `@font-face`, so rendering
 never depends on the host's installed fonts). `index.html`, `zicato-deck.pdf` and
 `contact-sheet.png` are all **derived**. Rebuild all three with
 `python3 docs/presentation/build.py` (needs headless `google-chrome`/`chromium`
-and `pypdf`), **in the same commit as the slide edit** — the exports have gone
-stale silently before, `zicato-deck.pdf` still reading "Console IV" for several
-commits after the slides were renamed to "Console".
+on `PATH` and `pypdf`), **in the same commit as the slide edit**. Nothing checks
+the exports against the slides, so an export rebuilt in a later commit leaves
+the derived files out of step with the slides until that commit.

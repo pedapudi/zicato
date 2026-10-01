@@ -1,7 +1,11 @@
 # zicato — runtime v2: the channel abstraction
 
-> **This document is a design proposal with a staged delivery plan; it is not a
-> description of the shipped system.** It generalizes zicato's one explicit
+> **Status: design proposal with a staged delivery plan, partly shipped.**
+> Phases 1, 3 and 4 shipped; phase 2 shipped on the control module's own
+> claim-once mechanics rather than on the `CommandQueue` class; phase 5 did
+> not ship. [Delivery status](#delivery-status) states what the code does for
+> each phase. The Context section records the problems the design set out to
+> remove. It generalizes zicato's one explicit
 > producer-consumer protocol — the control channel — into a single **Channel**
 > abstraction that every cross-process exchange uses, replacing hand-rolled
 > mutable snapshot files with event-sourced logs. Source comments cite the
@@ -15,8 +19,8 @@
 
 zicato runs as separated processes — orchestrator, dashboard (Starlette), Rust
 supervisor, subprocess workers — coordinating **only through the filesystem**
-(`.zicato/`). That coordination runs today through hand-rolled producer-consumer
-channels, each with its own file format, write discipline, atomicity guarantee,
+(`.zicato/`). Before this design, that coordination ran through hand-rolled
+producer-consumer channels, each with its own file format, write discipline, atomicity guarantee,
 and polling or inotify path:
 
 - **live state** — orchestrator/runner *produce* `heartbeat.json`,
@@ -24,7 +28,7 @@ and polling or inotify path:
 - **control commands** — dashboard *produces* `control/*`; the orchestrator
   *consumes* them at its safe points
   (`src/zicato/runtime/control_consumer.py`). The consumer was unwired when
-  this proposal was written, which is the gap the staged plan below closes.
+  this proposal was written; phase 2 wired it.
 - **kill markers** — parent *produces* `control/kill_requests/<run>`; supervisor
   *consumes*.
 - **telemetry** — workers *produce* `events.jsonl`; reducer + dashboard *consume*.
@@ -68,7 +72,8 @@ synchronization. Each entry is a typed record that describes itself.
 
 ## From mutable snapshots to event-sourced views
 
-Today a producer overwrites a mutable snapshot and a consumer reads it. Two
+Under a snapshot file, a producer overwrites a mutable snapshot and a consumer
+reads it. Two
 writers race for the same file, and the live view a consumer builds can
 contradict the settled record a producer wrote.
 
@@ -97,23 +102,32 @@ view is derived from it, so views cannot contradict each other.
 
 ## Channel inventory (migration targets)
 
-| hand-rolled channel today | replacement |
-|---|---|
-| Tournament live updates | Implemented: `active_tournament.events.jsonl`, folded by both readers |
-| `heartbeat.json` + `active_runs/*` | a runtime `EventLog` |
-| `control/*` commands | a **`CommandQueue`** (wire the consumer) |
-| `control/kill_requests/*` | a `CommandQueue` |
-| `events.jsonl` (worker) | already append-only — adopt the `EventLog` reader |
-| meta-loop emitter | an `EventLog` |
-| index dual-write | the index **folds the same logs** (closes canonical-vs-derived) |
+| hand-rolled channel | proposed replacement | shipped state |
+|---|---|---|
+| Tournament live updates | an `EventLog` | shipped: `runtime/active_tournament.events.jsonl`, folded by the Python reader (`zicato.runtime.tournament_log`) and the supervisor (`read_active_tournament`) |
+| `heartbeat.json` + `active_runs/*` | a runtime `EventLog` | partly shipped: the progress log `runtime/progress.events.jsonl` carries the liveness `seq`; `heartbeat.json` (which mirrors that `seq`) and `active_runs/*` remain snapshot files |
+| `control/*` commands | a **`CommandQueue`** (wire the consumer) | consumer wired (`zicato.runtime.control_consumer`); claim-once is an atomic move into `control_log/` in `zicato.runtime.control`, and `CommandQueue` is unused |
+| `control/kill_requests/*` | a `CommandQueue` | not migrated: one JSON marker per run, written by `request_worker_kill` and cleared by the supervisor |
+| `events.jsonl` (worker) | already append-only — adopt the `EventLog` reader | not migrated |
+| meta-loop emitter | an `EventLog` | not migrated |
+| index dual-write | the index **folds the same logs** (closes canonical-vs-derived) | not shipped |
 
-## Tournament log — event schema (the first migration)
+## Tournament log — event schema
 
-`TournamentStarted(structure, competitors)` · `MatchupStarted(matchup_id,
-sides)` · `BoardUnitProgress(matchup_id, entry, done, total, partial)` ·
-`MatchupSettled(matchup_id, result)` · `TournamentSettled(decision, standings)`.
-Each carries `seq` + `ts`. The dashboard folds them into the structure view;
-`TournamentSettled` is the terminal state. The runner is the single writer.
+The proposal named five typed events (tournament started, matchup started,
+board-unit progress, matchup settled, tournament settled). The shipped log
+uses two record types, each carrying `seq` and `ts`:
+
+- **`Snapshot`** — the complete `ActiveTournament` display state, written by
+  `write_active_tournament`.
+- **`Update`** — the fields that changed (`fields`) and the complete
+  replacement rows for changed entries (`entries`, keyed by row position),
+  written by `_update_active_tournament`.
+
+A reader replays the last `Snapshot` and every later `Update`; it applies
+replacements and computes no tournament rules. The workspace writer
+(`WorkspaceLock.tournament_log`, `zicato.runtime.lock`) is the single writer.
+`fold_active_tournament` returns `None` when no log exists.
 
 ## Phased plan
 
@@ -139,15 +153,42 @@ Each carries `seq` + `ts`. The dashboard folds them into the structure view;
 
 Phases 1 to 3 form the first execution slice; phases 4 and 5 follow.
 
+## Delivery status
+
+Verified against the code:
+
+- **The channel abstraction (phase 1) — shipped.** `zicato.runtime.channel` defines `Event`,
+  `EventLog` and `CommandQueue` over the storage atomic-write layer
+  (`CommandQueue.claim` uses `zicato.storage.atomic_claim`). Covered by
+  `tests/test_runtime_channel.py`.
+- **The control protocol (phase 2) — shipped without `CommandQueue`.** `zicato.runtime.control_consumer`
+  drains `pause_epoch`, `skip_round` and `rubric_replacement` between rounds,
+  claims `skip_round` at round start, and applies `promote/<gen>` and
+  `reject/<gen>` at the gate as a recorded operator override. A
+  `rubric_replacement` rolls the epoch. Claim-once and the audit archive live
+  in `zicato.runtime.control` (`consume_command` moves the file into
+  `control_log/`); no production code instantiates `CommandQueue`.
+- **Tournament live state (phase 3) — shipped.** Tournament live state is the event log described
+  above; the dashboard parity tests in
+  `src/zicato/dashboard/static/test/live_protocol.test.mjs` cover the reader.
+- **Heartbeat and liveness (phase 4) — shipped as an added log.** `zicato.runtime.progress_log`
+  appends one event per genuine loop transition and a terminal event on a
+  clean end (`Settled`, or `Stopped` for a budget or circuit-breaker cut). The heartbeat carries the log's tail `seq`, the
+  server-sent-events stream publishes `seq` and a terminal flag, and the
+  supervisor's `SeqLiveness` tracker ages the last `seq` change. The
+  supervisor's heartbeat checks only warn; they never signal the
+  orchestrator. `heartbeat.json` and `active_runs/*` remain snapshot files.
+- **Folding the logs into the index (phase 5) — not shipped.** The
+  index is projected from the canonical record files; it reads none of
+  these logs.
+
 ## Compatibility and migration
 
-The on-disk live-state format changes from snapshots to logs, so the migration
-does not preserve behavior. The test suite gates it: the producer-consumer
-parity tests assert that the dashboard renders identically, and new tests cover
-the log path, with producer and consumer migrated together. A compatibility
-reader accepts the snapshot format during the transition, and the Rust
-supervisor's state reader, which already tolerates partial writes, adapts to the
-log.
+The on-disk live-state format changed from snapshots to logs for the
+tournament state, so that migration did not preserve the file format. The test suite gates it: the producer-consumer
+parity tests assert that the dashboard renders identically, and tests cover
+the log path, with producer and consumer migrated together. The Rust
+supervisor reads the same log (`WorkspacePaths::active_tournament_log`).
 
 ## Non-goals
 
