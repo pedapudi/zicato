@@ -529,6 +529,8 @@ export function mountShell(root) {
   // for ANY tournament structure from the live APIs in renderStatus. The
   // four-state word keeps its `dt-rs-<state>` CSS modifier.
   _statusMarkEl = el('span', { class: 'dt-status-mark', role: 'img' });
+  // Hovering or focusing the mark shows its state sentence (the aria-label).
+  attachHovercard(_statusMarkEl, () => _statusMarkEl.getAttribute('aria-label') || '');
   _statusTextEl = el('span', { class: 'dt-status-text', text: 'connecting…' });
   _runStateTextEl = el('span', { class: 'dt-rs-text', text: '' });
   _runLabelEl = el('span', { class: 'dt-run-label', text: '' });
@@ -998,12 +1000,15 @@ function renderStatus() {
   const word = everSeen ? (interrupted ? 'INTERRUPTED' : runStateLabel(rs)) : '';
 
   // The one status mark: the socket and the run verdict in a single drawing.
+  // The status digest also changes as the heartbeat ages, so the mark is
+  // written only when its state changes; its icon and label follow the state.
   if (_statusMarkEl) {
     const mark = statusMark(!!conn, word ? (interrupted ? 'interrupted' : rs) : '');
-    patchIconLabel(_statusMarkEl, mark.icon, '');
-    _statusMarkEl.setAttribute('data-state', mark.key);
-    _statusMarkEl.setAttribute('aria-label', mark.label);
-    _statusMarkEl.setAttribute('title', mark.label);
+    if (_statusMarkEl.getAttribute('data-state') !== mark.key) {
+      patchIconLabel(_statusMarkEl, mark.icon, '');
+      _statusMarkEl.setAttribute('data-state', mark.key);
+      _statusMarkEl.setAttribute('aria-label', mark.label);
+    }
   }
 
   if (_runStateEl) {

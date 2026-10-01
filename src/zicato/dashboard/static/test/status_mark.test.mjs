@@ -10,6 +10,8 @@ import { installDom, test, run, assert, assertEqual } from './harness.mjs';
 installDom();
 
 const shell = await import('../js/shell.js');
+const hovercard = await import('../js/hovercard.js');
+const { recordWrites } = await import('./write_log.mjs');
 const livestatus = await import('../js/livestatus.js');
 const { state } = await import('../js/core/state.js');
 
@@ -140,6 +142,38 @@ test('status area: the mark\'s drawing distinguishes running, a clean end, a cut
   assertEqual(drawn.offline.state, 'offline', 'a dropped socket outranks the last run verdict');
   assertEqual(drawn.offline.icon, 'status-unknown', 'and draws the dashed outline');
   assertEqual(drawn.idle.icon, 'status-unknown', 'a workspace with no run draws the dashed outline');
+});
+
+test('status area: an ageing heartbeat on a settled workspace writes nothing to the status area', async () => {
+  const statusEl = await statusFor(SCENARIOS.settled);
+  const realNow = Date.now;
+  let now = realNow();
+  Date.now = () => now;
+  try {
+    const writes = await recordWrites(statusEl, async () => {
+      // five heartbeat-age buckets (the status digest folds a 5-second
+      // bucket), each one a fresh render pass with a changed digest.
+      for (let i = 0; i < 5; i++) {
+        now += 6_000;
+        state._changed();
+        await tick();
+      }
+    });
+    assertEqual(writes.join(', '), '', 'no attribute, class, text or child write while the shown status is unchanged');
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+test('status area: the mark\'s state sentence shows in the console hovercard, not a native tooltip', async () => {
+  const statusEl = await statusFor(SCENARIOS.settled);
+  const mark = allByClass(statusEl, 'dt-status-mark')[0];
+  assertEqual(mark.getAttribute('title'), null, 'the mark carries no native title');
+  assert(hovercard.hasHovercard(mark), 'the mark is wired to the hovercard');
+  hovercard.hide();
+  mark.dispatchEvent({ type: 'mouseenter', target: mark });
+  assertEqual(hovercard.cardText(), mark.getAttribute('aria-label'), 'the card reads the mark\'s state sentence');
+  mark.dispatchEvent({ type: 'mouseleave', target: mark });
 });
 
 test('statusMark: every key names an icon the icon set draws', async () => {

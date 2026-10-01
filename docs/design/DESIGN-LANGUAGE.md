@@ -456,8 +456,11 @@ while the connection word says `connecting…` or `disconnected — retrying`,
 and the last-known state word stays beside it. The mark's colour speaks the
 colour roles by direction: LIVE = good, STALLED = caution, SETTLED = calm ink
 (a clean end), DEAD and INTERRUPTED = bad (gone without settling), no run =
-faint ink, socket down = flat. The mark's `aria-label` (also its `title`)
-names the state in a sentence. The four run states key on the orchestrator
+faint ink, socket down = flat. The mark's `aria-label` names the state in a
+sentence, and hovering or focusing the mark shows that sentence in the
+console hovercard. The mark's attributes are written only when its state
+changes, so the heartbeat's ageing "last seen" note never rewrites them. The
+four run states key on the orchestrator
 progress cursor rather than a heartbeat timestamp. Only the LIVE mark pulses
 (`@keyframes dt-status-pulse`, a 1.6s opacity fade), and the pulse is
 disabled under `prefers-reduced-motion`. The `LIVE` word (`.dt-live-state`) and the structure
