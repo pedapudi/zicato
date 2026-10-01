@@ -85,6 +85,9 @@ in `js/CONTRACTS.md`.
   development tool and is NOT shipped in the wheel.
 - `brand/` and `fonts/` — the favicons and logo marks `index.html`
   links, and the self-hosted woff2 faces `css/console.css` declares.
+  `fonts/JetBrainsMono-OFL.txt` is the SIL Open Font License 1.1 and
+  copyright notice that JetBrains Mono ships under; the licence requires
+  it to travel with the font files.
 
 ### The structural no-flash render spine (digest-gating)
 

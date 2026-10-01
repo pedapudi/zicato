@@ -968,8 +968,14 @@ test('fonts: JetBrains Mono stays self-hosted woff2; the 12 finalized faces load
   // the self-hosted woff2 files actually ship on disk under static/fonts/.
   const path = await import('node:path');
   const fontsDir = path.dirname(new URL('../console.js', import.meta.url).pathname) + '/fonts';
-  assertEqual(fs.readdirSync(fontsDir).sort().join(','), 'JetBrainsMono-Bold.woff2,JetBrainsMono-Regular.woff2',
-    'static/fonts/ ships the JetBrains Mono faces and nothing else');
+  assertEqual(fs.readdirSync(fontsDir).sort().join(','),
+    'JetBrainsMono-Bold.woff2,JetBrainsMono-OFL.txt,JetBrainsMono-Regular.woff2',
+    'static/fonts/ ships the JetBrains Mono faces and their licence, and nothing else');
+  // the SIL Open Font License requires its text and the copyright notice to
+  // travel with the font files.
+  const licence = fs.readFileSync(fontsDir + '/JetBrainsMono-OFL.txt', 'utf8');
+  assert(/Copyright 2020 The JetBrains Mono Project Authors/.test(licence), 'the licence carries the copyright notice');
+  assert(/SIL OPEN FONT LICENSE Version 1\.1/.test(licence), 'and the SIL Open Font License 1.1 text');
   for (const f of ['JetBrainsMono-Regular.woff2', 'JetBrainsMono-Bold.woff2']) {
     assert(fs.statSync(fontsDir + '/' + f).size > 0, 'ships ' + f);
   }

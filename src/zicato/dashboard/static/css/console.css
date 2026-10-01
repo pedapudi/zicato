@@ -25,7 +25,8 @@
  * One SIL-OFL monospace face ships as woff2 under ../../../fonts/ (relative to
  * this stylesheet at css/), so it never depends on a font CDN: JetBrains Mono,
  * the fixed brand mono of the wordmark and the data face of the Editorial and
- * Display typeface options.
+ * Display typeface options. Its licence ships beside it as
+ * fonts/JetBrainsMono-OFL.txt.
  *
  * The other faces the typeface options name load from Google Fonts (see the
  * loader in console.js). `font-display: swap` so a slow font never blocks

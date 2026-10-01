@@ -79,7 +79,8 @@ def app_js() -> str:
 #   * brand/   — favicons/wordmarks/lockups; mostly binary (png/ico) and the
 #                handful of SVGs in there are brand assets tracked
 #                separately from the UI bundle, not counted here.
-#   * fonts/   — binary woff2 files, referenced only via @font-face url().
+#   * fonts/   — binary woff2 files, referenced only via @font-face url(),
+#                and their licence text.
 _UNCOUNTED_DIRS = {"test", "brand", "fonts"}
 
 # Text-file extensions the dashboard server will hand back verbatim from

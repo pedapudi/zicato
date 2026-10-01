@@ -272,7 +272,8 @@ pairings put each face in the role the interface rule allows.
   `src/zicato/dashboard/static/fonts/`, declared with `@font-face` +
   `font-display: swap` at the top of `console.css`. It backs the fixed brand
   mono (`--v2-brand-mono`) and is the data face of the editorial and display
-  options.
+  options. Its SIL Open Font License 1.1 text and copyright notice ship beside
+  the font files as `JetBrainsMono-OFL.txt`.
 - **The other picker faces load from Google Fonts** — the only external
   dependency — injected by `console.js` `ensureFonts()` with `display=swap`
   and a preconnect to the font origins. Every stack lists a system fallback,
