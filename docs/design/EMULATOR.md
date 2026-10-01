@@ -362,8 +362,8 @@ harmonograf. The returned `RunResult.run_id` is the adapter's run id; the
 scripted multi-turn driver follows the same rule.
 
 The audit lines are observability and do not change the loss. The
-reducer, the transcript reconstruction, and the pattern detectors skip
-them; [TELEMETRY.md §4.2](TELEMETRY.md#42-the-emulators-zicatoemulator-audit-lane)
+run-log tail lists them as their own rows;
+[TELEMETRY.md §4.2](TELEMETRY.md#42-the-emulators-zicatoemulator-audit-lane)
 gives the details.
 
 ### 8.1 Why the audit trail matters

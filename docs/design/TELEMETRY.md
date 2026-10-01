@@ -513,16 +513,29 @@ audit line per emulator turn. The line carries no `run_id` or
 `sequence`. The harmonograf sink drops plain-dict events, so the audits
 do not reach harmonograf.
 
-The audit line is not a goldfive `Event`, and every reader of the events
-file skips it:
+The audit line is not a goldfive `Event`. It leaves the loss unchanged,
+and each reader of the events file treats it as follows:
 
 - The reducer's strict proto replay rejects the file, and the reducer
   falls back to the plain-JSON reader, which yields the same records. The
-  line's kind matches no case the reducer counts, so the loss is
-  unchanged.
+  line's kind matches no case the reducer counts.
 - Transcript reconstruction adds no turn or annotation for it.
-- The pattern detectors that replay goldfive events skip any line with a
-  string `kind` field, a field `Event` does not have.
+- The run-log tail, in Python (`query/run_log.py`) and in the supervisor
+  (`crates/supervisor/src/run_log.rs`), lists it as its own row with kind
+  `zicato.emulator.turn_audit`, no sequence or timestamp, and the kind as
+  its summary.
+- The run-id index behind the conversation lookup skips lines without a
+  run id among the first 64 lines of the file, so the audit line that
+  opens an emulated run's file does not hide the goldfive run id.
+- The hot-task and hot-agent pattern detectors parse each line strictly as
+  a goldfive `Event` and skip a line whose top-level `kind` is a string.
+  That is the normalized record shape, which the strict parser cannot
+  read; the audit line has it.
+- The process-exemplar windows shown to the proposer render it as a bare
+  case marker with no fields, the treatment every case without a field
+  policy receives.
+- The event aggregator and the synthetic drift expectations ignore its
+  kind.
 - The `adk_events` and `transcript` dialects treat its kind as an unknown
   event type and skip it.
 

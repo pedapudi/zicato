@@ -125,10 +125,11 @@ def _replay_events(path: Path) -> list[Any] | None:
     """Parse a goldfive events JSONL into ``Event`` messages, or return ``None``.
 
     Each line is parsed strictly into a goldfive ``Event``, except a line
-    carrying a string ``kind`` field. ``Event`` has no ``kind`` field, so
-    such a line is a zicato-authored record, such as the user emulator's
-    per-turn audit, and is skipped. Returns ``None`` when goldfive is not
-    importable, the file does not exist, or any other line fails to parse.
+    whose top-level ``kind`` is a string. That is the normalized record
+    shape (:mod:`zicato.telemetry.event_log`), which the strict parser
+    cannot read; the user emulator's per-turn audit has it. Such a line is
+    skipped. Returns ``None`` when goldfive is not importable, the file
+    does not exist, or any other line fails to parse.
     Detectors that need events treat a ``None`` as "skip this entry" so a
     single corrupted file does not erase the rest of the detector's output.
     """

@@ -50,9 +50,9 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 466,953 | +58,292 |
-| Production | 197,702 | 186,241 | -11,461 |
-| Production logic | 110,276 | 108,626 | -1,650 |
+| Total | 408,661 | 467,249 | +58,588 |
+| Production | 197,702 | 186,269 | -11,433 |
+| Production logic | 110,276 | 108,637 | -1,639 |
 
 The baseline row is the reference `f9052dd` measured by the classification the
 checker holds, which counts the console's hand-written entry point
@@ -85,7 +85,7 @@ production-logic series per subsystem along a branch's first-parent commits.
 | Subsystem | Total | Production | Production logic | Prose share |
 |---|---:|---:|---:|---:|
 | src/zicato/dashboard | 61,800 | 31,966 | 22,051 | 31.0% |
-| src/zicato/query | 17,740 | 17,740 | 11,166 | 37.1% |
+| src/zicato/query | 17,748 | 17,748 | 11,169 | 37.1% |
 | src/zicato/epoch | 13,832 | 13,832 | 7,745 | 44.0% |
 | src/zicato/evolve | 11,230 | 11,230 | 7,167 | 36.2% |
 | src/zicato/tournament | 11,223 | 11,223 | 6,647 | 40.8% |
@@ -103,7 +103,7 @@ production-logic series per subsystem along a branch's first-parent commits.
 | src/zicato/health | 2,557 | 2,557 | 1,501 | 41.3% |
 | src/zicato/mutation | 2,954 | 2,954 | 1,405 | 52.4% |
 | src/zicato/check | 1,769 | 1,769 | 1,144 | 35.3% |
-| src/zicato/board | 2,412 | 2,412 | 1,097 | 54.5% |
+| src/zicato/board | 2,412 | 2,412 | 1,096 | 54.6% |
 | src/zicato/workspace | 1,968 | 1,968 | 937 | 52.4% |
 | src/zicato/adapters | 2,197 | 2,197 | 821 | 62.6% |
 | src/zicato/judge_runtime | 1,778 | 1,778 | 801 | 54.9% |
@@ -112,10 +112,10 @@ production-logic series per subsystem along a branch's first-parent commits.
 | src/zicato/synthetic | 1,202 | 1,202 | 574 | 52.2% |
 | src/zicato/models_config.py | 635 | 635 | 490 | 22.8% |
 | src/zicato/scoring | 1,401 | 1,401 | 475 | 66.1% |
-| src/zicato/patterns | 753 | 753 | 410 | 45.6% |
+| src/zicato/patterns | 766 | 766 | 419 | 45.3% |
 | src/zicato/storage | 1,022 | 1,022 | 360 | 64.8% |
 | src/zicato/logging_stream.py | 627 | 627 | 333 | 46.9% |
-| src/zicato/emulator | 675 | 675 | 306 | 54.7% |
+| src/zicato/emulator | 682 | 682 | 306 | 55.1% |
 | src/zicato/example_workspace | 657 | 657 | 300 | 54.3% |
 | hatch_build.py | 205 | 205 | 169 | 17.6% |
 | src/zicato/driver_imports.py | 206 | 206 | 161 | 21.8% |
@@ -473,3 +473,9 @@ dropped rows named.
 | Synthetic entry drift grading (production logic) | 108,590 | +34 | 108,624 | Synthetic board entries: the tournament worker grades an adversarial entry by its required drift kinds and a clean entry by the absence of warning or critical drift, conjoined with any declared expectation. A synthetic grading revision in the board hash rolls only epochs whose board holds a synthetic entry. Worker-process and contract-hash tests cover both. |
 | Manifest resolution from the package directory (production) | 186,234 | +7 | 186,241 | The goldfive optimization manifest resolves when the enumerated root is the `goldfive` package directory, which is the tree `epoch register` records and the directory a generation snapshot holds. Without it, every manifest source path resolves one directory too deep and the goldfive example has no mutation points. |
 | Manifest resolution from the package directory (production logic) | 108,624 | +2 | 108,626 | The goldfive optimization manifest resolves when the enumerated root is the `goldfive` package directory, which is the tree `epoch register` records and the directory a generation snapshot holds. Without it, every manifest source path resolves one directory too deep and the goldfive example has no mutation points. |
+| Emulator audit records and caller run identity (total) | 466,953 | +275 | 467,228 | The user emulator emits each turn's audit record to the run's sinks, and both multi-turn drivers return the caller's run id. Tests cover the emitted audit lines, the caller run id, and the reducer, transcript and pattern-detector readers that skip the audit lines. |
+| Emulator audit records and caller run identity (production) | 186,241 | +19 | 186,260 | The emulator's audit emission awaits asynchronous sinks, and the pattern detectors parse events line by line so an audit line does not discard a run's events. The drivers stop minting run ids. |
+| Emulator audit records and caller run identity (production logic) | 108,626 | +8 | 108,634 | Line-by-line event parsing in the pattern detectors and the per-sink emission loop add logic; removing run-id minting from both drivers offsets part of it. |
+| Run-id lookup past a leading audit line (total) | 467,228 | +21 | 467,249 | The run-id index reads past lines that carry no run id, up to 64 lines, so an emulated run's events file still maps its goldfive run id. A test covers an events file that opens with an emulator audit line. |
+| Run-id lookup past a leading audit line (production) | 186,260 | +9 | 186,269 | The bounded scan, its line-count constant, and the reader's docstring. |
+| Run-id lookup past a leading audit line (production logic) | 108,634 | +3 | 108,637 | The bounded scan's constant, import and continue-on-missing branch. |
