@@ -30,7 +30,7 @@ from zicato.models_config import execution_roles_for_runtime
 from zicato.runtime.lock import acquire_workspace_lock
 from zicato.tournament.scoring import read_gen_score, write_gen_score
 from zicato.workspace import WorkspaceLayout
-from zicato.workspace.config_io import write_workspace_config
+from zicato.workspace.config_io import read_workspace_config, write_workspace_config
 
 
 async def empty_target_call(system: str, user: str, model: str) -> str:
@@ -75,17 +75,15 @@ def prepare_tournament_epoch(
 def seed_tournament_generations(workspace: Path, epoch_id: str, backend: str) -> None:
     """Configure ``backend`` as the source store and seed ``v0`` and ``v1`` through it.
 
-    Each generation's tree holds ``agent/generation.txt`` naming that
-    generation, so a test can tell which tree the command handed the runner.
+    The backend is merged into any existing ``config.json``; a workspace
+    without one gets a minimal config. Each generation's tree holds
+    ``agent/generation.txt`` naming that generation, so a test can tell which
+    tree the command handed the runner.
     """
-    write_workspace_config(
-        workspace,
-        {
-            "instance_id": "test",
-            "created_at": "2026-05-14T00:00:00Z",
-            "generation_source_backend": backend,
-        },
-    )
+    existing = read_workspace_config(workspace)
+    config = dict(existing.raw) if existing.exists else {"instance_id": "test"}
+    config.setdefault("created_at", "2026-05-14T00:00:00Z")
+    write_workspace_config(workspace, {**config, "generation_source_backend": backend})
     store = default_generation_store(workspace)
     for generation_id in ("v0", "v1"):
         tree = workspace.parent / "sources" / generation_id / "agent"

@@ -50,9 +50,9 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 468,385 | +59,724 |
-| Production | 197,702 | 186,606 | -11,096 |
-| Production logic | 110,276 | 108,789 | -1,487 |
+| Total | 408,661 | 468,791 | +60,130 |
+| Production | 197,702 | 186,786 | -10,916 |
+| Production logic | 110,276 | 108,906 | -1,370 |
 
 The baseline row is the reference `f9052dd` measured by the classification the
 checker holds, which counts the console's hand-written entry point
@@ -86,13 +86,13 @@ production-logic series per subsystem along a branch's first-parent commits.
 |---|---:|---:|---:|---:|
 | src/zicato/dashboard | 61,821 | 31,968 | 22,051 | 31.0% |
 | src/zicato/query | 17,765 | 17,765 | 11,169 | 37.1% |
-| src/zicato/epoch | 13,834 | 13,834 | 7,745 | 44.0% |
-| src/zicato/evolve | 11,271 | 11,271 | 7,186 | 36.2% |
+| src/zicato/epoch | 13,995 | 13,995 | 7,849 | 43.9% |
+| src/zicato/evolve | 11,285 | 11,285 | 7,198 | 36.2% |
 | src/zicato/tournament | 11,221 | 11,221 | 6,647 | 40.8% |
 | src/zicato/reflection | 9,844 | 9,844 | 6,578 | 33.2% |
 | crates/supervisor | 13,091 | 11,405 | 5,030 | 55.9% |
 | src/zicato/proposer | 9,537 | 9,537 | 4,771 | 50.0% |
-| src/zicato/cli | 7,140 | 7,140 | 4,719 | 33.9% |
+| src/zicato/cli | 7,141 | 7,141 | 4,718 | 33.9% |
 | src/zicato/analyzer | 7,359 | 7,359 | 4,691 | 36.3% |
 | src/zicato/selection | 5,281 | 5,281 | 3,063 | 42.0% |
 | src/zicato/core | 6,375 | 6,375 | 2,793 | 56.2% |
@@ -104,7 +104,7 @@ production-logic series per subsystem along a branch's first-parent commits.
 | src/zicato/mutation | 2,954 | 2,954 | 1,405 | 52.4% |
 | src/zicato/check | 1,769 | 1,769 | 1,144 | 35.3% |
 | src/zicato/board | 2,412 | 2,412 | 1,096 | 54.6% |
-| src/zicato/workspace | 1,969 | 1,969 | 937 | 52.4% |
+| src/zicato/workspace | 1,973 | 1,973 | 939 | 52.4% |
 | src/zicato/adapters | 2,197 | 2,197 | 821 | 62.6% |
 | src/zicato/judge_runtime | 1,778 | 1,778 | 801 | 54.9% |
 | src/zicato/testing | 1,455 | 1,455 | 767 | 47.3% |
@@ -518,3 +518,9 @@ dropped rows named.
 | Describe the analyzer tests (production) | 186,583 | +0 | 186,583 | The analyzer test module's docstring names the provenance rule, the length bound, and the slice and restriction arguments. |
 | Describe the analyzer tests (production logic) | 108,792 | +0 | 108,792 | The analyzer test module's docstring names the provenance rule, the length bound, and the slice and restriction arguments. |
 | Accurate command help and module descriptions (production) | 186,583 | +23 | 186,606 | Docstrings and comments that described removed behaviour are rewritten to state what the code does; command help states that `epoch register` precedes the first `evolve`; three query modules gain descriptions of what they read. Deleting the unused single-generation override claim removes logic and offsets part of the added prose. |
+| Tournament command reads generations through the configured store (total) | 468,385 | +92 | 468,477 | `zicato tournament run` materializes each generation's source tree through `default_generation_store`, so the command re-scores a pair under the git store as well as the directory store. Most of the increase is the shared test helper that seeds generations through the configured store and the tests that run the command under each store. |
+| Tournament command reads generations through the configured store (production) | 186,606 | +5 | 186,611 | `zicato tournament run` materializes each generation's source tree through `default_generation_store`, so the command re-scores a pair under the git store as well as the directory store. Most of the increase is the shared test helper that seeds generations through the configured store and the tests that run the command under each store. |
+| Tournament command reads generations through the configured store (production logic) | 108,789 | +2 | 108,791 | `zicato tournament run` materializes each generation's source tree through `default_generation_store`, so the command re-scores a pair under the git store as well as the directory store. Most of the increase is the shared test helper that seeds generations through the configured store and the tests that run the command under each store. |
+| Round pattern records feed the epoch retrospective (total) | 468,477 | +316 | 468,793 | Each evolve round writes the detector patterns it passes to its proposer to `rounds/{round}/patterns.json` through one record module that declares the shape, and the close-of-epoch retrospective renders every round's record into its prompt. The `--patterns-from` option of `zicato proposer propose` decodes the same shape through the same decoder. Tests cover the codec, the round's write, and the retrospective's read. |
+| Round pattern records feed the epoch retrospective (production) | 186,611 | +175 | 186,786 | Each evolve round writes the detector patterns it passes to its proposer to `rounds/{round}/patterns.json` through one record module that declares the shape, and the close-of-epoch retrospective renders every round's record into its prompt. The `--patterns-from` option of `zicato proposer propose` decodes the same shape through the same decoder. Tests cover the codec, the round's write, and the retrospective's read. |
+| Round pattern records feed the epoch retrospective (production logic) | 108,791 | +115 | 108,906 | Each evolve round writes the detector patterns it passes to its proposer to `rounds/{round}/patterns.json` through one record module that declares the shape, and the close-of-epoch retrospective renders every round's record into its prompt. The `--patterns-from` option of `zicato proposer propose` decodes the same shape through the same decoder. Tests cover the codec, the round's write, and the retrospective's read. |
