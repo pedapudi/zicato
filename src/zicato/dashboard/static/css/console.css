@@ -3435,7 +3435,7 @@
     backdrop-filter: blur(1px); cursor: pointer; }
   .dt-drawer-panel { position: absolute; top: 0; right: 0; bottom: 0;
     width: min(560px, 94vw); display: flex; flex-direction: column;
-    background: var(--v2-ground); border-left: 1px solid var(--v2-rule);
+    background: var(--v2-paper); border-left: 1px solid var(--v2-rule);
     box-shadow: -8px 0 28px rgba(0, 0, 0, 0.32); overflow: hidden; }
   .dt-drawer-head { display: flex; align-items: center; justify-content: space-between;
     gap: 12px; padding: 13px 18px; border-bottom: 1px solid var(--v2-rule); flex: none; }
