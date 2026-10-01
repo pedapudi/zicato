@@ -5,10 +5,13 @@ files and exercise:
 
 * ``analyze_epoch_telemetry`` happy path → markdown written.
 * Empty epoch (no events) → fallback markdown written, no LLM call.
-* ``load_latest_insight`` returns only the highest-numbered round file and
-  withholds placeholders.
-* ``entry_ids`` narrows the analysis to the named board entries' runs, and
-  ``proposer_visible_entry_ids`` names the epoch's training slice.
+* ``load_latest_insight`` returns only the highest-numbered round file,
+  only when it opens with the training-slice provenance line, and bounded
+  in length.
+* ``training_entry_ids`` narrows the analysis to the named board entries'
+  runs, ``restricted_identities`` restricts the summary, and
+  ``proposer_slice`` names the epoch's training slice and visibility
+  posture.
 * Timeout enforcement when the evaluation callable hangs.
 * An aux callable that raises → fallback body cites the exception.
 """

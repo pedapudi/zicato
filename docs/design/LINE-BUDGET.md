@@ -50,9 +50,9 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 467,382 | +58,721 |
-| Production | 197,702 | 186,294 | -11,408 |
-| Production logic | 110,276 | 108,648 | -1,628 |
+| Total | 408,661 | 468,397 | +59,736 |
+| Production | 197,702 | 186,583 | -11,119 |
+| Production logic | 110,276 | 108,792 | -1,484 |
 
 The baseline row is the reference `f9052dd` measured by the classification the
 checker holds, which counts the console's hand-written entry point
@@ -87,13 +87,13 @@ production-logic series per subsystem along a branch's first-parent commits.
 | src/zicato/dashboard | 61,821 | 31,968 | 22,051 | 31.0% |
 | src/zicato/query | 17,748 | 17,748 | 11,169 | 37.1% |
 | src/zicato/epoch | 13,832 | 13,832 | 7,745 | 44.0% |
-| src/zicato/evolve | 11,230 | 11,230 | 7,167 | 36.2% |
+| src/zicato/evolve | 11,266 | 11,266 | 7,186 | 36.2% |
 | src/zicato/tournament | 11,223 | 11,223 | 6,647 | 40.8% |
 | src/zicato/reflection | 9,843 | 9,843 | 6,578 | 33.2% |
 | crates/supervisor | 13,091 | 11,405 | 5,030 | 55.9% |
-| src/zicato/proposer | 9,520 | 9,520 | 4,769 | 49.9% |
-| src/zicato/cli | 7,084 | 7,084 | 4,696 | 33.7% |
-| src/zicato/analyzer | 7,165 | 7,165 | 4,591 | 35.9% |
+| src/zicato/proposer | 9,536 | 9,536 | 4,771 | 50.0% |
+| src/zicato/cli | 7,129 | 7,129 | 4,719 | 33.8% |
+| src/zicato/analyzer | 7,357 | 7,357 | 4,691 | 36.2% |
 | src/zicato/selection | 5,284 | 5,284 | 3,063 | 42.0% |
 | src/zicato/core | 6,375 | 6,375 | 2,793 | 56.2% |
 | src/zicato/runtime | 5,188 | 5,188 | 2,531 | 51.2% |
@@ -487,3 +487,33 @@ dropped rows named.
 | Whole tournament block on a tournament edit (total) | 467,338 | +44 | 467,382 | A contract edit that changes the tournament writes the whole `tournament` block, because an omitted `params` resolves to the racing defaults only under racing and a partial block dropped the evidence-gate defaults the draft held; tests cover a default racing workspace switched to gauntlet and every ordered structure pair with a parameter edit. |
 | Whole tournament block on a tournament edit (production) | 186,289 | +5 | 186,294 | A contract edit that changes the tournament writes the whole `tournament` block, because an omitted `params` resolves to the racing defaults only under racing and a partial block dropped the evidence-gate defaults the draft held; tests cover a default racing workspace switched to gauntlet and every ordered structure pair with a parameter edit. |
 | Whole tournament block on a tournament edit (production logic) | 108,646 | +2 | 108,648 | A contract edit that changes the tournament writes the whole `tournament` block, because an omitted `params` resolves to the racing defaults only under racing and a partial block dropped the evidence-gate defaults the draft held; tests cover a default racing workspace switched to gauntlet and every ordered structure pair with a parameter edit. |
+| Deliver telemetry insights to the proposer (total) | 467,382 | +376 | 467,758 | The decision-telemetry insight reaches the next round's proposal evidence. The round reads the latest round file; the analyzer reads only training-slice runs; the command-line analyzer resolves the same slice; placeholders are withheld. Tests cover delivery, placeholders and holdout exclusion. |
+| Deliver telemetry insights to the proposer (production) | 186,294 | +98 | 186,392 | The decision-telemetry insight reaches the next round's proposal evidence. The round reads the latest round file; the analyzer reads only training-slice runs; the command-line analyzer resolves the same slice; placeholders are withheld. |
+| Deliver telemetry insights to the proposer (production logic) | 108,648 | +43 | 108,691 | The decision-telemetry insight reaches the next round's proposal evidence. The round reads the latest round file; the analyzer reads only training-slice runs; the command-line analyzer resolves the same slice; placeholders are withheld. |
+| Deliver only marked telemetry insights (total) | 467,758 | +64 | 467,822 | The analyzer stamps a training-slice provenance line on model analyses, and the loader delivers only files that open with it. Tests cover unmarked analyses, old-format placeholders and marked files. |
+| Deliver only marked telemetry insights (production) | 186,392 | +11 | 186,403 | The analyzer stamps a training-slice provenance line on model analyses, and the loader delivers only files that open with it. Tests cover unmarked analyses, old-format placeholders and marked files. |
+| Deliver only marked telemetry insights (production logic) | 108,691 | +5 | 108,696 | The analyzer stamps a training-slice provenance line on model analyses, and the loader delivers only files that open with it. Tests cover unmarked analyses, old-format placeholders and marked files. |
+| Bound the delivered telemetry insight (total) | 467,822 | +32 | 467,854 | The loader cuts a delivered insight at 8,000 characters, the bound applied to a mutation span, and appends a note. Tests cover text over and at the bound. |
+| Bound the delivered telemetry insight (production) | 186,403 | +16 | 186,419 | The loader cuts a delivered insight at 8,000 characters, the bound applied to a mutation span, and appends a note. Tests cover text over and at the bound. |
+| Bound the delivered telemetry insight (production logic) | 108,696 | +8 | 108,704 | The loader cuts a delivered insight at 8,000 characters, the bound applied to a mutation span, and appends a note. Tests cover text over and at the bound. |
+| Require the analyzer's training slice (total) | 467,854 | +45 | 467,899 | analyze_epoch_telemetry takes the training slice as a required keyword argument, so no caller analyzes every run by default. Test call sites name their slice. |
+| Require the analyzer's training slice (production) | 186,419 | +0 | 186,419 | analyze_epoch_telemetry takes the training slice as a required keyword argument, so no caller analyzes every run by default. Test call sites name their slice. |
+| Require the analyzer's training slice (production logic) | 108,704 | +1 | 108,705 | analyze_epoch_telemetry takes the training slice as a required keyword argument, so no caller analyzes every run by default. Test call sites name their slice. |
+| Restrict telemetry-insight names (total) | 467,899 | +296 | 468,195 | Under restricted visibility the analyzer drops ladder reasons and withholds emitter names that are long, hold non-identifier characters, or contain a board entry id. Tests cover the projection, the analyzer prompt and a restricted round. |
+| Restrict telemetry-insight names (production) | 186,419 | +133 | 186,552 | Under restricted visibility the analyzer drops ladder reasons and withholds emitter names that are long, hold non-identifier characters, or contain a board entry id. Tests cover the projection, the analyzer prompt and a restricted round. |
+| Restrict telemetry-insight names (production logic) | 108,705 | +75 | 108,780 | Under restricted visibility the analyzer drops ladder reasons and withholds emitter names that are long, hold non-identifier characters, or contain a board entry id. Tests cover the projection, the analyzer prompt and a restricted round. |
+| Test the telemetry command's training slice (total) | 468,195 | +72 | 468,267 | A command-line test runs zicato inspect telemetry on a board with a holdout entry and checks the holdout policy is absent from the prompt and the file. |
+| Test the telemetry command's training slice (production) | 186,552 | +0 | 186,552 | A command-line test runs zicato inspect telemetry on a board with a holdout entry and checks the holdout policy is absent from the prompt and the file. |
+| Test the telemetry command's training slice (production logic) | 108,780 | +0 | 108,780 | A command-line test runs zicato inspect telemetry on a board with a holdout entry and checks the holdout policy is absent from the prompt and the file. |
+| Report a corrupt board from the telemetry command (total) | 468,267 | +19 | 468,286 | zicato inspect telemetry reports an unreadable board record as a command error. A test covers a malformed board. |
+| Report a corrupt board from the telemetry command (production) | 186,552 | +1 | 186,553 | zicato inspect telemetry reports an unreadable board record as a command error. A test covers a malformed board. |
+| Report a corrupt board from the telemetry command (production logic) | 108,780 | +1 | 108,781 | zicato inspect telemetry reports an unreadable board record as a command error. A test covers a malformed board. |
+| Deliver the telemetry insight to the propose command (total) | 468,286 | +26 | 468,312 | zicato proposer propose reads the latest training-slice insight as a round does. A test covers the delivered block. |
+| Deliver the telemetry insight to the propose command (production) | 186,553 | +7 | 186,560 | zicato proposer propose reads the latest training-slice insight as a round does. A test covers the delivered block. |
+| Deliver the telemetry insight to the propose command (production logic) | 108,781 | +3 | 108,784 | zicato proposer propose reads the latest training-slice insight as a round does. A test covers the delivered block. |
+| Restrict the propose command's evidence (total) | 468,312 | +82 | 468,394 | zicato proposer propose renders experiment memory and patterns under the epoch's frozen visibility setting, defaulting to restricted. A test covers both settings. |
+| Restrict the propose command's evidence (production) | 186,560 | +23 | 186,583 | zicato proposer propose renders experiment memory and patterns under the epoch's frozen visibility setting, defaulting to restricted. A test covers both settings. |
+| Restrict the propose command's evidence (production logic) | 108,784 | +8 | 108,792 | zicato proposer propose renders experiment memory and patterns under the epoch's frozen visibility setting, defaulting to restricted. A test covers both settings. |
+| Describe the analyzer tests (total) | 468,394 | +3 | 468,397 | The analyzer test module's docstring names the provenance rule, the length bound, and the slice and restriction arguments. |
+| Describe the analyzer tests (production) | 186,583 | +0 | 186,583 | The analyzer test module's docstring names the provenance rule, the length bound, and the slice and restriction arguments. |
+| Describe the analyzer tests (production logic) | 108,792 | +0 | 108,792 | The analyzer test module's docstring names the provenance rule, the length bound, and the slice and restriction arguments. |
