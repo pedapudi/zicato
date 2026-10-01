@@ -844,25 +844,43 @@ def check_fork(
 
 
 def check_reconciled(
-    limits: dict[str, int], measured: dict[str, int], added: list[Entry]
+    limits: dict[str, int],
+    measured: dict[str, int],
+    added: list[Entry],
+    base_gap: dict[str, int] | None = None,
+    fork: str = "",
 ) -> list[str]:
     """Require each enforced limit to equal what the tree measures.
 
     Every commit on the base meets this rule, so a change meets it exactly when
     the entries it adds record its own movement. A change to the counting rules
     moves the measurement by the lines it exposes or hides, and records that.
-    The failure prints the table the added entries must state together.
+
+    ``base_gap`` is how far the base's own measurement stands from its limits
+    (measured minus limit). It is nonzero only after merges whose logic counts
+    did not add up. The failure names it on a line of its own and leaves it out
+    of the table printed for this change, so only one change records it; that
+    change balances the tree and passes.
     """
     errors = [
         f"{key}: the limit is {limits[key]:,}, but the tree measures {measured[key]:,}"
         for key in MEASUREMENTS
         if limits[key] != measured[key]
     ]
-    if errors:
-        needed = {
-            key: sum(entry.deltas[index] for entry in added) + measured[key] - limits[key]
-            for index, key in enumerate(MEASUREMENTS)
-        }
+    if not errors:
+        return []
+    gap = base_gap or dict.fromkeys(MEASUREMENTS, 0)
+    if any(gap.values()):
+        moves = ", ".join(f"{label.lower()} {gap[key]:+,}" for label, key in SUMMARY_LABELS)
+        errors.append(
+            f"the base {fork[:12]} is off its limits by {moves}; "
+            "record that difference in a change of its own"
+        )
+    recorded = {
+        key: sum(entry.deltas[index] for entry in added) for index, key in enumerate(MEASUREMENTS)
+    }
+    needed = {key: recorded[key] + measured[key] - limits[key] - gap[key] for key in MEASUREMENTS}
+    if needed != recorded:
         table = "\n".join(f"    | {label} | {needed[key]:+,} |" for label, key in SUMMARY_LABELS)
         errors.append(
             f"record the change in a file under {ENTRIES_PATH}/ whose table states:\n{table}"
@@ -870,28 +888,63 @@ def check_reconciled(
     return errors
 
 
+def _base_gap(cwd: Path, fork: str) -> dict[str, int] | None:
+    """The fork point's measurement minus its limits, or None when it cannot be read alike.
+
+    The fork point is measured only when ``tools/line_budget.py`` is unchanged
+    since then, so both sides are counted by one set of rules, and only when it
+    holds starting limits.
+    """
+    tool = PurePosixPath("tools", Path(__file__).name).as_posix()
+    if _content(tool, fork, cwd) != (cwd / tool).read_bytes():
+        return None
+    config = json.loads(_content(CONFIG.name, fork, cwd))
+    if "starting_limits" not in config:
+        return None
+    limits = enforced_limits(config, read_entries(fork, cwd)[0])
+    measured = _measured(measure(fork, cwd))
+    return {key: measured[key] - limits[key] for key in MEASUREMENTS}
+
+
+def _fork_point(cwd: Path, base: str) -> str:
+    result = subprocess.run(
+        ["git", "merge-base", base, "HEAD"], cwd=cwd, capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        raise ValueError(
+            f"--base {base} is not a commit sharing history with HEAD in this clone; "
+            "fetch it or name another base"
+        )
+    return result.stdout.strip()
+
+
 def check_ledger(cwd: Path = ROOT, base: str | None = None) -> list[str]:
     """Check the entries, the closed table, and the summary table in a worktree.
 
     Each enforced limit must equal the worktree's measurement. With ``base``,
-    :func:`check_fork` also compares the worktree with the fork point of its
-    ``HEAD`` and ``base``, and the entries absent there are the ones the
-    failure message attributes to this change. Neither rule reads a total
-    from the base, so two changes that record their own deltas never need
-    each other's numbers.
+    the fork point of ``HEAD`` and ``base`` supplies three things:
+    :func:`check_fork` compares the entries, starting limits, and closed table
+    with it; the entries absent there are the ones the failure attributes to
+    this change; and its own measurement against its limits, which
+    :func:`check_reconciled` reports apart from this change's table. Two
+    changes that record their own deltas never need each other's numbers.
     """
     text = (cwd / LEDGER_PATH).read_text()
     config = json.loads((cwd / CONFIG.name).read_text())
     entries, errors = read_entries(None, cwd)
     errors += check_history(text, config) + check_summary(text, config)
-    added = entries
+    added, gap, fork = entries, None, ""
     if base is not None:
-        fork = _git("merge-base", base, "HEAD", cwd=cwd).decode().strip()
+        try:
+            fork = _fork_point(cwd, base)
+        except ValueError as error:
+            return [*errors, str(error)]
         errors += check_fork(cwd, fork, entries, config, text)
         known = {entry.name for entry in read_entries(fork, cwd)[0]}
         added = [entry for entry in entries if entry.name not in known]
+        gap = _base_gap(cwd, fork)
     measured = _measured(measure(None, cwd))
-    return errors + check_reconciled(enforced_limits(config, entries), measured, added)
+    return errors + check_reconciled(enforced_limits(config, entries), measured, added, gap, fork)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -905,8 +958,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--base",
-        help="with --check-ledger, require the entries added since the fork point with this "
-        "ref to record the measured change",
+        help="with --check-ledger, read the fork point of HEAD and this ref: its entries, "
+        "starting limits, and closed table must be unchanged, entries absent there are this "
+        "change's, and its own measurement against its limits is reported apart",
     )
     parser.add_argument(
         "--report",

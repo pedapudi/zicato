@@ -1526,12 +1526,18 @@ limits, and the closed table's rows to keep their values there; entries absent
 at the fork point are the ones the failure message attributes to the change.
 When an entry is missing or wrong, the failure prints the table the entry must
 state, so the usual loop is: run the check, write the entry it prints, run it
-again. The same command pins the closed table of running totals by
+again. `_base_gap()` measures the fork point against its own limits when
+`tools/line_budget.py` is unchanged since then. A merge whose logic counts did
+not add up leaves that gap nonzero; `check_reconciled()` reports it on its own
+line and leaves it out of the printed table, so one dedicated change records
+it and no other change absorbs it. A `--base` that shares no history with
+`HEAD` in the clone fails with a message naming it. The same command pins the closed table of running totals by
 `HISTORY_DIGEST`, holds the summary table and the starting limits to
 `.line-budget.json`, and refuses a directory inside the ledger.
 `tests/test_line_budget_ledger.py` runs these rules end to end in a throwaway
-repository, including counting-rule changes in both directions and two
-branches that each record their own entry and merge in sequence without edits.
+repository, including counting-rule changes in both directions, two branches
+that each record their own entry and merge in sequence without edits, and two
+balanced branches whose merge leaves the base off its logic limit.
 
 The limits carry no allowance. Keep the three
 independent one-line-overage assertions in `tests/test_line_budget.py`: each

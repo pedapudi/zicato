@@ -342,3 +342,92 @@ def test_a_directory_inside_the_ledger_is_refused_by_name(tmp_path: Path) -> Non
     message = f"  {ENTRIES_PATH}/nested: the ledger holds only entry files"
     assert (worktree.returncode, worktree.stderr.splitlines()[1:]) == (1, [message])
     assert (at_ref.returncode, at_ref.stderr.splitlines()[1:]) == (1, [message])
+
+
+# A function body whose last statement becomes a docstring once both statements
+# above it are gone. Deleting either statement alone moves each measurement by
+# -1; deleting both moves the logic count by -3, because "marker" stops executing.
+NON_ADDITIVE = 'def f() -> None:\n    x = 0\n\n    y = 0\n    "marker"\n'
+
+
+def _unbalanced_base(repo: Path) -> None:
+    """Merge two changes that each record their own movement and together miss one logic line."""
+    _commit(repo, {"src/zicato/core/m.py": NON_ADDITIVE}, "function")
+    _commit(repo, {f"{ENTRIES_PATH}/2026-09-26-m.md": _entry("Add m", (5, 5, 4))}, "m entry")
+    for name, line in (("left", "    x = 0\n"), ("right", "    y = 0\n")):
+        _git(repo, "switch", "-q", "-c", name, "main")
+        source = NON_ADDITIVE.replace(line, "")
+        entry = _entry(name, (-1, -1, -1))
+        _commit(
+            repo,
+            {"src/zicato/core/m.py": source, f"{ENTRIES_PATH}/2026-09-27-{name}.md": entry},
+            name,
+        )
+        assert _run(repo, "--check-ledger", "--base", "main").returncode == 0
+    _git(repo, "switch", "-q", "main")
+    _git(repo, "merge", "-q", "--no-ff", "--no-edit", "left")
+    _git(repo, "merge", "-q", "--no-ff", "--no-edit", "right")
+
+
+def test_two_balanced_changes_can_merge_into_an_unbalanced_base(tmp_path: Path) -> None:
+    repo = _repository(tmp_path)
+    _unbalanced_base(repo)
+    logic = _measured(repo)["production_logic"]
+
+    result = _run(repo, "--check-ledger")
+
+    assert result.returncode == 1
+    assert result.stderr.splitlines()[1] == (
+        f"  production_logic: the limit is {logic + 1:,}, but the tree measures {logic:,}"
+    )
+
+
+def test_a_change_is_not_told_to_record_its_bases_imbalance(tmp_path: Path) -> None:
+    """The base's gap is reported once, apart from the table for the change."""
+    repo = _repository(tmp_path)
+    _unbalanced_base(repo)
+    fork = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "switch", "-q", "-c", "tests-only")
+    _commit(repo, {"tests/ten.txt": "x\n" * 10}, "ten test lines")
+    base_line = (
+        f"  the base {fork[:12]} is off its limits by total +0, production +0, production "
+        "logic -1; record that difference in a change of its own"
+    )
+
+    without = _run(repo, "--check-ledger", "--base", "main")
+    _commit(repo, {f"{ENTRIES_PATH}/2026-09-28-ten.md": _entry("Ten", (10, 0, 0))}, "entry")
+    with_entry = _run(repo, "--check-ledger", "--base", "main")
+
+    assert without.stderr.splitlines()[-5:] == [
+        base_line,
+        f"  record the change in a file under {ENTRIES_PATH}/ whose table states:",
+        "    | Total | +10 |",
+        "    | Production | +0 |",
+        "    | Production logic | +0 |",
+    ]
+    assert with_entry.returncode == 1
+    assert with_entry.stderr.splitlines()[-1] == base_line
+
+
+def test_one_change_of_its_own_rebalances_the_base(tmp_path: Path) -> None:
+    repo = _repository(tmp_path)
+    _unbalanced_base(repo)
+    _git(repo, "switch", "-q", "-c", "rebalance")
+    entry = _entry("Merged docstring", (0, 0, -1), "Two merged deletions made a docstring.")
+    _commit(repo, {f"{ENTRIES_PATH}/2026-09-28-merged-docstring.md": entry}, "rebalance")
+
+    result = _run(repo, "--check-ledger", "--base", "main")
+
+    assert (result.returncode, result.stderr) == (0, "")
+
+
+def test_a_base_missing_from_the_clone_is_named(tmp_path: Path) -> None:
+    repo = _repository(tmp_path)
+
+    result = _run(repo, "--check-ledger", "--base", "0" * 40)
+
+    assert result.returncode == 1
+    assert result.stderr.splitlines()[1] == (
+        f"  --base {'0' * 40} is not a commit sharing history with HEAD in this clone; "
+        "fetch it or name another base"
+    )

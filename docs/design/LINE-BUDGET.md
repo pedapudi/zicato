@@ -140,14 +140,21 @@ replaced. `python tools/line_budget.py --check` enforces each measurement
 against its limit.
 
 Line counts are additive across a clean merge, but the logic count is not
-always: a merge that joins two edits to one Python function or docstring can
-classify a line differently from either side. When that leaves the default
-branch measuring a few lines away from its limit, the reconciliation rule
-fails there and on every pull request merged into it. The next pull request
-adds a separate entry for that difference, stating that a merge produced it;
-the failure prints the total its entries must state. Other open pull requests
-fail the same rule until that entry lands and then pass on a re-run without
-edits.
+always. In a function body holding `x = 0`, `y = 0`, and a string expression,
+deleting either assignment removes one executable line, and each change records
+that. Deleting both makes the string the function's docstring, so the merged
+tree loses a third executable line that neither change recorded, and the
+default branch measures one line below its logic limit.
+
+The check keeps that difference out of every other change's table. With
+`--base`, and when `tools/line_budget.py` is unchanged since the fork point, it
+also measures the fork point against its own limits. A nonzero result is
+reported on a line of its own, naming the fork point and the difference, and
+the table printed for the change states only the change's own movement. One
+change records the difference in an entry of its own, stating that a merge
+produced it; that change balances the tree and passes. Until it lands, every
+other pull request fails on that line alone and passes on a re-run once it
+has merged, with no edit.
 
 `--check-ledger` also holds the summary table above to `.line-budget.json` and
 checks the closed table below.
