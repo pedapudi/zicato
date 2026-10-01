@@ -3,9 +3,9 @@
 The orchestrator spawns one :class:`HeartbeatBeater` for its lifetime;
 the beater wakes every ``interval_s`` seconds, writes a fresh
 :class:`zicato.runtime.state.Heartbeat` with the current UTC time, and
-goes back to sleep. The supervisor binary tails the file via inotify
-and treats a stale ``last_heartbeat`` (more than a few intervals old)
-as a stalled orchestrator.
+goes back to sleep. The supervisor binary rereads the file on every poll
+and logs a warning when ``last_heartbeat`` (or its ``seq``) is more than
+a few intervals old; it never signals the orchestrator.
 
 Design rules:
 

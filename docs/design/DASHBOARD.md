@@ -178,7 +178,7 @@ The two processes the operator runs into:
 
 | Process | Port | Role |
 |---|---|---|
-| Rust watchdog supervisor | `:7920` | Watches the orchestrator's heartbeat; restarts / escalates. Serves its own dashboard only when run standalone — under `evolve` it runs `--no-dashboard`. |
+| Rust watchdog supervisor | `:7920` | Warns on a stale orchestrator heartbeat and escalates stalled or overdue runs from SIGTERM to SIGKILL. Serves only `/statusz`, `/statusz.json` and `/api/audit/verify`. |
 | Python dashboard service | `:7892` | The dashboard this document describes. Reads the workspace, serves GET and the event stream, and writes `control/` files on POST. |
 
 The control POST endpoints write the `control/` files, and the

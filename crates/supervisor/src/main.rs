@@ -44,7 +44,7 @@ struct Cli {
     #[arg(long, default_value_t = 30)]
     heartbeat_stale_warn: u64,
 
-    /// SIGKILL orchestrator after this many seconds without heartbeat
+    /// Log a deep-stale warning after this many seconds; never signals the orchestrator
     #[arg(long, default_value_t = 90)]
     heartbeat_stale_kill: u64,
 

@@ -8,10 +8,13 @@ standalone against an existing workspace.
 The binary does two things:
 
 1. **Watchdog.** Polls `.zicato/runtime/heartbeat.json` and the per-run
-   files under `.zicato/runtime/active_runs/`. If the orchestrator's
-   heartbeat or any run's `last_progress` goes stale past the configured
-   thresholds, or a run passes its wall-clock deadline, the supervisor
-   sends SIGTERM, waits a grace period, and escalates to SIGKILL. It is
+   files under `.zicato/runtime/active_runs/`. A stale orchestrator
+   heartbeat produces a warning, and a deeply stale one a louder warning;
+   the supervisor never signals the orchestrator, so restarting it is a
+   decision for the operator or an external process supervisor. If a run's
+   `last_progress` goes stale past the configured threshold, or the run
+   passes its wall-clock deadline, the supervisor sends SIGTERM to the
+   run's worker, waits a grace period, and escalates to SIGKILL. It is
    also the one escalator for the kill requests the Python parent writes
    under `.zicato/runtime/control/kill_requests/`.
 2. **`/statusz`.** A terse, self-contained operational page (and
@@ -61,7 +64,7 @@ two never contend when `evolve` starts both.
 | `--bind ADDR`                         | `127.0.0.1` | Bind address                                                   |
 | `--interval SECS`                     | `2`         | Watchdog poll interval                                         |
 | `--heartbeat-stale-warn SECS`         | `30`        | Log a warning when the heartbeat is this old                   |
-| `--heartbeat-stale-kill SECS`         | `90`        | Escalate to SIGTERM/SIGKILL when the heartbeat is this old     |
+| `--heartbeat-stale-kill SECS`         | `90`        | Log a deep-stale warning when the heartbeat is this old; the orchestrator is never signalled |
 | `--run-stale-warn SECS`               | `30`        | Log a warning when a run's last_progress is this old           |
 | `--run-stale-kill SECS`               | `120`       | Escalate when a run is this stalled                            |
 | `--run-deadline-kill-disabled`        | off         | Do not kill runs that pass their wall-clock deadline           |

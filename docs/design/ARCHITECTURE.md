@@ -197,7 +197,7 @@ system under test's source. zicato is the only thing that does either.
                                                 │  + dashboard service (Py)  │
                                                 │  ────────────────────────  │
                                                 │  both spawned by `evolve`. │
-                                                │  Watchdog (Rust, no-dash): │
+                                                │  Watchdog (Rust):          │
                                                 │  reads heartbeat.json,     │
                                                 │  active_runs/*; escalates  │
                                                 │  SIGTERM → SIGKILL; serves │
@@ -207,7 +207,7 @@ system under test's source. zicato is the only thing that does either.
                                                 │  :7892, reads runtime/ +   │
                                                 │  index.db + epochs/.       │
                                                 └────────────┬───────────────┘
-                                                             │ inotify; signals
+                                                             │ polls files; signals
                                                              │
    ┌─────────────────────────────────────────────────────────┼───────────────┐
    │                       zicato meta-loop                  │               │

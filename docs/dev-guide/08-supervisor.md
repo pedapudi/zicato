@@ -26,7 +26,7 @@
 > | S5 | the confirmed-death-before-reaping rule | Orphan signalling and cleanup require a positively dead producer identity recorded by the run and the stable writer guard. Live, unknown or unreadable producer identity retains ownership. |
 > | S6 | the path-confined snapshot collection rule | Snapshot GC removes only a `ztw-snap-*` root that is a strict descendant of the system temp dir. Any other path is refused, however it got into the record. |
 > | S7 | the ledger-records-never-gates rule | The audit ledger is append-only, hash-chained, fsynced per append, torn-tail-repaired at open, and verified on startup. It records; it never gates. |
-> | S8 | the read-only version-pinned index rule | The supervisor opens `index.db` read-only, refuses a `user_version` that does not equal its pinned `EXPECTED_SCHEMA_VERSION`, and every index-backed endpoint degrades to an empty/`null` payload with a `note` rather than a 500. |
+> | S8 | the read-only version-pinned index rule | The supervisor opens `index.db` read-only and refuses a `user_version` that does not equal its pinned `EXPECTED_SCHEMA_VERSION`. A missing, stale or unreadable index makes the promotion-gate and divergence audits report no finding; it never fails a route or a watchdog loop. |
 > | S9 | coordinated worker termination | The parent delegates termination through a kill-request marker when a supervisor is reachable. A bounded fallback uses the captured process identity if delegation does not confirm group termination. |
 > | S10 | the read-only fail-open integrity check | Every integrity-notary check (diff containment, promotion gate, divergence) is read-only and fail-open on the supervisor side: it alarms on positive observed evidence and reports nothing when the attestation cannot be made. |
 > | S11 | independent enforcement with fixed trigger priority | Run enforcement applies confirmed-death reap, kill-request, deadline, then staleness. Each verified owner has one concurrent escalation, recorded in the action ring and optional ledger. Integrity scans run separately. |
@@ -1160,7 +1160,7 @@ what "escaped" means.
   `ztw-snap-` checkout contract; the control protocol's Python half; the
   seq-vs-timestamp liveness design.
 - 09-dashboard-and-query.md — the separate Python dashboard service that
-  serves the full UI; the supervisor's embedded UI is the minimal twin.
+  serves the UI.
 - 11-testing.md — the Rust checks in complete validation before merge; the
   REINDEX-DUMP gate that pins the shared index schema; route-test patterns.
 - 12-bug-casebook.md — the watchdog-kills-orchestrator finding that
