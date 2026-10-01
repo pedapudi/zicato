@@ -235,8 +235,18 @@ def _fold_entry_grading_source(entry: dict[str, object]) -> dict[str, object]:
     dotted plugins) and inline judges are left untouched, so a board that names
     no plugin canonicalizes to the same bytes either way. Operates on a copy of the
     nested dicts so the round-trip serializer (``entry_to_dict``) is unaffected.
+
+    A ``synthetic_adversarial`` or ``synthetic_clean`` entry also gains a
+    ``"synthetic_grading_revision"`` key carrying
+    :data:`zicato.synthetic.expectations.SYNTHETIC_GRADING_REVISION`, so a
+    change to how the worker grades those kinds rolls only the epochs whose
+    board contains one. Other entry kinds gain no key.
     """
     out = dict(entry)
+    if out.get("kind") in ("synthetic_adversarial", "synthetic_clean"):
+        from zicato.synthetic.expectations import SYNTHETIC_GRADING_REVISION  # noqa: PLC0415
+
+        out["synthetic_grading_revision"] = SYNTHETIC_GRADING_REVISION
     exp = out.get("expectation")
     if isinstance(exp, Mapping) and exp.get("kind") == "predicate":
         spec = exp.get("spec")

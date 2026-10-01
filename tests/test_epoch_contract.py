@@ -208,6 +208,50 @@ def test_goldfive_implementation_changes_only_a_goldfive_contract(
     assert compute_contract_hash(generic) != goldfive_hash
 
 
+def test_synthetic_grading_revision_changes_only_a_synthetic_contract(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Regrading synthetic entries rolls only epochs whose board holds one."""
+    import zicato.synthetic.expectations as synthetic_grading
+
+    for name in ("plain", "adversarial", "clean"):
+        (tmp_path / name).mkdir()
+    plain = _write_contract(tmp_path / "plain")
+    adversarial = json.dumps(
+        {
+            "id": "entry_adv",
+            "kind": "synthetic_adversarial",
+            "wall_clock_budget_seconds": 60,
+            "input": "loop",
+            "adversarial_agent_spec": "pkg.agents:Looping",
+            "required_drift_kinds": ["tool_error"],
+        }
+    )
+    clean = json.dumps(
+        {
+            "id": "entry_clean",
+            "kind": "synthetic_clean",
+            "wall_clock_budget_seconds": 60,
+            "input": "hi",
+        }
+    )
+    synthetic = [
+        _write_contract(tmp_path / name, board=_BOARD_LINE_A + "\n" + line + "\n")
+        for name, line in (("adversarial", adversarial), ("clean", clean))
+    ]
+    before = [compute_contract_hash(c) for c in (plain, *synthetic)]
+    monkeypatch.setattr(
+        synthetic_grading,
+        "SYNTHETIC_GRADING_REVISION",
+        synthetic_grading.SYNTHETIC_GRADING_REVISION + 1,
+    )
+    after = [compute_contract_hash(c) for c in (plain, *synthetic)]
+    assert after[0] == before[0]
+    assert after[1] != before[1]
+    assert after[2] != before[2]
+
+
 def test_evaluation_implementation_identity_is_explicit_and_capability_scoped() -> None:
     from zicato.integrations.goldfive import (
         GOLDFIVE_IMPLEMENTATION_VERSION,

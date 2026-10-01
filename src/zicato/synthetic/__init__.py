@@ -46,6 +46,9 @@ Public surface:
   ``synthetic_adversarial`` entries
 * :func:`evaluate_no_drift` — expectation matcher for
   ``synthetic_clean`` entries
+* :func:`score_synthetic_entry` — the tournament worker's verdict for a
+  synthetic entry: the kind's matcher conjoined with the entry's explicit
+  expectation
 """
 
 from __future__ import annotations
@@ -59,6 +62,7 @@ from zicato.synthetic.clean import run_clean_entry
 from zicato.synthetic.expectations import (
     evaluate_no_drift,
     evaluate_required_drift,
+    score_synthetic_entry,
 )
 
 __all__ = [
@@ -68,4 +72,5 @@ __all__ = [
     "run_clean_entry",
     "evaluate_no_drift",
     "evaluate_required_drift",
+    "score_synthetic_entry",
 ]
