@@ -602,6 +602,12 @@ string when off/failed). The restricted-visibility envelope
 (`01-orientation.md §4`) is enforced here, at computation time, rather
 than only at prompt-render time.
 
+The round also writes the unrestricted patterns to
+`rounds/{round}/patterns.json` through `write_round_patterns`
+(`src/zicato/epoch/round_patterns.py`), best-effort like the mutation
+inventory. The close-of-epoch retrospective reads every round's record; no
+proposer input reads it.
+
 ### 3.7 Step 5a′ — the screen-runner closure and candidate history
 
 `_build_candidate_screen_runner` returns `None` — and therefore no screen

@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from tests._workspace_support import experiment_record
+from zicato.core.patterns import Pattern
 from zicato.core.types import ScoringWeights
 from zicato.core.workspace import (
     analysis_path,
@@ -15,6 +16,8 @@ from zicato.core.workspace import (
 )
 from zicato.epoch import generate_analysis, new_epoch
 from zicato.epoch.analysis import REQUIRED_SECTIONS
+from zicato.epoch.round_patterns import write_round_patterns
+from zicato.workspace import WorkspaceLayout
 
 
 @pytest.fixture()
@@ -148,12 +151,26 @@ async def test_generate_analysis_handles_missing_journal(
 async def test_generate_analysis_includes_patterns_when_present(
     workspace: Path, board_file: Path, rubric_file: Path
 ) -> None:
+    """Every round's pattern record reaches the prompt, oldest round first."""
     cfg = new_epoch(workspace, "delta", board_file, rubric_file, ScoringWeights())
-    pdir = workspace / "epochs" / cfg.id / "patterns"
-    pdir.mkdir()
-    (pdir / "round_001.json").write_text(
-        json.dumps([{"id": "p1", "kind": "drift_metric_frequency"}])
+    layout = WorkspaceLayout.from_root(workspace)
+    write_round_patterns(
+        layout.round_patterns(cfg.id, 0),
+        parent_generation_id="v0",
+        patterns=[
+            Pattern(
+                id="p1",
+                kind="drift_metric_frequency",
+                summary="goal drift dominates",
+                detail={"kind": "goal_drift", "share": "0.800"},
+                affected_mutation_ids=("instr",),
+                severity="warning",
+            )
+        ],
     )
+    write_round_patterns(layout.round_patterns(cfg.id, 1), parent_generation_id="v1", patterns=[])
+    layout.round_patterns(cfg.id, 2).parent.mkdir(parents=True)
+    layout.round_patterns(cfg.id, 2).write_text("{}", encoding="utf-8")
 
     seen: dict[str, str] = {}
 
@@ -162,8 +179,30 @@ async def test_generate_analysis_includes_patterns_when_present(
         return "# Epoch analysis"
 
     await generate_analysis(workspace, cfg.id, stub_call)
-    assert "drift_metric_frequency" in seen["user"]
-    assert "## Patterns" in seen["user"]
+    patterns_section = seen["user"].split("## Patterns\n", 1)[1]
+    assert patterns_section.index("### Round 0 (parent generation v0)") < patterns_section.index(
+        "### Round 1 (parent generation v1)"
+    )
+    assert (
+        "- warning drift_metric_frequency: goal drift dominates; kind=goal_drift, "
+        "share=0.800; mutation points: instr"
+    ) in patterns_section
+    assert "### Round 1 (parent generation v1)\n- (no patterns detected)" in patterns_section
+    assert "### Round 2\n(pattern record unreadable:" in patterns_section
+
+
+async def test_generate_analysis_omits_patterns_when_no_round_recorded_them(
+    workspace: Path, board_file: Path, rubric_file: Path
+) -> None:
+    cfg = new_epoch(workspace, "foxtrot", board_file, rubric_file, ScoringWeights())
+    seen: dict[str, str] = {}
+
+    async def stub_call(system: str, user: str, model: str) -> str:
+        seen["user"] = user
+        return "# Epoch analysis"
+
+    await generate_analysis(workspace, cfg.id, stub_call)
+    assert "## Patterns" not in seen["user"]
 
 
 async def test_generate_analysis_propagates_model(

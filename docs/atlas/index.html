@@ -1221,7 +1221,7 @@ cat .zicato/epochs/&lt;epoch&gt;/journal.md</pre>
           patches/{patch_id}.json
           runs/...
       current_generation         <span class="cm"># marker: the promoted head</span>
-      patterns/round_{NNN}.json
+      rounds/{round}/patterns.json
       loop_health/round_{NNN}.json
       journal.md                 <span class="cm"># running narrative</span>
       analysis.md                <span class="cm"># written at epoch close</span>
@@ -2700,7 +2700,7 @@ cat .zicato/epochs/&lt;epoch&gt;/journal.md</pre>
   var PHASES = [
     { name: "Run the champion", body: "Every board entry runs against the parent generation, one run each. Under the default fast mode a run already recorded for this generation and entry is reused rather than repeated, so a long-standing champion is not re-evaluated every round.", writes: ".zicato/epochs/{epoch}/generations/v{N}/runs/{entry_id}/events.jsonl" },
     { name: "Reduce to loss", body: "The reducer walks each run's event stream once and writes one loss profile beside it: drift counts by kind and severity, plan revisions, task failure ratio, runtime, whether the run aborted, and the pass or fail the entry's expectations decided.", writes: ".../runs/{entry_id}/loss.json" },
-    { name: "Detect patterns", body: "Detectors read every loss profile in the epoch so far and emit typed aggregates — drift concentrated in one kind, a tag slice regressing, multi-turn memory failing, a mutation surface nothing has moved. These reset at the epoch boundary, because the contract they summarize has changed.", writes: ".zicato/epochs/{epoch}/patterns/round_{NNN}.json" },
+    { name: "Detect patterns", body: "Detectors read every loss profile in the epoch so far and emit typed aggregates — drift concentrated in one kind, a tag slice regressing, multi-turn memory failing, a mutation surface nothing has moved. These reset at the epoch boundary, because the contract they summarize has changed.", writes: ".zicato/epochs/{epoch}/rounds/{round}/patterns.json" },
     { name: "Propose", body: "The proposer reads the patterns, the operator's brief, and a digest of what has already been tried, and emits an experiment: a structured hypothesis plus the patches that test it. A schema-invalid response is rejected and re-prompted with the error rather than coerced into shape.", writes: ".../generations/v{N+1}/experiment.json" },
     { name: "Apply and validate", body: "The applier resolves each patch's mutation-point id to a source location, rewrites the span, and checks the result — the tree must still parse and import. A patch failing any validator is rejected outright. What survives is published as a new candidate snapshot.", writes: ".../generations/v{N+1}/snapshot/" },
     { name: "Hold the tournament", body: "Champion and challenger are compared on the board frozen for this epoch, and each generation gets an aggregate score. Full mode re-runs every entry against both; fast mode reuses the champion's recorded results.", writes: ".../generations/v{N+1}/gen_score.json" },

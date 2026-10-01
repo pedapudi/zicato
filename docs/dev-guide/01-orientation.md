@@ -677,6 +677,7 @@ shape, as `WorkspaceLayout` (`src/zicato/workspace/layout.py`) declares it:
         reflections/             # board-reflection runs
         rounds/{N}/
           round_log.jsonl        # the durable per-round event log
+          patterns.json          # the detector patterns shown to the proposer
           field_settlement.json  # the committed round record: every outcome,
                                  #   the primary promotion, the tournament
         generations/
