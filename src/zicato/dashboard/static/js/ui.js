@@ -562,14 +562,18 @@ export function normaliseOverride(prov) {
 // with the direction's icon after the label. Returns null when there is
 // no override (back-compat: absent → byte-identical). The chip's `kind` class
 // earns its tone by DIRECTION (promote good / reject bad / queued caution /
-// drained faint); it never touches the verdict pill's class.
+// drained faint); it never touches the verdict pill's class. The direction is
+// also in words — the accessible name and the tooltip read "forced promote ·
+// operator" — because the icons are hidden from assistive technology.
 export function overrideChip(prov) {
   const o = normaliseOverride(prov);
   if (!o) return null;
+  const words = o.label + ' ' + o.action;
   const chip = el('span', {
     class: `dn-chip dn-override dn-override-${o.kind}`,
     'data-override': o.kind,
-    title: o.reason ? ('operator override · ' + o.reason) : 'operator override',
+    role: 'img', 'aria-label': words + ' · operator',
+    title: 'operator override · ' + words + (o.reason ? ' · ' + o.reason : ''),
   }, [
     el('span', { class: 'dn-override-mark', 'aria-hidden': 'true' }, [icon('refresh')]),
     el('span', { class: 'dn-override-label' }, [o.label, icon(o.mark)]),

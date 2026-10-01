@@ -289,4 +289,69 @@ test('dropdown carets draw the chevron', () => {
   assertDeep(iconNames(allByClass(mountInto(face.node), 'dt-cd-caret')[0]), ['collapse'], 'the typeface picker caret');
 });
 
+// ── 5. a mark that replaced text keeps the text's reach ───────────────────
+test('elim radial seat: the gate group carries the hovercard in every state; no empty focus stop', async () => {
+  const { svg, elimCase } = await import('./fixtures.mjs');
+  const hovercard = await import('../js/hovercard.js');
+  const served = elimCase('duplicate_pending_match').served;
+  const tips = { crowned: 'v5 · crowned champion', stands: 'champion stands', deciding: 'gate deciding…', pending: 'champion gate' };
+  for (const [gateState, tip] of Object.entries(tips)) {
+    const node = svg.elimRadial({ rounds: served.rounds, gen_states: served.gen_states,
+      championId: gateState === 'crowned' ? 'v5' : null, benchmarkId: 'v6', gateState, onCompetitor() {} });
+    const gate = allByClass(node, 'dn-elimradial-gate')[0];
+    assert(hovercard.hasHovercard(gate), `${gateState}: the gate group is hovercard-wired`);
+    gate.dispatchEvent(makeEvent('mouseenter'));
+    assertEqual(hovercard.cardText(), tip, `${gateState}: hovering the seat shows its tip`);
+    gate.dispatchEvent(makeEvent('mouseleave'));
+    const stops = node.querySelectorAll('[tabindex]');
+    for (const stop of stops) {
+      assert(String(stop.textContent).trim() || iconNames(stop).length, `${gateState}: a focus stop holds text or an icon`);
+    }
+    assertEqual(allByClass(gate, 'dn-elimradial-seatlab').filter((t) => !String(t.textContent).trim()).length, 0,
+      `${gateState}: no empty seat label`);
+  }
+});
+
+test('override chip: the direction is in words for assistive technology and in the tooltip', () => {
+  const cases = [
+    [{ present: true, action: 'promote', reason: 'operator call' }, 'forced promote · operator', 'operator override · forced promote · operator call'],
+    [{ present: true, action: 'reject' }, 'forced reject · operator', 'operator override · forced reject'],
+    [{ action: 'promote', state: 'queued' }, 'queued promote · operator', 'operator override · queued promote'],
+    [{ action: 'reject', state: 'drained' }, 'drained reject · operator', 'operator override · drained reject'],
+  ];
+  for (const [prov, name, tip] of cases) {
+    const chip = ui.overrideChip(prov);
+    assertEqual(chip.getAttribute('role'), 'img', 'the chip is one named image');
+    assertEqual(chip.getAttribute('aria-label'), name, 'its accessible name states the direction');
+    assertEqual(chip.getAttribute('title'), tip, 'its tooltip states the direction');
+  }
+});
+
+test('trace detail: changing an episode\'s signal kind redraws its icon', async () => {
+  const { freshState, installFixtureMap } = await import('./fixtures.mjs');
+  const traces = await import('../js/views/traces.js');
+  const load = (name) => JSON.parse(readFileSync(join(STATIC, 'test', 'fixtures', 'trace_view', name + '.json'), 'utf8'));
+  const list = load('list');
+  const detail = load('detail');
+  const map = (d) => ({
+    '/api/epoch': { epoch_id: list.epoch_id, closed: false, goal: 'boot' },
+    '/api/reflections': { reflections: [{ reflection_id: list.reflection_id, epoch_id: list.epoch_id, created_at: '2020-01-01T00:00:00Z', mode: 'mint', executed: true }] },
+    [`/api/reflection/${list.reflection_id}/traces`]: list,
+    [`/api/reflection/${list.reflection_id}/trace/${d.trace_id}`]: d,
+  });
+  const route = { epochId: list.epoch_id, reflectionId: list.reflection_id, traceId: detail.trace_id };
+  const ctx = { navigate() {}, href: router.href };
+  const epIcons = (host) => allByClass(host, 'dn-trace-ep-glyph').map((g) => iconNames(g)[0]);
+  const host = document.createElement('div');
+  freshState(); installFixtureMap(map(detail));
+  await traces.render(host, ctx, route);
+  assertEqual(epIcons(host)[0], 'fail', 'an error cascade draws the fail mark');
+  const changed = JSON.parse(JSON.stringify(detail));
+  changed.episodes[0].signal_kind = 'retry_loop';
+  changed.strip_model.episodes[0].signal_kind = 'retry_loop';
+  freshState(); installFixtureMap(map(changed));
+  await traces.render(host, ctx, route);
+  assertEqual(epIcons(host)[0], 'refresh', 'the new kind redraws the episode icon');
+});
+
 await run();

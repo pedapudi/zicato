@@ -2733,7 +2733,6 @@
     vector-effect: non-scaling-stroke; }
   .dn-elimradial-seat.dn-good { stroke: var(--v2-good); }
   .dn-elimradial-seatlab { fill: var(--v2-accent); font: 11px var(--v2-sans); }
-  .dn-elimradial-seatlab.dn-good { fill: var(--v2-good); }
   .dn-elimradial-spoke { cursor: pointer; }
   .dn-elimradial-spoke:hover .dn-elimradial-name { fill: var(--v2-accent); }
   .dn-elimradial-spoke:focus-visible { outline: 2px solid var(--v2-accent); }

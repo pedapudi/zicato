@@ -929,7 +929,7 @@ export function trajectoryStripDigest(model, opts) {
     lane: marks.map((k) => [k.i, k.role, k.x0, k.x1, k.size]),
     signals: sigs.map((s) => [s.kind, s.tone, s.x, s.count, s.positioned === false ? 0 : 1, s.label || '']),
     budget: [b.fill, b.over ? 1 : 0, b.shaded ? 1 : 0, b.label || ''],
-    episodes: eps.map((e) => [e.episode_id, e.kind, e.tone, e.x0, e.x1, e.anchor, (e.suggestion_ids || []).join(',')]),
+    episodes: eps.map((e) => [e.episode_id, e.kind, e.signal_kind, e.tone, e.x0, e.x1, e.anchor, (e.suggestion_ids || []).join(',')]),
   });
 }
 
@@ -2738,16 +2738,17 @@ export function elimRadial(opts) {
   const seatR = mini ? 11 : 14;
   const gateG = svgEl('g', { class: 'dn-elimradial-gate', tabindex: (champId && o.onCompetitor) ? '0' : null });
   gateG.appendChild(svgEl('circle', { cx, cy, r: seatR, class: 'dn-elimradial-seat' + (crowned ? ' dn-good' : '') }));
-  const gt = hov(svgEl('text', { x: cx, y: cy + (mini ? 3.6 : 4.5), class: 'dn-elimradial-seatlab' + (crowned ? ' dn-good' : ''), 'text-anchor': 'middle' }),
-    crowned ? `${champId} · crowned champion`
-      : gateState === 'stands' ? 'champion stands'
-        : gateState === 'deciding' ? 'gate deciding…' : 'champion gate');
-  if (gateState === 'deciding' && !crowned) gt.textContent = '…';
-  gateG.appendChild(gt);
-  if (crowned || gateState !== 'deciding') {
-    gateG.appendChild(figIcon(crowned ? CROWN.current : CROWN.former, cx, cy + (mini ? 3.6 : 4.5), mini ? 10 : 13,
+  // the seat shows "…" while the gate decides and a crown otherwise; the gate
+  // group carries the hovercard, so the tip is reachable over the whole seat
+  // and the group is the one focus stop.
+  const seatY = cy + (mini ? 3.6 : 4.5);
+  gateG.appendChild(gateState === 'deciding' && !crowned
+    ? svgEl('text', { x: cx, y: seatY, class: 'dn-elimradial-seatlab', 'text-anchor': 'middle' }, ['…'])
+    : figIcon(crowned ? CROWN.current : CROWN.former, cx, seatY, mini ? 10 : 13,
       { anchor: 'middle', tone: crowned ? 'good' : 'accent', class: 'dn-elimradial-seatmark' }));
-  }
+  hov(gateG, crowned ? `${champId} · crowned champion`
+    : gateState === 'stands' ? 'champion stands'
+      : gateState === 'deciding' ? 'gate deciding…' : 'champion gate');
   clickable(gateG, (champId && o.onCompetitor) && (() => o.onCompetitor(champId)));
   svg.appendChild(gateG);
   return svg;

@@ -50,9 +50,9 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 468,791 | +60,130 |
-| Production | 197,702 | 186,786 | -10,916 |
-| Production logic | 110,276 | 108,906 | -1,370 |
+| Total | 408,661 | 469,364 | +60,703 |
+| Production | 197,702 | 187,039 | -10,663 |
+| Production logic | 110,276 | 109,072 | -1,204 |
 
 The baseline row is the reference `f9052dd` measured by the classification the
 checker holds, which counts the console's hand-written entry point
@@ -84,7 +84,7 @@ production-logic series per subsystem along a branch's first-parent commits.
 
 | Subsystem | Total | Production | Production logic | Prose share |
 |---|---:|---:|---:|---:|
-| src/zicato/dashboard | 61,821 | 31,968 | 22,051 | 31.0% |
+| src/zicato/dashboard | 62,401 | 32,221 | 22,217 | 31.0% |
 | src/zicato/query | 17,765 | 17,765 | 11,169 | 37.1% |
 | src/zicato/epoch | 13,995 | 13,995 | 7,849 | 43.9% |
 | src/zicato/evolve | 11,285 | 11,285 | 7,198 | 36.2% |
@@ -524,3 +524,6 @@ dropped rows named.
 | Round pattern records feed the epoch retrospective (total) | 468,477 | +316 | 468,793 | Each evolve round writes the detector patterns it passes to its proposer to `rounds/{round}/patterns.json` through one record module that declares the shape, and the close-of-epoch retrospective renders every round's record into its prompt. The `--patterns-from` option of `zicato proposer propose` decodes the same shape through the same decoder. Tests cover the codec, the round's write, and the retrospective's read. |
 | Round pattern records feed the epoch retrospective (production) | 186,611 | +175 | 186,786 | Each evolve round writes the detector patterns it passes to its proposer to `rounds/{round}/patterns.json` through one record module that declares the shape, and the close-of-epoch retrospective renders every round's record into its prompt. The `--patterns-from` option of `zicato proposer propose` decodes the same shape through the same decoder. Tests cover the codec, the round's write, and the retrospective's read. |
 | Round pattern records feed the epoch retrospective (production logic) | 108,791 | +115 | 108,906 | Each evolve round writes the detector patterns it passes to its proposer to `rounds/{round}/patterns.json` through one record module that declares the shape, and the close-of-epoch retrospective renders every round's record into its prompt. The `--patterns-from` option of `zicato proposer propose` decodes the same shape through the same decoder. Tests cover the codec, the round's write, and the retrospective's read. |
+| Drawn console icons (total) | 468,791 | +573 | 469,364 | The console draws every chrome mark from one icon module instead of typed Unicode symbols that the bundled fonts lack. Figure labels place icons beside their text, and a node test rejects typed symbols in the modules. The unused sprite file is deleted. |
+| Drawn console icons (production) | 186,786 | +253 | 187,039 | The console draws every chrome mark from one icon module instead of typed Unicode symbols that the bundled fonts lack. Figure labels place icons beside their text, and a node test rejects typed symbols in the modules. The unused sprite file is deleted. |
+| Drawn console icons (production logic) | 108,906 | +166 | 109,072 | The console draws every chrome mark from one icon module instead of typed Unicode symbols that the bundled fonts lack. Figure labels place icons beside their text, and a node test rejects typed symbols in the modules. The unused sprite file is deleted. |

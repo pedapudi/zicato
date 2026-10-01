@@ -324,7 +324,7 @@ function candidateHeader(ctx, epochId, c, epochLive) {
   const kids = [];
   if (spine) {
     kids.push(el('span', {
-      class: 'dn-evalmtx-crown', 'aria-label': 'champion spine',
+      class: 'dn-evalmtx-crown', role: 'img', 'aria-label': 'champion spine',
       title: seed ? 'the seed — the champion this epoch started from' : 'on the promoted-champion spine',
     }, [icon(CROWN.current)]));
   }

@@ -99,7 +99,7 @@ function digestFor(d) {
   const x = d.detail || {};
   const turns = (Array.isArray(x.turns) ? x.turns : []).map((t) => [t.index, t.role, (t.text || '').length, !!t.truncated]);
   const eps = (Array.isArray(x.episodes) ? x.episodes : []).map((e) => [
-    e.episode_id, e.episode_type, e.tone, e.glyph,
+    e.episode_id, e.episode_type, e.tone, e.signal_kind,
     e.span && e.span.anchor, e.span && e.span.x0, e.span && e.span.x1,
     (e.suggestion_ids || []).join(','), e.summary,
   ]);
