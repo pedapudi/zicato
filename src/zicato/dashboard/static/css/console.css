@@ -605,10 +605,13 @@
        overrunning the card. */
     overflow-wrap: anywhere; }
   .dn-fleet-spark { margin: 3px 0 6px; }
-  .dn-fleet-stats { display: flex; gap: 16px; }
-  .dn-mini { display: flex; flex-direction: column; }
-  .dn-mini-k { font-size: calc(9px * var(--dt-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.05em; color: var(--v2-ink-faint); }
-  .dn-mini-v { font-family: var(--v2-mono); font-size: calc(13px * var(--dt-font-scale, 1)); font-variant-numeric: tabular-nums; color: var(--v2-ink); }
+  /* the card's stats wrap onto a second row when the card is narrow; each
+     stat keeps its key and its value on one line and never shrinks, so no
+     stat runs past the card's border. */
+  .dn-fleet-stats { display: flex; flex-wrap: wrap; gap: 8px 16px; }
+  .dn-mini { display: flex; flex-direction: column; flex: none; }
+  .dn-mini-k { font-size: calc(9px * var(--dt-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.05em; color: var(--v2-ink-faint); white-space: nowrap; }
+  .dn-mini-v { font-family: var(--v2-mono); font-size: calc(13px * var(--dt-font-scale, 1)); font-variant-numeric: tabular-nums; color: var(--v2-ink); white-space: nowrap; }
 
   /* a flag: a state word in its semantic colour, set as plain text. */
   .dn-flag { display: inline-flex; align-items: center; gap: 4px; font-family: var(--v2-sans);
