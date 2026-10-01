@@ -571,27 +571,21 @@ parent_gen.snapshot_root))` — zero mutation points is a hard `RuntimeError`
 abort execution.
 
 Then the anti-overfitting boundary — worth reading verbatim because
-every downstream proposer input flows through it:
+every downstream proposer input flows through it. Step 4 calls
+`parent_training_evidence`, which `zicato proposer propose` also calls:
 
 ```python
-    # --- 4. Patterns ---
-    # The proposer + detectors + loss summary see the TRAIN slice ONLY
-    # (OVERFITTING.md §11.1, §12 #1): the holdout's per-entry behaviour is
-    # never surfaced to the proposer, so it cannot be memorized. When the
-    # board is too small to split (the default-safe degrade), the train
-    # slice IS the full board and every downstream artifact is byte-
-    # identical to the pre-split behaviour. The mutation manifest (code
-    # spans) is unrelated to the split and is left untouched.
-    from zicato.board.split import rotation_seed, split_board  # noqa: PLC0415
-
-    # Thread the epoch id as the rotation seed (OVERFITTING.md §12 #6) so the
-    # holdout slice is stable within this epoch but rotates across epochs.
-    # ``rotation_seed`` returns ``None`` (the unseeded, byte-identical split)
-    # when ``rotate_holdout`` is off.
-    train_seed = rotation_seed(weights.overfitting, resolved_epoch_id)
-    train_ids, _holdout_ids = split_board(board, weights.overfitting, seed=train_seed)
+    train_ids, _holdout_ids = split_board(
+        board, weights.overfitting, seed=rotation_seed(weights.overfitting, epoch_id)
+    )
+    train_id_set = set(train_ids)
+    train_board = [e for e in board if e.id in train_id_set]
 ```
-*(src/zicato/evolve/round_entry.py, `_evolve_once` step 4 — excerpt)*
+*(src/zicato/evolve/decision_support.py, `parent_training_evidence` — excerpt)*
+
+The epoch id seeds the split when the contract rotates its holdout, so the
+holdout slice is stable within an epoch and rotates across epochs. When the
+board is too small to split, the train slice is the full board.
 
 Everything the proposer will see is computed from the TRAIN slice only:
 `_load_parent_losses` (the champion's per-entry loss profiles),
