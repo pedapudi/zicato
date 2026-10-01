@@ -520,8 +520,7 @@ and each reader of the events file treats it as follows:
   falls back to the plain-JSON reader, which yields the same records. The
   line's kind matches no case the reducer counts.
 - Transcript reconstruction adds no turn or annotation for it.
-- The run-log tail, in Python (`query/run_log.py`) and in the supervisor
-  (`crates/supervisor/src/run_log.rs`), lists it as its own row with kind
+- The run-log tail (`query/run_log.py`) lists it as its own row with kind
   `zicato.emulator.turn_audit`, no sequence or timestamp, and the kind as
   its summary.
 - The run-id index behind the conversation lookup skips lines without a
