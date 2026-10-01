@@ -2330,6 +2330,12 @@ that episode:
   SNAPSHOT (the tree the episode edits), the patterns come from
   `--patterns-from <file>` or fresh detectors, and the brief from the
   epoch's `brief.md` (a missing brief is an error);
+- `restrict_visibility` comes from the epoch's frozen
+  `overfitting.restrict_proposer_visibility`, the field the round reads,
+  through `_load_restrict_visibility`; unreadable scoring yields the
+  restricted posture. Experiment-memory deltas are therefore banded, and
+  patterns, a `--patterns-from` file included, are projected, whenever
+  a round's would be;
 - the round's per-round DERIVED channels are absent — the failure-mode
   profile, the metric priorities, the process exemplars, the genealogy
   sample and the calibration record. Each is computed by a round from the

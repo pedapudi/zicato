@@ -15,9 +15,14 @@ What it includes of the round's inputs, and what it does not:
 * Included: the epoch's frozen proposer brief and skills, the mutation
   manifest enumerated from the parent generation's own snapshot, the
   cross-run loss patterns, the loss summary, the board's declared judge
-  names, and the settled experiment-memory digest. These are what make a proposal grounded, and
-  every one of them is already train-slice-only and redacted where the
-  round redacts it.
+  names, the settled experiment-memory digest, and the most recent
+  training-slice telemetry insight. These are what make a proposal
+  grounded, and every one of them is already train-slice-only. The epoch's
+  frozen ``overfitting.restrict_proposer_visibility`` setting, read as the
+  round reads it (:func:`_load_restrict_visibility`), switches the same
+  rendering the round's does: experiment-memory deltas are banded and
+  patterns, including a ``--patterns-from`` file, are projected to their
+  identity-free form.
 * Not included: the round's per-round derived channels — the failure-mode
   profile, the metric priorities, the process exemplars, the genealogy
   sample and the calibration record. Each is computed by the round from
@@ -220,6 +225,23 @@ def _load_custom_judge_names(workspace_dir: Path) -> frozenset[str]:
                 names.add(str(judge_name))
     names.update(str(k) for k in (getattr(weights, "per_judge_weights", None) or {}))
     return frozenset(names)
+
+
+def _load_restrict_visibility(workspace_dir: Path, epoch_id: str) -> bool:
+    """The epoch's frozen ``overfitting.restrict_proposer_visibility`` setting.
+
+    The round reads the same field off the epoch's frozen scoring. Missing,
+    unreadable or invalid scoring yields ``True``, the restricted posture,
+    so a debugging call can show the model less than a round would but
+    never more.
+    """
+    from zicato.workspace_loader import scoring_weights_from_dict  # noqa: PLC0415
+
+    try:
+        raw = json.loads((epoch_dir(workspace_dir, epoch_id) / "scoring.json").read_text("utf-8"))
+        return bool(scoring_weights_from_dict(raw).overfitting.restrict_proposer_visibility)
+    except Exception:  # noqa: BLE001 — fail closed to the restricted posture
+        return True
 
 
 def _write_proposal(
@@ -454,6 +476,7 @@ async def _propose(
                     custom_judge_names=custom_judge_names,
                     prior_experiments=tuple(prior),
                     insights=insights,
+                    restrict_visibility=_load_restrict_visibility(workspace_dir, epoch_id),
                 )
             )
         except ProposerError as exc:

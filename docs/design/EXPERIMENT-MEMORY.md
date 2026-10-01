@@ -502,9 +502,10 @@ blocks.
   `_propose_and_apply_challenger` takes a `prior_experiments` keyword and
   threads it onto the `ProposerContext` its episode runs from.
 - **The standalone propose command** (`zicato/cli/commands/propose.py`)
-  loads the same-epoch digest the same way, so `zicato proposer propose`
-  sees the section the loop sees; it does not apply
-  `experimental.cross_epoch_memory`.
+  loads the same-epoch digest the same way and renders it under the
+  epoch's frozen `restrict_proposer_visibility` setting, so
+  `zicato proposer propose` sees the section the loop sees; it does not
+  apply `experimental.cross_epoch_memory`.
 
 ### 5.6 The tests
 
