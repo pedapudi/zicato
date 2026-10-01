@@ -113,8 +113,8 @@ the six ROLE tokens + the secondary set (design-language §2): `--v2-ink` / `--v
 ### 1.3 The server pre-computes the strip and the browser only draws it
 
 The **strip-model is server-derived** — the reader emits a fully pre-computed
-render model (normalized mark positions and sizes, signal ticks with tone
-and glyph, the budget fill fraction, episode spans with anchors) so **the
+render model (normalized mark positions and sizes, signal ticks with their
+tone, the budget fill fraction, episode spans with anchors) so **the
 browser draws straight from it and never derives domain math**. This is the
 server-computes-client-renders rule the query layer holds everywhere
 (EVAL-VIEW.md). Every position/size is a normalized `[0,1]` float rounded to 4
@@ -232,13 +232,13 @@ callers.
           ]
         },
         "signals": [
-          { "kind": "error_cascade", "tone": "bad",     "glyph": "✕", "count": 3, "label": "3 tool errors", "x": 0.3333, "positioned": false },
-          { "kind": "retry_loop",    "tone": "caution", "glyph": "↻", "count": 1, "label": "1 retry loop", "x": 0.6667, "positioned": false }
+          { "kind": "error_cascade", "tone": "bad",     "count": 3, "label": "3 tool errors", "x": 0.3333, "positioned": false },
+          { "kind": "retry_loop",    "tone": "caution", "count": 1, "label": "1 retry loop", "x": 0.6667, "positioned": false }
         ],
         "budget": { "shaded": true, "fill": 0.42, "over": false, "tokens": 42000, "llm_calls": 21, "label": "21 calls · 42k tok" },
         "episodes": [
           { "episode_id": "ep-11aa22bb", "kind": "imported_signal", "signal_kind": "error_cascade",
-            "tone": "bad", "glyph": "✕", "x0": 0.2833, "x1": 0.3833, "anchor": "signal",
+            "tone": "bad", "x0": 0.2833, "x1": 0.3833, "anchor": "signal",
             "severity_rank": 5, "suggestion_ids": ["sug-77ee88ff"] }
         ],
         "focus_episode_id": null        // set only on a provenance mini-strip (§3.3)
@@ -271,7 +271,7 @@ callers.
   "episodes": [                         // per-episode span + anchor + linked suggestion ids
     { "episode_id": "ep-11aa22bb", "episode_type": "imported_signal", "signal_kind": "error_cascade",
       "summary": "trace 'prod-run-01.jsonl' (adk_events) hit an error cascade — 3 tool error(s), 2/4 tool failure(s)",
-      "severity_rank": 5, "tone": "bad", "glyph": "✕",
+      "severity_rank": 5, "tone": "bad",
       "span": { "x0": 0.2833, "x1": 0.3833, "anchor": "signal" },
       "suggestion_ids": ["sug-77ee88ff"] }
   ]
@@ -304,7 +304,7 @@ callers.
   "episodes": [                         // the provenance chain: suggestion -> episodes -> trace segment
     { "episode_id": "ep-11aa22bb", "episode_type": "imported_signal", "signal_kind": "error_cascade",
       "summary": "trace 'prod-run-01.jsonl' (adk_events) hit an error cascade — 3 tool error(s), 2/4 tool failure(s)",
-      "tone": "bad", "glyph": "✕", "severity_rank": 5,
+      "tone": "bad", "severity_rank": 5,
       "trace_id": "trace-ab12cd34", "source_file": "prod-run-01.jsonl",
       "segment_strip_model": { "...": "the §3.4 strip-model for this trace, focus_episode_id = ep-11aa22bb" } }
   ]
@@ -351,7 +351,7 @@ byte-stable). It is the one place the render math lives. The shape is the
   least informative input. Rounded to 4 decimals.
 - **Signals.** One entry per adverse signal present, in a fixed kind order
   (error_cascade, abort_pattern, retry_loop, budget_blowout, transfer_churn),
-  each with its tone + glyph (§3.5) + count + label. `x` is evenly distributed
+  each with its tone (§3.5) + count + label. `x` is evenly distributed
   `(k+1)/(n+1)` — `positioned: false` (aggregate, no real position).
 - **Budget.** `fill = round(min(1.0, max(tokens/MAX_TOKENS, llm_calls/MAX_LLM_CALLS)), 4)`;
   `over = tokens >= MAX_TOKENS or llm_calls >= MAX_LLM_CALLS`; `shaded = fill > 0`.
@@ -362,26 +362,25 @@ byte-stable). It is the one place the render math lives. The shape is the
 - **Episodes.** A **signal** episode (`imported_signal`) anchors to its matching
   signal tick: `x0/x1` = the tick's `x ± 0.05` (clamped `[0,1]`),
   `anchor: "signal"`. The **behavioral** episode (`imported_behavioral`) spans
-  the lane: `x0: 0.0, x1: 1.0, anchor: "lane"`. Each carries its tone/glyph +
+  the lane: `x0: 0.0, x1: 1.0, anchor: "lane"`. Each carries its tone +
   `severity_rank` + the linked `suggestion_ids` (from
   `suggestions_by_episode`). `focus_episode_id` is `None` here; the provenance
   reader sets it when emitting a mini-strip.
 
 ### 3.5 The signal → tone/icon table (one source, no new colour vocabulary)
 
-The server's strip model carries each kind's tone and a `glyph` character
-(`query/trace_view.py` `_TONE_GLYPH`). The browser console draws the icon
-named below from the kind (`svg.signalIcon`) and does not draw the served
-character.
+The server's strip model carries each kind's tone (`query/trace_view.py`
+`_TONE`) and no symbol. The browser console draws the icon named below from
+the kind (`svg.signalIcon`).
 
-| signal_kind | tone (→ token) | served glyph | drawn icon |
-| --- | --- | --- | --- |
-| `error_cascade` | `bad` (`--v2-bad`) | `✕` | `fail` |
-| `abort_pattern` | `bad` (`--v2-bad`) | `✕` | `fail` |
-| `retry_loop` | `caution` (`--v2-caution`) | `↻` | `refresh` |
-| `budget_blowout` | `caution` (`--v2-caution`) | `⏱` | `timeout` |
-| `transfer_churn` | `neutral` (`--v2-ink-soft`) | `⇄` | `swap` |
-| `behavioral` | `neutral` (`--v2-ink-soft`) | `○` | `ring` |
+| signal_kind | tone (→ token) | drawn icon |
+| --- | --- | --- |
+| `error_cascade` | `bad` (`--v2-bad`) | `fail` |
+| `abort_pattern` | `bad` (`--v2-bad`) | `fail` |
+| `retry_loop` | `caution` (`--v2-caution`) | `refresh` |
+| `budget_blowout` | `caution` (`--v2-caution`) | `timeout` |
+| `transfer_churn` | `neutral` (`--v2-ink-soft`) | `swap` |
+| `behavioral` | `neutral` (`--v2-ink-soft`) | `ring` |
 
 The focused episode/suggestion highlight is `--v2-accent` (the one structural
 highlight). Nothing here is a new token; all six + the secondary set are the

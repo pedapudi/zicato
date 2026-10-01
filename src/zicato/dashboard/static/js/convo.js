@@ -13,7 +13,7 @@
 //
 //  2. LIVE → SETTLED CONTINUITY. There is no second component for a finished
 //     run. When the transcript reports `complete`, the SAME pane stops
-//     following and repaints only its caption and header pill. The scroller,
+//     following and repaints only its caption and header label. The scroller,
 //     its turn nodes, and the reader's scroll position are not touched, so a
 //     run finishing under the operator's eyes does not yank the page.
 //
@@ -34,7 +34,7 @@
 import { el, clearChildren } from './core/dom.js';
 import { patchIconLabel } from './icons.js';
 import { bus } from './core/bus.js';
-import { fidelityLabel, pill } from './ui.js';
+import { fidelityLabel, stateLabel } from './ui.js';
 import { reconcileTurns, nearBottom } from './turns.js';
 import { createTranscriptStream, spliceTurns, mergeAnnotations } from './transcript_stream.js';
 import { LIVENESS } from './unit_liveness.js';
@@ -71,7 +71,7 @@ export function mountConversationPane(host, spec, opts) {
   // Built ONCE. Everything that changes as the run streams is a text update
   // inside these nodes — never a rebuild of the frame, because rebuilding it
   // would take the scroller (and the reader's position) with it.
-  const statusPill = pill(triClass(pane.tri), triWord(pane.tri));
+  const statusPill = stateLabel(triClass(pane.tri), triWord(pane.tri));
   const caption = el('p', { class: 'dn-faint dn-convo-cap', 'data-convo-caption': '' });
   const scroller = el('div', { class: 'dn-transcript dn-convo-scroll', 'data-convo-scroll': '' });
   const pinBtn = el('button', {
@@ -200,7 +200,7 @@ export function mountConversationPane(host, spec, opts) {
     paintPin();
   }
 
-  // THE LIVE → SETTLED TRANSITION. Caption and pill only: the scroller and
+  // THE LIVE → SETTLED TRANSITION. Caption and label only: the scroller and
   // every turn node inside it are left exactly as they are, which is what
   // makes this a state change rather than a remount.
   function setTriState(tri, endedAt) {
@@ -208,7 +208,7 @@ export function mountConversationPane(host, spec, opts) {
     if (endedAt !== undefined) pane.endedAt = endedAt;
     if (tri !== LIVENESS.LIVE) stopFollowing();
     statusPill.textContent = triWord(tri);
-    statusPill.className = 'dn-pill dn-' + triClass(tri);
+    statusPill.className = 'dn-state dn-' + triClass(tri);
     paintCaption(scroller.childNodes.length);
     if (tri === LIVENESS.LIVE) startFollowing();
   }

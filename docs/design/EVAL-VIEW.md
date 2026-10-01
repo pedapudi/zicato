@@ -474,8 +474,8 @@ A shell view (its own hash route and tree node) rendering `build_eval_matrix`.
   badge tooltip, so a flip rate calibrated against an older champion than the
   current spine tip is visible as stale.
 - **Decision column headers** — champion-spine columns marked (crown glyph
-  from `svg.js` `CROWN`); `round_index` grouped. The decision pill is
-  **tri-state**: `promoted` → the `promoted` pill, `rejected` → `rejected`,
+  from `svg.js` `CROWN`); `round_index` grouped. The decision label is
+  **tri-state**: `promoted` → the `promoted` label, `rejected` → `rejected`,
   `null` (in-flight or never raced) → the `pending` ("racing…") vocabulary. A
   null is NEVER collapsed to rejected, and the view digest folds a three-state
   token so a `false`→`null` change repaints.

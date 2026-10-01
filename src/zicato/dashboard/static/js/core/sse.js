@@ -107,7 +107,7 @@ export function connectSSE() {
       const frame = JSON.parse(ev.data);
       // Frame is `{ type, data, seq, terminal }`; older servers send the
       // bare snapshot. A snapshot is a full re-seed (always applied); the
-      // cursor only informs the run-state pill + later skips.
+      // cursor only informs the run-state label + later skips.
       if (frame && typeof frame === 'object' && 'seq' in frame) {
         state.noteProgress(frame.seq, frame.terminal);
       }

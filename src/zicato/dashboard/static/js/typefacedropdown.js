@@ -23,7 +23,7 @@
 // trigger + checked option in lockstep when the typeface changes by ANY path
 // (top bar, settings, keyboard, restore). Returns { node, setValue }.
 
-import { el, clearChildren, patchText } from './core/dom.js';
+import { el, clearChildren } from './core/dom.js';
 import { icon } from './icons.js';
 import {
   TYPE_OPTIONS, TYPE_MODE_ORDER, TYPE_MODE_LABEL, normaliseType, typeOption,
@@ -107,6 +107,18 @@ function specimen(opt, cls) {
   ]);
 }
 
+// The trigger's name as one unbreakable span per face, joined by " + ", so a
+// pairing that runs out of room wraps between its faces ("Open Sans +" over
+// "Google Sans Mono") and never inside a face name.
+function faceNameParts(label) {
+  const out = [];
+  String(label).split(' + ').forEach((face, i) => {
+    if (i > 0) out.push(' + ');
+    out.push(el('span', { class: 'dt-tf-face', text: face }));
+  });
+  return out;
+}
+
 // Build a typeface grouped-popover dropdown. `onChoose(id)` is invoked with the
 // chosen option id when the user selects a row (the caller applies + persists).
 // `opts` (optional) carries the S/M/L font-size control: `{ size, onSizeChoose }`
@@ -119,7 +131,7 @@ export function buildTypefaceDropdown(initial, onChoose, opts) {
   let value = normaliseType(initial);
 
   const triggerSpec = specimen(typeOption(value), 'dt-tf-spec dt-tf-spec-sm');
-  const triggerName = el('span', { class: 'dt-cd-name', text: typeOption(value).label });
+  const triggerName = el('span', { class: 'dt-cd-name' }, faceNameParts(typeOption(value).label));
   const trigger = el('button', {
     class: 'dt-cd-trigger dt-tf-trigger', type: 'button',
     'aria-haspopup': 'listbox', 'aria-expanded': 'false',
@@ -180,7 +192,12 @@ export function buildTypefaceDropdown(initial, onChoose, opts) {
     triggerSpec.appendChild(el('span', { class: 'dt-tf-spec-head', style: `font-family:${def.head}`, text: 'Aa' }));
     triggerSpec.appendChild(el('span', { class: 'dt-tf-spec-prose', style: `font-family:${def.prose}`, text: 'prose' }));
     triggerSpec.appendChild(el('span', { class: 'dt-tf-spec-data', style: `font-family:${def.data}`, text: '0.418' }));
-    patchText(triggerName, def.label);
+    if (triggerName.textContent !== def.label) {
+      clearChildren(triggerName);
+      for (const part of faceNameParts(def.label)) {
+        triggerName.appendChild(typeof part === 'string' ? document.createTextNode(part) : part);
+      }
+    }
     wiring.markSelected();
   }
 

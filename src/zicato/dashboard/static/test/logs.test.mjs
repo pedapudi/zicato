@@ -80,7 +80,7 @@ test('render: paints one mono row per record, level-toned, with the toolbar', as
   assert(textOf(host).includes('g5--faq'), 'the run context is shown');
   // toolbar: an invocation picker + the level-filter chips.
   assert(hasClass(host, 'dt-logs-inv'), 'the invocation picker renders');
-  assertEqual(allByClass(host, 'dt-logs-chip').length, 5, 'five level chips (ALL/DEBUG/INFO/WARNING/ERROR)');
+  assertEqual(allByClass(host, 'dt-logs-level').length, 5, 'five level chips (ALL/DEBUG/INFO/WARNING/ERROR)');
 });
 
 // ====================================================================

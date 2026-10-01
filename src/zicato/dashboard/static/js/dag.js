@@ -12,7 +12,7 @@
 import { svgEl } from './core/dom.js';
 import { isNum, fmt, CROWN, figIcon, iconBeside } from './svg.js';
 import { attachHovercard } from './hovercard.js';
-import { truncate } from './ui.js';
+import { truncate, valueFace } from './ui.js';
 
 export function verdictClass(verdict) {
   const v = String(verdict || '').toLowerCase();
@@ -72,7 +72,9 @@ function flow(x1, y1, x2, y2) {
 // `mark` names an icon drawn before the label, in the node's tone.
 const NODE_TONE = { 'ezn-promoted': 'good', 'ezn-rejected': 'bad', 'ezn-running': 'accent', 'ezn-baseline': 'faint' };
 function rectNode(layer, cx, cy, w, h, label, sub, cls, mark) {
-  const id = svgEl('text', { x: cx, y: cy - (sub ? 5 : 0), class: 'ezn-node-id', 'text-anchor': 'middle' }, [truncate(label, mark ? 16 : 18)]);
+  // A node named by an id (the parent, the candidate) sets it in the mono; a
+  // node named by a word (PATCH, GATE, promoted) sets it in the sans.
+  const id = svgEl('text', { x: cx, y: cy - (sub ? 5 : 0), class: 'ezn-node-id' + valueFace(label), 'text-anchor': 'middle' }, [truncate(label, mark ? 16 : 18)]);
   const g = svgEl('g', { class: 'ezn-node ' + (cls || ''), 'data-cz': 'lc-step' }, [
     svgEl('rect', { x: cx - w / 2, y: cy - h / 2, width: w, height: h, rx: 6, class: 'ezn-node-box' }),
     id,
@@ -406,7 +408,7 @@ export function lifecycleDag(spec) {
       const r = 12;
       // the loss value lives INSIDE the disc; the entry label sits to the LEFT
       // of the disc (anchored at its end), so a label can NEVER overlap the
-      // circle or the loss text. The rung-multiplicity badge sits to the RIGHT.
+      // circle or the loss text. The rung-multiplicity mark sits to the RIGHT.
       const labelDX = -(r + 8);
       const cls = e.pass_fail === true ? 'ezn-promoted' : (e.wall_clock_budget_exceeded ? 'ezn-deferred' : 'ezn-rejected');
       edgeLayer.appendChild(svgEl('path', { d: flow(X.patch + 0.065 * w, midY, X.board - r, y), class: 'ezn-edge ezn-edge-soft', fill: 'none' }));
@@ -458,7 +460,7 @@ export function lifecycleDag(spec) {
         }, ['champ ' + fmt(cmp.champDrift, 0) + ' · Δ ' + signedDelta(dLoss, 0)]));
       }
       if (raced) {
-        // rung-multiplicity badge to the RIGHT of the disc — makes it clear the
+        // rung-multiplicity mark to the RIGHT of the disc — makes it clear the
         // SAME entry was re-raced across rungs (not a random duplicate).
         children.push(svgEl('text', { x: X.board + r + 6, y: y + 3, class: 'ezn-board-mult', 'text-anchor': 'start' }, ['×' + e.mult]));
         // the EXPANSION: a small per-run stack (a sparkline + one row per run,
@@ -634,9 +636,9 @@ export function lifecycleDag(spec) {
     svg.appendChild(key);
 
     // the "?" info affordance — opens the FULL walkthrough in a hovercard. A
-    // small focusable badge top-right of the figure; keyboard-accessible.
+    // small focusable mark top-right of the figure; keyboard-accessible.
     const infoG = svgEl('g', { class: 'ezn-dag-info', 'data-cz': 'lc-info', role: 'button', 'aria-label': 'How to read this lifecycle figure' });
-    infoG.appendChild(svgEl('circle', { cx: w - 14, cy: 14, r: 8, class: 'ezn-dag-info-badge' }));
+    infoG.appendChild(svgEl('circle', { cx: w - 14, cy: 14, r: 8, class: 'ezn-dag-info-disc' }));
     infoG.appendChild(svgEl('text', { x: w - 14, y: 18, class: 'ezn-dag-info-mark', 'text-anchor': 'middle' }, ['?']));
     attachHovercard(infoG,
       'How to read this lifecycle: parent → patch → board (one node per entry, colour = pass/fail/timeout) → Σ → gate → terminal. '

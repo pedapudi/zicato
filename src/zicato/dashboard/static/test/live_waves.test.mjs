@@ -184,7 +184,7 @@ test('Match-ups (LIVE swiss): active-round pairings show in-flight board progres
   const gens = await import('../js/views/gens.js');
   const host = document.createElement('div');
   await gens.render(host, { navigate() {}, href: router.href }, { epochId: LIVE_UX_EPOCH });
-  assert(allByClass(host, 'dt-live-pill')[0], 'the live pill is shown');
+  assert(allByClass(host, 'dt-live-state')[0], 'the live pill is shown');
   assert(svgsByClass(host, 'dn-swissladder')[0], 'the live swiss ladder renders (NOT a being-seeded empty)');
   assert(!/being seeded/i.test(host.textContent), 'NOT "being seeded" once the field + active round exist');
   // the in-flight pairing reads its board progress (running) INSIDE the ladder
@@ -452,7 +452,7 @@ test('epoch overview: "field of N" counts champion + applied challengers, EXCLUD
   await epoch.render(host, { navigate() {}, href: router.href }, { epochId: FN_EPOCH });
   // the real field is the challenger fan {v1, v2} (v0 is the carried champion on
   // the spine); the unscored orphan v9 is EXCLUDED from the minted field.
-  const chips = allByClass(host, 'dn-roundtl-chip').map((c) => { const mono = allByClass(c, 'dn-mono')[0]; return mono ? (mono.textContent || '').trim() : ''; });
+  const chips = allByClass(host, 'dn-roundtl-member').map((c) => { const mono = allByClass(c, 'dn-mono')[0]; return mono ? (mono.textContent || '').trim() : ''; });
   assertDeep(chips.filter((s, i) => chips.indexOf(s) === i).sort(), ['v1', 'v2'], 'the field is {v1,v2} — the unscored orphan v9 is excluded');
   assert(!chips.includes('v9'), 'the orphan v9 is NOT a minted-field chip');
 });

@@ -2,7 +2,7 @@
 //
 // Small, pure builders every view composes:
 // the digest-gated content swap (the no-flash guarantee), section headers,
-// verdict pills, a GFM-capable tiny-markdown renderer (TABLES render — fix #3),
+// verdict labels, a GFM-capable tiny-markdown renderer (TABLES render — fix #3),
 // honest empty / loading states, and the colour + typeface theme tables. No
 // data fetching, no state mutation.
 
@@ -175,27 +175,33 @@ export function persistColor(t) { return persistPref(COLOR_PREF, normaliseColor,
 
 // ---- typeface OPTIONS (12 faces) ------------------------------------
 //
-// The typeface picker is a GROUPED POPOVER offering TWELVE faces — FOUR per
+// The typeface picker is a GROUPED POPOVER offering TWELVE pairings — FOUR per
 // mode across THREE modes (Technical · Editorial · Display). Each option
 // carries its id (the `[data-t-type]` value the stylesheet keys on), its mode
-// group, a human label, and the FOUR font-role stacks the dashboard tokens map
-// to:
+// group, a human label, and the font-role stacks the dashboard tokens map to:
 //   head  → --n-font-head   (headings / big numerals)
-//   prose → --v2-sans + --n-font-paper   (body / publication voice)
-//   data  → --v2-mono       (data / labels / code)
+//   prose → --v2-sans       (prose, controls and chrome)
+//   data  → --v2-mono       (data, code, ids and key names)
 //   code  → --v2-mono as well; the role stays separate so a stylesheet can
 //            split code from data without reshaping an option
 //
-// Selecting an option stamps `data-t-type="<id>"` on the root and the per-id
-// CSS rule in console.css swaps the four font-role vars to the matching
-// stacks. The micro-preview in each row renders in that option's REAL faces,
-// so the popover reads as a true type specimen.
+// Every option keeps the interface rule "sans for prose and controls, mono for
+// data": `prose` is always a sans-serif stack, `data` and `code` are always
+// monospace stacks, and `head` is never monospace. An option whose face is a
+// monospace (Google Sans Mono, Inconsolata) therefore sets that face as the
+// data face and pairs it with Open Sans; the Editorial and Display options set
+// their serif or display face for headings and pair it with a sans for prose
+// and JetBrains Mono for data.
 //
-// The stacks below match the ones in the typeface study under
-// docs/design/typeface-study/, so the dashboard renders what the study showed.
-// The self-hosted JetBrains/iA faces serve roles outside this picker; the
-// Google-Fonts families these reference are loaded by console.js's ensureFonts().
+// Selecting an option stamps `data-t-type="<id>"` on the root and the per-id
+// CSS rule in console.css swaps the font-role vars to the matching stacks. The
+// micro-preview in each row renders in that option's REAL faces, so the
+// popover reads as a true type specimen. The self-hosted JetBrains Mono is
+// declared in console.css; the Google-Fonts families these reference are
+// loaded by console.js's ensureFonts().
 const TF = {
+  OPENS: "'Open Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif",
+  JBM: "'JetBrains Mono', ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace",
   GSMONO: "'Google Sans Mono', 'Noto Sans Mono', ui-monospace, monospace",
   SRCS: "'Source Sans 3', system-ui, sans-serif",
   SRCC: "'Source Code Pro', ui-monospace, monospace",
@@ -216,29 +222,29 @@ const TF = {
 // The mode groups, in display order. Each option: {id, mode, label, head,
 // prose, data, code}. FOUR options per mode = TWELVE total.
 //
-// An option's id is the kebab-case name of the face it sets headings in — the
-// face the option is chosen for, and the one thing that separates it from the
-// other eleven. Where an option pairs that face with a body or code face from
-// another family, the pairing is spelled out in the label, not the id.
+// An option's id is the kebab-case name of the face the option is chosen for:
+// the heading face, or for the two monospace faces the data face. The label
+// spells out any pairing with a face from another family. Stored ids persist
+// in the viewer's preferences, so an id never changes when its pairing does.
 export const TYPE_MODE_ORDER = ['technical', 'editorial', 'display'];
 export const TYPE_MODE_LABEL = { technical: 'Technical', editorial: 'Editorial', display: 'Display' };
 
 export const TYPE_OPTIONS = [
   // Technical
-  { id: 'google-sans-mono',    mode: 'technical', label: 'Google Sans Mono',                head: TF.GSMONO, prose: TF.GSMONO, data: TF.GSMONO, code: TF.GSMONO },
+  { id: 'google-sans-mono',    mode: 'technical', label: 'Open Sans + Google Sans Mono',    head: TF.OPENS,  prose: TF.OPENS,  data: TF.GSMONO, code: TF.GSMONO },
   { id: 'source-sans-3',       mode: 'technical', label: 'Source Sans 3 + Source Code Pro', head: TF.SRCS,   prose: TF.SRCS,   data: TF.SRCC,   code: TF.SRCC  },
-  { id: 'inconsolata',         mode: 'technical', label: 'Inconsolata',                     head: TF.INCON,  prose: TF.INCON,  data: TF.INCON,  code: TF.INCON },
+  { id: 'inconsolata',         mode: 'technical', label: 'Open Sans + Inconsolata',         head: TF.OPENS,  prose: TF.OPENS,  data: TF.INCON,  code: TF.INCON },
   { id: 'ubuntu',              mode: 'technical', label: 'Ubuntu + Ubuntu Mono',            head: TF.UBUNTU, prose: TF.UBUNTU, data: TF.UBUM,   code: TF.UBUM  },
   // Editorial
-  { id: 'fraunces',            mode: 'editorial', label: 'Fraunces',                        head: TF.FRAUN,  prose: TF.FRAUN,  data: TF.FRAUN,  code: TF.FRAUN  },
-  { id: 'bitter',              mode: 'editorial', label: 'Bitter',                          head: TF.BITTER, prose: TF.BITTER, data: TF.BITTER, code: TF.BITTER },
-  { id: 'literata',            mode: 'editorial', label: 'Literata',                        head: TF.LITER,  prose: TF.LITER,  data: TF.LITER,  code: TF.LITER  },
-  { id: 'domine',              mode: 'editorial', label: 'Domine',                          head: TF.DOMINE, prose: TF.DOMINE, data: TF.DOMINE, code: TF.DOMINE },
+  { id: 'fraunces',            mode: 'editorial', label: 'Fraunces',                        head: TF.FRAUN,  prose: TF.OPENS,  data: TF.JBM,    code: TF.JBM },
+  { id: 'bitter',              mode: 'editorial', label: 'Bitter',                          head: TF.BITTER, prose: TF.OPENS,  data: TF.JBM,    code: TF.JBM },
+  { id: 'literata',            mode: 'editorial', label: 'Literata',                        head: TF.LITER,  prose: TF.OPENS,  data: TF.JBM,    code: TF.JBM },
+  { id: 'domine',              mode: 'editorial', label: 'Domine',                          head: TF.DOMINE, prose: TF.OPENS,  data: TF.JBM,    code: TF.JBM },
   // Display
-  { id: 'archivo-narrow',      mode: 'display',   label: 'Archivo Narrow + Space Grotesk',  head: TF.AN,     prose: TF.SG,     data: TF.SG,     code: TF.SG     },
-  { id: 'hanken-grotesk',      mode: 'display',   label: 'Hanken Grotesk',                  head: TF.HANKEN, prose: TF.HANKEN, data: TF.HANKEN, code: TF.HANKEN },
-  { id: 'barlow-condensed',    mode: 'display',   label: 'Barlow Condensed + Space Grotesk', head: TF.BARLOWC, prose: TF.SG,   data: TF.SG,     code: TF.SG     },
-  { id: 'bricolage-grotesque', mode: 'display',   label: 'Bricolage Grotesque',             head: TF.BRICO,  prose: TF.BRICO,  data: TF.BRICO,  code: TF.BRICO },
+  { id: 'archivo-narrow',      mode: 'display',   label: 'Archivo Narrow + Space Grotesk',  head: TF.AN,     prose: TF.SG,     data: TF.JBM,    code: TF.JBM },
+  { id: 'hanken-grotesk',      mode: 'display',   label: 'Hanken Grotesk',                  head: TF.HANKEN, prose: TF.HANKEN, data: TF.JBM,    code: TF.JBM },
+  { id: 'barlow-condensed',    mode: 'display',   label: 'Barlow Condensed + Space Grotesk', head: TF.BARLOWC, prose: TF.SG,   data: TF.JBM,    code: TF.JBM },
+  { id: 'bricolage-grotesque', mode: 'display',   label: 'Bricolage Grotesque',             head: TF.BRICO,  prose: TF.BRICO,  data: TF.JBM,    code: TF.JBM },
 ];
 
 const TYPE_IDS = TYPE_OPTIONS.map((o) => o.id);
@@ -248,7 +254,7 @@ const TYPE_BY_ID = new Map(TYPE_OPTIONS.map((o) => [o.id, o]));
 // other tuple consumer reads.
 export const TYPE_THEMES = TYPE_OPTIONS.map((o) => [o.id, o.label]);
 
-// The DEFAULT is Google Sans Mono, the first Technical option.
+// The DEFAULT is Open Sans with Google Sans Mono, the first Technical option.
 export const DEFAULT_TYPE = 'google-sans-mono';
 const TYPE_PREF = 'typeface';
 
@@ -269,18 +275,18 @@ export function persistType(t) { return persistPref(TYPE_PREF, normaliseType, t)
 // mid-air rhythm — is now baked in as the ONE permanent spacing baseline: the
 // `--dt-*` spacing tokens live unconditionally on the console root in
 // console.css (no `[data-t-density]` selector), and the SIZE tokens below are
-// fixed at the cozy values. The page-scale pill is the sizing control now.
+// fixed at the cozy values. The page-scale slider is the sizing control.
 //
 // `DENSITY` names that constant so any caller (and the size-token table) has a
 // single source of truth for "the active density is always cozy".
 export const DENSITY = 'cozy';
 
-// ---- PAGE-WIDE SCALE (the draggable scale pill + reset) -------------
+// ---- PAGE-WIDE SCALE (the page-scale slider + reset) ----------------
 //
 // The page scale is one master multiplier on the WHOLE rendered page (text AND
 // diagrams), applied via `zoom` on the console's app root, so the operator can
 // fill a wide monitor or shrink to fit a laptop. With density removed, this is
-// the SOLE sizing control. A small RESET affordance beside the pill snaps the
+// the SOLE sizing control. A small RESET affordance beside the label snaps the
 // scale back to 100% (DEFAULT_SCALE) and persists. Range 70 %–150 % in 5-point
 // steps; default 100 %. Because `zoom` reflows (it is not a transform), the
 // page never clips — content re-wraps at the scaled size.
@@ -300,7 +306,7 @@ export function persistScale(v) { return persistPref(SCALE_PREF, normaliseScale,
 
 // ---- GLOBAL TEXT FONT-SIZE (the S/M/L control in the typeface picker) ----
 //
-// DISTINCT from the page-scale pill: the scale pill `zoom`s the WHOLE page
+// DISTINCT from the page-scale slider: the page scale `zoom`s the WHOLE page
 // (text AND figures); this is a TEXT-ONLY multiplier — it scales the HTML text
 // (every `font-size` in console.css is `calc(Npx * var(--dt-font-scale,1))`)
 // WITHOUT touching the SVG figures (their text is sized by svg.js / the `font:`
@@ -339,7 +345,7 @@ export function persistFontSize(v) { return persistPref(FONTSIZE_PREF, normalise
 
 // ---- LEFT SIDE-PANEL (rail) WIDTH (the draggable rail handle) -------
 //
-// Distinct from the page-scale pill (which zooms the WHOLE page): this resizes
+// Distinct from the page-scale slider (which zooms the WHOLE page): this resizes
 // only the LEFT tree side-panel width (the `--dt-rail` grid column), so the
 // operator can widen the tree to read long generation / entry ids or narrow it
 // to give the detail pane more room. A draggable handle on the rail's right
@@ -359,7 +365,7 @@ export function persistRail(v) { return persistPref(RAIL_PREF, normaliseRail, v)
 
 // THE PAGE-SCALE FACTOR a coordinate must be divided by to convert a viewport
 // (CSS-px) pointer position into the LAYOUT space that `--dt-rail` lives in.
-// The console's app root carries a page-wide `zoom` (the scale pill) plus a
+// The console's app root carries a page-wide `zoom` (the page scale) plus a
 // mirrored `--dt-page-scale` ratio; both are the same number. The rail handle
 // sits INSIDE that zoomed root, so `event.clientX` (viewport CSS px) is the
 // LAID-OUT position multiplied by `zoom`. Dividing the pointer delta by this
@@ -398,7 +404,7 @@ export function pageScaleOf(root) {
 // size, dot-plot row height, the reel/DAG vertical scale, and a figure font
 // scale. Every figure stays fit-to-width (Problem 1 holds) — only the INTRINSIC
 // (vertical / cell / radius) dimensions are set here; the width is always 100%
-// of the pane via the viewBox. The page-scale pill scales the WHOLE page on top
+// of the pane via the viewBox. The page scale zooms the WHOLE page on top
 // of these. `sizeScale` is the master multiplier the views apply to row heights
 // / cell sizes so the whole composition stays coherent.
 const COZY_SIZES = { sizeScale: 1, fontScale: 1, nodeRadius: 1, dagRowStep: 34, heatCell: 16, dotRow: 22, sparkbarH: 42, reelScale: 1.18 };
@@ -514,17 +520,24 @@ export function decisionOf(rec) {
   return (typeof d === 'string' && d) ? d : null;
 }
 
-export function verdictPill(decision, opts) {
+// The drawn mark that leads each decision word; a decision without one (the
+// seed baseline) reads as the word alone.
+const DECISION_ICON = { promoted: 'up', rejected: 'fail', deferred: 'timeout', pending: 'more' };
+
+// verdictLabel(decision) — a decision as plain text in its semantic colour,
+// led by the decision's drawn mark: `<span class="dn-state dn-<decision>">`.
+export function verdictLabel(decision, opts) {
   const d = decision || 'baseline';
   const label = opts && opts.label ? opts.label : d;
-  return el('span', { class: `dn-pill dn-${d}`, text: label });
+  const mark = DECISION_ICON[d];
+  return el('span', { class: `dn-state dn-${d}` }, mark ? [icon(mark), String(label)] : [String(label)]);
 }
 
-// ---- operator-override provenance (the overrideChip primitive) -------
+// ---- operator-override provenance (the overrideLabel primitive) -------
 //
-// The GATE owns the verdict (verdictPill); an OPERATOR override is a SEPARATE
+// The GATE owns the verdict (verdictLabel); an OPERATOR override is a SEPARATE
 // provenance fact that rides BESIDE the verdict and must NOT recolor it.
-// `overrideChip` is the sibling primitive carrying that fact. `prov` accepts
+// `overrideLabel` is the sibling primitive carrying that fact. `prov` accepts
 // either contract shape verbatim:
 //   * gate.override        — {present, action: "promote"|"reject", reason}
 //   * override_status[gid] — {action: "promote"|"reject", state, reason, ts}
@@ -557,20 +570,20 @@ export function normaliseOverride(prov) {
   return { kind, action, state, label, mark, reason };
 }
 
-// Build the override chip — a `dn-chip dn-override dn-override-<kind>` span that
+// Build the override label — a `dn-flag dn-override dn-override-<kind>` span that
 // reads "forced · operator" beside the verdict, led by the refresh mark and
 // with the direction's icon after the label. Returns null when there is
-// no override (back-compat: absent → byte-identical). The chip's `kind` class
+// no override (back-compat: absent → byte-identical). The label's `kind` class
 // earns its tone by DIRECTION (promote good / reject bad / queued caution /
-// drained faint); it never touches the verdict pill's class. The direction is
+// drained faint); it never touches the verdict label's class. The direction is
 // also in words — the accessible name and the tooltip read "forced promote ·
 // operator" — because the icons are hidden from assistive technology.
-export function overrideChip(prov) {
+export function overrideLabel(prov) {
   const o = normaliseOverride(prov);
   if (!o) return null;
   const words = o.label + ' ' + o.action;
   const chip = el('span', {
-    class: `dn-chip dn-override dn-override-${o.kind}`,
+    class: `dn-flag dn-override dn-override-${o.kind}`,
     'data-override': o.kind,
     role: 'img', 'aria-label': words + ' · operator',
     title: 'operator override · ' + words + (o.reason ? ' · ' + o.reason : ''),
@@ -594,7 +607,7 @@ export function overrideDigest(prov) {
 
 // ---- the FIELD-OVERRIDE CONTROL PLANE (the operator action cell) ------
 //
-// The override CHIP renders the FACT of an override; this CONTROL creates one —
+// The override LABEL renders the FACT of an override; this CONTROL creates one —
 // the per-challenger force-promote/reject the operator fires against the gate.
 // CONFIRM-INLINE (arm → reason → POST, never one-click) and OPTIMISTIC: a
 // 202-accepted POST stamps a local 'queued' override that survives the digest-
@@ -603,7 +616,7 @@ export function overrideDigest(prov) {
 const _pendingOverrides = new Map(); // gid -> {action, reason, state:'queued'}
 
 // The optimistic prov for a gid (override_status shape), or null — flows straight
-// into overrideChip / overrideDigest like the durable readback.
+// into overrideLabel / overrideDigest like the durable readback.
 export function pendingOverride(gid) {
   const p = _pendingOverrides.get(String(gid));
   return p ? { action: p.action, reason: p.reason, state: 'queued' } : null;
@@ -721,9 +734,18 @@ export function overrideControlCell(opts) {
   return cell;
 }
 
+// The face class for a displayed value. A value led by a word ("open",
+// "provisional · 1 game", "single-turn", "Σ Δ score") is prose and takes the
+// sans (`dn-wordval`); a number, an id such as `v2`, a hash or a dash stays in
+// the mono the value slot sets.
+export function valueFace(value) {
+  const first = String(value == null ? '' : value).trim().split(/[\s·]+/)[0] || '';
+  return /^\p{L}[\p{L}-]*$/u.test(first) ? ' dn-wordval' : '';
+}
+
 export function stat(value, key) {
   return el('div', { class: 'dn-stat' }, [
-    el('span', { class: 'v', text: value }),
+    el('span', { class: 'v' + valueFace(value), text: value }),
     el('span', { class: 'k', text: key }),
   ]);
 }
@@ -903,15 +925,14 @@ function inline(s) {
   return out.length ? out : [str];
 }
 
-// ---- chip + hovercard-body builders ---------------------------------
+// ---- flag + hovercard-body builders ---------------------------------
 //
-// chip(cls, word) — the ONE `dn-chip dn-chip-<cls>` span builder, folding the
-// five inlined `el('span', { class: 'dn-chip dn-chip-' + x, text: w })` sites.
-// `cls` is the tone suffix (live / open / closed / a verdict class); `word` the
-// label. An optional third `extra` string appends further classes verbatim (the
+// flagLabel(cls, word) — the ONE `dn-flag dn-flag-<cls>` span builder: a state
+// word set as plain text in its tone colour. `cls` is the tone suffix (live /
+// open / closed / a verdict class); `word` the label. An optional third `extra` string appends further classes verbatim (the
 // `dn-looptraj-verdict` / `dn-div-penalized` modifier sites).
-export function chip(cls, word, extra) {
-  const c = 'dn-chip dn-chip-' + cls + (extra ? ' ' + extra : '');
+export function flagLabel(cls, word, extra) {
+  const c = 'dn-flag dn-flag-' + cls + (extra ? ' ' + extra : '');
   return el('span', { class: c, text: word == null ? '' : String(word) });
 }
 
@@ -937,14 +958,14 @@ export function fidelityLabel(fidelity) {
   return f;
 }
 
-// pill(cls, word) — the `dn-pill dn-<cls>` span with a CUSTOM word. This is the
-// sibling of verdictPill: verdictPill(decision) colours by a decision AND
+// stateLabel(cls, word) — the `dn-state dn-<cls>` span with a CUSTOM word. This is the
+// sibling of verdictLabel: verdictLabel(decision) colours by a decision AND
 // derives the label from it ('seed (v0)' / 'racing…'), whereas these sites want
 // the decision COLOUR under a caller-chosen word (a role / 'champion' / a raw
-// token) — swapping them onto verdictPill would silently rewrite that label. An
+// token) — swapping them onto verdictLabel would silently rewrite that label. An
 // optional `extra` appends further classes verbatim.
-export function pill(cls, word, extra) {
-  const c = 'dn-pill dn-' + cls + (extra ? ' ' + extra : '');
+export function stateLabel(cls, word, extra) {
+  const c = 'dn-state dn-' + cls + (extra ? ' ' + extra : '');
   return el('span', { class: c, text: word == null ? '' : String(word) });
 }
 
@@ -985,7 +1006,7 @@ export function hovercardBody(...children) {
 //   * A CELL is one of: a string (plain <td> text); {text, class?} (a classed
 //     text cell — the sign-coloured delta cell rides this shape via deltaCell);
 //     {el, class?} (an el-returning cell factory — `el` may be one node or an
-//     array, so a composed cell with a control/badge composes); null → empty <td>.
+//     array, so a composed cell with a control/mark composes); null → empty <td>.
 // No querySelector; strictly within the DOM-stub budget.
 function _cellNode(c) {
   if (c == null) return el('td');
@@ -1035,7 +1056,7 @@ export function deltaCell(value, opts) {
 // ---- loop-communication helpers (pure — moved here from home.js) -----
 //
 // These read one epoch's /api/epoch/{id}/trajectory (+ cost) and shape the
-// verdict chip / promotion-rate / cost / noise-band the fleet cards AND the
+// verdict label / promotion-rate / cost / noise-band the fleet cards AND the
 // epoch view both render. They lived in home.js, which made epoch.js import
 // UPWARD from a sibling view (a reverse dependency); the shared home is ui.js.
 // The verdict words BOTH the fleet card and the epoch panel print. Only the

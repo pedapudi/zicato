@@ -12,7 +12,7 @@ import * as D from '../data.js';
 import * as svg from '../svg.js';
 import { icon } from '../icons.js';
 import { livenessFor, epochIsLive } from '../livestatus.js';
-import { gatedSwap, section, empty, stat, renderMarkdown, densityTokens, chip, dataTable, figCaption,
+import { gatedSwap, section, empty, stat, renderMarkdown, densityTokens, flagLabel, dataTable, figCaption,
   loopVerdict, promotionRateLabel, costPerPromotionLabel, fmtDurationMs, noiseBandFor } from '../ui.js';
 import { structurePill } from './structure.js';
 import { isNonGauntlet, structureLabel, normalizeStructure, racingModel, swissOverviewModel, elimModel, resolveNonGauntletSt, structureDigest } from '../tournament_model.js';
@@ -120,7 +120,7 @@ export async function render(host, ctx, params) {
   const championId = (ep && ep.current_champion != null) ? String(ep.current_champion) : null;
 
   // The configured tournament structure (§3.1) — surfaced as a one-line
-  // header pill. Absent ⇒ no pill (a gauntlet epoch that predates the
+  // header label. Absent ⇒ no label (a gauntlet epoch that predates the
   // feature reads byte-identically — the block is simply omitted upstream).
   const tournament = (ep && ep.tournament && typeof ep.tournament === 'object') ? ep.tournament : null;
   // Is this a NON-gauntlet epoch? Racing/swiss/elim are NOT N sequential
@@ -277,7 +277,7 @@ export async function render(host, ctx, params) {
     judgeTrend: judgeTrendDigest(judgeTrend),
     calib: calib ? svg.calibrationTrendDigest(calib) : null,
     ledger: ledgerDigest(ledger),
-    // the ledger's pending verdict pills read "racing…" only while THIS epoch's
+    // the ledger's pending verdict labels read "racing…" only while THIS epoch's
     // loop runs, so their tense is rendered content and belongs in the digest.
     ledgerLive: epochIsLive(state, epochId) ? 1 : 0,
   });
@@ -375,7 +375,7 @@ export async function render(host, ctx, params) {
     // spine + the challenger fan already tell that round's one-duel story).
     const figureForRound = (r) => {
       // an IN-FLIGHT round (still proposing/applying, no settled record) has no
-      // tournament figure yet — the proposing-step chips + the live banner ARE
+      // tournament figure yet — the proposing-step labels + the live banner ARE
       // its read. Returning null here also stops it from borrowing the SETTLED
       // aggregate model (racingFunnel/swissOver/elimOver) as a phantom figure.
       if (r.inflight) return null;
@@ -607,7 +607,7 @@ export function buildTrajectoryPanel(traj, opts) {
   const v = verdictLine(traj);
   if (v) {
     rowKids.push(el('div', { class: 'dn-stat' }, [
-      el('span', { class: 'v' }, [chip(v.cls, v.word, 'dn-looptraj-verdict')]),
+      el('span', { class: 'v' }, [flagLabel(v.cls, v.word, 'dn-looptraj-verdict')]),
       el('span', { class: 'k', text: 'trajectory' }),
     ]));
   }

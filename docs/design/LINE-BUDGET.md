@@ -50,9 +50,9 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 469,364 | +60,703 |
-| Production | 197,702 | 187,039 | -10,663 |
-| Production logic | 110,276 | 109,072 | -1,204 |
+| Total | 408,661 | 469,824 | +61,163 |
+| Production | 197,702 | 187,117 | -10,585 |
+| Production logic | 110,276 | 109,113 | -1,163 |
 
 The baseline row is the reference `f9052dd` measured by the classification the
 checker holds, which counts the console's hand-written entry point
@@ -84,8 +84,8 @@ production-logic series per subsystem along a branch's first-parent commits.
 
 | Subsystem | Total | Production | Production logic | Prose share |
 |---|---:|---:|---:|---:|
-| src/zicato/dashboard | 62,401 | 32,221 | 22,217 | 31.0% |
-| src/zicato/query | 17,765 | 17,765 | 11,169 | 37.1% |
+| src/zicato/dashboard | 62,860 | 32,301 | 22,262 | 31.1% |
+| src/zicato/query | 17,763 | 17,763 | 11,165 | 37.1% |
 | src/zicato/epoch | 13,995 | 13,995 | 7,849 | 43.9% |
 | src/zicato/evolve | 11,285 | 11,285 | 7,198 | 36.2% |
 | src/zicato/tournament | 11,221 | 11,221 | 6,647 | 40.8% |
@@ -527,3 +527,6 @@ dropped rows named.
 | Drawn console icons (total) | 468,791 | +573 | 469,364 | The console draws every chrome mark from one icon module instead of typed Unicode symbols that the bundled fonts lack. Figure labels place icons beside their text, and a node test rejects typed symbols in the modules. The unused sprite file is deleted. |
 | Drawn console icons (production) | 186,786 | +253 | 187,039 | The console draws every chrome mark from one icon module instead of typed Unicode symbols that the bundled fonts lack. Figure labels place icons beside their text, and a node test rejects typed symbols in the modules. The unused sprite file is deleted. |
 | Drawn console icons (production logic) | 108,906 | +166 | 109,072 | The console draws every chrome mark from one icon module instead of typed Unicode symbols that the bundled fonts lack. Figure labels place icons beside their text, and a node test rejects typed symbols in the modules. The unused sprite file is deleted. |
+| Console interface rules (total) | 469,364 | +460 | 469,824 | The console follows its interface rules: chrome, prose and figure labels in a sans with mono kept for numbers, ids and code; no accent left rail; no pill or tag chips; and a one-line top bar. A node test enforces each rule, and the trace strip model drops its unread `glyph` field. |
+| Console interface rules (production) | 187,039 | +78 | 187,117 | The console follows its interface rules: chrome, prose and figure labels in a sans with mono kept for numbers, ids and code; no accent left rail; no pill or tag chips; and a one-line top bar. A node test enforces each rule, and the trace strip model drops its unread `glyph` field. |
+| Console interface rules (production logic) | 109,072 | +41 | 109,113 | The console follows its interface rules: chrome, prose and figure labels in a sans with mono kept for numbers, ids and code; no accent left rail; no pill or tag chips; and a one-line top bar. A node test enforces each rule, and the trace strip model drops its unread `glyph` field. |

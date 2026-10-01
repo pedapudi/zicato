@@ -246,9 +246,9 @@ test('live feed: ticker rows lead with the mark of their kind; follow, outcomes 
 });
 
 test('verdicts and overrides: the override chip, the confirm row and the lifecycle terminal draw their marks', () => {
-  assertDeep(iconNames(ui.overrideChip({ present: true, action: 'promote' })), ['refresh', 'up'], 'a forced promote');
-  assertDeep(iconNames(ui.overrideChip({ action: 'reject', state: 'queued' })), ['refresh', 'more'], 'a queued override');
-  assertDeep(iconNames(ui.overrideChip({ action: 'reject', state: 'drained' })), ['refresh', 'empty'], 'a drained override');
+  assertDeep(iconNames(ui.overrideLabel({ present: true, action: 'promote' })), ['refresh', 'up'], 'a forced promote');
+  assertDeep(iconNames(ui.overrideLabel({ action: 'reject', state: 'queued' })), ['refresh', 'more'], 'a queued override');
+  assertDeep(iconNames(ui.overrideLabel({ action: 'reject', state: 'drained' })), ['refresh', 'empty'], 'a drained override');
   const cell = ui.overrideControlCell({ gid: 'v2', readOnly: false, onFire() {} });
   const host = mountInto(cell);
   allByClass(host, 'dn-ovr-arm')[0].dispatchEvent(makeEvent('click'));
@@ -320,7 +320,7 @@ test('override chip: the direction is in words for assistive technology and in t
     [{ action: 'reject', state: 'drained' }, 'drained reject · operator', 'operator override · drained reject'],
   ];
   for (const [prov, name, tip] of cases) {
-    const chip = ui.overrideChip(prov);
+    const chip = ui.overrideLabel(prov);
     assertEqual(chip.getAttribute('role'), 'img', 'the chip is one named image');
     assertEqual(chip.getAttribute('aria-label'), name, 'its accessible name states the direction');
     assertEqual(chip.getAttribute('title'), tip, 'its tooltip states the direction');

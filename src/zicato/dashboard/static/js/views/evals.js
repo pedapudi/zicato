@@ -12,7 +12,7 @@
 //     FAINT (`dn-faint`), a replicated one FIRM. The tier is the SERVED
 //     `cell.evidence` (none/single/replicated); the view never counts replicates.
 //   * A FAILURE renders beside its row's flip-rate context — every entry row
-//     carries its `flip_rate` badge (or "unmeasured"), so a lone red cell is
+//     carries its `flip_rate` mark (or "unmeasured"), so a lone red cell is
 //     never read as truth on a noisy channel.
 //   * NO FABRICATED NUMBERS — `flip_rate_measured: false` prints "unmeasured",
 //     NEVER 0.0.
@@ -33,10 +33,10 @@ import { el, svgEl } from '../core/dom.js';
 import { state } from '../core/state.js';
 import * as D from '../data.js';
 import * as M from '../matrix.js';
-import { section, empty, gatedSwap, verdictPill } from '../ui.js';
+import { section, empty, gatedSwap, verdictLabel } from '../ui.js';
 import { epochIsLive } from '../livestatus.js';
 import { CROWN, fmt } from '../svg.js';
-import { icon } from '../icons.js';
+import { icon, iconLabel } from '../icons.js';
 import { harmonografMini, harmonografIsLive } from '../core/harmonograf.js';
 import { mount as mountEvalHealth } from '../panels/evals_health.js';
 
@@ -48,7 +48,7 @@ let _failuresOnly = false;   // rows with at least one failing cell
 // flips-only = a CROSS-COLUMN verdict change (a cell whose verdict differs from
 // the previous non-null column) — "what did this candidate MOVE" (EVAL-VIEW.md
 // §5). This is NOT the entry-noise (A/A flip-rate) signal, which lives on the
-// per-row flip badge; a noisy channel with no cross-column change is excluded.
+// per-row flip mark; a noisy channel with no cross-column change is excluded.
 let _flipsOnly = false;
 let _holdoutOnly = false;    // rows in the holdout slice
 
@@ -60,7 +60,7 @@ function shortId(s, n) {
   return str.length > cap ? str.slice(0, cap - 1) + '…' : str;
 }
 
-// The flip-rate badge for an entry row (EVAL-VIEW.md §4.2 / §4.4). Measured →
+// The flip-rate mark for an entry row (EVAL-VIEW.md §4.2 / §4.4). Measured →
 // the percentage, toned by magnitude; unmeasured → the honest "unmeasured"
 // word, NEVER a fabricated 0. Read straight off the served entry — the view
 // never computes a flip rate.
@@ -75,7 +75,7 @@ function flipBadge(entry) {
   // a noisy channel (any flip) earns caution; a clean 0% reads quiet-good.
   const tone = pct === 0 ? 'dn-eval-flip-clean' : (pct >= 20 ? 'dn-eval-flip-hot' : 'dn-eval-flip-warm');
   // N4: name the calibrated champion so a STALE flip rate (measured on an older
-  // champion than the current spine tip) is visible in the badge tooltip.
+  // champion than the current spine tip) is visible in the mark tooltip.
   const onGen = entry.calibration_generation ? ' on ' + entry.calibration_generation : '';
   return el('span', {
     class: 'dn-eval-flip ' + tone,
@@ -134,7 +134,7 @@ function digestOf(matrix, live, epochLive) {
     ep: matrix.epoch_id, c: cands, r: rows, x: cells,
     cal: [cal.measured ? 1 : 0, cal.runs || 0, Math.round((cal.max_abs_delta || 0) * 1000)],
     // BOTH liveness reads are view-visible: the harmonograf deep-link appears
-    // with `live`, and the pending pill's TENSE ("racing…" vs "undecided")
+    // with `live`, and the pending label's TENSE ("racing…" vs "undecided")
     // moves with `epochLive`. A digest blind to either would freeze the stale
     // wording on the beat that settles the loop.
     live: live ? 1 : 0, el: epochLive ? 1 : 0, f: fbits(),
@@ -149,7 +149,7 @@ export async function render(host, ctx, params, _route) {
   const epochId = (params && params.epochId) || null;
   const matrix = epochId ? await D.evalMatrix(epochId) : null;
   const live = harmonografIsLive();
-  // Is the loop running FOR THIS EPOCH? The verdict pills' tense hangs off it:
+  // Is the loop running FOR THIS EPOCH? The verdict labels' tense hangs off it:
   // an undecided candidate in an epoch nothing is racing did not stay in the
   // race — the race ended without deciding it (issue #207 §2).
   const epochLive = epochIsLive(state, epochId);
@@ -234,7 +234,7 @@ function buildToolbar(host, ctx, matrix) {
   for (const [key, label, get, set] of defs) {
     const active = get();
     const chip = el('button', {
-      class: 'dn-evals-chip' + (active ? ' dn-evals-chip-on' : ''),
+      class: 'dn-evals-filter' + (active ? ' dn-evals-filter-on' : ''),
       type: 'button', 'data-filter': key,
       'aria-pressed': active ? 'true' : 'false',
       text: label,
@@ -309,7 +309,7 @@ function roundGroupRow(candidates) {
 }
 
 // A candidate column header: the champion-spine crown + the gen id + the served
-// decision verdict pill (reusing the shipped dn-pill vocabulary — NO new chip).
+// decision verdict label (reusing the shipped dn-state vocabulary — NO new chip).
 //
 // The decision comes from the server-owned candidate payload rather than from a
 // local re-reading of `promoted`. Deriving it inline here cannot see the seed or
@@ -334,21 +334,21 @@ function candidateHeader(ctx, epochId, c, epochLive) {
   }));
   // the shipped decision vocabulary, TRISTATE (§3.1 / F1): the seed → 'baseline'
   // (it faced no gate, so it never WON one), promoted → dn-promoted, rejected →
-  // dn-rejected, null (in-flight / never raced) → the shipped 'pending' pill —
+  // dn-rejected, null (in-flight / never raced) → the shipped 'pending' label —
   // NEVER collapse a null into rejected (the Class-B bug).
   const decision = c.decision || 'pending';
-  kids.push(verdictPill(decision, { live: epochLive, label: c.decision_label }));
+  kids.push(verdictLabel(decision, { live: epochLive, label: c.decision_label }));
   return M.matrixColumnHeader({
     extra: 'dn-evalmtx-gen' + (spine ? ' dn-evalmtx-spine' : ''),
     attrs: { scope: 'col', 'data-gen': String(c.generation_id) },
   }, [el('div', { class: 'dn-evalmtx-genhead' }, kids)]);
 }
 
-// An entry row header: the entry id + the holdout marker + the flip-rate badge.
+// An entry row header: the entry id + the holdout marker + the flip-rate mark.
 function entryHeader(entry) {
   const kids = [el('span', { class: 'dn-mtx-file dn-evalmtx-entry', text: entry.entry_id })];
   if (entry.slice === 'holdout') {
-    kids.push(el('span', { class: 'dn-evalmtx-holdout-tag', title: 'held-out entry (not scored into the gate)', text: 'holdout' }));
+    kids.push(el('span', { class: 'dn-evalmtx-holdout-mark', title: 'held-out entry (not scored into the gate)' }, iconLabel('holdout', 'holdout')));
   }
   kids.push(flipBadge(entry));
   return M.matrixRowHeader({

@@ -20,7 +20,7 @@ import { livenessFor } from '../livestatus.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
 import { icon, iconLabel } from '../icons.js';
-import { gatedSwap, section, empty, stat, densityTokens, prText, metricsDigest, scoreFmt, pill, dataTable, deltaCell, fmtDurationMs, ENTRY_KIND_LABEL } from '../ui.js';
+import { gatedSwap, section, empty, stat, densityTokens, prText, metricsDigest, scoreFmt, stateLabel, dataTable, deltaCell, fmtDurationMs, ENTRY_KIND_LABEL } from '../ui.js';
 import { splitFrame, captureScroll, restoreScroll } from '../compare.js';
 import * as facets from '../facets.js';
 import { buildTurnNode, dedupConsecutiveTurns, reconcileTurns } from '../turns.js';
@@ -343,7 +343,7 @@ export async function render(host, ctx, params, route) {
     ]));
     const tags = (def && Array.isArray(def.tags)) ? def.tags : [];
     if (tags.length) {
-      nodes.push(el('p', { class: 'dn-faint dn-board-tags', text: 'tags · ' + tags.join(' · ') }));
+      nodes.push(el('p', { class: 'dn-faint dn-board-taglist', text: 'tags · ' + tags.join(' · ') }));
     }
     if (def && def.input_preview) {
       nodes.push(el('div', { class: 'dn-panel' }, [
@@ -480,7 +480,7 @@ export async function render(host, ctx, params, route) {
           cells: [
             { class: 'dn-mono', el: [
               el('span', null, r.promoted ? iconLabel(svg.CROWN.current, r.gen, { after: true }) : [r.gen]),
-              r.cached ? el('span', { class: 'dn-cached-badge-mark', title: r.sourceEpoch ? 'cached · from ' + r.sourceEpoch : 'cached champion result',
+              r.cached ? el('span', { class: 'dn-cached-mark', title: r.sourceEpoch ? 'cached · from ' + r.sourceEpoch : 'cached champion result',
                 text: r.sourceEpoch ? ' cached · ' + r.sourceEpoch : ' cached' }) : null,
             ] },
             { class: 'dn-num dn-mono', text: svg.isNum(r.primary) ? svg.fmt(r.primary, channel === 'score' ? 2 : 1) : (r.running ? 'running' : '—') },
@@ -682,15 +682,15 @@ function transcriptColumn(sel, conv, championId, side) {
     return col;
   }
   const role = sel.gen === championId ? 'champion' : (sel.parent ? 'challenger' : 'seed');
-  // Class B: the pill's COLOUR follows the candidate's decision, so an unscored
+  // Class B: the label's COLOUR follows the candidate's decision, so an unscored
   // challenger reads pending (neutral), never rejected.
   const pillCls = sel.decision || 'pending';
   col.appendChild(el('div', { class: 'dn-xscript-head' }, [
     el('span', { class: 'dn-mono' }, sel.promoted ? iconLabel(svg.CROWN.current, sel.gen, { after: true }) : [sel.gen]),
-    pill(pillCls, role),
+    stateLabel(pillCls, role),
     // A RUNNING candidate gets a live marker so the operator reads the column
     // as a streaming transcript (it appends as new turns land) rather than a final one.
-    sel.running ? el('span', { class: 'dn-pill dn-live dn-xscript-live' }, [
+    sel.running ? el('span', { class: 'dn-state dn-live dn-xscript-live' }, [
       el('span', { class: 'dn-inflight-pulse', 'aria-hidden': 'true' }),
       el('span', { text: 'live' }),
     ]) : null,
@@ -822,7 +822,7 @@ export function weightText(w) {
   return '×' + (Number.isInteger(w) ? String(w) : w.toFixed(2));
 }
 
-// Severity → the shipped pill TONE. Reuses the colour vocabulary rather than
+// Severity → the shipped label TONE. Reuses the colour vocabulary rather than
 // minting a severity palette: red for critical, caution for warning, neutral
 // for info and for anything the board spells differently.
 export function severityTone(severity) {
@@ -865,19 +865,19 @@ function scorecardLink(roster, name, ctx, epochId) {
   const rid = (roster && roster.scorecards && roster.scorecards[name]) || null;
   if (!rid) return el('span', { class: 'dn-faint', text: '—' });
   return el('a', {
-    class: 'dn-linkbtn dn-mono', href: ctx.href('instrument', { epochId, reflectionId: rid, judge: name }),
+    class: 'dn-idlink', href: ctx.href('instrument', { epochId, reflectionId: rid, judge: name }),
     title: 'open this judge’s scorecard in the Instrument lens (' + rid + ')',
   }, iconLabel('forward', 'scorecard', { after: true }));
 }
 
-// One built-in's chip. A suppressed built-in carries the reason IN the chip, not
+// One built-in's label. A suppressed built-in carries the reason IN the label, not
 // only in a tooltip: an operator scanning the strip must be able to read why a
 // judge is dark without hovering it.
 function builtinChip(b, weights) {
   const by = Array.isArray(b.suppressed_by) ? b.suppressed_by : [];
   const w = weightText(weights[b.name]);
   return el('span', {
-    class: 'dn-pill ' + (b.suppressed ? 'dn-judge-off' : 'dn-baseline'),
+    class: 'dn-state ' + (b.suppressed ? 'dn-judge-off' : 'dn-baseline'),
     title: b.suppressed
       ? 'suppressed by disable_drift' + (by.length ? ' · ' + by.join(' · ') : '')
       : 'armed for every run on this board',
@@ -929,7 +929,7 @@ export function judgesPanel(roster, entryJudges, ctx, epochId) {
           j.path ? el('div', { class: 'dn-faint', style: 'font-size:10.5px;', text: j.path }) : null,
         ].filter(Boolean) },
         { class: 'dn-mono dn-faint', text: j.mode || '—' },
-        { el: j.severity ? pill(severityTone(j.severity), j.severity) : el('span', { class: 'dn-faint', text: '—' }) },
+        { el: j.severity ? stateLabel(severityTone(j.severity), j.severity) : el('span', { class: 'dn-faint', text: '—' }) },
         { el: scorecardLink(roster, j.name, ctx, epochId) },
       ]; }),
     }));
@@ -1069,7 +1069,7 @@ function instrumentStats(dossier) {
 
 // A link to another candidate's dossier (the attribution targets).
 function candLink(gen, ctx, epochId) {
-  return el('a', { class: 'dn-linkbtn dn-mono', href: ctx.href('candidate', { epochId, gen }), text: gen });
+  return el('a', { class: 'dn-idlink', href: ctx.href('candidate', { epochId, gen }), text: gen });
 }
 
 // Interleave candidate links with faint separators (the regressed-by list).

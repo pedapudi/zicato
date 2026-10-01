@@ -32,7 +32,7 @@ import * as svg from '../svg.js';
 import { icon, iconLabel } from '../icons.js';
 import { attachHovercard } from '../hovercard.js';
 import { lifecycleDag, rungProgression } from '../dag.js';
-import { gatedSwap, section, subhead, empty, stat, verdictPill, pill, overrideChip, overrideDigest, decisionOf, densityTokens, prText, metricsDigest, truncate, hovercardBody, dataTable, deltaCell, ratingModel, ratingTripleDigest } from '../ui.js';
+import { gatedSwap, section, subhead, empty, stat, valueFace, verdictLabel, stateLabel, overrideLabel, overrideDigest, decisionOf, densityTokens, prText, metricsDigest, truncate, hovercardBody, dataTable, deltaCell, ratingModel, ratingTripleDigest } from '../ui.js';
 import { comparePicker, splitFrame } from '../compare.js';
 import { candidateProgression, inflightForActiveEpoch, inflightForEntryGen, runProgressRatio, liveMatchupsForCandidate, liveBelongsToEpoch, resolveNonGauntletSt, racingModel, structureDigest, normalizeStructure } from '../tournament_model.js';
 import { roundsFromTimeline, reignModel } from '../rounds.js';
@@ -171,7 +171,7 @@ export async function render(host, ctx, params, route) {
   const ratingByGen = new Map(rows.map((g) => [String(g.generation_id), { elo: g.elo, elo_se: g.elo_se, elo_games: g.elo_games }]));
   sideA.rating = ratingByGen.get(String(genId)) || null;
   if (sideB) sideB.rating = ratingByGen.get(String(cmpId)) || null;
-  // Is the loop running FOR THIS EPOCH? The verdict pills' tense hangs off it:
+  // Is the loop running FOR THIS EPOCH? The verdict labels' tense hangs off it:
   // a gate with no resolved decision is "racing…" only while something is
   // actually racing; on a settled / interrupted epoch it went undecided.
   sideA.live = liveForThisEpoch;
@@ -328,7 +328,7 @@ function resolveCandidate(dossier, genId, genList, experiments, scalarByGen, cha
   // per-board scalars are REUSED from a prior epoch/run rather than re-executed
   // this round. The epoch's OWN per-entry rows carry `cached`/`source_epoch`/
   // `source_run`, so a cached champion shows its results with a "cached · from
-  // <source_epoch>" badge — never "no board entries scored". The header tag
+  // <source_epoch>" mark — never "no board entries scored". The header tag
   // reflects the eval mode: any cached entry ⇒ "fast — champion reused".
   const cachedEntries = entries.filter((e) => e && e.cached);
   const cached = cachedEntries.length > 0;
@@ -814,7 +814,7 @@ function deriveGateExplain(gate) {
 }
 
 // A headline stat in the PROJECTED treatment — the value reads in the projected
-// tone with a "proj" badge + a scored board-progress sub-bar (boards_done/total)
+// tone with a "proj" mark + a scored board-progress sub-bar (boards_done/total)
 // so an in-flight candidate's projected scalar / Δ is visibly NOT a settled one.
 function projStat(value, key, proj) {
   const bd = proj && svg.isNum(proj.boards_done) ? proj.boards_done : null;
@@ -823,7 +823,7 @@ function projStat(value, key, proj) {
   return el('div', { class: 'dn-stat dt-proj', title: 'projected — boards still streaming in' }, [
     el('span', { class: 'v dt-proj-val' }, [
       el('span', { text: value }),
-      el('span', { class: 'dt-proj-badge', text: 'proj' }),
+      el('span', { class: 'dt-proj-mark', text: 'proj' }),
     ]),
     el('span', { class: 'k', text: key }),
     frac != null ? el('span', { class: 'dt-proj-bar', title: bd + '/' + bt + ' boards scored' }, [
@@ -939,7 +939,7 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
   }
 
   // PROJECTED headline — a candidate with no SETTLED scalar yet (boards still
-  // streaming) shows its live PROJECTED scalar / Δ: "~<value>" + a "proj" badge
+  // streaming) shows its live PROJECTED scalar / Δ: "~<value>" + a "proj" mark
   // + the dimmed/dashed treatment, distinct from a committed number.
   const settledScalar = svg.isNum(s.scalarByGen.get(genId)) ? s.scalarByGen.get(genId) : null;
   const proj = (settledScalar == null && s.projected) ? s.projected : null;
@@ -965,7 +965,7 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
     deltaStat,
     ratingStat,
     stat(node.parent || 'seed', 'parent'),
-    el('div', { class: 'dn-stat' }, [verdictPill(s.decision, { live: s.live, label: s.node.decisionLabel })]),
+    el('div', { class: 'dn-stat' }, [verdictLabel(s.decision, { live: s.live, label: s.node.decisionLabel })]),
   ]));
 
   // ── WHAT THIS CANDIDATE IS (§4) — its idea, before its numbers ──
@@ -1005,8 +1005,8 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
   // cached champion is never read as a fresh run. (full ⇒ no tag.)
   if (s.cached) {
     const src = s.cachedProvenance && s.cachedProvenance.sourceEpoch;
-    host.appendChild(el('div', { class: 'dn-cached-tag dn-faint', 'data-eval-mode': 'fast' }, [
-      el('span', { class: 'dn-cached-tag-pill', text: 'fast — champion reused' }),
+    host.appendChild(el('div', { class: 'dn-cached-line dn-faint', 'data-eval-mode': 'fast' }, [
+      el('span', { class: 'dn-cached-word', text: 'fast — champion reused' }),
       src ? el('span', { class: 'dn-mono', text: ' · from ' + src }) : null,
     ].filter(Boolean)));
   }
@@ -1096,13 +1096,13 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
     const sbt = pj && svg.isNum(pj.boards_total) ? pj.boards_total : null;
     const sfrac = (sbd != null && sbt != null && sbt > 0) ? Math.min(1, sbd / sbt) : null;
     liveCard.appendChild(el('div', { class: 'dn-inflight-head' }, [
-      el('span', { class: 'dn-inflight-pill' }, [
+      el('span', { class: 'dn-inflight-state' }, [
         el('span', { class: 'dn-inflight-pulse', 'aria-hidden': 'true' }),
         el('span', { text: 'live' }),
       ]),
       el('span', { class: 'dn-inflight-count', text: String(inflight.length) + (inflight.length === 1 ? ' board running' : ' boards running') }),
       el('span', { class: 'dn-faint', text: ' for this candidate' }),
-      sfrac != null ? el('span', { class: 'dt-proj-badge', text: 'proj' }) : null,
+      sfrac != null ? el('span', { class: 'dt-proj-mark', text: 'proj' }) : null,
       sfrac != null ? el('span', { class: 'dt-proj-bar', title: sbd + '/' + sbt + ' boards scored (projected)' }, [
         el('span', { class: 'dt-proj-bar-fill', style: 'width:' + Math.round(sfrac * 100) + '%;' }),
       ]) : null,
@@ -1181,8 +1181,8 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
   // board entries scored".
   if (s.cached) {
     const src = s.cachedProvenance && s.cachedProvenance.sourceEpoch;
-    scoreCard.appendChild(el('div', { class: 'dn-cached-badge dn-faint' }, [
-      el('span', { class: 'dn-cached-badge-mark', text: 'cached' }),
+    scoreCard.appendChild(el('div', { class: 'dn-cached-note dn-faint' }, [
+      el('span', { class: 'dn-cached-mark', text: 'cached' }),
       el('span', { text: src ? ' · from ' + src : ' · champion results reused' }),
     ]));
   }
@@ -1295,7 +1295,7 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
       // do NOT drop the panel: a clearly-marked projected placeholder + the
       // racing affordance keep the dossier coherent while boards stream.
       radarCard.appendChild(el('div', { class: 'dn-radar-projhint dt-proj' }, [
-        el('span', { class: 'dt-proj-badge', text: 'projected' }),
+        el('span', { class: 'dt-proj-mark', text: 'projected' }),
         el('span', { class: 'dn-faint', text: ' silhouette forms as axes land · ' + s.radar.axes.length + ' of ≥3 so far' }),
       ]));
       radarCard.appendChild(racingAffordance());
@@ -1498,7 +1498,7 @@ function racingAffordance() {
   return el('div', { class: 'dn-racing-affordance dt-proj' }, [
     el('span', { class: 'dn-inflight-pulse', 'aria-hidden': 'true' }),
     el('span', { class: 'dn-racing-affordance-lab' }, [
-      el('span', { class: 'dt-proj-badge', text: 'racing' }),
+      el('span', { class: 'dt-proj-mark', text: 'racing' }),
       el('span', { class: 'dn-faint', text: ' settled comparisons (per-board dumbbell · gate ladder) appear once boards finish' }),
     ]),
   ]);
@@ -1737,7 +1737,7 @@ function racingFieldPanels(st, epochId, genId, championId, scalarByGen, liveProj
   // (1) FIELD STANDINGS — the racing analogue of the pairwise scalar bullet.
   const standCard = el('div', { class: 'dn-panel' });
   standCard.appendChild(el('div', { class: 'dn-racing-standhead' }, [
-    el('span', { class: 'dn-pill dn-promoted', text: candRank > 0 ? `rank ${candRank} / ${fieldSize}` : `field of ${fieldSize}` }),
+    el('span', { class: 'dn-state dn-promoted', text: candRank > 0 ? `rank ${candRank} / ${fieldSize}` : `field of ${fieldSize}` }),
     el('span', { class: 'dn-faint', text: ` · ${survivorCount} of ${fieldSize} survived the cuts` }),
   ]));
   const stbl = dataTable({
@@ -1752,7 +1752,7 @@ function racingFieldPanels(st, epochId, genId, championId, scalarByGen, liveProj
           { class: 'dn-mono dn-faint', text: String(i + 1) },
           { el: el('span', { class: 'dn-mono' + (isCand ? ' dn-racing-cand' : '') }, isChamp ? iconLabel(svg.CROWN.current, f.id, { after: true }) : [f.id]) },
           { class: 'dn-num dn-mono', text: svg.isNum(f.scalar) ? svg.fmt(f.scalar, 1) : '—' },
-          { el: pill(f.survived ? 'promoted' : 'rejected', f.survived ? 'racing' : ('cut at rung ' + f.cut_rung)) },
+          { el: stateLabel(f.survived ? 'promoted' : 'rejected', f.survived ? 'racing' : ('cut at rung ' + f.cut_rung)) },
         ],
       };
       if (!isCand) { row.style = 'cursor: pointer'; row.onClick = () => ctx.navigate('candidate', { epochId, gen: f.id }, opts); }
@@ -1825,8 +1825,8 @@ function allMatchupsPanel(mine, genId, championId, ctx, epochId) {
         onClick: () => ctx.navigate('candidate', { epochId, gen: genId }, { cmp: other }),
         cells: [
           { el: el('span', { class: 'dn-mono', text: `${m.champion} → ${m.challenger}` }) },
-          { el: pill(asChamp ? 'promoted' : 'rejected', asChamp ? 'champion' : 'challenger') },
-          { el: pill(dec, dec) },
+          { el: stateLabel(asChamp ? 'promoted' : 'rejected', asChamp ? 'champion' : 'challenger') },
+          { el: stateLabel(dec, dec) },
           deltaCell(m.delta_scalar, { base: 'dn-num dn-mono', text: svg.isNum(m.delta_scalar) ? svg.fmtSigned(m.delta_scalar, 2) : '—' }),
           { class: 'dn-faint', text: m.hypothesis_core_idea ? truncate(m.hypothesis_core_idea, 64) : '—' },
         ],
@@ -1841,11 +1841,11 @@ function allMatchupsPanel(mine, genId, championId, ctx, epochId) {
 }
 
 // The ABSOLUTE-SCALAR endpoints the gate Δ is measured between, surfaced as a
-// pair of `dn-stat` chips LEFT of the Δ chips in the gate head. The champion
+// pair of `dn-stat` labels LEFT of the Δ labels in the gate head. The champion
 // side is the SETTLED floor (`champion_scalar`); the challenger side is its
 // absolute `challenger_scalar` when SETTLED, or — while boards are still
 // streaming in for THIS pair — the LIVE PROJECTED scalar in the projStat
-// treatment (proj badge + boards_done/total bar) so an in-flight endpoint is
+// treatment (proj mark + boards_done/total bar) so an in-flight endpoint is
 // visibly NOT a settled one. Closes the "Δ without endpoints" gap with no new
 // backend data: `champion_scalar`/`challenger_scalar` and `live` already ride on
 // the gate object. Returns null when NEITHER side resolves (absent → the gate
@@ -2061,8 +2061,8 @@ function replicationStrip(rating) {
 
   // schedule exhausted → an explicit inconclusive caption, NEVER a faked crown.
   if (exhausted) {
-    wrap.appendChild(el('p', { class: 'dn-faint dn-bt-inconclusive',
-      text: 'schedule exhausted — the duels did not separate the two strengths. Inconclusive: held deferred (no faked crown).' }));
+    wrap.appendChild(el('p', { class: 'dn-bt-inconclusive' },
+      iconLabel('caution', 'schedule exhausted — the duels did not separate the two strengths. Inconclusive: held deferred (no faked crown).')));
   }
   return wrap;
 }
@@ -2081,7 +2081,7 @@ export function ratingBlock(rating) {
   if (!rating.credible && nDuels < MIN_CREDIBLE_DUELS) {
     const need = MIN_CREDIBLE_DUELS - nDuels;
     wrap.appendChild(el('div', { class: 'dn-bt-forming dt-proj' }, [
-      el('span', { class: 'dt-proj-badge', text: 'forming' }),
+      el('span', { class: 'dt-proj-mark', text: 'forming' }),
       el('span', { class: 'dn-faint', text: ' rating forms after ' + MIN_CREDIBLE_DUELS
         + ' duels · ' + nDuels + ' resolved' + (need > 0 ? ' (' + need + ' more)' : '') }),
     ]));
@@ -2315,7 +2315,7 @@ function defenceRow(d, opts) {
     el('summary', null, [
       el('span', { class: 'chev', 'aria-hidden': 'true' }, [icon('expand')]),
       el('span', { class: 'dn-mono dn-gate-defence-vs', text: 'vs ' + d.spec.chall }),
-      verdictPill(decision, opts),
+      verdictLabel(decision, opts),
       el('span', { class: 'dn-mono dn-faint dn-gate-defence-delta',
         text: delta == null ? 'Δ —' : 'Δ ' + svg.fmtSigned(delta, 3) }),
     ]),
@@ -2329,13 +2329,13 @@ export function gatePanel(gate, comparison, spec, opts) {
   const card = el('div', { class: 'dn-panel dn-gate' });
   // A gate with no resolved decision is still pending rather than rejected.
   // The backend emits decision:"deferred" verbatim until BOTH aggregates
-  // resolve — decisionOf threads it through to its caution-toned pill.
+  // resolve — decisionOf threads it through to its caution-toned label.
   const decision = decisionOf(gate) || 'pending';
-  // operator-override provenance rides BESIDE the verdict (overrideChip) WITHOUT
+  // operator-override provenance rides BESIDE the verdict (overrideLabel) WITHOUT
   // recoloring it. Absent (gate-decided / pre-feature) → null → byte-identical.
-  const ovChip = overrideChip(gate && gate.override);
+  const ovChip = overrideLabel(gate && gate.override);
   // hover detail (the operator's reason) lives in the hovercard singleton,
-  // OUTSIDE the gated render — the chip itself stays a stable node.
+  // OUTSIDE the gated render — the label itself stays a stable node.
   if (ovChip && gate && gate.override) {
     const ov = gate.override;
     const act = ov.action === 'promote' ? 'force-promoted' : 'force-rejected';
@@ -2346,13 +2346,13 @@ export function gatePanel(gate, comparison, spec, opts) {
     ]));
   }
   card.appendChild(el('div', { class: 'dn-gate-head' }, [
-    el('div', { class: 'dn-gate-decision' }, [verdictPill(decision, opts), ovChip].filter(Boolean)),
-    // ABSOLUTE scalars sit LEFT of the Δ chips — the settled champion floor and
+    el('div', { class: 'dn-gate-decision' }, [verdictLabel(decision, opts), ovChip].filter(Boolean)),
+    // ABSOLUTE scalars sit LEFT of the Δ labels — the settled champion floor and
     // the candidate's absolute scalar (or, mid-flight, its PROJECTED scalar in
     // the projStat treatment) so the operator reads the two ENDPOINTS the Δ is
     // taken between rather than the gap alone. Each side is absent-tolerant: an
     // unresolved aggregate (champion_scalar/challenger_scalar = null) drops its
-    // chip, and with both absent no absolute block is drawn at all.
+    // label, and with both absent no absolute block is drawn at all.
     absoluteScalars(gate),
     el('div', { class: 'dn-row dn-gate-deltas' }, [
       svg.isNum(gate.delta_scalar) ? stat(svg.fmtSigned(gate.delta_scalar, 2), 'Δ scalar (loss)') : null,
@@ -2466,7 +2466,7 @@ export function perJudgeComparisonBlock(comparison, spec) {
         cells: [
           { el: el('span', null, [
             el('span', { class: 'dn-mono', text: name }),
-            isDriver ? el('span', { class: 'dn-judgecmp-drivertag dn-faint', text: ' · primary driver' }) : null,
+            isDriver ? el('span', { class: 'dn-judgecmp-drivername dn-faint', text: ' · primary driver' }) : null,
           ].filter(Boolean)) },
           { class: 'dn-num dn-mono', text: svg.isNum(j.champion_weighted_loss) ? svg.fmt(j.champion_weighted_loss, 2) : '—' },
           { class: 'dn-num dn-mono', text: svg.isNum(j.challenger_weighted_loss) ? svg.fmt(j.challenger_weighted_loss, 2) : '—' },
@@ -2619,7 +2619,7 @@ export function buildPredictionScorecard(scorecard) {
   return card;
 }
 
-// The pass-rate claim chip: the proposer's free-text predicted Δ vs the realised
+// The pass-rate claim label: the proposer's free-text predicted Δ vs the realised
 // board-wide Δ. NOT a stamped match (no hits/total contribution) — surfaced for
 // context. Returns null when the proposer made no pass-rate claim.
 function predRateChip(pr) {
@@ -2628,7 +2628,7 @@ function predRateChip(pr) {
   const observed = svg.isNum(pr.observed) ? svg.fmtSigned(pr.observed, 2) : null;
   if (!predicted && observed == null) return null;
   return el('div', { class: 'dn-stat dn-predrate' }, [
-    el('span', { class: 'v', text: observed == null ? (predicted || '—') : observed }),
+    el('span', { class: 'v' + valueFace(observed == null ? (predicted || '—') : observed), text: observed == null ? (predicted || '—') : observed }),
     el('span', { class: 'k', text: 'pass-rate Δ · ' + (predicted ? 'claimed “' + truncate(predicted, 24) + '”' : 'observed') }),
   ]);
 }
@@ -2738,7 +2738,7 @@ function decompRow(seam, view) {
     el('span', { class: 'dn-decomp-seam', text: seam }),
     el('div', {}, [
       el('span', { class: 'dn-decomp-src', text: source }),
-      tagText ? el('span', { class: failOpen ? 'dn-decomp-failtag' : 'dn-decomp-kindtag', text: ' · ' + tagText }) : null,
+      tagText ? el('span', { class: failOpen ? 'dn-decomp-fail' : 'dn-decomp-kind', text: ' · ' + tagText }) : null,
     ].filter(Boolean)),
   ]);
 }

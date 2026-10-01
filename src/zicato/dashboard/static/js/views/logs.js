@@ -4,7 +4,7 @@
 // the structured log streams are per-invocation): one JSONL stream per evolve
 // / reflect invocation, tailed through the SAME query-layer reader the CLI and
 // `/api/logs` share. The pane renders the tail as quiet mono rows, level-
-// coloured via the existing --v2 tone tokens, with level-filter chips and an
+// coloured via the existing --v2 tone tokens, with level-filter labels and an
 // invocation picker — no decorative chrome.
 //
 // RENDER DISCIPLINE. The view is fetch-then-gatedSwap: it folds its records
@@ -112,7 +112,7 @@ function build(host, ctx, view, records, invocations, resolvedInv) {
     el('p', { class: 'dn-lede', text: 'The structured log stream for one evolve / reflect invocation — captured under .zicato/logs/, read back files-canonical. Observability only: nothing here feeds a score, a gate, or the journal.' }),
   ]));
 
-  // ── toolbar: invocation picker + level filter chips ──────────────────
+  // ── toolbar: invocation picker + level filter labels ──────────────────
   const toolbar = el('div', { class: 'dt-logs-toolbar' });
 
   if (invocations.length) {
@@ -132,11 +132,11 @@ function build(host, ctx, view, records, invocations, resolvedInv) {
     ]));
   }
 
-  const chips = el('div', { class: 'dt-logs-chips', role: 'group', 'aria-label': 'Level filter' });
+  const chips = el('div', { class: 'dt-logs-levels', role: 'group', 'aria-label': 'Level filter' });
   for (const lvl of LEVELS) {
     const active = lvl === _level;
     const chip = el('button', {
-      class: 'dt-logs-chip' + (active ? ' dt-logs-chip-on' : '') + (lvl !== 'ALL' ? ' dt-logs-t-' + levelTone(lvl) : ''),
+      class: 'dt-logs-level' + (active ? ' dt-logs-level-on' : '') + (lvl !== 'ALL' ? ' dt-logs-t-' + levelTone(lvl) : ''),
       type: 'button',
       'aria-pressed': active ? 'true' : 'false',
       text: lvl.toLowerCase(),

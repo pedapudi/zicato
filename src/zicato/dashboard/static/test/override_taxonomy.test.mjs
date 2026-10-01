@@ -1,12 +1,12 @@
 // test/override_taxonomy.test.mjs — the UNIFIED DECISION-STATE TAXONOMY +
-// overrideChip primitive (the cockpit foundation BT/b4 + field-override/b5
+// overrideLabel primitive (the cockpit foundation BT/b4 + field-override/b5
 // consume).
 //
 // Pins:
-//   * verdictPill renders the dormant 'deferred' state end-to-end (the
-//     dn-pill.dn-deferred → --v2-caution chain) and normaliseDecision threads a
+//   * verdictLabel renders the dormant 'deferred' state end-to-end (the
+//     dn-state.dn-deferred → --v2-caution chain) and normaliseDecision threads a
 //     real gate decision='deferred' through;
-//   * overrideChip(prov) is a SIBLING to verdictPill that layers operator-
+//   * overrideLabel(prov) is a SIBLING to verdictLabel that layers operator-
 //     override provenance (forced↑ / forced✕ / queued / drained) BESIDE the
 //     verdict WITHOUT recoloring it; absent / present:false → null (byte-
 //     identical to today);
@@ -31,21 +31,21 @@ function allByClass(host, cls) {
   return host.querySelectorAll('[class]').filter((n) => hasClass(n, cls));
 }
 
-// ── 1. verdictPill: the dormant 'deferred' state renders end-to-end ──────────
-test('verdictPill: deferred → dn-pill.dn-deferred with a "deferred" label (the caution chain)', () => {
-  const pill = ui.verdictPill('deferred');
-  assert(hasClass(pill, 'dn-pill'), 'carries the dn-pill base class');
+// ── 1. verdictLabel: the dormant 'deferred' state renders end-to-end ──────────
+test('verdictLabel: deferred → dn-state.dn-deferred with a "deferred" label (the caution chain)', () => {
+  const pill = ui.verdictLabel('deferred');
+  assert(hasClass(pill, 'dn-state'), 'carries the dn-state base class');
   assert(hasClass(pill, 'dn-deferred'), 'carries the dn-deferred state class (→ --v2-caution in every theme)');
   assertEqual(pill.textContent, 'deferred', 'reads "deferred" (not "racing…"/"seed (v0)")');
 });
 
-test('verdictPill: the five-state vocabulary each map to their own class', () => {
+test('verdictLabel: the five-state vocabulary each map to their own class', () => {
   const map = {
     promoted: 'dn-promoted', rejected: 'dn-rejected', deferred: 'dn-deferred',
     baseline: 'dn-baseline', pending: 'dn-pending',
   };
   for (const [decision, cls] of Object.entries(map)) {
-    assert(hasClass(ui.verdictPill(decision), cls), decision + ' → ' + cls);
+    assert(hasClass(ui.verdictLabel(decision), cls), decision + ' → ' + cls);
   }
 });
 
@@ -65,54 +65,54 @@ test('decisionOf: a stamped decision:"deferred" reads back verbatim (not pending
   assertEqual(ui.normaliseDecision, undefined, 'normaliseDecision (the substring classifier) is deleted');
 });
 
-// ── 3. overrideChip: each operator state + the back-compat absent path ───────
-test('overrideChip: absent / present:false → null (byte-identical to today)', () => {
-  assertEqual(ui.overrideChip(null), null, 'null → no chip');
-  assertEqual(ui.overrideChip(undefined), null, 'undefined → no chip');
-  assertEqual(ui.overrideChip({}), null, 'empty → no chip');
-  assertEqual(ui.overrideChip({ present: false }), null, 'gate.override present:false → no chip (back-compat)');
-  assertEqual(ui.overrideChip({ action: 'shrug' }), null, 'an unknown action → no chip');
+// ── 3. overrideLabel: each operator state + the back-compat absent path ───────
+test('overrideLabel: absent / present:false → null (byte-identical to today)', () => {
+  assertEqual(ui.overrideLabel(null), null, 'null → no chip');
+  assertEqual(ui.overrideLabel(undefined), null, 'undefined → no chip');
+  assertEqual(ui.overrideLabel({}), null, 'empty → no chip');
+  assertEqual(ui.overrideLabel({ present: false }), null, 'gate.override present:false → no chip (back-compat)');
+  assertEqual(ui.overrideLabel({ action: 'shrug' }), null, 'an unknown action → no chip');
 });
 
-test('overrideChip: a force-promote (gate.override shape) reads forced↑ + earns the GOOD direction', () => {
-  const chip = ui.overrideChip({ present: true, action: 'promote', reason: 'operator call' });
+test('overrideLabel: a force-promote (gate.override shape) reads forced↑ + earns the GOOD direction', () => {
+  const chip = ui.overrideLabel({ present: true, action: 'promote', reason: 'operator call' });
   assert(chip, 'a chip is built');
   assert(hasClass(chip, 'dn-override'), 'carries the dn-override base');
   assert(hasClass(chip, 'dn-override-promote'), 'carries the promote (good-direction) class');
-  assert(!hasClass(chip, 'dn-promoted') && !hasClass(chip, 'dn-pill'), 'is NOT a verdict pill — a SIBLING primitive');
+  assert(!hasClass(chip, 'dn-promoted') && !hasClass(chip, 'dn-state'), 'is NOT a verdict pill — a SIBLING primitive');
   assertEqual(chip.getAttribute('data-override'), 'promote', 'data-override marks the kind');
   assert(/forced/.test(chip.textContent), 'reads "forced"');
   assertDeep(iconNames(chip), ['refresh', 'up'], 'the override mark, then the up mark for a force-promote');
   assert(/operator/.test(chip.textContent), 'attributes the override to the operator');
 });
 
-test('overrideChip: a force-reject reads forced✕ + earns the BAD direction', () => {
-  const chip = ui.overrideChip({ present: true, action: 'reject', reason: 'spurious' });
+test('overrideLabel: a force-reject reads forced✕ + earns the BAD direction', () => {
+  const chip = ui.overrideLabel({ present: true, action: 'reject', reason: 'spurious' });
   assert(hasClass(chip, 'dn-override-reject'), 'carries the reject (bad-direction) class');
   assert(/forced/.test(chip.textContent), 'reads "forced"');
   assertDeep(iconNames(chip), ['refresh', 'fail'], 'the override mark, then the fail mark for a force-reject');
 });
 
-test('overrideChip: a queued override (state:"queued") reads caution; a drained one reads faint', () => {
-  const queued = ui.overrideChip({ action: 'promote', state: 'queued', reason: 'pending' });
+test('overrideLabel: a queued override (state:"queued") reads caution; a drained one reads faint', () => {
+  const queued = ui.overrideLabel({ action: 'promote', state: 'queued', reason: 'pending' });
   assert(hasClass(queued, 'dn-override-queued'), 'queued → caution-toned class');
   assert(/queued/.test(queued.textContent), 'reads "queued"');
-  const drained = ui.overrideChip({ action: 'reject', state: 'drained' });
+  const drained = ui.overrideLabel({ action: 'reject', state: 'drained' });
   assert(hasClass(drained, 'dn-override-drained'), 'drained → faint-toned class');
   assert(/drained/.test(drained.textContent), 'reads "drained"');
 });
 
-test('overrideChip: the structure override_status shape (state:"applied") resolves by action direction', () => {
-  const promote = ui.overrideChip({ action: 'promote', ts: '2026-06-13T00:00:00Z', reason: 'r', state: 'applied' });
+test('overrideLabel: the structure override_status shape (state:"applied") resolves by action direction', () => {
+  const promote = ui.overrideLabel({ action: 'promote', ts: '2026-06-13T00:00:00Z', reason: 'r', state: 'applied' });
   assert(hasClass(promote, 'dn-override-promote'), 'applied promote → promote class');
-  const reject = ui.overrideChip({ action: 'reject', ts: '2026-06-13T00:00:00Z', reason: 'r', state: 'applied' });
+  const reject = ui.overrideLabel({ action: 'reject', ts: '2026-06-13T00:00:00Z', reason: 'r', state: 'applied' });
   assert(hasClass(reject, 'dn-override-reject'), 'applied reject → reject class');
 });
 
-// ── 4. overrideChip does NOT recolor the verdict it rides beside ─────────────
-test('overrideChip: a force-promote chip does NOT touch a DEFERRED verdict pill it sits beside', () => {
-  const verdict = ui.verdictPill('deferred');
-  const chip = ui.overrideChip({ present: true, action: 'promote', reason: 'x' });
+// ── 4. overrideLabel does NOT recolor the verdict it rides beside ─────────────
+test('overrideLabel: a force-promote chip does NOT touch a DEFERRED verdict pill it sits beside', () => {
+  const verdict = ui.verdictLabel('deferred');
+  const chip = ui.overrideLabel({ present: true, action: 'promote', reason: 'x' });
   // the verdict keeps its deferred (caution) class — the chip is the ONLY
   // carrier of the override colour, so the gate verdict is never overwritten.
   assert(hasClass(verdict, 'dn-deferred'), 'the verdict stays deferred');
@@ -158,7 +158,7 @@ test('standings: an override_status rides BESIDE the status pill (the chip + the
   assertEqual(chips.length, 1, 'exactly the one overridden row carries a chip');
   assert(hasClass(chips[0], 'dn-override-promote'), 'the v5 override reads as a force-promote');
   // the pill is still there beside it — the override never replaced the verdict.
-  assert(allByClass(host, 'dn-pill').length >= 2, 'every standing keeps its status pill (the override is additive)');
+  assert(allByClass(host, 'dn-state').length >= 2, 'every standing keeps its status pill (the override is additive)');
 });
 
 test('standings: NO override_status → ZERO chips (byte-identical to the pre-feature path)', () => {

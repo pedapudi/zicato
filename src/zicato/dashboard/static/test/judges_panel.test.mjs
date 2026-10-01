@@ -157,7 +157,7 @@ test('builtins: a per_judge_weight rides the built-in chip too (the lookup keys 
   const host = panel(ROSTER, ENTRY_JUDGES);
   const off = allByClass(host, 'dn-judge-off')[0];
   assert(/×0.75/.test(textOf(off)), 'tool_error carries its configured weight: ' + textOf(off));
-  const undecorated = allByClass(host, 'dn-pill').find((c) => /reasoning_drift/.test(textOf(c)));
+  const undecorated = allByClass(host, 'dn-state').find((c) => /reasoning_drift/.test(textOf(c)));
   assert(!/×/.test(textOf(undecorated)), 'a judge with no configured weight shows no weight');
 });
 
@@ -173,7 +173,7 @@ test('custom: each judge renders name / mode / severity, with the weight beside 
   assert(/file_findability/.test(rows[1][0]) && rows[1][1] === 'python', 'the python judge names its mode');
   assert(/×2/.test(rows[1][0]), 'the configured weight rides beside the name');
   assert(!/×/.test(rows[0][0]), 'an unweighted judge shows no weight');
-  const sevs = allByClass(host, 'dn-pill').map(textOf);
+  const sevs = allByClass(host, 'dn-state').map(textOf);
   assert(sevs.includes('warning') && sevs.includes('critical'), 'severity renders as a chip');
 });
 

@@ -820,9 +820,10 @@ component vocabulary of their own:
   rather than a new tile shape.
 - **Figures carry a `dn-faint` caption**, the console's established
   quiet-caption treatment, rather than a heavier frame invented for reflection.
-- **Tags and chips are reserved for semantic state the console already pills** —
-  a `verdict` (`sound` / `attend` / `unsound` / `unmeasured`) or a `severity`.
-  These map onto the console's existing pill palette. Everything else is text.
+- **Semantic state is a coloured word, never a chip** — a `verdict` (`sound` /
+  `attend` / `unsound` / `unmeasured`) or a `severity` is plain text in the
+  console's tone colours, led by a drawn mark where one exists. Everything
+  else is uncoloured text.
 - **Metadata is a caption line rather than a per-row tag.** The fidelity tier,
   the adjudicator model, the prompt version, and similar fields belong in a
   single `dn-faint` caption under a figure. Scattering them as a chip on every

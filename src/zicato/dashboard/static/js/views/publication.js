@@ -136,7 +136,7 @@ function aggregateScoresFigure(gens, scalarByGen, epochLive) {
     rows: items.map((it) => {
       // Class B: an unscored candidate reads pending, never rejected. And the
       // pending WORD is tense-bound: a publication of a settled epoch
-      // that says "racing…" is describing a race that finished. The pill's own
+      // that says "racing…" is describing a race that finished. The label's own
       // liveness-aware vocabulary decides it; this table only re-skins the two
       // labels it renders differently (the crown and the short "seed").
       const dec = it.decision || 'pending';

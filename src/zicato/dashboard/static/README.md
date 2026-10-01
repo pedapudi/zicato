@@ -5,9 +5,10 @@ Python dashboard service (`zicato.dashboard.server`) serves these files
 off disk from `/` and `/static/...`.
 
 No build step. No framework. No external network, with one exception:
-`console.js` loads the typeface picker's non-default families from Google
-Fonts with `display=swap` and system fallbacks. The default monospace
-faces (iA Writer Mono and JetBrains Mono) are self-hosted under `fonts/`.
+`console.js` loads the typeface picker's families from Google Fonts with
+`display=swap` and system fallbacks. Two monospace faces (iA Writer Mono
+and JetBrains Mono) are self-hosted under `fonts/`; JetBrains Mono backs
+the fixed brand mono.
 Everything else in this directory must remain self-contained — no CDN,
 no remote scripts.
 
@@ -51,7 +52,7 @@ in `js/CONTRACTS.md`.
   `live.js` and `livestatus.js` (the live-run controller and its status
   derivation), `hovercard.js` (the singleton hover-for-detail card),
   `compare.js` (the side-by-side compare picker and split frame),
-  `ui.js` (digest-gated swap, pills, themes, typefaces), `data.js` (the
+  `ui.js` (digest-gated swap, state labels, themes, typefaces), `data.js` (the
   per-epoch read accessors), plus `convo.js`, `facets.js`, `rounds.js`,
   `icons.js` (the one drawn icon set: every control, verdict, crown and
   tree mark is an icon from it, never a typed symbol),
@@ -67,8 +68,12 @@ in `js/CONTRACTS.md`.
   mount them.
 - `css/console.css` — all console styling: the sixteen-theme `--v2-*`
   six-role token contract (swapped by `[data-t-theme]`), the typeface
-  tokens (`[data-t-type]`), and every fit-to-width SVG mark's classes
-  (`dn-*` / `dt-*`, and `ezn-*` for the lifecycle DAG).
+  tokens (`[data-t-type]`: `--v2-sans` for prose, controls and chrome,
+  `--v2-mono` for data, code and ids), and every fit-to-width SVG mark's
+  classes (`dn-*` / `dt-*`, and `ezn-*` for the lifecycle DAG). The
+  stylesheet draws no accent left rail and no pill, tag or badge: a
+  selected item renders its name in the accent colour, and a state is
+  plain text in its tone colour (`js/CONTRACTS.md` §6a).
 - `js/CONTRACTS.md` — the pinned frontend contracts (the API shape, the
   server-sent-event delta types, the AppState shape, the routes).
 - `test/` — a dependency-free JS/DOM test harness. `harness.mjs` is a
@@ -154,7 +159,7 @@ only to keep it from growing without bound.
   to the region holding the active view (`#main-content`)
 - keyboard activation (Enter / Space) on clickable figure marks, the
   lifecycle DAG's nodes, and the live standings and trace rows
-- `aria-live="polite"` on the live activity ticker, the run-state pill
+- `aria-live="polite"` on the live activity ticker, the run-state label
   and the execution link, so screen readers announce changes without
   interrupting
 - `Escape` closes the settings drawer, an open dropdown and the

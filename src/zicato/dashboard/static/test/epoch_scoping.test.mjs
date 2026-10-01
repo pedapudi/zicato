@@ -228,7 +228,7 @@ test('Tier2 (Class B): the tree tags an unscored child PENDING, not rejected', (
   const toggles = new Set(['e:' + SC_NEW, 'e:' + SC_NEW + '/gens']);
   const route = router.parseRoute(`#/e/${SC_NEW}`);
   tree.buildTree(host, model, route, toggles, { navigate() {}, href: router.href }, () => {});
-  const tags = allByClass(host, 'dt-tag').map((n) => n.textContent);
+  const tags = allByClass(host, 'dt-role').map((n) => n.textContent);
   assert(tags.includes('pending'), 'the unscored child v1 is tagged "pending"');
   assert(!tags.includes('rejected'), 'the unscored child v1 is NOT tagged "rejected"');
 });
@@ -790,7 +790,7 @@ test('gens (cross-epoch): a NON-active epoch’s Match-ups renders the COMPLETED
   await gens.render(host, { navigate() {}, href: router.href }, { epochId: TWO_EP_OLD });
 
   // NO live leak from e1 onto e0.
-  assertEqual(allByClass(host, 'dt-live-pill').length, 0, 'NO LIVE pill on the closed e0 view (e1’s live run does not leak)');
+  assertEqual(allByClass(host, 'dt-live-state').length, 0, 'NO LIVE pill on the closed e0 view (e1’s live run does not leak)');
   assert(!/being seeded|is being seeded|run is starting/i.test(host.textContent), 'NOT e1’s live "being seeded"/"starting" empty state under e0');
   // e0 renders its OWN completed survival funnel (reconstructed from its records).
   const ladder = svgsByClass(host, 'dn-funnel')[0];
@@ -831,7 +831,7 @@ test('gens (cross-epoch): the ACTIVE epoch’s Match-ups still shows the live pr
   const host = document.createElement('div');
   await gens.render(host, { navigate() {}, href: router.href }, { epochId: TWO_EP_NEW });
 
-  assert(allByClass(host, 'dt-live-pill')[0], 'the active e1 view carries the LIVE pill');
+  assert(allByClass(host, 'dt-live-state')[0], 'the active e1 view carries the LIVE pill');
   const ladder = svgsByClass(host, 'dn-funnel')[0];
   assert(ladder, 'the live progressive survival funnel renders for the active epoch');
   assert(!/being seeded/i.test(host.textContent), 'NOT the "being seeded" empty state once the live field exists');
@@ -845,9 +845,9 @@ test('gens (cross-epoch): the ACTIVE epoch’s Match-ups still shows the live pr
 //
 // Each option id has a per-id CSS rule that swaps the four font-role tokens
 // (--v2-sans / --v2-mono / --n-font-head / --n-font-paper) to the option's
-// stacks. We assert each id's block exists AND that its head/prose/data faces
-// are the faces the id names. The JS model (ui.TYPE_OPTIONS) is the source of
-// truth; the CSS must agree with it.
+// stacks. We assert each id's block exists AND that its head/prose/data/paper
+// faces are the option's pairing. The JS model (ui.TYPE_OPTIONS) is the source
+// of truth; the CSS must agree with it.
 test('typeface options: each of the 12 ids has a CSS rule whose font-role tokens match its faces', () => {
   const css = readCss();
   function typeBlock(id) {
@@ -866,18 +866,18 @@ test('typeface options: each of the 12 ids has a CSS rule whose font-role tokens
   }
   // EXPECTED head/prose/data primaries per option id.
   const expect = {
-    'google-sans-mono':    { head: 'Google Sans Mono', prose: 'Google Sans Mono', data: 'Google Sans Mono' },
-    'source-sans-3':       { head: 'Source Sans 3',    prose: 'Source Sans 3',    data: 'Source Code Pro' },
-    inconsolata:           { head: 'Inconsolata',      prose: 'Inconsolata',      data: 'Inconsolata' },
-    ubuntu:                { head: 'Ubuntu',           prose: 'Ubuntu',           data: 'Ubuntu Mono' },
-    fraunces:              { head: 'Fraunces',         prose: 'Fraunces',         data: 'Fraunces' },
-    bitter:                { head: 'Bitter',           prose: 'Bitter',           data: 'Bitter' },
-    literata:              { head: 'Literata',         prose: 'Literata',         data: 'Literata' },
-    domine:                { head: 'Domine',           prose: 'Domine',           data: 'Domine' },
-    'archivo-narrow':      { head: 'Archivo Narrow',   prose: 'Space Grotesk',    data: 'Space Grotesk' },
-    'hanken-grotesk':      { head: 'Hanken Grotesk',   prose: 'Hanken Grotesk',   data: 'Hanken Grotesk' },
-    'barlow-condensed':    { head: 'Barlow Condensed', prose: 'Space Grotesk',    data: 'Space Grotesk' },
-    'bricolage-grotesque': { head: 'Bricolage Grotesque', prose: 'Bricolage Grotesque', data: 'Bricolage Grotesque' },
+    'google-sans-mono':    { head: 'Open Sans',        prose: 'Open Sans',        data: 'Google Sans Mono', paper: 'Open Sans' },
+    'source-sans-3':       { head: 'Source Sans 3',    prose: 'Source Sans 3',    data: 'Source Code Pro',  paper: 'Source Sans 3' },
+    inconsolata:           { head: 'Open Sans',        prose: 'Open Sans',        data: 'Inconsolata',      paper: 'Open Sans' },
+    ubuntu:                { head: 'Ubuntu',           prose: 'Ubuntu',           data: 'Ubuntu Mono',      paper: 'Ubuntu' },
+    fraunces:              { head: 'Fraunces',         prose: 'Open Sans',        data: 'JetBrains Mono',   paper: 'Fraunces' },
+    bitter:                { head: 'Bitter',           prose: 'Open Sans',        data: 'JetBrains Mono',   paper: 'Bitter' },
+    literata:              { head: 'Literata',         prose: 'Open Sans',        data: 'JetBrains Mono',   paper: 'Literata' },
+    domine:                { head: 'Domine',           prose: 'Open Sans',        data: 'JetBrains Mono',   paper: 'Domine' },
+    'archivo-narrow':      { head: 'Archivo Narrow',   prose: 'Space Grotesk',    data: 'JetBrains Mono',   paper: 'Space Grotesk' },
+    'hanken-grotesk':      { head: 'Hanken Grotesk',   prose: 'Hanken Grotesk',   data: 'JetBrains Mono',   paper: 'Hanken Grotesk' },
+    'barlow-condensed':    { head: 'Barlow Condensed', prose: 'Space Grotesk',    data: 'JetBrains Mono',   paper: 'Space Grotesk' },
+    'bricolage-grotesque': { head: 'Bricolage Grotesque', prose: 'Bricolage Grotesque', data: 'JetBrains Mono', paper: 'Bricolage Grotesque' },
   };
   for (const id of Object.keys(expect)) {
     const b = typeBlock(id);
@@ -885,7 +885,7 @@ test('typeface options: each of the 12 ids has a CSS rule whose font-role tokens
     // data→--v2-mono.
     assertEqual(primary(declIn(b, 'n-font-head')), expect[id].head, id + ' head face → --n-font-head');
     assertEqual(primary(declIn(b, 'v2-sans')), expect[id].prose, id + ' prose face → --v2-sans');
-    assertEqual(primary(declIn(b, 'n-font-paper')), expect[id].prose, id + ' prose face → --n-font-paper');
+    assertEqual(primary(declIn(b, 'n-font-paper')), expect[id].paper, id + ' paper-title face → --n-font-paper');
     assertEqual(primary(declIn(b, 'v2-mono')), expect[id].data, id + ' data/code face → --v2-mono');
     // the CSS must agree with the JS model for the same id.
     const opt = ui.TYPE_OPTIONS.find((o) => o.id === id);
@@ -893,10 +893,11 @@ test('typeface options: each of the 12 ids has a CSS rule whose font-role tokens
     assertEqual(primary(opt.prose), expect[id].prose, id + ' JS model prose matches');
     assertEqual(primary(opt.data), expect[id].data, id + ' JS model data matches');
   }
-  // the DEFAULT block (no data-t-type) lands on the Google Sans Mono voice.
+  // the DEFAULT block (no data-t-type) lands on the Open Sans + Google Sans Mono pairing.
   const baseM = css.match(/#console-root\s*\{([^}]*--v2-sans[^}]*)\}/);
   assert(baseM, 'the base #console-root token block declares the default font roles');
-  assert(/Google Sans Mono/.test(baseM[1]), 'the default (no data-t-type) voice is Google Sans Mono');
+  assertEqual(primary(declIn(baseM[1], 'v2-sans')), 'Open Sans', 'the default (no data-t-type) prose face is Open Sans');
+  assertEqual(primary(declIn(baseM[1], 'v2-mono')), 'Google Sans Mono', 'the default (no data-t-type) data face is Google Sans Mono');
 });
 
 // the brand wordmark pins to a FIXED brand mono, INDEPENDENT of the user's

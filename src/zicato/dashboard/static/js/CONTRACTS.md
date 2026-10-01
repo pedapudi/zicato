@@ -23,9 +23,9 @@ static/
       harmonograf.js    — harmonograf URL builders
       prefs.js          — the persisted per-viewer preference store
     router.js           — hash routing + deep links
-    shell.js            — chrome, sidebar-to-detail host, page-scale pill
+    shell.js            — chrome, sidebar-to-detail host, page-scale apply path
     icons.js            — the one drawn icon set every mark uses
-    ui.js               — gatedSwap, pills, tables, themes, typefaces
+    ui.js               — gatedSwap, state labels, tables, themes, typefaces
     svg.js, dag.js      — the figure builders
     tournament_model.js — the tournament-structure models the figures draw
     matrix.js           — the dn-mtx table-grid primitives
@@ -441,9 +441,15 @@ From `js/ui.js`:
 - `deltaCell(value, opts)` — the sign-coloured delta cell spec for
   `dataTable`. A positive delta is a regression (`dn-bad-t`), a negative
   one an improvement (`dn-good-t`).
-- `pill(cls, word, extra)`, `chip(cls, word, extra)`,
-  `verdictPill(decision, opts)`, `stat(value, key)` — the small labelled
-  marks.
+- `verdictLabel(decision, opts)` → a `.dn-state .dn-<decision>` span: the
+  decision as plain text in its tone colour, led by its drawn mark
+  (promoted `up`, rejected `fail`, deferred `timeout`, pending `more`; the
+  seed baseline has none). `stateLabel(tone, word, extra)` colours a
+  caller's word by a decision tone without a mark; `flagLabel(tone, word,
+  extra)` builds a lowercase `.dn-flag` word. None of them draws a box,
+  a fill or a border: the console has no pill, tag or badge.
+- `stat(value, key)` — a value (in the mono token) over its key (in the
+  sans).
 - `figCaption(lines, opts)` — a figure caption that refuses to stack.
   The first line stays visible; the rest collapse behind a focusable "?"
   glyph (`moreMark`) that opens the singleton hovercard.
@@ -487,8 +493,30 @@ mark. The console types none of these as a Unicode symbol.
   icon on a text line and `svg.iconBeside(parent, label, name, fontPx,
   opts)` places one beside a `<text>` label, moving the words so the
   pair keeps the label's anchor. `svg.signalIcon(kind)` maps a trace
-  signal kind to its icon; the strip model's served `glyph` field is not
-  drawn.
+  signal kind to its icon; the served strip model carries the kind and
+  its tone, never a symbol.
+
+### 6a. The interface rules every builder keeps
+
+- **Type.** The console root is set in `--v2-sans`; prose, controls and
+  chrome (the top bar, the tree, buttons, headings) inherit it. Only data,
+  code, ids, hashes, key names and the numbers in tables and figures take
+  `--v2-mono`, through a data class. A figure's captions, axis titles,
+  legends and sentences stay sans, as does a value led by a word
+  (`valueFace(value)` in `ui.js` adds `.dn-wordval`). Every typeface option pairs a sans
+  prose face with a monospace data face.
+- **Selection.** A selected item renders its name in `--v2-accent`; no rule
+  or inline style draws a coloured left edge on a container or a selection.
+- **States.** A state is plain text in its tone colour, led by an icon from
+  `js/icons.js` where it has one; no class names a pill, chip, tag or badge.
+- **Top bar.** One line at desktop widths: a crumb never wraps inside an id,
+  truncates with an ellipsis when the bar is short of room, and a long crumb
+  shows its full value in the hovercard. Lower-priority items yield in a
+  fixed order as the viewport narrows; at phone width the bar wraps to two
+  lines so the page never scrolls sideways.
+
+`test/interface_rules.test.mjs` checks all four against `console.css`, the
+inline styles in `js/**` and the rendered chrome.
 
 ## 7. The detail panes (`js/views/`) and the panels (`js/panels/`)
 

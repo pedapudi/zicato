@@ -115,7 +115,7 @@ test('metaLoopLedger: a structure roll is a SOFT seam (caution-dashed cell + sea
 test('metaLoopLedger: the change rail attributes each roll to a named lever (compact)', () => {
   const node = svg.metaLoopLedger(chain());
   // a change chip per epoch with a changed_list (e1, e2, e3 = 3; e0 baseline has none).
-  const chips = textOfClass(node, 'dn-metaledger-chiptxt');
+  const chips = textOfClass(node, 'dn-metaledger-rolllbl');
   assertEqual(chips.length, 3, 'a change chip at each roll boundary (not the baseline)');
   // COMPACT labels: e1 ['board'] → 'board'; e2 ['scoring','structure'] (→swiss)
   // leads with the structure headline → '→swiss +1'; e3 ['proposer','brief'] →
@@ -133,7 +133,7 @@ test('metaLoopLedger: the change rail attributes each roll to a named lever (com
 
 test('metaLoopLedger: the FULL change-set lives on the chip hovercard (nothing lost)', () => {
   const node = svg.metaLoopLedger(chain());
-  const chipRects = allByClass(node, 'dn-metaledger-chip');
+  const chipRects = allByClass(node, 'dn-metaledger-roll');
   assertEqual(chipRects.length, 3, 'a chip rect per roll boundary');
   // every chip is hovercard-wired and the full join is on hover rather than in the box.
   chipRects.forEach((r) => assert(hovercard.hasHovercard(r), 'each chip is hovercard-wired'));
@@ -171,7 +171,7 @@ test('metaLoopLedger: chips do NOT overlap given tight/adjacent boundaries + lon
     ],
   };
   const node = svg.metaLoopLedger(m);
-  const rects = allByClass(node, 'dn-metaledger-chip');
+  const rects = allByClass(node, 'dn-metaledger-roll');
   assertEqual(rects.length, 3, 'three chips for the three rolls');
   // build [x, x+width] extents, sort by left edge, assert pairwise disjoint.
   const ext = rects.map((r) => {
@@ -217,7 +217,7 @@ test('metaLoopLedger: degrades on 1 epoch (band + heatstrip, no risers/seams)', 
   assertEqual(allByClass(node, 'dn-metaledger-band').length, 1, 'one band');
   assertEqual(allByClass(node, 'dn-metaledger-held').length, 1, 'one held floor level');
   assertEqual(allByClass(node, 'dn-metaledger-riser').length, 0, 'no risers (nothing to step from)');
-  assertEqual(allByClass(node, 'dn-metaledger-chiptxt').length, 0, 'no change chips (no predecessor)');
+  assertEqual(allByClass(node, 'dn-metaledger-rolllbl').length, 0, 'no change chips (no predecessor)');
   assertEqual(allByClass(node, 'dn-metaledger-cell').length, 8, 'the 8-component column still renders');
 });
 

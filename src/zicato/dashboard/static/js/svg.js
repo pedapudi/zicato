@@ -761,7 +761,7 @@ export function valueDotPlot(opts) {
       // theme-aware (uses the faint ink token), no extra stylesheet rule.
       const ctx = svgEl('text', {
         x: labelW, y: cy + 9, class: 'dn-dot-ctx', 'text-anchor': 'end',
-        fill: 'var(--v2-ink-faint)', 'font-size': '9px', 'font-family': 'var(--v2-mono)',
+        fill: 'var(--v2-ink-faint)', 'font-size': '9px', 'font-family': 'var(--v2-sans)',
       });
       ctx.textContent = shortLabel(String(d.context), 22);
       g.appendChild(ctx);
@@ -3064,7 +3064,7 @@ export function proposingTracker(opts) {
       text: ok ? 'applied' : pending ? 'proposing…' : 'rejected',
     });
 
-    // The retry badge — only when more than one attempt was made (a retried
+    // The retry mark — only when more than one attempt was made (a retried
     // slot is worth flagging; a clean first-try slot stays uncluttered).
     const attempts = (typeof f.attempts === 'number' && f.attempts > 0) ? f.attempts : null;
     const topRow = [glyph, gid, verdict];
@@ -3326,9 +3326,9 @@ export function roundTimeline(opts) {
     });
     // episode header: round ordinal + the incoming champion + a drill link. An
     // IN-FLIGHT round (still proposing/applying its field, no settled gate yet)
-    // wears a LIVE badge so it reads as the round forming NOW (issue #16).
+    // wears a LIVE mark so it reads as the round forming NOW (issue #16).
     const head = el('div', { class: 'dn-roundtl-ephead' + (r.inflight ? ' dn-roundtl-ephead-live' : '') }, [
-      el('span', { class: 'dn-roundtl-eptag', text: 'round ' + r.round_index }),
+      el('span', { class: 'dn-roundtl-eplabel', text: 'round ' + r.round_index }),
       r.inflight ? el('span', { class: 'dn-roundtl-eplive', 'aria-label': 'in-flight round', text: 'LIVE' }) : null,
       el('span', { class: 'dn-roundtl-epchamp' }, [
         el('span', { class: 'dn-roundtl-epcrown', 'aria-hidden': 'true' }, [icon(CROWN.current)]),
@@ -3344,27 +3344,27 @@ export function roundTimeline(opts) {
     }
     card.appendChild(head);
 
-    // the fan of MINTED challengers (chips) — each opens its candidate.
+    // the fan of MINTED challengers (labels) — each opens its candidate.
     const fan = el('div', { class: 'dn-roundtl-fan' });
     if (r.challengers.length) {
       for (const c of r.challengers) {
-        // an in-flight round's chip carries its PROPOSING-STEP status (a
+        // an in-flight round's label carries its PROPOSING-STEP status (a
         // proposing slot is dimmed/pending, a rejected slot dimmed, an applied
         // slot reads normal) so the field reads as it forms (issue #16).
         const st = c.status || null;
-        const statusCls = st === 'proposing' ? ' dn-roundtl-chip-proposing'
-          : st === 'rejected' ? ' dn-roundtl-chip-rejected' : '';
+        const statusCls = st === 'proposing' ? ' dn-roundtl-member-proposing'
+          : st === 'rejected' ? ' dn-roundtl-member-rejected' : '';
         const chip = el('button', {
-          class: 'dn-roundtl-chip' + (c.promoted ? ' dn-roundtl-chip-win' : '') + statusCls,
+          class: 'dn-roundtl-member' + (c.promoted ? ' dn-roundtl-member-win' : '') + statusCls,
           type: 'button',
           'aria-label': `Challenger ${c.id}` + (isNum(c.scalar) ? `, loss ${fmt(c.scalar, 1)}` : '')
             + (c.promoted ? ' — promoted' : st === 'proposing' ? ' — proposing' : st === 'rejected' ? ' — rejected' : ''),
         }, [
           el('span', { class: 'dn-mono', text: shortLabel(String(c.id), 12) }),
-          c.promoted ? el('span', { class: 'dn-roundtl-chipcrown', 'aria-hidden': 'true' }, [icon(CROWN.current)]) : null,
-          st === 'proposing' ? el('span', { class: 'dn-faint dn-roundtl-chipstatus', 'aria-hidden': 'true' }, [icon('more')]) : null,
-          st === 'rejected' ? el('span', { class: 'dn-faint dn-roundtl-chipstatus', 'aria-hidden': 'true' }, [icon('fail')]) : null,
-          isNum(c.scalar) ? el('span', { class: 'dn-faint dn-roundtl-chiploss', text: fmt(c.scalar, 1) }) : null,
+          c.promoted ? el('span', { class: 'dn-roundtl-membercrown', 'aria-hidden': 'true' }, [icon(CROWN.current)]) : null,
+          st === 'proposing' ? el('span', { class: 'dn-faint dn-roundtl-memberstatus', 'aria-hidden': 'true' }, [icon('more')]) : null,
+          st === 'rejected' ? el('span', { class: 'dn-faint dn-roundtl-memberstatus', 'aria-hidden': 'true' }, [icon('fail')]) : null,
+          isNum(c.scalar) ? el('span', { class: 'dn-faint dn-roundtl-memberloss', text: fmt(c.scalar, 1) }) : null,
         ].filter(Boolean));
         if (o.onCompetitor) chip.addEventListener('click', () => o.onCompetitor(String(c.id)));
         fan.appendChild(chip);
@@ -3588,18 +3588,18 @@ export function reignGantt(opts) {
 //
 //   (A) FLOOR STAIRCASE (opt 1)  — the held loss floor as held steps + risers;
 //       a step DROPS when the floor improves, JUMPS UP on a reset; every roll
-//       seam carries a component-coded change CHIP on a vertical rail.
+//       seam carries a component-coded change LABEL on a vertical rail.
 //   (B) EFFORT BANDS    (opt 4)  — band width ∝ generation_count, fill ∝ floor
 //       (good→bad), with a champion-reign tick marking the generation that set
 //       the floor.
 //   (C) COMPONENT HEATSTRIP (opt 3) — epochs(cols) × components(rows incl. the
 //       proposer* column the contract-diff omits + structure); a filled cell =
-//       that lever changed vs the predecessor. A floor-Δ chip sits per epoch in
+//       that lever changed vs the predecessor. A floor-Δ label sits per epoch in
 //       the right gutter.
 //
 // A structure roll is a SOFT seam (the cross-roll floor comparison is not
 // directly comparable) — stripped down the staircase + bands and dashed on the
-// structure cell + the change chip.
+// structure cell + the change label.
 //
 // The decision it answers: "is the meta-loop making net progress across
 // contracts, which lever moved each reset, and is effort buying floor."
@@ -3624,7 +3624,7 @@ const LEDGER_COMP_LABEL = {
   board: 'board', brief: 'brief', scoring: 'scoring', adapter: 'adapter',
   evaluator_revision: 'evaluator revision', mutable_trees: 'mutable_trees', structure: 'structure', proposer: 'proposer*',
 };
-// component → accent for the change-chip primary colour (mirrors the study's rcol).
+// component → accent for the change-label primary colour (mirrors the study's rcol).
 const LEDGER_COMP_COLOR = {
   board: 'var(--v2-accent)', scoring: 'var(--v2-good)', brief: 'var(--v2-caution)',
   evaluator_revision: 'var(--v2-caution)', structure: 'var(--v2-bad)', adapter: 'var(--v2-accent)',
@@ -3739,18 +3739,18 @@ export function metaLoopLedger(opts) {
       { class: 'dn-metaledger-floorlbl ' + stepCls, 'text-anchor': 'middle' }));
     if (hasF) prevF = e.floor;
   });
-  // open badge under the last held level
+  // open mark under the last held level
   const last = rows[n - 1];
   if (last && (last.open || last.closed === false)) {
     const yy = isNum(last.floor) ? sy(last.floor) : sy((flo + fhi) / 2);
-    const open = txt(bx[n - 1].xc, yy + 20, 'OPEN', { class: 'dn-metaledger-openbadge', 'text-anchor': 'middle' });
+    const open = txt(bx[n - 1].xc, yy + 20, 'OPEN', { class: 'dn-metaledger-openlbl', 'text-anchor': 'middle' });
     svg.appendChild(open);
     iconBeside(svg, open, 'dot', 8.5, { lead: true, tone: 'faint' });
   }
 
-  // ───────── contract-change RAIL + chips (opt 1), at each roll boundary ─────────
+  // ───────── contract-change RAIL + labels (opt 1), at each roll boundary ─────────
   // RAIL + SOFT seam stay at the TRUE boundary b.x0; only the label box moves.
-  // Chips carry a COMPACT label (headline + "+N"), the FULL set on hover, and are
+  // Labels carry a COMPACT label (headline + "+N"), the FULL set on hover, and are
   // de-collided by their VARIABLE widths so adjacent rolls never overlap/clip.
   const chips = [];
   rows.forEach((e, i) => {
@@ -3807,18 +3807,24 @@ export function metaLoopLedger(opts) {
     }
   }
   chips.forEach((c) => {
-    // subtle connector chip → true boundary when the label is pushed well off it.
+    // subtle connector label → true boundary when the label is pushed well off it.
     if (Math.abs(c.cx - c.x0) > c.cw / 2 + 4) {
       svg.appendChild(svgEl('line', {
-        x1: c.x0, y1: T - 26, x2: c.cx, y2: T - 26, class: 'dn-metaledger-chiplink',
+        x1: c.x0, y1: T - 26, x2: c.cx, y2: T - 26, class: 'dn-metaledger-rolllink',
       }));
     }
+    // The roll's lever label is plain text in the lever's colour (a soft roll
+    // in italics). An unpainted rect under it is the hover target that
+    // carries the full lever set, and it fixes the label's extent for the
+    // de-collide above; nothing is drawn round the words.
     svg.appendChild(hov(svgEl('rect', {
-      x: c.cx - c.cw / 2, y: T - 44, width: c.cw, height: 18, rx: 4,
-      class: 'dn-metaledger-chip', fill: 'var(--v2-panel)',
-      stroke: c.chipCol, 'stroke-width': 1.5, 'stroke-dasharray': c.soft ? '3 3' : null,
+      x: c.cx - c.cw / 2, y: T - 44, width: c.cw, height: 18,
+      class: 'dn-metaledger-roll', fill: 'transparent',
     }), c.full));
-    svg.appendChild(txt(c.cx, T - 31, c.compact, { class: 'dn-metaledger-chiptxt', 'text-anchor': 'middle' }));
+    svg.appendChild(txt(c.cx, T - 31, c.compact, {
+      class: 'dn-metaledger-rolllbl' + (c.soft ? ' dn-metaledger-rolllbl-soft' : ''),
+      'text-anchor': 'middle', fill: c.chipCol,
+    }));
   });
 
   // ───────── (B) EFFORT-PROPORTIONAL BANDS (opt 4) ─────────

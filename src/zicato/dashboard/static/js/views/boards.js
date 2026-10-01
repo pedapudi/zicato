@@ -183,9 +183,9 @@ function trellis(board, gens, rowByGenEntry, domain, valueOf, epochId, ctx, infl
       el('figcaption', { class: 'dn-trellis-cap' }, [
         el('span', { class: 'dn-trellis-id', text: String(eid) }),
         el('span', { class: 'dn-trellis-meta' }, [
-          el('span', { class: 'dn-kind-tag dn-kind-' + (b.kind || 'unknown'), text: ENTRY_KIND_LABEL[b.kind] || b.kind || '—' }),
+          el('span', { class: 'dn-kind-label dn-kind-' + (b.kind || 'unknown'), text: ENTRY_KIND_LABEL[b.kind] || b.kind || '—' }),
           b.expectation_kind ? el('span', { class: 'dn-faint', text: ' · ' + b.expectation_kind }) : null,
-          inf && inf.count ? el('span', { class: 'dn-trellis-live-tag', title: inf.count + ' running' }, [
+          inf && inf.count ? el('span', { class: 'dn-trellis-livemark', title: inf.count + ' running' }, [
             el('span', { class: 'dn-inflight-pulse', 'aria-hidden': 'true' }),
             el('span', { text: inf.count + ' running' }),
           ]) : null,

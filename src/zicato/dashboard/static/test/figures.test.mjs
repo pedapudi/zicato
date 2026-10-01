@@ -211,7 +211,7 @@ test('round timeline (issue #16): the in-flight round renders with a LIVE badge 
   assert(/2 applied/.test(node.textContent), 'the banner reads the applied count (2)');
   assert(/1 proposing/.test(node.textContent), 'the banner reads the still-proposing count (1)');
   // the proposing chip is dimmed (its own status class), distinct from applied.
-  assert(allByClass(node, 'dn-roundtl-chip-proposing').length === 1, 'the still-proposing slot is marked proposing');
+  assert(allByClass(node, 'dn-roundtl-member-proposing').length === 1, 'the still-proposing slot is marked proposing');
 });
 
 // ---- (2) the SPINE TIMELINE renders one episode per round ----------
@@ -249,7 +249,7 @@ test('round timeline: a SINGLE round degrades to ONE episode (≈ today’s over
   assertEqual(allByClass(node, 'dn-roundtl-ep').length, 1, 'a single round → exactly ONE episode');
   assert(allByClass(node, 'dn-roundtl-single').length >= 1, 'the single-episode layout is flagged');
   // its challenger fan still lists the minted field.
-  const chips = allByClass(node, 'dn-roundtl-chip').map((c) => { const m = allByClass(c, 'dn-mono')[0]; return m ? (m.textContent || '').trim() : ''; });
+  const chips = allByClass(node, 'dn-roundtl-member').map((c) => { const m = allByClass(c, 'dn-mono')[0]; return m ? (m.textContent || '').trim() : ''; });
   assertDeep(chips.sort(), ['v1', 'v2'], 'the single episode lists its challenger fan');
 });
 

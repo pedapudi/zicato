@@ -1,8 +1,8 @@
 // js/livestatus.js — derive a STRUCTURE-AGNOSTIC live-run status.
 //
-// THE BUG this fixes: T's chrome status pill was gauntlet-shaped — it only lit
+// THE BUG this fixes: T's chrome status label was gauntlet-shaped — it only lit
 // up off `state.activeTournament` (which the gauntlet path populates). During a
-// live NON-gauntlet run (racing / swiss / single_elim / double_elim) the pill
+// live NON-gauntlet run (racing / swiss / single_elim / double_elim) the label
 // read "nothing is running" even though the run was plainly in flight.
 //
 // The live read APIs already report activity for ANY structure:
@@ -90,7 +90,7 @@ function runTs(r) {
 // `active_runs/*.json` outlives the process that wrote it: a killed run leaves
 // its records on disk indefinitely. Counting them makes a long-dead workspace
 // report units in flight, which forces `pulsing`, which settles the run-state
-// pill on STALLED (alive, no progress) instead of DEAD and keeps the hero up.
+// label on STALLED (alive, no progress) instead of DEAD and keeps the hero up.
 // Each record carries the per-run beater's `last_progress`, so a record is aged
 // the same way the orchestrator heartbeat is.
 //
@@ -172,7 +172,7 @@ function roundDetail(segs, structure) {
 //
 // Map a RAW standings status (alive / eliminated / champion / competing,
 // per /api/active-tournament's `standings[].status`) onto the word the
-// standings table / pills show — STRUCTURE-CORRECT so a non-racing
+// standings table / labels show — STRUCTURE-CORRECT so a non-racing
 // tournament never borrows racing vocabulary. The terminal verdicts
 // (champion / eliminated) pass through unchanged in EVERY structure; only
 // the "still in contention" word is structure-specific:
@@ -291,7 +291,7 @@ export function deriveLiveStatus(
   // progress log existed — so seq 0 means "no progress recorded" rather than a
   // known cursor. Treating it as known makes the client count the first seq it
   // ever sees as an advance and stamp `lastSeqAdvanceAt = now`, so a long-dead
-  // workspace reports that it has just progressed and the pill reads LIVE.
+  // workspace reports that it has just progressed and the label reads LIVE.
   const seqKnown = typeof seq === 'number' && isFinite(seq) && seq > 0;
   const advanceAge = isFinite(lastSeqAdvanceAt) ? Math.max(0, now - lastSeqAdvanceAt) : NaN;
   const seqAdvancingFresh = seqKnown && isFinite(advanceAge) && advanceAge <= SEQ_STALL_BUDGET_MS;
@@ -532,7 +532,7 @@ export function liveStatusDigest(conn, status) {
   // every LIVE/STALLED/SETTLED/DEAD transition. The seq advance AGE climbs
   // every frame and is INTENTIONALLY NOT folded (folding it would re-stamp
   // the chrome on every tick — the render-discipline bug); the discrete
-  // runState transition is the only thing that should flip the pill.
+  // runState transition is the only thing that should flip the label.
   return [
     conn,
     s.running ? 'R' : '-',

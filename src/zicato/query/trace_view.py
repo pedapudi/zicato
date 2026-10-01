@@ -74,15 +74,17 @@ _SIGNAL_ORDER: tuple[str, ...] = (
     _SIG_BEHAVIORAL,
 )
 
-#: signal_kind → (tone, glyph) — the ONE source, no new colour vocabulary
+#: signal_kind → tone — the ONE source, no new colour vocabulary
 #: (TRAJECTORY-UI.md §3.5). Tones map to the design-language §2 role tokens.
-_TONE_GLYPH: dict[str, tuple[str, str]] = {
-    _SIG_ERROR_CASCADE: ("bad", "✕"),
-    _SIG_ABORT_PATTERN: ("bad", "✕"),
-    _SIG_RETRY_LOOP: ("caution", "↻"),
-    _SIG_BUDGET_BLOWOUT: ("caution", "⏱"),
-    _SIG_TRANSFER_CHURN: ("neutral", "⇄"),
-    _SIG_BEHAVIORAL: ("neutral", "○"),
+#: The console draws each signal's mark from the kind itself (``signalIcon`` in
+#: the dashboard's svg.js), so the payload carries the tone and no symbol.
+_TONE: dict[str, str] = {
+    _SIG_ERROR_CASCADE: "bad",
+    _SIG_ABORT_PATTERN: "bad",
+    _SIG_RETRY_LOOP: "caution",
+    _SIG_BUDGET_BLOWOUT: "caution",
+    _SIG_TRANSFER_CHURN: "neutral",
+    _SIG_BEHAVIORAL: "neutral",
 }
 
 #: The cost ceilings the budget-ground fraction is measured against. Mirrored
@@ -109,8 +111,8 @@ def _r4(value: float) -> float:
     return round(float(value), 4)
 
 
-def _tone_glyph(signal_kind: str) -> tuple[str, str]:
-    return _TONE_GLYPH.get(signal_kind, ("neutral", "○"))
+def _tone(signal_kind: str) -> str:
+    return _TONE.get(signal_kind, "neutral")
 
 
 # ---------------------------------------------------------------------------
@@ -258,19 +260,18 @@ def signal_ticks(present: list[tuple[str, int, str]]) -> list[dict[str, Any]]:
     """Aggregate adverse-signal ticks, evenly distributed (§1.1 — NOT positioned).
 
     ``present`` is ``[(signal_kind, count, label), …]`` already in the fixed
-    kind order. Each tick rides its tone + glyph (§3.5); ``x`` is the even
+    kind order. Each tick rides its tone (§3.5); ``x`` is the even
     ``(k+1)/(n+1)`` slot and ``positioned`` is ``False`` — the honesty flag,
     because the reduced signals carry counts rather than per-event positions.
     """
     n = len(present)
     ticks: list[dict[str, Any]] = []
     for k, (kind, count, label) in enumerate(present):
-        tone, glyph = _tone_glyph(kind)
+        tone = _tone(kind)
         ticks.append(
             {
                 "kind": kind,
                 "tone": tone,
-                "glyph": glyph,
                 "count": int(count),
                 "label": label,
                 "x": _r4((k + 1) / (n + 1)),
@@ -352,7 +353,7 @@ def build_strip_model(
     ep_models: list[dict[str, Any]] = []
     for ep in episodes:
         signal_kind = str(ep["signal_kind"])
-        tone, glyph = _tone_glyph(signal_kind)
+        tone = _tone(signal_kind)
         span = _episode_span(signal_kind, ticks)
         ep_models.append(
             {
@@ -360,7 +361,6 @@ def build_strip_model(
                 "kind": ep["episode_type"],
                 "signal_kind": signal_kind,
                 "tone": tone,
-                "glyph": glyph,
                 "x0": span["x0"],
                 "x1": span["x1"],
                 "anchor": span["anchor"],
@@ -601,7 +601,7 @@ def build_trace_detail(paths: WorkspacePaths, reflection_id: str, trace_id: str)
     episode_rows: list[dict[str, Any]] = []
     for ep in trace_eps:
         signal_kind = str(ep["signal_kind"])
-        tone, glyph = _tone_glyph(signal_kind)
+        tone = _tone(signal_kind)
         span = next(
             (e for e in strip["episodes"] if e["episode_id"] == ep["episode_id"]),
             {"x0": 0.0, "x1": 1.0, "anchor": "lane"},
@@ -614,7 +614,6 @@ def build_trace_detail(paths: WorkspacePaths, reflection_id: str, trace_id: str)
                 "summary": ep["summary"],
                 "severity_rank": int(ep["severity_rank"]),
                 "tone": tone,
-                "glyph": glyph,
                 "span": {"x0": span["x0"], "x1": span["x1"], "anchor": span["anchor"]},
                 "suggestion_ids": list(ep["suggestion_ids"]),
             }
@@ -755,7 +754,7 @@ def build_suggestion_provenance(
         if ep is None:
             continue
         signal_kind = str(ep["signal_kind"])
-        tone, glyph = _tone_glyph(signal_kind)
+        tone = _tone(signal_kind)
         trace = traces_by_id.get(ep["trace_id"])
         segment = (
             build_strip_model(
@@ -773,7 +772,6 @@ def build_suggestion_provenance(
                 "signal_kind": signal_kind,
                 "summary": ep["summary"],
                 "tone": tone,
-                "glyph": glyph,
                 "severity_rank": int(ep["severity_rank"]),
                 "trace_id": ep["trace_id"],
                 "source_file": ep["source_file"],

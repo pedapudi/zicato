@@ -22,20 +22,16 @@
 
 /* ===================  self-hosted monospace faces (@font-face)  ===================
  *
- * The DEFAULT typeface (Technical) is all-monospace — matching zicato's terminal
- * aesthetic — a MIXTURE along a prose↔code axis: a warm, humanist PROSE mono for
- * body / headings / publication, and a crisp CODE mono for data / labels / code.
- * Both faces are self-hosted SIL-OFL woff2 under ../../../fonts/ (relative to
- * this stylesheet at css/). NO network dependency for the default
- * mode: the files ship in the bundle directory, so a blocked CDN never affects
- * the page. (Editorial's serif + Display's geometric/condensed families load
- * from the font CDN — see the Google-Fonts loader in console.js.)
+ * Two SIL-OFL monospace faces ship as woff2 under ../../../fonts/ (relative to
+ * this stylesheet at css/), so they never depend on a font CDN:
  *
- *   iA Writer Mono — PROSE: a warm, humanist mono that reads like text.
- *   JetBrains Mono — CODE: crisp, grid-y, the canonical coding mono.
+ *   JetBrains Mono — the fixed brand mono of the wordmark, and the data face
+ *                    of the Editorial and Display typeface options.
+ *   iA Writer Mono — declared here; no font token currently names it.
  *
- * `font-display: swap` so a slow font never blocks paint; the `--n-font-*`
- * token stacks below list broad system-mono fallbacks for the same reason.
+ * The other faces the typeface options name load from Google Fonts (see the
+ * loader in console.js). `font-display: swap` so a slow font never blocks
+ * paint.
  */
 @font-face {
   font-family: "iA Writer Mono"; font-style: normal; font-weight: 400;
@@ -348,11 +344,11 @@
  *   Espresso — the palette's "cyan" #BED6FF is itself a pale blue; it reads as a
  *            clean accent on the dark ground, so accent keys off it directly.
  *   Dracula  — accent keys off the palette's signature purple #BD93F9, the
- *            defining Dracula hue, so the LIVE pill / highlights / active state
+ *            defining Dracula hue, so the LIVE label / highlights / active state
  *            carry the famous purple. Comment grey #6272A4 is the natural flat
  *            (unchanged) tone; pink #FF79C6 + cyan #8BE9FD remain in palette.
  *   Ubuntu   — accent keys off the bright cyan #34E2E2 (the dim cyan #06989A is a
- *            muted teal); good keys off the bright green #8AE234 so the LIVE pill
+ *            muted teal); good keys off the bright green #8AE234 so the LIVE label
  *            and improve marks read crisply on the signature aubergine ground. */
 
 /* Gogh: Espresso (dark). */
@@ -388,7 +384,7 @@
   --v2-bad:        #FF5555;
   --v2-bad-soft:   #3C2329;
   --v2-caution:    #F1FA8C;   /* dracula yellow */
-  --v2-accent:     #BD93F9;   /* dracula purple: signature accent — LIVE pill, highlights, active state */
+  --v2-accent:     #BD93F9;   /* dracula purple: signature accent — LIVE label, highlights, active state */
   --v2-flat:       #6272A4;   /* dracula comment: unchanged / muted */
   --v2-cell-empty: #2E303D;
 }
@@ -414,68 +410,64 @@
 
 /* ===================  the typeface OPTIONS (12 faces)  ===================
  *
- * The typeface picker is a GROUPED POPOVER offering TWELVE faces — FOUR per
- * mode across THREE modes (Technical · Editorial · Display). Each option keys
- * on a `[data-t-type]` id naming its heading face (e.g. `google-sans-mono`)
- * that the picker stamps on the root; the matching rule below swaps the FOUR
- * font-role tokens the dashboard reads:
- *   head  → --n-font-head   (headings / big numerals)
- *   prose → --v2-sans + --n-font-paper   (body / publication voice)
- *   data/code → --v2-mono   (data / labels / code)
- * The font-stack strings match the ones in the typeface study under
- * docs/design/typeface-study/, so the dashboard renders what the study showed.
- * Every family lists a system fallback so a slow / blocked font never breaks
- * layout; the Google-Fonts families load in console.js (display=swap). The two
- * self-hosted monos (iA Writer Mono + JetBrains Mono, @font-face above) serve
- * roles outside this picker, and the brand mono pins to JetBrains Mono.
- * DEFAULT: Google Sans Mono, the first Technical option.
+ * Two font tokens carry the interface rule "sans for prose and controls, mono
+ * for data, code and key names":
+ *   --v2-sans  prose, controls and chrome (the root face; everything inherits it)
+ *   --v2-mono  data, code, ids, hashes, key names and numbers in tables
+ * Two further tokens set display type:
+ *   --n-font-head   headings and big numerals
+ *   --n-font-paper  the publication's title
+ *
+ * The typeface picker is a grouped popover offering twelve pairings, four per
+ * mode (Technical, Editorial, Display). The picker stamps an option's id on
+ * the root as `[data-t-type]`, and the matching rule below sets all four
+ * tokens. Every option keeps the rule true: `--v2-sans` is always a sans-serif
+ * stack, `--v2-mono` is always a monospace stack, and the heading face is never
+ * monospace. `test/interface_rules.test.mjs` checks all twelve.
+ *
+ * Every stack ends in a generic family, so a slow or blocked font never breaks
+ * layout. The Google Fonts families load in console.js (display=swap); the
+ * self-hosted JetBrains Mono (@font-face above) is the data face of the
+ * Editorial and Display options, and it backs the fixed brand mono.
+ * DEFAULT: Open Sans with Google Sans Mono, the first Technical option.
  */
 #console-root {
-  --n-font-base: "Open Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-  --n-font-mono-real: "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
-  /* prose/humanist mono — warm, reads like text. */
-  --n-font-prose-mono: "iA Writer Mono", "iA Writer Mono S", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  --n-font-serif: "Source Serif 4", Georgia, "Times New Roman", serif;
-  --n-font-display: "Archivo Narrow", "Space Grotesk", "Open Sans", system-ui, sans-serif;
-  --n-font-geo: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
-
   /* THE BRAND MONO — a FIXED monospace the wordmark pins to, INDEPENDENT of the
    * user's typeface choice, so its dot stays centred on the advance grid no
    * matter which option is selected (the brand never reflows with the UI). */
   --v2-brand-mono: "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
 
-  /* DEFAULT (Google Sans Mono): all four roles = Google Sans Mono (Noto Sans
-   * Mono fallback). Applied unconditionally so a missing data-t-type still
-   * lands on the default voice. */
-  --v2-sans: 'Google Sans Mono', 'Noto Sans Mono', ui-monospace, monospace;
+  /* DEFAULT (Open Sans + Google Sans Mono), applied unconditionally so a
+   * missing data-t-type still lands on the default pairing. */
+  --v2-sans: 'Open Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
   --v2-mono: 'Google Sans Mono', 'Noto Sans Mono', ui-monospace, monospace;
-  --n-font-head: 'Google Sans Mono', 'Noto Sans Mono', ui-monospace, monospace;
-  --n-font-paper: 'Google Sans Mono', 'Noto Sans Mono', ui-monospace, monospace;
+  --n-font-head: 'Open Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --n-font-paper: 'Open Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
 }
 
 /* ----- Technical group ----- */
-/* Google Sans Mono — all four = Google Sans Mono (Noto Sans Mono fallback). */
+/* Open Sans + Google Sans Mono */
 #console-root[data-t-type="google-sans-mono"] {
-  --v2-sans: 'Google Sans Mono', 'Noto Sans Mono', ui-monospace, monospace;
+  --v2-sans: 'Open Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
   --v2-mono: 'Google Sans Mono', 'Noto Sans Mono', ui-monospace, monospace;
-  --n-font-head: 'Google Sans Mono', 'Noto Sans Mono', ui-monospace, monospace;
-  --n-font-paper: 'Google Sans Mono', 'Noto Sans Mono', ui-monospace, monospace;
+  --n-font-head: 'Open Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --n-font-paper: 'Open Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
 }
-/* Source Sans 3 + Source Code Pro — head/prose = Source Sans 3, data/code = Source Code Pro. */
+/* Source Sans 3 + Source Code Pro */
 #console-root[data-t-type="source-sans-3"] {
   --v2-sans: 'Source Sans 3', system-ui, sans-serif;
   --v2-mono: 'Source Code Pro', ui-monospace, monospace;
   --n-font-head: 'Source Sans 3', system-ui, sans-serif;
   --n-font-paper: 'Source Sans 3', system-ui, sans-serif;
 }
-/* Inconsolata — all four = Inconsolata. */
+/* Open Sans + Inconsolata */
 #console-root[data-t-type="inconsolata"] {
-  --v2-sans: 'Inconsolata', ui-monospace, monospace;
+  --v2-sans: 'Open Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
   --v2-mono: 'Inconsolata', ui-monospace, monospace;
-  --n-font-head: 'Inconsolata', ui-monospace, monospace;
-  --n-font-paper: 'Inconsolata', ui-monospace, monospace;
+  --n-font-head: 'Open Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --n-font-paper: 'Open Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
 }
-/* Ubuntu + Ubuntu Mono — head/prose = Ubuntu, data/code = Ubuntu Mono. */
+/* Ubuntu + Ubuntu Mono */
 #console-root[data-t-type="ubuntu"] {
   --v2-sans: 'Ubuntu', system-ui, sans-serif;
   --v2-mono: 'Ubuntu Mono', ui-monospace, monospace;
@@ -483,62 +475,62 @@
   --n-font-paper: 'Ubuntu', system-ui, sans-serif;
 }
 
-/* ----- Editorial group ----- */
-/* Fraunces — all four = Fraunces. */
+/* ----- Editorial group: a serif heading and paper-title voice over Open Sans prose and JetBrains Mono data ----- */
+/* Fraunces */
 #console-root[data-t-type="fraunces"] {
-  --v2-sans: 'Fraunces', Georgia, serif;
-  --v2-mono: 'Fraunces', Georgia, serif;
+  --v2-sans: 'Open Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --v2-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
   --n-font-head: 'Fraunces', Georgia, serif;
   --n-font-paper: 'Fraunces', Georgia, serif;
 }
-/* Bitter — all four = Bitter. */
+/* Bitter */
 #console-root[data-t-type="bitter"] {
-  --v2-sans: 'Bitter', Georgia, serif;
-  --v2-mono: 'Bitter', Georgia, serif;
+  --v2-sans: 'Open Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --v2-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
   --n-font-head: 'Bitter', Georgia, serif;
   --n-font-paper: 'Bitter', Georgia, serif;
 }
-/* Literata — all four = Literata. */
+/* Literata */
 #console-root[data-t-type="literata"] {
-  --v2-sans: 'Literata', Georgia, serif;
-  --v2-mono: 'Literata', Georgia, serif;
+  --v2-sans: 'Open Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --v2-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
   --n-font-head: 'Literata', Georgia, serif;
   --n-font-paper: 'Literata', Georgia, serif;
 }
-/* Domine — all four = Domine. */
+/* Domine */
 #console-root[data-t-type="domine"] {
-  --v2-sans: 'Domine', Georgia, serif;
-  --v2-mono: 'Domine', Georgia, serif;
+  --v2-sans: 'Open Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --v2-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
   --n-font-head: 'Domine', Georgia, serif;
   --n-font-paper: 'Domine', Georgia, serif;
 }
 
-/* ----- Display group ----- */
-/* Archivo Narrow + Space Grotesk — head = Archivo Narrow, prose/data/code = Space Grotesk. */
+/* ----- Display group: a display heading voice over a grotesque sans, with JetBrains Mono data ----- */
+/* Archivo Narrow + Space Grotesk */
 #console-root[data-t-type="archivo-narrow"] {
   --v2-sans: 'Space Grotesk', system-ui, sans-serif;
-  --v2-mono: 'Space Grotesk', system-ui, sans-serif;
+  --v2-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
   --n-font-head: 'Archivo Narrow', 'Space Grotesk', system-ui, sans-serif;
   --n-font-paper: 'Space Grotesk', system-ui, sans-serif;
 }
-/* Hanken Grotesk — all four = Hanken Grotesk. */
+/* Hanken Grotesk */
 #console-root[data-t-type="hanken-grotesk"] {
   --v2-sans: 'Hanken Grotesk', system-ui, sans-serif;
-  --v2-mono: 'Hanken Grotesk', system-ui, sans-serif;
+  --v2-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
   --n-font-head: 'Hanken Grotesk', system-ui, sans-serif;
   --n-font-paper: 'Hanken Grotesk', system-ui, sans-serif;
 }
-/* Barlow Condensed + Space Grotesk — head = Barlow Condensed, rest = Space Grotesk. */
+/* Barlow Condensed + Space Grotesk */
 #console-root[data-t-type="barlow-condensed"] {
   --v2-sans: 'Space Grotesk', system-ui, sans-serif;
-  --v2-mono: 'Space Grotesk', system-ui, sans-serif;
+  --v2-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
   --n-font-head: 'Barlow Condensed', 'Archivo Narrow', system-ui, sans-serif;
   --n-font-paper: 'Space Grotesk', system-ui, sans-serif;
 }
-/* Bricolage Grotesque — all four = Bricolage Grotesque. */
+/* Bricolage Grotesque */
 #console-root[data-t-type="bricolage-grotesque"] {
   --v2-sans: 'Bricolage Grotesque', system-ui, sans-serif;
-  --v2-mono: 'Bricolage Grotesque', system-ui, sans-serif;
+  --v2-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
   --n-font-head: 'Bricolage Grotesque', system-ui, sans-serif;
   --n-font-paper: 'Bricolage Grotesque', system-ui, sans-serif;
 }
@@ -550,7 +542,8 @@
  * padding, section gaps, panel padding, card min-widths, the reel's vertical
  * scale, a global font-size scale) are baked unconditionally onto the console
  * root: every layout that breathes reads them, always at the cozy values. The
- * page-scale pill (`zoom` on the root) is the sizing control now.
+ * page-scale slider in Settings → Appearance (`zoom` on the root) is the
+ * sizing control.
  */
 #console-root {
   --dt-rail: 288px;
@@ -592,7 +585,7 @@
 
   .dn-nav { display: inline-flex; gap: 12px; }
 
-  .dn-status { display: inline-flex; align-items: center; gap: 5px; font-family: var(--v2-mono);
+  .dn-status { display: inline-flex; align-items: center; gap: 5px; font-family: var(--v2-sans);
     font-size: calc(10.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); }
 
   .dn-pagehead { margin-bottom: 18px; }
@@ -628,19 +621,20 @@
   .dn-mini-k { font-size: calc(9px * var(--dt-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.05em; color: var(--v2-ink-faint); }
   .dn-mini-v { font-family: var(--v2-mono); font-size: calc(13px * var(--dt-font-scale, 1)); font-variant-numeric: tabular-nums; color: var(--v2-ink); }
 
-  .dn-chip { font-family: var(--v2-mono); font-size: calc(9.5px * var(--dt-font-scale, 1)); padding: 1px 6px; border-radius: 8px;
-    border: 1px solid var(--v2-rule); color: var(--v2-ink-soft); text-transform: lowercase; }
-  .dn-chip-live { color: var(--v2-caution); border-color: var(--v2-caution); }
-  .dn-chip-open { color: var(--v2-good); border-color: var(--v2-good); }
-  .dn-chip-closed { color: var(--v2-ink-faint); }
-  /* loop-communication verdict chips: a plateau is caution ink; a below-noise-
+  /* a flag: a state word in its semantic colour, set as plain text. */
+  .dn-flag { display: inline-flex; align-items: center; gap: 4px; font-family: var(--v2-sans);
+    font-size: calc(10.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft); text-transform: lowercase; }
+  .dn-flag-live { color: var(--v2-caution); }
+  .dn-flag-open { color: var(--v2-good); }
+  .dn-flag-closed { color: var(--v2-ink-faint); }
+  /* loop-communication verdict labels: a plateau is caution ink; a below-noise-
    * floor "no detectable signal" is faint (the honest can't-tell state, never
    * an alarm hue). "stalled" — challengers fielded, none promoted, no floor
    * measured — is caution alongside the plateau it resembles: it reports
    * promotions that did not happen, which is an observation, not an alarm. */
-  .dn-chip-plateau { color: var(--v2-caution); border-color: var(--v2-caution); }
-  .dn-chip-stalled { color: var(--v2-caution); border-color: var(--v2-caution); }
-  .dn-chip-nosignal { color: var(--v2-ink-faint); border-color: var(--v2-rule); }
+  .dn-flag-plateau { color: var(--v2-caution); }
+  .dn-flag-stalled { color: var(--v2-caution); }
+  .dn-flag-nosignal { color: var(--v2-ink-faint); }
 
   /* ---- the drawn icon set (js/icons.js) ----
    * One construction for every chrome mark: a 16-unit grid, a 1.5-unit round-
@@ -660,8 +654,8 @@
   .dt-icon-faint { color: var(--v2-ink-faint); }
   .dt-icon-neutral { color: var(--v2-ink-soft); }
 
-  /* the overrideChip — operator-override provenance riding BESIDE a verdict
-   * pill / status pill, NEVER recoloring it. Tone is earned by DIRECTION only
+  /* the overrideLabel — operator-override provenance riding BESIDE a verdict
+   * label / status label, NEVER recoloring it. Tone is earned by DIRECTION only
    * (no new hue): a force-promote reads good, a force-reject reads bad, a
    * queued override reads caution (pending), a drained one reads faint (never
    * fired). The refresh mark + " · operator" attribution make the provenance legible.
@@ -682,10 +676,10 @@
    * row (a reason field + promote/reject + cancel); only the explicit confirm
    * POSTs. The accent is the sole structural highlight; the promote/reject
    * confirm buttons earn their tone by DIRECTION (good/bad), never a new hue. */
-  .dn-ovr-ctl { display: inline-flex; align-items: center; gap: 6px; font-family: var(--v2-mono); }
+  .dn-ovr-ctl { display: inline-flex; align-items: center; gap: 6px; font-family: var(--v2-sans); }
   .dn-ovr-col { white-space: nowrap; }
   .dn-ovr-arm, .dn-ovr-confirm, .dn-ovr-cancel {
-    font-family: var(--v2-mono); font-size: calc(10.5px * var(--dt-font-scale, 1));
+    font-family: var(--v2-sans); font-size: calc(10.5px * var(--dt-font-scale, 1));
     padding: 2px 8px; border: 1px solid var(--v2-rule); border-radius: 4px;
     background: transparent; color: var(--v2-ink-soft); cursor: pointer;
     transition: background 0.15s, color 0.15s, border-color 0.15s; }
@@ -693,7 +687,7 @@
   .dn-ovr-arm:hover { background: var(--v2-accent); color: var(--v2-paper); }
   .dn-ovr-arm[disabled] { opacity: 0.42; cursor: default; pointer-events: none; border-color: var(--v2-rule); color: var(--v2-ink-faint); }
   .dn-ovr-confirmrow { display: inline-flex; align-items: center; gap: 5px; }
-  .dn-ovr-reason { font-family: var(--v2-mono); font-size: calc(10.5px * var(--dt-font-scale, 1));
+  .dn-ovr-reason { font-family: var(--v2-sans); font-size: calc(10.5px * var(--dt-font-scale, 1));
     padding: 2px 6px; border: 1px solid var(--v2-rule); border-radius: 4px;
     background: var(--v2-panel); color: var(--v2-ink); width: 14ch; }
   .dn-ovr-confirm.dn-ovr-promote { border-color: var(--v2-good); color: var(--v2-good); }
@@ -711,13 +705,13 @@
 
   /* FIGURE CAPTION (ui.js figCaption): one visible dim line plus a "?" that
      carries everything that would otherwise stack under the figure. The glyph
-     borrows the lifecycle DAG's info-badge look (.ezn-dag-info-*) in HTML. */
+     borrows the lifecycle DAG's info-mark look (.ezn-dag-info-*) in HTML. */
   .dn-figcap { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
   .dn-figcap-lead { min-width: 0; }
   .dn-figcap-more { flex: none; appearance: none; cursor: help;
     width: 14px; height: 14px; padding: 0; line-height: 12px; text-align: center;
     border: 1px solid var(--v2-rule); border-radius: 50%; background: var(--v2-rule-soft);
-    font: 600 9px var(--v2-mono); color: var(--v2-ink-faint); }
+    font: 600 9px var(--v2-sans); color: var(--v2-ink-faint); }
   .dn-figcap-more:hover, .dn-figcap-more:focus { border-color: var(--v2-accent); color: var(--v2-accent); }
 
   /* transcript scroll container: constrained, normal block flow, no overlap */
@@ -747,34 +741,43 @@
    * the intent reads in the markup and no stray overflow wrapper creeps back. */
   .dn-figpane { overflow-x: hidden; }
   .dn-row { display: flex; gap: var(--dt-row-gap, 24px); flex-wrap: wrap; align-items: flex-start; }
-  .dn-stat { font-family: var(--v2-mono); }
+  .dn-stat .v { font-family: var(--v2-mono); }
+  /* a value led by a word is prose: it takes the sans (ui.valueFace). */
+  .dn-stat .v.dn-wordval, .dn-tile-value.dn-wordval, .dn-mini-v.dn-wordval { font-family: var(--v2-sans); }
   .dn-stat .v { font-size: calc(18px * var(--dt-font-scale, 1)); font-variant-numeric: tabular-nums; color: var(--v2-ink); }
   .dn-stat .k { font-size: calc(10px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); text-transform: uppercase; letter-spacing: 0.06em; display: block; margin-top: 1px; }
 
-  .dn-pill { display: inline-flex; align-items: center; gap: 5px; font-family: var(--v2-mono);
-    font-size: calc(10.5px * var(--dt-font-scale, 1)); padding: 2px 8px; border-radius: 10px; border: 1px solid; }
-  .dn-pill.dn-promoted { color: var(--v2-good); border-color: var(--v2-good); background: var(--v2-good-soft); }
-  .dn-pill.dn-rejected { color: var(--v2-bad); border-color: var(--v2-bad); background: var(--v2-bad-soft); }
-  .dn-pill.dn-deferred { color: var(--v2-caution); border-color: var(--v2-caution); }
-  .dn-pill.dn-baseline { color: var(--v2-ink-soft); border-color: var(--v2-rule); }
+  /* a state or verdict word: plain text in its semantic colour, led by a
+     drawn mark where the state has one (verdictLabel in js/ui.js). */
+  .dn-state { display: inline-flex; align-items: center; gap: 4px; font-family: var(--v2-sans);
+    font-size: calc(11px * var(--dt-font-scale, 1)); white-space: nowrap; }
+  .dn-state.dn-promoted { color: var(--v2-good); }
+  .dn-state.dn-rejected { color: var(--v2-bad); }
+  .dn-state.dn-deferred { color: var(--v2-caution); }
+  .dn-state.dn-baseline { color: var(--v2-ink-soft); }
   /* PENDING (Class B): an in-flight / not-yet-raced candidate — visually
      distinct from rejected. Uses the live/racing accent (theme-aware across
      every theme), never the bad/red, so an unscored candidate never reads as a
      dead branch. */
-  .dn-pill.dn-pending { color: var(--v2-accent); border-color: var(--v2-accent);
-    background: color-mix(in srgb, var(--v2-accent) 14%, transparent); }
+  .dn-state.dn-pending { color: var(--v2-accent); }
   /* LIVE: a candidate whose transcript is streaming as the run produces turns.
      Carries the same pulsing dot the in-flight card uses (good/accent), so a
      running transcript reads as alive, not finished. */
-  .dn-pill.dn-live { color: var(--v2-good); border-color: var(--v2-good);
-    background: color-mix(in srgb, var(--v2-good) 12%, transparent); }
+  .dn-state.dn-live { color: var(--v2-good); }
   .dn-xscript-live { margin-left: 6px; }
 
-  /* themed link/button (the E "open transcript" bug fix — never unstyled) */
-  a.dn-linkbtn { display: inline-flex; align-items: center; gap: 4px; font-family: var(--v2-mono);
-    font-size: calc(11.5px * var(--dt-font-scale, 1)); color: var(--v2-accent); text-decoration: none; padding: 4px 10px;
-    border: 1px solid var(--v2-accent); border-radius: 4px; background: transparent; transition: background 0.15s, color 0.15s; }
-  a.dn-linkbtn:hover { background: var(--v2-accent); color: var(--v2-paper); }
+  /* the link button: one style for an <a> and a <button> (a native button
+     otherwise keeps the platform's grey face and font). */
+  .dn-linkbtn { display: inline-flex; align-items: center; gap: 4px; font-family: var(--v2-sans);
+    font-size: calc(11.5px * var(--dt-font-scale, 1)); line-height: 1.3; color: var(--v2-accent); text-decoration: none; padding: 4px 10px;
+    border: 1px solid var(--v2-accent); border-radius: 4px; background: transparent; cursor: pointer;
+    transition: background 0.15s, color 0.15s; }
+  .dn-linkbtn:hover { background: var(--v2-accent); color: var(--v2-paper); }
+  /* an id that links to its page (a generation, a judge): the id in the data
+     face and the accent colour, underlined on hover — no box round it. */
+  .dn-idlink { font-family: var(--v2-mono); font-size: calc(11.5px * var(--dt-font-scale, 1));
+    color: var(--v2-accent); text-decoration: none; white-space: nowrap; }
+  .dn-idlink:hover, .dn-idlink:focus-visible { text-decoration: underline; }
 
   /* the objective callout is led by its faint mono uppercase "objective" label
    * (the standard caption idiom) + spacing — NOT a coloured accent left rail. */
@@ -799,7 +802,7 @@
   .dn-md-body pre { background: var(--v2-rule-soft); padding: 9px 11px; border-radius: 3px; overflow-x: auto; font-size: calc(11px * var(--dt-font-scale, 1)); }
 
   .dn-legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: calc(10.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint);
-    font-family: var(--v2-mono); margin-top: 9px; }
+    font-family: var(--v2-sans); margin-top: 9px; }
   .dn-legend span { display: inline-flex; align-items: center; gap: 5px; }
   .dn-legend i { width: 17px; height: 0; border-top: 2px solid; display: inline-block; }
   .dn-legend i.good { border-color: var(--v2-good); }
@@ -839,7 +842,7 @@
   .dn-dot { fill: var(--v2-ink); }
   .dn-dot.dn-good { fill: var(--v2-good); }
   .dn-dot.dn-bad { fill: var(--v2-bad); }
-  .dn-dot-missing { fill: var(--v2-ink-faint); font: 11px var(--v2-mono); }
+  .dn-dot-missing { fill: var(--v2-ink-faint); font: 11px var(--v2-sans); }
   .dn-dotrow:hover .dn-dot-label { fill: var(--v2-ink); }
   .dn-dotrow:focus { outline: none; }
   .dn-dotrow:focus .dn-dot-label { fill: var(--v2-accent); }
@@ -848,7 +851,7 @@
   /* lineage bumps */
   .dn-lane-guide { stroke: var(--v2-rule); stroke-width: 1; stroke-dasharray: 1 4; }
   .dn-spine-guide { stroke-dasharray: none; stroke: var(--v2-rule); }
-  .dn-lane-label { fill: var(--v2-ink-faint); font: 10px var(--v2-mono); text-transform: uppercase; letter-spacing: 0.05em; }
+  .dn-lane-label { fill: var(--v2-ink-faint); font: 10px var(--v2-sans); text-transform: uppercase; letter-spacing: 0.05em; }
   .dn-spine-line { stroke: var(--v2-accent); stroke-width: 2.4; }
   .dn-branch { stroke: var(--v2-flat); stroke-width: 1; opacity: 0.7; }
   .dn-bump-node.dn-promoted { fill: var(--v2-accent); }
@@ -891,19 +894,19 @@
   .dn-trellis-cell:hover { border-color: var(--v2-accent); }
   /* LIVE — a trellis cell with in-flight runs (current epoch) lights up. */
   .dn-trellis-cell.dn-trellis-live { border-color: var(--v2-accent); box-shadow: inset 0 0 0 1px var(--v2-accent); }
-  .dn-trellis-live-tag { display: inline-flex; align-items: center; gap: 3px; margin-left: auto; font-family: var(--v2-mono); font-size: calc(9px * var(--dt-font-scale, 1)); color: var(--v2-accent); }
+  .dn-trellis-livemark { display: inline-flex; align-items: center; gap: 3px; margin-left: auto; font-family: var(--v2-sans); font-size: calc(9px * var(--dt-font-scale, 1)); color: var(--v2-accent); }
   .dn-trellis-cap { display: flex; flex-direction: column; gap: 2px; margin-bottom: 5px; }
   .dn-trellis-id { font-family: var(--v2-mono); font-size: calc(11.5px * var(--dt-font-scale, 1)); color: var(--v2-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .dn-trellis-meta { display: flex; align-items: center; gap: 4px; font-size: calc(10px * var(--dt-font-scale, 1)); }
-  .dn-kind-tag { font-family: var(--v2-mono); font-size: calc(9px * var(--dt-font-scale, 1)); padding: 0 4px; border-radius: 3px; border: 1px solid var(--v2-rule); color: var(--v2-ink-soft); }
-  .dn-kind-tag.dn-kind-multi_turn_scripted { border-color: var(--v2-accent); color: var(--v2-accent); }
-  .dn-kind-tag.dn-kind-multi_turn_emulated { border-color: var(--v2-good); color: var(--v2-good); }
+  .dn-kind-label { font-family: var(--v2-sans); font-size: calc(9px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft); }
+  .dn-kind-label.dn-kind-multi_turn_scripted { color: var(--v2-accent); }
+  .dn-kind-label.dn-kind-multi_turn_emulated { color: var(--v2-good); }
   /* the two SYNTHETIC kinds — same scale, one step further out: adversarial is
      the deliberately-known-bad probe (caution), clean is its paired control
      (flat), so a trellis of five kinds reads as five, not three plus two blanks. */
-  .dn-kind-tag.dn-kind-synthetic_adversarial { border-color: var(--v2-caution); color: var(--v2-caution); }
-  .dn-kind-tag.dn-kind-synthetic_clean { border-color: var(--v2-flat); color: var(--v2-flat); }
-  .dn-trellis-foot { display: flex; gap: 9px; flex-wrap: wrap; font-size: calc(9.5px * var(--dt-font-scale, 1)); margin-top: 4px; font-family: var(--v2-mono); }
+  .dn-kind-label.dn-kind-synthetic_adversarial { color: var(--v2-caution); }
+  .dn-kind-label.dn-kind-synthetic_clean { color: var(--v2-flat); }
+  .dn-trellis-foot { display: flex; gap: 9px; flex-wrap: wrap; font-size: calc(9.5px * var(--dt-font-scale, 1)); margin-top: 4px; font-family: var(--v2-sans); }
 
   /* sparkbar verdict overlay — the bars stretch to fill width, the glyph keeps
      its 1:1 aspect (a TRUE triangle, never sheared into an oval/wedge). */
@@ -935,15 +938,18 @@
   .dn-expect-detail { font-size: calc(11.5px * var(--dt-font-scale, 1)); }
 
   /* transcript turns */
-  .dn-turn { border-left: 2px solid var(--v2-rule); padding: 4px 0 4px 10px; margin: 5px 0; }
-  .dn-turn-agent { border-left-color: var(--v2-accent); }
-  .dn-turn-user { border-left-color: var(--v2-good); }
-  .dn-turn-system { border-left-color: var(--v2-rule); }
+  /* a turn names its role with a drawn mark in the head (agent, user,
+     system), coloured by role; the turn itself carries no edge rule. */
+  .dn-turn { padding: 4px 0; margin: 5px 0; }
+  .dn-turn-role { margin-right: 4px; vertical-align: -1px; }
+  .dn-turn-agent .dn-turn-role { color: var(--v2-accent); }
+  .dn-turn-user .dn-turn-role { color: var(--v2-good); }
+  .dn-turn-system .dn-turn-role { color: var(--v2-ink-faint); }
   .dn-turn-head { font-size: calc(10px * var(--dt-font-scale, 1)); margin-bottom: 2px; }
   .dn-turn-text { font-size: calc(12px * var(--dt-font-scale, 1)); line-height: 1.45; white-space: pre-wrap; word-break: break-word; color: var(--v2-ink); }
   .dn-tool { font-size: calc(10.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft); margin-top: 2px; }
   .dn-execution { margin-top: 7px; padding-left: 9px; border-left: 1px solid var(--v2-rule);
-    font: calc(11px * var(--dt-font-scale, 1))/1.45 var(--v2-mono); }
+    font: calc(11px * var(--dt-font-scale, 1))/1.45 var(--v2-sans); }
   .dn-exec-node { position: relative; min-width: 0; }
   .dn-exec-node + .dn-exec-node { margin-top: 3px; }
   .dn-exec-node::before { content: ''; position: absolute; left: -9px; top: 10px;
@@ -954,7 +960,7 @@
   .dn-exec-node[open] > .dn-exec-toggle > .dn-exec-caret { transform: rotate(90deg); }
   .dn-exec-label { min-width: 0; }
   .dn-exec-glyph { display: inline-block; width: 15px; color: var(--v2-ink-faint); }
-  .dn-exec-name { color: var(--v2-ink); font-weight: 600; }
+  .dn-exec-name { color: var(--v2-ink); font-weight: 600; font-family: var(--v2-mono); }
   .dn-exec-summary { overflow-wrap: anywhere; }
   .dn-exec-running > .dn-exec-label .dn-exec-glyph,
   .dn-exec-running > .dn-exec-label .dn-exec-status,
@@ -975,13 +981,13 @@
   .dn-exec-running > .dn-exec-children { border-left-style: dashed; }
   .dn-exec-toggle:focus-visible { outline: 2px solid var(--v2-accent); outline-offset: 2px; }
   .dn-exec-unresolved { margin-top: 9px; padding: 7px 9px; border: 1px dashed var(--v2-rule); }
-  .dn-exec-unresolved-title { font: calc(10px * var(--dt-font-scale, 1))/1.3 var(--v2-mono); }
+  .dn-exec-unresolved-title { font: calc(10px * var(--dt-font-scale, 1))/1.3 var(--v2-sans); }
   .dn-annot { font-size: calc(10.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); margin-top: 2px; font-style: italic; }
   .dn-annot-drift { color: var(--v2-bad); }
   .dn-annot-judge { color: var(--v2-accent); }
 
   /* paired slopegraph */
-  .dn-slope-col { fill: var(--v2-ink-faint); font: 10px var(--v2-mono); text-transform: uppercase; letter-spacing: 0.06em; }
+  .dn-slope-col { fill: var(--v2-ink-faint); font: 10px var(--v2-sans); text-transform: uppercase; letter-spacing: 0.06em; }
   .dn-slope-axis { stroke: var(--v2-rule); stroke-width: 1; }
   .dn-leader { stroke: var(--v2-rule); stroke-width: 0.8; }
   .dn-pslope-line { stroke-width: 1.2; vector-effect: non-scaling-stroke; }
@@ -1008,7 +1014,8 @@
   .dn-mtx-file { color: var(--v2-ink); }
   .dn-mtx-sitelink:hover .dn-mtx-file { color: var(--v2-accent); }
   .dn-mtx-role { color: var(--v2-ink-faint); font-size: calc(9.5px * var(--dt-font-scale, 1)); }
-  .dn-mtx-row.dn-mtx-pinned .dn-mtx-site { border-left: 3px solid var(--v2-accent); }
+  /* the pinned row reads as selected through its name in the accent colour. */
+  .dn-mtx-row.dn-mtx-pinned .dn-mtx-file { color: var(--v2-accent); }
   /* the SITE label is the "all generations" affordance — make it visibly a
    * link (underline on hover) so its click target reads distinctly from the
    * cells, which are the "one generation" affordance. */
@@ -1026,10 +1033,9 @@
   .dn-mtx-mark { display: block; }
   .dn-mtx-drillhead { margin-bottom: 10px; font-size: calc(13px * var(--dt-font-scale, 1)); }
   .dn-mtx-drillhead .dn-mono { color: var(--v2-ink); }
-  /* the scope chip names whether the pane is showing ONE generation or ALL. */
-  .dn-mtx-scope { display: inline-block; margin-left: 8px; font-family: var(--v2-mono); font-size: calc(9.5px * var(--dt-font-scale, 1));
-    text-transform: uppercase; letter-spacing: 0.05em; color: var(--v2-ink-soft);
-    padding: 1px 6px; border: 1px solid var(--v2-rule); border-radius: 3px; }
+  /* the scope word names whether the pane is showing ONE generation or ALL. */
+  .dn-mtx-scope { display: inline-block; margin-left: 8px; font-family: var(--v2-sans); font-size: calc(9.5px * var(--dt-font-scale, 1));
+    text-transform: uppercase; letter-spacing: 0.05em; color: var(--v2-ink-soft); }
 
   /* ===================  EVALS: entries × candidates matrix (WS-MATRIX)  =================== */
 
@@ -1041,13 +1047,15 @@
 
   /* the calibration caption + client-side filter toolbar */
   .dn-evals-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 16px; margin: 4px 0 12px; }
-  .dn-evals-cal { font-size: calc(11px * var(--dt-font-scale, 1)); font-family: var(--v2-mono); }
+  .dn-evals-cal { font-size: calc(11px * var(--dt-font-scale, 1)); font-family: var(--v2-sans); }
   .dn-evals-filters { display: inline-flex; gap: 6px; }
-  .dn-evals-chip { font-family: var(--v2-mono); font-size: calc(10.5px * var(--dt-font-scale, 1));
-    color: var(--v2-ink-soft); background: transparent; border: 1px solid var(--v2-rule);
-    border-radius: 3px; padding: 2px 9px; cursor: pointer; text-transform: lowercase; letter-spacing: 0.03em; }
-  .dn-evals-chip:hover { color: var(--v2-ink); border-color: var(--v2-rule-strong, var(--v2-ink-faint)); }
-  .dn-evals-chip-on { color: var(--v2-accent); border-color: var(--v2-accent); background: var(--v2-accent-soft, var(--v2-good-soft)); }
+  .dn-evals-filters { gap: 14px; }
+  .dn-evals-filter { appearance: none; background: none; border: 0; padding: 0;
+    font-family: var(--v2-sans); font-size: calc(11px * var(--dt-font-scale, 1));
+    color: var(--v2-ink-soft); cursor: pointer; text-transform: lowercase; }
+  .dn-evals-filter:hover { color: var(--v2-ink); text-decoration: underline; }
+  /* the selected filter: its name in the accent colour. */
+  .dn-evals-filter-on { color: var(--v2-accent); font-weight: 600; }
 
   /* the matrix grid — reuses the shipped dn-mtx grammar; the wide table scrolls
    * in its OWN dn-table-scroll container, so the page body never scrolls. */
@@ -1062,19 +1070,18 @@
   .dn-evalmtx-gen.dn-evalmtx-spine { background: var(--v2-good-soft); }
   .dn-evalmtx-genlink { color: var(--v2-ink); text-decoration: none; }
   .dn-evalmtx-genlink:hover { color: var(--v2-accent); text-decoration: underline; }
-  .dn-evalmtx-gen .dn-pill { font-size: calc(9px * var(--dt-font-scale, 1)); padding: 0 5px; }
+  .dn-evalmtx-gen .dn-state { font-size: calc(9px * var(--dt-font-scale, 1)); }
 
-  /* the entry (row) header: id + holdout marker + flip-rate badge */
+  /* the entry (row) header: id + holdout marker + flip-rate mark */
   .dn-evalmtx-sitehead { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 4px 8px; }
   .dn-evalmtx-entry { color: var(--v2-ink); }
-  .dn-evalmtx-row.dn-evalmtx-holdout .dn-evalmtx-site { border-left: 3px solid var(--v2-accent); }
-  .dn-evalmtx-holdout-tag { font-size: calc(9px * var(--dt-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.05em;
-    color: var(--v2-accent); border: 1px solid var(--v2-accent); border-radius: 3px; padding: 0 5px; }
-  .dn-eval-flip { font-size: calc(9.5px * var(--dt-font-scale, 1)); font-family: var(--v2-mono);
-    padding: 0 5px; border-radius: 3px; white-space: nowrap; }
+  /* a held-out entry: the drawn padlock and the word "holdout" in the accent. */
+  .dn-evalmtx-holdout-mark { display: inline-flex; align-items: center; gap: 3px;
+    font-size: calc(10px * var(--dt-font-scale, 1)); color: var(--v2-accent); }
+  .dn-eval-flip { font-size: calc(10px * var(--dt-font-scale, 1)); white-space: nowrap; }
   .dn-eval-flip-clean { color: var(--v2-good); }
   .dn-eval-flip-warm { color: var(--v2-caution, var(--v2-ink-soft)); }
-  .dn-eval-flip-hot { color: var(--v2-bad); border: 1px solid var(--v2-bad); }
+  .dn-eval-flip-hot { color: var(--v2-bad); font-weight: 600; }
   .dn-eval-flip-unmeasured { font-style: italic; }
 
   /* the cells — toned by the SERVED verdict, SHADED BY the SERVED evidence tier
@@ -1104,7 +1111,7 @@
 
   .dn-patch-block { border: 1px solid var(--v2-rule-soft); border-radius: 4px; padding: 8px 10px; margin: 8px 0; }
   .dn-patch-head { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
-  .dn-patch-op { font-size: calc(10px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft); padding: 1px 6px; border: 1px solid var(--v2-rule); border-radius: 3px; }
+  .dn-patch-op { font-size: calc(10.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft); }
   .dn-patch-why { font-size: calc(11.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft); margin: 4px 0 6px; line-height: 1.4; }
   .dn-patch-why-lead { color: var(--v2-accent); font-weight: 600; }
   .dn-patch-note { font-size: calc(10.5px * var(--dt-font-scale, 1)); margin: 0 0 5px; }
@@ -1114,7 +1121,7 @@
   .dn-num { text-align: right; font-variant-numeric: tabular-nums; }
   .dn-bad-t { color: var(--v2-bad); }
   .dn-subhead { font-size: calc(11px * var(--dt-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.07em; color: var(--v2-ink-faint);
-    margin: 16px 0 7px; font-family: var(--v2-mono); }
+    margin: 16px 0 7px; font-family: var(--v2-sans); }
   /* a CONTAINED horizontal scroll for genuinely-wide tables (publication body
    * GFM tables, the mutation matrix): the scroll lives on THIS wrapper, never
    * on the surrounding panel/page, so the table can be wide without any element
@@ -1133,12 +1140,11 @@
   .dn-board-table tr.dn-board-champ td { background: var(--v2-good-soft); }
   .dn-board-run { padding: 2px 7px; font-size: calc(10.5px * var(--dt-font-scale, 1)); }
 
-  /* the armed built-in judge chips (#194 §5). A SUPPRESSED built-in stays on
+  /* the armed built-in judge labels (#194 §5). A SUPPRESSED built-in stays on
    * the strip, struck through and faded: dropping it would show the
    * disable_drift header's effect by omission, which shows nothing. */
   .dn-judges-strip { display: flex; flex-wrap: wrap; gap: 6px; margin: 5px 0 0; }
-  .dn-pill.dn-judge-off { color: var(--v2-ink-faint); border-color: var(--v2-rule);
-    border-style: dashed; background: none; }
+  .dn-state.dn-judge-off { color: var(--v2-ink-faint); }
   .dn-judge-off .dn-judge-name { text-decoration: line-through; }
 
   /* ===================  loop communication (trajectory / cost / judges) ============= */
@@ -1167,7 +1173,7 @@
     padding: 12px 14px; background: var(--v2-paper); }
   .dn-measure-card > svg, .dn-measure-card .dn-judgetrend-row > svg {
     display: block; max-width: 100%; }
-  .dn-measure-head { font-family: var(--v2-mono); font-size: calc(10.5px * var(--dt-font-scale, 1));
+  .dn-measure-head { font-family: var(--v2-sans); font-size: calc(10.5px * var(--dt-font-scale, 1));
     letter-spacing: 0.04em; text-transform: uppercase; color: var(--v2-ink-soft);
     margin-bottom: 9px; }
 
@@ -1191,7 +1197,7 @@
   .dn-gate-decision { display: flex; align-items: center; gap: 10px; }
   .dn-gate-deltas { gap: 28px; }
   /* the absolute-scalar endpoints (champion/challenger scalar) sit left of the
-     Δ chips; same chip gap so the head reads as one row of stats. */
+     Δ labels; same label gap so the head reads as one row of stats. */
   .dn-gate-absolutes { gap: 28px; }
   .dn-gate-reason { font-size: calc(12px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft); margin: 10px 0 4px; line-height: 1.45; max-width: 88ch; }
   .dn-rules { list-style: none; margin: 4px 0 8px; padding: 0; display: flex; flex-direction: column; gap: 0; }
@@ -1203,7 +1209,7 @@
   .dn-rule-pass .dn-rule-dot { background: var(--v2-good); }
   .dn-rule-skipped .dn-rule-dot, .dn-rule-not_reached .dn-rule-dot { background: var(--v2-flat); opacity: 0.5; }
   .dn-rule-label { font-family: var(--v2-mono); color: var(--v2-ink); }
-  .dn-rule-status { font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.04em; color: var(--v2-ink-soft); }
+  .dn-rule-status { font-family: var(--v2-sans); font-size: calc(11px * var(--dt-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.04em; color: var(--v2-ink-soft); }
   .dn-rule-fail .dn-rule-status { color: var(--v2-bad); }
   .dn-rule-pass .dn-rule-status { color: var(--v2-good); }
   /* the diff-complexity parsimony line item: NEUTRAL (dn-rule-neutral) inherits
@@ -1256,7 +1262,7 @@
   /* the ONE-LINE verdict sentence, directly under the proposal: decision ·
      deciding rule · what regressed · how far from the margin. The decision
      earns the tone (dn-good-t / dn-bad-t); the line itself adds no colour. */
-  .dn-verdictline { font-family: var(--v2-mono); font-size: calc(12.5px * var(--dt-font-scale, 1));
+  .dn-verdictline { font-family: var(--v2-sans); font-size: calc(12.5px * var(--dt-font-scale, 1));
     margin: 8px 0 0; line-height: 1.45; }
 
   /* ===================  the EXPERIMENTS LEDGER (#194 §3)  =================== */
@@ -1288,22 +1294,21 @@
   .dn-scalar-decomp { margin: 2px 0 10px; padding: 0; }
   .dn-decomp-sides { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
   .dn-decomp-side { border: 1px solid var(--v2-rule-soft); border-radius: 4px; padding: 8px 10px; }
-  .dn-decomp-sidehead { font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1));
+  .dn-decomp-sidehead { font-family: var(--v2-sans); font-size: calc(11px * var(--dt-font-scale, 1));
     text-transform: uppercase; letter-spacing: 0.04em; color: var(--v2-ink-soft); margin: 0 0 6px; }
   .dn-decomp-row { display: grid; grid-template-columns: 92px 1fr; gap: 8px; align-items: baseline;
     font-size: calc(12px * var(--dt-font-scale, 1)); padding: 3px 0; line-height: 1.4; }
   .dn-decomp-seam { font-family: var(--v2-mono); color: var(--v2-ink-soft); }
   .dn-decomp-src { font-family: var(--v2-mono); color: var(--v2-ink); overflow-wrap: anywhere; }
   .dn-decomp-builtin .dn-decomp-src { color: var(--v2-ink-soft); }
-  .dn-decomp-kindtag { color: var(--v2-ink-soft); font-size: calc(11px * var(--dt-font-scale, 1)); }
+  .dn-decomp-kind { color: var(--v2-ink-soft); font-size: calc(11px * var(--dt-font-scale, 1)); }
   /* FAIL-OPEN: a fired plugin that fell back to the built-in / transformed
      default. Caution-colored, with its reason, so a silently-degraded plugin is
      obvious in the UI — never buried in a WARNING log. */
   .dn-decomp-row.dn-decomp-failopen { color: var(--v2-caution);
-    background: color-mix(in srgb, var(--v2-caution) 10%, transparent);
-    border-left: 2px solid var(--v2-caution); padding-left: 6px; margin-left: -8px; }
+    background: color-mix(in srgb, var(--v2-caution) 10%, transparent); }
   .dn-decomp-row.dn-decomp-failopen .dn-decomp-src { color: var(--v2-caution); }
-  .dn-decomp-failtag { font-family: var(--v2-mono); color: var(--v2-caution);
+  .dn-decomp-fail { font-family: var(--v2-sans); color: var(--v2-caution);
     font-size: calc(11px * var(--dt-font-scale, 1)); }
   .dn-decomp-banner { display: flex; align-items: baseline; gap: 8px; margin: 0 0 8px;
     padding: 6px 10px; border-radius: 4px; color: var(--v2-caution);
@@ -1335,7 +1340,7 @@
   .dn-bt-theta { fill: var(--v2-ink); }
   .dn-bt-theta.dn-good { fill: var(--v2-good); }
   .dn-bt-theta.dn-bad { fill: var(--v2-bad); }
-  .dn-bt-unfit { fill: var(--v2-ink-faint); font: italic 10px var(--v2-mono); }
+  .dn-bt-unfit { fill: var(--v2-ink-faint); font: italic 10px var(--v2-sans); }
   .dn-bt-probwrap { margin: 4px 0 6px; }
   .dn-bt-probhead { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
   .dn-bt-problab { font-size: calc(11px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft);
@@ -1346,7 +1351,7 @@
   .dn-bt-prob-fill.dn-good-fill { fill: var(--v2-good); }
   .dn-bt-prob-fill.dn-caution-fill { fill: var(--v2-caution); }
   .dn-bt-prob-thr { stroke: var(--v2-ink); stroke-width: 1.5; stroke-dasharray: 2 2; }
-  .dn-bt-prob-thrlab { fill: var(--v2-ink-soft); font: 9px var(--v2-mono); }
+  .dn-bt-prob-thrlab { fill: var(--v2-ink-soft); font: 9px var(--v2-sans); }
   .dn-bt-readout { font-size: calc(11px * var(--dt-font-scale, 1)); margin: 2px 0 0; }
   .dn-bt-forming { display: flex; align-items: baseline; gap: 6px; margin: 6px 0; }
   /* the replication strip (deferred) — replicates-spent pips + next duel + the
@@ -1358,8 +1363,7 @@
   .dn-bt-repl-n { color: var(--v2-ink-soft); }
   .dn-bt-duelpair { color: var(--v2-ink); }
   .dn-bt-convspark { display: inline-block; width: 120px; }
-  .dn-bt-inconclusive { font-size: calc(11px * var(--dt-font-scale, 1)); margin: 6px 0 0;
-    border-left: 2px solid var(--v2-caution); padding-left: 8px; color: var(--v2-caution); }
+  .dn-bt-inconclusive { font-size: calc(11px * var(--dt-font-scale, 1)); margin: 6px 0 0; color: var(--v2-caution); }
   .dn-bt-theta.dn-caution { fill: var(--v2-caution); }
 
   /* the BT credible-interval band drawn on the radar scalar vertex. */
@@ -1367,7 +1371,7 @@
   .dn-radar-citick { stroke: var(--v2-accent); stroke-width: 1.4; opacity: 0.7; }
   .dn-radar-ciband.dn-proj, .dn-radar-citick.dn-proj { stroke-dasharray: 2 2; opacity: 0.45; }
   /* the field-level deferred caption under the standings table. */
-  .dt-standings-deferred { border-left: 2px solid var(--v2-caution); padding-left: 8px; }
+  .dt-standings-deferred { color: var(--v2-caution); }
 
   /* ===  field-diversity ribbon + overlap matrix  ===
      pairwise idea overlap of the minted field. One accent only; the meter earns
@@ -1388,14 +1392,14 @@
   .dn-div-fill.dn-flat-fill { fill: var(--v2-flat); }
   .dn-div-max { stroke: var(--v2-ink); stroke-width: 1.6; }
   .dn-div-tol { stroke: var(--v2-ink); stroke-width: 1.5; stroke-dasharray: 2 2; }
-  .dn-div-tollab { fill: var(--v2-ink-soft); font: 9px var(--v2-mono); }
+  .dn-div-tollab { fill: var(--v2-ink-soft); font: 9px var(--v2-sans); }
   /* the overlap matrix — clones dn-mtx; the max-overlap pair gets the accent rail. */
   .dn-divmtx { margin-top: 4px; }
   .dn-divmtx-paired { border-top: 2px solid var(--v2-accent); }
   .dn-divmtx-wrap { margin-top: 10px; }
-  /* the per-row diversity badge: soft-rejected rides the deferred pill, penalized a chip. */
-  .dn-pill.dn-div-softrej { margin-left: 6px; }
-  .dn-chip.dn-div-penalized { margin-left: 6px; }
+  /* the per-row diversity mark: soft-rejected rides the deferred label, penalized a label. */
+  .dn-state.dn-div-softrej { margin-left: 6px; }
+  .dn-flag.dn-div-penalized { margin-left: 6px; }
 
   /* ===  proposer prediction-accuracy + calibration scorecard (DIAGNOSTIC)  === */
   /* the dossier's orthogonal read: did the PROPOSER call the movement? Reuses
@@ -1458,7 +1462,7 @@
   .dn-mut-detail { min-height: 120px; }
   .dn-sxs { border: 1px solid var(--v2-rule); border-radius: 4px; overflow: hidden; margin: 8px 0; }
   .dn-sxs-head { display: grid; grid-template-columns: 1fr 1fr; background: var(--v2-rule-soft); }
-  .dn-sxs-col-h { font-family: var(--v2-mono); font-size: calc(10px * var(--dt-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.05em;
+  .dn-sxs-col-h { font-family: var(--v2-sans); font-size: calc(10px * var(--dt-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.05em;
     padding: 5px 10px; color: var(--v2-ink-soft); }
   .dn-sxs-col-h.dn-sxs-new { border-left: 1px solid var(--v2-rule); }
   .dn-sxs-body { font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1)); max-height: 340px; overflow: auto; }
@@ -1480,7 +1484,7 @@
      grid cell instead of pushing the metadata row past the page. */
   .dn-paper-h2 { font-family: var(--n-font-head); font-size: calc(16px * var(--dt-font-scale, 1)); color: var(--v2-ink); margin: 26px 0 8px; font-weight: 600; }
   .dn-paper-fig { margin: 18px 0; padding: 14px; border: 1px solid var(--v2-rule); border-radius: 4px; background: var(--v2-paper); max-width: 100%; min-width: 0; overflow-x: auto; }
-  .dn-paper-figcap { font-size: calc(11px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); font-family: var(--v2-mono); margin-top: 8px; line-height: 1.4; }
+  .dn-paper-figcap { font-size: calc(11px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); font-family: var(--v2-sans); margin-top: 8px; line-height: 1.4; }
   .dn-paper-plates, .dn-paper-matchups { margin-top: 24px; padding-top: 14px; border-top: 1px solid var(--v2-rule); }
   /* combined aggregate-scores visual: chart + table, one figure */
   .dn-scores-combined { display: grid; gap: 16px; grid-template-columns: minmax(220px, 320px) 1fr; align-items: center; min-width: 0; }
@@ -1491,7 +1495,7 @@
   /* ===================  lifecycle DAG (ezn-*)  =================== */
 
   .ezn-dag { display: block; }
-  .ezn-col-head { fill: var(--v2-ink-faint); font: 9.5px var(--v2-mono); text-transform: uppercase; letter-spacing: 0.08em; }
+  .ezn-col-head { fill: var(--v2-ink-faint); font: 9.5px var(--v2-sans); text-transform: uppercase; letter-spacing: 0.08em; }
   .ezn-edge { stroke: var(--v2-flat); stroke-width: 1; fill: none; }
   .ezn-edge-spine { stroke: var(--v2-accent); stroke-width: 2; }
   .ezn-edge-soft { stroke: var(--v2-rule); stroke-width: 1; }
@@ -1502,7 +1506,8 @@
   .ezn-edge-neutral { stroke: var(--v2-accent); stroke-dasharray: 4 3; }
   .ezn-node-box { fill: var(--v2-panel); stroke: var(--v2-rule); stroke-width: 1; }
   .ezn-node-id { fill: var(--v2-ink); font: 600 11px var(--v2-mono); text-anchor: middle; }
-  .ezn-node-sub { fill: var(--v2-ink-faint); font: 9.5px var(--v2-mono); text-anchor: middle; }
+  .ezn-node-id.dn-wordval { font-family: var(--v2-sans); }
+  .ezn-node-sub { fill: var(--v2-ink-faint); font: 9.5px var(--v2-sans); text-anchor: middle; }
   .ezn-promoted .ezn-node-box { stroke: var(--v2-good); }
   .ezn-promoted .ezn-node-id { fill: var(--v2-good); }
   .ezn-rejected .ezn-node-box { stroke: var(--v2-bad); }
@@ -1520,7 +1525,7 @@
   .ezn-board-node.ezn-deferred .ezn-board-disc { stroke: var(--v2-caution); }
   .ezn-board-label { fill: var(--v2-ink-soft); font: 9px var(--v2-mono); }
   .ezn-board-loss { fill: var(--v2-ink); font: 9px var(--v2-mono); font-variant-numeric: tabular-nums; }
-  /* rung-multiplicity badge: the SAME entry re-raced across rungs (racing). */
+  /* rung-multiplicity mark: the SAME entry re-raced across rungs (racing). */
   .ezn-board-mult { fill: var(--v2-ink-faint); font: 600 8.5px var(--v2-mono); font-variant-numeric: tabular-nums; }
   .ezn-board-raced .ezn-board-disc { stroke-dasharray: 3 2; }
   /* per-board candidate-vs-champion sublabel (champ N · Δ ±X), under the disc.
@@ -1537,15 +1542,15 @@
   /* the KEY beneath the DAG — ONE short, faint, mono line (the verbose how-to
      moved into the "?" info hovercard + the GATE/Σ hovercards, de-crowding the
      figure). */
-  .ezn-dag-key { fill: var(--v2-ink-faint); font: 8.5px var(--v2-mono); letter-spacing: 0.01em; }
+  .ezn-dag-key { fill: var(--v2-ink-faint); font: 8.5px var(--v2-sans); letter-spacing: 0.01em; }
   /* the "?" info affordance top-right of the DAG — opens the full how-to in the
      hovercard. Themed via the rule/accent/panel tokens (no hardcoded hex). */
   .ezn-dag-info { cursor: help; }
   .ezn-dag-info:focus { outline: none; }
-  .ezn-dag-info-badge { fill: var(--v2-rule-soft); stroke: var(--v2-rule); stroke-width: 1; }
-  .ezn-dag-info:hover .ezn-dag-info-badge,
-  .ezn-dag-info:focus .ezn-dag-info-badge { stroke: var(--v2-accent); }
-  .ezn-dag-info-mark { fill: var(--v2-ink-faint); font: 600 10px var(--v2-mono); }
+  .ezn-dag-info-disc { fill: var(--v2-rule-soft); stroke: var(--v2-rule); stroke-width: 1; }
+  .ezn-dag-info:hover .ezn-dag-info-disc,
+  .ezn-dag-info:focus .ezn-dag-info-disc { stroke: var(--v2-accent); }
+  .ezn-dag-info-mark { fill: var(--v2-ink-faint); font: 600 10px var(--v2-sans); }
   .ezn-dag-info:hover .ezn-dag-info-mark,
   .ezn-dag-info:focus .ezn-dag-info-mark { fill: var(--v2-accent); }
   /* ── the styled, theme-aware HOVERCARD (replaces native <title> tooltips) ──
@@ -1568,7 +1573,7 @@
     border-radius: 6px;
     box-shadow: 0 4px 14px color-mix(in srgb, var(--v2-rule) 60%, transparent),
                 0 1px 3px color-mix(in srgb, var(--v2-rule) 80%, transparent);
-    font: 11px/1.45 var(--v2-mono);
+    font: 11px/1.45 var(--v2-sans);
     letter-spacing: 0.01em;
     pointer-events: none;            /* never steals hover from the target */
     opacity: 0;
@@ -1589,19 +1594,19 @@
     .dn-hovercard, .dn-hovercard.dn-hovercard-on { transition: none; transform: none; }
   }
 
-  /* ── the RESEARCH-PREVIEW pill — a QUIET product-status tag pinned NEXT TO
+  /* ── the RESEARCH-PREVIEW label — a QUIET product-status tag pinned NEXT TO
    * the "zıcato console" wordmark in the top bar. It echoes the wordmark's own
-   * register (the sibling .dt-brand-tag "console" tag): small, FAINT,
+   * register (the sibling .dt-brand-sub "console" tag): small, FAINT,
    * monospace, uppercase tracking, theme-adaptive (the muted ink-faint token).
    * The label is STACKED on two lines ("research" / "preview") so it reads as a
    * compact corner tag beside the wordmark — a quiet status mark, not a loud
-   * badge. NO tint fill, NO glow, NO pulse, NO animation. Purely informational
+   * mark. NO tint fill, NO glow, NO pulse, NO animation. Purely informational
    * (pointer-events:none). This supersedes the old lower-right corner note. */
   .dt-respreview {
     display: inline-flex; flex-direction: column; justify-content: center;
     align-self: center;
     pointer-events: none;            /* informational only — never blocks a click */
-    font: 9.5px/1.25 var(--v2-mono);   /* sized to the sibling "console" tag register (was 7.5px — too small to read) */
+    font: 9.5px/1.25 var(--v2-sans);   /* sized to the sibling "console" tag register (was 7.5px — too small to read) */
     text-transform: uppercase;
     letter-spacing: 0.1em;
     color: var(--v2-ink-faint);
@@ -1623,28 +1628,23 @@
 
   /* 1 — the split strip. train = OUTLINE, holdout = ACCENT FILL (matches the
    * builder's Board & holdout strip). All theme tokens — carries every scheme. */
-  /* the STAT LINE: three dn-stat tiles with the board-level fact chips riding
-     at their baseline, so counts read as values and flags read as chips. */
+  /* the STAT LINE: three dn-stat tiles with the board-level fact labels riding
+     at their baseline, so counts read as values and flags read as labels. */
   .dn-bs-statline { align-items: baseline; row-gap: 8px; margin-bottom: 10px; }
-  .dn-bs-chips { display: flex; flex-wrap: wrap; gap: 4px 6px; }
+  .dn-bs-entries { display: flex; flex-wrap: wrap; gap: 4px 6px; }
   /* the two fact tones: judge-only is a real change to how the board scores
      (accent), the rest is provenance (faint). No new hue. */
-  .dn-chip.dn-chip-judgeonly { color: var(--v2-accent); border-color: var(--v2-accent); }
-  .dn-chip.dn-chip-boardfact { color: var(--v2-ink-faint); }
+  .dn-flag.dn-flag-judgeonly { color: var(--v2-accent); }
+  .dn-flag.dn-flag-boardfact { color: var(--v2-ink-faint); }
   .dn-bs-fact { cursor: help; }
   .dn-bs-fact:focus { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--v2-accent) 50%, transparent); }
   .dn-bs-grid { display: flex; flex-wrap: wrap; gap: 6px; }
-  .dn-bs-chip {
-    font-family: var(--v2-mono); font-size: calc(10.5px * var(--dt-font-scale, 1)); line-height: 1.4;
-    padding: 2px 8px; border-radius: 10px; border: 1px solid var(--v2-rule);
-    color: var(--v2-ink-soft); background: transparent;
-  }
-  .dn-bs-chip.dn-bs-train { border-color: var(--v2-rule); color: var(--v2-ink-soft); }
-  .dn-bs-chip.dn-bs-holdout {
-    border-color: var(--v2-accent); color: var(--v2-bg, var(--v2-panel));
-    background: var(--v2-accent);
-  }
-  .dn-bs-chip:focus { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--v2-accent) 50%, transparent); }
+  .dn-bs-grid { gap: 4px 14px; }
+  .dn-bs-entry { display: inline-flex; align-items: center; gap: 3px;
+    font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1)); line-height: 1.4;
+    color: var(--v2-ink-soft); }
+  .dn-bs-holdout { color: var(--v2-accent); }
+  .dn-bs-entry:focus { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--v2-accent) 50%, transparent); }
 
   /* 2 — the swatch key + the ladder budget readout, on ONE row, with the
    * where/when sentences behind the key's "?" (.dn-figcap-more, shared with the
@@ -1652,23 +1652,21 @@
    * strand the budget against the far edge with nothing between the two. */
   .dn-bs-legend { display: flex; flex-wrap: wrap; align-items: center;
     gap: 8px 28px; padding-top: 6px; border-top: 1px solid var(--v2-rule-soft); }
-  .dn-bs-legrow { display: flex; align-items: center; gap: 6px; font-family: var(--v2-mono); font-size: calc(11.5px * var(--dt-font-scale, 1)); }
-  .dn-bs-legtxt { color: var(--v2-ink); margin-right: 6px; }
-  .dn-bs-sw { display: inline-block; width: 14px; height: 14px; border-radius: 3px; flex: 0 0 auto; }
-  .dn-bs-sw.dn-bs-train { border: 1px solid var(--v2-rule); background: transparent; }
-  .dn-bs-sw.dn-bs-holdout { border: 1px solid var(--v2-accent); background: var(--v2-accent); }
+  .dn-bs-legrow { display: flex; align-items: center; gap: 6px; font-family: var(--v2-sans); font-size: calc(11.5px * var(--dt-font-scale, 1)); }
+  .dn-bs-legtxt { display: inline-flex; align-items: center; gap: 3px; color: var(--v2-ink); margin-right: 6px; }
+  .dn-bs-legtxt.dn-bs-holdout { color: var(--v2-accent); }
   .dn-bs-ladder { display: flex; align-items: baseline; gap: 8px;
-    font-family: var(--v2-mono); font-size: calc(11.5px * var(--dt-font-scale, 1)); }
+    font-family: var(--v2-sans); font-size: calc(11.5px * var(--dt-font-scale, 1)); }
   .dn-bs-ladder-lab { color: var(--v2-ink-faint); text-transform: uppercase; letter-spacing: 0.05em; font-size: calc(9.5px * var(--dt-font-scale, 1)); }
-  .dn-bs-ladder-val { color: var(--v2-ink); font-variant-numeric: tabular-nums; font-size: calc(14px * var(--dt-font-scale, 1)); }
+  .dn-bs-ladder-val { font-family: var(--v2-mono); color: var(--v2-ink); font-variant-numeric: tabular-nums; font-size: calc(14px * var(--dt-font-scale, 1)); }
 
   /* 3 — the generalization-gap trend (two themed sparklines + a verdict). */
   .dn-bs-gap { padding-top: 4px; border-top: 1px solid var(--v2-rule-soft); }
   .dn-bs-gap-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px;
-    font-family: var(--v2-mono); font-size: calc(11.5px * var(--dt-font-scale, 1)); color: var(--v2-ink); margin-bottom: 6px; }
+    font-family: var(--v2-sans); font-size: calc(11.5px * var(--dt-font-scale, 1)); color: var(--v2-ink); margin-bottom: 6px; }
   .dn-bs-gap-rows { display: flex; flex-direction: column; gap: 6px; }
   .dn-bs-gap-row { display: flex; align-items: center; gap: 10px; }
-  .dn-bs-gap-lab { font-family: var(--v2-mono); font-size: calc(10.5px * var(--dt-font-scale, 1)); width: 56px; flex: 0 0 56px;
+  .dn-bs-gap-lab { font-family: var(--v2-sans); font-size: calc(10.5px * var(--dt-font-scale, 1)); width: 56px; flex: 0 0 56px;
     color: var(--v2-ink-faint); text-align: right; }
   .dn-bs-gap-spark { flex: 1 1 auto; min-width: 0; }
   /* the two series read apart: train = ink, holdout = accent (theme-aware). */
@@ -1676,7 +1674,7 @@
   .dn-bs-line-train .dn-spark-dot { fill: var(--v2-ink-soft); }
   .dn-bs-line-holdout .dn-spark-line { stroke: var(--v2-accent); }
   .dn-bs-line-holdout .dn-spark-dot { fill: var(--v2-accent); }
-  .dn-bs-verdict { margin-top: 8px; font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1)); }
+  .dn-bs-verdict { margin-top: 8px; font-family: var(--v2-sans); font-size: calc(11px * var(--dt-font-scale, 1)); }
   .dn-bs-verdict.dn-good { color: var(--v2-good); }
   .dn-bs-verdict.dn-bad { color: var(--v2-bad); }
 
@@ -1695,14 +1693,14 @@
     font-variant-numeric: tabular-nums; color: var(--v2-ink-soft); }
   .dn-eh-formula { white-space: normal; word-break: break-word; }
   .dn-eh-mde-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
-  .dn-eh-mde-title { font-family: var(--v2-mono); text-transform: uppercase; letter-spacing: 0.06em;
+  .dn-eh-mde-title { font-family: var(--v2-sans); text-transform: uppercase; letter-spacing: 0.06em;
     font-size: calc(10px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); }
   .dn-eh-mde-note { font-size: calc(11px * var(--dt-font-scale, 1)); font-style: italic; }
 
   /* the ranked sub-blocks: a quiet subhead + a dataTable + an optional note. */
   .dn-eh-sub { padding-top: 8px; border-top: 1px solid var(--v2-rule-soft); }
   .dn-eh-subhead { font-size: calc(11px * var(--dt-font-scale, 1)); text-transform: uppercase;
-    letter-spacing: 0.07em; color: var(--v2-ink-faint); margin: 6px 0; font-family: var(--v2-mono); font-weight: 600; }
+    letter-spacing: 0.07em; color: var(--v2-ink-faint); margin: 6px 0; font-family: var(--v2-sans); font-weight: 600; }
   .dn-eh-note, .dn-eh-rec { font-size: calc(11px * var(--dt-font-scale, 1)); margin: 4px 0 0; }
   .dn-eh-table { margin-top: 2px; }
   .dn-eh-entry, .dn-eh-entrybtn { font-family: var(--v2-mono); font-size: calc(11.5px * var(--dt-font-scale, 1)); color: var(--v2-ink); }
@@ -1736,7 +1734,7 @@
   .ezn-board-run.ezn-promoted .ezn-board-run-dot { fill: var(--v2-good); }
   .ezn-board-run.ezn-rejected .ezn-board-run-dot { fill: var(--v2-bad); }
   .ezn-board-run.ezn-deferred .ezn-board-run-dot { fill: var(--v2-caution); }
-  .ezn-board-run-rung { fill: var(--v2-ink-soft); font: 8.5px var(--v2-mono); }
+  .ezn-board-run-rung { fill: var(--v2-ink-soft); font: 8.5px var(--v2-sans); }
   .ezn-board-run-loss { fill: var(--v2-ink); font: 8.5px var(--v2-mono); font-variant-numeric: tabular-nums; }
   .ezn-board-run:hover .ezn-board-run-loss { fill: var(--v2-accent); }
 
@@ -1744,7 +1742,7 @@
   .dn-rungprog-strip { display: flex; align-items: center; gap: 10px; margin: 2px 0 12px;
     padding: 6px 8px; border: 1px dashed var(--v2-rule); border-radius: 6px;
     background: color-mix(in srgb, var(--v2-panel) 40%, transparent); }
-  .dn-rungprog-cap { font-family: var(--v2-mono); font-size: calc(9.5px * var(--dt-font-scale, 1)); text-transform: uppercase;
+  .dn-rungprog-cap { font-family: var(--v2-sans); font-size: calc(9.5px * var(--dt-font-scale, 1)); text-transform: uppercase;
     letter-spacing: 0.08em; white-space: nowrap; flex: 0 0 auto; }
   .ezn-rungprog { display: block; flex: 1 1 auto; min-width: 0; }
   .ezn-rungprog-spine { stroke: var(--v2-rule); stroke-width: 2; }
@@ -1752,7 +1750,7 @@
   .ezn-rungprog-stage.ezn-promoted .ezn-rungprog-dot { fill: var(--v2-good-soft); stroke: var(--v2-good); }
   .ezn-rungprog-stage.ezn-rejected .ezn-rungprog-dot { stroke: var(--v2-bad); }
   .ezn-rungprog-stage.ezn-running .ezn-rungprog-dot { stroke: var(--v2-caution); }
-  .ezn-rungprog-label { fill: var(--v2-ink); font: 600 9.5px var(--v2-mono); }
+  .ezn-rungprog-label { fill: var(--v2-ink); font: 600 9.5px var(--v2-sans); }
   .ezn-rungprog-sub { fill: var(--v2-ink-faint); font: 9px var(--v2-mono); font-variant-numeric: tabular-nums; }
   .ezn-rungprog-stage.ezn-promoted .ezn-rungprog-sub { fill: var(--v2-good); }
   .ezn-rungprog-stage.ezn-rejected .ezn-rungprog-sub { fill: var(--v2-bad); }
@@ -1779,7 +1777,7 @@
  * An in-flight candidate (boards still streaming in) shows a PROJECTED
  * standing — distinct from a SETTLED one. The visual language is consistent
  * across every structure + viz level: dashed outline, ~prefix on the number,
- * a "proj" badge, reduced opacity, a scored board-progress sub-bar, and a
+ * a "proj" mark, reduced opacity, a scored board-progress sub-bar, and a
  * subtle pulse (suppressed under prefers-reduced-motion). Every token below
  * is DERIVED from the already-themed --v2-* variables via color-mix, so the
  * projected treatment adapts to every theme with NO hardcoded colours. */
@@ -1811,10 +1809,14 @@
 
 #console-root {
   /* ---- compact top bar (chrome lives above the body split) ---- */
+  /* ONE line at desktop widths: nothing wraps, ids never break inside, the
+   * breadcrumb shrinks first (each crumb truncates with an ellipsis and keeps
+   * its full value in the DOM text and a hovercard), and the lower-priority
+   * items yield in order as the viewport narrows (media rules below). */
   .dt-topbar {
     position: sticky; top: 0; z-index: 6;
-    display: flex; align-items: center; gap: 18px;
-    padding: 11px 26px;
+    display: flex; flex-wrap: nowrap; align-items: center; gap: 14px;
+    padding: 11px 26px; min-width: 0; white-space: nowrap;
     background: color-mix(in srgb, var(--v2-paper) 92%, transparent);
     backdrop-filter: blur(6px);
     border-bottom: 1px solid var(--v2-rule);
@@ -1825,7 +1827,7 @@
    * done = muted filled pip; active = accent pip + label; pending = hollow. */
   .dt-live-hero-pipe { display: inline-flex; align-items: center; margin-left: 14px; min-width: 0; }
   .dt-pipe { display: inline-flex; align-items: center; gap: 6px;
-    font-family: var(--v2-mono); font-size: calc(10px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); }
+    font-family: var(--v2-sans); font-size: calc(10px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); }
   .dt-pipe-step { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
   .dt-pipe-dot { width: 7px; height: 7px; border-radius: 50%; border: 1px solid var(--v2-rule);
     background: transparent; flex: none; }
@@ -1844,7 +1846,7 @@
   .dt-loopctl { display: inline-flex; align-items: center; }
   .dt-loopctl-group { display: inline-flex; align-items: center; gap: 6px; }
   .dt-loopctl-btn { display: inline-flex; align-items: center; gap: 4px;
-    font-family: var(--v2-mono); font-size: calc(10.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft);
+    font-family: var(--v2-sans); font-size: calc(10.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft);
     background: transparent; border: 1px solid var(--v2-rule); border-radius: 5px;
     padding: 3px 8px; cursor: pointer; white-space: nowrap;
     transition: background 0.15s, color 0.15s, border-color 0.15s; }
@@ -1855,7 +1857,7 @@
 
   /* the top-left back / up control (THE BACK-BUTTON FIX) */
   .dt-back { display: inline-flex; align-items: center; gap: 5px;
-    font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft);
+    font-family: var(--v2-sans); font-size: calc(11px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft);
     background: transparent; border: 1px solid var(--v2-rule); border-radius: 5px;
     padding: 4px 9px; cursor: pointer; transition: background 0.15s, color 0.15s, border-color 0.15s; }
   .dt-back:hover { color: var(--v2-paper); background: var(--v2-accent); border-color: var(--v2-accent); }
@@ -1881,30 +1883,56 @@
    * the wordmark, "console", "research preview" and the breadcrumb all align.
    * Tunable single value — nudge if it reads high/low. */
   .dt-brand-name { height: 16px; width: auto; display: block; flex: none; color: var(--v2-ink); align-self: center; overflow: visible; transform: translateY(-1.5px); }
-  .dt-brand-tag { font-family: var(--v2-mono); font-size: calc(9.5px * var(--dt-font-scale, 1)); letter-spacing: 0.16em;
+  .dt-brand-sub { font-family: var(--v2-sans); font-size: calc(9.5px * var(--dt-font-scale, 1)); letter-spacing: 0.16em;
     text-transform: uppercase; color: var(--v2-accent); }
 
-  .dt-crumbs { display: inline-flex; align-items: center; gap: 4px; font-family: var(--v2-mono);
-    font-size: calc(11px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); }
-  .dt-crumb { color: var(--v2-ink-soft); text-decoration: none; }
+  .dt-topbar > * { flex: none; }
+  .dt-crumbs { display: inline-flex; align-items: center; gap: 4px; font-family: var(--v2-sans);
+    font-size: calc(12px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint);
+    flex: 0 1 auto; min-width: 0; overflow: hidden; }
+  .dt-crumb { color: var(--v2-ink-soft); text-decoration: none; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; min-width: 2.5em; max-width: 18em; flex: 0 1 auto; }
+  .dt-crumb-sep { flex: none; }
   .dt-crumb:hover { color: var(--v2-accent); }
   .dt-crumb-current { color: var(--v2-ink); }
   .dt-crumb-sep { opacity: 0.5; margin: 0 1px; }
-  .dt-topbar-spacer { flex: 1; }
+  .dt-topbar > .dt-topbar-spacer { flex: 1 1 0; min-width: 0; }
+  .dt-topbar > .dt-status { flex: 0 1 auto; min-width: 0; overflow: hidden; }
+  .dt-status .dt-run-state { min-width: 0; }
+  .dt-status-stale { overflow: hidden; text-overflow: ellipsis; }
+
+  /* Lower-priority top-bar items yield as the viewport narrows: the preview
+   * note first, then the words beside the drawn marks (each control keeps its
+   * aria-label), then the "last seen" note and the brand's sub-word. */
+  @media (max-width: 1480px) { .dt-respreview { display: none; } }
+  @media (max-width: 1220px) {
+    .dt-nav-logs-text, .dt-nav-build-text, .dt-topbar .dt-cd-trigger .dt-cd-name { display: none; }
+  }
+  @media (max-width: 1080px) {
+    .dt-status-stale, .dt-brand-sub, .dt-run-count { display: none; }
+  }
+  /* phone widths: the bar wraps to two lines and the breadcrumb takes the
+   * second line, so the page never scrolls sideways. */
+  @media (max-width: 760px) {
+    .dt-topbar { flex-wrap: wrap; gap: 8px 10px; padding: 10px 16px; }
+    .dt-topbar > .dt-topbar-spacer { display: none; }
+    .dt-topbar > .dt-crumbs { order: 10; flex: 1 1 100%; }
+    .dt-brand-name, .dt-run-label { display: none; }
+  }
 
   /* ---- the COLOUR SWATCH DROPDOWN (13 themes) ---- */
   .dt-cd { position: relative; display: inline-flex; }
   .dt-cd-trigger { display: inline-flex; align-items: center; gap: 6px;
     border: 1px solid var(--v2-rule); border-radius: 5px; padding: 2px 7px;
     background: transparent; color: var(--v2-ink-soft); cursor: pointer;
-    font-family: var(--v2-mono); font-size: calc(9.5px * var(--dt-font-scale, 1)); transition: border-color 0.15s, color 0.15s; }
+    font-family: var(--v2-sans); font-size: calc(9.5px * var(--dt-font-scale, 1)); transition: border-color 0.15s, color 0.15s; }
   .dt-cd-trigger:hover { color: var(--v2-ink); border-color: var(--v2-accent); }
   .dt-cd-trigger:focus-visible { outline: 2px solid var(--v2-accent); outline-offset: 2px; }
   .dt-cd-name { color: var(--v2-ink); white-space: nowrap; }
   .dt-cd-caret { color: var(--v2-ink-faint); font-size: calc(8px * var(--dt-font-scale, 1)); transition: transform 0.15s; }
   .dt-cd.dt-cd-open .dt-cd-caret { transform: rotate(180deg); }
 
-  /* the swatch strip — a row of small colour chips (the legibility preview) */
+  /* the swatch strip — a row of small colour swatches (the legibility preview) */
   .dt-swatch-strip { display: inline-flex; border-radius: 3px; overflow: hidden;
     border: 1px solid var(--v2-rule); }
   .dt-swatch { display: inline-block; width: 11px; height: 13px; }
@@ -1918,7 +1946,7 @@
   .dt-cd.dt-cd-open .dt-cd-list { display: block; }
   .dt-cd-option { display: flex; align-items: center; gap: 8px; padding: 5px 7px; border-radius: 4px;
     cursor: pointer; color: var(--v2-ink-soft); transition: background 0.12s, color 0.12s; }
-  .dt-cd-option .dt-cd-name { font-family: var(--v2-mono); font-size: calc(10.5px * var(--dt-font-scale, 1)); }
+  .dt-cd-option .dt-cd-name { font-family: var(--v2-sans); font-size: calc(10.5px * var(--dt-font-scale, 1)); }
   .dt-cd-option:hover, .dt-cd-option.dt-cd-active { background: var(--v2-rule-soft); color: var(--v2-ink); }
   .dt-cd-option[aria-selected="true"] { color: var(--v2-ink); }
   .dt-cd-option[aria-selected="true"] .dt-cd-name { color: var(--v2-accent); }
@@ -1928,7 +1956,7 @@
    * specimens. A wider list so the face names + micro-previews read. */
   .dt-tf-list { min-width: 248px; }
   /* group headers — uppercase mode labels separating the four-option blocks */
-  .dt-cd-group { padding: 7px 7px 3px; font-family: var(--v2-mono); font-size: calc(8.5px * var(--dt-font-scale, 1));
+  .dt-cd-group { padding: 7px 7px 3px; font-family: var(--v2-sans); font-size: calc(8.5px * var(--dt-font-scale, 1));
     text-transform: uppercase; letter-spacing: 0.1em; color: var(--v2-ink-faint);
     border-top: 1px solid var(--v2-rule-soft); margin-top: 3px; }
   .dt-cd-group:first-child { border-top: none; margin-top: 0; }
@@ -1941,7 +1969,7 @@
   .dt-tf-option:hover, .dt-tf-option.dt-cd-active { background: var(--v2-rule-soft); color: var(--v2-ink); }
   .dt-tf-option[aria-selected="true"] { color: var(--v2-ink); }
   .dt-tf-option[aria-selected="true"] .dt-tf-name { color: var(--v2-accent); }
-  .dt-tf-option .dt-tf-name { font-family: var(--v2-mono); font-size: calc(10.5px * var(--dt-font-scale, 1)); }
+  .dt-tf-option .dt-tf-name { font-family: var(--v2-sans); font-size: calc(10.5px * var(--dt-font-scale, 1)); }
   /* the type specimen — head "Aa", a prose word, a tabular sample, each in the
    * option's REAL faces (font-family inlined per span) so the row is a true
    * specimen independent of the active data-t-type. */
@@ -1951,6 +1979,14 @@
   .dt-tf-spec-data { font-size: calc(11px * var(--dt-font-scale, 1)); font-variant-numeric: tabular-nums; }
   /* the closed trigger carries a small specimen beside the current face name */
   .dt-tf-trigger .dt-tf-spec-sm { gap: 5px; }
+  /* The trigger stays inside its column: a pairing name such as "Open Sans +
+   * Google Sans Mono" wraps onto a second line rather than widening the
+   * control past the row that holds it. */
+  .dt-cd.dt-tf { max-width: 100%; min-width: 0; }
+  .dt-tf .dt-tf-trigger { max-width: 100%; min-width: 0; text-align: left; }
+  .dt-tf .dt-tf-trigger .dt-tf-spec-sm { flex: none; }
+  .dt-tf .dt-tf-trigger .dt-cd-name { white-space: normal; min-width: 0; line-height: 1.25; }
+  .dt-tf .dt-tf-trigger .dt-tf-face { white-space: nowrap; }
   .dt-tf-spec-sm .dt-tf-spec-head { font-size: calc(12px * var(--dt-font-scale, 1)); }
   .dt-tf-spec-sm .dt-tf-spec-prose { font-size: calc(10px * var(--dt-font-scale, 1)); }
   .dt-tf-spec-sm .dt-tf-spec-data { font-size: calc(9.5px * var(--dt-font-scale, 1)); }
@@ -1977,20 +2013,20 @@
    * idiom (mono label · segmented buttons that read/apply the text size). */
   .dt-tf-foot { display: flex; align-items: center; justify-content: space-between;
     gap: 8px; margin-top: 4px; padding: 6px 4px 2px; border-top: 1px solid var(--v2-rule-soft); }
-  .dt-tf-foot-lab { font-family: var(--v2-mono); font-size: calc(8.5px * var(--dt-font-scale, 1));
+  .dt-tf-foot-lab { font-family: var(--v2-sans); font-size: calc(8.5px * var(--dt-font-scale, 1));
     text-transform: uppercase; letter-spacing: 0.1em; color: var(--v2-ink-faint); }
   .dt-tf-sizeseg-wrap { display: inline-flex; border: 1px solid var(--v2-rule); border-radius: 5px;
     overflow: hidden; }
-  .dt-tf-sizeseg { font-family: var(--v2-mono); font-size: calc(10px * var(--dt-font-scale, 1));
+  .dt-tf-sizeseg { font-family: var(--v2-sans); font-size: calc(10px * var(--dt-font-scale, 1));
     min-width: 26px; padding: 3px 8px; background: transparent; color: var(--v2-ink-soft);
     border: none; border-left: 1px solid var(--v2-rule); cursor: pointer;
     transition: background 0.12s, color 0.12s; }
   .dt-tf-sizeseg:first-child { border-left: none; }
   .dt-tf-sizeseg:hover { background: var(--v2-rule-soft); color: var(--v2-ink); }
-  .dt-tf-sizeseg[aria-checked="true"] { background: var(--v2-accent); color: var(--v2-paper); }
+  .dt-tf-sizeseg[aria-checked="true"] { color: var(--v2-accent); font-weight: 700; }
   .dt-tf-sizeseg:focus-visible { outline: 2px solid var(--v2-accent); outline-offset: -2px; }
 
-  .dt-status { display: inline-flex; align-items: center; gap: 5px; font-family: var(--v2-mono);
+  .dt-status { display: inline-flex; align-items: center; gap: 5px; font-family: var(--v2-sans);
     font-size: calc(10.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); }
   .dt-status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--v2-flat); transition: background 0.2s; }
   .dt-status.dt-connected .dt-status-dot { background: var(--v2-good); }
@@ -1998,9 +2034,8 @@
   /* A frozen heartbeat (stale, not live): a dim, hollow dot + a muted
      "last seen Ns ago" note — never the live accent, never a silent freeze. */
   .dt-status.dt-stale .dt-status-dot { background: transparent; box-shadow: inset 0 0 0 1.5px var(--v2-flat); }
-  /* The stale affordance + the phase label + the in-flight count all ride
-   * INSIDE the one liveness pill (.dt-run-state) below — no longer standalone
-   * badges. They reset the pill's uppercase/tracked treatment so the phase reads
+  /* The stale affordance, the phase label and the in-flight count ride
+   * INSIDE the one liveness label (.dt-run-state) below. They reset the label's uppercase/tracked treatment so the phase reads
    * naturally ("· racing · rung 0", "· last seen 30s ago") and collapse to
    * nothing when empty. */
   .dt-status-stale { color: var(--v2-ink-faint); font-style: italic; white-space: nowrap;
@@ -2019,15 +2054,15 @@
     100% { box-shadow: 0 0 0 0 transparent; opacity: 1; }
   }
 
-  /* The FOUR-STATE run pill (RUNTIME-V2 Phase 4) — keyed on the orchestrator
+  /* The FOUR-STATE run label (RUNTIME-V2 Phase 4) — keyed on the orchestrator
    * progress seq, NOT a heartbeat timestamp. LIVE (seq advancing) / STALLED
    * (no advance, still pulsing) / SETTLED (terminal marker) / DEAD (no advance,
    * no pulse). Speaks the console decision language — good/caution/ink/bad by
    * DIRECTION, no new hue: LIVE = good (progress), STALLED = caution, SETTLED =
    * calm ink (the desired clean end), DEAD = bad (gone without settling). The
-   * `dt-rs-dot` reuses the `.dt-status-dot` shape; the word is a small mono pill. */
+   * `dt-rs-dot` reuses the `.dt-status-dot` shape; the word is a small mono label. */
   .dt-run-state { display: none; align-items: center; gap: 4px; margin-left: 7px;
-    font-family: var(--v2-mono); font-size: calc(9.5px * var(--dt-font-scale, 1));
+    font-family: var(--v2-sans); font-size: calc(9.5px * var(--dt-font-scale, 1));
     letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; }
   .dt-run-state.dt-rs-on { display: inline-flex; }
   .dt-run-state .dt-rs-dot { width: 6px; height: 6px; flex: 0 0 auto; }
@@ -2053,17 +2088,16 @@
 
   /* board-detail — the LIVE in-flight candidates panel. Liveness is carried by
    * the idiomatic header vocabulary (the pulsing status dot + the faint mono
-   * "live" pill), NOT a coloured left rail — it wears the standard faint
+   * "live" label), NOT a coloured left rail — it wears the standard faint
    * .dn-panel border like every other card. */
-  .dn-inflight-head { display: flex; align-items: center; gap: 6px; font-family: var(--v2-mono);
+  .dn-inflight-head { display: flex; align-items: center; gap: 6px; font-family: var(--v2-sans);
     font-size: calc(11px * var(--dt-font-scale, 1)); margin-bottom: 6px; }
-  /* the faint mono "live" status pill in the in-flight header — the same pill
-   * register as the wordmark/.dn-pill vocabulary; colour lives in the small dot
-   * + text, never a slab. */
-  .dn-inflight-pill { display: inline-flex; align-items: center; gap: 4px; flex: none;
-    font-family: var(--v2-mono); font-size: calc(9px * var(--dt-font-scale, 1)); letter-spacing: 0.1em; text-transform: uppercase;
-    color: var(--v2-good); border: 1px solid var(--v2-rule); border-radius: 9px; padding: 0 6px; }
-  .dn-inflight-pill .dn-inflight-pulse { width: 5px; height: 5px; }
+  /* the "live" state word in the in-flight header: its colour lives in the
+   * small dot and the text, never a slab. */
+  .dn-inflight-state { display: inline-flex; align-items: center; gap: 4px; flex: none;
+    font-family: var(--v2-sans); font-size: calc(9px * var(--dt-font-scale, 1)); letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--v2-good); }
+  .dn-inflight-state .dn-inflight-pulse { width: 5px; height: 5px; }
   .dn-inflight-pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--v2-good); flex: 0 0 auto;
     animation: dt-run-pulse 1.6s ease-out infinite; }
   .dn-inflight-count { color: var(--v2-good); font-weight: 600; }
@@ -2112,16 +2146,16 @@
   }
   .dt-rail-handle:hover::before,
   .dt-rail-handle:focus-visible::before,
-  .dt-rail-handle.dt-rail-dragging::before { background: var(--v2-accent); width: 2px; }
+  .dt-rail-handle.dt-rail-dragging::before { background: var(--v2-ink-faint); }
   .dt-rail-handle:focus-visible { outline: none; }
-  .dt-rail-handle.dt-rail-dragging { background: color-mix(in srgb, var(--v2-accent) 12%, transparent); }
+  .dt-rail-handle.dt-rail-dragging { background: color-mix(in srgb, var(--v2-ink-faint) 12%, transparent); }
   /* the detail pane: FLUID + resolution-responsive. Was clamped to a narrow
    * 1160px centred column that wasted space on wide monitors AND squeezed the
    * side-by-side COMPARE panes; now it fills the detail column (width:100%) so
    * the two compare panes split the FULL content width and every SVG renders
    * as large as the screen allows. A very generous cap (no centring) only
    * guards prose line-length on ultra-wide displays; density still drives the
-   * padding, and the page-scale pill multiplies the whole thing on top. */
+   * padding, and the page scale multiplies the whole thing on top. */
   .dt-viewhost {
     width: 100%;
     max-width: min(100%, 2400px);
@@ -2142,12 +2176,7 @@
     padding-left: calc(var(--dt-depth, 0) * 13px);
     position: relative;
   }
-  .dt-node:hover { background: color-mix(in srgb, var(--v2-accent) 9%, transparent); }
-  .dt-node.dt-sel { background: color-mix(in srgb, var(--v2-accent) 18%, transparent); }
-  .dt-node.dt-sel::before {
-    content: ""; position: absolute; left: 0; top: 3px; bottom: 3px; width: 2px;
-    background: var(--v2-accent); border-radius: 2px;
-  }
+  .dt-node:hover { background: var(--v2-rule-soft); }
 
   .dt-twisty {
     width: 18px; height: 24px; padding: 0; border: none; background: transparent;
@@ -2166,12 +2195,14 @@
     transition: color 0.12s;
   }
   .dt-label:hover { color: var(--v2-ink); }
-  .dt-node.dt-sel .dt-label { color: var(--v2-ink); font-weight: 600; }
+  /* the selected row: its name in the accent colour (no fill, no rail). */
+  .dt-tree .dt-node.dt-sel .dt-label, .dt-tree .dt-node.dt-sel .dt-text { color: var(--v2-accent); font-weight: 600; }
   .dt-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   /* branch labels (Environment / Epoch / Generations / Boards) read as headers */
+  .dt-branch[data-kind="epoch"] .dt-text { font-family: var(--v2-mono); }
   .dt-branch[data-kind="env"] .dt-label,
-  .dt-branch[data-kind="epoch"] .dt-label { font-family: var(--v2-mono); font-size: calc(11.5px * var(--dt-font-scale, 1)); }
+  .dt-branch[data-kind="epoch"] .dt-label { font-size: calc(11.5px * var(--dt-font-scale, 1)); }
   .dt-branch[data-kind="group"] .dt-label { text-transform: uppercase; letter-spacing: 0.05em; font-size: calc(10.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); }
   .dt-branch[data-kind="group"] .dt-label:hover { color: var(--v2-ink-soft); }
 
@@ -2196,11 +2227,11 @@
   .dt-leaf[data-kind="gen-champ"] .dt-text { color: var(--v2-good); }
   .dt-leaf[data-kind="gen-former"] .dt-text { color: var(--v2-ink-soft); }
   .dt-leaf[data-kind="gen-orphan"] .dt-text { color: var(--v2-ink-faint); }
-  .dt-tag-gen-orphan { color: var(--v2-ink-faint); border-color: var(--v2-rule); font-style: italic; }
-  .dt-leaf .dt-text { font-family: var(--v2-mono); font-size: calc(11.5px * var(--dt-font-scale, 1)); }
-  .dt-leaf[data-kind="mutations"] .dt-text,
-  .dt-leaf[data-kind="instrument"] .dt-text,
-  .dt-leaf[data-kind="paper"] .dt-text { font-family: var(--v2-sans); font-size: calc(12px * var(--dt-font-scale, 1)); }
+  .dt-role-gen-orphan { color: var(--v2-ink-faint); font-style: italic; }
+  /* a leaf named by an id (a generation or a board entry) sets the id in the
+     data face; a leaf named by a word (Evals, Instrument, …) keeps the sans. */
+  .dt-leaf[data-kind^="gen"] .dt-text,
+  .dt-leaf[data-kind="board"] .dt-text { font-family: var(--v2-mono); font-size: calc(11.5px * var(--dt-font-scale, 1)); }
 
   /* the LIVE-ACTIVITY pulse (Task 2): a subtle clue on a running gen / board
    * row. It reuses the dn-inflight-pulse animation; sized small + nudged to the
@@ -2209,14 +2240,14 @@
    * change). Reduced-motion drops the animation (it keeps a static dot). */
   .dt-node-pulse { width: 6px; height: 6px; margin-left: auto; }
 
-  .dt-sub { font-family: var(--v2-mono); font-size: calc(9px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); margin-left: auto; padding-left: 6px; }
-  .dt-tag { font-family: var(--v2-mono); font-size: calc(8.5px * var(--dt-font-scale, 1)); padding: 0 5px; border-radius: 7px;
-    border: 1px solid var(--v2-rule); color: var(--v2-ink-faint); margin-left: auto; white-space: nowrap; }
-  .dt-tag-gen-champ { color: var(--v2-good); border-color: var(--v2-good); }
-  .dt-tag-gen-former { color: var(--v2-ink-faint); border-color: var(--v2-rule); font-style: italic; }
+  .dt-sub { font-family: var(--v2-sans); font-size: calc(9px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); margin-left: auto; padding-left: 6px; }
+  /* a row's role word (champion, former champion, …): plain text in its colour. */
+  .dt-role { font-size: calc(10px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); margin-left: auto; padding-left: 6px; white-space: nowrap; }
+  .dt-role-gen-champ { color: var(--v2-good); }
+  .dt-role-gen-former { color: var(--v2-ink-faint); font-style: italic; }
   /* a CARRIED champion reference ("↑ … defends"): a dimmed, caution-toned tag —
    * the incumbent carried in to defend this round, not a fresh proposal. */
-  .dt-tag-gen-carried { color: var(--v2-caution); border-color: var(--v2-rule); font-style: italic; }
+  .dt-role-gen-carried { color: var(--v2-caution); font-style: italic; }
 
   /* ---- view affordances added by P ---- */
   .dt-empty { color: var(--v2-ink-faint); font-size: calc(12px * var(--dt-font-scale, 1)); font-style: italic; padding: 12px 0; }
@@ -2238,7 +2269,7 @@
     font-size: calc(10.5px * var(--dt-font-scale, 1)); margin: 0 0 6px; }
   /* ---- the LIVE CONVERSATION pane (issue #194 §2) -------------------------
      One component for both modes, so the styling must not branch on live vs
-     settled: what changes when a run finishes is the pill and the caption
+     settled: what changes when a run finishes is the label and the caption
      text, never the geometry — a layout shift at the moment of settling would
      undo the point of transitioning in place. */
   .dn-convo { position: relative; }
@@ -2250,23 +2281,23 @@
      the document while there IS a backlog — an affordance that outlives its
      condition trains the operator to ignore it. */
   .dn-convo-pin { position: absolute; right: 14px; bottom: 12px;
-    font-family: var(--v2-mono); font-size: calc(10px * var(--dt-font-scale, 1));
-    color: var(--v2-paper); background: var(--v2-accent); border: 0;
-    border-radius: 10px; padding: 2px 9px; cursor: pointer; white-space: nowrap;
+    font-family: var(--v2-sans); font-size: calc(10px * var(--dt-font-scale, 1));
+    color: var(--v2-accent); background: var(--v2-panel); border: 1px solid var(--v2-accent);
+    border-radius: 4px; padding: 2px 9px; cursor: pointer; white-space: nowrap;
     box-shadow: 0 1px 4px color-mix(in srgb, var(--v2-ink) 25%, transparent); }
   .dn-convo-pin[hidden] { display: none; }
   .dn-board-sel { outline: 2px solid var(--v2-accent); outline-offset: -2px; }
-  a.dn-linkbtn.dn-linkbtn-on { color: var(--v2-paper); background: var(--v2-accent); border-radius: 3px; }
+  /* a selected link button: its words in the accent colour, weighted. */
+  .dn-linkbtn.dn-linkbtn-on { font-weight: 700; }
   /* the patch diff's BASELINE picker — which version the left column is.
      Same select as the candidate compare, but this one is the page's ONE
      control, so it carries the accent rather than sitting flat among the
      read-only panels. A non-default choice tints the whole strip: the diff
      on screen is then not the default one, and that must not be quiet. */
-  .dn-basepick { --dt-row-gap: 10px; align-items: center; gap: 10px;
-    border-left: 3px solid var(--v2-accent); }
+  .dn-basepick { --dt-row-gap: 10px; align-items: center; gap: 10px; }
   .dn-basepick .dt-cmp-picker-lab { color: var(--v2-accent); }
   .dn-basepick .dt-cmp-select { border-color: var(--v2-accent); font-weight: 700; }
-  .dn-basepick-hint { font-family: var(--v2-mono); color: var(--v2-ink-faint);
+  .dn-basepick-hint { font-family: var(--v2-sans); color: var(--v2-ink-faint);
     font-size: calc(10.5px * var(--dt-font-scale, 1)); }
   .dn-basepick.dn-basepick-picked { background: color-mix(in srgb, var(--v2-accent) 10%, var(--v2-panel)); }
   .dn-basepick.dn-basepick-picked .dn-basepick-hint { color: var(--v2-accent); }
@@ -2274,28 +2305,28 @@
      hovered: the diff is the content, these only reach for more of it. */
   .dn-sxs-xbar { display: flex; gap: 8px; align-items: center; }
   .dn-sxs-xbar:empty { display: none; }
-  .dn-sxs-xbtn { font-family: var(--v2-mono); font-size: calc(10px * var(--dt-font-scale, 1));
+  .dn-sxs-xbtn { font-family: var(--v2-sans); font-size: calc(10px * var(--dt-font-scale, 1));
     color: var(--v2-ink-faint); background: var(--v2-rule-soft); border: 1px solid var(--v2-rule);
     border-radius: 3px; padding: 1px 8px; cursor: pointer; }
   .dn-sxs-xbtn:hover { color: var(--v2-paper); background: var(--v2-accent); border-color: var(--v2-accent); }
   .dn-sxs-xbtn[disabled] { opacity: 0.45; cursor: default; pointer-events: none; }
-  .dn-sxs-xnote { font-family: var(--v2-mono); font-size: calc(10px * var(--dt-font-scale, 1)); }
+  .dn-sxs-xnote { font-family: var(--v2-sans); font-size: calc(10px * var(--dt-font-scale, 1)); }
   /* a RUNNING candidate row — its loss is not scored yet; the live link reads
      "watch live →" and tints with the good/live accent (theme-aware). */
   .dn-board-table tr.dn-board-running td { background: color-mix(in srgb, var(--v2-good) 7%, transparent); }
-  a.dn-linkbtn.dn-board-run-live { color: var(--v2-good); border-color: var(--v2-good); }
+  .dn-linkbtn.dn-board-run-live { color: var(--v2-good); border-color: var(--v2-good); }
 
   /* ===================  S's side-by-side COMPARE (folded in)  =================== */
 
   /* the "compare with…" affordance bar */
   .dt-cmp-bar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin: 4px 0 18px; }
   .dt-cmp-picker { display: inline-flex; align-items: center; gap: 8px; }
-  .dt-cmp-picker-lab { font-family: var(--v2-mono); font-size: calc(10.5px * var(--dt-font-scale, 1)); text-transform: uppercase;
+  .dt-cmp-picker-lab { font-family: var(--v2-sans); font-size: calc(10.5px * var(--dt-font-scale, 1)); text-transform: uppercase;
     letter-spacing: 0.06em; color: var(--v2-ink-faint); }
-  .dt-cmp-select { font-family: var(--v2-mono); font-size: calc(12px * var(--dt-font-scale, 1)); color: var(--v2-ink);
+  .dt-cmp-select { font-family: var(--v2-sans); font-size: calc(12px * var(--dt-font-scale, 1)); color: var(--v2-ink);
     background: var(--v2-panel); border: 1px solid var(--v2-rule); border-radius: 5px; padding: 5px 10px; cursor: pointer; }
   .dt-cmp-select:hover { border-color: var(--v2-accent); }
-  .dt-cmp-clear { font-family: var(--v2-mono); font-size: calc(10.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft);
+  .dt-cmp-clear { font-family: var(--v2-sans); font-size: calc(10.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft);
     background: transparent; border: 1px solid var(--v2-rule); border-radius: 5px; padding: 4px 9px; cursor: pointer;
     transition: color 0.15s, border-color 0.15s; }
   .dt-cmp-clear:hover { color: var(--v2-bad); border-color: var(--v2-bad); }
@@ -2306,12 +2337,12 @@
   .dt-split-side { min-width: 0; }
   .dt-split-head { display: flex; align-items: center; gap: 9px; margin-bottom: 12px;
     padding-bottom: 7px; border-bottom: 2px solid var(--v2-rule); }
-  .dt-split-tag { font-family: var(--v2-mono); font-size: calc(10px * var(--dt-font-scale, 1)); font-weight: 700;
-    width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center;
-    border-radius: 4px; background: var(--v2-accent); color: var(--v2-paper); }
-  .dt-split-b .dt-split-tag { background: var(--v2-caution); }
+  /* the pane letter (A / B): plain bold text in the pane's colour. */
+  .dt-split-letter { font-family: var(--v2-sans); font-size: calc(13px * var(--dt-font-scale, 1)); font-weight: 700;
+    color: var(--v2-accent); }
+  .dt-split-b .dt-split-letter { color: var(--v2-caution); }
   .dt-split-title { font-family: var(--v2-mono); font-size: calc(14px * var(--dt-font-scale, 1)); color: var(--v2-ink); }
-  .dt-split-sub { font-family: var(--v2-mono); font-size: calc(10px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint);
+  .dt-split-sub { font-family: var(--v2-sans); font-size: calc(10px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint);
     text-transform: uppercase; letter-spacing: 0.05em; margin-left: auto; }
   .dt-split-host { display: flex; flex-direction: column; }
   /* a split side keeps its sections compact so two columns stay legible */
@@ -2331,7 +2362,7 @@
   .dn-roundtl-spine { display: block; width: 100%; height: auto;
     max-height: calc(130px * var(--dt-reel-scale, 1)); }
   .dn-roundtl-spineline { stroke: var(--v2-accent); stroke-width: 2.2; vector-effect: non-scaling-stroke; }
-  .dn-roundtl-axis { fill: var(--v2-ink-faint); font: 11px var(--v2-mono); text-transform: uppercase; letter-spacing: 0.06em; }
+  .dn-roundtl-axis { fill: var(--v2-ink-faint); font: 11px var(--v2-sans); text-transform: uppercase; letter-spacing: 0.06em; }
   .dn-roundtl-disc { fill: var(--v2-panel); stroke: var(--v2-accent); stroke-width: 2; }
   .dn-roundtl-node.dn-roundtl-promote .dn-roundtl-disc { stroke: var(--v2-good); }
   .dn-roundtl-glyph { color: var(--v2-accent); }
@@ -2355,96 +2386,86 @@
   .dn-roundtl-ep + .dn-roundtl-ep { border-top: 1px solid var(--v2-rule);
     margin-top: 16px; padding-top: 16px; }
   /* Selection is a small accent marker on the round tag — not a full-height rail. */
-  .dn-roundtl-ep.dn-roundtl-ep-sel .dn-roundtl-eptag::before { content: '\25b8\00a0'; color: var(--v2-accent); }
+  .dn-roundtl-ep.dn-roundtl-ep-sel .dn-roundtl-eplabel::before { content: '\25b8\00a0'; color: var(--v2-accent); }
   .dn-roundtl-ephead { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-  .dn-roundtl-eptag { font-family: var(--v2-mono); font-size: calc(9.5px * var(--dt-font-scale, 1)); letter-spacing: 0.12em;
+  .dn-roundtl-eplabel { font-family: var(--v2-sans); font-size: calc(9.5px * var(--dt-font-scale, 1)); letter-spacing: 0.12em;
     text-transform: uppercase; color: var(--v2-accent); font-weight: 700; }
   .dn-roundtl-epchamp { display: inline-flex; align-items: center; gap: 5px; font-size: calc(13px * var(--dt-font-scale, 1)); color: var(--v2-ink); }
   .dn-roundtl-epcrown { color: var(--v2-caution); }
   .dn-roundtl-epdrill { margin-left: auto; }
   .dn-roundtl-fanrow { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
-  .dn-roundtl-fanlab { font-family: var(--v2-mono); font-size: calc(10px * var(--dt-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.08em; }
+  .dn-roundtl-fanlab { font-family: var(--v2-sans); font-size: calc(10px * var(--dt-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.08em; }
   .dn-roundtl-fan { display: flex; gap: 6px; flex-wrap: wrap; }
-  .dn-roundtl-chip { display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
-    border: 1px solid var(--v2-rule); border-radius: 5px; padding: 2px 8px; background: var(--v2-flat);
+  .dn-roundtl-fan { gap: 4px 14px; }
+  .dn-roundtl-member { appearance: none; background: none; border: 0; padding: 0;
+    display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
     font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft);
     transition: border-color 0.12s, color 0.12s; }
-  .dn-roundtl-chip:hover { border-color: var(--v2-accent); color: var(--v2-ink); }
-  .dn-roundtl-chip.dn-roundtl-chip-win { border-color: var(--v2-good); color: var(--v2-ink); }
-  .dn-roundtl-chipcrown { color: var(--v2-caution); }
-  .dn-roundtl-chiploss { font-variant-numeric: tabular-nums; }
+  .dn-roundtl-member:hover { color: var(--v2-accent); }
+  .dn-roundtl-member.dn-roundtl-member-win { color: var(--v2-good); }
+  .dn-roundtl-membercrown { color: var(--v2-caution); }
+  .dn-roundtl-memberloss { font-variant-numeric: tabular-nums; }
   .dn-roundtl-fig { margin-top: 10px; }
   .dn-roundtl-gate { display: flex; align-items: center; gap: 7px; margin-top: 10px;
-    font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft); }
+    font-family: var(--v2-sans); font-size: calc(11px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft); }
   .dn-roundtl-gate.dn-roundtl-gate-win { color: var(--v2-good); }
   .dn-roundtl-gate.dn-roundtl-gate-live { color: var(--v2-accent); }
   .dn-roundtl-gatemark { font-size: calc(13px * var(--dt-font-scale, 1)); }
 
   /* ── the IN-FLIGHT round (issue #16): the new round still proposing its
-     field, surfaced as its OWN round. A LIVE badge marks the episode + spine
-     node; proposing/rejected chips are dimmed so the field reads as it forms.
+     field, surfaced as its OWN round. A LIVE mark marks the episode + spine
+     node; proposing/rejected labels are dimmed so the field reads as it forms.
      All CSS-only — no motion that would conflict with the digest-gated repaint
      discipline (the breathing dot reuses the shared reduced-motion guard). */
-  .dn-roundtl-eplive { font-family: var(--v2-mono); font-size: calc(8.5px * var(--dt-font-scale, 1));
-    letter-spacing: 0.14em; text-transform: uppercase; font-weight: 700; color: var(--v2-accent);
-    border: 1px solid color-mix(in srgb, var(--v2-accent) 55%, transparent); border-radius: 4px;
-    padding: 1px 5px; line-height: 1.4; }
+  .dn-roundtl-eplive { font-family: var(--v2-sans); font-size: calc(8.5px * var(--dt-font-scale, 1));
+    letter-spacing: 0.14em; text-transform: uppercase; font-weight: 700; color: var(--v2-accent); line-height: 1.4; }
   .dn-roundtl-node.dn-roundtl-live .dn-roundtl-disc { stroke: var(--v2-accent); stroke-dasharray: 3 2.4; }
-  .dn-roundtl-chip.dn-roundtl-chip-proposing { border-style: dashed; color: var(--v2-ink-faint);
-    border-color: color-mix(in srgb, var(--v2-accent) 45%, var(--v2-rule)); }
-  .dn-roundtl-chip.dn-roundtl-chip-rejected { color: var(--v2-ink-faint);
-    border-color: color-mix(in srgb, var(--v2-bad) 35%, var(--v2-rule)); }
-  .dn-roundtl-chip.dn-roundtl-chip-rejected .dn-roundtl-chipstatus { color: var(--v2-bad); }
-  .dn-roundtl-chipstatus { font-variant-numeric: tabular-nums; }
+  .dn-roundtl-member.dn-roundtl-member-proposing { color: var(--v2-ink-faint); }
+  .dn-roundtl-member.dn-roundtl-member-rejected { color: var(--v2-ink-faint); }
+  .dn-roundtl-member.dn-roundtl-member-rejected .dn-roundtl-memberstatus { color: var(--v2-bad); }
+  .dn-roundtl-memberstatus { font-variant-numeric: tabular-nums; }
 
   /* ── configured tournament STRUCTURE (bracket / standings / racing) ──
      All marks read from CSS tokens so they theme across every swatch;
      the SVGs are fit-to-width (width:100% + viewBox in svg.js) so they
-     scale with the page-scale pill and never need a pan/zoom wrapper. */
+     scale with the page scale and never need a pan/zoom wrapper. */
 
-  /* structure pill — the one-line header label (epoch + match-ups) */
+  /* the structure label — the one-line header naming the tournament structure */
   .dt-structure-line { margin-top: 8px; }
-  .dt-structure-pill { display: inline-flex; align-items: center; gap: 6px;
-    font-family: var(--v2-mono); font-size: calc(10px * var(--dt-font-scale, 1)); padding: 3px 9px;
-    border: 1px solid var(--v2-rule); border-radius: 11px; background: var(--v2-rule-soft); }
-  .dt-structure-pill-k { color: var(--v2-ink-faint); text-transform: uppercase; letter-spacing: 0.07em; }
-  .dt-structure-pill-v { color: var(--v2-ink); font-weight: 600; }
-  /* a LIVE badge beside the structure pill while a run is in flight */
-  .dt-live-pill { display: inline-flex; align-items: center; margin-left: 8px;
-    font-family: var(--v2-mono); font-size: calc(9.5px * var(--dt-font-scale, 1)); font-weight: 700; letter-spacing: 0.1em;
-    padding: 2px 8px; border-radius: 10px; color: var(--v2-good);
-    border: 1px solid var(--v2-good); background: color-mix(in srgb, var(--v2-good) 12%, transparent); }
+  .dt-structure-label { display: inline-flex; align-items: center; gap: 6px; margin-right: 14px;
+    font-family: var(--v2-sans); font-size: calc(10px * var(--dt-font-scale, 1)); }
+  .dt-structure-key { color: var(--v2-ink-faint); text-transform: uppercase; letter-spacing: 0.07em; }
+  .dt-structure-value { color: var(--v2-ink); font-weight: 600; }
+  /* a LIVE word beside the structure label while a run is in flight */
+  .dt-live-state { display: inline-flex; align-items: center; margin-left: 8px;
+    font-family: var(--v2-sans); font-size: calc(9.5px * var(--dt-font-scale, 1)); font-weight: 700; letter-spacing: 0.1em; color: var(--v2-good); }
   /* Its past-tense sibling: the topology came off the live envelope, but the
    * run that wrote it stopped before the tournament settled. Same shape, muted
    * hue, no pulse — it is a record, not a claim about now. */
-  .dt-interrupted-pill { display: inline-flex; align-items: center; margin-left: 8px;
-    font-family: var(--v2-mono); font-size: calc(9.5px * var(--dt-font-scale, 1)); font-weight: 700; letter-spacing: 0.1em;
-    padding: 2px 8px; border-radius: 10px; color: var(--v2-ink-soft);
-    border: 1px dashed var(--v2-rule); background: transparent; }
+  .dt-interrupted-state { display: inline-flex; align-items: center; margin-left: 8px;
+    font-family: var(--v2-sans); font-size: calc(9.5px * var(--dt-font-scale, 1)); font-weight: 700; letter-spacing: 0.1em; color: var(--v2-ink-soft); }
 
   /* CACHED-champion provenance: a fast-mode champion whose per-board results
      were reused from a prior epoch/run (not re-executed this round). */
-  .dn-cached-tag { display: inline-flex; align-items: center; gap: 4px; margin: 6px 0 0;
-    font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1)); }
-  .dn-cached-tag-pill { padding: 2px 8px; border-radius: 10px; font-weight: 700; letter-spacing: 0.04em;
-    color: var(--v2-accent); border: 1px solid var(--v2-accent);
-    background: color-mix(in srgb, var(--v2-accent) 10%, transparent); }
-  .dn-cached-badge { display: inline-flex; align-items: center; gap: 4px; margin-bottom: 8px;
-    font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1)); }
-  .dn-cached-badge-mark { font-family: var(--v2-mono); font-size: calc(9.5px * var(--dt-font-scale, 1)); font-weight: 700;
-    letter-spacing: 0.06em; text-transform: uppercase; padding: 1px 6px; border-radius: 8px;
-    color: var(--v2-accent); border: 1px solid var(--v2-accent);
-    background: color-mix(in srgb, var(--v2-accent) 10%, transparent); }
+  .dn-cached-line { display: inline-flex; align-items: center; gap: 4px; margin: 6px 0 0;
+    font-family: var(--v2-sans); font-size: calc(11px * var(--dt-font-scale, 1)); }
+  .dn-cached-word { font-weight: 700; letter-spacing: 0.04em;
+    color: var(--v2-accent); }
+  .dn-cached-note { display: inline-flex; align-items: center; gap: 4px; margin-bottom: 8px;
+    font-family: var(--v2-sans); font-size: calc(11px * var(--dt-font-scale, 1)); }
+  .dn-cached-mark { font-family: var(--v2-sans); font-size: calc(9.5px * var(--dt-font-scale, 1)); font-weight: 700;
+    letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--v2-accent); }
 
 
   /* racing SURVIVAL FUNNEL (the epoch-overview hero) — field → cuts →
      survivor → champion-gate; the flow narrows at each cut. All marks read
      from --v2-* tokens so the funnel is legible across every theme (incl. the
      light Paper / Selenized-Light swatches), and the SVG is fit-to-width
-     (width:100% + viewBox in svg.js) so it scales with the page-scale pill. */
-  .dn-funnel-head { fill: var(--v2-ink-faint); font: 10px var(--v2-mono);
+     (width:100% + viewBox in svg.js) so it scales with the page scale. */
+  .dn-funnel-head { fill: var(--v2-ink-faint); font: 10px var(--v2-sans);
     text-transform: uppercase; letter-spacing: 0.05em; }
-  .dn-funnel-sub { fill: var(--v2-ink-faint); font: 9.5px var(--v2-mono); }
+  .dn-funnel-sub { fill: var(--v2-ink-faint); font: 9.5px var(--v2-sans); }
   /* the DOT LADDER — one filled accent dot per competitor alive entering a rung,
      thin converging cubic-bezier SPLINES between a lane's rung dots (the
      racingScalarTrack marker language). Non-winner lanes read dimmed; the WINNER's
@@ -2489,7 +2510,7 @@
     vector-effect: non-scaling-stroke; }
   .dn-funnel-gatebox.dn-good { stroke: var(--v2-good); stroke-width: 1.2;
     fill: color-mix(in srgb, var(--v2-good) 9%, transparent); }
-  .dn-funnel-gatelab { fill: var(--v2-ink-soft); font: 11px var(--v2-mono); }
+  .dn-funnel-gatelab { fill: var(--v2-ink-soft); font: 11px var(--v2-sans); }
   .dn-funnel-gatelab.dn-good { fill: var(--v2-good); font-weight: 700; }
   .dn-funnel-gate:hover .dn-funnel-gatelab,
   .dn-funnel-gate:focus .dn-funnel-gatelab { fill: var(--v2-accent); outline: none; }
@@ -2499,7 +2520,7 @@
    * streaming) PROJECTED standing — applied to a standings-table ROW, an SVG
    * NODE (funnel runner / swiss lane / elim node), and the candidate headline.
    * Distinct from a settled standing: dashed outline + reduced opacity + a
-   * subtle pulse (suppressed under reduced-motion), the ~prefix + "proj" badge
+   * subtle pulse (suppressed under reduced-motion), the ~prefix + "proj" mark
    * are emitted by the renderers, and a SCORED board-progress sub-bar tracks
    * boards_done/boards_total. All colours derive from --v2-projected-*. */
   .dt-proj { opacity: var(--v2-projected-op); }
@@ -2507,10 +2528,9 @@
   tr.dt-proj-row td { color: var(--v2-projected); }
   tr.dt-proj-row { outline: 1px dashed var(--v2-projected-line); outline-offset: -1px;
     background: var(--v2-projected-soft); animation: dt-proj-pulse 2.2s ease-in-out infinite; }
-  /* the inline "proj" badge — a small caps pill on the projected tone. */
-  .dt-proj-badge { display: inline-block; font: 9px var(--v2-mono); font-weight: 700;
+  /* the inline "proj" word — small caps text in the projected tone. */
+  .dt-proj-mark { display: inline-block; font: 9px var(--v2-sans); font-weight: 700;
     text-transform: uppercase; letter-spacing: 0.06em; color: var(--v2-projected);
-    border: 1px dashed var(--v2-projected-line); border-radius: 3px; padding: 0 3px;
     margin-left: 5px; vertical-align: middle; line-height: 1.5; }
   /* the ~prefix value reads in the projected tone (the number itself is dimmed). */
   .dt-proj-val { color: var(--v2-projected); }
@@ -2546,7 +2566,7 @@
      per-round pairings + accumulating Copeland-point standings → champion-gate.
      All marks read --v2-* tokens so it is legible across every theme; the SVG is
      fit-to-width (width:100% + viewBox in svg.js). */
-  .dn-swissladder-head { fill: var(--v2-ink-faint); font: 10px var(--v2-mono);
+  .dn-swissladder-head { fill: var(--v2-ink-faint); font: 10px var(--v2-sans);
     text-transform: uppercase; letter-spacing: 0.05em; }
   .dn-swissladder-queued, .dn-swissladder-pairlab.dn-swissladder-queued { fill: var(--v2-ink-faint); opacity: 0.7; }
   .dn-swissladder-lane-queued { opacity: 0.7; }
@@ -2572,11 +2592,11 @@
   .dn-swissladder-gatebox { fill: var(--v2-rule-soft); stroke: var(--v2-rule); stroke-width: 1; }
   .dn-swissladder-gatebox.dn-good { stroke: var(--v2-good); stroke-width: 1.4;
     fill: color-mix(in srgb, var(--v2-good) 10%, transparent); }
-  .dn-swissladder-gatelab { fill: var(--v2-ink-soft); font: 11px var(--v2-mono); }
+  .dn-swissladder-gatelab { fill: var(--v2-ink-soft); font: 11px var(--v2-sans); }
   .dn-swissladder-gatelab.dn-good { fill: var(--v2-good); font-weight: 700; }
   .dn-swissladder-gate:hover .dn-swissladder-gatelab,
   .dn-swissladder-gate:focus .dn-swissladder-gatelab { fill: var(--v2-accent); outline: none; }
-  .dn-swissladder-bench { fill: var(--v2-accent); font: 9.5px var(--v2-mono); font-weight: 600; }
+  .dn-swissladder-bench { fill: var(--v2-accent); font: 9.5px var(--v2-sans); font-weight: 600; }
 
   /* ---- the GAUNTLET DUEL FLOW (the field as Δ-vs-champion lanes) ----
    * Each challenger a lane vs the crowned champion-gate; a dot below the Δ=0
@@ -2592,9 +2612,9 @@
   .dt-fieldflow-champmeta { font-size: calc(11px * var(--dt-font-scale, 1)); }
   .dn-duelflow-ref { stroke: var(--v2-ink-faint); stroke-width: 1.2; stroke-dasharray: 3 3;
     vector-effect: non-scaling-stroke; }
-  .dn-duelflow-axis { fill: var(--v2-ink-faint); font: 9.5px var(--v2-mono);
+  .dn-duelflow-axis { fill: var(--v2-ink-faint); font: 9.5px var(--v2-sans);
     text-transform: uppercase; letter-spacing: 0.05em; }
-  .dn-duelflow-dir { font: 9px var(--v2-mono); }
+  .dn-duelflow-dir { font: 9px var(--v2-sans); }
   .dn-duelflow-dir.dn-good { fill: var(--v2-good); }
   .dn-duelflow-laneline { stroke: var(--v2-rule); stroke-width: 1.4; opacity: 0.55;
     vector-effect: non-scaling-stroke; }
@@ -2613,7 +2633,7 @@
   .dn-duelflow-delta.dn-bad { fill: var(--v2-bad); }
   .dn-duelflow-gatebox { fill: var(--v2-panel); stroke: var(--v2-accent); stroke-width: 1.6; }
   .dn-duelflow-gatebox.dn-good { stroke: var(--v2-good); }
-  .dn-duelflow-gatelab { fill: var(--v2-accent); font: 600 12px var(--v2-mono); }
+  .dn-duelflow-gatelab { fill: var(--v2-accent); font: 600 12px var(--v2-sans); }
   .dn-duelflow-gatelab.dn-good { fill: var(--v2-good); }
   .dn-duelflow-gateflow { vector-effect: non-scaling-stroke; }
   .dn-duelflow-gateflow.dn-good { stroke: var(--v2-good); stroke-width: 2; }
@@ -2628,16 +2648,16 @@
    * projected dn-proj. Champion v0 a dashed accent benchmark; cut tick caution.
    * All --v2-* tokens (theme-adaptive). */
   .dn-scalartrack-axis { stroke: var(--v2-rule); stroke-width: 1; vector-effect: non-scaling-stroke; }
-  .dn-scalartrack-cap { fill: var(--v2-ink-faint); font: 10px var(--v2-mono);
+  .dn-scalartrack-cap { fill: var(--v2-ink-faint); font: 10px var(--v2-sans);
     text-transform: uppercase; letter-spacing: 0.04em; }
   .dn-scalartrack-tick { fill: var(--v2-ink-faint); font: 9px var(--v2-mono);
     font-variant-numeric: tabular-nums; }
   .dn-scalartrack-bench { stroke: var(--v2-accent); stroke-width: 1.5; stroke-dasharray: 3 3;
     vector-effect: non-scaling-stroke; }
-  .dn-scalartrack-benchlab { fill: var(--v2-accent); font: 10px var(--v2-mono); }
+  .dn-scalartrack-benchlab { fill: var(--v2-accent); font: 10px var(--v2-sans); }
   .dn-scalartrack-cut { stroke: var(--v2-caution); stroke-width: 1.2; stroke-dasharray: 4 3;
     vector-effect: non-scaling-stroke; }
-  .dn-scalartrack-cutlab { fill: var(--v2-caution); font: 9px var(--v2-mono); }
+  .dn-scalartrack-cutlab { fill: var(--v2-caution); font: 9px var(--v2-sans); }
   .dn-scalartrack-dot { fill: transparent; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
   .dn-scalartrack-dot.dn-good { stroke: var(--v2-good); }
   .dn-scalartrack-dot.dn-good.dn-scalartrack-filled { fill: var(--v2-good); }
@@ -2669,8 +2689,8 @@
   .dn-fieldbars-standard { stroke: var(--v2-accent); stroke-width: 1.6; vector-effect: non-scaling-stroke; }
   .dn-fieldbars-gate { stroke: var(--v2-accent); stroke-width: 1.2; stroke-dasharray: 4 3;
     opacity: 0.7; vector-effect: non-scaling-stroke; }
-  .dn-fieldbars-gatelab { fill: var(--v2-accent); font: 9px var(--v2-mono); }
-  .dn-fieldbars-axis { fill: var(--v2-accent); font: 9.5px var(--v2-mono); }
+  .dn-fieldbars-gatelab { fill: var(--v2-accent); font: 9px var(--v2-sans); }
+  .dn-fieldbars-axis { fill: var(--v2-accent); font: 9.5px var(--v2-sans); }
   .dn-fieldbars-bar { stroke: none; opacity: 0.5; }
   .dn-fieldbars-bar.dn-good { fill: var(--v2-good); }
   .dn-fieldbars-bar.dn-bad { fill: var(--v2-bad); }
@@ -2747,7 +2767,7 @@
    * pulls in. Live/projected candidate ghosts in dn-proj. All --v2-* tokens. */
   .dn-radar-ring { stroke: var(--v2-rule-soft); stroke-width: 1; vector-effect: non-scaling-stroke; }
   .dn-radar-spoke { stroke: var(--v2-rule-soft); stroke-width: 1; vector-effect: non-scaling-stroke; }
-  .dn-radar-axislab { fill: var(--v2-ink-soft); font: 9.5px var(--v2-mono); }
+  .dn-radar-axislab { fill: var(--v2-ink-soft); font: 9.5px var(--v2-sans); }
   .dn-radar-champ { stroke: var(--v2-ink-faint); stroke-width: 1.5; stroke-dasharray: 4 3;
     fill: none; vector-effect: non-scaling-stroke; }
   .dn-radar-champ-dot { stroke: var(--v2-ink-faint); stroke-width: 1; vector-effect: non-scaling-stroke; }
@@ -2763,8 +2783,8 @@
   .dn-radar-hot:focus-visible { outline: 2px solid var(--v2-accent); }
   .dn-radar-legendbox { fill: var(--v2-panel); stroke: var(--v2-rule); stroke-width: 1;
     vector-effect: non-scaling-stroke; }
-  .dn-radar-legendcap { fill: var(--v2-ink-faint); font: 9.5px var(--v2-mono); }
-  .dn-radar-legendlab { fill: var(--v2-ink-soft); font: 9.5px var(--v2-mono); }
+  .dn-radar-legendcap { fill: var(--v2-ink-faint); font: 9.5px var(--v2-sans); }
+  .dn-radar-legendlab { fill: var(--v2-ink-soft); font: 9.5px var(--v2-sans); }
   .dn-radar-legendlab.dn-good { fill: var(--v2-good); }
   .dn-radar-legendlab.dn-bad { fill: var(--v2-bad); }
   .dn-radar-cand-key { stroke: var(--v2-accent); stroke-width: 2; vector-effect: non-scaling-stroke; }
@@ -2817,7 +2837,7 @@
    * connector + glyphs crisp under the uniform width stretch. */
   .dn-dumbbell { display: block; width: 100%; height: auto; }
   .dn-dumbbell-label { fill: var(--v2-ink-soft); font: 10px var(--v2-mono); }
-  .dn-dumbbell-ctx { fill: var(--v2-ink-faint); font: 9px var(--v2-mono); }
+  .dn-dumbbell-ctx { fill: var(--v2-ink-faint); font: 9px var(--v2-sans); }
   .dn-dumbbell-base { stroke: var(--v2-rule-soft); stroke-width: 0.75; vector-effect: non-scaling-stroke; }
   .dn-dumbbell-conn { stroke-width: 2.2; vector-effect: non-scaling-stroke; }
   .dn-dumbbell-conn.dn-good { stroke: var(--v2-good); }
@@ -2838,7 +2858,7 @@
   .dn-dumbbell-pass { fill: var(--v2-good); }
   .dn-dumbbell-fail { stroke: var(--v2-bad); stroke-width: 1.4; vector-effect: non-scaling-stroke; }
   .dn-dumbbell-aggtick { stroke: var(--v2-rule-soft); stroke-width: 1; stroke-dasharray: 2 4; vector-effect: non-scaling-stroke; }
-  .dn-dumbbell-aggcap { fill: var(--v2-ink-faint); font: 7px var(--v2-mono); }
+  .dn-dumbbell-aggcap { fill: var(--v2-ink-faint); font: 7px var(--v2-sans); }
   /* the whole row is clickable → its board drill-down (cursor + focus/hover). */
   .dn-dumbbell-row { cursor: pointer; }
   .dn-dumbbell-row:hover .dn-dumbbell-label { fill: var(--v2-ink); }
@@ -2858,13 +2878,13 @@
   .dn-score-val { fill: var(--v2-ink-soft); font: 8px var(--v2-mono); }
   .dn-score-pr { fill: var(--v2-ink-faint); font: 7px var(--v2-mono); }
   /* the per-generation mean-score caption beneath the per-board dumbbell. */
-  .dn-meanscore { margin-top: 6px; font: 11px var(--v2-mono); }
+  .dn-meanscore { margin-top: 6px; font: 11px var(--v2-sans); }
   .dn-meanscore-val { color: var(--v2-ink-soft); }
-  /* the facet strip — one chip per `facet:` board tag. Deliberately quiet:
+  /* the facet strip — one label per `facet:` board tag. Deliberately quiet:
      neutral ink, no verdict colour, no bar. A facet mean is diagnostic and
      un-thresholded, so it must not read as a scoreboard row. */
   .dn-facets { margin-top: 8px; }
-  .dn-facets-head { font: 11px var(--v2-mono); }
+  .dn-facets-head { font: 11px var(--v2-sans); }
   .dn-facet-table { margin-top: 4px; font: 11px var(--v2-mono); }
   /* the two explained columns read as hoverable without shouting. */
   .dn-facet-table th[data-hovercard] { cursor: help; text-decoration: underline dotted var(--v2-rule); }
@@ -2891,11 +2911,11 @@
    * the pane caps the max-width so figure svg{width:100%} cannot balloon it. */
   .dn-genpane { max-width: 300px; }
   .dn-gen-svg { display: block; width: 100%; height: auto; }
-  .dn-gen-title { fill: var(--v2-ink-faint); font: 9px var(--v2-mono); }
+  .dn-gen-title { fill: var(--v2-ink-faint); font: 9px var(--v2-sans); }
   .dn-gen-gap { font: 700 9px var(--v2-mono); }
   .dn-gen-gap.dn-caution { fill: var(--v2-caution); }
   .dn-gen-gap.dn-bad { fill: var(--v2-bad); }
-  .dn-gen-axlab { fill: var(--v2-ink-faint); font: 8.5px var(--v2-mono); }
+  .dn-gen-axlab { fill: var(--v2-ink-faint); font: 8.5px var(--v2-sans); }
   .dn-gen-slope { stroke-width: 2; fill: none; vector-effect: non-scaling-stroke; }
   .dn-gen-slope.dn-caution { stroke: var(--v2-caution); }
   .dn-gen-slope.dn-bad { stroke: var(--v2-bad); }
@@ -2923,7 +2943,7 @@
   /* ---- the LOSS-FLOOR WATERFALL (the epoch's descent across rounds) ----
    * Each round a step sized by its promotion Δ — improvement reads --v2-good,
    * regression --v2-bad, a held round is flat. The accent spine is the floor. */
-  .dn-waterfall-axis { fill: var(--v2-ink-faint); font: 10px var(--v2-mono);
+  .dn-waterfall-axis { fill: var(--v2-ink-faint); font: 10px var(--v2-sans);
     text-transform: uppercase; letter-spacing: 0.04em; }
   .dn-waterfall-spine { stroke: var(--v2-accent); stroke-width: 2; opacity: 0.85;
     vector-effect: non-scaling-stroke; }
@@ -2946,7 +2966,7 @@
    * dim ink + ♔. All --v2-* tokens. */
   .dn-reignribbon { margin-top: 12px; }
   .dn-reignribbon-cap { font-size: calc(11px * var(--dt-font-scale, 1)); margin-bottom: 6px; }
-  .dn-reigngantt-axis { fill: var(--v2-ink-faint); font: 9.5px var(--v2-mono); }
+  .dn-reigngantt-axis { fill: var(--v2-ink-faint); font: 9.5px var(--v2-sans); }
   .dn-reigngantt-grid { stroke: var(--v2-rule-soft); stroke-width: 0.6;
     vector-effect: non-scaling-stroke; }
   .dn-reigngantt-name { font: 10.5px var(--v2-mono); }
@@ -2963,9 +2983,9 @@
    * opt 7) — held floor STAIRCASE over effort-proportional BANDS + a
    * contract-component HEATSTRIP (incl. the proposer* column). All marks read
    * --v2-* tokens; a structure roll is a SOFT (caution-dashed) seam. */
-  .dn-metaledger-zonecap { fill: var(--v2-ink-faint); font: 10px var(--v2-mono);
+  .dn-metaledger-zonecap { fill: var(--v2-ink-faint); font: 10px var(--v2-sans);
     font-weight: 700; letter-spacing: 0.04em; }
-  .dn-metaledger-axis { fill: var(--v2-ink-faint); font: 9.5px var(--v2-mono);
+  .dn-metaledger-axis { fill: var(--v2-ink-faint); font: 9.5px var(--v2-sans);
     font-variant-numeric: tabular-nums; }
   .dn-metaledger-grid { stroke: var(--v2-rule); stroke-width: 1;
     vector-effect: non-scaling-stroke; }
@@ -2986,18 +3006,19 @@
      the stroke is thin enough to halo WITHOUT visually thickening the glyph. */
   .dn-metaledger-floorlbl { font: 400 11px var(--v2-mono); font-variant-numeric: tabular-nums;
     paint-order: stroke; stroke: var(--v2-paper); stroke-width: 3px; stroke-linejoin: round; }
-  .dn-metaledger-openbadge { fill: var(--v2-ink-faint); font: 400 8.5px var(--v2-mono); }
-  /* change rail + chip at each roll seam */
+  .dn-metaledger-openlbl { fill: var(--v2-ink-faint); font: 400 8.5px var(--v2-sans); }
+  /* change rail + label at each roll seam */
   .dn-metaledger-rail { stroke: var(--v2-rule-soft); stroke-width: 1;
     vector-effect: non-scaling-stroke; }
-  .dn-metaledger-chip { vector-effect: non-scaling-stroke; }
-  /* a subtle connector from a de-collided chip back to its true roll boundary */
-  .dn-metaledger-chiplink { stroke: var(--v2-rule-soft); stroke-width: 1;
+  /* a subtle connector from a de-collided label back to its true roll boundary */
+  .dn-metaledger-rolllink { stroke: var(--v2-rule-soft); stroke-width: 1;
     stroke-dasharray: 2 3; vector-effect: non-scaling-stroke; }
-  .dn-metaledger-chiptxt { fill: var(--v2-ink); font: 400 9.5px var(--v2-mono); }
+  .dn-metaledger-roll { cursor: help; }
+  .dn-metaledger-rolllbl { font: 600 10px var(--v2-sans); pointer-events: none; }
+  .dn-metaledger-rolllbl-soft { font-style: italic; }
   .dn-metaledger-soft { stroke: var(--v2-caution); stroke-width: 2;
     stroke-dasharray: 2 5; vector-effect: non-scaling-stroke; }
-  .dn-metaledger-softlbl { fill: var(--v2-caution); font: 400 8.5px var(--v2-mono); }
+  .dn-metaledger-softlbl { fill: var(--v2-caution); font: 400 8.5px var(--v2-sans); }
   /* (B) effort bands: width ∝ gen_count, fill ∝ floor (inline), champion tick */
   .dn-metaledger-band { vector-effect: non-scaling-stroke; }
   .dn-metaledger-band-g { cursor: pointer; }
@@ -3005,12 +3026,12 @@
   .dn-metaledger-band-g:focus-visible { outline: 2px solid var(--v2-accent); }
   .dn-metaledger-bandid { fill: var(--v2-paper); font: 400 13px var(--v2-mono); }
   .dn-metaledger-bandsub { fill: color-mix(in srgb, var(--v2-paper) 80%, transparent);
-    font: 9.5px var(--v2-mono); }
-  .dn-metaledger-bandopen { fill: var(--v2-paper); font: 400 9px var(--v2-mono); }
+    font: 9.5px var(--v2-sans); }
+  .dn-metaledger-bandopen { fill: var(--v2-paper); font: 400 9px var(--v2-sans); }
   .dn-metaledger-champtick { fill: var(--v2-accent); }
-  .dn-metaledger-champlbl { fill: var(--v2-accent); font: 400 9px var(--v2-mono); }
+  .dn-metaledger-champlbl { fill: var(--v2-accent); font: 400 9px var(--v2-sans); }
   /* (C) component heatstrip: filled = changed vs predecessor */
-  .dn-metaledger-rowlbl { fill: var(--v2-ink-soft); font: 9.5px var(--v2-mono); }
+  .dn-metaledger-rowlbl { fill: var(--v2-ink-soft); font: 9.5px var(--v2-sans); }
   .dn-metaledger-rowlbl-prop { fill: var(--v2-caution); font-weight: 400; }
   .dn-metaledger-colid { fill: var(--v2-ink); font: 400 11px var(--v2-mono); }
   .dn-metaledger-cell { vector-effect: non-scaling-stroke; }
@@ -3021,7 +3042,7 @@
   .dn-metaledger-cell-soft { fill: color-mix(in srgb, var(--v2-caution) 30%, var(--v2-panel));
     stroke: var(--v2-caution); stroke-width: 1.4; }
   .dn-metaledger-cellmark { color: var(--v2-accent); }
-  .dn-metaledger-cellmark-soft { fill: var(--v2-caution); font: 400 8.5px var(--v2-mono); }
+  .dn-metaledger-cellmark-soft { fill: var(--v2-caution); font: 400 8.5px var(--v2-sans); }
 
   /* ====================================================================
    * COMPACT structure OVERVIEW (epoch-card hero) — the swiss standings-bump
@@ -3030,10 +3051,12 @@
    * ==================================================================== */
 
   /* ---- swiss OVERVIEW: bump lines (champion bold) + ranked Copeland bar ---- */
-  .dn-swissover-title { fill: var(--v2-ink-faint); font: 10px var(--v2-mono);
+  .dn-swissover-title { fill: var(--v2-ink-faint); font: 10px var(--v2-sans);
     text-transform: uppercase; letter-spacing: 0.05em; font-weight: 700; }
-  .dn-swissover-round, .dn-swissover-rank { fill: var(--v2-ink-faint); font: 10px var(--v2-mono); }
-  .dn-swissover-barval, .dn-swissover-verdict { fill: var(--v2-ink-faint); font: 10px var(--v2-mono); }
+  .dn-swissover-round { fill: var(--v2-ink-faint); font: 10px var(--v2-sans); }
+  .dn-swissover-rank { fill: var(--v2-ink-faint); font: 10px var(--v2-mono); }
+  .dn-swissover-barval { fill: var(--v2-ink-faint); font: 10px var(--v2-mono); }
+  .dn-swissover-verdict { fill: var(--v2-ink-faint); font: 10px var(--v2-sans); }
   .dn-swissover-name, .dn-swissover-barname { fill: var(--v2-ink-soft); font: 10.5px var(--v2-mono); }
   .dn-swissover-name-champ, .dn-swissover-verdict.dn-good { fill: var(--v2-good); font-weight: 700; }
   /* the displaced incumbent (former champion): dim, italic, never the accent */
@@ -3067,7 +3090,7 @@
    * a persistent caption naming the champion the per-rung deltas are measured
    * against (v0 is the benchmark, not a rung competitor; it defends at the
    * champion-gate). */
-  .dn-funnel-bench { fill: var(--v2-accent); font: 9.5px var(--v2-mono); font-weight: 600; }
+  .dn-funnel-bench { fill: var(--v2-accent); font: 9.5px var(--v2-sans); font-weight: 600; }
 
   /* a freshly-built funnel eases in (one-shot — never infinite). */
   .dt-live-enter { animation: dt-live-fade 0.34s ease-out; }
@@ -3096,7 +3119,7 @@
   }
   /* THE ONE-LINE BAND — the whole hero when nothing is running. */
   .dt-live-band { display: flex; align-items: center; gap: 8px; min-height: 30px;
-    font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1));
+    font-family: var(--v2-sans); font-size: calc(11px * var(--dt-font-scale, 1));
     color: var(--v2-ink-soft); letter-spacing: 0.01em; }
   /* A settled/interrupted band gets a still, muted dot — never the breathing
    * one. The pulse is reserved for a run that is genuinely in flight. */
@@ -3109,28 +3132,25 @@
   .dt-live-band-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   /* the drawer toggle: present only while there is a drawer to toggle. */
   .dt-live-band-toggle { display: none; }
-  .dt-live-band-toggle.dt-live-band-toggle-on { display: inline-block; margin-left: auto;
-    padding: 1px 7px; border: 1px solid var(--v2-rule); border-radius: 9px;
-    background: transparent; cursor: pointer; color: var(--v2-ink-soft);
-    font-family: var(--v2-mono); font-size: calc(10px * var(--dt-font-scale, 1)); }
-  .dt-live-band-toggle.dt-live-band-toggle-on:hover { color: var(--v2-ink); border-color: var(--v2-ink-soft); }
+  .dt-live-band-toggle.dt-live-band-toggle-on { display: inline-flex; align-items: center; gap: 4px; margin-left: auto;
+    appearance: none; padding: 0; border: 0; background: none; cursor: pointer; color: var(--v2-ink-soft);
+    font-family: var(--v2-sans); font-size: calc(11px * var(--dt-font-scale, 1)); }
+  .dt-live-band-toggle.dt-live-band-toggle-on:hover { color: var(--v2-ink); text-decoration: underline; }
   /* THE DRAWER — the full live surface, only while live and expanded. */
   .dt-live-hero-body { display: none; }
   .dt-live-hero.dt-live-on .dt-live-hero-body { display: block; padding: 4px 0 16px; }
   /* ── 1. THE STATUS HEADER — ONE muted metadata baseline ──
    * `● LIVE · racing · rung 2 of 2 · field of 2 · 7 units running`. No competing
-   * big phase title: the LIVE pill + one muted mono metadata line on one row. */
+   * big phase title: the LIVE label + one muted mono metadata line on one row. */
   .dt-live-hero-head { display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap; }
-  .dt-live-hero-pill { display: inline-flex; align-items: center; gap: 6px;
-    padding: 2px 9px; border-radius: 10px; border: 1px solid var(--v2-good);
-    background: color-mix(in srgb, var(--v2-good) 12%, transparent);
-    font-family: var(--v2-mono); font-size: calc(10px * var(--dt-font-scale, 1)); letter-spacing: 0.08em;
+  .dt-live-hero-state { display: inline-flex; align-items: center; gap: 6px;
+    font-family: var(--v2-sans); font-size: calc(10px * var(--dt-font-scale, 1)); letter-spacing: 0.08em;
     color: var(--v2-good); }
   /* the breathing dot — subtle, GPU-friendly (opacity + box-shadow ring). */
   .dt-live-hero-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--v2-good);
     box-shadow: 0 0 0 0 var(--v2-good); animation: dt-run-pulse 1.8s ease-out infinite; }
   /* the ONE metadata line — consistent muted mono type, never a bold title. */
-  .dt-live-hero-meta { font-family: var(--v2-mono); font-size: calc(11.5px * var(--dt-font-scale, 1));
+  .dt-live-hero-meta { font-family: var(--v2-sans); font-size: calc(11.5px * var(--dt-font-scale, 1));
     color: var(--v2-ink-soft); letter-spacing: 0.01em; }
 
   /* ── 2. THE RACE STATE — the PRIMARY, FULL-WIDTH viz ──
@@ -3159,7 +3179,7 @@
   .dt-live-hero-panel { min-width: 0; border: 1px solid var(--v2-rule); border-radius: 7px;
     background: var(--v2-panel); padding: 11px 13px; display: flex; flex-direction: column; }
   /* the ONE eyebrow style every section label in the hero shares. */
-  .dt-live-hero-eyebrow { font-family: var(--v2-mono); font-size: calc(10px * var(--dt-font-scale, 1));
+  .dt-live-hero-eyebrow { font-family: var(--v2-sans); font-size: calc(10px * var(--dt-font-scale, 1));
     text-transform: uppercase; letter-spacing: 0.07em; color: var(--v2-ink-faint); margin-bottom: 8px; }
   /* ---- the MATCH-GROUPED "what's running" body (the densified champion-gate
    * rows; reused as-is). Each board entry shows a live progress bar + an
@@ -3172,7 +3192,7 @@
    * shared panel chrome, separated by a hairline rule. */
   .dt-live-match { min-width: 0; }
   .dt-live-match + .dt-live-match { border-top: 1px solid var(--v2-rule-soft); padding-top: 8px; }
-  .dt-live-match-head { font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft);
+  .dt-live-match-head { font-family: var(--v2-sans); font-size: calc(11px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft);
     margin-bottom: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .dt-live-match-rows { display: flex; flex-direction: column; gap: 4px; }
   /* ONE dense competitor row, fixed columns L→R that USE the width:
@@ -3190,7 +3210,7 @@
   /* the per-run FOLLOW affordance — a quiet outlined button tinted with the
      accent on hover. */
   .dt-live-follow-cluster { display: inline-flex; gap: 4px; }
-  .dt-live-follow { font-family: var(--v2-mono); font-size: calc(9.5px * var(--dt-font-scale, 1));
+  .dt-live-follow { font-family: var(--v2-sans); font-size: calc(9.5px * var(--dt-font-scale, 1));
     color: var(--v2-ink-faint); background: transparent; border: 1px solid var(--v2-rule);
     border-radius: 4px; padding: 0 5px; line-height: 1.5; cursor: pointer; white-space: nowrap;
     transition: color 0.15s, border-color 0.15s; }
@@ -3214,12 +3234,12 @@
   .dt-live-match-boards { font-size: calc(10.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft);
     text-align: right; min-width: 3.4em; white-space: nowrap; font-variant-numeric: tabular-nums; }
   /* the trailing tag column: PROJ / a verdict glyph / "queued" / "live". */
-  .dt-live-match-tag { font-family: var(--v2-mono); font-size: calc(10px * var(--dt-font-scale, 1));
+  .dt-live-match-kind { font-family: var(--v2-sans); font-size: calc(10px * var(--dt-font-scale, 1));
     text-align: right; min-width: 2.6em; white-space: nowrap; }
-  /* the PROJ badge sits in its own grid column now — drop the inline left margin
+  /* the PROJ mark sits in its own grid column now — drop the inline left margin
    * so it aligns to the column's right edge (the column-gap owns the spacing). */
-  .dt-live-match-tag.dt-proj-badge { margin-left: 0; }
-  .dt-live-match-state { font-family: var(--v2-mono); font-size: calc(10.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); }
+  .dt-live-match-kind.dt-proj-mark { margin-left: 0; }
+  .dt-live-match-state { font-family: var(--v2-sans); font-size: calc(10.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); }
   .dt-live-match-state.dn-good { color: var(--v2-good); }
   .dt-live-match-state.dn-bad { color: var(--v2-bad); }
 
@@ -3230,7 +3250,7 @@
      view as the "Proposed field" section. Theme-aware (every colour is a
      --v2-* token); applied rows lean good, rejected rows lean bad. */
   .dn-prop-tracker { min-width: 0; }
-  .dn-prop-caption { font-family: var(--v2-mono); font-size: calc(10px * var(--dt-font-scale, 1)); text-transform: uppercase;
+  .dn-prop-caption { font-family: var(--v2-sans); font-size: calc(10px * var(--dt-font-scale, 1)); text-transform: uppercase;
     letter-spacing: 0.06em; margin-bottom: 5px; }
   .dn-prop-head { font-size: calc(12.5px * var(--dt-font-scale, 1)); color: var(--v2-ink); margin-bottom: 8px; font-weight: 600; }
   .dn-prop-head-allbad { color: var(--v2-bad); }
@@ -3239,10 +3259,10 @@
     border: 1px solid var(--v2-rule); border-radius: 5px; background: var(--v2-panel);
     font-size: calc(12px * var(--dt-font-scale, 1)); }
   /* status is carried by the row's glyph (✓/⋯/✗) + the coloured verdict text +
-   * the faint mono status pill in the row head — NOT a coloured left rail. The
-   * rejected row keeps a gentle soft fill (the same understated tint .dn-pill.
+   * the faint mono status label in the row head — NOT a coloured left rail. The
+   * rejected row keeps a gentle soft fill (the same understated tint .dn-state.
    * dn-rejected uses), never a slab edge. */
-  .dn-prop-row-ok { /* status conveyed by the ✓ glyph + "applied" verdict + pill */ }
+  .dn-prop-row-ok { /* status conveyed by the ✓ glyph + "applied" verdict + label */ }
   .dn-prop-row-bad { background: var(--v2-bad-soft); }
   .dn-prop-glyph { font-family: var(--v2-mono); font-weight: 700; width: 1em; text-align: center; }
   .dn-prop-gen { font-family: var(--v2-mono); color: var(--v2-ink); flex: 1 1 auto; }
@@ -3253,7 +3273,7 @@
   .dn-prop-clickable:hover { border-color: var(--v2-accent); }
   .dn-prop-clickable:focus-visible { outline: 2px solid var(--v2-accent); outline-offset: 1px; }
   /* v6 observability: per-row detail line (reason / hypothesis), the
-     attempt badge, and the in-flight "proposing" state. A rejected row's
+     attempt mark, and the in-flight "proposing" state. A rejected row's
      reason is rendered inline (faint mono) so the SPECIFIC validation /
      parse / post-apply message is legible without a hover. */
   .dn-prop-row { flex-direction: column; align-items: stretch; gap: 3px; }
@@ -3261,8 +3281,7 @@
   .dn-prop-detail { font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1)); line-height: 1.35;
     padding-left: calc(1em + 8px); overflow-wrap: anywhere; }
   .dn-prop-reason { color: var(--v2-bad); }
-  .dn-prop-attempts { font-family: var(--v2-mono); font-size: calc(10.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint);
-    border: 1px solid var(--v2-rule); border-radius: 4px; padding: 0 5px; }
+  .dn-prop-attempts { font-family: var(--v2-sans); font-size: calc(10.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); }
   .dn-prop-pending { color: var(--v2-caution); }
   /* status conveyed by the ⋯ glyph + "proposing…" verdict text (the same
    * dot+text vocabulary used elsewhere) — never a coloured left rail. */
@@ -3277,7 +3296,7 @@
   .dt-ticker-empty { font-size: calc(11px * var(--dt-font-scale, 1)); padding: 8px 6px; font-style: italic; }
   .dt-ticker-list { display: flex; flex-direction: column; gap: 1px; }
   .dt-ticker-row { display: flex; align-items: baseline; gap: 6px; padding: 2px 5px;
-    font-family: var(--v2-mono); font-size: calc(10.5px * var(--dt-font-scale, 1)); line-height: 1.5; border-radius: 3px;
+    font-family: var(--v2-sans); font-size: calc(10.5px * var(--dt-font-scale, 1)); line-height: 1.5; border-radius: 3px;
     color: var(--v2-ink-soft);
     /* each NEW row slides in once (prepended at top); surviving rows untouched. */
     animation: dt-ticker-in 0.3s ease-out; }
@@ -3322,7 +3341,7 @@
 
   /* Top-bar build and log navigation. */
   .dt-nav-build,
-  .dt-nav-logs { display: inline-flex; align-items: center; gap: 5px; font-family: var(--v2-mono);
+  .dt-nav-logs { display: inline-flex; align-items: center; gap: 5px; font-family: var(--v2-sans);
     font-size: calc(11px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft); border: 1px solid var(--v2-rule); border-radius: 5px;
     padding: 4px 9px; text-decoration: none; transition: background 0.15s, color 0.15s, border-color 0.15s; }
   .dt-nav-build:hover,
@@ -3333,12 +3352,12 @@
   .dt-nav-logs:hover .dt-nav-logs-glyph { color: var(--v2-paper); }
 
   /* the ZICATO-LEVEL harmonograf entry — top-bar "execution ↗" deep-link
-   * into the meta-loop session. Matches the nav-build chip so the two top-bar
+   * into the meta-loop session. Matches the nav-build label so the two top-bar
    * entries read as a set; theme-tokened throughout. Empty (no child) when the
    * surface isn't available, so the chrome collapses cleanly. */
   .dt-nav-exec { display: inline-flex; align-items: center; }
   .dt-nav-exec:empty { display: none; }
-  .dt-exec-link { display: inline-flex; align-items: center; gap: 5px; font-family: var(--v2-mono);
+  .dt-exec-link { display: inline-flex; align-items: center; gap: 5px; font-family: var(--v2-sans);
     font-size: calc(11px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft); border: 1px solid var(--v2-rule); border-radius: 5px;
     padding: 4px 9px; text-decoration: none; transition: background 0.15s, color 0.15s, border-color 0.15s; }
   .dt-exec-link:hover { background: var(--v2-accent); color: var(--v2-paper); border-color: var(--v2-accent); }
@@ -3352,7 +3371,8 @@
     background: transparent; border: 1px solid transparent; border-radius: 5px; padding: 9px 11px;
     color: var(--v2-ink-soft); font-size: calc(12.5px * var(--dt-font-scale, 1)); transition: background 0.12s, color 0.12s, border-color 0.12s; }
   a.dn-set-railitem:hover { background: var(--v2-rule-soft); color: var(--v2-ink); }
-  a.dn-set-railitem-active { background: var(--v2-rule-soft); color: var(--v2-ink); border-color: var(--v2-rule); }
+  /* the open section: its name in the accent colour, no fill. */
+  a.dn-set-railitem-active { color: var(--v2-accent); font-weight: 600; }
   .dn-set-railglyph { color: var(--v2-accent); font-size: calc(12px * var(--dt-font-scale, 1)); flex: none; width: 14px; text-align: center; }
   .dn-set-raillabel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
   .dn-set-body { min-width: 0; }
@@ -3413,7 +3433,7 @@
     box-shadow: -8px 0 28px rgba(0, 0, 0, 0.32); overflow: hidden; }
   .dt-drawer-head { display: flex; align-items: center; justify-content: space-between;
     gap: 12px; padding: 13px 18px; border-bottom: 1px solid var(--v2-rule); flex: none; }
-  .dt-drawer-title { font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1));
+  .dt-drawer-title { font-family: var(--v2-sans); font-size: calc(11px * var(--dt-font-scale, 1));
     text-transform: uppercase; letter-spacing: 0.08em; color: var(--v2-ink-faint); }
   .dt-drawer-x { font-size: calc(18px * var(--dt-font-scale, 1)); line-height: 1; padding: 2px 8px;
     cursor: pointer; color: var(--v2-ink-soft); background: transparent;
@@ -3427,6 +3447,9 @@
   .dt-drawer-body .dn-set-rail { position: static; flex-direction: row; flex-wrap: wrap; }
   @media (max-width: 560px) {
     .dt-drawer-panel { width: 100vw; border-left: none; }
+    /* a phone-width Appearance row stacks its label over its control, so a
+       control keeps the full row width. */
+    .dn-set-approw { grid-template-columns: minmax(0, 1fr); gap: 6px; }
   }
 
   /* ===========================================================================
@@ -3500,7 +3523,7 @@
    * the reflection-viz-study bill-of-health / judge-audit / x-ray mockups.
    * ================================================================ */
   .dn-instr-apply {
-    display: inline-block; font-family: var(--v2-mono);
+    display: inline-block; font-family: var(--v2-sans);
     font-size: calc(11px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft);
     background: var(--v2-paper); border: 1px solid var(--v2-rule); border-radius: 4px;
     padding: 3px 7px; margin-top: 8px; user-select: all; white-space: nowrap;
@@ -3538,12 +3561,8 @@
    * dn-faint rationale and inline evidence. The severity/verdict tone rides a
    * thin left accent + the glyph, not a tag. */
   .dn-instr-list-panel { display: flex; flex-direction: column; }
-  .dn-instr-frow { padding: 10px 0 10px 12px; border-left: 3px solid var(--v2-rule); }
+  .dn-instr-frow { padding: 10px 0; }
   .dn-instr-frow + .dn-instr-frow { border-top: 1px solid var(--v2-rule-soft); }
-  .dn-instr-frow.dn-instr-fs-bad { border-left-color: var(--v2-bad); }
-  .dn-instr-frow.dn-instr-fs-warn { border-left-color: var(--v2-caution); }
-  .dn-instr-frow.dn-instr-fs-good { border-left-color: var(--v2-good); }
-  .dn-instr-frow.dn-instr-fs-faint { border-left-color: var(--v2-ink-faint); }
   .dn-instr-frow-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
   .dn-instr-mark { font-size: calc(9px * var(--dt-font-scale, 1)); line-height: 1; }
   .dn-instr-frow-verdict { font-size: calc(10px * var(--dt-font-scale, 1)); font-weight: 700;
@@ -3586,7 +3605,7 @@
   @media (max-width: 820px) { .dn-instr-xray { grid-template-columns: 1fr; } }
   .dn-instr-xleft, .dn-instr-xright { padding: 13px 15px; }
   .dn-instr-transcript { display: flex; flex-direction: column; gap: 9px; }
-  .dn-instr-turn { border: 1px solid var(--v2-rule); border-left: 3px solid var(--v2-rule);
+  .dn-instr-turn { border: 1px solid var(--v2-rule);
     border-radius: 8px; background: var(--v2-paper); padding: 9px 12px; }
   .dn-instr-turn-role { font-size: calc(9px * var(--dt-font-scale, 1)); letter-spacing: .12em;
     text-transform: uppercase; margin-bottom: 4px; }
@@ -3604,31 +3623,33 @@
     margin: 5px 0 0; line-height: 1.5; }
   .dn-instr-xwhy { font-size: calc(12.5px * var(--dt-font-scale, 1)); color: var(--v2-ink);
     margin: 4px 0 8px; line-height: 1.55; }
-  /* severity agreement — a second, quieter axis beside the verdict pill; the
+  /* severity agreement — a second, quieter axis beside the verdict label; the
      tone comes from the shared dn-instr-t-* set, so only metrics live here. */
   .dn-instr-xsevmatch { font-size: calc(11.5px * var(--dt-font-scale, 1));
     margin: 0 0 8px; line-height: 1.5; }
-  /* the ONE pill the lens keeps — the adjudication verdict (semantic state). */
-  .dn-chip.dn-chip-instr-verdict-tp { color: var(--v2-good); border-color: var(--v2-good); }
-  .dn-chip.dn-chip-instr-verdict-fp { color: var(--v2-bad); border-color: var(--v2-bad); }
-  .dn-chip.dn-chip-instr-verdict-fn { color: var(--v2-caution); border-color: var(--v2-caution); }
-  .dn-chip.dn-chip-instr-verdict-tn,
-  .dn-chip.dn-chip-instr-verdict-amb { color: var(--v2-ink-faint); border-color: var(--v2-rule); }
+  /* the ONE label the lens keeps — the adjudication verdict (semantic state). */
+  .dn-flag.dn-flag-instr-verdict-tp { color: var(--v2-good); }
+  .dn-flag.dn-flag-instr-verdict-fp { color: var(--v2-bad); }
+  .dn-flag.dn-flag-instr-verdict-fn { color: var(--v2-caution); }
+  .dn-flag.dn-flag-instr-verdict-tn,
+  .dn-flag.dn-flag-instr-verdict-amb { color: var(--v2-ink-faint); }
 
   /* ── the operator-log pane (views/logs.js, LOGGING.md §5) ───────────────
    * Quiet-precision register: mono rows, level-coloured via the --v2 tone
-   * tokens, level-filter chips + an invocation picker. No decorative chrome. */
+   * tokens, level-filter labels + an invocation picker. No decorative chrome. */
   .dt-logs-toolbar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin: 4px 0 12px; }
   .dt-logs-invwrap { display: inline-flex; align-items: center; gap: 6px; }
-  .dt-logs-invlab { font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1)); }
+  .dt-logs-invlab { font-family: var(--v2-sans); font-size: calc(11px * var(--dt-font-scale, 1)); }
   .dt-logs-inv { font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1));
     color: var(--v2-ink); background: var(--v2-panel); border: 1px solid var(--v2-rule); border-radius: 4px; padding: 3px 6px; }
-  .dt-logs-chips { display: inline-flex; gap: 6px; }
-  .dt-logs-chip { font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1));
-    color: var(--v2-ink-soft); background: transparent; border: 1px solid var(--v2-rule); border-radius: 999px;
-    padding: 2px 10px; cursor: pointer; transition: background 0.12s, color 0.12s, border-color 0.12s; }
-  .dt-logs-chip:hover { border-color: var(--v2-ink-soft); }
-  .dt-logs-chip-on { background: var(--v2-ink-soft); color: var(--v2-paper); border-color: var(--v2-ink-soft); }
+  .dt-logs-levels { display: inline-flex; gap: 6px; }
+  .dt-logs-levels { gap: 14px; }
+  .dt-logs-level { appearance: none; background: none; border: 0; padding: 0;
+    font-family: var(--v2-sans); font-size: calc(11px * var(--dt-font-scale, 1));
+    color: var(--v2-ink-soft); cursor: pointer; transition: color 0.12s; }
+  .dt-logs-level:hover { text-decoration: underline; }
+  /* the selected level: its name in the accent colour. */
+  .dt-logs-level.dt-logs-level-on { color: var(--v2-accent); font-weight: 700; }
   .dt-logs-body { display: flex; flex-direction: column; gap: 1px; font-family: var(--v2-mono);
     font-size: calc(12px * var(--dt-font-scale, 1)); line-height: 1.5; overflow-x: auto; }
   .dt-logs-row { display: flex; gap: 10px; align-items: baseline; padding: 1px 2px; white-space: pre-wrap; word-break: break-word; }
@@ -3637,16 +3658,16 @@
   .dt-logs-comp { flex: 0 0 auto; }
   .dt-logs-ctx { flex: 0 0 auto; }
   .dt-logs-msg { flex: 1 1 auto; color: var(--v2-ink); }
-  /* level → tone (also used by the level-filter chips) */
+  /* level → tone (also used by the level-filter labels) */
   .dt-logs-t-bad .dt-logs-lvl, .dt-logs-lvl.dt-logs-t-bad { color: var(--v2-bad); }
   .dt-logs-t-warn .dt-logs-lvl, .dt-logs-lvl.dt-logs-t-warn { color: var(--v2-caution); }
   .dt-logs-t-info .dt-logs-lvl, .dt-logs-lvl.dt-logs-t-info { color: var(--v2-ink); }
   .dt-logs-t-faint .dt-logs-lvl, .dt-logs-lvl.dt-logs-t-faint { color: var(--v2-ink-faint); }
   .dt-logs-t-bad .dt-logs-msg { color: var(--v2-bad); }
   .dt-logs-t-warn .dt-logs-msg { color: var(--v2-ink); }
-  .dt-logs-chip.dt-logs-t-bad { color: var(--v2-bad); }
-  .dt-logs-chip.dt-logs-t-warn { color: var(--v2-caution); }
-  .dt-logs-chip.dt-logs-t-faint { color: var(--v2-ink-faint); }
+  .dt-logs-level.dt-logs-t-bad { color: var(--v2-bad); }
+  .dt-logs-level.dt-logs-t-warn { color: var(--v2-caution); }
+  .dt-logs-level.dt-logs-t-faint { color: var(--v2-ink-faint); }
 }
 
 /* ===================  the trajectory strip + Traces view  ===================
@@ -3694,7 +3715,7 @@
   .dn-strip-mark-agent { fill: var(--v2-ink-soft); fill-opacity: 0.26; }
   .dn-strip-baseline { stroke: var(--v2-rule); stroke-width: 1; }
   /* signal cluster: icons toned by kind, the count label faint */
-  .dn-strip-sig-label { fill: var(--v2-ink-faint); font-family: var(--v2-mono); font-size: 9px; }
+  .dn-strip-sig-label { fill: var(--v2-ink-faint); font-family: var(--v2-sans); font-size: 9px; }
   /* episode overlay: the bracket strokes its tone; the focused one rides accent */
   .dn-strip-bracket { stroke: currentColor; stroke-width: 1.4; }
   .dn-strip-ep { color: var(--v2-ink-soft); }
@@ -3716,15 +3737,13 @@
   .dn-trace-strip { padding: 10px 12px; }
   /* the episode anchors */
   .dn-trace-eps { display: flex; flex-direction: column; gap: 8px; }
-  .dn-trace-ep { border: 1px solid var(--v2-rule); border-left: 2px solid var(--v2-rule); border-radius: 4px;
+  .dn-trace-ep { border: 1px solid var(--v2-rule); border-radius: 4px;
     padding: 7px 10px; background: var(--v2-panel); cursor: pointer; transition: border-color 0.12s, background 0.12s; }
   .dn-trace-ep:hover { border-color: var(--v2-ink-faint); }
-  .dn-trace-ep-bad { border-left-color: var(--v2-bad); }
-  .dn-trace-ep-caution { border-left-color: var(--v2-caution); }
-  .dn-trace-ep-neutral { border-left-color: var(--v2-flat); }
-  .dn-trace-ep-on { border-color: var(--v2-accent); border-left-color: var(--v2-accent); }
+  /* an episode's tone rides its leading signal mark; the selected episode
+     reads through its summary in the accent colour. */
+  .dn-trace-ep-on .dn-trace-ep-sum { color: var(--v2-accent); font-weight: 600; }
   .dn-trace-ep-head { display: flex; align-items: baseline; gap: 8px; }
-  .dn-trace-ep-glyph { font-family: var(--v2-mono); }
   .dn-strip-t-bad.dn-trace-ep-glyph { color: var(--v2-bad); }
   .dn-strip-t-caution.dn-trace-ep-glyph { color: var(--v2-caution); }
   .dn-strip-t-neutral.dn-trace-ep-glyph { color: var(--v2-ink-soft); }
@@ -3742,5 +3761,5 @@
      standing fact about the whole view — never an alarm, never coloured;
      the honesty is in the words, which the SERVER owns. */
   .dn-mut-prov { font-size: calc(11px * var(--dt-font-scale, 1)); margin: -4px 0 12px;
-    font-family: var(--v2-mono); }
+    font-family: var(--v2-sans); }
 }

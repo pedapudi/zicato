@@ -4,7 +4,7 @@
 // difference. Three panels read the selected epoch and tolerate missing data:
 //
 //   1. THE SPLIT — one STAT LINE (train / holdout / % held out in the shipped
-//      stat idiom) with the board-level facts as CHIPS beside it, over the
+//      stat idiom) with the board-level facts as LABELS beside it, over the
 //      epoch's board as a strip: train (outline) vs holdout (accent fill).
 //   2. WHERE / WHEN — the swatch KEY the strip cannot be read without, plus the
 //      Ladder budget remaining.
@@ -13,7 +13,7 @@
 //
 // The panel prints FACTS at value weight and keeps every EXPLANATION one hover
 // away — the "?" mark (ui.js `moreMark`, the figCaption idiom) for the
-// where/when sentences and the gap explainer, a chip's own hovercard for the
+// where/when sentences and the gap explainer, a label's own hovercard for the
 // board_meta wording. Six dim prose lines at one weight was a wall the eye
 // skipped; nothing was dropped, it moved behind the affordance.
 //
@@ -25,7 +25,7 @@
 import { el } from '../core/dom.js';
 import * as svg from '../svg.js';
 import { iconLabel } from '../icons.js';
-import { section, empty, truncate, hovercardBody, stat, chip, moreMark, fmtPercent, ENTRY_KIND_LABEL } from '../ui.js';
+import { section, empty, truncate, hovercardBody, stat, flagLabel, moreMark, fmtPercent, ENTRY_KIND_LABEL } from '../ui.js';
 import { attachHovercard } from '../hovercard.js';
 
 // The doc the popovers point at for "what does this mean" detail.
@@ -209,7 +209,7 @@ export function boardStatusDigest(model) {
 // ---- render ---------------------------------------------------------
 //
 // Returns ONE <section> node. `opts.onEntry(entryId)` (optional) makes each
-// chip activate to that board's cross-candidate view.
+// label activate to that board's cross-candidate view.
 export function renderBoardStatus(model, opts) {
   const o = opts || {};
   const m = model || boardStatusModel(null);
@@ -222,8 +222,8 @@ export function renderBoardStatus(model, opts) {
   return section('Board status · train / holdout split', card);
 }
 
-// 1 — THE SPLIT: one stat line + the board-level fact chips, over the board as
-//     a chip grid (train = outline, holdout = accent fill).
+// 1 — THE SPLIT: one stat line + the board-level fact labels, over the board as
+//     a label grid (train = outline, holdout = accent fill).
 function splitPanel(split, meta, opts) {
   const wrap = el('div', { class: 'dn-bs-split' });
   const frac = split.total > 0 ? split.holdoutCount / split.total : 0;
@@ -240,7 +240,7 @@ function splitPanel(split, meta, opts) {
       stat(fmtPercent(frac), 'held out'),
     ]);
   const facts = factChips(split, meta);
-  if (facts.length) head.appendChild(el('div', { class: 'dn-bs-chips' }, facts));
+  if (facts.length) head.appendChild(el('div', { class: 'dn-bs-entries' }, facts));
   if (head.childNodes.length) wrap.appendChild(head);
 
   if (split.total === 0) {
@@ -251,11 +251,12 @@ function splitPanel(split, meta, opts) {
   const grid = el('div', { class: 'dn-bs-grid' });
   for (const r of split.entries) {
     const held = r.slice === 'holdout';
+    // A held-out entry is marked by the drawn padlock and the accent colour; a
+    // training entry is the plain id.
     const chip = el('span', {
-      class: 'dn-bs-chip' + (held ? ' dn-bs-holdout' : ' dn-bs-train'),
+      class: 'dn-bs-entry' + (held ? ' dn-bs-holdout' : ' dn-bs-train'),
       tabindex: '0',
-      text: truncate(r.entryId, 16),
-    });
+    }, held ? iconLabel('holdout', truncate(r.entryId, 16)) : [truncate(r.entryId, 16)]);
     attachHovercard(chip, () => entryCard(r));
     if (typeof opts.onEntry === 'function') {
       chip.style.cursor = 'pointer';
@@ -270,12 +271,12 @@ function splitPanel(split, meta, opts) {
   return wrap;
 }
 
-// The board-level FACTS as chips beside the stat line: whether a holdout is
+// The board-level FACTS as labels beside the stat line: whether a holdout is
 // configured at all, and the `board_meta` header (BOARD-FORMAT §1.0) — the
 // judge-only flag + the drift kinds suppressed for every entry. Both fold into
 // the contract hash, so they describe how THIS board is scored; each was a
 // sentence at prose weight, and a sentence per flag is what made this panel a
-// wall. The chip carries the fact; the wording rides its hovercard.
+// wall. The label carries the fact; the wording rides its hovercard.
 function factChips(split, meta) {
   const chips = [];
   // only worth saying of a board that HAS entries — "no holdout" over an empty
@@ -297,11 +298,11 @@ function factChips(split, meta) {
   return chips;
 }
 
-// One fact chip in the shipped chip vocabulary. attachHovercard makes the chip
+// One fact label in the shipped label vocabulary. attachHovercard makes the label
 // focusable, so the sentence is reachable by keyboard — on this surface the
 // hovercard is the ONLY copy of that wording.
 function factChip(tone, word, sentence) {
-  const node = chip(tone, word, 'dn-bs-fact');
+  const node = flagLabel(tone, word, 'dn-bs-fact');
   attachHovercard(node, sentence);
   return node;
 }
@@ -335,18 +336,16 @@ function entryCard(r) {
 // 2 — WHERE / WHEN: the swatch key + the Ladder budget remaining, on one row.
 //
 // The KEY stays visible and the two where/when SENTENCES collapse behind the
-// "?": figCaption's own rule is that a swatch key the figure cannot be read
-// without belongs beside the figure, while its explanation does not. The chip
-// grid above is unreadable without knowing which fill means held out; it is
+// "?": figCaption's own rule is that a key the figure cannot be read without
+// belongs beside the figure, while its explanation does not. The entry grid
+// above is unreadable without knowing which mark means held out; it is
 // perfectly readable without being told when each slice is played.
 function legendPanel(split, ladder) {
   const wrap = el('div', { class: 'dn-bs-legend' });
 
-  const trainSwatch = el('span', { class: 'dn-bs-sw dn-bs-train' });
-  const holdSwatch = el('span', { class: 'dn-bs-sw dn-bs-holdout' });
   const key = el('div', { class: 'dn-bs-legrow' }, [
-    trainSwatch, el('span', { class: 'dn-bs-legtxt', text: 'train' }),
-    holdSwatch, el('span', { class: 'dn-bs-legtxt', text: 'holdout' }),
+    el('span', { class: 'dn-bs-legtxt dn-bs-train', text: 'train' }),
+    el('span', { class: 'dn-bs-legtxt dn-bs-holdout' }, iconLabel('holdout', 'holdout')),
   ]);
   key.appendChild(moreMark([
     'train → every round · proposer-visible',

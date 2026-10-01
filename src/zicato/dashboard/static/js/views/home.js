@@ -12,7 +12,7 @@ import { state } from '../core/state.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
 import { iconLabel } from '../icons.js';
-import { gatedSwap, section, empty, fmt, chip, truncate,
+import { gatedSwap, section, empty, fmt, flagLabel, truncate, valueFace,
   loopVerdict, promotionRateLabel, costPerPromotionLabel, fmtDurationMs, noiseBandFor, loopStatsDigest } from '../ui.js';
 import { attachHovercard } from '../hovercard.js';
 import { livenessFor } from '../livestatus.js';
@@ -208,7 +208,7 @@ function statTile(value, key, foot) {
   const footNode = (foot && typeof foot === 'object' && foot.nodeType !== undefined)
     ? foot : (foot ? el('span', { class: 'dn-tile-foot', text: foot }) : null);
   return el('div', { class: 'dn-tile' }, [
-    el('span', { class: 'dn-tile-value', text: value }),
+    el('span', { class: 'dn-tile-value' + valueFace(value), text: value }),
     el('span', { class: 'dn-tile-key', text: key }),
     footNode,
   ].filter(Boolean));
@@ -274,17 +274,17 @@ function goalLine(m) {
 function fleetCard(row, isCurrent, ctx, sparkVals, live, loop, cost, goalModel) {
   // "running" requires the GATED live flag (fresh heartbeat) — not just an
   // active_tournament.events.jsonl whose epoch_id matches. A stale file must not paint
-  // the current epoch's chip "running" after the orchestrator has exited.
+  // the current epoch's label "running" after the orchestrator has exited.
   const liveHere = isCurrent && !!live && state.activeTournament && state.activeTournament.epoch_id === row.epoch_id;
   const st = isCurrent ? (liveHere ? 'live' : 'open') : (row.closed ? 'closed' : 'open');
-  // The UNCERTAINTY-HONEST loop verdict chip: "plateaued" only when the recent
+  // The UNCERTAINTY-HONEST loop verdict label: "plateaued" only when the recent
   // movement is resolvable above the measured noise floor; below the floor the
   // honest word is "no detectable signal", never a confident plateau.
   const verdict = loopVerdict(loop);
   const head = el('div', { class: 'dn-fleet-head' }, [
     el('span', { class: 'dn-fleet-id', text: row.epoch_id }),
-    verdict ? chip(verdict.cls, verdict.word) : null,
-    chip(liveHere ? 'live' : st, liveHere ? 'running' : st),
+    verdict ? flagLabel(verdict.cls, verdict.word) : null,
+    flagLabel(liveHere ? 'live' : st, liveHere ? 'running' : st),
   ].filter(Boolean));
   const goal = goalLine(goalModel);
   // The measured A/A noise floor renders as a band around the champion floor
@@ -325,7 +325,7 @@ function fleetCard(row, isCurrent, ctx, sparkVals, live, loop, cost, goalModel) 
 // history — the champion simply never moved — and saying "yet" reads as a
 // loop that has not started rather than one that is not getting anywhere.
 // Counts come from the trajectory payload, which already carries them.
-// The round count is SETTLED challengers, matching the verdict chip beside it:
+// The round count is SETTLED challengers, matching the verdict label beside it:
 // a challenger that is still racing has retained nothing yet, and counting it
 // would report a round the loop has not finished. `settled_count` is additive,
 // so a payload from before it existed falls back to
@@ -347,7 +347,7 @@ export function heroPlaceholderText(loop) {
 function miniStat(k, v, tone, by) {
   return el('div', { class: 'dn-mini' }, [
     el('span', { class: 'dn-mini-k', text: k }),
-    el('span', { class: 'dn-mini-v' + (tone ? ' dn-good-t' : ''), text: v }),
+    el('span', { class: 'dn-mini-v' + (tone ? ' dn-good-t' : '') + valueFace(v), text: v }),
     by ? el('span', { class: 'dn-mini-by dn-faint dn-mono', title: by + ' set this floor', text: '· ' + by }) : null,
   ].filter(Boolean));
 }
@@ -379,7 +379,7 @@ function healthPanel(hr) {
     for (const f of findings) {
       const sev = String((f && f.severity) || 'info').toLowerCase();
       body.appendChild(el('div', { class: 'dn-finding' }, [
-        chip(sev === 'critical' ? 'closed' : 'open', sev),
+        flagLabel(sev === 'critical' ? 'closed' : 'open', sev),
         el('span', { class: 'dn-mono', style: 'margin-left:8px', text: f.code || 'finding' }),
         el('div', { class: 'dn-faint', style: 'margin-top:4px', text: f.summary || '' }),
       ]));

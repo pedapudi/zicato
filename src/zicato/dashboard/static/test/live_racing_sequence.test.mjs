@@ -572,14 +572,14 @@ test('dense champion-gate card: each competitor row carries ALL fields inline �
   assert(boards, 'col 4: a dedicated boards-done column exists (not the clipped trailing glyph)');
   assertEqual(textOf(boards), '8/16', 'col 4: the boards-done reads the FULL k/N (8/16) — never a truncated "8…"');
   // 5 — the PROJ tag column.
-  const tag = nodesByClass(projRow, 'dt-live-match-tag')[0];
+  const tag = nodesByClass(projRow, 'dt-live-match-kind')[0];
   assert(tag && /PROJ/i.test(textOf(tag)), 'col 5: the trailing tag reads PROJ for the in-flight projection');
 
   // the column ORDER on the DOM is id → bar → scalar → boards → tag (no far-right
   // floating: the five columns appear in that left-to-right sequence).
   const order = (projRow.childNodes || []).filter((n) => n.nodeType === 1)
     .map((n) => (n._attrs.class || '').split(/\s+/).find((k) => k.startsWith('dt-live-match-')));
-  assertEqual(order.join(' '), 'dt-live-match-name dt-live-match-bar dt-live-match-scalar dt-live-match-boards dt-live-match-tag',
+  assertEqual(order.join(' '), 'dt-live-match-name dt-live-match-bar dt-live-match-scalar dt-live-match-boards dt-live-match-kind',
     'the five columns appear in the fixed L→R order (id · bar · scalar · boards · tag)');
 });
 
@@ -610,7 +610,7 @@ test('dense champion-gate card: the CSS row is a 5-track grid with the bar as th
   // each new column has its own CSS rule.
   assert(/\.dt-live-match-scalar\s*\{/.test(css), 'the ~scalar column has a CSS rule');
   assert(/\.dt-live-match-boards\s*\{/.test(css), 'the k/N boards column has a CSS rule');
-  assert(/\.dt-live-match-tag\s*\{/.test(css), 'the PROJ/verdict tag column has a CSS rule');
+  assert(/\.dt-live-match-kind\s*\{/.test(css), 'the PROJ/verdict tag column has a CSS rule');
 });
 
 await run();

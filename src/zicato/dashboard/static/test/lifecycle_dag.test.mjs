@@ -1047,7 +1047,7 @@ test('hovercard: show on mouseenter/focus, hide on mouseleave/blur/Escape — an
   assert(/var\(--v2-panel\)/.test(block), 'the hovercard background uses the --v2-panel token');
   assert(/var\(--v2-ink\)/.test(block), 'the hovercard text uses the --v2-ink token');
   assert(/var\(--v2-rule\)/.test(block), 'the hovercard border uses the --v2-rule token');
-  assert(/var\(--v2-mono\)/.test(block), 'the hovercard uses the mono font token');
+  assert(/var\(--v2-sans\)/.test(block), 'the hovercard sets its prose in the sans font token');
   assert(!/#[0-9a-fA-F]{3,6}\b/.test(block), 'the hovercard block carries NO hardcoded hex colour');
   assert(/prefers-reduced-motion/.test(css), 'the hovercard honours prefers-reduced-motion');
 });

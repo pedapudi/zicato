@@ -39,6 +39,10 @@ const DRAWINGS = {
   timeout: [['circle', { cx: 8, cy: 9, r: 4.5 }], ['path', { d: 'M8 9V6.5M6.5 2.5h3' }]],
   unscored: [['circle', { cx: 8, cy: 8, r: 4.5, 'stroke-dasharray': '1.6 1.9' }]],
   unpredicted: [['path', { d: 'M8 3.5v9M3.5 8h9' }]],
+  // a caution: a finding or caption that needs the operator's attention
+  caution: [['path', { d: 'M8 2.5 14 13H2z' }], ['path', { d: 'M8 6.5v3' }], ['circle', { cx: 8, cy: 11.2, r: 0.5, ...FILLED }]],
+  // a held-out board entry: scored for the holdout check, never into the gate
+  holdout: [['rect', { x: 3.5, y: 7, width: 9, height: 6.5, rx: 1 }], ['path', { d: 'M5.5 7V5a2.5 2.5 0 0 1 5 0v2' }]],
   // champions: the current champion's crown is solid, a former champion's open
   crown: [['path', { d: 'M2.5 12.5v-7l3 2.5L8 3.5l2.5 4.5 3-2.5v7z', ...FILLED }]],
   'crown-former': [['path', { d: 'M2.5 12.5v-7l3 2.5L8 3.5l2.5 4.5 3-2.5v7z' }]],
