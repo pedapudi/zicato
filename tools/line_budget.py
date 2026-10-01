@@ -768,19 +768,33 @@ def parse_entry(name: str, text: str) -> tuple[Entry | None, list[str]]:
 
 
 def read_entries(ref: str | None = None, cwd: Path = ROOT) -> tuple[list[Entry], list[str]]:
-    """Every ledger entry in the worktree or at a ref, in file-name order."""
+    """Every ledger entry in the worktree or at a ref, in file-name order.
+
+    The ledger directory holds only entry files; a directory inside it is an
+    error rather than a file that fails to parse.
+    """
+    files: dict[str, str] = {}
+    directories: list[str] = []
     if ref:
-        listing = _git("ls-tree", "--name-only", ref, f"{ENTRIES_PATH}/", cwd=cwd).decode()
-        files = {
-            PurePosixPath(path).name: _content(path, ref, cwd).decode()
-            for path in listing.splitlines()
-        }
+        listing = _git("ls-tree", "-z", ref, f"{ENTRIES_PATH}/", cwd=cwd).decode()
+        for item in filter(None, listing.split("\0")):
+            meta, path = item.split("\t", 1)
+            name = PurePosixPath(path).name
+            if meta.split()[1] == "tree":
+                directories.append(name)
+            else:
+                files[name] = _content(path, ref, cwd).decode()
     else:
         directory = cwd / ENTRIES_PATH
-        paths = sorted(directory.iterdir()) if directory.is_dir() else []
-        files = {path.name: path.read_text() for path in paths}
+        for child in sorted(directory.iterdir()) if directory.is_dir() else []:
+            if child.is_dir():
+                directories.append(child.name)
+            else:
+                files[child.name] = child.read_text()
     entries: list[Entry] = []
-    errors: list[str] = []
+    errors = [
+        f"{ENTRIES_PATH}/{name}: the ledger holds only entry files" for name in sorted(directories)
+    ]
     for name in sorted(files):
         entry, problems = parse_entry(name, files[name])
         errors += problems
@@ -798,37 +812,58 @@ def enforced_limits(config: dict[str, Any], entries: Iterable[Entry]) -> dict[st
     return limits
 
 
-def check_entries(
-    entries: list[Entry], earlier: list[Entry], moved: dict[str, int], fork: str
+def check_fork(
+    cwd: Path, fork: str, entries: list[Entry], config: dict[str, Any], text: str
 ) -> list[str]:
-    """Check a change's entries against the entries and measurement at its fork point.
+    """Hold the entries, starting limits, and closed table to their values at the fork point.
 
-    1. Every entry present at the fork point is still present with the same
-       name, title, and deltas; its reason may be reworded.
-    2. The entries the change adds record, per measurement, the amount the
-       tree moved since the fork point. A limit therefore moves with the tree:
-       an increase raises it by the recorded delta and a reduction lowers it
-       by the same amount.
+    Every entry present at the fork point is still present with the same name,
+    title, and deltas; its reason may be reworded. The starting limits and the
+    closed table's rows equal the fork point's, so editing them together with
+    ``HISTORY_DIGEST`` cannot move a limit. A fork point that predates the
+    per-change ledger holds neither, and those two comparisons are skipped.
     """
     names = {entry.name: entry for entry in entries}
     errors = [
         f"{entry}: present at {fork[:12]} and missing or altered here"
-        for entry in earlier
+        for entry in read_entries(fork, cwd)[0]
         if names.get(entry.name) != entry
     ]
-    known = {entry.name for entry in earlier}
-    added = [entry for entry in entries if entry.name not in known]
-    recorded = {
-        key: sum(entry.deltas[index] for entry in added) for index, key in enumerate(MEASUREMENTS)
-    }
-    mismatched = [key for key in MEASUREMENTS if recorded[key] != moved[key]]
-    for key in mismatched:
+    earlier = json.loads(_content(CONFIG.name, fork, cwd)).get("starting_limits")
+    if earlier is not None and any(
+        int(earlier[key]) != int(config["starting_limits"][key]) for key in MEASUREMENTS
+    ):
         errors.append(
-            f"{key}: the entries this change adds record {recorded[key]:+,}, "
-            f"but the tree moved it by {moved[key]:+,} since {fork[:12]}"
+            f"starting limits: .line-budget.json differs from {fork[:12]}; "
+            "a limit moves only by a ledger entry"
         )
-    if mismatched:
-        table = "\n".join(f"    | {label} | {moved[key]:+,} |" for label, key in SUMMARY_LABELS)
+    earlier_text = _content(LEDGER_PATH, fork, cwd).decode()
+    if HISTORY_HEADING in earlier_text and parse_history(earlier_text)[0] != parse_history(text)[0]:
+        errors.append(f"the closed table under '{HISTORY_HEADING}' differs from {fork[:12]}")
+    return errors
+
+
+def check_reconciled(
+    limits: dict[str, int], measured: dict[str, int], added: list[Entry]
+) -> list[str]:
+    """Require each enforced limit to equal what the tree measures.
+
+    Every commit on the base meets this rule, so a change meets it exactly when
+    the entries it adds record its own movement. A change to the counting rules
+    moves the measurement by the lines it exposes or hides, and records that.
+    The failure prints the table the added entries must state together.
+    """
+    errors = [
+        f"{key}: the limit is {limits[key]:,}, but the tree measures {measured[key]:,}"
+        for key in MEASUREMENTS
+        if limits[key] != measured[key]
+    ]
+    if errors:
+        needed = {
+            key: sum(entry.deltas[index] for entry in added) + measured[key] - limits[key]
+            for index, key in enumerate(MEASUREMENTS)
+        }
+        table = "\n".join(f"    | {label} | {needed[key]:+,} |" for label, key in SUMMARY_LABELS)
         errors.append(
             f"record the change in a file under {ENTRIES_PATH}/ whose table states:\n{table}"
         )
@@ -838,23 +873,25 @@ def check_entries(
 def check_ledger(cwd: Path = ROOT, base: str | None = None) -> list[str]:
     """Check the entries, the closed table, and the summary table in a worktree.
 
-    With ``base``, the fork point of the worktree's ``HEAD`` and ``base`` is
-    measured, and :func:`check_entries` compares the worktree with it. The
-    fork point makes the check independent of changes that landed on the base
-    after this one forked, so two changes that record their own deltas never
-    need each other's numbers.
+    Each enforced limit must equal the worktree's measurement. With ``base``,
+    :func:`check_fork` also compares the worktree with the fork point of its
+    ``HEAD`` and ``base``, and the entries absent there are the ones the
+    failure message attributes to this change. Neither rule reads a total
+    from the base, so two changes that record their own deltas never need
+    each other's numbers.
     """
     text = (cwd / LEDGER_PATH).read_text()
     config = json.loads((cwd / CONFIG.name).read_text())
     entries, errors = read_entries(None, cwd)
     errors += check_history(text, config) + check_summary(text, config)
+    added = entries
     if base is not None:
         fork = _git("merge-base", base, "HEAD", cwd=cwd).decode().strip()
-        earlier = read_entries(fork, cwd)[0]
-        before, after = _measured(measure(fork, cwd)), _measured(measure(None, cwd))
-        moved = {key: after[key] - before[key] for key in MEASUREMENTS}
-        errors += check_entries(entries, earlier, moved, fork)
-    return errors
+        errors += check_fork(cwd, fork, entries, config, text)
+        known = {entry.name for entry in read_entries(fork, cwd)[0]}
+        added = [entry for entry in entries if entry.name not in known]
+    measured = _measured(measure(None, cwd))
+    return errors + check_reconciled(enforced_limits(config, entries), measured, added)
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -116,20 +116,38 @@ where the default branch stands, and independent pull requests add different
 files.
 
 `python tools/line_budget.py --check-ledger --base origin/main` enforces the
-ledger. It finds the fork point of `HEAD` and the base and applies two rules
-against it:
+ledger with three rules:
 
-- **Append-only.** Every entry present at the fork point is still present
-  with the same file name, title, and deltas; a reason may be reworded.
-- **Reconciled with the tree.** The entries the change adds record, for each
-  measurement, the amount the tree moved since the fork point. A missing or
-  wrong entry fails, and the failure prints the table the entry must state.
+- **Reconciled with the tree.** Each enforced limit equals what the tree
+  measures. Every commit on the default branch meets this rule, so a change
+  meets it when the entries it adds record its own movement. A change to the
+  counting rules (an exclusion added or removed, a counter extended to a
+  language) records the movement it causes, because the tree is measured with
+  the rules that change carries. A missing or wrong entry fails, and the
+  failure prints the table the entry must state.
+- **Append-only.** Every entry present at the fork point of `HEAD` and the
+  base is still present with the same file name, title, and deltas; a reason
+  may be reworded.
+- **Fixed starting point.** The starting limits in `.line-budget.json` and the
+  rows of the closed table below equal their values at the fork point, so a
+  limit moves only by an entry.
 
-Measuring from the fork point keeps the check independent of changes that
-landed after the branch forked. In CI the checkout is the pull request merged
-into its base, so the fork point is the base's tip and the measured movement is
-the pull request's own. `python tools/line_budget.py --check` then enforces
-each measurement against its starting limit plus the deltas of every entry.
+None of the rules reads a total from the base. In CI the checkout of a pull
+request is the pull request merged into its base, so the reconciliation rule
+measures the merged tree, and the entries absent at the base's tip are the
+pull request's own. A push to the default branch is compared with the tip it
+replaced. `python tools/line_budget.py --check` enforces each measurement
+against its limit.
+
+Line counts are additive across a clean merge, but the logic count is not
+always: a merge that joins two edits to one Python function or docstring can
+classify a line differently from either side. When that leaves the default
+branch measuring a few lines away from its limit, the reconciliation rule
+fails there and on every pull request merged into it. The next pull request
+adds a separate entry for that difference, stating that a merge produced it;
+the failure prints the total its entries must state. Other open pull requests
+fail the same rule until that entry lands and then pass on a re-run without
+edits.
 
 `--check-ledger` also holds the summary table above to `.line-budget.json` and
 checks the closed table below.
@@ -140,9 +158,10 @@ Before the per-change ledger, each change appended rows to this table, one row
 per measurement, stating the value before the change, the signed delta, and
 the value after it. Those values were anchored to the default branch's
 measurement when written. The table is closed. `--check-ledger` pins its
-labels, measurements, and numbers by digest (reasons may be reworded), and
-requires each starting limit in `.line-budget.json` to equal the value the
-table's last row for that measurement reaches. The rows are not re-derived:
+labels, measurements, and numbers by digest and by comparison with the fork
+point (reasons may be reworded), and requires each starting limit in
+`.line-budget.json` to equal the value the table's last row for that
+measurement reaches. The rows are not re-derived:
 some start below their predecessor because a reduction then lowered the limit
 without a row.
 

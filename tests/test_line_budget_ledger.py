@@ -2,9 +2,11 @@
 
 Each test copies the tool, the policy document, and the budget file into a new
 repository, commits a small source tree, and runs ``tools/line_budget.py`` the
-way CI does. The source files are sized so each measurement moves by a
-different amount: a Python file with a docstring adds three total and
-production lines and one executable line, and a test file adds one total line.
+way CI does. The repository's first commit carries one entry that brings each
+limit down to what the small tree measures, as the ledger requires of every
+commit. The source files are sized so each measurement moves by a different
+amount: a Python file with a docstring adds three total and production lines
+and one executable line, and a test file adds one total line.
 """
 
 from __future__ import annotations
@@ -15,7 +17,15 @@ import subprocess
 import sys
 from pathlib import Path
 
-from tools.line_budget import CONFIG, LEDGER, LEDGER_PATH, ROOT
+from tools.line_budget import (
+    CONFIG,
+    HISTORY_DIGEST,
+    LEDGER,
+    LEDGER_PATH,
+    ROOT,
+    history_digest,
+    parse_history,
+)
 
 # Written out rather than imported, so the path an entry lives at is pinned here.
 ENTRIES_PATH = "docs/design/line-budget-ledger"
@@ -25,6 +35,12 @@ GIT = ("git", "-c", "user.name=t", "-c", "user.email=t@t")
 SOURCE = '"""A module."""\n\nvalue = 1\n'
 # A change adding SOURCE under src/ and one test line moves the measurements by these.
 MOVED = (4, 3, 1)
+MEASUREMENTS = ("total", "production", "production_logic")
+# A path the tool excludes from every measurement. The fixture holds it with six
+# lines, and a second file with three lines that the tool counts.
+EXCLUDED = "tests/data/elim_states_served.json"
+EXCLUSION = f'    "{EXCLUDED}",\n'
+COUNTED = "tests/data/counted.json"
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -55,8 +71,29 @@ def _repository(tmp_path: Path) -> Path:
     shutil.copyfile(CONFIG, repo / CONFIG.name)
     (repo / LEDGER_PATH).parent.mkdir(parents=True)
     shutil.copyfile(LEDGER, repo / LEDGER_PATH)
-    _commit(repo, {"src/zicato/core/a.py": "one = 1\n"}, "base")
+    _write(
+        repo,
+        {
+            "src/zicato/core/a.py": "one = 1\n",
+            EXCLUDED: "[\n" + "1,\n" * 4 + "]\n",
+            COUNTED: "[\n1\n]\n",
+        },
+    )
+    _git(repo, "add", "-A")
+    measured = _measured(repo)
+    start = json.loads(CONFIG.read_text())["starting_limits"]
+    deltas = tuple(measured[key] - int(start[key]) for key in MEASUREMENTS)
+    _commit(repo, {f"{ENTRIES_PATH}/2026-01-01-fixture.md": _entry("Fixture", deltas)}, "base")
     return repo
+
+
+def _measured(repo: Path) -> dict[str, int]:
+    """The three measurements the tool prints for the repository's worktree."""
+    lines = _run(repo).stdout.splitlines()[:3]
+    return {
+        key: int(line.split("lines")[0].split()[-1].replace(",", ""))
+        for key, line in zip(MEASUREMENTS, lines, strict=True)
+    }
 
 
 def _entry(title: str, deltas: tuple[int, int, int], reason: str = "Why it moved.") -> str:
@@ -79,12 +116,14 @@ def _run(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def _starting_total() -> int:
-    return int(json.loads(CONFIG.read_text())["starting_limits"]["total"])
+def _limit(result: subprocess.CompletedProcess[str]) -> int:
+    """The total limit the tool printed beside the total measurement."""
+    return int(result.stdout.splitlines()[0].split("limit")[1].replace(",", ""))
 
 
 def test_a_change_recording_its_own_movement_passes(tmp_path: Path) -> None:
     repo = _repository(tmp_path)
+    before = _limit(_run(repo, "--check"))
     _git(repo, "switch", "-q", "-c", "change")
     _commit(
         repo,
@@ -97,25 +136,25 @@ def test_a_change_recording_its_own_movement_passes(tmp_path: Path) -> None:
 
     assert (ledger.returncode, ledger.stderr) == (0, "")
     assert budget.returncode == 0
-    assert f"limit {_starting_total() + MOVED[0]:>9,}" in budget.stdout.splitlines()[0]
+    assert _limit(budget) == before + MOVED[0]
 
 
 def test_a_change_without_an_entry_fails_and_states_the_entry_it_needs(tmp_path: Path) -> None:
     repo = _repository(tmp_path)
-    fork = _git(repo, "rev-parse", "HEAD")
     _git(repo, "switch", "-q", "-c", "change")
     _commit(repo, _change("b"), "change")
+    measured = _measured(repo)
 
     result = _run(repo, "--check-ledger", "--base", "main")
 
     assert result.returncode == 1
     assert result.stderr.splitlines()[1:] == [
-        f"  total: the entries this change adds record +0, but the tree moved it by +4 "
-        f"since {fork[:12]}",
-        f"  production: the entries this change adds record +0, but the tree moved it by +3 "
-        f"since {fork[:12]}",
-        f"  production_logic: the entries this change adds record +0, but the tree moved it "
-        f"by +1 since {fork[:12]}",
+        f"  total: the limit is {measured['total'] - 4:,}, but the tree measures "
+        f"{measured['total']:,}",
+        f"  production: the limit is {measured['production'] - 3:,}, but the tree measures "
+        f"{measured['production']:,}",
+        f"  production_logic: the limit is {measured['production_logic'] - 1:,}, but the tree "
+        f"measures {measured['production_logic']:,}",
         f"  record the change in a file under {ENTRIES_PATH}/ whose table states:",
         "    | Total | +4 |",
         "    | Production | +3 |",
@@ -125,27 +164,30 @@ def test_a_change_without_an_entry_fails_and_states_the_entry_it_needs(tmp_path:
 
 def test_an_entry_misstating_one_measurement_fails_on_that_measurement(tmp_path: Path) -> None:
     repo = _repository(tmp_path)
-    fork = _git(repo, "rev-parse", "HEAD")
     _git(repo, "switch", "-q", "-c", "change")
     _commit(
         repo,
         {**_change("b"), f"{ENTRIES_PATH}/2026-09-27-b.md": _entry("Add b", (3, 3, 1))},
         "change",
     )
+    total = _measured(repo)["total"]
 
     result = _run(repo, "--check-ledger", "--base", "main")
 
     assert result.returncode == 1
-    assert result.stderr.splitlines()[1] == (
-        f"  total: the entries this change adds record +3, but the tree moved it by +4 "
-        f"since {fork[:12]}"
-    )
-    assert len(result.stderr.splitlines()) == 6
+    assert result.stderr.splitlines()[1:] == [
+        f"  total: the limit is {total - 1:,}, but the tree measures {total:,}",
+        f"  record the change in a file under {ENTRIES_PATH}/ whose table states:",
+        "    | Total | +4 |",
+        "    | Production | +3 |",
+        "    | Production logic | +1 |",
+    ]
 
 
 def test_independent_changes_merge_in_either_order_without_edits(tmp_path: Path) -> None:
     """Each branch records only its own movement, so neither needs the other's numbers."""
     repo = _repository(tmp_path)
+    before = _limit(_run(repo, "--check"))
     for name in ("left", "right"):
         _git(repo, "switch", "-q", "-c", name, "main")
         _commit(
@@ -163,7 +205,7 @@ def test_independent_changes_merge_in_either_order_without_edits(tmp_path: Path)
     budget = _run(repo, "--check")
     assert (ledger.returncode, ledger.stderr) == (0, "")
     assert budget.returncode == 0
-    assert f"limit {_starting_total() + 2 * MOVED[0]:>9,}" in budget.stdout.splitlines()[0]
+    assert _limit(budget) == before + 2 * MOVED[0]
 
 
 def test_an_entry_already_on_the_base_may_not_be_dropped_or_altered(tmp_path: Path) -> None:
@@ -186,14 +228,11 @@ def test_an_entry_already_on_the_base_may_not_be_dropped_or_altered(tmp_path: Pa
     assert (reworded.returncode, reworded.stderr) == (0, "")
 
 
-def test_an_entry_lets_the_tree_exceed_the_starting_limit(tmp_path: Path) -> None:
+def test_an_entry_lets_the_tree_exceed_its_previous_limit(tmp_path: Path) -> None:
     """The limit moves by what the entries record; without the entry the tree would exceed it."""
     repo = _repository(tmp_path)
-    measured = int(_run(repo).stdout.split()[1].replace(",", ""))
-    config = (repo / CONFIG.name).read_text()
-    lowered = config.replace(f'"total": {_starting_total()}', f'"total": {measured}')
-    assert lowered != config
-    _write(repo, {CONFIG.name: lowered, **_change("b")})
+    limit = _limit(_run(repo, "--check"))
+    _write(repo, _change("b"))
     _git(repo, "add", "-A")
 
     over = _run(repo, "--check")
@@ -201,5 +240,105 @@ def test_an_entry_lets_the_tree_exceed_the_starting_limit(tmp_path: Path) -> Non
     within = _run(repo, "--check")
 
     assert over.returncode == 1
-    assert f"  total: {measured + 4:,} exceeds {measured:,} by 4" in over.stderr.splitlines()
+    assert f"  total: {limit + 4:,} exceeds {limit:,} by 4" in over.stderr.splitlines()
     assert (within.returncode, within.stderr) == (0, "")
+
+
+def _retarget_exclusion(repo: Path, path: str) -> None:
+    """Point the tool's exclusion of EXCLUDED at another path, keeping its line count."""
+    tool = repo / "tools/line_budget.py"
+    source = tool.read_text()
+    assert source.count(EXCLUSION) == 1
+    tool.write_text(source.replace(EXCLUSION, f'    "{path}",\n'))
+
+
+def test_removing_an_exclusion_needs_an_entry_for_the_lines_it_exposes(tmp_path: Path) -> None:
+    repo = _repository(tmp_path)
+    limit = _limit(_run(repo, "--check"))
+    _git(repo, "switch", "-q", "-c", "change")
+    _retarget_exclusion(repo, "tests/data/absent.json")
+    _commit(repo, {}, "count the served states")
+
+    without = (_run(repo, "--check"), _run(repo, "--check-ledger", "--base", "main"))
+    _commit(repo, {f"{ENTRIES_PATH}/2026-09-27-count.md": _entry("Count", (6, 0, 0))}, "entry")
+    with_entry = (_run(repo, "--check"), _run(repo, "--check-ledger", "--base", "main"))
+
+    assert [result.returncode for result in without] == [1, 1]
+    assert f"  total: {limit + 6:,} exceeds {limit:,} by 6" in without[0].stderr.splitlines()
+    assert "    | Total | +6 |" in without[1].stderr.splitlines()
+    assert [(result.returncode, result.stderr) for result in with_entry] == [(0, ""), (0, "")]
+
+
+def test_adding_an_exclusion_needs_an_entry_for_the_lines_it_hides(tmp_path: Path) -> None:
+    """Without the rule, excluding a counted file would leave its lines as unrecorded room."""
+    repo = _repository(tmp_path)
+    _git(repo, "switch", "-q", "-c", "change")
+    _write(repo, {EXCLUDED: ""})
+    _retarget_exclusion(repo, COUNTED)
+    _commit(repo, {}, "exclude the counted file")
+
+    budget = _run(repo, "--check")
+    without = _run(repo, "--check-ledger", "--base", "main")
+    _commit(repo, {f"{ENTRIES_PATH}/2026-09-27-exclude.md": _entry("Exclude", (-3, 0, 0))}, "entry")
+    with_entry = _run(repo, "--check-ledger", "--base", "main")
+
+    assert budget.returncode == 0
+    assert without.returncode == 1
+    assert "    | Total | -3 |" in without.stderr.splitlines()
+    assert (with_entry.returncode, with_entry.stderr) == (0, "")
+
+
+def test_starting_limits_and_closed_rows_hold_their_values_at_the_fork(tmp_path: Path) -> None:
+    """Raising a starting limit with the closed table and its digest is still refused."""
+    repo = _repository(tmp_path)
+    fork = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "switch", "-q", "-c", "change")
+    start = json.loads(CONFIG.read_text())["starting_limits"]["total"]
+    last = [row for row in parse_history(LEDGER.read_text())[0] if row.measurement == "total"][-1]
+    baseline = json.loads(CONFIG.read_text())["baseline"]["total"]
+    edits = {
+        LEDGER_PATH: (
+            (
+                f"| {last.previous:,} | {last.delta:+,} | {last.new:,} |",
+                f"| {last.previous:,} | {last.delta + 4:+,} | {last.new + 4:,} |",
+            ),
+            (
+                f"| Total | {baseline:,} | {start:,} | {start - baseline:+,} |",
+                f"| Total | {baseline:,} | {start + 4:,} | {start + 4 - baseline:+,} |",
+            ),
+        ),
+        CONFIG.name: ((f'"total": {start}', f'"total": {start + 4}'),),
+    }
+    for name, pairs in edits.items():
+        text = (repo / name).read_text()
+        for old, new in pairs:
+            assert text.count(old) == 1
+            text = text.replace(old, new)
+        (repo / name).write_text(text)
+    digest = history_digest(parse_history((repo / LEDGER_PATH).read_text())[0])
+    tool = (repo / "tools/line_budget.py").read_text()
+    assert tool.count(HISTORY_DIGEST) == 1
+    (repo / "tools/line_budget.py").write_text(tool.replace(HISTORY_DIGEST, digest))
+    _commit(repo, {"tests/four.txt": "1\n2\n3\n4\n"}, "four lines with no entry")
+
+    result = _run(repo, "--check-ledger", "--base", "main")
+
+    assert result.returncode == 1
+    assert result.stderr.splitlines()[1:] == [
+        f"  starting limits: .line-budget.json differs from {fork[:12]}; a limit moves only "
+        f"by a ledger entry",
+        f"  the closed table under '## Changes recorded with running totals' differs from "
+        f"{fork[:12]}",
+    ]
+
+
+def test_a_directory_inside_the_ledger_is_refused_by_name(tmp_path: Path) -> None:
+    repo = _repository(tmp_path)
+    _commit(repo, {f"{ENTRIES_PATH}/nested/2026-09-27-b.md": _entry("Add b", (0, 0, 0))}, "nest")
+
+    worktree = _run(repo, "--check-ledger")
+    at_ref = _run(repo, "--check", "--ref", "HEAD")
+
+    message = f"  {ENTRIES_PATH}/nested: the ledger holds only entry files"
+    assert (worktree.returncode, worktree.stderr.splitlines()[1:]) == (1, [message])
+    assert (at_ref.returncode, at_ref.stderr.splitlines()[1:]) == (1, [message])

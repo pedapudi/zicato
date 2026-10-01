@@ -1517,17 +1517,21 @@ Each enforced limit is the starting limit in `.line-budget.json` plus the
 deltas recorded by every entry under `docs/design/line-budget-ledger/`, and
 `enforced_limits()` computes it; the plain report prints each measurement
 beside it. A change that moves a measurement adds one entry file stating the
-change's own delta per measurement and its reason. `--check-ledger --base
-origin/main` measures the fork point of `HEAD` and the base, requires the
-entries the change adds to sum to the measured movement, and requires every
-entry present at the fork point to keep its name, title, and deltas. When the
-entry is missing or wrong, the failure prints the table the entry must state,
-so the usual loop is: run the check, write the entry it prints, run it again.
-The same command pins the closed table of running totals by `HISTORY_DIGEST`
-and holds the summary table and the starting limits to `.line-budget.json`.
+change's own delta per measurement and its reason. `check_reconciled()`
+requires each limit to equal the tree's measurement, taken with the change's
+own counting rules, so a change to `EXCLUDED_FROM_BUDGET` or to a logic counter
+records the lines it exposes or hides. With `--base`, `check_fork()` finds the
+fork point of `HEAD` and the base and requires every entry, the starting
+limits, and the closed table's rows to keep their values there; entries absent
+at the fork point are the ones the failure message attributes to the change.
+When an entry is missing or wrong, the failure prints the table the entry must
+state, so the usual loop is: run the check, write the entry it prints, run it
+again. The same command pins the closed table of running totals by
+`HISTORY_DIGEST`, holds the summary table and the starting limits to
+`.line-budget.json`, and refuses a directory inside the ledger.
 `tests/test_line_budget_ledger.py` runs these rules end to end in a throwaway
-repository, including two branches that each record their own entry and merge
-in sequence without edits.
+repository, including counting-rule changes in both directions and two
+branches that each record their own entry and merge in sequence without edits.
 
 The limits carry no allowance. Keep the three
 independent one-line-overage assertions in `tests/test_line_budget.py`: each
