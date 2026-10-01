@@ -30,6 +30,7 @@ from click.testing import CliRunner
 from tests._contract_pins import deterministic_weights
 from tests._foe_support import stand_in_proposer_block
 from tests._source_tree_builders import mutable_tree
+from tests.test_settlement_receipt_records import REJECTED_RECEIPT
 from zicato.cli.commands.propose import propose_cmd
 from zicato.core import LossProfile, MetricCount
 from zicato.core.experiment import PriorExperiment
@@ -37,6 +38,7 @@ from zicato.core.measurement import TOURNAMENT_DRAW
 from zicato.core.types import OverfittingConfig
 from zicato.core.workspace import run_id_for_unit
 from zicato.epoch.lifecycle import new_epoch
+from zicato.epoch.settlement_receipt import decode_settlement_receipt, write_settlement_receipt
 from zicato.telemetry.reducer import write_loss_profile
 from zicato.tournament.unit_cache import _unit_loss_path
 
@@ -386,3 +388,22 @@ def test_an_unrestricted_epoch_renders_patterns_verbatim(tmp_path: Path) -> None
     task = _proposal_task(workspace, epoch_id)
     assert "kind=drift_metric_frequency" in task
     assert "affected_entry_ids=entry_train" in task
+
+
+def test_the_parent_is_the_champion_after_a_rejected_round(tmp_path: Path) -> None:
+    """A rejected challenger is newer than the champion but is not the parent."""
+    workspace, epoch_id = _workspace(tmp_path)
+    rejected = workspace / "epochs" / epoch_id / "generations" / "v1" / "snapshot"
+    mutable_tree(rejected, instr="Route the message loudly.")
+    receipt = json.loads(json.dumps(REJECTED_RECEIPT))
+    receipt.update(epoch_id=epoch_id, state="committed")
+    write_settlement_receipt(workspace, decode_settlement_receipt(receipt))
+
+    result = _run(workspace)
+
+    assert result.exit_code == 0, result.output
+    body = json.loads(
+        (workspace / "epochs" / epoch_id / "proposals" / "v2.json").read_text(encoding="utf-8")
+    )
+    assert body["parent_generation_id"] == "v0"
+    assert body["generation_id"] == "v2"

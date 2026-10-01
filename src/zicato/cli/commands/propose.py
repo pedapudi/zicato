@@ -8,7 +8,9 @@ It is the same episode. The command assembles the round's proposal
 context and hands it to the agent the round resolves, which builds its
 request through :func:`zicato.proposer.foe_request.build_request` — so
 what an operator debugs here is what the loop runs, rather than a second
-stitching of the same inputs that drifts from it.
+stitching of the same inputs that drifts from it. The parent is the
+epoch's current champion, resolved as the round resolves it, so a rejected
+challenger is never proposed from.
 
 What it includes of the round's inputs, and what it does not:
 
@@ -120,6 +122,24 @@ def _list_generations(workspace_dir: Path, epoch_id: str) -> list[str]:
     """
 
     return generation_ids(WorkspaceLayout.from_root(workspace_dir), epoch_id)
+
+
+def _current_champion(workspace_dir: Path, epoch_id: str) -> str:
+    """The generation a round would propose from: the epoch's current champion.
+
+    Resolved by the round's own resolver,
+    :func:`zicato.evolve.generation_phase.current_generation`: the primary
+    promotion of the most recent committed settlement record, or ``v0``
+    before any promotion. A rejected challenger is newer than the champion
+    but is never a parent.
+    """
+    from zicato.epoch._storage import RecordError  # noqa: PLC0415
+    from zicato.evolve.generation_phase import current_generation  # noqa: PLC0415
+
+    try:
+        return current_generation(workspace_dir, epoch_id)
+    except (FileNotFoundError, ValueError, RecordError) as exc:
+        raise click.ClickException(str(exc)) from exc
 
 
 def _load_mutations(workspace_dir: Path, generation_root: Path) -> list[MutationPoint]:
@@ -436,7 +456,7 @@ async def _propose(
             raise click.ClickException(
                 f"Epoch {epoch_id!r} has no generations yet; cannot propose a child."
             )
-        parent_gen = existing[-1]
+        parent_gen = _current_champion(workspace_dir, epoch_id)
         new_gen = next_generation_id(existing)
 
         agent, generation_root = _resolve_agent(workspace_dir, config, epoch_id, parent_gen)

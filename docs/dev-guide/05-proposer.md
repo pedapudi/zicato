@@ -2328,6 +2328,11 @@ It is the **same episode**: the command resolves the agent through
 builds is the request the loop builds. What differs is what it does around
 that episode:
 
+- the parent is the epoch's current champion, resolved by the round's own
+  `generation_phase.current_generation` (the primary promotion of the most
+  recent committed settlement record, or `v0` before any promotion), so a
+  rejected challenger is never the parent; the proposal is named for the
+  next unused generation id;
 - the mutation manifest is enumerated from the parent generation's own
   SNAPSHOT (the tree the episode edits), and the brief comes from the
   epoch's `brief.md` (a missing brief is an error);
