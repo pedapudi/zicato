@@ -603,7 +603,10 @@ existing params the new structure accepts and drops the rest, so switching
 a racing contract to `gauntlet` removes `field_size`, `eta` and
 `board_fraction` and keeps `replicates` and the `promote_confidence_*`
 keys. `--tournament-param` applies after the switch, and a key the new
-structure does not accept is refused. `--dry-run` checks the edit without saving
+structure does not accept is refused. An edit that changes the tournament
+writes the whole `tournament` block, structure and every parameter, so a
+workspace that relied on the omitted-block racing defaults keeps the
+confirmation threshold of 0.8 and the budget of 32 explicitly. `--dry-run` checks the edit without saving
 it, and neither flag combines with `--epoch`. `zicato evolve --help` is
 the authoritative flag reference, and [`CLI.md`](CLI.md) is generated
 from it.

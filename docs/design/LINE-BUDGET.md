@@ -50,9 +50,9 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 467,249 | +58,588 |
-| Production | 197,702 | 186,269 | -11,433 |
-| Production logic | 110,276 | 108,637 | -1,639 |
+| Total | 408,661 | 467,382 | +58,721 |
+| Production | 197,702 | 186,294 | -11,408 |
+| Production logic | 110,276 | 108,648 | -1,628 |
 
 The baseline row is the reference `f9052dd` measured by the classification the
 checker holds, which counts the console's hand-written entry point
@@ -84,7 +84,7 @@ production-logic series per subsystem along a branch's first-parent commits.
 
 | Subsystem | Total | Production | Production logic | Prose share |
 |---|---:|---:|---:|---:|
-| src/zicato/dashboard | 61,800 | 31,966 | 22,051 | 31.0% |
+| src/zicato/dashboard | 61,821 | 31,968 | 22,051 | 31.0% |
 | src/zicato/query | 17,748 | 17,748 | 11,169 | 37.1% |
 | src/zicato/epoch | 13,832 | 13,832 | 7,745 | 44.0% |
 | src/zicato/evolve | 11,230 | 11,230 | 7,167 | 36.2% |
@@ -94,12 +94,12 @@ production-logic series per subsystem along a branch's first-parent commits.
 | src/zicato/proposer | 9,520 | 9,520 | 4,769 | 49.9% |
 | src/zicato/cli | 7,084 | 7,084 | 4,696 | 33.7% |
 | src/zicato/analyzer | 7,165 | 7,165 | 4,591 | 35.9% |
-| src/zicato/selection | 5,278 | 5,278 | 3,060 | 42.0% |
+| src/zicato/selection | 5,284 | 5,284 | 3,063 | 42.0% |
 | src/zicato/core | 6,375 | 6,375 | 2,793 | 56.2% |
 | src/zicato/runtime | 5,188 | 5,188 | 2,531 | 51.2% |
 | src/zicato/index | 4,392 | 4,392 | 2,390 | 45.6% |
 | src/zicato/telemetry | 4,499 | 4,499 | 2,197 | 51.2% |
-| src/zicato/contract_draft | 2,468 | 2,468 | 1,622 | 34.3% |
+| src/zicato/contract_draft | 2,485 | 2,485 | 1,630 | 34.4% |
 | src/zicato/health | 2,557 | 2,557 | 1,501 | 41.3% |
 | src/zicato/mutation | 2,954 | 2,954 | 1,405 | 52.4% |
 | src/zicato/check | 1,769 | 1,769 | 1,144 | 35.3% |
@@ -479,3 +479,11 @@ dropped rows named.
 | Run-id lookup past a leading audit line (total) | 467,228 | +21 | 467,249 | The run-id index reads past lines that carry no run id, up to 64 lines, so an emulated run's events file still maps its goldfive run id. A test covers an events file that opens with an emulator audit line. |
 | Run-id lookup past a leading audit line (production) | 186,260 | +9 | 186,269 | The bounded scan, its line-count constant, and the reader's docstring. |
 | Run-id lookup past a leading audit line (production logic) | 108,634 | +3 | 108,637 | The bounded scan's constant, import and continue-on-missing branch. |
+| Structure switch keeps accepted tournament parameters (total) | 467,249 | +68 | 467,317 | Switching the tournament structure keeps only the existing parameters that the new structure's strategy class accepts, so `zicato evolve --tournament-structure gauntlet` succeeds on a racing contract. `selection/registry.py` gains the shared lookup from structure token to strategy class; tests cover the switch and the refusal of an explicitly passed unsupported parameter. |
+| Structure switch keeps accepted tournament parameters (production) | 186,269 | +18 | 186,287 | Switching the tournament structure keeps only the existing parameters that the new structure's strategy class accepts, so `zicato evolve --tournament-structure gauntlet` succeeds on a racing contract. `selection/registry.py` gains the shared lookup from structure token to strategy class; tests cover the switch and the refusal of an explicitly passed unsupported parameter. |
+| Structure switch keeps accepted tournament parameters (production logic) | 108,637 | +9 | 108,646 | Switching the tournament structure keeps only the existing parameters that the new structure's strategy class accepts, so `zicato evolve --tournament-structure gauntlet` succeeds on a racing contract. `selection/registry.py` gains the shared lookup from structure token to strategy class; tests cover the switch and the refusal of an explicitly passed unsupported parameter. |
+| Console skip-link target (total) | 467,317 | +21 | 467,338 | The console's view host carries the skip link's target id and a programmatic-focus tabindex, with a comment naming the link; `shell.test.mjs` gains the test that the target exists after the shell mounts. |
+| Console skip-link target (production) | 186,287 | +2 | 186,289 | The console's view host carries the skip link's target id and a programmatic-focus tabindex, with a comment naming the link; `shell.test.mjs` gains the test that the target exists after the shell mounts. |
+| Whole tournament block on a tournament edit (total) | 467,338 | +44 | 467,382 | A contract edit that changes the tournament writes the whole `tournament` block, because an omitted `params` resolves to the racing defaults only under racing and a partial block dropped the evidence-gate defaults the draft held; tests cover a default racing workspace switched to gauntlet and every ordered structure pair with a parameter edit. |
+| Whole tournament block on a tournament edit (production) | 186,289 | +5 | 186,294 | A contract edit that changes the tournament writes the whole `tournament` block, because an omitted `params` resolves to the racing defaults only under racing and a partial block dropped the evidence-gate defaults the draft held; tests cover a default racing workspace switched to gauntlet and every ordered structure pair with a parameter edit. |
+| Whole tournament block on a tournament edit (production logic) | 108,646 | +2 | 108,648 | A contract edit that changes the tournament writes the whole `tournament` block, because an omitted `params` resolves to the racing defaults only under racing and a partial block dropped the evidence-gate defaults the draft held; tests cover a default racing workspace switched to gauntlet and every ordered structure pair with a parameter edit. |

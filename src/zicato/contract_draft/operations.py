@@ -1649,6 +1649,11 @@ def candidate_scoring(draft: TournamentDraft) -> dict[str, Any]:
         return result
 
     candidate = merge(original, before, after)
+    # An omitted ``params`` resolves to the racing defaults only under the
+    # racing structure, so a partial tournament block can lose the defaults
+    # the draft holds. A changed block is therefore written whole.
+    if after["tournament"] != before["tournament"]:
+        candidate["tournament"] = after["tournament"]
     scoring_weights_from_dict(candidate)
     return candidate
 
