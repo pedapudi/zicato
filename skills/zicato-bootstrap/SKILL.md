@@ -183,7 +183,8 @@ $ZICATO/.venv/bin/zicato evolve --workspace .zicato --rounds 1 --no-dashboard
 
 No `epoch new` is needed: `evolve` finds no current epoch, resolves the
 contract from `board.jsonl`, `brief.md` and `scoring.json` beside the
-workspace, and opens epoch `e0`.
+workspace, and opens the first epoch, whose id is the creation date plus
+`_e0` (for example `2026-10-01_e0`).
 
 ## What success looks like
 

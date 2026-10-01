@@ -144,7 +144,7 @@ directory.
       episodes/                      # one directory per proposal episode transcript
       generations/
         v0/
-          snapshot/                  # system-under-test source at this generation
+          snapshot/                  # source at this generation (directory store only; see below)
           experiment.json            # synthetic seed record (the baseline)
           gen_score.json
           runs/
@@ -167,7 +167,11 @@ directory.
           ...
       rounds/
         {round_index}/
+          round_log.jsonl            # the round's step-by-step event log
           field_settlement.json      # outcomes, tournament details, primary promotion
+      tournaments/                   # durable field-tournament snapshots
+      insights/
+        round_{N}.md                 # per-round decision-telemetry analysis
       health/
         round_{N}.json               # loop-health report, one per round (LOOP-HEALTH.md)
       analysis.md                    # epoch report; refreshed each round, prose added at close
@@ -187,6 +191,12 @@ directory.
       analysis.md
       analysis.html
 ```
+
+`snapshot/` exists only under the directory generation store. The default
+git store keeps each generation's source as a commit in `.zicato/repo/` and
+materialises checkouts under `.zicato/repo-worktrees/{epoch}/{generation}/`;
+the generation directory then holds the records shown here without a
+`snapshot/`.
 
 A run's artifacts are named by measurement purpose and draw index. The
 purpose is `tournament` for an ordinary tournament run; the other purposes

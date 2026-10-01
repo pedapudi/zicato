@@ -288,7 +288,7 @@ As shipped (`ActiveRun`), the file carries:
   "last_progress": "2026-05-14T12:35:05.000Z",
   "wall_clock_budget_seconds": 120,
   "deadline": "2026-05-14T12:37:00.000Z",
-  "events_jsonl_path": ".zicato/epochs/hardened_research/generations/v5/runs/short_solar/events.jsonl",
+  "events_jsonl_path": ".zicato/epochs/hardened_research/generations/v5/runs/short_solar/seed-0/events.tournament.r0.jsonl",
   "entry_id": "short_solar",
   "generation_id": "v5",
   "epoch_id": "hardened_research",
@@ -639,12 +639,11 @@ loop continues from wherever it was when interrupted.
 | Artifact | Source of truth | Survives restart? |
 |---|---|---|
 | Candidate source | Git commits or directory snapshots, through the configured generation store | yes |
-| Pattern detector output | `epochs/{epoch}/patterns/round_NNN.json` | **yes** — written once per round |
 | Round decisions and tournament details | `epochs/{epoch}/rounds/{round}/field_settlement.json` | yes — committing one record publishes every candidate outcome and the primary promotion |
 | Journal | rendered from accepted experiments | regenerated from durable records when requested |
 | Proposal and patches | per-generation `experiment.json` and `patches/` | yes — tournament outcomes come from the committed round record; rejection before tournament execution is recorded in the proposal file |
-| Per-run `events.jsonl` | per-entry files under `runs/{entry_id}/` | **yes** — but may be partial if the run was mid-flight |
-| Per-run `loss.json` | per-entry files under `runs/{entry_id}/` | **yes** if reducer ran |
+| Per-run event log | `runs/{entry_id}/seed-{seed}/events.{purpose}.r{draw}.jsonl` under the generation | **yes** — but may be partial if the run was mid-flight |
+| Per-run loss profile | `runs/{entry_id}/seed-{seed}/loss.{purpose}.r{draw}.json` under the generation | **yes** if reducer ran |
 | `active_tournament.events.jsonl` | runtime state | discarded on restart |
 | `active_runs/` | runtime state | discarded on restart |
 | `heartbeat.json` | runtime state | discarded on restart |

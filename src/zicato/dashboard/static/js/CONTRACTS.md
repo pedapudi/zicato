@@ -165,7 +165,7 @@ The drill-down / lazy endpoints:
   dual-write; a finished tournament whose index was never rebuilt
   carries an empty `ab_grid`, so a match-up detail read off that payload
   has no per-board outcomes. This endpoint reconstructs them from
-  `generations/{gen}/runs/{entry}/loss.json` (the reducer's `LossProfile`)
+  `generations/{gen}/runs/{entry}/seed-{seed}/loss.{purpose}.r{draw}.json` (the reducer's `LossProfile`)
   for both generations plus the `generations/{gen}/gen_score.json`
   aggregates. Shape:
   ```jsonc
