@@ -14,9 +14,7 @@ roll-at-evolve-time decision and its supporting helpers:
 * :func:`_promoted_head_snapshot` — locate an epoch's promoted-head
   snapshot dir (the cross-epoch lineage seed source);
 * the per-component sub-hash reader and drift labeling
-  (:func:`_component_diff_label`) and the
-  v0-seed marker path
-  (:func:`_roll_seed_marker`).
+  (:func:`_component_diff_label`).
 
 Public epoch resolution is exported by :mod:`zicato.orchestrator`; the
 private helpers live here.
@@ -42,16 +40,6 @@ if TYPE_CHECKING:
 log = logging.getLogger("zicato.orchestrator")
 
 CallLLM = Callable[[str, str, str], Awaitable[str]]
-
-
-#: Internal sentinel: workspace-level state file recording, for each
-#: epoch, where its v0 baseline should be seeded from when the epoch is
-#: a contract-roll of a predecessor. Keyed by epoch id; value is the
-#: absolute path to the previous epoch's promoted-head snapshot. The
-#: file is written by :func:`ensure_epoch_for_contract` and consumed by
-#: :func:`_ensure_baseline_snapshot`.
-def _roll_seed_marker(workspace_root: Path, epoch_id: str) -> Path:
-    return WorkspaceLayout.from_root(workspace_root).roll_seed_marker(epoch_id)
 
 
 def _component_diff_label(prev_components: dict[str, str], cur_components: dict[str, str]) -> str:

@@ -151,16 +151,12 @@ def test_core_helpers_agree_with_workspace_layout(tmp_path: Path) -> None:
 def test_workspace_layout_write_markers(tmp_path: Path) -> None:
     """The write-path marker methods added to ``WorkspaceLayout`` resolve correctly.
 
-    ``current_generation`` (promoted-head marker), ``v0_seed_from`` (the
-    cross-epoch roll seed marker), ``ladder_state.json``, the per-patch JSON
-    file, and one round's field-tournament snapshot — the write-path leaf
-    joins that previously lived as inline string joins in the orchestrator
-    and epoching modules.
+    ``ladder_state.json``, the per-patch JSON file, and one round's
+    field-tournament snapshot — the write-path leaf joins of the evolve loop.
     """
     root = tmp_path / ".zicato"
     layout = WorkspaceLayout.from_root(root)
     edir = root / "epochs" / "e0"
-    assert layout.roll_seed_marker("e0") == edir / "v0_seed_from"
     assert layout.ladder_state("e0") == edir / "ladder_state.json"
     assert layout.patch_json("e0", "v1", "p3") == (
         edir / "generations" / "v1" / "patches" / "p3.json"

@@ -522,10 +522,13 @@ construction to Goldfive's `RuntimeConfigDocument` API.
 
 ### 3.5 Step 2 — baseline and parent
 
-`_ensure_baseline_snapshot` materializes `v0` from the registered mutable
-trees if the epoch has no generations yet (byte-for-byte copy of the
-operator's source; on a contract roll it seeds from the previous epoch's
-promoted head via the roll-seed marker — see 03-contract-and-epochs.md).
+`_ensure_baseline_snapshot` materializes `v0` if the epoch has no
+generations yet. An epoch opened by a contract roll carries a baseline seed
+record (`baseline_seed.json`) naming the previous epoch's promoted head and a
+retained copy of its tree, and `v0` is that tree with the head's losses
+carried over; any other epoch seeds
+`v0` as a byte-for-byte copy of the registered mutable trees (see
+03-contract-and-epochs.md).
 A resumed round keeps the parent its persisted experiment recorded;
 otherwise `generation_phase.current_generation` returns the primary
 generation from the most recent committed promotion, or `v0` before any

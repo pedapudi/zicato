@@ -665,7 +665,8 @@ shape, as `WorkspaceLayout` (`src/zicato/workspace/layout.py`) declares it:
         execution.json           # required captured execution bindings
         config.json              # EpochConfig (required hash, goal, measurements)
         contract_components.json # per-component sub-hashes (roll diagnosis)
-        baseline_seed.json       # where the seed generation came from
+        baseline_seed.json       # unpublished v0: retained source and, after
+                                 #   a contract roll, the head it came from
         mutations.json           # the enumerated mutation surface
         ladder_state.json        # the holdout-query budget
         proposer_inputs.jsonl    # what each proposal was shown

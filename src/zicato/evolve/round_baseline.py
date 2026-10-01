@@ -21,9 +21,6 @@ from zicato.core.measurement import (
 from zicato.core.workspace import (
     generation_dir,
 )
-from zicato.evolve.epoching import (
-    _roll_seed_marker,
-)
 from zicato.evolve.ingest import (
     _index_db_path,
 )
@@ -89,32 +86,22 @@ def _ensure_baseline_snapshot(
                         "preserve its source and repair the missing seed records before evolving"
                     )
             return
-        source_coordinates: tuple[str, str] | None = None
-        sources: list[Path] = []
-        marker = _roll_seed_marker(workspace_root, epoch_id)
-        if marker.exists():
-            source = Path(marker.read_text(encoding="utf-8").strip())
-            if not source.is_dir():
-                raise FileNotFoundError(f"baseline predecessor snapshot is missing: {source}")
-            sources = sorted(source.iterdir())
-            source_coordinates = _source_epoch_generation(source)
-        if not sources:
-            from zicato.core.adapter_config import registered_mutable_trees
+        # An epoch opened by a contract roll carries its seed record from
+        # publication, so an epoch without one seeds from the registered trees.
+        from zicato.core.adapter_config import registered_mutable_trees
 
-            raw = registered_mutable_trees(workspace_config, workspace_root)
-            if not raw:
-                raise RuntimeError(
-                    "evolve_once: workspace_config has no 'mutable_trees' / 'source_roots' — "
-                    "cannot seed a v0 baseline snapshot; run `zicato epoch register` first"
-                )
-            sources = [Path(item) for item in raw]
+        raw = registered_mutable_trees(workspace_config, workspace_root)
+        if not raw:
+            raise RuntimeError(
+                "evolve_once: workspace_config has no 'mutable_trees' / 'source_roots' — "
+                "cannot seed a v0 baseline snapshot; run `zicato epoch register` first"
+            )
         seed = prepare_baseline_seed(
             workspace_root,
             epoch_id,
-            sources,
+            [Path(item) for item in raw],
             backend=store.backend_name,
             created_at=_now_iso(),
-            source_coordinates=source_coordinates,
         )
         seed.write(workspace_root)
     finish_baseline_seed(workspace_root, seed, writer=writer)
@@ -126,33 +113,6 @@ def _ensure_baseline_snapshot(
             source_epoch=seed.source_epoch,
             source_generation=seed.source_generation,
         )
-
-
-def _source_epoch_generation(seed_source: Path) -> tuple[str, str] | None:
-    """Derive ``(source_epoch, source_generation)`` from a roll-seed snapshot path.
-
-    The cross-epoch roll-seed marker points at the predecessor's
-    promoted-head snapshot directory, of the form
-    ``…/epochs/<epoch>/generations/<gen>/snapshot``. This recovers the
-    ``(epoch, generation)`` pair so the champion's prior losses can be
-    materialised into the new epoch with honest provenance. Returns
-    ``None`` when the path does not match the expected layout (a
-    hand-built marker, a future relayout) — materialisation is then
-    skipped, which is a clean degrade rather than a crash.
-    """
-    parts = seed_source.parts
-    try:
-        # …/epochs/<epoch>/generations/<gen>/snapshot
-        snap_i = len(parts) - 1 - parts[::-1].index("snapshot")
-    except ValueError:
-        return None
-    # Expect ["generations", <gen>, "snapshot"] ending and an "epochs"
-    # marker two levels above the generation id.
-    if snap_i < 4 or parts[snap_i - 2] != "generations" or parts[snap_i - 4] != "epochs":
-        return None
-    source_generation = parts[snap_i - 1]
-    source_epoch = parts[snap_i - 3]
-    return source_epoch, source_generation
 
 
 def _materialize_carried_champion(
