@@ -10,7 +10,7 @@
 // styled (scoped under the variant root) by css/console.css.
 
 import { svgEl } from './core/dom.js';
-import { isNum, fmt, CROWN } from './svg.js';
+import { isNum, fmt, CROWN, figIcon, iconBeside } from './svg.js';
 import { attachHovercard } from './hovercard.js';
 import { truncate } from './ui.js';
 
@@ -69,12 +69,16 @@ function flow(x1, y1, x2, y2) {
   return `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`;
 }
 
-function rectNode(layer, cx, cy, w, h, label, sub, cls) {
+// `mark` names an icon drawn before the label, in the node's tone.
+const NODE_TONE = { 'ezn-promoted': 'good', 'ezn-rejected': 'bad', 'ezn-running': 'accent', 'ezn-baseline': 'faint' };
+function rectNode(layer, cx, cy, w, h, label, sub, cls, mark) {
+  const id = svgEl('text', { x: cx, y: cy - (sub ? 5 : 0), class: 'ezn-node-id', 'text-anchor': 'middle' }, [truncate(label, mark ? 16 : 18)]);
   const g = svgEl('g', { class: 'ezn-node ' + (cls || ''), 'data-cz': 'lc-step' }, [
     svgEl('rect', { x: cx - w / 2, y: cy - h / 2, width: w, height: h, rx: 6, class: 'ezn-node-box' }),
-    svgEl('text', { x: cx, y: cy - (sub ? 5 : 0), class: 'ezn-node-id' }, [truncate(label, 18)]),
+    id,
     sub ? svgEl('text', { x: cx, y: cy + 12, class: 'ezn-node-sub' }, [truncate(sub, 22)]) : null,
   ].filter(Boolean));
+  if (mark) iconBeside(g, id, mark, 11, { lead: true, tone: NODE_TONE[cls] });
   layer.appendChild(g);
   return g;
 }
@@ -233,17 +237,17 @@ const KEY_LINE_H = 12;
 const KEY_PAD = NODE_BOX_H / 2 + KEY_GAP + KEY_LINE_H;
 
 // The pending TERMINAL label is STRUCTURE-AWARE: a swiss/elim candidate awaiting
-// the gate must not read "racing". racing → "⋯ racing", swiss → "⋯ competing",
-// single/double elim → "⋯ in bracket"; an unknown/absent structure degrades to a
-// neutral "⋯ awaiting gate".
+// the gate must not read "racing". racing → "racing", swiss → "competing",
+// single/double elim → "in bracket"; an unknown/absent structure degrades to a
+// neutral "awaiting gate". The node draws the overflow mark before the words.
 function pendingTermLabel(structure) {
   switch (String(structure || '').toLowerCase()) {
-    case 'racing': return '⋯ racing';
-    case 'swiss': return '⋯ competing';
+    case 'racing': return 'racing';
+    case 'swiss': return 'competing';
     case 'single_elim':
-    case 'double_elim': return '⋯ in bracket';
-    case 'gauntlet': return '⋯ at gate';
-    default: return '⋯ awaiting gate';
+    case 'double_elim': return 'in bracket';
+    case 'gauntlet': return 'at gate';
+    default: return 'awaiting gate';
   }
 }
 
@@ -335,7 +339,7 @@ export function lifecycleDag(spec) {
   const edgeLayer = svgEl('g', { class: 'ezn-edge-layer' });
   const nodeLayer = svgEl('g', { class: 'ezn-node-layer' });
 
-  rectNode(nodeLayer, X.parent, midY, 0.12 * w, 44, o.parentId || '∅ seed', baseline ? 'no parent' : 'champion', baseline ? 'ezn-baseline' : 'ezn-promoted');
+  rectNode(nodeLayer, X.parent, midY, 0.12 * w, 44, o.parentId || 'seed', baseline ? 'no parent' : 'champion', baseline ? 'ezn-baseline' : 'ezn-promoted', o.parentId ? null : 'empty');
 
   const patchSub = baseline ? 'seed snapshot'
     : (isNum(o.patchPoints) && o.patchPoints > 0 ? o.patchPoints + ' mutation point' + (o.patchPoints === 1 ? '' : 's') : 'patch');
@@ -426,13 +430,16 @@ export function lifecycleDag(spec) {
       const discText = channel === 'score'
         ? (dScore != null ? discDelta(dScore) : (isNum(e.score) ? fmt(e.score, 2) : '—'))
         : channel === 'pass'
-          ? (e.pass_fail === true ? '✓' : e.pass_fail === false ? '✕' : '—')
+          ? (typeof e.pass_fail === 'boolean' ? null : '—')
           : (isNum(e.drift_loss) ? fmt(e.drift_loss, 0) : '—');
       const children = [
         svgEl('circle', { cx: X.board, cy: y, r, class: 'ezn-board-disc' }),
         // label to the LEFT of the disc, vertically centred, never on the circle.
         svgEl('text', { x: X.board + labelDX, y: y + 3, class: 'ezn-board-label', 'text-anchor': 'end' }, [truncate(e.entry_id, 18)]),
-        svgEl('text', { x: X.board, y: y + 3, class: 'ezn-board-loss', 'text-anchor': 'middle' }, [discText]),
+        // a pass-only board draws its verdict as the pass or fail mark.
+        discText == null
+          ? figIcon(e.pass_fail ? 'pass' : 'fail', X.board, y + 3, 9, { anchor: 'middle', tone: e.pass_fail ? 'good' : 'bad', class: 'ezn-board-loss' })
+          : svgEl('text', { x: X.board, y: y + 3, class: 'ezn-board-loss', 'text-anchor': 'middle' }, [discText]),
       ];
       if (channel === 'score' && cmp && (isNum(cmp.champScore) || isNum(cmp.candScore))) {
         children.push(svgEl('text', {
@@ -583,16 +590,16 @@ export function lifecycleDag(spec) {
 
   const promoted = dec === 'promoted' || (baseline && o.promoted === true);
   // Class B: a PENDING candidate (in-flight / not yet raced — promoted == null,
-  // no resolved decision) must NOT read "✕ dead branch / champion stands". Show
+  // no resolved decision) must NOT read "dead branch / champion stands". Show
   // a non-terminal racing/awaiting-gate state instead.
   const pending = !baseline && !promoted && (dec === 'pending' || dec === 'running' || (o.promoted == null && (!dec || dec === 'running' || dec === 'pending')));
-  let termLabel, termSub, termCls;
+  let termLabel, termSub, termCls, termMark = null;
   if (baseline) { termLabel = 'seed'; termSub = 'defines floor'; termCls = 'ezn-baseline'; }
-  else if (promoted) { termLabel = CROWN.current + ' promoted'; termSub = 'new champion'; termCls = 'ezn-promoted'; }
-  else if (pending) { termLabel = pendingTermLabel(o.structure); termSub = 'awaiting gate'; termCls = 'ezn-running'; }
-  else { termLabel = '✕ dead branch'; termSub = 'champion stands'; termCls = 'ezn-rejected'; }
+  else if (promoted) { termLabel = 'promoted'; termSub = 'new champion'; termCls = 'ezn-promoted'; termMark = CROWN.current; }
+  else if (pending) { termLabel = pendingTermLabel(o.structure); termSub = 'awaiting gate'; termCls = 'ezn-running'; termMark = 'more'; }
+  else { termLabel = 'dead branch'; termSub = 'champion stands'; termCls = 'ezn-rejected'; termMark = 'fail'; }
   edgeLayer.appendChild(svgEl('path', { d: flow(X.gate + 0.06 * w, midY, X.term - 0.045 * w, midY), class: 'ezn-edge ' + (promoted ? 'ezn-edge-good' : pending ? 'ezn-edge-neutral' : 'ezn-edge-bad'), fill: 'none' }));
-  rectNode(nodeLayer, X.term, midY, 0.1 * w, 48, termLabel, termSub, termCls);
+  rectNode(nodeLayer, X.term, midY, 0.1 * w, 48, termLabel, termSub, termCls, termMark);
 
   svg.appendChild(edgeLayer);
   svg.appendChild(nodeLayer);

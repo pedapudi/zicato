@@ -140,13 +140,13 @@ Built by `js/core/harmonograf.js` (`harmonografRunUrl`, `harmonografLink`,
 on `harmonografIsLive()`. They render:
 
 * on the **candidate** view — the run drill header ("Open this run in
-  harmonograf") and each in-flight board row ("execution ▸");
+  harmonograf") and each in-flight board row ("execution" with the external-link icon);
 * on the **board grid / matchup** A/B cells (`parent_adk_session_id` /
   `child_adk_session_id`).
 
 ### 3b. The execution surface for zicato's own loop
 
-A single, clearly-labelled **"execution ▸"** entry in the top bar
+A single, clearly-labelled **"execution"** entry (with the external-link icon) in the top bar
 (`js/shell.js`) links to the meta-loop session:
 
 ```
@@ -234,7 +234,7 @@ Every layer warns-and-continues; harmonograf is never load-bearing:
 The proposer and judge emits (§2b) put zicato's model calls on the meta-loop
 timeline. The orchestration around them — the round loop, the propose-time
 slate, the tournament fan-out, the per-run workers — needs its own emits, or
-the "execution ▸" view shows the target-agent lifelines with no surrounding
+the "execution" view shows the target-agent lifelines with no surrounding
 structure. The structural spans supply that structure: the `MetaLoopEmitter`
 brackets each unit of orchestration work with a paired goldfive
 `AgentInvocation{Started,Completed}` envelope, which harmonograf renders as a

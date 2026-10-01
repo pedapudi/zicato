@@ -10,6 +10,7 @@ import { el } from '../core/dom.js';
 import { state } from '../core/state.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
+import { icon } from '../icons.js';
 import { livenessFor, epochIsLive } from '../livestatus.js';
 import { gatedSwap, section, empty, stat, renderMarkdown, densityTokens, chip, dataTable, figCaption,
   loopVerdict, promotionRateLabel, costPerPromotionLabel, fmtDurationMs, noiseBandFor } from '../ui.js';
@@ -330,7 +331,7 @@ export async function render(host, ctx, params) {
     const briefOpen = _briefOpen.has(epochId) ? _briefOpen.get(epochId) : briefDefaultOpen;
     const briefDetails = el('details', { class: 'dn-brief', open: briefOpen ? '' : null }, [
       el('summary', null, [
-        el('span', { class: 'chev', text: '▸' }), 'Proposer brief',
+        el('span', { class: 'chev', 'aria-hidden': 'true' }, [icon('expand')]), 'Proposer brief',
         el('span', { class: 'dn-faint', style: 'font-weight:400;font-size:11px;', text: briefText ? `· ${briefText.split(/\n/).length} lines` : '· none' }),
       ]),
       renderMarkdown(briefText),
@@ -450,9 +451,9 @@ export async function render(host, ctx, params) {
       rounds: epochRounds, selected: null,
       figureFor: figureForRound, onRound: drill, onCompetitor: open,
     }));
-    timelineCard.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text:
-      'one node per round on the champion spine — the descending loss floor reads as "is it improving?" · each episode is one round (incoming champion + its minted field + the tournament figure + the gate) · '
-      + svg.CROWN.current + ' = the round\'s champion · click a round → its full tournament (Match-ups)' }));
+    timelineCard.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;' }, [
+      'one node per round on the champion spine — the descending loss floor reads as "is it improving?" · each episode is one round (incoming champion + its minted field + the tournament figure + the gate) · ',
+      icon(svg.CROWN.current), ' = the round\'s champion · click a round → its full tournament (Match-ups)']));
     nodes.push(section(single
       ? 'Round timeline · ' + structureLabel(structure, params)
       : `Round timeline · the champion spine across ${epochRounds.length} rounds · ` + structureLabel(structure, params),

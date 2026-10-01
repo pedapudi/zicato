@@ -22,6 +22,7 @@
 // Theme + typeface are CSS-only swaps (data-t-theme / data-t-type on the root).
 
 import { el, svgEl, clearChildren, patchText, patchClass } from './core/dom.js';
+import { icon, iconLabel, patchIconLabel } from './icons.js';
 import { harmonografMetaUrl } from './core/harmonograf.js';
 import { state } from './core/state.js';
 import { bus } from './core/bus.js';
@@ -557,10 +558,10 @@ export function mountShell(root) {
 
   // top-left UP control — navigates UP the selection hierarchy (the parent
   // route); dispatch then repaints the destination into the MAIN detail pane
-  // (never the sidebar). Labelled "↑ up" because it climbs the hierarchy rather
-  // than stepping back through browser history.
+  // (never the sidebar). Labelled "up" with an up arrow because it climbs the
+  // hierarchy rather than stepping back through browser history.
   _backBtn = el('button', { class: 'dt-back', type: 'button', title: 'Navigate up one level', 'aria-label': 'Navigate up' }, [
-    el('span', { class: 'dt-back-glyph', 'aria-hidden': 'true', text: '↑' }),
+    el('span', { class: 'dt-back-glyph', 'aria-hidden': 'true' }, [icon('up')]),
     el('span', { class: 'dt-back-text', text: 'up' }),
   ]);
   _backBtn.addEventListener('click', () => goBack(parseRoute(location.hash)));
@@ -575,7 +576,7 @@ export function mountShell(root) {
     ]),
     _crumbHost,
     el('span', { class: 'dt-topbar-spacer' }),
-    // the ZICATO-LEVEL harmonograf entry — a liveness-gated "execution ▸"
+    // the ZICATO-LEVEL harmonograf entry — a liveness-gated "execution"
     // link into the meta-loop session (the proposer + judge timeline of the
     // evolution itself). Filled by renderExecLink, digest-gated so a no-op
     // heartbeat never repaints it. See docs/design/HARMONOGRAF.md §3b.
@@ -584,11 +585,11 @@ export function mountShell(root) {
     // Reads the structured stream
     // for one evolve / reflect invocation.
     el('a', { class: 'dt-nav-logs', href: href('logs', {}), title: 'Operator log (the structured log stream for one invocation)', 'aria-label': 'Open the operator log' }, [
-      el('span', { class: 'dt-nav-logs-glyph', 'aria-hidden': 'true', text: '☰' }),
+      el('span', { class: 'dt-nav-logs-glyph', 'aria-hidden': 'true' }, [icon('log')]),
       el('span', { class: 'dt-nav-logs-text', text: 'log' }),
     ]),
     el('a', { class: 'dt-nav-build', href: href('settings', {}), title: 'Settings (contract · models · appearance)', 'aria-label': 'Open settings' }, [
-      el('span', { class: 'dt-nav-build-glyph', 'aria-hidden': 'true', text: '⚙' }),
+      el('span', { class: 'dt-nav-build-glyph', 'aria-hidden': 'true' }, [icon('settings')]),
       el('span', { class: 'dt-nav-build-text', text: 'settings' }),
     ]),
     colorSwitch,
@@ -649,11 +650,11 @@ export function mountShell(root) {
   // `#/settings[/<section>]` is the route. The underlying view stays rendered in
   // `_viewHost` behind a scrim, so an Appearance change (theme / typeface / font
   // size) applies LIVE to the page visible behind the panel. Esc, a scrim click,
-  // and the × all close the overlay by navigating to the underlying route.
+  // and the close button all close the overlay by navigating to the underlying route.
   _settingsPanelHost = el('div', { class: 'dt-drawer-body', role: 'region', 'aria-label': 'Settings' });
   const closeBtn = el('button', {
-    class: 'dt-drawer-x', type: 'button', title: 'Close settings', 'aria-label': 'Close settings', text: '×',
-  });
+    class: 'dt-drawer-x', type: 'button', title: 'Close settings', 'aria-label': 'Close settings',
+  }, [icon('close')]);
   closeBtn.addEventListener('click', () => closeSettingsOverlay());
   const panel = el('div', {
     class: 'dt-drawer-panel', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Settings',
@@ -924,7 +925,7 @@ function renderCrumbs(route) {
   gatedSwap(_crumbHost, digest, () => {
     const out = [];
     trail.forEach((c, i) => {
-      if (i > 0) out.push(el('span', { class: 'dt-crumb-sep', 'aria-hidden': 'true', text: '›' }));
+      if (i > 0) out.push(el('span', { class: 'dt-crumb-sep', 'aria-hidden': 'true' }, [icon('separator')]));
       if (c.current || !c.view) {
         out.push(el('span', { class: 'dt-crumb dt-crumb-current', 'aria-current': 'page', text: c.label }));
       } else {
@@ -1039,8 +1040,7 @@ export function buildLoopControls(opts) {
     title: o.paused
       ? 'Resume — clear the pause flag; the orchestrator continues at its next poll'
       : 'Pause — hold scheduling at the next between-rounds safe point',
-    text: o.paused ? '▶ resume' : '⏸ pause',
-  });
+  }, o.paused ? iconLabel('resume', 'resume') : iconLabel('pause', 'pause'));
   toggle.addEventListener('click', () => {
     if (o.paused) { if (o.onResume) o.onResume(); } else if (o.onPause) o.onPause();
   });
@@ -1052,20 +1052,19 @@ export function buildLoopControls(opts) {
   const skip = el('button', {
     class: 'dt-loopctl-btn dt-loopctl-skip', type: 'button',
     title: 'Skip the current round — aborts it cleanly, exactly like a wall-clock budget cut',
-    text: '⏭ skip round',
-  });
+  }, iconLabel('skip', 'skip round'));
   let armed = false;
   let timer = null;
   const disarm = () => {
     armed = false;
     if (timer != null) { clearTimeout(timer); timer = null; }
-    patchText(skip, '⏭ skip round');
+    patchIconLabel(skip, 'skip', 'skip round');
     skip.classList.remove('dt-loopctl-armed');
   };
   skip.addEventListener('click', () => {
     if (!armed) {
       armed = true;
-      patchText(skip, 'confirm skip?');
+      patchIconLabel(skip, null, 'confirm skip?');
       skip.classList.add('dt-loopctl-armed');
       timer = setTimeout(disarm, 4000);
       return;
@@ -1118,7 +1117,7 @@ function renderLoopControls(status, liveness) {
   }));
 }
 
-// THE ZICATO-LEVEL HARMONOGRAF LINK. The top-bar "execution ▸" entry deep-links
+// THE ZICATO-LEVEL HARMONOGRAF LINK. The top-bar "execution" entry deep-links
 // into the meta-loop session (zicato's own proposer + judge timeline). It is
 // liveness-gated (via harmonografMetaUrl → harmonografBase) so it renders only
 // while a harmonograf server is reachable AND a meta-loop session id is known —
@@ -1137,7 +1136,7 @@ function renderExecLink() {
     href: url, target: '_blank', rel: 'noopener',
     title: 'Open the zicato execution timeline (meta-loop) in harmonograf',
     'aria-label': 'open the zicato execution timeline in harmonograf',
-  }, ['execution ↗']));
+  }, iconLabel('external', 'execution', { after: true })));
 }
 
 // THE SSE-DRIVEN LIVE REFRESH. Distinct from renderStatus (which is gated on the

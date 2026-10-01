@@ -21,6 +21,7 @@
 
 import { el } from '../core/dom.js';
 import * as svg from '../svg.js';
+import { iconLabel } from '../icons.js';
 import { dataTable, deltaCell, empty, truncate, verdictPill } from '../ui.js';
 
 // How much of a core idea / rejection reason rides the row before it clips.
@@ -114,9 +115,9 @@ function ledgerRow(r, epochId, o) {
 // builder (a plain mono label otherwise — the builder stays pure).
 function genCell(gen, r, o) {
   if (!gen) return el('span', { class: 'dn-faint', text: '—' });
-  const label = gen + (r.promoted === true ? ' ' + svg.CROWN.current : '');
-  if (typeof o.hrefFor !== 'function') return el('span', { text: label });
-  return el('a', { class: 'dn-linkbtn dn-mono', href: o.hrefFor(gen), text: label });
+  const label = r.promoted === true ? iconLabel(svg.CROWN.current, gen, { after: true }) : [gen];
+  if (typeof o.hrefFor !== 'function') return el('span', null, label);
+  return el('a', { class: 'dn-linkbtn dn-mono', href: o.hrefFor(gen) }, label);
 }
 
 // The core idea: one clipped line that expands IN PLACE on click. An absent

@@ -17,6 +17,7 @@
 // css/console.css, the `.dt-split*` rules).
 
 import { el } from './core/dom.js';
+import { iconLabel } from './icons.js';
 
 // A candidate picker that sets the `cmp` route param. `current` is the primary
 // gen (excluded from the options); `value` is the currently-compared gen.
@@ -42,7 +43,8 @@ export function comparePicker(o) {
   return wrap;
 }
 
-// A two-column comparison frame. `a` and `b` are { title, sub, build(host) } —
+// A two-column comparison frame. `a` and `b` are { title, mark, sub, build(host) }
+// (`mark` names an icon drawn after the title) —
 // each build paints into its own host so the digest gate is per-side. When
 // there is no comparison target, side B shows `emptyPrompt`.
 export function splitFrame(o) {
@@ -57,7 +59,7 @@ function splitSide(side, which) {
   if (side.title) {
     col.appendChild(el('div', { class: 'dt-split-head' }, [
       el('span', { class: 'dt-split-tag', text: which === 'a' ? 'A' : 'B' }),
-      el('span', { class: 'dt-split-title', text: side.title }),
+      el('span', { class: 'dt-split-title' }, side.mark ? iconLabel(side.mark, side.title, { after: true }) : [side.title]),
       side.sub ? el('span', { class: 'dt-split-sub', text: side.sub }) : null,
     ].filter(Boolean)));
   }

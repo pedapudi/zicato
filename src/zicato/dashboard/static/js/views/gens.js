@@ -27,6 +27,7 @@ import { el } from '../core/dom.js';
 import { state } from '../core/state.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
+import { icon, iconLabel } from '../icons.js';
 import { gatedSwap, section, empty, verdictPill, decisionOf, dataTable, deltaCell, ratingCellEl, ratingTripleDigest, coreIdeaLine } from '../ui.js';
 import { renderStructure, structurePill } from './structure.js';
 import { structureDigest, isNonGauntlet, normalizeStructure, resolveNonGauntletSt } from '../tournament_model.js';
@@ -198,7 +199,7 @@ export async function render(host, ctx, params) {
             class: g.promoted ? 'dn-board-champ' : '',
             cells: [
               { class: 'dn-mono', el: [
-                el('span', { text: g.id + (g.promoted ? ' ♛' : '') }),
+                el('span', null, g.promoted ? iconLabel(svg.CROWN.current, g.id, { after: true }) : [g.id]),
                 coreIdeaLine(ideaByGen.get(String(g.id))),
               ].filter(Boolean) },
               // the pending pill reads "racing…" only while THIS epoch's loop is
@@ -209,7 +210,7 @@ export async function render(host, ctx, params) {
               // the visibility rating (server-joined; never the gate).
               { class: 'dn-num', el: [ratingCellEl(g)] },
               deltaCell(delta, { base: 'dn-num dn-mono', text: svg.isNum(delta) ? svg.fmtSigned(delta, 1) : '—' }),
-              { el: el('a', { class: 'dn-linkbtn', href: ctx.href('candidate', { epochId: id, gen: g.id }), text: 'open →' }) },
+              { el: el('a', { class: 'dn-linkbtn', href: ctx.href('candidate', { epochId: id, gen: g.id }) }, iconLabel('forward', 'open', { after: true })) },
             ],
           };
         }),
@@ -325,7 +326,7 @@ async function renderRoundDrilldown(host, ctx, id, ep, bracket, traj, rows, roun
       el('h1', { class: 'dn-h1', text: `Round ${roundParam} · match-ups · ${id}` }),
       el('div', { class: 'dt-structure-line' }, [structurePill(structure, (tournament && tournament.params) || (st && st.structure_params))]),
       el('p', { class: 'dn-lede', text: 'One evolve round of this epoch: its incoming champion, the field minted that round, the tournament, and the gate. The epoch timeline indexes every round; this view shows ONE.' }),
-      el('a', { class: 'dn-linkbtn', href: ctx.href('gens', { epochId: id }), text: '← all rounds' }),
+      el('a', { class: 'dn-linkbtn', href: ctx.href('gens', { epochId: id }) }, iconLabel('back', 'all rounds')),
     ]));
     if (!round) {
       nodes.push(empty(`No round ${roundParam} in this epoch (the timeline ran fewer rounds).`));
@@ -504,7 +505,7 @@ function fieldFlow(championId, champScalar, matchups, gates, total, promoted, ct
       class: 'dt-fieldflow-champ', href: ctx.href('candidate', { epochId, gen: championId }),
       'aria-label': 'Champion ' + championId + ' — open its detail',
     }, [
-      el('span', { class: 'dt-fieldflow-crown', 'aria-hidden': 'true', text: svg.CROWN.current }),
+      el('span', { class: 'dt-fieldflow-crown', 'aria-hidden': 'true' }, [icon(svg.CROWN.current)]),
       el('span', { class: 'dt-fieldflow-champid dn-mono', text: championId }),
       el('span', { class: 'dt-fieldflow-champmeta dn-faint', text:
         'defending · loss ' + (svg.isNum(champScalar) ? svg.fmt(champScalar, 1) : '—')
@@ -538,7 +539,9 @@ function fieldFlow(championId, champScalar, matchups, gates, total, promoted, ct
     championId, championScalar: champScalar, challengers,
     onCompetitor: (id) => ctx.navigate('candidate', { epochId, gen: id }),
   }));
-  wrap.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text:
-    'each lane is a challenger duelling the champion · the vertical rule is the champion (Δ=0) · a lane reaching RIGHT toward the ' + svg.CROWN.current + ' gate improved on the champion (good); one reaching LEFT regressed (bad); bar length = |Δ| · ↑ promoted · ✕ cut · ○ pending · hover a lane for its hypothesis + exact Δ · click → its candidate' }));
+  wrap.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;' }, [
+    'each lane is a challenger duelling the champion · the vertical rule is the champion (Δ=0) · a lane reaching RIGHT toward the ', icon(svg.CROWN.current),
+    ' gate improved on the champion (good); one reaching LEFT regressed (bad); bar length = |Δ| · ', icon('up'), ' promoted · ', icon('fail'), ' cut · ',
+    icon('ring'), ' pending · hover a lane for its hypothesis + exact Δ · click → its candidate']));
   return wrap;
 }

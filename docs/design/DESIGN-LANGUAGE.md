@@ -72,11 +72,11 @@ set of semantic roles whose meaning is **fixed across all sixteen themes**:
 | `--v2-ink-faint` | tertiary text (faint tags, empty-state italics) | |
 | `--v2-rule` | borders / separators / hovercard outline | |
 | `--v2-rule-soft` | fainter rule / inline-code background | |
-| `--v2-good` | **improvement / promotion / survival** | a dot *below* the reference rule, a survivor `↑`, a crowned gate, a promoted verdict — *always* the better outcome |
+| `--v2-good` | **improvement / promotion / survival** | a dot *below* the reference rule, a survivor's up mark, a crowned gate, a promoted verdict — *always* the better outcome |
 | `--v2-good-soft` | tinted fill behind a good state | |
-| `--v2-bad` | **regression / rejection / a cut** | a dot *above* the rule, a cut competitor `✕`, a rejected verdict — *always* the worse outcome |
+| `--v2-bad` | **regression / rejection / a cut** | a dot *above* the rule, a cut competitor's fail mark, a rejected verdict — *always* the worse outcome |
 | `--v2-bad-soft` | tinted fill behind a bad state | |
-| `--v2-caution` | caution / timeout (the budget-exceeded `⏱`) | |
+| `--v2-caution` | caution / timeout (the budget-exceeded timeout mark) | |
 | `--v2-accent` | **the one structural / interactive highlight** | the champion spine, the emphasised current line, an interactive focus — used sparingly so it stays meaningful |
 | `--v2-flat` | unchanged / neutral-flat | a slope that neither improved nor regressed |
 | `--v2-cell-empty` | an empty heatmap cell | |
@@ -345,11 +345,12 @@ right:
 3. **`.dt-crumbs`** — breadcrumb trail (mono, faint), `.dt-crumb` links +
    `.dt-crumb-sep`.
 4. `.dt-topbar-spacer` (flex spacer).
-5. **`.dt-nav-exec`** — the liveness-gated `execution ↗` link into the
+5. **`.dt-nav-exec`** — the liveness-gated `execution` link (with the external-link
+   icon) into the
    harmonograf meta-loop session; empty when no harmonograf server is
    reachable.
-6. **`.dt-nav-logs`** — a `☰ log` entry into the operator-log pane (`#/logs`).
-7. **`.dt-nav-build`** — a `⚙ settings` entry (opens read-only contract and model
+6. **`.dt-nav-logs`** — a `log` entry (list icon) into the operator-log pane (`#/logs`).
+7. **`.dt-nav-build`** — a `settings` entry (gear icon; opens read-only contract and model
    configuration plus editable appearance preferences).
 8. **Colour swatch dropdown** (`.dt-cd`, §6.8). The typeface picker, the text
    size, the page scale and the side-panel width live in Settings →
@@ -435,15 +436,18 @@ fixed pixel width that exceeds the pane, and no pan/zoom**. A figure that must
 stretch its bars uses `preserveAspectRatio:"none"` but then puts any glyph that
 must stay round into a separate 1:1 overlay (see `sparkbar`).
 
-**Shared semantic glyphs** (one source of truth, exported from `svg.js`):
+**Shared semantic marks** are drawn icons from `js/icons.js` (§8), never typed
+symbols. The crowns have one definition, re-exported by `svg.js`:
 
 ```js
-export const CROWN = { current: '♛', former: '♔' };
+export const CROWN = Object.freeze({ current: 'crown', former: 'crown-former' });
 ```
 
-`↑` survives · `✕` cut · `○` pending · `♛` current champion · `♔` former
-champion · `⏱` timeout · `✓` pass. The reference rule means **good = below /
-lower loss, bad = above / higher loss**.
+`up` survives · `fail` cut · `ring` pending · `crown` (solid) current champion ·
+`crown-former` (open) former champion · `timeout` timeout · `pass` pass. Inside a
+figure, `figIcon` places an icon on a text centre line and `iconBeside` sets one
+beside a `<text>` label. The reference rule means **good = below / lower loss,
+bad = above / higher loss**.
 
 ### 5.2 Worked snippet — the sparkline
 
@@ -486,7 +490,7 @@ export function sparkline(opts) {
 
 A horizontal-bar tenure chart — **directly the model for an execution timeline**:
 one row per entity, a bar spanning the rounds it held, round-axis ticks along the
-top, the current item in `--v2-accent` + `♛`, former items dim ink + `♔`
+top, the current item in `--v2-accent` + the solid crown, former items dim ink + the open crown
 (`svg.js`, abridged):
 
 ```js
@@ -508,11 +512,12 @@ export function reignGantt(opts) {
     const cy = top + i * rowH + rowH / 2;
     const x0 = x(r.fromRound ?? 0), x1 = x(r.toRound ?? maxRound);
     const current = !!r.current;
-    // label: "id ♛" current / "id ♔" former
+    // label: the id, then the solid crown (current) or the open crown (former)
+    iconBeside(g, lbl, current ? CROWN.current : CROWN.former, 10.5, { tone: current ? 'accent' : 'faint' });
     g.appendChild(hov(svgEl('rect', {
       x: x0, y: cy - rowH * 0.32, width: Math.max(4, x1 - x0), height: rowH * 0.64, rx: 3,
       class: 'dn-reigngantt-bar' + (current ? ' dn-reigngantt-bar-current' : ' dn-reigngantt-bar-former'),
-    }), `${r.id} ${current ? CROWN.current + ' current' : CROWN.former + ' former'} · held r${r.fromRound}…`));
+    }), `${r.id} ${current ? 'current' : 'former'} champion · held r${r.fromRound}…`));
   });
 }
 ```
@@ -564,10 +569,10 @@ All scoped under `#console-root`; all token-only.
 | --- | --- | --- |
 | primary action / themed link-button | `a.dn-linkbtn` | mono, `1px solid var(--v2-accent)`, transparent → on hover fills `--v2-accent` with `--v2-paper` text |
 | up / back | `.dt-back` | mono, `1px solid var(--v2-rule)`, hover → accent fill |
-| icon button (reset) | `.dn-set-reset` | `⟲`, hover → accent fill |
+| icon button (reset) | `.dn-set-reset` | the `reset` icon, hover → accent fill |
 
 ```html
-<a class="dn-linkbtn" href="#/e/epoch-3">open transcript →</a>
+<a class="dn-linkbtn" href="#/e/epoch-3">open transcript <svg class="zi zi-forward" data-icon="forward" …/></a>
 ```
 
 Do: keep buttons mono and outline-first, filling the accent only on hover/active.
@@ -576,7 +581,7 @@ Do not: leave a link unstyled.
 ### 6.2 Pills & badges
 
 ```html
-<span class="dn-pill dn-promoted">♛ promoted</span>
+<span class="dn-pill dn-promoted">promoted</span>
 <span class="dn-pill dn-rejected">rejected</span>
 <span class="dn-pill dn-pending">racing</span>   <!-- accent, NOT red -->
 ```
@@ -624,9 +629,9 @@ rather than crowding the figure.
 ### 6.6 Tabs / section rails
 
 The Settings surface (`.dn-settings`) is a section **rail + host**:
-`a.dn-set-railitem` (active → `.dn-set-railitem-active`, accent glyph
-`.dn-set-railglyph`). Disclosure sections use `.dn-brief` (a `<details>` with a
-rotating `.chev`). The epoch publication renders as panels rather than a tab
+`a.dn-set-railitem` (active → `.dn-set-railitem-active`, the section icon in
+`.dn-set-railglyph` in accent). Disclosure sections use `.dn-brief` (a `<details>` with a
+rotating `.chev` chevron icon). The epoch publication renders as panels rather than a tab
 strip.
 
 ### 6.8 The swatch / typeface pickers
@@ -732,6 +737,33 @@ The discipline in full:
   but muddies at 16px, so the **tab favicon** is a simplified `z` + green
   plucked-note (`docs/brand/zicato-favicon.svg`); the full mark stays for the
   180px apple-touch tile. Different mark by size — standard favicon practice.
+- **The icon set** — every other mark the console draws comes from one module,
+  `js/icons.js`: loop controls, close, verdicts, crowns, tree marks, live-feed
+  marks, chevrons, refresh, overflow, execution kinds and link arrows. The
+  console never types these as Unicode symbols. The bundled faces carry few of
+  them, so a browser would substitute a system font, whose weight, baseline and
+  advance change with the operating system and the typeface choice, and would
+  render some as colour emoji. Each icon follows the brand mark's line
+  character on a smaller grid:
+  - a `0 0 16 16` viewBox, a `1.5`-unit stroke with round caps and joins, and
+    `stroke: currentColor`, so an icon takes the colour of the text around it;
+    a filled part (the current champion's crown, the play triangle, the dots of
+    the overflow mark) fills with `currentColor` too;
+  - `aria-hidden="true"`: the control or row carrying the icon names itself
+    through its words or its `aria-label`;
+  - in running text an icon is one em square (`.zi` in `console.css`); inside a
+    figure it takes explicit `x`, `y` and size (`svg.js` `figIcon`,
+    `iconBeside`) and a `dt-icon-<tone>` class for its colour;
+  - `icon(name)` builds one, `iconLabel(name, words)` returns an icon plus its
+    words as children, and `patchIconLabel` updates a long-lived node only when
+    the icon or the words change, so a no-op heartbeat writes nothing.
+
+  Characters that are text inside words or values stay typed: the `·`
+  separator, dashes, the `…` truncation marker, typographic quotes, arrows
+  inside prose and axis captions (`cause → effect`, `rounds →`, `scalar ↓`),
+  `×` and `±` in values, and the mathematical signs of formulas. The node test
+  `test/icons.test.mjs` fails when any other non-letter symbol appears in the
+  modules' string text.
 
 See [docs/brand/README.md](../brand/README.md) for the asset table and usage.
 
@@ -808,7 +840,7 @@ phases.forEach((p, i) => {
     height: rowH * 0.64, rx: 3, class: 'hg-bar ' + cls,
   });
   hov(bar, `${p.name} · ${fmt((p.end - p.start) / 1000, 1)}s · ${p.status}`);
-  // current phase gets a ♛-style marker; the running edge is dashed accent
+  // the current phase gets a crown-style marker; the running edge is dashed accent
 });
 ```
 

@@ -1,6 +1,7 @@
 // Settings: digest-gated contract, model-engine, and appearance sections.
 
 import { el, clearChildren } from '../core/dom.js';
+import { icon } from '../icons.js';
 import {
   gatedSwap, section, empty, readColor, readType, readFontSize,
 } from '../ui.js';
@@ -30,9 +31,9 @@ import {
 } from '../shell.js';
 
 const SECTIONS = [
-  { id: 'contract', label: 'Contract', glyph: '◷' },
-  { id: 'models', label: 'Models / LLM endpoints', glyph: '✦' },
-  { id: 'appearance', label: 'Appearance', glyph: '◑' },
+  { id: 'contract', label: 'Contract', mark: 'contract' },
+  { id: 'models', label: 'Models / LLM endpoints', mark: 'models' },
+  { id: 'appearance', label: 'Appearance', mark: 'appearance' },
 ];
 
 
@@ -78,7 +79,7 @@ function renderRail() {
       href: _ctx.href('settings', { section: s.id }),
       'aria-current': s.id === _active ? 'page' : null,
     }, [
-      el('span', { class: 'dn-set-railglyph', 'aria-hidden': 'true', text: s.glyph }),
+      el('span', { class: 'dn-set-railglyph', 'aria-hidden': 'true' }, [icon(s.mark)]),
       el('span', { class: 'dn-set-raillabel', text: s.label }),
     ]));
     return items;
@@ -238,8 +239,8 @@ function scalePicker(current) {
   range.addEventListener('change', onScale);
   const reset = el('button', {
     class: 'dn-set-reset', type: 'button',
-    title: 'Reset page scale to 100%', 'aria-label': 'Reset page scale to 100%', text: '⟲',
-  });
+    title: 'Reset page scale to 100%', 'aria-label': 'Reset page scale to 100%',
+  }, [icon('reset')]);
   reset.addEventListener('click', () => {
     const n = resetScale();
     range.value = String(n);

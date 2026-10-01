@@ -25,7 +25,7 @@
 // These exercise the REAL modules (svg.js builders, structure.js render*, live.js
 // LiveController) with inline fixtures — no live run, no network.
 
-import { installDom, test, run, assert, assertEqual } from './harness.mjs';
+import { installDom, test, run, assert, assertEqual, iconNames } from './harness.mjs';
 import { elimPayload } from './recorded.mjs';
 
 installDom();
@@ -329,7 +329,7 @@ test('single-elim — single-round radial renders each lifecycle stage (in-fligh
   const f = renderSingleRound(elimLive('inflight'), true);
   const radial = svgsByClass(f, 'dn-elimradial')[0];
   assert(radial, 'live: the radial bracket renders');
-  assert(/✕/.test(textOf(radial)), 'live: a decided semifinal cut shows ✕ in the radial');
+  assert(iconNames(radial).includes('fail'), 'live: a decided semifinal cut shows the fail mark in the radial');
   assert(nodesByClass(radial, 'dn-elimradial-pending').length >= 1, 'live: the in-flight final reads as pending (not falsely decided)');
 
   // settled: the survivor reaches the center gate with a crown, no pending spokes.
@@ -337,7 +337,7 @@ test('single-elim — single-round radial renders each lifecycle stage (in-fligh
   const radialS = svgsByClass(s, 'dn-elimradial')[0];
   assert(radialS, 'settled: the radial bracket renders');
   assert(nodesByClass(radialS, 'dn-elimradial-pending').length === 0, 'settled: NO pending spokes remain (committed)');
-  assert(/✕/.test(textOf(radialS)), 'settled: the eliminated lanes still read ✕');
+  assert(iconNames(radialS).includes('fail'), 'settled: the eliminated lanes still draw the fail mark');
 });
 
 test('single-elim — live hero renders the radial mini + emits the ✕ elimination glyph', () => {
@@ -346,7 +346,7 @@ test('single-elim — live hero renders the radial mini + emits the ✕ eliminat
     activeRuns: [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r1' }] });
   const radial = svgsByClass(figHost, 'dn-elimradial')[0];
   assert(radial, 'hero: the single-elim mini is the radial');
-  assert(/✕/.test(textOf(radial)), 'hero: the decided semifinal emits ✕');
+  assert(iconNames(radial).includes('fail'), 'hero: the decided semifinal draws the fail mark');
   assertEqual(svgsByClass(figHost, 'dn-scalartrack').length, 0, 'hero: no racing scalar track for an elim run');
   // FULL-WIDTH HERO: the radial scales aspect-locked; as a SQUARE figure its
   // svg.dn-elimradial-hero cap centres it under the cap (margin-inline:auto).
@@ -387,7 +387,7 @@ test('double-elim — the single-round radial renders the WB→LB transfer arc +
   const s = renderSingleRound(DELIM_SETTLED, false);
   const radialS = svgsByClass(s, 'dn-elimradial')[0];
   assert(radialS, 'settled: the double-elim radial renders');
-  assert(/✕/.test(textOf(radialS)), 'settled: the true (second-loss) eliminations read ✕');
+  assert(iconNames(radialS).includes('fail'), 'settled: the true (second-loss) eliminations draw the fail mark');
   assertEqual(nodesByClass(radialS, 'dn-elimradial-pending').length, 0, 'settled: no pending spoke remains');
 });
 

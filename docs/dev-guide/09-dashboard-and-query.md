@@ -2106,13 +2106,13 @@ after 4 s:
   const disarm = () => {
     armed = false;
     if (timer != null) { clearTimeout(timer); timer = null; }
-    patchText(skip, '⏭ skip round');
+    patchIconLabel(skip, 'skip', 'skip round');
     skip.classList.remove('dt-loopctl-armed');
   };
   skip.addEventListener('click', () => {
     if (!armed) {
       armed = true;
-      patchText(skip, 'confirm skip?');
+      patchIconLabel(skip, null, 'confirm skip?');
       skip.classList.add('dt-loopctl-armed');
       timer = setTimeout(disarm, 4000);
       return;
@@ -2125,7 +2125,7 @@ after 4 s:
 
 The per-challenger override (`overrideControlCell`) uses the same
 arm→confirm idiom but a richer one — arming reveals a reason input plus
-direction buttons (promote ↑ / reject ✕) plus cancel, never a one-click
+direction buttons (promote with the up icon / reject with the fail icon) plus cancel, never a one-click
 force-decision. Both surfaces short-circuit to a spent/disabled state when
 an override is already recorded or the round has settled.
 

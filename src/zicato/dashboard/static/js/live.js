@@ -26,6 +26,7 @@
 // is honoured in CSS (the JS only adds/keeps stable nodes; CSS gates ALL motion).
 
 import { el, patchText, patchClass } from './core/dom.js';
+import { icon, patchIconLabel } from './icons.js';
 import {
   isNum, swissLadder,
   racingScalarTrack, racingScalarTrackDigest,
@@ -236,17 +237,17 @@ export function deriveActivity(prev, next, seq) {
       // the champion gate decided.
       const dec = String(cur.decision || '').toLowerCase();
       if (dec && dec !== String(was.decision || '').toLowerCase()) {
-        if (dec.includes('promot')) push('gate', 'champion-gate · ' + label(cur.winner) + ' promoted ' + CROWN.current, 'good', cur.winner);
+        if (dec.includes('promot')) push('gate', 'champion-gate · ' + label(cur.winner) + ' promoted', 'good', cur.winner);
         else push('gate', 'champion-gate · champion stands', 'neutral', cur.winner);
       }
       continue;
     }
-    if (newlyCut.length) push('cut', 'rung cut · ' + newlyCut.map(label).join(', ') + ' eliminated ✕', 'bad', newlyCut[0]);
-    if (newlySurv.length && was.survivors.length) push('survive', 'rung · ' + newlySurv.map(label).join(', ') + ' survive ↑', 'good', newlySurv[0]);
+    if (newlyCut.length) push('cut', 'rung cut · ' + newlyCut.map(label).join(', ') + ' eliminated', 'bad', newlyCut[0]);
+    if (newlySurv.length && was.survivors.length) push('survive', 'rung · ' + newlySurv.map(label).join(', ') + ' survive', 'good', newlySurv[0]);
   }
 
   // a promotion confirmed via lineage growth.
-  if (prev && next.lineageLen > prev.lineageLen) push('promote', 'promotion · the lineage advanced ' + CROWN.current, 'good');
+  if (prev && next.lineageLen > prev.lineageLen) push('promote', 'promotion · the lineage advanced', 'good');
 
   // newest-first.
   out.reverse();
@@ -341,7 +342,7 @@ export function pipelineStepper(pipe) {
   steps.forEach((s, i) => {
     if (!s || !s.id) return;
     const state = (s.state === 'done' || s.state === 'active') ? s.state : 'pending';
-    if (i > 0 || open) wrap.appendChild(el('span', { class: 'dt-pipe-sep', 'aria-hidden': 'true', text: '→' }));
+    if (i > 0 || open) wrap.appendChild(el('span', { class: 'dt-pipe-sep', 'aria-hidden': 'true' }, [icon('forward')]));
     const node = el('span', { class: 'dt-pipe-step dt-pipe-' + state, 'data-step': String(s.id) }, [
       el('span', { class: 'dt-pipe-dot', 'aria-hidden': 'true' }),
       el('span', { class: 'dt-pipe-label', text: s.label || s.id }),
@@ -434,22 +435,23 @@ export class ActivityTicker {
 
   _buildRow(ev) {
     return el('div', { class: 'dt-ticker-row dt-ticker-' + (ev.tone || 'neutral'), 'data-kind': ev.kind || '' }, [
-      el('span', { class: 'dt-ticker-glyph', 'aria-hidden': 'true', text: glyphFor(ev) }),
+      el('span', { class: 'dt-ticker-glyph', 'aria-hidden': 'true' }, [icon(iconFor(ev))]),
       el('span', { class: 'dt-ticker-text', text: ev.text || '' }),
     ]);
   }
 }
 
-function glyphFor(ev) {
+// The mark each ticker row leads with, by event kind; a phase change (or any
+// other kind) takes a small dot.
+function iconFor(ev) {
   switch (ev && ev.kind) {
-    case 'cut': return '✕';
-    case 'survive': return '↑';
+    case 'cut': return 'fail';
+    case 'survive': return 'up';
     case 'gate': return CROWN.current;
     case 'promote': return CROWN.current;
-    case 'run': return '✓';
-    case 'matchup': return '▸';
-    case 'phase': return '·';
-    default: return '·';
+    case 'run': return 'pass';
+    case 'matchup': return 'expand';
+    default: return 'dot';
   }
 }
 
@@ -465,13 +467,12 @@ function glyphFor(ev) {
 //
 // `blocks` is liveMatchBlocks(model)'s output; `onCompetitor(id)` opens a
 // candidate. Pure: returns a detached node.
-function blockOutcomeGlyph(outcome) {
+function blockOutcomeIcon(outcome) {
   switch (outcome) {
-    case 'win': return '✓';
-    case 'loss': return '✗';
-    case 'timeout': return '⏱';
-    case 'queued': return '·';
-    default: return '';
+    case 'win': return 'pass';
+    case 'loss': return 'fail';
+    case 'timeout': return 'timeout';
+    default: return null;
   }
 }
 
@@ -507,8 +508,7 @@ export function followRunButton(gen, runInfo, onFollow) {
     class: 'dt-live-follow', type: 'button', 'data-follow-run': entry,
     title: 'follow the live conversation for ' + gen + ' on ' + entry,
     'aria-label': 'follow live conversation for ' + gen + ' on ' + entry,
-    text: '💬',
-  });
+  }, [icon('message')]);
   btn.addEventListener('click', (ev) => {
     if (ev && ev.stopPropagation) ev.stopPropagation();
     onFollow(gen, entry, runId);
@@ -605,8 +605,9 @@ function liveMatchRow(e, onCompetitor, ctl) {
   if (proj) {
     tag = el('span', { class: 'dt-live-match-tag dt-proj-badge', text: 'PROJ' });
   } else if (settled) {
+    const mark = blockOutcomeIcon(e.outcome);
     tag = el('span', { class: 'dt-live-match-tag dt-live-match-state' + (e.outcome === 'win' ? ' dn-good' : e.outcome === 'loss' ? ' dn-bad' : ''),
-      text: blockOutcomeGlyph(e.outcome) });
+      role: mark ? 'img' : null, 'aria-label': mark ? String(e.outcome) : null }, mark ? [icon(mark)] : null);
   } else if (queued) {
     tag = el('span', { class: 'dt-live-match-tag dt-live-match-state dn-faint', text: 'queued' });
   } else {
@@ -778,7 +779,7 @@ export class LiveController {
     patchClass(this._band, 'dt-live-band-live', lv.state === LIVENESS.LIVE);
     patchClass(this._band, 'dt-live-band-interrupted', lv.state === LIVENESS.INTERRUPTED);
     // The toggle is meaningless without a drawer to toggle.
-    patchText(this._bandToggle, lv.live ? (this._collapsed ? '▸ details' : '▾ details') : '');
+    patchIconLabel(this._bandToggle, lv.live ? (this._collapsed ? 'expand' : 'collapse') : null, lv.live ? 'details' : '');
     this._bandToggle.setAttribute('aria-expanded', lv.live && !this._collapsed ? 'true' : 'false');
     patchClass(this._bandToggle, 'dt-live-band-toggle-on', !!lv.live);
   }

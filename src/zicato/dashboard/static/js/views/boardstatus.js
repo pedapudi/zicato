@@ -24,6 +24,7 @@
 
 import { el } from '../core/dom.js';
 import * as svg from '../svg.js';
+import { iconLabel } from '../icons.js';
 import { section, empty, truncate, hovercardBody, stat, chip, moreMark, fmtPercent, ENTRY_KIND_LABEL } from '../ui.js';
 import { attachHovercard } from '../hovercard.js';
 
@@ -398,7 +399,7 @@ function ladderCard(ladder) {
   } else {
     lines.push(el('div', { class: 'dn-hc-row dn-faint', text: 'No holdout step recorded yet.' }));
   }
-  lines.push(el('a', { class: 'dn-hc-link', href: DOC_HREF, text: 'overfitting design →' }));
+  lines.push(el('a', { class: 'dn-hc-link', href: DOC_HREF }, iconLabel('forward', 'overfitting design', { after: true })));
   return hovercardBody(lines);
 }
 
@@ -417,7 +418,7 @@ function gapPanel(gap) {
       'The gap is holdout loss minus train loss. A champion that keeps improving'
       + ' on train while the holdout stalls or worsens is overfitting the train slice:'
       + ' a WIDENING gap (holdout loss pulling above train) = overfitting.' }),
-    el('a', { class: 'dn-hc-link', href: DOC_HREF, text: 'overfitting design →' }),
+    el('a', { class: 'dn-hc-link', href: DOC_HREF }, iconLabel('forward', 'overfitting design', { after: true })),
   ]), { title: 'what a widening gap means' }));
   wrap.appendChild(head);
 

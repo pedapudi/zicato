@@ -74,7 +74,7 @@ function readRadial(node) {
       transfers.push({ start: { x: Number(m[1]), y: Number(m[2]) }, end: { x: Number(m[4]), y: Number(m[5]) }, r: Number(m[3]) });
     }
     if (!cls.includes('dn-elimradial-spoke')) return;
-    const sp = { id: null, label: '', segs: [], nodes: [], cut: null, gate: false, side: null, outer: null };
+    const sp = { id: null, label: '', marks: [], segs: [], nodes: [], cut: null, gate: false, side: null, outer: null };
     walk(n, (c) => {
       const cc = clsOf(c);
       const tone = cc.includes('dn-good') ? 'good' : cc.includes('dn-bad') ? 'bad'
@@ -89,7 +89,10 @@ function readRadial(node) {
         sp.nodes.push({ ring, tone });
         if (ring === 0) sp.outer = { x: num(c, 'cx'), y: num(c, 'cy') };
       } else if (cc.includes('dn-elimradial-cut')) {
-        sp.cut = ringOf(num(c, 'x'), num(c, 'y') - 3.2);
+        // the fail mark is an icon: its centre sits on the loss point.
+        sp.cut = ringOf(num(c, 'x') + num(c, 'width') / 2, num(c, 'y') + num(c, 'height') / 2);
+      } else if (c.getAttribute && c.getAttribute('data-icon')) {
+        sp.marks.push(c.getAttribute('data-icon'));
       } else if (cc.includes('dn-elimradial-name')) {
         sp.label = c.textContent;
         sp.id = String(c.textContent).trim().split(/\s+/)[0];
@@ -114,7 +117,7 @@ function radial(model, extra) {
 
 // ---- SINGLE-ELIM (settled, with a champion crowned) ----------------------
 
-test('single-elim radial: each spoke survives inward ring by ring, the loser ends with ✕ at its loss, the champion dashes into the seat', () => {
+test('single-elim radial: each spoke survives inward ring by ring, the loser ends with the fail mark at its loss, the champion dashes into the seat', () => {
   // v0 = champion (benchmark). 4 challengers v1..v4.
   //   R0: WB-R0-0 v1>v2, WB-R0-1 v3>v4
   //   R1: WB-R1-0 v1>v3
@@ -141,7 +144,7 @@ test('single-elim radial: each spoke survives inward ring by ring, the loser end
   assert(survived(v1, 0) && survived(v1, 1) && survived(v1, 2), 'v1 survives R0, R1 and the final (good segments ring 0→1→2→3)');
   assert(v1.gate, 'v1 dashes from the innermost ring into the champion seat');
   assertEqual(v1.cut, null, 'the champion is never marked eliminated');
-  assert(v1.label.includes(svg.CROWN.current), 'the champion spoke carries the current crown');
+  assert(v1.marks.includes(svg.CROWN.current), 'the champion spoke carries the current crown');
 
   // v3 wins R0 then loses R1: its true (and only) elimination ✕ is at R1.
   const v3 = f.byId('v3');
@@ -165,7 +168,7 @@ test('single-elim radial: each spoke survives inward ring by ring, the loser end
   // every survival segment runs inward (outer ring → the next ring in).
   for (const sp of f.spokes) for (const s of goodSegs(sp)) assert(s.to === s.from + 1, `${sp.id}: a survival segment steps one ring inward (${s.from}→${s.to})`);
   // the displaced incumbent reads the former crown.
-  assert(f.byId('v0').label.includes(svg.CROWN.former), 'the displaced incumbent v0 reads ♔');
+  assert(f.byId('v0').marks.includes(svg.CROWN.former), 'the displaced incumbent v0 carries the former crown');
 });
 
 // ---- DOUBLE-ELIM (settled, with a losers-bracket drop) -------------------

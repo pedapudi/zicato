@@ -5,7 +5,7 @@
 //
 // Shared fixtures and helpers live in ./fixtures.mjs.
 
-import { installDom, test, run, assert, assertEqual, assertDeep, makeEvent } from './harness.mjs';
+import { installDom, test, run, assert, assertEqual, assertDeep, makeEvent, iconNames } from './harness.mjs';
 
 installDom();
 
@@ -131,8 +131,8 @@ test('structure: the "Proposed field" section renders applied ✓ / rejected ✗
   const badRows = allByClass(host, 'dn-prop-row-bad');
   assertEqual(okRows.length, 2, 'two applied rows');
   assertEqual(badRows.length, 1, 'one rejected row');
-  assert(okRows[0].textContent.includes('✓') && okRows[0].textContent.includes('v1'), 'the applied row shows ✓ + v1');
-  assert(badRows[0].textContent.includes('✗') && badRows[0].textContent.includes('v2'), 'the rejected row shows ✗ + v2');
+  assert(iconNames(okRows[0]).includes('pass') && okRows[0].textContent.includes('v1'), 'the applied row shows the pass mark + v1');
+  assert(iconNames(badRows[0]).includes('fail') && badRows[0].textContent.includes('v2'), 'the rejected row shows the fail mark + v2');
   // the rejection reason is reachable via the hovercard (attached to the row).
   const hc = await import('../js/hovercard.js');
   hc.show(badRows[0], 'x'); // prime the card surface (the row carries a hovercard binding)
@@ -659,9 +659,9 @@ test('epoch timeline (swiss): the round episode embeds the standings BUMP chart 
   assert(allByClass(over, 'dn-swissover-line-champ').length >= 1, 'the champion line is emphasised');
   // (2) the ranked Copeland-point bar (the standings, one bar each).
   assert(allByClass(over, 'dn-swissover-bar').length >= 2, 'the ranked Copeland bars rendered');
-  assert(over.textContent.includes('♔'), 'the leader is marked ♔ on the ranked bar');
+  assert(iconNames(over).includes('crown-former'), 'the leader is marked with the open crown on the ranked bar');
   // the champion-gate verdict.
-  assert(over.textContent.includes('promoted') || over.textContent.includes('♛'),
+  assert(over.textContent.includes('promoted') || iconNames(over).includes('crown'),
     'the champion-gate verdict (promoted ♛) is shown');
   // the episode drills into the round's full Match-ups.
   assert(host.textContent.includes('open round'), 'the episode keeps the "open round →" drill affordance');

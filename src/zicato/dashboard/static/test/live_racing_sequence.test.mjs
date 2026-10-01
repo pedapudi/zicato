@@ -22,7 +22,7 @@
 // + the real champion benchmark, the hero scalar-track mini, one "what's running"
 // block per rung, settled convergence, and anti-flash on no-op repeats.
 
-import { installDom, test, run, assert, assertEqual } from './harness.mjs';
+import { installDom, test, run, assert, assertEqual, labelledWith } from './harness.mjs';
 
 installDom();
 
@@ -333,9 +333,9 @@ test('sequence — the SURVIVAL FUNNEL renders the WHOLE rung sequence mid-fligh
   assert(/Rung 0/.test(t), 'funnel: Rung 0 (the first 4→2 narrowing) is present');
   assert(/Rung 1/.test(t), 'funnel: Rung 1 (the active rung) is present');
   assert(/champion-gate/.test(t), 'funnel: the champion-gate is present');
-  // Rung 0 shows its narrowing: two survivors (↑) + two cuts (✕).
-  assert(/v1 ↑/.test(t) && /v2 ↑/.test(t), 'funnel: Rung 0 survivors v1,v2 ride the band (↑)');
-  assert(/v3 ✕/.test(t) && /v4 ✕/.test(t), 'funnel: Rung 0 cuts v3,v4 peel off (✕)');
+  // Rung 0 shows its narrowing: two survivors (up mark) + two cuts (fail mark).
+  assert(labelledWith(funnel, 'v1', 'up') && labelledWith(funnel, 'v2', 'up'), 'funnel: Rung 0 survivors v1,v2 ride the band (up mark)');
+  assert(labelledWith(funnel, 'v3', 'fail') && labelledWith(funnel, 'v4', 'fail'), 'funnel: Rung 0 cuts v3,v4 peel off (fail mark)');
   // the DOT LADDER: a dot per competitor alive entering each rung + converging
   // splines carrying the survivors forward, in place of a band-polygon count.
   const dots = nodesByClass(funnel, 'dn-funnel-dot');

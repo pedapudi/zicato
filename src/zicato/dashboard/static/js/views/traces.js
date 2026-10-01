@@ -35,6 +35,7 @@
 import { el } from '../core/dom.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
+import { icon } from '../icons.js';
 import { section, empty, renderView, dataTable } from '../ui.js';
 import { buildTurnNode } from './board.js';
 
@@ -98,7 +99,7 @@ function digestFor(d) {
   const x = d.detail || {};
   const turns = (Array.isArray(x.turns) ? x.turns : []).map((t) => [t.index, t.role, (t.text || '').length, !!t.truncated]);
   const eps = (Array.isArray(x.episodes) ? x.episodes : []).map((e) => [
-    e.episode_id, e.episode_type, e.tone, e.glyph,
+    e.episode_id, e.episode_type, e.tone, e.signal_kind,
     e.span && e.span.anchor, e.span && e.span.x0, e.span && e.span.x1,
     (e.suggestion_ids || []).join(','), e.summary,
   ]);
@@ -285,7 +286,7 @@ function episodeAnchor(e, focus) {
   row.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault && ev.preventDefault(); focus(e.episode_id); } });
 
   row.appendChild(el('div', { class: 'dn-trace-ep-head' }, [
-    el('span', { class: 'dn-trace-ep-glyph dn-strip-t-' + tone, 'aria-hidden': 'true', text: e.glyph || '○' }),
+    el('span', { class: 'dn-trace-ep-glyph dn-strip-t-' + tone, 'aria-hidden': 'true' }, [icon(svg.signalIcon(e.signal_kind))]),
     el('span', { class: 'dn-trace-ep-sum', text: e.summary || (e.signal_kind || e.episode_type || 'episode') }),
   ]));
 

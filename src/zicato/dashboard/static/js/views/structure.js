@@ -9,6 +9,7 @@
 
 import { el, svgEl } from '../core/dom.js';
 import * as svg from '../svg.js';
+import { icon, iconLabel } from '../icons.js';
 import { section, empty, stat, verdictPill, overrideChip, overrideControlCell, pendingOverride, clearPendingOverride, chip, hovercardBody, dataTable, ratingCellEl, coreIdeaLine } from '../ui.js';
 import { structureStatusLabel } from '../livestatus.js';
 import { attachHovercard } from '../hovercard.js';
@@ -80,7 +81,7 @@ function diversitySection(st, ctx, epochId) {
   if (pair && pair.length === 2) {
     attachHovercard(meter, () => hovercardBody([
       el('div', { class: 'dn-hc-title', text: 'most-overlapping pair' }),
-      el('div', { class: 'dn-hc-row dn-mono', text: pair[0] + ' ⇄ ' + pair[1] }),
+      el('div', { class: 'dn-hc-row dn-mono' }, [pair[0] + ' ', icon('swap'), ' ' + pair[1]]),
       el('div', { class: 'dn-hc-row dn-faint', text: 'Jaccard ' + svg.fmt(maxO, 2)
         + (tol != null ? ' · tolerance ' + svg.fmt(tol, 2) : ' · enforcement off') }),
     ]));
@@ -185,7 +186,7 @@ function proposedFieldSection(st, ctx, epochId) {
 // The shared champion-gate CAPTION fragment: the crowned / stands /
 // deciding phrase every figure's caption appends. An undecided gate → ''.
 function gateNoteFor(gateState, championId) {
-  return gateState === 'crowned' ? ` · champion-gate: ${championId} promoted ${CROWN.current}`
+  return gateState === 'crowned' ? ` · champion-gate: ${championId} promoted`
     : gateState === 'stands' ? ' · champion-gate: champion stands'
     : gateState === 'deciding' ? ' · champion-gate: deciding…' : '';
 }
@@ -216,12 +217,13 @@ function renderBracket(st, ctx, epochId, structure) {
       })
     : empty(model.live ? 'The bracket is being seeded — matches fill in as runs land.' : 'No bracket rounds recorded yet.'));
   if (model.winners.length) {
-    card.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text:
-      'rounds are concentric rings narrowing to the champion seat at the center; each spoke is a generation — the rings it survived read green, the ring it was eliminated at turns red ✕, and the survivor dashes into the center gate ' + CROWN.current
-      + (model.benchmarkId ? ' · ' + CROWN.former + ' = displaced incumbent' : '')
-      + (isDouble ? ' · winners’ bracket on the upper arc, losers’ on the lower; a dashed arc along the rim carries a first loss down into the losers’ bracket' : '')
+    card.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;' }, [
+      'rounds are concentric rings narrowing to the champion seat at the center; each spoke is a generation — the rings it survived read green, the ring it was eliminated at turns red ', icon('fail'),
+      ', and the survivor dashes into the center gate ', icon(CROWN.current),
+      ...(model.benchmarkId ? [' · ', icon(CROWN.former), ' = displaced incumbent'] : []),
+      (isDouble ? ' · winners’ bracket on the upper arc, losers’ on the lower; a dashed arc along the rim carries a first loss down into the losers’ bracket' : '')
       + gateNoteFor(model.gateState, model.championId)
-      + (model.live ? ' · LIVE — still-racing spokes are dashed' : '') }));
+      + (model.live ? ' · LIVE — still-racing spokes are dashed' : '')]));
   }
   nodes.push(section(model.live ? 'Bracket · LIVE — rings narrowing to the champion gate' : 'Bracket · rings narrowing to the champion gate', card));
 
@@ -245,10 +247,11 @@ function renderSwiss(st, ctx, epochId) {
     : empty(model.live ? 'The swiss is being seeded — pairings fill in as runs land.' : 'No swiss rounds recorded yet.'));
   if (model.hasRounds) {
     const gateNote = gateNoteFor(model.gateState, model.championId);
-    lCard.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text:
-      'each round pairs the field; Copeland points accumulate (win 1 / draw ½) · hover a pairing for its Δ scalar · ' + CROWN.current + ' = champion · ' + CROWN.former + ' = former champion (displaced incumbent) — the swiss leader must beat the incumbent at the champion-gate'
+    lCard.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;' }, [
+      'each round pairs the field; Copeland points accumulate (win 1 / draw ½) · hover a pairing for its Δ scalar · ', icon(CROWN.current), ' = champion · ',
+      icon(CROWN.former), ' = former champion (displaced incumbent) — the swiss leader must beat the incumbent at the champion-gate'
       + gateNote
-      + (model.live ? ' · LIVE — the winner is not committed until the final gate' : '') }));
+      + (model.live ? ' · LIVE — the winner is not committed until the final gate' : '')]));
   }
   // ONE view: the ladder lays out every round's pairings (with winners and Δ on
   // hover) alongside the accumulating standings and the champion-gate, so a
@@ -323,9 +326,9 @@ function renderRacing(st, ctx, epochId) {
       rungs, championId, benchmarkId, live, gateState, gateDelta,
       responsive: true, onCompetitor: openGen,
     }));
-    flowCard.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text:
-      'each rung races the field on a fraction of the board, then cuts the worst by η · ✕ = cut · ↑ = survives · ' + CROWN.current + ' = champion-gate winner'
-      + (live ? ' · LIVE — in-flight lanes read "k/N boards"' : '') }));
+    flowCard.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;' }, [
+      'each rung races the field on a fraction of the board, then cuts the worst by η · ', icon('fail'), ' = cut · ', icon('up'), ' = survives · ',
+      icon(CROWN.current), ' = champion-gate winner' + (live ? ' · LIVE — in-flight lanes read "k/N boards"' : '')]));
     nodes.push(section(live ? 'Survival funnel · LIVE — field narrowing rung-by-rung' : 'Survival funnel · field narrowing rung-by-rung', flowCard));
   }
 
@@ -353,10 +356,11 @@ function renderGauntlet(st, ctx, epochId) {
       })
     : empty(live ? 'The gauntlet is being seeded — challengers fill in as runs land.' : 'No challengers recorded for this gauntlet.'));
   if (model.hasField) {
-    card.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text:
+    card.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;' }, [
       (model.championId ? `the wave is measured against the champion standard = ${model.championId}` + (svg.isNum(model.championScalar) ? ` (${svg.fmt(model.championScalar, 2)})` : '') + ' · ' : '')
-      + 'each bar runs from the standard out to a challenger’s scalar (lower = better); a bar that clears the dashed promote gate reads ↑ survivor · ✕ = failed the gate · click a challenger → open'
-      + (live ? ' · LIVE — in-flight challengers ghost in with a "k/N boards" sub-bar; the winner is not committed until the gate' : '') }));
+      + 'each bar runs from the standard out to a challenger’s scalar (lower = better); a bar that clears the dashed promote gate reads ', icon('up'), ' survivor · ',
+      icon('fail'), ' = failed the gate · click a challenger → open'
+      + (live ? ' · LIVE — in-flight challengers ghost in with a "k/N boards" sub-bar; the winner is not committed until the gate' : '')]));
   }
   nodes.push(section(live ? 'Gauntlet field · LIVE — the wave vs the champion standard' : 'Gauntlet field · the wave vs the champion standard', card));
 
@@ -523,7 +527,7 @@ function standingsTable(st, ctx, epochId, live) {
       cells: [
         { class: 'dn-mono', text: svg.isNum(s.rank) ? String(s.rank) : '—' },
         { class: 'dn-mono', el: [
-          el('span', { text: (s.generation_id || '—') + (status === 'champion' ? ' ' + CROWN.current : '') }),
+          el('span', null, status === 'champion' ? iconLabel(CROWN.current, s.generation_id || '—', { after: true }) : [s.generation_id || '—']),
           coreIdeaLine(ideaByGen ? ideaByGen[gidStr] : null),
         ].filter(Boolean) },
         { el: [statusPill(status), ovChip, divBadge] },
@@ -541,7 +545,7 @@ function standingsTable(st, ctx, epochId, live) {
             el('span', { class: 'dt-proj-bar-fill', style: 'width:' + Math.round(frac * 100) + '%;' }),
           ]) : null,
           proj && frac != null ? el('span', { class: 'dt-proj-bar-lab', text: bd + '/' + bt }) : null,
-          s.generation_id ? el('a', { class: 'dn-linkbtn', href: ctx.href('candidate', { epochId, gen: s.generation_id }), text: 'open →' }) : null,
+          s.generation_id ? el('a', { class: 'dn-linkbtn', href: ctx.href('candidate', { epochId, gen: s.generation_id }), }, iconLabel('forward', 'open', { after: true })) : null,
         ] },
         { class: 'dn-ovr-col', el: ctlCell ? [ctlCell] : [] },
       ],

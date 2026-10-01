@@ -642,11 +642,29 @@
   .dn-chip-stalled { color: var(--v2-caution); border-color: var(--v2-caution); }
   .dn-chip-nosignal { color: var(--v2-ink-faint); border-color: var(--v2-rule); }
 
+  /* ---- the drawn icon set (js/icons.js) ----
+   * One construction for every chrome mark: a 16-unit grid, a 1.5-unit round-
+   * capped stroke in currentColor, so an icon takes the colour of the text
+   * around it. In text an icon is one em square on the text's centre line; in a
+   * figure it carries explicit x/y/width/height and is left alone. The fill and
+   * stroke are pinned on the icon root because figure classes on the same node
+   * set `fill` for text, which would otherwise paint an open outline solid. The
+   * `dt-icon-<tone>` classes colour a figure icon, whose surroundings set `fill`
+   * rather than `color`. */
+  .zi { fill: none !important; stroke: currentColor !important; overflow: visible; flex: none; }
+  .zi:not([width]) { display: inline-block; width: 1em; height: 1em; vertical-align: -0.14em; }
+  .dt-icon-good { color: var(--v2-good); }
+  .dt-icon-bad { color: var(--v2-bad); }
+  .dt-icon-caution { color: var(--v2-caution); }
+  .dt-icon-accent { color: var(--v2-accent); }
+  .dt-icon-faint { color: var(--v2-ink-faint); }
+  .dt-icon-neutral { color: var(--v2-ink-soft); }
+
   /* the overrideChip — operator-override provenance riding BESIDE a verdict
    * pill / status pill, NEVER recoloring it. Tone is earned by DIRECTION only
    * (no new hue): a force-promote reads good, a force-reject reads bad, a
    * queued override reads caution (pending), a drained one reads faint (never
-   * fired). The ⟳ mark + " · operator" attribution make the provenance legible.
+   * fired). The refresh mark + " · operator" attribution make the provenance legible.
    */
   .dn-override { display: inline-flex; align-items: center; gap: 3px; text-transform: lowercase; }
   .dn-override-mark { font-weight: 600; }
@@ -661,7 +679,7 @@
 
   /* the FIELD-OVERRIDE CONTROL cell — the operator's per-challenger force
    * promote/reject. CONFIRM-INLINE: the bare "override" button ARMS a confirm
-   * row (a reason field + promote↑/reject✕ + cancel); only the explicit confirm
+   * row (a reason field + promote/reject + cancel); only the explicit confirm
    * POSTs. The accent is the sole structural highlight; the promote/reject
    * confirm buttons earn their tone by DIRECTION (good/bad), never a new hue. */
   .dn-ovr-ctl { display: inline-flex; align-items: center; gap: 6px; font-family: var(--v2-mono); }
@@ -768,7 +786,7 @@
   .dn-brief summary { cursor: pointer; padding: 10px 14px; font-weight: 600; font-size: calc(12.5px * var(--dt-font-scale, 1));
     list-style: none; display: flex; align-items: center; gap: 8px; color: var(--v2-ink); }
   .dn-brief summary::-webkit-details-marker { display: none; }
-  .dn-brief summary .chev { transition: transform 0.15s; color: var(--v2-ink-faint); }
+  .dn-brief summary .chev { display: inline-flex; transition: transform 0.15s; color: var(--v2-ink-faint); }
   .dn-brief[open] summary .chev { transform: rotate(90deg); }
   .dn-md-body { padding: 4px 20px 16px; max-width: 80ch; line-height: 1.55; font-size: calc(13px * var(--dt-font-scale, 1));
     color: var(--v2-ink); border-top: 1px solid var(--v2-rule-soft); }
@@ -901,7 +919,7 @@
 
   .dn-glyph-pass { fill: var(--v2-good); }
   .dn-glyph-fail { stroke: var(--v2-bad); stroke-width: 1.3; }
-  .dn-glyph-timeout { fill: var(--v2-caution); font-size: 7px; }
+  .dn-glyph-timeout { color: var(--v2-caution); }
   .dn-glyph-none { fill: none; stroke: var(--v2-ink-faint); stroke-width: 0.8; }
 
   .dn-vbar { fill: var(--v2-accent); opacity: 0.85; }
@@ -932,8 +950,8 @@
     width: 7px; border-top: 1px solid var(--v2-rule); }
   .dn-exec-toggle { cursor: pointer; list-style: none; }
   .dn-exec-toggle::-webkit-details-marker { display: none; }
-  .dn-exec-toggle::before { content: '›'; display: inline-block; width: 10px; color: var(--v2-ink-faint); }
-  .dn-exec-node[open] > .dn-exec-toggle::before { transform: rotate(90deg); }
+  .dn-exec-caret { width: 10px; color: var(--v2-ink-faint); }
+  .dn-exec-node[open] > .dn-exec-toggle > .dn-exec-caret { transform: rotate(90deg); }
   .dn-exec-label { min-width: 0; }
   .dn-exec-glyph { display: inline-block; width: 15px; color: var(--v2-ink-faint); }
   .dn-exec-name { color: var(--v2-ink); font-weight: 600; }
@@ -1205,7 +1223,7 @@
   .dn-gate-defence > summary { display: flex; align-items: center; gap: 10px; padding: 7px 2px;
     cursor: pointer; list-style: none; font-size: calc(12px * var(--dt-font-scale, 1)); }
   .dn-gate-defence > summary::-webkit-details-marker { display: none; }
-  .dn-gate-defence > summary .chev { color: var(--v2-ink-faint); transition: transform 0.12s; }
+  .dn-gate-defence > summary .chev { display: inline-flex; color: var(--v2-ink-faint); transition: transform 0.12s; }
   .dn-gate-defence[open] > summary .chev { transform: rotate(90deg); }
   .dn-gate-defence-vs { color: var(--v2-ink); }
   .dn-gate-defence-delta { font-variant-numeric: tabular-nums; margin-left: auto; }
@@ -2316,7 +2334,7 @@
   .dn-roundtl-axis { fill: var(--v2-ink-faint); font: 11px var(--v2-mono); text-transform: uppercase; letter-spacing: 0.06em; }
   .dn-roundtl-disc { fill: var(--v2-panel); stroke: var(--v2-accent); stroke-width: 2; }
   .dn-roundtl-node.dn-roundtl-promote .dn-roundtl-disc { stroke: var(--v2-good); }
-  .dn-roundtl-glyph { fill: var(--v2-accent); font: 11px var(--v2-sans); }
+  .dn-roundtl-glyph { color: var(--v2-accent); }
   .dn-roundtl-champid { fill: var(--v2-ink); font: 600 12px var(--n-font-head); letter-spacing: 0.02em; }
   .dn-roundtl-loss { fill: var(--v2-ink-soft); font: 11px var(--v2-mono); font-variant-numeric: tabular-nums; }
   .dn-roundtl-rord { fill: var(--v2-ink-faint); font: 10px var(--v2-mono); }
@@ -2372,7 +2390,6 @@
     border: 1px solid color-mix(in srgb, var(--v2-accent) 55%, transparent); border-radius: 4px;
     padding: 1px 5px; line-height: 1.4; }
   .dn-roundtl-node.dn-roundtl-live .dn-roundtl-disc { stroke: var(--v2-accent); stroke-dasharray: 3 2.4; }
-  .dn-roundtl-node.dn-roundtl-live .dn-roundtl-glyph { fill: var(--v2-accent); }
   .dn-roundtl-chip.dn-roundtl-chip-proposing { border-style: dashed; color: var(--v2-ink-faint);
     border-color: color-mix(in srgb, var(--v2-accent) 45%, var(--v2-rule)); }
   .dn-roundtl-chip.dn-roundtl-chip-rejected { color: var(--v2-ink-faint);
@@ -2444,16 +2461,16 @@
   .dn-funnel-win .dn-funnel-dot { opacity: 1; }
   .dn-funnel-win .dn-funnel-spline,
   .dn-funnel-spline.dn-funnel-win-line { opacity: 0.95; stroke-width: 1.4; }
-  /* a cut drops a dim ✕ in the gap after its rung dot (the dn-bad polish idiom —
-     opacity 0.7, no strikethrough; the ✕ IS the mark). */
-  .dn-funnel-cut { fill: var(--v2-bad); font: 10px var(--v2-mono); opacity: 0.7; }
+  /* a cut drops a dim fail mark in the gap after its rung dot (the dn-bad polish
+     idiom — opacity 0.7, no strikethrough; the fail mark IS the cut). */
+  .dn-funnel-cut { opacity: 0.7; }
   /* a live lane's "k/N boards" / "~proj" progress label near the active dot. */
   .dn-funnel-prog { fill: var(--v2-ink-faint); font: 9px var(--v2-mono); }
   .dn-funnel-prog.dn-proj { fill: var(--v2-projected); }
-  /* competitor labels — survivors (good ↑), cuts (bad ✕), racing (neutral). The
-     ✕ glyph + bad colour already mark a cut, so NO strikethrough — a line
+  /* competitor labels — survivors (good, up mark), cuts (bad), racing (neutral).
+     The fail mark + bad colour already mark a cut, so NO strikethrough — a line
      through the name reads as the connector slashing the text. A cut name is
-     DIMMED (the ✕ carries the signal). */
+     DIMMED (the fail mark carries the signal). */
   .dn-funnel-name { fill: var(--v2-ink-soft); font: 11px var(--v2-mono); }
   .dn-funnel-name.dn-good { fill: var(--v2-good); font-weight: 600; }
   .dn-funnel-name.dn-bad { fill: var(--v2-bad); opacity: 0.7; }
@@ -2690,7 +2707,7 @@
   /* ---- ELIM RADIAL (concentric bracket — rounds as rings to a center gate) ----
    * Rounds are concentric rings narrowing to the champion seat at center. Each
    * spoke's survived segments read --v2-good; the elimination segment --v2-bad +
-   * a red ✕; the survivor dashes accent into the seat. Double-elim splits WB
+   * a red fail mark; the survivor dashes accent into the seat. Double-elim splits WB
    * (upper) / LB (lower) by a dashed equator with rim-hugging transfer arcs.
    * All --v2-* tokens. */
   .dn-elimradial-ring { stroke: var(--v2-rule-soft); stroke-width: 1; stroke-dasharray: 2 4;
@@ -2706,7 +2723,6 @@
   .dn-elimradial-node { vector-effect: non-scaling-stroke; }
   .dn-elimradial-node.dn-good { fill: var(--v2-good); }
   .dn-elimradial-node.dn-bad { fill: var(--v2-bad); }
-  .dn-elimradial-cut { fill: var(--v2-bad); font: 700 10px var(--v2-sans); }
   .dn-elimradial-transfer { stroke: var(--v2-caution); stroke-width: 1.1; stroke-dasharray: 3 3;
     opacity: 0.65; vector-effect: non-scaling-stroke; }
   .dn-elimradial-name { font: 9px var(--v2-mono); }
@@ -2717,7 +2733,6 @@
     vector-effect: non-scaling-stroke; }
   .dn-elimradial-seat.dn-good { stroke: var(--v2-good); }
   .dn-elimradial-seatlab { fill: var(--v2-accent); font: 11px var(--v2-sans); }
-  .dn-elimradial-seatlab.dn-good { fill: var(--v2-good); }
   .dn-elimradial-spoke { cursor: pointer; }
   .dn-elimradial-spoke:hover .dn-elimradial-name { fill: var(--v2-accent); }
   .dn-elimradial-spoke:focus-visible { outline: 2px solid var(--v2-accent); }
@@ -2793,9 +2808,9 @@
     .dn-dossier-col--side .dn-section { position: static; }
   }
 
-  /* ---- PER-BOARD champion○ → candidate● DUMBBELL (study opt 2) ----
+  /* ---- PER-BOARD champion → candidate DUMBBELL (study opt 2) ----
    * The per-board figure is a per-row dumbbell: on each board the champion's loss
-   * (hollow ○) and the candidate's (filled ●) ride a shared per-row value axis,
+   * (a hollow dot) and the candidate's (a filled dot) ride a shared per-row value axis,
    * joined by a connector coloured improved/regressed; the Δ + pass/fail/timeout
    * marker sit at the right. Theme-aware via the same tokens as the dot-plot. The
    * SVG scales to width:100% (responsive); a non-scaling stroke keeps the
@@ -2819,7 +2834,7 @@
   .dn-dumbbell-delta.dn-good { fill: var(--v2-good); }
   .dn-dumbbell-delta.dn-bad { fill: var(--v2-bad); }
   .dn-dumbbell-delta.dn-flat { fill: var(--v2-ink-faint); }
-  .dn-dumbbell-timeout { fill: var(--v2-caution); font: 9px var(--v2-mono); }
+  .dn-dumbbell-timeout { color: var(--v2-caution); }
   .dn-dumbbell-pass { fill: var(--v2-good); }
   .dn-dumbbell-fail { stroke: var(--v2-bad); stroke-width: 1.4; vector-effect: non-scaling-stroke; }
   .dn-dumbbell-aggtick { stroke: var(--v2-rule-soft); stroke-width: 1; stroke-dasharray: 2 4; vector-effect: non-scaling-stroke; }
@@ -2921,7 +2936,7 @@
   .dn-waterfall-floor { fill: var(--v2-ink); font: 10px var(--v2-mono);
     font-variant-numeric: tabular-nums; }
   .dn-waterfall-rord { fill: var(--v2-ink-faint); font: 10px var(--v2-mono); }
-  .dn-waterfall-crown { fill: var(--v2-caution); font: 11px var(--v2-sans); }
+  .dn-waterfall-crown { color: var(--v2-caution); }
   .dn-waterfall-step { cursor: pointer; }
   .dn-waterfall-step:hover .dn-waterfall-bar { fill-opacity: 1; }
   .dn-waterfall-step:focus-visible { outline: 2px solid var(--v2-accent); }
@@ -3005,7 +3020,7 @@
     stroke: var(--v2-accent); stroke-width: 1.4; }
   .dn-metaledger-cell-soft { fill: color-mix(in srgb, var(--v2-caution) 30%, var(--v2-panel));
     stroke: var(--v2-caution); stroke-width: 1.4; }
-  .dn-metaledger-cellmark { fill: var(--v2-accent); font: 400 11px var(--v2-mono); }
+  .dn-metaledger-cellmark { color: var(--v2-accent); }
   .dn-metaledger-cellmark-soft { fill: var(--v2-caution); font: 400 8.5px var(--v2-mono); }
 
   /* ====================================================================
@@ -3656,11 +3671,11 @@
    * above carries a type selector, and a bare class cap would lose to it and
    * balloon straight back. Do NOT add a max-height (it would shear the aspect). */
   svg.dn-strip-hero { display: block; width: 100%; height: auto; max-width: 680px; }
-  /* shared tone classes (fill for figure marks) */
-  .dn-strip-t-bad { fill: var(--v2-bad); }
-  .dn-strip-t-caution { fill: var(--v2-caution); }
-  .dn-strip-t-neutral { fill: var(--v2-ink-soft); }
-  .dn-strip-t-accent { fill: var(--v2-accent); }
+  /* shared tone classes (fill for figure marks, colour for their icons) */
+  .dn-strip-t-bad { fill: var(--v2-bad); color: var(--v2-bad); }
+  .dn-strip-t-caution { fill: var(--v2-caution); color: var(--v2-caution); }
+  .dn-strip-t-neutral { fill: var(--v2-ink-soft); color: var(--v2-ink-soft); }
+  .dn-strip-t-accent { fill: var(--v2-accent); color: var(--v2-accent); }
   /* budget ground: a faint frame + the caution-tinted fill (∝ ceiling fraction) */
   .dn-strip-ground { fill: var(--v2-rule-soft); }
   .dn-strip-budget { fill: var(--v2-caution); fill-opacity: 0.16; }
@@ -3678,8 +3693,7 @@
   .dn-strip-mark-user { fill: var(--v2-ink-soft); fill-opacity: 0.55; }
   .dn-strip-mark-agent { fill: var(--v2-ink-soft); fill-opacity: 0.26; }
   .dn-strip-baseline { stroke: var(--v2-rule); stroke-width: 1; }
-  /* signal cluster: glyphs toned by kind, the count label faint */
-  .dn-strip-sig-glyph { font-family: var(--v2-mono); font-size: 12px; }
+  /* signal cluster: icons toned by kind, the count label faint */
   .dn-strip-sig-label { fill: var(--v2-ink-faint); font-family: var(--v2-mono); font-size: 9px; }
   /* episode overlay: the bracket strokes its tone; the focused one rides accent */
   .dn-strip-bracket { stroke: currentColor; stroke-width: 1.4; }
@@ -3688,7 +3702,6 @@
   .dn-strip-ep.dn-strip-t-caution { color: var(--v2-caution); }
   .dn-strip-ep.dn-strip-t-neutral { color: var(--v2-ink-soft); }
   .dn-strip-ep.dn-strip-t-accent, .dn-strip-ep-focus { color: var(--v2-accent); }
-  .dn-strip-ep-glyph { fill: currentColor; font-family: var(--v2-mono); font-size: 11px; }
   .dn-strip-ep[role="button"] { cursor: pointer; }
 
   /* the Traces view */

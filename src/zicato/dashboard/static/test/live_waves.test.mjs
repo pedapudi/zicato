@@ -4,7 +4,7 @@
 //
 // Shared fixtures and helpers live in ./fixtures.mjs.
 
-import { installDom, test, run, assert, assertEqual, assertDeep, makeEvent } from './harness.mjs';
+import { installDom, test, run, assert, assertEqual, assertDeep, makeEvent, iconNames } from './harness.mjs';
 import { elimPayload, elimCase } from './recorded.mjs';
 
 installDom();
@@ -102,8 +102,8 @@ test('candidate page (LIVE): in-flight board runs for THIS candidate show "N run
   assert(/board running|boards running/.test(host.textContent), 'reads "N board(s) running"');
   assert(/50%/.test(host.textContent), 'the in-flight board shows its progress (50%)');
   // a swiss candidate awaiting the gate must NOT read "racing".
-  assert(!/⋯ racing/.test(host.textContent), 'the pending terminal label is structure-aware (swiss → not "racing")');
-  assert(/⋯ competing/.test(host.textContent), 'a swiss candidate reads "⋯ competing"');
+  assert(!/racing/.test(host.textContent.replace(/racing…/g, '')), 'the pending terminal label is structure-aware (swiss → not "racing")');
+  assert(/competing/.test(host.textContent), 'a swiss candidate reads "competing"');
 
   // FOREIGN-epoch run must NOT light up this candidate.
   freshState();
@@ -248,17 +248,18 @@ test('live hero (BLOOM): a RUNNING swiss with the applied field as competitors (
 test('lifecycle DAG: the pending terminal label is structure-aware (swiss → "⋯ competing", elim → "⋯ in bracket", racing → "⋯ racing", unknown → "⋯ awaiting gate")', () => {
   const entries = [{ entry_id: 'b0', drift_loss: 10, pass_fail: true }];
   const swiss = dag.lifecycleDag({ genId: 'v1', parentId: 'v0', decision: 'pending', entries, structure: 'swiss' });
-  assert(swiss.textContent.includes('⋯ competing'), 'a pending swiss candidate reads "⋯ competing"');
-  assert(!swiss.textContent.includes('⋯ racing'), 'a pending swiss candidate does NOT read "racing"');
+  assert(swiss.textContent.includes('competing'), 'a pending swiss candidate reads "competing"');
+  assert(!swiss.textContent.includes('racing'), 'a pending swiss candidate does NOT read "racing"');
+  assert(iconNames(swiss).includes('more'), 'the pending terminal leads with the overflow mark');
 
   const elim = dag.lifecycleDag({ genId: 'v1', parentId: 'v0', decision: 'pending', entries, structure: 'single_elim' });
-  assert(elim.textContent.includes('⋯ in bracket'), 'a pending elim candidate reads "⋯ in bracket"');
+  assert(elim.textContent.includes('in bracket'), 'a pending elim candidate reads "in bracket"');
 
   const racing = dag.lifecycleDag({ genId: 'v1', parentId: 'v0', decision: 'pending', entries, structure: 'racing' });
-  assert(racing.textContent.includes('⋯ racing'), 'a pending racing candidate still reads "⋯ racing"');
+  assert(racing.textContent.includes('racing'), 'a pending racing candidate still reads "racing"');
 
   const unknown = dag.lifecycleDag({ genId: 'v1', parentId: 'v0', decision: 'pending', entries });
-  assert(unknown.textContent.includes('⋯ awaiting gate'), 'an unknown structure degrades to "⋯ awaiting gate"');
+  assert(unknown.textContent.includes('awaiting gate'), 'an unknown structure degrades to "awaiting gate"');
 });
 
 // ====================================================================
@@ -459,19 +460,19 @@ test('epoch overview: "field of N" counts champion + applied challengers, EXCLUD
 // ---- Task 6: crown glyph is ♛ for current / ♔ for former everywhere ----
 
 test('crown glyphs: the shared CROWN constant is ♛ current / ♔ former; no ♚ is emitted by any gate label', () => {
-  assertEqual(svg.CROWN.current, '♛', 'the current-champion crown is ♛');
-  assertEqual(svg.CROWN.former, '♔', 'the former-champion crown is ♔');
+  assertEqual(svg.CROWN.current, 'crown', 'the current champion takes the solid crown icon');
+  assertEqual(svg.CROWN.former, 'crown-former', 'a former champion takes the open crown icon');
 
   // a crowned racing gate (survival funnel) shows ♛, never ♚.
   const rungs = [{ label: 'Rung 0', match_id: 'rung0', competitors: ['v1', 'v2'], survivors: ['v1'], cut: ['v2'], board_fraction: 0.5 }];
   const funnel = svg.survivalFunnel({ rungs, championId: 'v1', benchmarkId: 'v0', gateState: 'crowned', gateDelta: -2 });
-  assert(funnel.textContent.includes('♛'), 'a crowned funnel gate emits ♛');
+  assert(iconNames(funnel).includes('crown'), 'a crowned funnel gate draws the solid crown');
   assert(!funnel.textContent.includes('♚'), 'a crowned funnel gate does NOT emit ♚');
 
   // a crowned radial bracket seat.
   const servedCrown = elimCase('lone_final_crowned').served;
   const bracket = svg.elimRadial({ rounds: servedCrown.rounds, gen_states: servedCrown.gen_states, championId: 'v1', benchmarkId: 'v0', gateState: 'crowned' });
-  assert(bracket.textContent.includes('♛'), 'a crowned radial seat emits ♛');
+  assert(iconNames(bracket).includes('crown'), 'a crowned radial seat draws the solid crown');
   assert(!bracket.textContent.includes('♚'), 'a crowned radial seat does NOT emit ♚');
 
   // the tree current/former champion glyphs.
@@ -484,8 +485,8 @@ test('crown glyphs: the shared CROWN constant is ♛ current / ♔ former; no �
     ], boards: [] } },
   }, { view: 'gens', params: { epochId: EPOCH_ID } }, new Set(['e:' + EPOCH_ID, 'e:' + EPOCH_ID + '/gens']),
     { navigate() {}, href: router.href }, () => {});
-  assert(thost.textContent.includes('♛'), 'the tree marks the current champion ♛');
-  assert(thost.textContent.includes('♔'), 'the tree marks the former champion ♔');
+  assert(iconNames(thost).includes('crown'), 'the tree marks the current champion with the solid crown');
+  assert(iconNames(thost).includes('crown-former'), 'the tree marks the former champion with the open crown');
   assert(!thost.textContent.includes('♚'), 'the tree emits no ♚');
 });
 
@@ -685,14 +686,14 @@ test('elimRadial: rounds as rings, one spoke per generation; surviving segments 
   assertEqual(allByClass(bracket, 'dn-elimradial-spoke').length, 4, 'one spoke per generation (v0..v3)');
   // a surviving segment (good) + a terminating ✕ (bad) exist.
   assert(allByClass(bracket, 'dn-elimradial-seg').some((s) => (s.getAttribute('class') || '').includes('dn-good')), 'a surviving segment reads --v2-good');
-  assert(bracket.textContent.includes('✕'), 'an eliminated generation terminates with ✕');
+  assert(iconNames(bracket).includes('fail'), 'an eliminated generation terminates with the fail mark');
   // the champion (v1) dashes into the seat with the current crown; v0 (displaced
   // incumbent / benchmark) reads the former crown on its label.
   assertEqual(String(model.championId), 'v1', 'v1 is the bracket champion');
   assertEqual(allByClass(bracket, 'dn-elimradial-gateline').length, 1, 'the champion spoke dashes into the seat');
-  assertEqual(allByClass(bracket, 'dn-elimradial-seatlab')[0].textContent, svg.CROWN.current, 'the seat reads ♛ (CROWN.current)');
+  assertEqual(allByClass(bracket, 'dn-elimradial-seatmark')[0].getAttribute('data-icon'), svg.CROWN.current, 'the seat draws CROWN.current');
   const v0 = allByClass(bracket, 'dn-elimradial-name').find((t) => t.textContent.startsWith('v0'));
-  assert(v0 && v0.textContent.includes(svg.CROWN.former), 'the displaced incumbent (benchmark v0) reads ♔ (CROWN.former)');
+  assert(v0 && iconNames(v0.parentNode).includes(svg.CROWN.former), 'the displaced incumbent (benchmark v0) draws CROWN.former beside its label');
   assert(!bracket.textContent.includes('♚'), 'no stray ♚ glyph literal');
 });
 
@@ -750,7 +751,7 @@ test('elimRadial: a spoke ELIMINATED in a column survives NO ring, even when it 
   const spokeOf = (id) => allByClass(bracket, 'dn-elimradial-spoke').find((g) => allByClass(g, 'dn-elimradial-name').some((t) => t.textContent.startsWith(id)));
   const goodSegs = (g) => allByClass(g, 'dn-elimradial-seg').filter((s) => (s.getAttribute('class') || '').includes('dn-good'));
   assertEqual(goodSegs(spokeOf('v1')).length, 0, 'the eliminated v1 survives no ring despite its sibling win');
-  assertEqual(allByClass(spokeOf('v1'), 'dn-elimradial-cut').length, 1, 'v1 terminates with ✕');
+  assertEqual(allByClass(spokeOf('v1'), 'dn-elimradial-cut').length, 1, 'v1 terminates with the fail mark');
   assertEqual(goodSegs(spokeOf('v3')).length, 2, 'only the champion v3 survives both rings');
   assertEqual(allByClass(spokeOf('v3'), 'dn-elimradial-gateline').length, 1, 'v3 dashes into the seat');
 });

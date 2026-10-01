@@ -4,6 +4,7 @@ import { el } from '../core/dom.js';
 import { state } from '../core/state.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
+import { iconLabel } from '../icons.js';
 import { harmonografIsLive, harmonografMini } from '../core/harmonograf.js';
 import { gatedSwap, empty, subhead, densityTokens, dataTable, deltaCell } from '../ui.js';
 import { epochIsLive } from '../livestatus.js';
@@ -126,7 +127,7 @@ function aggregateScoresFigure(gens, scalarByGen, epochLive) {
   // the bar chart (one bar per generation, scalar / loss)
   combined.appendChild(svg.valueBars({
     width: 300, rowHeight: 24, labelWidth: 60,
-    items: items.map((it) => ({ label: it.label + (it.promoted ? ' ♛' : ''), value: it.value })),
+    items: items.map((it) => ({ label: it.label, mark: it.promoted ? svg.CROWN.current : null, value: it.value })),
   }));
   // the table, sharing the same data
   const tbl = dataTable({
@@ -137,13 +138,13 @@ function aggregateScoresFigure(gens, scalarByGen, epochLive) {
       // pending WORD is tense-bound: a publication of a settled epoch
       // that says "racing…" is describing a race that finished. The pill's own
       // liveness-aware vocabulary decides it; this table only re-skins the two
-      // labels it renders differently (the ♛ and the short "seed").
+      // labels it renders differently (the crown and the short "seed").
       const dec = it.decision || 'pending';
-      const label = dec === 'promoted' ? it.decisionLabel + ' ♛' : it.decisionLabel;
+      const label = dec === 'promoted' ? iconLabel(svg.CROWN.current, it.decisionLabel, { after: true }) : [it.decisionLabel];
       return [
         { class: 'dn-mono', text: it.label },
         { class: 'dn-num dn-mono', text: svg.fmt(it.value, 2) },
-        { text: label },
+        { el: label },
       ];
     }),
   });

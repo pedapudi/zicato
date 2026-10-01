@@ -184,7 +184,7 @@ def create_app(
         containing ``.zicato`` is also accepted).
     static_dir:
         Directory holding the dashboard UI bundle (``index.html``,
-        ``app.js``, ``style.css``, ``icons.svg``).
+        ``console.js``, ``style.css``, ``css/``, ``js/``).
     read_only:
         When ``True`` (the default) the POST control endpoints return
         ``403``; the GET endpoints and SSE stream are always available.

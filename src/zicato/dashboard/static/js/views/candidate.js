@@ -29,6 +29,7 @@ import { state } from '../core/state.js';
 import { livenessFor, LIVENESS, shortDate } from '../livestatus.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
+import { icon, iconLabel } from '../icons.js';
 import { attachHovercard } from '../hovercard.js';
 import { lifecycleDag, rungProgression } from '../dag.js';
 import { gatedSwap, section, subhead, empty, stat, verdictPill, pill, overrideChip, overrideDigest, decisionOf, densityTokens, prText, metricsDigest, truncate, hovercardBody, dataTable, deltaCell, ratingModel, ratingTripleDigest } from '../ui.js';
@@ -190,7 +191,7 @@ export async function render(host, ctx, params, route) {
   gatedSwap(host, digest, () => {
     const nodes = [];
     nodes.push(el('div', { class: 'dn-pagehead' }, [
-      el('h1', { class: 'dn-h1' }, [(sideA.node.promoted ? '♛ ' : '') + 'Candidate ' + genId + (cmpId ? `  vs  ${cmpId}` : '')]),
+      el('h1', { class: 'dn-h1' }, [sideA.node.promoted ? icon(svg.CROWN.current) : null, (sideA.node.promoted ? ' ' : '') + 'Candidate ' + genId + (cmpId ? `  vs  ${cmpId}` : '')]),
       el('p', { class: 'dn-lede', text: cmpId
         ? 'Two candidates side by side — lifecycle, promote gate, match-ups, and per-board scoring, A against B.'
         : (sideA.baseline
@@ -203,7 +204,7 @@ export async function render(host, ctx, params, route) {
     nodes.push(el('div', { class: 'dt-cmp-bar' }, [
       comparePicker({
         label: 'compare with…',
-        options: genList.map((g) => ({ id: g.id, label: g.id + (g.promoted ? ' ♛' : '') })),
+        options: genList.map((g) => ({ id: g.id, label: g.id + (g.promoted ? ' (promoted)' : '') })),
         current: genId, value: cmpId,
         onChange: (v) => ctx.navigate('candidate', { epochId, gen: genId }, { cmp: v }),
       }),
@@ -212,8 +213,8 @@ export async function render(host, ctx, params, route) {
     ].filter(Boolean)));
 
     nodes.push(splitFrame({
-      a: { title: genId + (sideA.node.promoted ? ' ♛' : ''), sub: sideA.decision, build: (h) => paintCandidate(h, ctx, epochId, sideA, cmpId, true, !!cmpId, structure, reigns, bracket, liveProjected, racingSt) },
-      b: cmpId ? { title: cmpId + (sideB.node.promoted ? ' ♛' : ''), sub: sideB.decision, build: (h) => paintCandidate(h, ctx, epochId, sideB, null, false, true, structure, reigns, bracket, liveProjected, racingSt) } : null,
+      a: { title: genId, mark: sideA.node.promoted ? svg.CROWN.current : null, sub: sideA.decision, build: (h) => paintCandidate(h, ctx, epochId, sideA, cmpId, true, !!cmpId, structure, reigns, bracket, liveProjected, racingSt) },
+      b: cmpId ? { title: cmpId, mark: sideB.node.promoted ? svg.CROWN.current : null, sub: sideB.decision, build: (h) => paintCandidate(h, ctx, epochId, sideB, null, false, true, structure, reigns, bracket, liveProjected, racingSt) } : null,
       emptyTitle: 'no comparison',
       emptyPrompt: 'Choose a candidate above to compare its lifecycle, gate, match-ups and per-board scoring against ' + genId + '.',
     }));
@@ -663,7 +664,7 @@ export function proposalHeader(model, opts) {
   card.appendChild(sitesRow);
   card.appendChild(el('p', { class: 'dn-proposal-size dn-faint' }, [
     el('span', { text: sizeBits.join(' · ') }),
-    o.diffHref ? el('a', { class: 'dn-linkbtn dn-proposal-difflink', href: o.diffHref, text: 'see the diff →' }) : null,
+    o.diffHref ? el('a', { class: 'dn-linkbtn dn-proposal-difflink', href: o.diffHref }, iconLabel('forward', 'see the diff', { after: true })) : null,
   ].filter(Boolean)));
   if (model.risks) card.appendChild(el('p', { class: 'dn-proposal-risks dn-faint', text: 'risks · ' + model.risks }));
   const episode = episodeRow(o.episode, o.episodeHref);
@@ -690,8 +691,7 @@ export function episodeRow(payload, href) {
   if (payload.export_available && href) {
     row.appendChild(el('a', {
       class: 'dn-linkbtn dn-proposal-episodelink', href, target: '_blank', rel: 'noopener',
-      text: 'read it in Foe →',
-    }));
+    }, iconLabel('forward', 'read it in Foe', { after: true })));
     return row;
   }
   row.appendChild(el('span', { text: 'no Foe page was rendered · ' }));
@@ -1043,8 +1043,8 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
 
   dagCard.appendChild(lifecycleDag({
     genId, parentId: node.parent, baseline, promoted: node.promoted, decision: s.decision,
-    // structure-aware pending terminal label (swiss → "⋯ competing", elim → "⋯
-    // in bracket", racing → "⋯ racing"), so an in-flight non-racing candidate
+    // structure-aware pending terminal label (swiss → "competing", elim → "in
+    // bracket", racing → "racing"), so an in-flight non-racing candidate
     // does not wrongly read "racing".
     structure,
     deltaScalar: s.primaryDelta, patchPoints: s.mpts, entries: s.entries,
@@ -1115,7 +1115,7 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
         const eid = r.entry_id != null ? r.entry_id : '—';
         const pr = runProgressRatio(r);
         const pct = pr != null ? Math.round(pr * 100) : null;
-        // a per-run harmonograf "execution ▸" link — liveness-gated (these are
+        // a per-run harmonograf "execution" link — liveness-gated (these are
         // in-flight runs, so the auto-launched server is up) and stop-propagated
         // so the cell click does not also navigate the row. Renders nothing when
         // not live / no harmonograf url (harmonografMini returns null).
@@ -1130,9 +1130,8 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
           class: 'dn-linkbtn dn-inflight-follow',
           href: ctx.href('board', { epochId, entry: eid, gen: genId }, { follow: true }),
           title: 'follow this run’s conversation as it streams',
-          text: 'follow →',
           onclick: (ev) => ev.stopPropagation(),
-        });
+        }, iconLabel('forward', 'follow', { after: true }));
         const row = {
           class: 'dn-inflight-row',
           cells: [
@@ -1235,12 +1234,12 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
     }));
     const anyPaired = rows.some((r) => svg.isNum(r.champ));
     scoreCard.appendChild(el('div', { class: 'dn-legend' }, [
-      anyPaired ? el('span', null, [el('i', { class: 'dotpred', style: 'border-color:var(--v2-ink-faint);' }), `champion ${championId} ○`]) : null,
-      el('span', null, [el('i', { class: 'dotact', style: 'background:var(--v2-good);' }), 'candidate ● · improved']),
-      el('span', null, [el('i', { class: 'dotact', style: 'background:var(--v2-bad);' }), 'candidate ● · regressed']),
+      anyPaired ? el('span', null, [el('i', { class: 'dotpred', style: 'border-color:var(--v2-ink-faint);' }), `champion ${championId}`]) : null,
+      el('span', null, [el('i', { class: 'dotact', style: 'background:var(--v2-good);' }), 'candidate · improved']),
+      el('span', null, [el('i', { class: 'dotact', style: 'background:var(--v2-bad);' }), 'candidate · regressed']),
       !scoreAxis && svg.isNum(championScalar) ? el('span', null, [el('i', { class: 'spine', style: 'border-color:var(--v2-ink-faint);border-top-style:dashed;' }), `champ aggregate ${svg.fmt(championScalar, 1)}`]) : null,
-      el('span', { class: 'dn-faint', text: (scoreAxis ? 'axis = per-entry score, higher is better · ± = replicate spread, -- when unmeasured · ' : 'axis = drift loss, lower is better · ')
-        + '⏱ timeout · Δ = candidate − champion · dim tag = rung/round it ran in · click → drill-down' }),
+      el('span', { class: 'dn-faint' }, [(scoreAxis ? 'axis = per-entry score, higher is better · ± = replicate spread, -- when unmeasured · ' : 'axis = drift loss, lower is better · '),
+        icon('timeout'), ' timeout · Δ = candidate − champion · dim tag = rung/round it ran in · click → drill-down']),
     ].filter(Boolean)));
     // per-generation MEAN continuous outcome (#18) — a board-level score
     // summary beneath the per-board rows; higher is better. The aggregate
@@ -1261,7 +1260,7 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
   } else {
     scoreCard.appendChild(empty('No per-entry scores for this candidate (the index may not be built).'));
   }
-  const scoreSection = section('Per-board scoring · champion ○ → candidate ● · sorted', scoreCard);
+  const scoreSection = section('Per-board scoring · champion → candidate · sorted', scoreCard);
 
   // (LEFT) ── the STACKED promote gate(s) (fix #1) — moved INTO the dossier grid
   // so the deciding rules read beside the per-board evidence + the silhouette.
@@ -1649,9 +1648,7 @@ function perBoardDumbbell(opts) {
     // the pass/fail/timeout marker at the right edge.
     const gx = w - glyphW + 6;
     if (r.timeout) {
-      const tm = svgEl('text', { x: gx, y: cy + 3, class: 'dn-dumbbell-timeout', 'text-anchor': 'middle' });
-      tm.textContent = '⏱';
-      g.appendChild(tm);
+      g.appendChild(svg.figIcon('timeout', gx, cy + 3, 9, { anchor: 'middle', class: 'dn-dumbbell-timeout' }));
     } else if (r.pass === 1 || r.pass === true) {
       g.appendChild(svgEl('circle', { cx: gx, cy, r: 2.6, class: 'dn-dumbbell-pass' }));
     } else if (r.pass === 0 || r.pass === false) {
@@ -1753,9 +1750,9 @@ function racingFieldPanels(st, epochId, genId, championId, scalarByGen, liveProj
         class: isCand ? 'dn-racing-cand-row' : '',
         cells: [
           { class: 'dn-mono dn-faint', text: String(i + 1) },
-          { el: el('span', { class: 'dn-mono' + (isCand ? ' dn-racing-cand' : ''), text: f.id + (isChamp ? ' ♛' : '') }) },
+          { el: el('span', { class: 'dn-mono' + (isCand ? ' dn-racing-cand' : '') }, isChamp ? iconLabel(svg.CROWN.current, f.id, { after: true }) : [f.id]) },
           { class: 'dn-num dn-mono', text: svg.isNum(f.scalar) ? svg.fmt(f.scalar, 1) : '—' },
-          { el: pill(f.survived ? 'promoted' : 'rejected', f.survived ? 'racing' : ('✂ rung ' + f.cut_rung)) },
+          { el: pill(f.survived ? 'promoted' : 'rejected', f.survived ? 'racing' : ('cut at rung ' + f.cut_rung)) },
         ],
       };
       if (!isCand) { row.style = 'cursor: pointer'; row.onClick = () => ctx.navigate('candidate', { epochId, gen: f.id }, opts); }
@@ -1763,7 +1760,7 @@ function racingFieldPanels(st, epochId, genId, championId, scalarByGen, liveProj
     }),
   });
   standCard.appendChild(stbl);
-  standCard.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text: 'lower scalar = better · ✂ = the rung a racer was cut at · click a racer → its dossier' }));
+  standCard.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text: 'lower scalar = better · click a racer → its dossier' }));
   wrap.appendChild(section('Field standings · candidate vs the whole field', standCard));
 
   // (2) RUNG LADDER — entered / cut / survived per rung; the candidate's rank
@@ -1790,7 +1787,7 @@ function racingFieldPanels(st, epochId, genId, championId, scalarByGen, liveProj
       return [
         { class: 'dn-mono', text: r.label || ('Rung ' + ri) },
         { class: 'dn-num dn-mono', text: String(entered) },
-        { class: 'dn-num dn-mono ' + (cutN ? 'dn-bad-t' : ''), text: cutN ? ('✂ ' + cutN) : '0' },
+        { class: 'dn-num dn-mono ' + (cutN ? 'dn-bad-t' : ''), text: String(cutN) },
         { class: 'dn-num dn-mono dn-good-t', text: String(survived) },
         { class: 'dn-mono', text: candRungRank ? ('#' + candRungRank + ' of ' + entered) : '—' },
       ];
@@ -2316,7 +2313,7 @@ function defenceRow(d, opts) {
   const open = _defenceOpen.get(key) === true;
   const row = el('details', { class: 'dn-gate-defence', open: open ? '' : null }, [
     el('summary', null, [
-      el('span', { class: 'chev', text: '▸' }),
+      el('span', { class: 'chev', 'aria-hidden': 'true' }, [icon('expand')]),
       el('span', { class: 'dn-mono dn-gate-defence-vs', text: 'vs ' + d.spec.chall }),
       verdictPill(decision, opts),
       el('span', { class: 'dn-mono dn-faint dn-gate-defence-delta',
@@ -2522,17 +2519,17 @@ export function judgeComparisonDigest(comparison) {
 // so a candidate the proposer made no falsifiable claim about is byte-identical
 // to the pre-feature dossier (back-compat clean).
 
-// Map one claim to its single-glyph verdict (the dn-pred-glyph token + a tone):
-//   hit  ✓ (good)   — predicted direction matched the realised movement
-//   miss ✗ (bad)    — predicted, but the realised movement went the other way
-//   band ◌ (flat)   — predicted, but no realised movement was paired (unresolved)
-//   unp  ＋ (flat)   — a realised movement the proposer never predicted (context)
+// Map one claim to its verdict icon (inside the dn-pred-glyph token) + a tone:
+//   hit  pass (good)        — predicted direction matched the realised movement
+//   miss fail (bad)         — predicted, but the realised movement went the other way
+//   band unscored (flat)    — predicted, but no realised movement was paired (unresolved)
+//   unp  unpredicted (flat) — a realised movement the proposer never predicted (context)
 function predictionVerdict(claim) {
-  if (claim && claim.unpredicted) return { kind: 'unp', glyph: '＋', tone: 'flat', label: 'unpredicted' };
-  if (claim && claim.hypothesis_match === true) return { kind: 'hit', glyph: '✓', tone: 'good', label: 'hit' };
-  if (claim && claim.hypothesis_match === false) return { kind: 'miss', glyph: '✗', tone: 'bad', label: 'miss' };
+  if (claim && claim.unpredicted) return { kind: 'unp', mark: 'unpredicted', tone: 'flat', label: 'unpredicted' };
+  if (claim && claim.hypothesis_match === true) return { kind: 'hit', mark: 'pass', tone: 'good', label: 'hit' };
+  if (claim && claim.hypothesis_match === false) return { kind: 'miss', mark: 'fail', tone: 'bad', label: 'miss' };
   // predicted but never paired against a realised movement (no outcome yet).
-  return { kind: 'band', glyph: '◌', tone: 'flat', label: 'unresolved' };
+  return { kind: 'band', mark: 'unscored', tone: 'flat', label: 'unresolved' };
 }
 
 function dirArrow(d) {
@@ -2587,8 +2584,8 @@ export function buildPredictionScorecard(scorecard) {
       const obs = dirArrow(c.observed_direction)
         + (svg.isNum(c.from_rate) && svg.isNum(c.to_rate)
           ? ' ' + svg.fmt(c.from_rate, 2) + '→' + svg.fmt(c.to_rate, 2) : '');
-      const glyph = el('span', { class: 'dn-pred-glyph dn-' + v.tone, text: v.glyph,
-        'aria-label': v.label });
+      const glyph = el('span', { class: 'dn-pred-glyph dn-' + v.tone, role: 'img',
+        'aria-label': v.label, 'data-verdict': v.kind }, [icon(v.mark)]);
       // hover-level detail (signed error · note · kind) lives in the hovercard
       // singleton, OUTSIDE the gated render — the glyph node stays stable.
       attachHovercard(glyph, () => hovercardBody([
@@ -2616,8 +2613,9 @@ export function buildPredictionScorecard(scorecard) {
   card.appendChild(tbl);
 
   // ── the EXPLICIT diagnostic caption (the non-negotiable disclaimer) ──
-  card.appendChild(el('p', { class: 'dn-faint dn-predcard-cap', style: 'font-size:11px;margin:8px 0 0;',
-    text: 'diagnostic — does not affect the gate · ✓ hit · ✗ miss · ◌ unresolved · ＋ unpredicted (not scored)' }));
+  card.appendChild(el('p', { class: 'dn-faint dn-predcard-cap', style: 'font-size:11px;margin:8px 0 0;' }, [
+    'diagnostic — does not affect the gate · ', icon('pass'), ' hit · ', icon('fail'), ' miss · ',
+    icon('unscored'), ' unresolved · ', icon('unpredicted'), ' unpredicted (not scored)']));
   return card;
 }
 
@@ -2821,7 +2819,7 @@ function entryDrilldown(ctx, epochId, genId, entryId, row, exps, judges, header)
   // after it ends points at a dead port; harmonografLink returns null then).
   const hgExec = harmonografLink(header || {}, 'Open this run in harmonograf');
   card.appendChild(el('div', { style: 'margin-top:14px;' }, [
-    el('a', { class: 'dn-linkbtn', href: ctx.href('board', { epochId, entry: entryId, gen: genId }), text: 'Open the transcript inline (vs champion) →' }),
+    el('a', { class: 'dn-linkbtn', href: ctx.href('board', { epochId, entry: entryId, gen: genId }) }, iconLabel('forward', 'Open the transcript inline (vs champion)', { after: true })),
     runId ? el('span', { class: 'dn-faint dn-mono', style: 'margin-left:8px;', text: runId.slice(0, 10) + '…' }) : null,
     hgExec ? el('span', { class: 'dn-faint', style: 'margin-left:8px;' }, ['· ', hgExec]) : null,
   ].filter(Boolean)));

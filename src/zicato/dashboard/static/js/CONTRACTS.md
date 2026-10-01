@@ -24,6 +24,7 @@ static/
       prefs.js          — the persisted per-viewer preference store
     router.js           — hash routing + deep links
     shell.js            — chrome, sidebar-to-detail host, page-scale pill
+    icons.js            — the one drawn icon set every mark uses
     ui.js               — gatedSwap, pills, tables, themes, typefaces
     svg.js, dag.js      — the figure builders
     tournament_model.js — the tournament-structure models the figures draw
@@ -423,7 +424,7 @@ Route changes do not travel on the bus: the shell listens for the
 browser's `hashchange` event, and `router.navigate()` dispatches one when
 the target hash equals the current one.
 
-## 6. Shared builders (`js/ui.js`, `js/svg.js`)
+## 6. Shared builders (`js/ui.js`, `js/svg.js`, `js/icons.js`)
 
 Every builder is a pure factory returning a detached DOM node; none
 mounts itself, and none reads global state. A caller composes the nodes
@@ -468,6 +469,26 @@ that digest with the volatile keys named explicitly.
 
 `js/dag.js` builds the candidate lifecycle DAG, and `js/hovercard.js`
 owns the single hover-for-detail card every `moreMark` attaches to.
+
+From `js/icons.js`: every control, verdict, crown, tree, feed and link
+mark. The console types none of these as a Unicode symbol.
+- `icon(name, opts)` → an `<svg data-icon="name">` on a `0 0 16 16`
+  grid with a 1.5-unit round-capped `currentColor` stroke and
+  `aria-hidden="true"`; the carrying control names itself in words or
+  `aria-label`. With `x`, `y` and `size` it sits inside a figure.
+  `ICON_NAMES` lists the set; an unknown name throws.
+- `iconLabel(name, words, { after })` → the children for an icon plus
+  its words.
+- `patchIconLabel(node, name, words, { after })` updates a long-lived
+  chrome node in place and writes nothing when neither changed.
+- `CROWN = { current: 'crown', former: 'crown-former' }` — the champion
+  crowns; `svg.js` re-exports it.
+- In a figure, `svg.figIcon(name, x, baselineY, size, opts)` centres an
+  icon on a text line and `svg.iconBeside(parent, label, name, fontPx,
+  opts)` places one beside a `<text>` label, moving the words so the
+  pair keeps the label's anchor. `svg.signalIcon(kind)` maps a trace
+  signal kind to its icon; the strip model's served `glyph` field is not
+  drawn.
 
 ## 7. The detail panes (`js/views/`) and the panels (`js/panels/`)
 
@@ -648,7 +669,7 @@ namespaced coordinates and constructs that URL; Harmonograf does not know
 what a tournament or board means.
 
 **Zicato-level (meta-loop) surface.** Beyond the per-run links, the top
-bar (`js/shell.js`) carries a single liveness-gated `execution ↗`
+bar (`js/shell.js`) carries a single liveness-gated `execution`
 deep-link into the **meta-loop** session — zicato's own proposer + judge
 timeline, drawn as a Gantt chart of zicato's own work. The backend
 surfaces its session id on the heartbeat as `harmonograf_meta_session`

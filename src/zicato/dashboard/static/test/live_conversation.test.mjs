@@ -19,7 +19,7 @@
 // Plus the cursor protocol the pane rides on (idempotence, splice-by-index,
 // and the two ways a delta can leave a hole).
 
-import { installDom, test, run, assert, assertEqual } from './harness.mjs';
+import { installDom, test, run, assert, assertEqual, assertDeep, iconNames } from './harness.mjs';
 
 installDom();
 
@@ -384,12 +384,13 @@ test('a reader who scrolled up is NOT moved, and is told how far behind', async 
   srv.add('two');
   await h.refresh();
   assertEqual(scroller.scrollTop, 0, 'the reader was yanked to the bottom');
-  assertEqual(pinOf(h).textContent, '1 new turn ↓');
+  assertEqual(pinOf(h).textContent.trim(), '1 new turn');
+  assertDeep(iconNames(pinOf(h)), ['down'], 'the pin points down to the new turn');
 
   srv.add('three');
   await h.refresh();
   assertEqual(scroller.scrollTop, 0);
-  assertEqual(pinOf(h).textContent, '2 new turns ↓', 'the backlog did not accumulate');
+  assertEqual(pinOf(h).textContent.trim(), '2 new turns', 'the backlog did not accumulate');
 });
 
 test('clicking the pin returns to the tail and clears the backlog', async () => {

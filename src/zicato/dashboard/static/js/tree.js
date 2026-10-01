@@ -25,7 +25,7 @@
 // selected node) writes ZERO DOM.
 
 import { el, clearChildren } from './core/dom.js';
-import { CROWN } from './svg.js';
+import { icon, CROWN } from './icons.js';
 
 // `data` is the structural model the shell assembles once per dispatch:
 //   { epochs:[{id, current}], expanded:{ epochs:{<id>:{gens, boards}} },
@@ -153,10 +153,10 @@ export function buildTree(host, model, route, toggles, ctx, onToggle, live) {
         // Class B: a child with no recorded outcome (promoted == null) is still
         // racing — tag it "pending", NEVER "rejected/dead branch".
         const childTag = g.parent ? (g.promoted == null ? 'pending' : (g.promoted === false ? 'rejected' : 'promoted')) : 'seed';
-        let kind = 'gen', glyph = (g.parent ? '↳' : '◆'), tag = childTag;
+        let kind = 'gen', glyph = (g.parent ? 'child' : 'generation'), tag = childTag;
         if (isCurrent) { kind = 'gen-champ'; glyph = CROWN.current; tag = 'champion'; }
         else if (isFormer) { kind = 'gen-former'; glyph = CROWN.former; tag = 'former champion'; }
-        else if (g.orphan === true) { kind = 'gen-orphan'; glyph = '◌'; tag = 'unscored'; }
+        else if (g.orphan === true) { kind = 'gen-orphan'; glyph = 'unscored'; tag = 'unscored'; }
         return leafRow({
           depth, kind, label: g.id, glyph, tag,
           selected, live: isLive(g.id),
@@ -172,7 +172,7 @@ export function buildTree(host, model, route, toggles, ctx, onToggle, live) {
       // in fast mode, the fresh re-run in full mode — i.e. always the output that
       // round actually used.
       const champRefLeaf = (id, roundIndex, evalMode, depth) => leafRow({
-        depth, kind: 'gen-carried', label: id, glyph: '↑',
+        depth, kind: 'gen-carried', label: id, glyph: 'up',
         // the carried champion's per-round eval provenance: a fast/cached reuse
         // vs a full re-run that round — the canonical signal from the record.
         tag: (evalMode === 'fast' || evalMode === 'fast-degraded') ? 'defends · cached'
@@ -202,12 +202,11 @@ export function buildTree(host, model, route, toggles, ctx, onToggle, live) {
                     || (r.challengers || []).some((g) => g && String(g.id) === String(p.gen))));
           const promoted = r.gateOutcome && r.gateOutcome.kind === 'promoted';
           // the DEFENDING champion lives in the ROUND HEADER (e.g. "v3 defends ·
-          // — held" / "▲ v6 promoted") rather than as a duplicate ↑-reference child row.
-          // The champion's full node still appears under its own BIRTH round.
+          // — held" / "(up) v6 promoted") rather than as a duplicate carried-reference
+          // child row. The champion's full node still appears under its own BIRTH round.
           const champLabel = r.championId != null ? String(r.championId) : null;
-          const gateSub = champLabel
-            ? (promoted ? champLabel + ' defends · ▲ ' + r.gateOutcome.gen + ' promoted' : champLabel + ' defends · — held')
-            : (promoted ? '▲ ' + r.gateOutcome.gen + ' promoted' : '— held');
+          const outcome = promoted ? [icon('up'), ' ' + r.gateOutcome.gen + ' promoted'] : ['— held'];
+          const gateSub = champLabel ? [champLabel + ' defends · ', ...outcome] : outcome;
           tree.appendChild(branchRow({
             key: rKey, depth: 3, kind: 'round', label: 'Round ' + r.round_index, sub: gateSub,
             expandable: (r.challengers || []).length > 0, isOpen: rOpen,
@@ -261,7 +260,7 @@ export function buildTree(host, model, route, toggles, ctx, onToggle, live) {
       for (const b of bundle.boards) {
         const selected = sel === 'board' && p.epochId === epoch.id && p.entry === b.id;
         tree.appendChild(leafRow({
-          depth: 3, kind: 'board', label: b.id, glyph: '▦', tag: b.kindTag || null,
+          depth: 3, kind: 'board', label: b.id, glyph: 'board', tag: b.kindTag || null,
           selected, live: isLive(b.id),
           onSelect: () => ctx.navigate('board', { epochId: epoch.id, entry: b.id }),
         }));
@@ -271,7 +270,7 @@ export function buildTree(host, model, route, toggles, ctx, onToggle, live) {
     // Evals (leaf) — the top-level entries × candidates matrix (the board-as-
     // instrument OUTCOMES lens); a peer of Boards / Mutation surface.
     tree.appendChild(leafRow({
-      depth: 2, kind: 'evals', label: 'Evals', glyph: '▤', tag: null,
+      depth: 2, kind: 'evals', label: 'Evals', glyph: 'evals', tag: null,
       selected: sel === 'evals' && p.epochId === epoch.id,
       onSelect: () => ctx.navigate('evals', { epochId: epoch.id }),
     }));
@@ -283,7 +282,7 @@ export function buildTree(host, model, route, toggles, ctx, onToggle, live) {
     // auditing. The landing degrades honestly ("No reflections for this epoch
     // yet."), so the node costs nothing and the route is not a URL-only feature.
     tree.appendChild(leafRow({
-      depth: 2, kind: 'instrument', label: 'Instrument', glyph: '⌾', tag: null,
+      depth: 2, kind: 'instrument', label: 'Instrument', glyph: 'instrument', tag: null,
       selected: sel === 'instrument' && p.epochId === epoch.id,
       onSelect: () => ctx.navigate('instrument', { epochId: epoch.id }),
     }));
@@ -292,7 +291,7 @@ export function buildTree(host, model, route, toggles, ctx, onToggle, live) {
     // reflection there is no trace surface to reach, only an empty list.
     if (bundle.hasReflections) {
       tree.appendChild(leafRow({
-        depth: 2, kind: 'traces', label: 'Traces', glyph: '⌇', tag: null,
+        depth: 2, kind: 'traces', label: 'Traces', glyph: 'traces', tag: null,
         selected: sel === 'traces' && p.epochId === epoch.id,
         onSelect: () => ctx.navigate('traces', { epochId: epoch.id }),
       }));
@@ -300,14 +299,14 @@ export function buildTree(host, model, route, toggles, ctx, onToggle, live) {
 
     // Mutation surface (leaf)
     tree.appendChild(leafRow({
-      depth: 2, kind: 'mutations', label: 'Mutation surface', glyph: '⌗', tag: null,
+      depth: 2, kind: 'mutations', label: 'Mutation surface', glyph: 'mutations', tag: null,
       selected: sel === 'mutations' && p.epochId === epoch.id,
       onSelect: () => ctx.navigate('mutations', { epochId: epoch.id }),
     }));
 
     // Publication (leaf)
     tree.appendChild(leafRow({
-      depth: 2, kind: 'paper', label: 'Publication', glyph: '¶', tag: null,
+      depth: 2, kind: 'paper', label: 'Publication', glyph: 'publication', tag: null,
       selected: sel === 'publication' && p.epochId === epoch.id,
       onSelect: () => ctx.navigate('publication', { epochId: epoch.id }),
     }));
@@ -331,8 +330,8 @@ function branchRow(o) {
     class: 'dt-twisty' + (o.expandable ? '' : ' dt-twisty-leaf'),
     type: 'button', 'aria-hidden': o.expandable ? null : 'true',
     title: o.expandable ? (o.isOpen ? 'collapse' : 'expand') : '',
-    text: o.expandable ? (o.isOpen ? '▾' : '▸') : '',
-  });
+    'aria-label': o.expandable ? (o.isOpen ? 'collapse' : 'expand') : null,
+  }, o.expandable ? [icon(o.isOpen ? 'collapse' : 'expand')] : null);
   if (o.expandable && !o.lockOpen && o.onToggle) {
     twisty.addEventListener('click', (ev) => { ev.stopPropagation(); o.onToggle(); });
   } else {
@@ -341,7 +340,7 @@ function branchRow(o) {
   const label = el('button', { class: 'dt-label', type: 'button' }, [
     el('span', { class: 'dt-icon dt-icon-' + o.kind, 'aria-hidden': 'true' }),
     el('span', { class: 'dt-text', text: o.label }),
-    o.sub ? el('span', { class: 'dt-sub', text: o.sub }) : null,
+    o.sub ? el('span', { class: 'dt-sub' }, Array.isArray(o.sub) ? o.sub : [o.sub]) : null,
   ].filter(Boolean));
   if (o.selected) label.setAttribute('aria-current', 'true');
   label.addEventListener('click', () => o.onSelect());
@@ -358,7 +357,7 @@ function leafRow(o) {
   });
   row.appendChild(el('span', { class: 'dt-twisty dt-twisty-leaf', 'aria-hidden': 'true' }));
   const label = el('button', { class: 'dt-label', type: 'button' }, [
-    el('span', { class: 'dt-glyph dt-glyph-' + o.kind, 'aria-hidden': 'true', text: o.glyph || '·' }),
+    el('span', { class: 'dt-glyph dt-glyph-' + o.kind, 'aria-hidden': 'true' }, o.glyph ? [icon(o.glyph)] : null),
     el('span', { class: 'dt-text', text: o.label }),
     // a subtle, CSS-pulsing ● clue on rows with LIVE activity (a running gen or
     // board entry). It is a clue rather than a banner — reuses the dn-inflight-pulse

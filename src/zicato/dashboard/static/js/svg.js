@@ -6,18 +6,65 @@
 import { svgEl, el } from './core/dom.js';
 import { attachHovercard } from './hovercard.js';
 import * as M from './matrix.js';
+import { icon, iconLabel, CROWN } from './icons.js';
 
-// ── CROWN GLYPHS — the SINGLE source of truth (CONSOLE-IV §9) ─────────
+// ── CROWNS — the SINGLE source of truth (CONSOLE-IV §9) ──────────────
 //
 // The rule, defined ONCE so it cannot drift across files again:
 //   CROWN.current — the CURRENT champion (the crowned survivor of the gate;
-//                   the last id in champion_lineage). Solid crown.
+//                   the last id in champion_lineage). The solid crown icon.
 //   CROWN.former  — a FORMER champion (the displaced incumbent) OR a transient
-//                   round-leader before the gate decides. Hollow crown.
+//                   round-leader before the gate decides. The open crown icon.
 // A just-crowned gate winner IS the current champion, so gate labels use
-// CROWN.current too (the historical `♚` mix is retired). Every file that emits
-// a crown imports from here.
-export const CROWN = { current: '♛', former: '♔' };
+// CROWN.current too. The values are icon names (js/icons.js); every file that
+// marks a champion imports CROWN from here or from icons.js.
+export { CROWN };
+
+// Place an icon inside a figure so its centre sits on the centre line of text
+// set at baseline `y` — the mid-height of lower-case mono text is about 0.35em
+// above the baseline. `anchor` says which edge `x` names: 'start' the left
+// edge, 'middle' the centre, 'end' the right edge. `tone` colours it;
+// `class` adds classes.
+export function figIcon(name, x, y, size, opts) {
+  const o = opts || {};
+  const anchor = o.anchor || 'start';
+  const left = anchor === 'middle' ? x - size / 2 : anchor === 'end' ? x - size : x;
+  const cls = [o.tone ? 'dt-icon-' + o.tone : null, o.class || null].filter(Boolean).join(' ') || null;
+  return icon(name, { x: +left.toFixed(1), y: +(y - 0.35 * size - size / 2).toFixed(1), size, class: cls });
+}
+
+// Draw an icon beside a figure's <text> label, one gap clear of the words:
+// after them by default, before them with `lead`. The words move so the pair
+// keeps the label's anchor. Call after setting the label's text; the icon is
+// appended to `parent`. The width is the CHAR_EM mono estimate every figure
+// label is fitted with.
+export function iconBeside(parent, label, name, fontPx, opts) {
+  const o = opts || {};
+  const size = fontPx;
+  const gap = fontPx * 0.3;
+  const w = textPx(label.textContent, fontPx);
+  const x = Number(label.getAttribute('x')) || 0;
+  const y = Number(label.getAttribute('y')) || 0;
+  const anchor = label.getAttribute('text-anchor') || 'start';
+  const span = w + gap + size;
+  const left = anchor === 'middle' ? x - span / 2 : anchor === 'end' ? x - span : x;
+  const wordsLeft = o.lead ? left + size + gap : left;
+  const wordsX = anchor === 'middle' ? wordsLeft + w / 2 : anchor === 'end' ? wordsLeft + w : wordsLeft;
+  label.setAttribute('x', String(+wordsX.toFixed(1)));
+  const mark = figIcon(name, o.lead ? left : left + w + gap, y, size, { tone: o.tone });
+  parent.appendChild(mark);
+  return mark;
+}
+
+// The icon for one adverse-signal kind on a trace (the served strip model's
+// `kind` / `signal_kind`): failures draw the fail mark, a retry loop the
+// refresh mark, a budget blowout the timeout mark, transfer churn the swap
+// mark, and a behavioural signal (or an unknown kind) an open ring.
+const SIGNAL_ICON = {
+  error_cascade: 'fail', abort_pattern: 'fail', retry_loop: 'refresh',
+  budget_blowout: 'timeout', transfer_churn: 'swap', behavioral: 'ring',
+};
+export function signalIcon(kind) { return SIGNAL_ICON[kind] || 'ring'; }
 
 // Wire a mark with the styled, theme-aware HOVERCARD instead of a native,
 // off-brand <title> tooltip (positioned card on hover/focus; keyboard- and
@@ -707,8 +754,9 @@ export function valueDotPlot(opts) {
     // sits just beneath it (two stacked right-anchored lines inside the gutter).
     const nameY = hasCtx ? cy - 2 : cy + 3;
     const lbl = svgEl('text', { x: labelW, y: nameY, class: 'dn-dot-label', 'text-anchor': 'end' });
-    lbl.textContent = d.label != null ? shortLabel(String(d.label), 22) : '';
+    lbl.textContent = d.label != null ? shortLabel(String(d.label), d.mark ? 20 : 22) : '';
     g.appendChild(lbl);
+    if (d.mark) iconBeside(g, lbl, d.mark, 11);
     if (hasCtx) {
       // theme-aware (uses the faint ink token), no extra stylesheet rule.
       const ctx = svgEl('text', {
@@ -881,7 +929,7 @@ export function trajectoryStripDigest(model, opts) {
     lane: marks.map((k) => [k.i, k.role, k.x0, k.x1, k.size]),
     signals: sigs.map((s) => [s.kind, s.tone, s.x, s.count, s.positioned === false ? 0 : 1, s.label || '']),
     budget: [b.fill, b.over ? 1 : 0, b.shaded ? 1 : 0, b.label || ''],
-    episodes: eps.map((e) => [e.episode_id, e.kind, e.tone, e.x0, e.x1, e.anchor, (e.suggestion_ids || []).join(',')]),
+    episodes: eps.map((e) => [e.episode_id, e.kind, e.signal_kind, e.tone, e.x0, e.x1, e.anchor, (e.suggestion_ids || []).join(',')]),
   });
 }
 
@@ -990,9 +1038,7 @@ export function trajectoryStrip(model, opts) {
       'data-kind': s.kind || '', 'data-tone': s.tone || 'neutral',
       'data-positioned': 'false', 'data-count': isNum(s.count) ? String(s.count) : '',
     });
-    const glyph = svgEl('text', { x: cx, y: ySigTop + (o.compact ? 11 : 13), class: 'dn-strip-sig-glyph', 'text-anchor': 'middle' });
-    glyph.textContent = s.glyph || '•';
-    g.appendChild(glyph);
+    g.appendChild(figIcon(signalIcon(s.kind), cx, ySigTop + (o.compact ? 11 : 13), o.compact ? 10 : 12, { anchor: 'middle', class: 'dn-strip-sig-glyph' }));
     if (!o.compact) {
       g.appendChild(fitInto({ text: s.label || (isNum(s.count) ? String(s.count) : ''), x: cx, y: ySigTop + dims.sigH - 3, anchor: 'middle', maxPx: slot * 0.96, viewW: W, pad, fontPx: 9, cls: 'dn-strip-sig-label' }));
     }
@@ -1022,9 +1068,7 @@ export function trajectoryStrip(model, opts) {
       d: `M${x0.toFixed(1)} ${(by - tick).toFixed(1)} L${x0.toFixed(1)} ${by.toFixed(1)} L${x1.toFixed(1)} ${by.toFixed(1)} L${x1.toFixed(1)} ${(by - tick).toFixed(1)}`,
       class: 'dn-strip-bracket', fill: 'none',
     }));
-    const gl = svgEl('text', { x: (x0 + x1) / 2, y: pad + (o.compact ? 9 : 12), class: 'dn-strip-ep-glyph', 'text-anchor': 'middle' });
-    gl.textContent = e.glyph || '○';
-    g.appendChild(gl);
+    g.appendChild(figIcon(signalIcon(e.signal_kind), (x0 + x1) / 2, pad + (o.compact ? 9 : 12), o.compact ? 9 : 11, { anchor: 'middle', class: 'dn-strip-ep-glyph' }));
     hov(g, (e.signal_kind || e.kind || 'episode') + (sugs.length ? ' · ' + sugs.length + ' suggestion' + (sugs.length > 1 ? 's' : '') : ' · no suggestion'));
     clickable(g, o.onFocusEpisode && (() => o.onFocusEpisode(e.episode_id, sugs)));
     svg.appendChild(g);
@@ -1062,7 +1106,7 @@ function outcomeGlyph(d, side) {
   const svg = svgEl('svg', { class: 'dn-glyph', width: s, height: s, viewBox: '0 0 10 10', preserveAspectRatio: 'xMidYMid meet', role: 'img' });
   const cx = 5, cy = 5;
   if (d && d.ran === false) { svg.appendChild(svgEl('circle', { cx, cy, r: 2.2, class: 'dn-glyph-none' })); return hov(svg, 'no run'); }
-  if (d && d.timeout) { svg.appendChild(svgEl('text', { x: cx, y: cy + 3.2, class: 'dn-glyph-timeout', 'text-anchor': 'middle' }, ['⏱'])); return hov(svg, 'budget exceeded (timeout)'); }
+  if (d && d.timeout) { svg.appendChild(icon('timeout', { x: 1, y: 1, size: 8, class: 'dn-glyph-timeout' })); return hov(svg, 'budget exceeded (timeout)'); }
   if (d && d.pass === true) { svg.appendChild(svgEl('circle', { cx, cy, r: 2.6, class: 'dn-glyph-pass' })); return hov(svg, 'passed'); }
   if (d && d.pass === false) {
     svg.appendChild(svgEl('line', { x1: cx - 2.6, y1: cy - 2.6, x2: cx + 2.6, y2: cy + 2.6, class: 'dn-glyph-fail' }));
@@ -1095,8 +1139,9 @@ export function valueBars(opts) {
   items.forEach((d, i) => {
     const cy = i * rh + rh / 2 + 3;
     const lbl = svgEl('text', { x: labelW, y: cy + 3, class: 'dn-dot-label', 'text-anchor': 'end' });
-    lbl.textContent = shortLabel(String(d.label), 20);
+    lbl.textContent = shortLabel(String(d.label), d.mark ? 18 : 20);
     svg.appendChild(lbl);
+    if (d.mark) iconBeside(svg, lbl, d.mark, 11);
     const bx = x(Math.abs(d.value));
     svg.appendChild(hov(svgEl('rect', { x: x0, y: cy - 4, width: Math.max(1, bx - x0), height: 8, rx: 1, class: 'dn-vbar' }), `${d.label}: ${fmt(d.value)}`));
     // The worst-judge bar always reaches the plot end (w-36); a left-anchored
@@ -1274,7 +1319,7 @@ export function survivalFunnel(opts) {
   if (chrome && benchId) {
     const bt = hov(edgeText({
       x: 2, y: benchY, anchor: 'start', viewW: w, pad: 2, fontPx: 9.5, cls: 'dn-funnel-bench',
-      text: `▸ vs champion v0 = ${fitLabel(benchId, 18 * 9.5 * CHAR_EM, 9.5)} · every Δ is vs v0`,
+      text: `vs champion v0 = ${fitLabel(benchId, 18 * 9.5 * CHAR_EM, 9.5)} · every Δ is vs v0`,
     }), `champion v0 = ${benchId} · the field is raced vs this benchmark; every Δ is vs v0 · v0 defends at the champion-gate`);
     svg.appendChild(bt);
   }
@@ -1376,7 +1421,7 @@ export function survivalFunnel(opts) {
     // "id". Fit to the rail gutter so a long id ellipsises (never clips).
     if (chrome) {
       const entry = appears[0];
-      const glyph = verdict === 'adv' ? ' ↑' : '';
+      const glyph = verdict === 'adv';
       const gutter = dotX(0) - 4 - dotR - 6;      // px budget left of the first dot column
       // a still-racing lane with a live server projection reads in the projected tone.
       const projLane = verdict === 'racing' && appears.some((rg) => rg.pending && rg.prog && rg.prog[id] && rg.prog[id].projected);
@@ -1385,8 +1430,9 @@ export function survivalFunnel(opts) {
         + (projLane ? ' dn-proj' : '');
       const nl = hov(svgEl('text', { x: 4, y: entry.yById.get(id) + 3, class: nameCls }),
         `${id} · ${verdict === 'cut' ? 'eliminated' : verdict === 'adv' ? 'survives' : 'racing'}`);
-      nl.textContent = fitLabel(id, gutter - (glyph ? 14 : 2), 11) + glyph;
+      nl.textContent = fitLabel(id, gutter - (glyph ? 14 : 2), 11);
       g.appendChild(nl);
+      if (glyph) iconBeside(g, nl, 'up', 11, { tone: 'good' });
     }
 
     // (2) the converging splines between consecutive rung appearances (each such
@@ -1424,13 +1470,8 @@ export function survivalFunnel(opts) {
         + ` · ${atCut ? 'cut' : atSurv ? 'survives' : projected ? 'projected' : rg.pending ? 'racing' : 'survives'}`;
       g.appendChild(hov(svgEl('circle', { cx: dotX(rg.j), cy: y, r: dotR, class: dotCls }), tip));
 
-      // a cut drops a small ✕ in the gap immediately after its rung-r dot (a
-      // leading space so the group's textContent reads "id ✕").
-      if (atCut) {
-        const xm = svgEl('text', { x: dotX(rg.j) + dotR + 2, y: y + 3, class: 'dn-funnel-cut dn-bad' });
-        xm.textContent = ' ✕';
-        g.appendChild(xm);
-      }
+      // a cut drops a small fail mark in the gap immediately after its rung-r dot.
+      if (atCut) g.appendChild(figIcon('fail', dotX(rg.j) + dotR + 3, y + 3, 8, { tone: 'bad', class: 'dn-funnel-cut' }));
 
       // a LIVE racing lane grows a thin per-lane board-progress sub-bar under the
       // active dot + (chrome) a "k/N boards" / "~scalar proj" label. Projected
@@ -1494,7 +1535,7 @@ export function survivalFunnel(opts) {
   let label;
   let tip;
   if (crowned) {
-    label = CROWN.current + ' ' + shortLabel(champId, mini ? 8 : 12);
+    label = shortLabel(champId, mini ? 8 : 12);
     tip = `${champId} cleared the full-board gate → crowned champion${dStr}`;
   } else if (gateState === 'stands') {
     label = 'champion stands';
@@ -1510,10 +1551,11 @@ export function survivalFunnel(opts) {
     tip = 'awaiting the final survivor';
   }
   const gt = hov(fitInto({
-    x: gx + gateW / 2, y: midY + 4, anchor: 'middle', viewW: w, pad: 2, maxPx: gateW - 10, fontPx: 11,
+    x: gx + gateW / 2, y: midY + 4, anchor: 'middle', viewW: w, pad: 2, maxPx: gateW - (crowned ? 24 : 10), fontPx: 11,
     cls: 'dn-funnel-gatelab' + (crowned ? ' dn-good' : ''), text: label,
   }), tip);
   gateG.appendChild(gt);
+  if (crowned) iconBeside(gateG, gt, CROWN.current, 11, { lead: true, tone: 'good' });
   clickable(gateG, (clickId && o.onCompetitor) && (() => o.onCompetitor(clickId)));
   svg.appendChild(gateG);
   return svg;
@@ -1551,7 +1593,7 @@ export function swissLadder(opts) {
   if (benchId) {
     const bt = hov(svgEl('text', { x: 4, y: top + 10, class: 'dn-swissladder-bench' }),
       `incumbent champion = ${benchId} · the swiss winner must beat the incumbent at the champion-gate to be promoted`);
-    bt.textContent = `▸ incumbent champion = ${shortLabel(benchId, 18)} · defends at the gate`;
+    bt.textContent = `incumbent champion = ${shortLabel(benchId, 18)} · defends at the gate`;
     svg.appendChild(bt);
   }
   if (rounds.length === 0 && standings.length === 0) {
@@ -1578,14 +1620,12 @@ export function swissLadder(opts) {
       const b = p.bye ? 'bye' : (p.b == null ? '—' : String(p.b));
       const aWon = decided && p.winner === p.a;
       const bWon = decided && p.winner === p.b;
-      const progText = decided ? (p.winner === p.a ? ` · ${shortLabel(a, 8)} ↑` : ` · ${shortLabel(String(p.winner), 8)} ↑`)
-        : queued ? ' · queued'
+      const progText = queued ? ' · queued'
         : inflight ? ' · running' + (isNum(p.total) && p.total > 0 ? ` ${p.done || 0}/${p.total}` : (p.inflight ? ` · ${p.inflight} board${p.inflight === 1 ? '' : 's'}` : ''))
         : ' · pairing';
       const cls = 'dn-swissladder-pairlab' + (queued ? ' dn-swissladder-queued' : (inflight ? ' dn-racing' : ''));
       const t = hov(svgEl('text', { x: x + 6, y: cy + 3, class: cls }),
         `${a} vs ${b}${decided ? ' → ' + p.winner : ''}${isNum(p.delta) ? ` · Δ ${fmtSigned(p.delta, 2)}` : ''}`);
-      const aCls = aWon ? ' ↑' : '';
       // the primary label is ALWAYS just the `a v b` pairing — the status suffix
       // (winner / running N/M / queued) rides the cy+13 sub-line below, so a long
       // in-flight suffix can't overrun the ~colW round column into the next round.
@@ -1593,8 +1633,9 @@ export function swissLadder(opts) {
       g.appendChild(t);
       if (decided) {
         const sub = svgEl('text', { x: x + 6, y: cy + 13, class: 'dn-swissladder-win dn-good' });
-        sub.textContent = shortLabel(String(p.winner), 10) + ' ↑';
+        sub.textContent = shortLabel(String(p.winner), 10);
         g.appendChild(sub);
+        iconBeside(g, sub, 'up', 10, { tone: 'good' });
       } else if (inflight) {
         const barW = colW - 12;
         const frac = (isNum(p.total) && p.total > 0) ? Math.min(1, (p.done || 0) / p.total) : 0.5;
@@ -1651,8 +1692,9 @@ export function swissLadder(opts) {
     // undecorated row keeps the full 9-char cap — no regression.
     const hasCrown = isChamp || isFormer || isLeader;
     const idCap = Math.max(4, 9 - (i + 1 >= 10 ? 1 : 0) - (hasCrown ? 2 : 0) - (proj ? 6 : 0));
-    lab.textContent = `${i + 1}. ${fitLabel(sid, idCap * 11 * CHAR_EM, 11)}` + (isChamp ? ' ' + CROWN.current : (isFormer || isLeader ? ' ' + CROWN.former : '')) + (proj ? ' ~proj' : '');
+    lab.textContent = `${i + 1}. ${fitLabel(sid, idCap * 11 * CHAR_EM, 11)}` + (proj ? ' ~proj' : '');
     g.appendChild(lab);
+    if (hasCrown) iconBeside(g, lab, isChamp ? CROWN.current : CROWN.former, 11, { tone: isChamp ? 'good' : 'faint' });
     const pts = svgEl('text', { x: sx + standW - 6, y: cy + 3, 'text-anchor': 'end', class: 'dn-swissladder-pts' + (emph ? ' dn-good' : '') });
     pts.textContent = isNum(s.points) ? fmt(s.points, s.points % 1 ? 1 : 0) : '—';
     g.appendChild(pts);
@@ -1698,13 +1740,14 @@ export function swissLadder(opts) {
   const dStr = isNum(o.gateDelta) ? ` · Δ ${fmtSigned(o.gateDelta, 2)}` : '';
   let label;
   let tip;
-  if (crowned) { label = CROWN.current + ' ' + shortLabel(champId, 11); tip = `${champId} won the swiss + cleared the gate → new champion${dStr}`; }
+  if (crowned) { label = shortLabel(champId, 11); tip = `${champId} won the swiss + cleared the gate → new champion${dStr}`; }
   else if (gateState === 'stands') { label = 'champion stands'; tip = `the swiss winner did not beat the incumbent — champion stands${dStr}`; }
   else if (gateState === 'deciding') { label = 'deciding…'; tip = leaderId ? `${leaderId} leads — gate not yet committed` : 'the gate is deciding'; }
   else { label = 'tbd'; tip = 'awaiting the swiss leader'; }
   const gt = hov(svgEl('text', { x: gx + 6, y: cy + 3, class: 'dn-swissladder-gatelab' + (crowned ? ' dn-good' : '') }), tip);
   gt.textContent = label;
   gateG.appendChild(gt);
+  if (crowned) iconBeside(gateG, gt, CROWN.current, 11, { lead: true, tone: 'good' });
   clickable(gateG, (clickId && o.onCompetitor) && (() => o.onCompetitor(String(clickId))));
   svg.appendChild(gateG);
   return svg;
@@ -1801,8 +1844,9 @@ export function swissOverview(opts) {
     svg.appendChild(svgEl('circle', { cx: x0, cy: y0, r, class: dotCls }));
     if (pts.length > 1) svg.appendChild(svgEl('circle', { cx: xn, cy: yn, r, class: dotCls }));
     const lL = svgEl('text', { x: x0 - 6, y: y0 + 3, class: 'dn-swissover-name' + (champ ? ' dn-swissover-name-champ' : (former ? ' dn-swissover-name-former' : '')), 'text-anchor': 'end' });
-    lL.textContent = shortLabel(s.id, 11) + (champ ? ' ' + CROWN.current : (former ? ' ' + CROWN.former : ''));
+    lL.textContent = shortLabel(s.id, 11);
     svg.appendChild(lL);
+    if (champ || former) iconBeside(svg, lL, champ ? CROWN.current : CROWN.former, 10.5, { tone: champ ? 'good' : 'faint' });
     const lR = svgEl('text', { x: xn + 6, y: yn + 3, class: 'dn-swissover-rank', 'text-anchor': 'start' });
     lR.textContent = '#' + (s.ranks[s.ranks.length - 1] || '?');
     svg.appendChild(lR);
@@ -1827,8 +1871,9 @@ export function swissOverview(opts) {
     const lead = !champ && !former && b.leader && live;
     const g = svgEl('g', { class: 'dn-swissover-barrow', tabindex: o.onCompetitor ? '0' : null });
     const lab = svgEl('text', { x: barX0 - 6, y: y + barH / 2 + 3, class: 'dn-swissover-barname' + (champ ? ' dn-swissover-name-champ' : (former ? ' dn-swissover-name-former' : '')), 'text-anchor': 'end' });
-    lab.textContent = (i + 1) + '. ' + shortLabel(b.id, 9) + (champ ? ' ' + CROWN.current : (former || lead ? ' ' + CROWN.former : ''));
+    lab.textContent = (i + 1) + '. ' + shortLabel(b.id, 9);
     g.appendChild(lab);
+    if (champ || former || lead) iconBeside(g, lab, champ ? CROWN.current : CROWN.former, 10.5, { tone: champ ? 'good' : 'faint' });
     g.appendChild(svgEl('rect', { x: barX0, y, width: barMaxW, height: barH, rx: 3, class: 'dn-swissover-bar-bg' }));
     g.appendChild(hov(svgEl('rect', { x: barX0, y, width: bw, height: barH, rx: 3, class: 'dn-swissover-bar' + (champ || lead ? ' dn-swissover-bar-lead' : '') }),
       `${b.id} · ${fmt(b.points, b.points % 1 ? 1 : 0)} pts · ${b.wins}W ${b.draws}D ${b.losses}L`));
@@ -1842,7 +1887,7 @@ export function swissOverview(opts) {
   const crowned = gateState === 'crowned' && !!champId;
   const vy = barTop + barBandH + 4;
   let verdict;
-  if (crowned) verdict = `${CROWN.current} ${shortLabel(champId, 12)} promoted`;
+  if (crowned) verdict = `${shortLabel(champId, 12)} promoted`;
   else if (gateState === 'stands') verdict = 'champion stands';
   else if (gateState === 'deciding') verdict = 'gate deciding…';
   else verdict = '';
@@ -1850,6 +1895,7 @@ export function swissOverview(opts) {
     const vt = svgEl('text', { x: w - padR, y: vy, class: 'dn-swissover-verdict' + (crowned ? ' dn-good' : ''), 'text-anchor': 'end' });
     vt.textContent = verdict + (isNum(o.gateDelta) ? ` · Δ ${fmtSigned(o.gateDelta, 2)}` : '');
     svg.appendChild(vt);
+    if (crowned) iconBeside(svg, vt, CROWN.current, 10, { lead: true, tone: 'good' });
   }
   return svg;
 }
@@ -1941,7 +1987,7 @@ export function duelFlow(opts) {
     const bad = isNum(c.delta) ? c.delta > 0 : cut;
     const dx = refX + offsetOf(c.delta);
     const cls = 'dn-duelflow-dot ' + (good ? 'dn-good' : bad ? 'dn-bad' : 'dn-duelflow-pending');
-    const glyph = won ? ' ↑' : cut ? ' ✕' : ' ○';
+    const mark = won ? 'up' : cut ? 'fail' : 'ring';
     const g = svgEl('g', { class: 'dn-duelflow-lane', tabindex: o.onCompetitor ? '0' : null,
       'aria-label': `${c.id} vs champion${isNum(c.delta) ? ', Δ ' + fmtSigned(c.delta, 1) : ''}, ${verdict}` });
     // the lane bar from the rule out to the dot — its direction IS the sign of Δ.
@@ -1954,8 +2000,9 @@ export function duelFlow(opts) {
     g.appendChild(hov(svgEl('circle', { cx: dx, cy, r: won ? 4.4 : 3.4, class: cls }), tip));
     // the challenger label + status glyph in the left gutter.
     const lbl = svgEl('text', { x: nameW, y: cy + 3, class: 'dn-duelflow-name ' + (good ? 'dn-good' : bad ? 'dn-bad' : ''), 'text-anchor': 'end' });
-    lbl.textContent = shortLabel(String(c.id), 9) + glyph;
+    lbl.textContent = shortLabel(String(c.id), 9);
     g.appendChild(lbl);
+    iconBeside(g, lbl, mark, 10.5, { tone: won ? 'good' : cut ? 'bad' : 'faint' });
     // the Δ value, just OUTBOARD of the dot (away from the rule) so it never
     // collides with the spine.
     if (isNum(c.delta) && c.delta !== 0) {
@@ -1984,8 +2031,9 @@ export function duelFlow(opts) {
   }
   const gt = hov(svgEl('text', { x: gx + gateW / 2, y: gateCy + 4, class: 'dn-duelflow-gatelab' + (promotedAny ? ' dn-good' : ''), 'text-anchor': 'middle' }),
     champId ? `champion-gate · ${promotedAny ? 'a challenger was promoted' : champId + ' defends the title'}` : 'champion-gate');
-  gt.textContent = (champId ? CROWN.current + ' ' + shortLabel(champId, 11) : 'champion-gate');
+  gt.textContent = (champId ? shortLabel(champId, 11) : 'champion-gate');
   gateG.appendChild(gt);
+  if (champId) iconBeside(gateG, gt, CROWN.current, 12, { lead: true, tone: promotedAny ? 'good' : 'accent' });
   clickable(gateG, (champId && o.onCompetitor) && (() => o.onCompetitor(champId)));
   svg.appendChild(gateG);
   return svg;
@@ -2382,10 +2430,11 @@ export function gauntletFieldBars(opts) {
       + ` · ${row.outcome}`;
     g.appendChild(hov(svgEl('circle', { cx: dx, cy, r: row.survivor ? 4.4 : 3.3, class: dotCls }), tip));
     // the challenger label + survivor glyph in the left gutter.
-    const glyph = row.survivor ? ' ↑' : row.outcome === 'failed' ? ' ✕' : row.outcome === 'tied' ? ' =' : '';
+    const mark = row.survivor ? 'up' : row.outcome === 'failed' ? 'fail' : null;
     const lbl = svgEl('text', { x: padL - 6, y: cy + 3, class: 'dn-fieldbars-name ' + cls + (row.projected ? ' dn-proj' : ''), 'text-anchor': 'end' });
-    lbl.textContent = shortLabel(id, mini ? 7 : 11) + glyph;
+    lbl.textContent = shortLabel(id, mini ? 7 : 11) + (row.outcome === 'tied' ? ' =' : '');
     g.appendChild(lbl);
+    if (mark) iconBeside(g, lbl, mark, 10, { tone: row.survivor ? 'good' : 'bad' });
     // the scalar value just past the marker (settled / projected). A worst-end
     // challenger lands its dot near the band's right edge (W − padR); a start-
     // anchored value there (`12.345`, ~42px) overruns the W viewBox, so when dx
@@ -2601,9 +2650,7 @@ export function elimRadial(opts) {
       const [sx, sy] = pol(rr(surv), a); const [ex, ey] = pol(rr(Math.min(surv + 1, rings)), a);
       lane.appendChild(svgEl('line', { x1: sx, y1: sy, x2: ex, y2: ey, class: 'dn-elimradial-seg dn-bad' }));
       lane.appendChild(svgEl('circle', { cx: sx, cy: sy, r: mini ? 1.8 : 2.2, class: 'dn-elimradial-node dn-bad' }));
-      const xm = svgEl('text', { x: ex, y: ey + 3.2, class: 'dn-elimradial-cut dn-bad', 'text-anchor': 'middle' });
-      xm.textContent = '✕';
-      lane.appendChild(xm);
+      lane.appendChild(figIcon('fail', ex, ey + 3.2, mini ? 8 : 9, { anchor: 'middle', tone: 'bad', class: 'dn-elimradial-cut' }));
     } else if (isChamp) {
       // the survivor reaches the gate ring (good) then dashes accent into center.
       const [gx, gy] = pol(rr(surv), a);
@@ -2625,21 +2672,24 @@ export function elimRadial(opts) {
     const anchor = ca < -0.3 ? 'end' : (ca > 0.3 ? 'start' : 'middle');
     const ldy = sa < -0.3 ? -2 : (sa > 0.3 ? 9 : 3);
     const lblCls = 'dn-elimradial-name ' + (eliminated ? 'dn-bad' : isChamp ? 'dn-good' : isFormer ? 'dn-elimradial-former' : 'dn-good') + (proj ? ' dn-proj' : '');
-    const lblText = shortLabel(g.id, mini ? 5 : 8) + (isChamp ? ' ' + CROWN.current : isFormer ? ' ' + CROWN.former : '') + (proj ? ' ~' : '');
-    // the name is 9px mono ⇒ ~0.6em/char; clamp x so the start/end/middle run
-    // never crosses [edge, W-edge]. A no-op for any spoke that already fits.
-    const lblW = lblText.length * (mini ? 5 : 5.4);
+    const lblText = shortLabel(g.id, mini ? 5 : 8) + (proj ? ' ~' : '');
+    const crown = isChamp ? CROWN.current : isFormer ? CROWN.former : null;
+    // the name is 9px mono ⇒ ~0.6em/char, and a crown takes about two more;
+    // clamp x so the start/end/middle run never crosses [edge, W-edge]. A
+    // no-op for any spoke that already fits.
+    const lblW = (lblText.length + (crown ? 2 : 0)) * (mini ? 5 : 5.4);
     const edge = mini ? 2 : 3;
     const lx = anchor === 'start' ? Math.min(lx0, W - edge - lblW)
       : anchor === 'end' ? Math.max(lx0, edge + lblW)
       : Math.max(edge + lblW / 2, Math.min(lx0, W - edge - lblW / 2));
     const tip = `${g.id}`
-      + (isChamp ? ` · champion ${CROWN.current}` : isFormer ? ' · former champion' : eliminated ? ` · eliminated at ${rounds[g.eliminatedAt] ? (rounds[g.eliminatedAt].label || 'R' + g.eliminatedAt) : 'R' + g.eliminatedAt}` : pendingSpoke ? ' · racing' : ' · advanced')
+      + (isChamp ? ' · current champion' : isFormer ? ' · former champion' : eliminated ? ` · eliminated at ${rounds[g.eliminatedAt] ? (rounds[g.eliminatedAt].label || 'R' + g.eliminatedAt) : 'R' + g.eliminatedAt}` : pendingSpoke ? ' · racing' : ' · advanced')
       + (proj ? ` · projected scalar ~${fmt(proj.scalar, 2)} (boards streaming)` : '')
-      + (isDouble ? ` · ${g.side === 'LB' ? "losers' bracket ●○" : "winners' bracket ●●"}` : '');
+      + (isDouble ? ` · ${g.side === 'LB' ? "losers' bracket (one loss)" : "winners' bracket (unbeaten)"}` : '');
     const lbl = hov(svgEl('text', { x: lx, y: ly + ldy, class: lblCls, 'text-anchor': anchor }), tip);
     lbl.textContent = lblText;
     lane.appendChild(lbl);
+    if (crown) iconBeside(lane, lbl, crown, 9, { tone: isChamp ? 'good' : 'faint' });
     clickable(lane, o.onCompetitor && (() => o.onCompetitor(g.id)));
     svg.appendChild(lane);
   });
@@ -2688,12 +2738,17 @@ export function elimRadial(opts) {
   const seatR = mini ? 11 : 14;
   const gateG = svgEl('g', { class: 'dn-elimradial-gate', tabindex: (champId && o.onCompetitor) ? '0' : null });
   gateG.appendChild(svgEl('circle', { cx, cy, r: seatR, class: 'dn-elimradial-seat' + (crowned ? ' dn-good' : '') }));
-  const gt = hov(svgEl('text', { x: cx, y: cy + (mini ? 3.6 : 4.5), class: 'dn-elimradial-seatlab' + (crowned ? ' dn-good' : ''), 'text-anchor': 'middle' }),
-    crowned ? `${champId} · crowned champion ${CROWN.current}`
-      : gateState === 'stands' ? 'champion stands'
-        : gateState === 'deciding' ? 'gate deciding…' : 'champion gate');
-  gt.textContent = crowned ? CROWN.current : gateState === 'deciding' ? '…' : CROWN.former;
-  gateG.appendChild(gt);
+  // the seat shows "…" while the gate decides and a crown otherwise; the gate
+  // group carries the hovercard, so the tip is reachable over the whole seat
+  // and the group is the one focus stop.
+  const seatY = cy + (mini ? 3.6 : 4.5);
+  gateG.appendChild(gateState === 'deciding' && !crowned
+    ? svgEl('text', { x: cx, y: seatY, class: 'dn-elimradial-seatlab', 'text-anchor': 'middle' }, ['…'])
+    : figIcon(crowned ? CROWN.current : CROWN.former, cx, seatY, mini ? 10 : 13,
+      { anchor: 'middle', tone: crowned ? 'good' : 'accent', class: 'dn-elimradial-seatmark' }));
+  hov(gateG, crowned ? `${champId} · crowned champion`
+    : gateState === 'stands' ? 'champion stands'
+      : gateState === 'deciding' ? 'gate deciding…' : 'champion gate');
   clickable(gateG, (champId && o.onCompetitor) && (() => o.onCompetitor(champId)));
   svg.appendChild(gateG);
   return svg;
@@ -2871,10 +2926,12 @@ export function radarSilhouette(opts) {
     svg.appendChild(svgEl('line', { x1: lx, y1: ly + 34, x2: lx + 22, y2: ly + 34, class: 'dn-radar-champ-key' }));
     const hk = svgEl('text', { x: lx + 28, y: ly + 37, class: 'dn-radar-legendlab' }); hk.textContent = 'champion';
     svg.appendChild(hk);
-    const gk = svgEl('text', { x: lx, y: ly + 56, class: 'dn-radar-legendlab dn-good' }); gk.textContent = '● gain';
+    const gk = svgEl('text', { x: lx, y: ly + 56, class: 'dn-radar-legendlab dn-good' }); gk.textContent = 'gain';
     svg.appendChild(gk);
-    const bk = svgEl('text', { x: lx + 52, y: ly + 56, class: 'dn-radar-legendlab dn-bad' }); bk.textContent = '● loss';
+    iconBeside(svg, gk, 'dot', 9.5, { lead: true, tone: 'good' });
+    const bk = svgEl('text', { x: lx + 52, y: ly + 56, class: 'dn-radar-legendlab dn-bad' }); bk.textContent = 'loss';
     svg.appendChild(bk);
+    iconBeside(svg, bk, 'dot', 9.5, { lead: true, tone: 'bad' });
   }
   return svg;
 }
@@ -2999,8 +3056,8 @@ export function proposingTracker(opts) {
     const pending = st === 'proposing';
     const glyph = el('span', {
       class: 'dn-prop-glyph ' + (ok ? 'dn-prop-ok' : pending ? 'dn-prop-pending' : 'dn-prop-bad'),
-      'aria-hidden': 'true', text: ok ? '✓' : pending ? '⋯' : '✗',
-    });
+      'aria-hidden': 'true',
+    }, [icon(ok ? 'pass' : pending ? 'more' : 'fail')]);
     const gid = el('span', { class: 'dn-prop-gen', text: shortLabel(String(f.generation_id), 16) });
     const verdict = el('span', {
       class: 'dn-prop-verdict ' + (ok ? 'dn-prop-ok' : pending ? 'dn-prop-pending' : 'dn-prop-bad'),
@@ -3145,8 +3202,9 @@ export function diversityMatrix(opts) {
   table.appendChild(tbody);
   return el('div', { class: 'dn-divmtx-wrap' }, [
     M.matrixScroll(table),
-    el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;',
-      text: 'column = challenger · row = mutation site · ▪ = touched here · coinciding columns are the same idea (the overlap the ribbon scores)' }),
+    el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;' }, [
+      'column = challenger · row = mutation site · ', icon('cell'),
+      ' = touched here · coinciding columns are the same idea (the overlap the ribbon scores)']),
   ]);
 }
 
@@ -3241,7 +3299,7 @@ export function roundTimeline(opts) {
           : promoted ? `, promoted ${r.gateOutcome.gen}` : ', champion held'),
     }, [
       svgEl('circle', { cx, cy: spineY, r: 8, class: 'dn-roundtl-disc' }),
-      svgEl('text', { x: cx, y: spineY + 3.5, class: 'dn-roundtl-glyph', 'text-anchor': 'middle' }, [CROWN.current]),
+      figIcon(CROWN.current, cx, spineY + 3.5, 10, { anchor: 'middle', class: 'dn-roundtl-glyph' }),
       svgEl('text', { x: cx, y: spineY - 16, class: 'dn-roundtl-champid', 'text-anchor': 'middle' }, [fitLabel(champId, 10 * 12 * CHAR_EM, 12, { mid: true })]),
       svgEl('text', { x: cx, y: spineY + 26, class: 'dn-roundtl-loss', 'text-anchor': 'middle' },
         [isNum(r.champion && r.champion.scalar) ? fmt(r.champion.scalar, 1) : '·']),
@@ -3273,14 +3331,14 @@ export function roundTimeline(opts) {
       el('span', { class: 'dn-roundtl-eptag', text: 'round ' + r.round_index }),
       r.inflight ? el('span', { class: 'dn-roundtl-eplive', 'aria-label': 'in-flight round', text: 'LIVE' }) : null,
       el('span', { class: 'dn-roundtl-epchamp' }, [
-        el('span', { class: 'dn-roundtl-epcrown', 'aria-hidden': 'true', text: CROWN.current }),
+        el('span', { class: 'dn-roundtl-epcrown', 'aria-hidden': 'true' }, [icon(CROWN.current)]),
         el('span', { class: 'dn-mono', text: champId }),
         isNum(r.champion && r.champion.scalar)
           ? el('span', { class: 'dn-faint', text: ' · loss ' + fmt(r.champion.scalar, 1) }) : null,
       ].filter(Boolean)),
     ]);
     if (o.onRound) {
-      const link = el('button', { class: 'dn-linkbtn dn-roundtl-epdrill', type: 'button', text: 'open round →' });
+      const link = el('button', { class: 'dn-linkbtn dn-roundtl-epdrill', type: 'button' }, iconLabel('forward', 'open round', { after: true }));
       link.addEventListener('click', () => o.onRound(r.round_index));
       head.appendChild(link);
     }
@@ -3303,9 +3361,9 @@ export function roundTimeline(opts) {
             + (c.promoted ? ' — promoted' : st === 'proposing' ? ' — proposing' : st === 'rejected' ? ' — rejected' : ''),
         }, [
           el('span', { class: 'dn-mono', text: shortLabel(String(c.id), 12) }),
-          c.promoted ? el('span', { class: 'dn-roundtl-chipcrown', 'aria-hidden': 'true', text: CROWN.current }) : null,
-          st === 'proposing' ? el('span', { class: 'dn-faint dn-roundtl-chipstatus', 'aria-hidden': 'true', text: '⋯' }) : null,
-          st === 'rejected' ? el('span', { class: 'dn-faint dn-roundtl-chipstatus', 'aria-hidden': 'true', text: '✗' }) : null,
+          c.promoted ? el('span', { class: 'dn-roundtl-chipcrown', 'aria-hidden': 'true' }, [icon(CROWN.current)]) : null,
+          st === 'proposing' ? el('span', { class: 'dn-faint dn-roundtl-chipstatus', 'aria-hidden': 'true' }, [icon('more')]) : null,
+          st === 'rejected' ? el('span', { class: 'dn-faint dn-roundtl-chipstatus', 'aria-hidden': 'true' }, [icon('fail')]) : null,
           isNum(c.scalar) ? el('span', { class: 'dn-faint dn-roundtl-chiploss', text: fmt(c.scalar, 1) }) : null,
         ].filter(Boolean));
         if (o.onCompetitor) chip.addEventListener('click', () => o.onCompetitor(String(c.id)));
@@ -3336,12 +3394,12 @@ export function roundTimeline(opts) {
       if (rejected > 0) tally += ` · ${rejected} rejected`;
       if (proposing > 0) tally += ` · ${proposing} proposing…`;
       card.appendChild(el('div', { class: 'dn-roundtl-gate dn-roundtl-gate-live' }, [
-        el('span', { class: 'dn-roundtl-gatemark', 'aria-hidden': 'true', text: '⋯' }),
+        el('span', { class: 'dn-roundtl-gatemark', 'aria-hidden': 'true' }, [icon('more')]),
         el('span', { text: 'proposing the field · ' + tally }),
       ]));
     } else {
       card.appendChild(el('div', { class: 'dn-roundtl-gate' + (promoted ? ' dn-roundtl-gate-win' : '') }, [
-        el('span', { class: 'dn-roundtl-gatemark', 'aria-hidden': 'true', text: promoted ? CROWN.current : '=' }),
+        el('span', { class: 'dn-roundtl-gatemark', 'aria-hidden': 'true' }, [promoted ? icon(CROWN.current) : '=']),
         el('span', {
           text: promoted
             ? `${r.gateOutcome.gen} promoted → next round's champion`
@@ -3451,9 +3509,7 @@ export function waterfall(opts) {
     // yTo − 6, also centred on cx) so the ♛ never overprints the number; a
     // regressed/flat step drops it below the station (yTo + 14).
     if (!held && s.gen != null && yTo != null) {
-      const cr = svgEl('text', { x: cx, y: y(s.to) - (isNum(s.from) && isNum(s.to) && s.to < s.from ? 18 : -14), class: 'dn-waterfall-crown', 'text-anchor': 'middle' });
-      cr.textContent = CROWN.current;
-      g.appendChild(cr);
+      g.appendChild(figIcon(CROWN.current, cx, y(s.to) - (isNum(s.from) && isNum(s.to) && s.to < s.from ? 18 : -14), 11, { anchor: 'middle', class: 'dn-waterfall-crown' }));
     }
     clickable(g, o.onRound && (() => o.onRound(s.round_index)));
     svg.appendChild(g);
@@ -3508,13 +3564,14 @@ export function reignGantt(opts) {
     const current = !!r.current;
     const g = svgEl('g', { class: 'dn-reigngantt-row', tabindex: o.onCompetitor ? '0' : null });
     const lbl = svgEl('text', { x: padL - 8, y: cy + 3, class: 'dn-reigngantt-name' + (current ? ' dn-reigngantt-current' : ' dn-reigngantt-former'), 'text-anchor': 'end' });
-    lbl.textContent = fitLabel(String(r.id), 12 * 10.5 * CHAR_EM, 10.5, { mid: true }) + ' ' + (current ? CROWN.current : CROWN.former);
+    lbl.textContent = fitLabel(String(r.id), 12 * 10.5 * CHAR_EM, 10.5, { mid: true });
     g.appendChild(lbl);
+    iconBeside(g, lbl, current ? CROWN.current : CROWN.former, 10.5, { tone: current ? 'accent' : 'faint' });
     const span = Math.max(4, x1 - x0);
     g.appendChild(hov(svgEl('rect', {
       x: x0, y: cy - rowH * 0.32, width: span, height: rowH * 0.64, rx: 3,
       class: 'dn-reigngantt-bar' + (current ? ' dn-reigngantt-bar-current' : ' dn-reigngantt-bar-former'),
-    }), `${r.id} ${current ? CROWN.current + ' current champion' : CROWN.former + ' former champion'} · held r${isNum(r.fromRound) ? r.fromRound : 0}`
+    }), `${r.id} ${current ? 'current champion' : 'former champion'} · held r${isNum(r.fromRound) ? r.fromRound : 0}`
       + (isNum(r.toRound) && r.toRound !== r.fromRound ? `–r${r.toRound}` : '')));
     clickable(g, o.onCompetitor && (() => o.onCompetitor(String(r.id))));
     svg.appendChild(g);
@@ -3686,8 +3743,9 @@ export function metaLoopLedger(opts) {
   const last = rows[n - 1];
   if (last && (last.open || last.closed === false)) {
     const yy = isNum(last.floor) ? sy(last.floor) : sy((flo + fhi) / 2);
-    svg.appendChild(txt(bx[n - 1].xc, yy + 20, '● OPEN',
-      { class: 'dn-metaledger-openbadge', 'text-anchor': 'middle' }));
+    const open = txt(bx[n - 1].xc, yy + 20, 'OPEN', { class: 'dn-metaledger-openbadge', 'text-anchor': 'middle' });
+    svg.appendChild(open);
+    iconBeside(svg, open, 'dot', 8.5, { lead: true, tone: 'faint' });
   }
 
   // ───────── contract-change RAIL + chips (opt 1), at each roll boundary ─────────
@@ -3850,8 +3908,10 @@ export function metaLoopLedger(opts) {
       }), `${e.epoch_id} · ${LEDGER_COMP_LABEL[c]} ${changed ? 'CHANGED vs predecessor' : 'unchanged'}`
         + (soft ? ` (→ ${e.structure || '?'} · SOFT seam)` : '')));
       if (changed) {
-        svg.appendChild(txt(b.xc, yTop + (hsRowH - 4) / 2 + 3, soft ? ('→' + (e.structure || '?')) : '●',
-          { class: soft ? 'dn-metaledger-cellmark-soft' : 'dn-metaledger-cellmark', 'text-anchor': 'middle' }));
+        const markY = yTop + (hsRowH - 4) / 2 + 3;
+        svg.appendChild(soft
+          ? txt(b.xc, markY, '→' + (e.structure || '?'), { class: 'dn-metaledger-cellmark-soft', 'text-anchor': 'middle' })
+          : figIcon('dot', b.xc, markY, 9, { anchor: 'middle', class: 'dn-metaledger-cellmark' }));
       }
     });
     // colid is middle-anchored at b.xc, so a full 14-char id (~92px) overprints

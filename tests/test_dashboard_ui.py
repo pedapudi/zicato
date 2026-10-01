@@ -71,11 +71,6 @@ def app_js() -> str:
     return "\n".join(p.read_text(encoding="utf-8") for p in _js_bundle_files())
 
 
-@pytest.fixture(scope="module")
-def icons_svg() -> str:
-    return (STATIC_DIR / "icons.svg").read_text(encoding="utf-8")
-
-
 # Directories under static/ that are NOT part of the served bundle the
 # browser loads to render the dashboard:
 #   * test/    — the dev-only JS test harness; excluded from the wheel
@@ -109,12 +104,10 @@ def _served_text_files() -> list[Path]:
 
     This walks the actual served tree (mirroring what
     ``server.py``'s catch-all static route exposes) rather than
-    hand-listing fixtures per file. A prior version of this test summed
-    four hand-picked fixtures (``index.html`` + ``style.css`` + the JS
-    bundle + ``icons.svg``) and silently missed ``css/console.css`` —
-    loaded at runtime by ``console.js`` via a dynamic ``<link>`` — because
-    nothing forced the fixture list to track what's actually on disk.
-    Walking the tree closes that gap structurally: a new text asset
+    hand-listing fixtures per file. A hand-picked list misses a file such
+    as ``css/console.css``, which ``console.js`` loads at runtime via a
+    dynamic ``<link>``, because nothing forces the list to track what is
+    on disk. Walking the tree closes that gap structurally: a new text asset
     dropped anywhere under ``static/`` (outside the excluded
     dev/binary/brand directories) is counted automatically.
     """
@@ -860,7 +853,7 @@ def test_bundle_under_size_envelope() -> None:
 
 
 def test_each_file_is_non_empty() -> None:
-    for name in ("index.html", "style.css", "console.js", "icons.svg"):
+    for name in ("index.html", "style.css", "console.js"):
         path = STATIC_DIR / name
         assert path.exists(), f"missing required file {name}"
         assert path.stat().st_size > 0, f"empty file {name}"

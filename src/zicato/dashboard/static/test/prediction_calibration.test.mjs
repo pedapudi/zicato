@@ -14,8 +14,8 @@
 //   * absent / no-claims scorecard → null → the dossier is byte-identical to
 //     today (back-compat clean); a baseline (seed) never reads the endpoint;
 //   * each claim's stamped hypothesis_match drives the hit/miss glyph; a
-//     predicted-but-unpaired claim is "unresolved" (◌); an unpredicted realised
-//     movement is "＋" and NEVER scored;
+//     predicted-but-unpaired claim is "unresolved" (a dashed ring); an unpredicted
+//     realised movement draws a plus and is NEVER scored;
 //   * brier is always null → no Brier value rendered;
 //   * the card carries the EXPLICIT 'diagnostic — does not affect the gate'
 //     caption;
@@ -28,7 +28,7 @@
 //   * the HOME view mounts the trend beside the ledger, captions it diagnostic,
 //     and a no-op heartbeat churns NO DOM (digest-gated).
 
-import { installDom, test, run, assert, assertEqual, assertDeep } from './harness.mjs';
+import { installDom, test, run, assert, assertEqual, assertDeep, iconNames } from './harness.mjs';
 import { recorded } from './recorded.mjs';
 
 installDom();
@@ -106,10 +106,10 @@ test('buildPredictionScorecard: renders the calibration fraction + a hit/miss/un
   assertEqual(glyphs.length, 4, 'a verdict glyph per claim');
   const tones = glyphs.map((g) => (hasClass(g, 'dn-good') ? 'good' : hasClass(g, 'dn-bad') ? 'bad' : 'flat'));
   assertDeep(tones, ['good', 'bad', 'flat', 'flat'], 'hit=good · miss=bad · unresolved=flat · unpredicted=flat');
-  assertEqual(glyphs[0].textContent, '✓', 'hit glyph is ✓');
-  assertEqual(glyphs[1].textContent, '✗', 'miss glyph is ✗');
-  assertEqual(glyphs[2].textContent, '◌', 'unresolved glyph is ◌');
-  assertEqual(glyphs[3].textContent, '＋', 'unpredicted glyph is ＋');
+  assertDeep(glyphs.map((g) => iconNames(g)[0]), ['pass', 'fail', 'unscored', 'unpredicted'],
+    'hit draws the pass mark · miss the fail mark · unresolved the dashed ring · unpredicted the plus');
+  assertDeep(glyphs.map((g) => g.getAttribute('aria-label')), ['hit', 'miss', 'unresolved', 'unpredicted'],
+    'each verdict mark names its verdict for assistive technology');
 });
 
 // ── 3. the EXPLICIT diagnostic caption (the non-negotiable disclaimer) ──────

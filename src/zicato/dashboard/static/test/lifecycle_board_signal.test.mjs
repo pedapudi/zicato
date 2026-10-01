@@ -144,8 +144,8 @@ test('drift: hidden when the workspace emits no drift stream, kept when it does'
   });
   const bareKeys = byKeyOf(bare);
   assertEqual(bareKeys.a.getAttribute('data-channel'), 'pass', 'the figure falls through to the pass channel');
-  assertEqual(textOf(childByClass(bareKeys.a, 'ezn-board-loss')), '✓', 'a passing entry reads ✓, not 0');
-  assertEqual(textOf(childByClass(bareKeys.b, 'ezn-board-loss')), '✕', 'a failing entry reads ✕, not 0');
+  assertEqual(childByClass(bareKeys.a, 'ezn-board-loss').getAttribute('data-icon'), 'pass', 'a passing entry draws the pass mark, not 0');
+  assertEqual(childByClass(bareKeys.b, 'ezn-board-loss').getAttribute('data-icon'), 'fail', 'a failing entry draws the fail mark, not 0');
   assert(/no continuous score, no drift stream/.test(textOf(nodeByClass(bare, 'ezn-dag-key'))),
     'the key states why there is no magnitude to plot');
 

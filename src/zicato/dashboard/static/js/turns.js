@@ -1,6 +1,7 @@
 // Shared transcript renderer for board comparison, imported traces, and live follow.
 
 import { el } from './core/dom.js';
+import { icon } from './icons.js';
 
 export function buildTurnNode(t, annBySeq, execution) {
   const turn = el('div', { class: 'dn-turn dn-turn-' + (t.role || 'agent') }, [
@@ -19,7 +20,7 @@ export function buildTurnNode(t, annBySeq, execution) {
   const activity = buildExecutionOutline(execution, t.activity_ids);
   if (activity) turn.appendChild(activity);
   for (const a of ((annBySeq && annBySeq.get(t.seq)) || [])) {
-    turn.appendChild(el('div', { class: 'dn-annot dn-annot-' + (a.kind || 'note'), text: '◂ ' + (a.summary || a.kind) }));
+    turn.appendChild(el('div', { class: 'dn-annot dn-annot-' + (a.kind || 'note') }, [icon('note'), ' ' + (a.summary || a.kind)]));
   }
   return turn;
 }
@@ -37,7 +38,8 @@ function toolContent(record, field) {
 function buildToolNode({ name, label, id, text }) {
   return el('div', { class: 'dn-tool' }, [
     el('div', {}, [
-      el('span', { class: 'dn-mono', text: '⚙ ' + name }),
+      icon('tool'),
+      el('span', { class: 'dn-mono', text: ' ' + name }),
       el('span', { class: 'dn-faint', text: ' · ' + label }),
       id ? el('span', { class: 'dn-mono', text: ' · ' + id }) : null,
     ]),
@@ -83,14 +85,14 @@ export function buildExecutionNode(node, byId, children, seen) {
     'data-fidelity': fidelity,
   };
   const label = el('span', { class: 'dn-exec-label' }, [
-    el('span', { class: 'dn-exec-glyph', 'aria-hidden': 'true', text: executionGlyph(kind) }),
+    el('span', { class: 'dn-exec-glyph', 'aria-hidden': 'true' }, [icon(executionIcon(kind))]),
     el('span', { class: 'dn-exec-name', text: node.name || kind }),
     el('span', { class: 'dn-exec-status dn-faint', text: ' · ' + status }),
   ]);
   if (node.summary) label.appendChild(el('span', { class: 'dn-exec-summary dn-faint', text: ' · ' + node.summary }));
   if (!childIds.length) return el('div', attrs, [label]);
 
-  const summary = el('summary', { class: 'dn-exec-toggle', 'aria-expanded': 'false' }, [label]);
+  const summary = el('summary', { class: 'dn-exec-toggle', 'aria-expanded': 'false' }, [icon('expand', { class: 'dn-exec-caret' }), label]);
   const branch = el('details', attrs, [summary]);
   const childRail = el('div', { class: 'dn-exec-children', role: 'group' });
   for (const id of childIds) {
@@ -104,11 +106,11 @@ export function buildExecutionNode(node, byId, children, seen) {
   return branch;
 }
 
-function executionGlyph(kind) {
-  if (kind === 'tool') return '⚙';
-  if (kind === 'agent') return '◇';
-  if (kind === 'artifact') return '□';
-  return '·';
+function executionIcon(kind) {
+  if (kind === 'tool') return 'tool';
+  if (kind === 'agent') return 'agent';
+  if (kind === 'artifact') return 'artifact';
+  return 'dot';
 }
 
 // Fold only the adjacent literal goal duplicate emitted by run start and derivation.

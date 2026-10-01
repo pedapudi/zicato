@@ -32,6 +32,7 @@
 import { el } from '../core/dom.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
+import { iconLabel } from '../icons.js';
 import { gatedSwap, empty, stat, subhead } from '../ui.js';
 import { comparePicker } from '../compare.js';
 
@@ -176,7 +177,7 @@ export async function render(host, ctx, params) {
     nodes.push(el('div', { class: 'dn-panel dn-row' }, [
       stat(String(myPatches.length || fileEntries.length), pinned ? 'pinned site' : 'patched sites'),
       stat(genId, 'candidate'),
-      el('div', { class: 'dn-stat' }, [el('a', { class: 'dn-linkbtn', href: ctx.href('candidate', { epochId, gen: genId }), text: '← back to candidate' })]),
+      el('div', { class: 'dn-stat' }, [el('a', { class: 'dn-linkbtn', href: ctx.href('candidate', { epochId, gen: genId }), }, iconLabel('back', 'back to candidate'))]),
     ]));
 
     if (gens.length > 1) {
@@ -389,19 +390,16 @@ function expandableDiff(o) {
     for (const [bar, dir, room] of [[top, 'up', roomUp()], [bottom, 'down', roomDown()]]) {
       while (bar.firstChild) bar.removeChild(bar.firstChild);
       if (state.left && room <= 0) continue;
-      const arrow = dir === 'up' ? '↑' : '↓';
       bar.appendChild(el('button', {
         type: 'button', class: 'dn-sxs-xbtn', disabled: state.busy ? 'disabled' : null,
         'aria-label': `expand ${CONTEXT_STEP} lines ${dir}`,
         onclick: () => grow(dir, CONTEXT_STEP),
-        text: `${arrow} ${CONTEXT_STEP} lines`,
-      }));
+      }, iconLabel(dir, `${CONTEXT_STEP} lines`)));
       bar.appendChild(el('button', {
         type: 'button', class: 'dn-sxs-xbtn dn-sxs-xbtn-all', disabled: state.busy ? 'disabled' : null,
         'aria-label': `expand to the ${dir === 'up' ? 'start' : 'end'} of the file`,
         onclick: () => grow(dir, Infinity),
-        text: dir === 'up' ? '⤒ file start' : '⤓ file end',
-      }));
+      }, dir === 'up' ? iconLabel('to-start', 'file start') : iconLabel('to-end', 'file end')));
     }
   };
 

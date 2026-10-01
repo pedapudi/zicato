@@ -36,6 +36,7 @@ import * as M from '../matrix.js';
 import { section, empty, gatedSwap, verdictPill } from '../ui.js';
 import { epochIsLive } from '../livestatus.js';
 import { CROWN, fmt } from '../svg.js';
+import { icon } from '../icons.js';
 import { harmonografMini, harmonografIsLive } from '../core/harmonograf.js';
 import { mount as mountEvalHealth } from '../panels/evals_health.js';
 
@@ -285,7 +286,7 @@ function buildMatrix(ctx, epochId, candidates, entries, cells, live, epochLive) 
   if (!shown) {
     wrap.appendChild(el('p', { class: 'dn-empty', text: 'No entries match the active filters.' }));
   }
-  wrap.appendChild(el('p', { class: 'dn-faint dn-evalmtx-legend', text: 'row = board entry · column = candidate · ' + CROWN.current + ' = champion spine · faint cell = single-sample (unreplicated) · click a cell for its transcript' }));
+  wrap.appendChild(el('p', { class: 'dn-faint dn-evalmtx-legend' }, ['row = board entry · column = candidate · ', icon(CROWN.current), ' = champion spine · faint cell = single-sample (unreplicated) · click a cell for its transcript']));
   return section('Matrix', wrap);
 }
 
@@ -323,10 +324,9 @@ function candidateHeader(ctx, epochId, c, epochLive) {
   const kids = [];
   if (spine) {
     kids.push(el('span', {
-      class: 'dn-evalmtx-crown', 'aria-label': 'champion spine',
+      class: 'dn-evalmtx-crown', role: 'img', 'aria-label': 'champion spine',
       title: seed ? 'the seed — the champion this epoch started from' : 'on the promoted-champion spine',
-      text: CROWN.current,
-    }));
+    }, [icon(CROWN.current)]));
   }
   kids.push(M.matrixColumnLabel(shortId(c.generation_id, 14), {
     extra: 'dn-evalmtx-genlink',
@@ -409,7 +409,7 @@ function cellNode(ctx, epochId, entry, cand, cell, live) {
   ]);
   td.appendChild(link);
   if (cell.cached) {
-    td.appendChild(el('span', { class: 'dn-evalmtx-cachemark dn-faint', title: 'carried-over cached result', 'aria-hidden': 'true', text: '↻' }));
+    td.appendChild(el('span', { class: 'dn-evalmtx-cachemark dn-faint', title: 'carried-over cached result', 'aria-hidden': 'true' }, [icon('refresh')]));
   }
   // the harmonograf deep-link — rendered ONLY while a run is live (the helper
   // returns null otherwise), keyed on the cell's latest run id.

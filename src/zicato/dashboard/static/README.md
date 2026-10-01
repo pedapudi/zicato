@@ -53,6 +53,8 @@ in `js/CONTRACTS.md`.
   `compare.js` (the side-by-side compare picker and split frame),
   `ui.js` (digest-gated swap, pills, themes, typefaces), `data.js` (the
   per-epoch read accessors), plus `convo.js`, `facets.js`, `rounds.js`,
+  `icons.js` (the one drawn icon set: every control, verdict, crown and
+  tree mark is an icon from it, never a typed symbol),
   `swatchdropdown.js`, `transcript_stream.js`, `turns.js`,
   `typefacedropdown.js`, `dropdown.js` and `unit_liveness.js`. Each of
   the fourteen routed views has a module under `js/views/`: `home`,
@@ -76,8 +78,6 @@ in `js/CONTRACTS.md`.
   discipline. Run with `node test/run-all.mjs`; also driven
   from `tests/test_dashboard_js.py`. The `test/` directory is a
   development tool and is NOT shipped in the wheel.
-- `icons.svg` — inline-able sprite. Reference via
-  `<use href="/static/icons.svg#icon-name"/>`.
 - `brand/` and `fonts/` — the favicons and logo marks `index.html`
   links, and the self-hosted woff2 faces `css/console.css` declares.
 
@@ -104,7 +104,7 @@ per-route accessors in `js/data.js` when it renders.
 
 ```
 GET  /                              — index.html
-GET  /static/{path}                 — console.css, console.js, icons.svg, ...
+GET  /static/{path}                 — console.css, console.js, js/*.js, ...
 GET  /api/environment                — the consolidated environment read:
                                        workspace identity, epoch summary,
                                        active tournament, generation
@@ -141,7 +141,7 @@ rather than re-rendering.
 The structural test in `tests/test_dashboard_ui.py` holds the total
 bundle under an uncompressed size ceiling. It counts every hand-written
 text file the static route serves — `index.html`, `style.css`,
-`console.js`, `css/console.css`, the `js/**` modules, `icons.svg`, this
+`console.js`, `css/console.css`, the `js/**` modules, this
 README and `js/CONTRACTS.md` — and excludes `brand/`, `fonts/` and
 `test/`. The bundle
 is served from localhost and costs no network time; the ceiling exists
