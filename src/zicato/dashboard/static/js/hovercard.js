@@ -140,21 +140,31 @@ export function hide() {
 // which is fine because nodes are rebuilt (not heartbeat-mutated). The visible
 // affordance is the card; a trivial native `<title>` may be kept ALONGSIDE as a
 // pure no-JS/a11y fallback by the caller.
-export function attachHovercard(target, content) {
+//
+// `opts.focusable: false` wires the pointer only, for a target inside a
+// control that is already focusable (a span inside a <button>): the target
+// takes no tab stop and no aria-describedby, and the control's own accessible
+// name must already carry the card's text.
+export function attachHovercard(target, content, opts) {
   if (!target || !target.addEventListener) return target;
+  const focusable = !(opts && opts.focusable === false);
   const get = () => (typeof content === 'function' ? content() : content);
   // make the target keyboard-focusable + announce the relationship.
-  if (target.getAttribute && target.getAttribute('tabindex') == null && !target.hasAttribute('tabindex')) {
-    target.setAttribute('tabindex', '0');
+  if (focusable) {
+    if (target.getAttribute && target.getAttribute('tabindex') == null && !target.hasAttribute('tabindex')) {
+      target.setAttribute('tabindex', '0');
+    }
+    if (target.setAttribute) target.setAttribute('aria-describedby', _cardId);
   }
-  if (target.setAttribute) target.setAttribute('aria-describedby', _cardId);
   target.setAttribute('data-hovercard', '1');
   const onShow = () => show(target, get());
   const onHide = () => { if (_activeTarget === target) hide(); };
   target.addEventListener('mouseenter', onShow);
-  target.addEventListener('focus', onShow);
   target.addEventListener('mouseleave', onHide);
-  target.addEventListener('blur', onHide);
+  if (focusable) {
+    target.addEventListener('focus', onShow);
+    target.addEventListener('blur', onHide);
+  }
   return target;
 }
 

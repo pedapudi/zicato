@@ -90,7 +90,10 @@ test('every row with a caption carries its full text in the button name and a ho
     assert(button.textContent.includes(name) && button.textContent.includes(cap.textContent),
       row.getAttribute('data-kind') + ': the button text holds the name and the full caption');
     assert(hovercard.hasHovercard(cap), row.getAttribute('data-kind') + ': the caption shows a hovercard');
-    assertEqual(cap.getAttribute('tabindex'), '-1', row.getAttribute('data-kind') + ': the caption takes no tab stop inside its button');
+    const kind = row.getAttribute('data-kind');
+    assertEqual(cap.getAttribute('tabindex'), null, kind + ': the caption inside the button is not focusable');
+    assertEqual(cap.getAttribute('aria-describedby'), null, kind + ': the button\'s accessible name carries the caption');
+    assert(!(cap._listeners.focus || []).length, kind + ': only the pointer opens the caption\'s card');
   }
 });
 

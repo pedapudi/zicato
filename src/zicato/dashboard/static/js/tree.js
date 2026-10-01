@@ -322,13 +322,13 @@ export function buildTree(host, model, route, toggles, ctx, onToggle, live) {
 
 // A row caption truncates before the row's name does (console.css `.dt-label`),
 // so its full text rides in a hovercard on the caption, shown with the row's
-// name. The button's accessible name already carries the full caption text.
-// The caption sits inside the row's button, so it takes no tab stop of its own.
+// name. The caption sits inside the row's button, so the card is wired to the
+// pointer only: keyboard and screen-reader users get the same text from the
+// button's accessible name, which holds the name and the full caption.
 function captionWithHovercard(name, caption) {
-  caption.setAttribute('tabindex', '-1');
   attachHovercard(caption, () => el('span', {}, [
     name + ' · ', ...Array.from(caption.childNodes).map((n) => n.cloneNode(true)),
-  ]));
+  ]), { focusable: false });
   return caption;
 }
 
