@@ -50,9 +50,9 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 468,397 | +59,736 |
-| Production | 197,702 | 186,583 | -11,119 |
-| Production logic | 110,276 | 108,792 | -1,484 |
+| Total | 408,661 | 468,385 | +59,724 |
+| Production | 197,702 | 186,606 | -11,096 |
+| Production logic | 110,276 | 108,789 | -1,487 |
 
 The baseline row is the reference `f9052dd` measured by the classification the
 checker holds, which counts the console's hand-written entry point
@@ -85,18 +85,18 @@ production-logic series per subsystem along a branch's first-parent commits.
 | Subsystem | Total | Production | Production logic | Prose share |
 |---|---:|---:|---:|---:|
 | src/zicato/dashboard | 61,821 | 31,968 | 22,051 | 31.0% |
-| src/zicato/query | 17,748 | 17,748 | 11,169 | 37.1% |
-| src/zicato/epoch | 13,832 | 13,832 | 7,745 | 44.0% |
-| src/zicato/evolve | 11,266 | 11,266 | 7,186 | 36.2% |
-| src/zicato/tournament | 11,223 | 11,223 | 6,647 | 40.8% |
-| src/zicato/reflection | 9,843 | 9,843 | 6,578 | 33.2% |
+| src/zicato/query | 17,765 | 17,765 | 11,169 | 37.1% |
+| src/zicato/epoch | 13,834 | 13,834 | 7,745 | 44.0% |
+| src/zicato/evolve | 11,271 | 11,271 | 7,186 | 36.2% |
+| src/zicato/tournament | 11,221 | 11,221 | 6,647 | 40.8% |
+| src/zicato/reflection | 9,844 | 9,844 | 6,578 | 33.2% |
 | crates/supervisor | 13,091 | 11,405 | 5,030 | 55.9% |
-| src/zicato/proposer | 9,536 | 9,536 | 4,771 | 50.0% |
-| src/zicato/cli | 7,129 | 7,129 | 4,719 | 33.8% |
-| src/zicato/analyzer | 7,357 | 7,357 | 4,691 | 36.2% |
-| src/zicato/selection | 5,284 | 5,284 | 3,063 | 42.0% |
+| src/zicato/proposer | 9,537 | 9,537 | 4,771 | 50.0% |
+| src/zicato/cli | 7,140 | 7,140 | 4,719 | 33.9% |
+| src/zicato/analyzer | 7,359 | 7,359 | 4,691 | 36.3% |
+| src/zicato/selection | 5,281 | 5,281 | 3,063 | 42.0% |
 | src/zicato/core | 6,375 | 6,375 | 2,793 | 56.2% |
-| src/zicato/runtime | 5,188 | 5,188 | 2,531 | 51.2% |
+| src/zicato/runtime | 5,175 | 5,175 | 2,528 | 51.1% |
 | src/zicato/index | 4,392 | 4,392 | 2,390 | 45.6% |
 | src/zicato/telemetry | 4,499 | 4,499 | 2,197 | 51.2% |
 | src/zicato/contract_draft | 2,485 | 2,485 | 1,630 | 34.4% |
@@ -104,14 +104,14 @@ production-logic series per subsystem along a branch's first-parent commits.
 | src/zicato/mutation | 2,954 | 2,954 | 1,405 | 52.4% |
 | src/zicato/check | 1,769 | 1,769 | 1,144 | 35.3% |
 | src/zicato/board | 2,412 | 2,412 | 1,096 | 54.6% |
-| src/zicato/workspace | 1,968 | 1,968 | 937 | 52.4% |
+| src/zicato/workspace | 1,969 | 1,969 | 937 | 52.4% |
 | src/zicato/adapters | 2,197 | 2,197 | 821 | 62.6% |
 | src/zicato/judge_runtime | 1,778 | 1,778 | 801 | 54.9% |
 | src/zicato/testing | 1,455 | 1,455 | 767 | 47.3% |
 | src/zicato/_tournament_worker.py | 1,197 | 1,197 | 704 | 41.2% |
 | src/zicato/synthetic | 1,202 | 1,202 | 574 | 52.2% |
 | src/zicato/models_config.py | 635 | 635 | 490 | 22.8% |
-| src/zicato/scoring | 1,401 | 1,401 | 475 | 66.1% |
+| src/zicato/scoring | 1,402 | 1,402 | 475 | 66.1% |
 | src/zicato/patterns | 766 | 766 | 419 | 45.3% |
 | src/zicato/storage | 1,022 | 1,022 | 360 | 64.8% |
 | src/zicato/logging_stream.py | 627 | 627 | 333 | 46.9% |
@@ -517,3 +517,4 @@ dropped rows named.
 | Describe the analyzer tests (total) | 468,394 | +3 | 468,397 | The analyzer test module's docstring names the provenance rule, the length bound, and the slice and restriction arguments. |
 | Describe the analyzer tests (production) | 186,583 | +0 | 186,583 | The analyzer test module's docstring names the provenance rule, the length bound, and the slice and restriction arguments. |
 | Describe the analyzer tests (production logic) | 108,792 | +0 | 108,792 | The analyzer test module's docstring names the provenance rule, the length bound, and the slice and restriction arguments. |
+| Accurate command help and module descriptions (production) | 186,583 | +23 | 186,606 | Docstrings and comments that described removed behaviour are rewritten to state what the code does; command help states that `epoch register` precedes the first `evolve`; three query modules gain descriptions of what they read. Deleting the unused single-generation override claim removes logic and offsets part of the added prose. |

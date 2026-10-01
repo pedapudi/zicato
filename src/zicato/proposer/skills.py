@@ -5,15 +5,16 @@ A *proposer* is, on disk, a directory ``proposers/<name>/`` carrying:
 * ``skills/*.md`` — markdown skill modules. Each is SKILL.md-style: an
   optional YAML-ish frontmatter block (``name`` + ``description``) fenced
   by ``---`` lines, followed by a free-form markdown body. Zero or more.
-* an optional ``agent.py`` — a custom proposer agent. Its *presence and
-  contents* are part of the evaluation contract; this module only hashes
-  it (the loading of the agent itself is a later phase).
 
-When no proposer dir is configured the proposer is the built-in default
-agent — no skills, no tools, no custom agent module. A workspace may
-instead name an *external* agent through ``runtime.proposer_agent``, in
-which case :mod:`zicato.proposer.external` supplies the identity and any
-proposer dir contributes only its skills.
+A directory may not carry an ``agent.py``;
+:func:`zicato.proposer.foe_config.refuse_removed_proposer_directory` refuses
+one before an agent is built.
+
+The class that proposes is named by the workspace config, and
+:mod:`zicato.proposer.external` supplies its identity; a proposer dir
+contributes only its skills. With neither a proposer class nor a proposer
+dir, the spec is :meth:`ProposerSpec.default`, which still hashes but from
+which no agent can be built.
 
 This module turns a proposer dir (or ``None``) into a hash-ready
 :class:`~zicato.core.types.ProposerSpec`. The contract layer
@@ -118,7 +119,7 @@ def resolve_proposer_spec(
 ) -> ProposerSpec:
     """Resolve a proposer dir (or ``None``) into a :class:`ProposerSpec`.
 
-    ``None`` ⇒ the built-in default proposer (:meth:`ProposerSpec.default`).
+    ``None`` ⇒ :meth:`ProposerSpec.default`, the identity with no skills.
     Otherwise the spec is loaded from ``<proposer_path>/``:
 
     * skills come from ``<proposer_path>/skills/*.md``;

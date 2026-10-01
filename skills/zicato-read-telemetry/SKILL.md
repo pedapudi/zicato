@@ -123,7 +123,7 @@ A mismatch indicates a provenance error to investigate before tuning weights
 
 ## The third stream: one structured log per invocation
 
-Distinct from run telemetry, each `evolve` / `reflect run` invocation writes
+Distinct from run telemetry, each `evolve` / `inspect reflection run` invocation writes
 `.zicato/logs/<utc-stamp>-<pid>.jsonl` — every `zicato.*` log record, structured,
 with the `epoch_id` / `generation_id` / `run_id` context bound in. Worker
 subprocesses append to the SAME file, so a parallel round's records land in one

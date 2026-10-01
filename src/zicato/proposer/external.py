@@ -1,14 +1,14 @@
-"""The external-proposer seam: a dotted path to a non-ADK proposer agent.
+"""Name and hash the class that implements the epoch's proposer.
 
-:func:`~zicato.proposer.agent.build_proposer_agent` resolves three ways,
-and all three end in an ADK agent or the text shim. A coding-agent
-proposer — one that runs as its own process and investigates before it
-emits — cannot go through either door. But
-:class:`~zicato.proposer.agent.ProposerAgent` is a one-method protocol, so
-it needs no new machinery: only a way to *name* an implementation and a
-way to *hash* it.
+:func:`~zicato.proposer.agent.build_proposer_agent` builds one kind of
+agent: the class this module names. A workspace that declares a
+``proposer`` block gets the Foe-backed agent
+(:data:`DEFAULT_PROPOSER_AGENT`); an operator may bind a class of their own
+instead. :class:`~zicato.proposer.agent.ProposerAgent` is a one-method
+protocol, so an implementation needs only a way to be *named* and a way to
+be *hashed*.
 
-This module is both.
+This module provides both.
 
 * ``[runtime] proposer_agent = "pkg.module:Class"`` names the class.
   :func:`external_proposer_config` reads it off a workspace config and
@@ -133,7 +133,8 @@ class ExternalProposerAgent(Protocol):
       produce a schema-valid experiment within its budget.
 
     An implementation may also declare ``external_id``, a short label
-    (``"pi"``) that spells the agent id ``external:pi``. Absent one, the
+    (``"foe"`` for :class:`~zicato.proposer.foe_agent.FoeProposerAgent`)
+    that spells the agent id ``external:foe``. Absent one, the
     dotted path is the label.
     """
 

@@ -5,8 +5,9 @@ planted-defect target: real propose → apply → validate → **subprocess
 tournament workers** → reduce → gate → persist, under the DEFAULT git
 generation-store backend, with a scalar that lands on an exact,
 hand-computable floor. Nothing tournament-side is monkeypatched — only
-the shared conftest autouse fixtures apply (default-proposer text shim,
-harmonograf launch stub).
+the shared conftest autouse fixtures apply (harmonograf launch stub, among
+others). The proposer is the Foe-backed agent driving the stand-in binary
+from :mod:`tests._foe_support`.
 
 The target is ``examples/zicato_examples/target_0_convergence``:
 
@@ -153,11 +154,9 @@ def _bootstrap_workspace(
         weights=weights,
         auto_close_previous=False,
         contract=resolved_contract_with_proposer(workspace, EXAMPLE_DIR / "proposer"),
-        # The example's skills-only proposer dir selects the REAL
-        # skill-composed text-shim proposer (an explicit dir:* spec) —
-        # the same engine the RUN.md no-endpoint recipe uses. This test
-        # therefore does not depend on the conftest default-proposer pin:
-        # a dir:* spec flows through the real build_proposer_agent.
+        # The example's skills-only proposer dir supplies the skills the
+        # epoch hashes; the workspace's `proposer` block selects the
+        # Foe-backed agent, which build_proposer_agent constructs.
     )
     return workspace, cfg.id
 

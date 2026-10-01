@@ -545,9 +545,9 @@ def test_contract_hash_stable_at_default_and_rolls_on_opt_in() -> None:
     assert json.loads(json.dumps(opted))["experimental"]["process_exemplars"] == 2
 
 
-def test_scaffold_does_not_enable_process_exemplars() -> None:
-    """The deliberate asymmetry with screening (PROCESS-EXEMPLARS.md §4):
-    the scaffold turns the screen ON but leaves this knob OFF."""
+def test_default_scoring_does_not_enable_process_exemplars() -> None:
+    """The asymmetry with screening (PROCESS-EXEMPLARS.md §4): the default
+    scoring configuration turns the screen ON but leaves this knob OFF."""
     from zicato.core.scoring_config import ScoringWeights
 
     weights = ScoringWeights()

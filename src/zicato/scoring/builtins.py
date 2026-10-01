@@ -120,13 +120,14 @@ def builtin_scalar(
     drift, judges, failures, runtime, cost, latency, rubric, output, schema —
     is a namespace, with no privileged term among them.
 
-    The namespace sum is SORTED because float addition is not associative:
-    accumulating in ``dict``/``set`` iteration order would make the last bit of
-    the scalar depend on hash seeding. Sorting makes the result reproducible
-    across processes, which the goldens and the two statistical oracles pin.
-    The dict-then-``sum`` shape also keeps the original key-collision
-    behaviour: two namespaces that strip to the same component name collapse to
-    the last one written.
+    The sum uses :func:`math.fsum`, which returns the correctly rounded total
+    of its inputs whatever their order. Plain float addition is not
+    associative, so accumulating in ``dict``/``set`` iteration order would make
+    the last bit of the scalar depend on hash seeding; ``fsum`` makes the
+    result reproducible across processes, which the goldens and the two
+    statistical oracles pin. Namespaces are visited in sorted order so that
+    two namespaces stripping to the same component name collapse
+    deterministically to the later one in that order.
 
     ``namespace_aggregates`` are ALREADY weight-multiplied (see
     :func:`zicato.tournament.scoring.aggregate_namespaced_metrics`), so each

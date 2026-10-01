@@ -3,8 +3,8 @@
 The pillars answer *what the numbers say* about one contract; the practice
 review answers *what you should change about how you evaluate*. It diagnoses
 (anti-)best practices — sound authoring as loudly as unsound authoring — over
-the contract, the operating history, and (when a ``reflect run`` produced them)
-the reflection artifacts. **Zero LLM calls**: every input is a pure read (the
+the contract, the operating history, and (when an ``inspect reflection run``
+produced them) the reflection artifacts. **Zero LLM calls**: every input is a pure read (the
 free passive tier). Recommend-only: a mechanically-fixable check carries a
 ``proposed_op`` naming a configuration operation, validated against that op's signature
 at emit time, as :mod:`zicato.reflection.findings` validates its own.

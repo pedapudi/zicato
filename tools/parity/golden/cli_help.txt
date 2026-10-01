@@ -214,8 +214,7 @@ Commands:
   gc        Prune settled-rejected generation source trees (dry-run by default).
   list      List every epoch in the workspace.
   new       Create a new epoch and make it current.
-  register  Advanced: record the adapter entrypoint, mutable trees, and contract
-            paths.
+  register  Record the adapter entrypoint, mutable trees, and contract paths.
   rounds    Verify every round of an epoch actually produced a measurement.
   set-goal  Set or overwrite the goal field on an existing epoch.
   switch    Point the current-epoch marker at EPOCH_ID.
@@ -296,11 +295,13 @@ Options:
 ===== zicato epoch register --help =====
 Usage: zicato epoch register [OPTIONS]
 
-  Advanced: record the adapter entrypoint, mutable trees, and contract paths.
+  Record the adapter entrypoint, mutable trees, and contract paths.
 
-  Off the happy path — `zicato evolve` resolves the contract itself. Run
-  `register` by hand only to pin the contract source paths up front, or to point
-  the workspace at a different agent / brief.
+  Run once after `zicato init` and before the first `zicato evolve`, which
+  refuses to seed a baseline without the registered source trees. A workspace
+  made by `zicato init --example` is already registered. Run it again to change
+  the contract source paths or to point the workspace at a different agent /
+  brief.
 
   Merges into the existing config.json rather than replacing it, so any keys
   `zicato init` wrote (instance_id, created_at) are preserved.
@@ -313,8 +314,9 @@ Usage: zicato epoch register [OPTIONS]
   `--proposer-path` is optional and stored under the same `contract` key as
   `contract.proposer_path` (absolutised). It is itself a contract input —
   configuring a proposer dir, or editing one of its skills, rolls the epoch on
-  the next `evolve`. Omitting the flag leaves the key unset, which resolves to
-  the built-in default proposer.
+  the next `evolve`. Omitting the flag leaves the key unset, and the proposer
+  runs without skills. The proposer runtime is declared separately, in the
+  `proposer` block of the workspace config; a round refuses to open without it.
 
 Options:
   --workspace DIRECTORY    Workspace directory to update.  [default: .zicato]
@@ -334,10 +336,10 @@ Options:
                            <workspace_parent>/brief.md).
   --scoring PATH           Canonical scoring.json path (default:
                            <workspace_parent>/scoring.json).
-  --proposer-path PATH     Proposer dir (proposers/<name>/ — skills + optional
-                           agent.py). Absent ⇒ the built-in default proposer.
-                           Part of the contract: configuring it (or editing a
-                           skill) rolls the epoch.
+  --proposer-path PATH     Proposer dir (proposers/<name>/ holding skills/*.md;
+                           an agent.py is refused). Absent ⇒ the proposer runs
+                           without skills. Part of the contract: configuring it
+                           (or editing a skill) rolls the epoch.
   --factory TEXT           Custom adapter factory in module:callable form.
   --factory-args TEXT      JSON array of positional factory arguments.
   --factory-options TEXT   JSON object of factory keyword arguments.
@@ -413,10 +415,13 @@ Usage: zicato evolve [OPTIONS]
 
   Run the self-improvement loop — the single happy-path entry point.
 
-  `evolve` is self-orchestrating: it resolves the evaluation contract, auto-
-  opens an epoch when that contract has changed, then proposes / runs the
-  tournament / promotes for --rounds rounds. You do not run `register`,
-  `propose`, `tournament`, `reindex`, or `epoch` by hand — evolve drives them.
+  Run it after `zicato epoch register` has recorded the adapter and the source
+  trees the proposer may edit; a workspace made by `zicato init --example` is
+  already registered. `evolve` is self-orchestrating: it resolves the evaluation
+  contract, auto-opens an epoch when that contract has changed, then proposes /
+  runs the tournament / promotes for --rounds rounds. You do not run `proposer
+  propose`, `tournament run`, `repair index`, or `epoch new` by hand — evolve
+  performs those steps.
 
   By default, contract-hash auto-epoching is ON: when the evaluation contract
   (board / proposer brief / scoring / system-under-test identity) has drifted,
@@ -634,8 +639,9 @@ Usage: zicato inspect logs [OPTIONS]
   Tail the structured operator-log stream for one evolve invocation.
 
   The streams live under `.zicato/logs/<stamp>-<pid>.jsonl` — one per `evolve` /
-  `reflect run` invocation — and this reads them through the same reader the
-  dashboard log pane uses. A workspace with no logs prints nothing and exits 0.
+  `inspect reflection run` invocation — and this reads them through the same
+  reader the dashboard log pane uses. A workspace with no logs prints nothing
+  and exits 0.
 
 Options:
   --workspace PATH                Path to the zicato workspace root (the
@@ -704,9 +710,9 @@ Usage: zicato inspect reflection practices [OPTIONS]
   The instant, always-free tier: a pure read over the epoch's board / scoring /
   lineage. The checks that need a reflection corpus or scorecards
   (``loss_monoculture`` / ``judge_criterion_quality`` / ``weight_revisit``)
-  honestly report ``unmeasured`` naming the missing input — run ``zicato reflect
-  run`` for those. Nothing is persisted (there is no reflection id); the review
-  is printed.
+  honestly report ``unmeasured`` naming the missing input — run ``zicato inspect
+  reflection run`` for those. Nothing is persisted (there is no reflection id);
+  the review is printed.
 
 Options:
   --workspace TEXT  Workspace root.  [default: .zicato]

@@ -175,10 +175,10 @@ class ProposerSkill:
 class ProposerSpec:
     """The resolved proposer for an epoch — its agent identity + skills.
 
-    A proposer is either the built-in default agent (no skills, no custom
-    agent module) or a ``proposers/<name>/`` directory carrying markdown
-    skill modules and an optional custom ``agent.py``. :class:`ProposerSpec`
-    is the resolved, hash-ready shape of that directory; it is produced by
+    The proposer's skills come from an optional ``proposers/<name>/``
+    directory of markdown skill modules; the class that runs is named by the
+    workspace config (:mod:`zicato.proposer.external`). :class:`ProposerSpec`
+    is the resolved, hash-ready shape of both; it is produced by
     :func:`zicato.proposer.skills.resolve_proposer_spec` and folded into the
     contract hash so configuring a proposer dir — or editing one of its
     skills — rolls the epoch.
@@ -186,15 +186,14 @@ class ProposerSpec:
     Fields
     ------
     agent_id:
-        ``"builtin:default"`` for the built-in agent, ``"dir:<name>"``
-        when a ``proposers/<name>/agent.py`` directory backs the proposer,
-        or ``"external:<label>"`` when ``runtime.proposer_agent`` names a
-        non-ADK agent (:mod:`zicato.proposer.external`). The id
-        distinguishes the builtin from any on-disk proposer even when the
-        latter happens to carry no skills.
+        ``"external:<label>"`` when the workspace names a proposer class
+        (:mod:`zicato.proposer.external`). A workspace that names none
+        still hashes: ``"dir:<name>"`` when a proposer directory is
+        configured, ``"builtin:default"`` when none is. A round refuses to
+        open on either of those two identities.
     tools:
-        Names of the tools the proposer agent may call. Empty for the
-        builtin and for an on-disk proposer; an external agent declares
+        Names of the tools the proposer agent may call. Empty unless a
+        proposer class is named; that class declares
         its sanctioned set, read off the same identity mapping that is
         hashed.
     skills:
@@ -222,10 +221,10 @@ class ProposerSpec:
 
     @classmethod
     def default(cls) -> ProposerSpec:
-        """Return the built-in default proposer — no skills, no tools.
+        """Return the identity of a workspace that configures no proposer.
 
-        The default is the built-in agent that runs when no proposer dir
-        is configured. It canonicalizes to a stable form so a workspace
-        that never configures a proposer keeps a stable contract hash.
+        It carries no skills, no tools, and no proposer class, so no agent
+        can be built from it. It canonicalizes to a stable form so such a
+        workspace still has a stable contract hash.
         """
         return cls(agent_id="builtin:default", tools=(), skills=())

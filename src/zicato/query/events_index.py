@@ -1,4 +1,10 @@
-"""events_index — extracted from the former dashboard state_reader monolith (pure move)."""
+"""Locate run telemetry and build the workspace-level views read from it.
+
+This module maps run ids to their ``events.jsonl`` files (with a cached
+index), resolves a generation's runs, transcripts, and proposal-episode logs,
+and reads a run's result. It also builds the workspace overview, the
+contract diff between epochs, and the meta-loop ledger.
+"""
 
 from __future__ import annotations
 

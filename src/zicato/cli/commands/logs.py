@@ -1,7 +1,7 @@
 """``zicato inspect logs`` — read the structured operator-log streams.
 
 ADVANCED — off the happy path. Every ``zicato evolve`` (and ``zicato
-reflect run``) invocation writes one structured JSONL stream under
+inspect reflection run``) invocation writes one structured JSONL stream under
 ``.zicato/logs/`` (see docs/design/LOGGING.md). This command tails a
 stream through the SAME query-layer reader the dashboard uses — the files
 are canonical.
@@ -110,7 +110,7 @@ def logs_cmd(
     """Tail the structured operator-log stream for one evolve invocation.
 
     The streams live under `.zicato/logs/<stamp>-<pid>.jsonl` — one per
-    `evolve` / `reflect run` invocation — and this reads them through the
+    `evolve` / `inspect reflection run` invocation — and this reads them through the
     same reader the dashboard log pane uses. A workspace with no logs
     prints nothing and exits 0.
     """

@@ -12,9 +12,9 @@ Each lane in :data:`~mock_evolve_capture.LANES` is a (tournament structure,
 runtime mode, round count) triple that executes production branches no other
 lane reaches — the gauntlet's single-challenger selector, the cache-first
 slot resolution of fast mode, the bracket and Swiss schedules — and each has
-its own golden. The parity script runs each lane as its own gate by selecting
-on the lane name (``pytest -k <lane>``), so a failure names the configuration
-that moved, and both tests below run under that one selector.
+its own golden. The parity script runs this file as the single MOCK-GOLDEN
+gate; each parametrized test id carries the lane name, so a failure names the
+configuration that moved, and ``pytest -k <lane>`` reruns one lane by hand.
 
 :func:`test_mock_evolve_golden` is the byte-comparison. :func:`test_lane_board_
 splits_to_a_non_empty_holdout` is the guard on what the goldens are able to
@@ -23,8 +23,7 @@ all, so it silently stops covering the train-slice selection and the crowning
 confirmation while still passing.
 
 Lane names are chosen so none is a substring of another: ``-k`` matches by
-substring, and a selector that caught two lanes would report one gate's
-result under another gate's name.
+substring, and a selector that caught two lanes would rerun both.
 """
 
 from __future__ import annotations

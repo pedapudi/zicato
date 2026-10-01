@@ -48,7 +48,6 @@ from zicato.runtime.control_consumer import (
     CONSUMER_SOURCE,
     block_while_paused,
     claim_field_gate_overrides,
-    claim_gate_override,
     claim_rubric_replacement,
     claim_skip_round,
     drain_stale_gate_overrides,
@@ -116,55 +115,6 @@ def test_claim_skip_round_reads_dashboard_reason(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Unit — gate override (promote / reject)
-# ---------------------------------------------------------------------------
-
-
-def test_claim_gate_override_absent_returns_none(tmp_path: Path) -> None:
-    assert claim_gate_override(tmp_path, "v1") is None
-
-
-def test_claim_gate_override_promote(tmp_path: Path) -> None:
-    write_command(tmp_path, ControlCommand(name=CMD_PROMOTE_PREFIX, arg="v1"))
-    override = claim_gate_override(tmp_path, "v1")
-    assert override is not None
-    assert override.decision == "promoted"
-    assert override.generation_id == "v1"
-    # Consumed + archived.
-    assert list_pending_commands(tmp_path) == []
-    assert _archived(tmp_path)[0]["command"] == CMD_PROMOTE_PREFIX
-
-
-def test_claim_gate_override_reject(tmp_path: Path) -> None:
-    write_command(tmp_path, ControlCommand(name=CMD_REJECT_PREFIX, arg="v2"))
-    override = claim_gate_override(tmp_path, "v2")
-    assert override is not None
-    assert override.decision == "rejected"
-
-
-def test_claim_gate_override_ignores_other_generation(tmp_path: Path) -> None:
-    """An override aimed at a DIFFERENT generation is left pending, not fired."""
-    write_command(tmp_path, ControlCommand(name=CMD_PROMOTE_PREFIX, arg="v9"))
-    assert claim_gate_override(tmp_path, "v1") is None
-    # Still pending — it must not mis-fire on the wrong round.
-    pending = list_pending_commands(tmp_path)
-    assert [(c.name, c.arg) for c in pending] == [(CMD_PROMOTE_PREFIX, "v9")]
-
-
-def test_claim_gate_override_promote_wins_and_drains_reject(tmp_path: Path) -> None:
-    """Promote+reject for the same gen: promote wins, reject is drained."""
-    write_command(tmp_path, ControlCommand(name=CMD_PROMOTE_PREFIX, arg="v1"))
-    write_command(tmp_path, ControlCommand(name=CMD_REJECT_PREFIX, arg="v1"))
-    override = claim_gate_override(tmp_path, "v1")
-    assert override is not None
-    assert override.decision == "promoted"
-    # Both commands are gone — the reject cannot re-fire on a later round.
-    assert list_pending_commands(tmp_path) == []
-    archived = {r["command"] for r in _archived(tmp_path)}
-    assert archived == {CMD_PROMOTE_PREFIX, CMD_REJECT_PREFIX}
-
-
-# ---------------------------------------------------------------------------
 # Unit — field gate override (promote/reject across a whole field)
 # ---------------------------------------------------------------------------
 
@@ -220,8 +170,10 @@ def test_claim_field_gate_overrides_promote_wins_same_gen(tmp_path: Path) -> Non
     write_command(tmp_path, ControlCommand(name=CMD_REJECT_PREFIX, arg="v2"))
     claimed = claim_field_gate_overrides(tmp_path, ["v1", "v2"])
     assert claimed["v2"].decision == "promoted"
-    # Both commands for v2 are drained — the reject cannot re-fire.
+    # Both commands for v2 are drained and archived — the reject cannot re-fire.
     assert list_pending_commands(tmp_path) == []
+    archived = {r["command"] for r in _archived(tmp_path)}
+    assert archived == {CMD_PROMOTE_PREFIX, CMD_REJECT_PREFIX}
 
 
 # ---------------------------------------------------------------------------
@@ -262,7 +214,7 @@ def test_drained_override_cannot_misfire_on_a_reused_generation_id(tmp_path: Pat
     write_command(tmp_path, ControlCommand(name=CMD_PROMOTE_PREFIX, arg="v3"))
     drain_stale_gate_overrides(tmp_path, reason="superseded by epoch roll e0 -> e1")
     # New epoch's v3 reaches its gate — no stale override is claimed.
-    assert claim_gate_override(tmp_path, "v3") is None
+    assert claim_field_gate_overrides(tmp_path, ["v3"]) == {}
 
 
 # ---------------------------------------------------------------------------

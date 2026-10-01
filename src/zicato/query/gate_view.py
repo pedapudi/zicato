@@ -1,4 +1,9 @@
-"""gate_view — extracted from the former dashboard state_reader monolith (pure move)."""
+"""Read the views that explain a promotion decision.
+
+This module builds the score trajectory, per-generation drift movements, the
+health report, the gate breakdown (scalar decomposition, live challenger
+projection, operator override), and the Bradley-Terry rating view.
+"""
 
 from __future__ import annotations
 

@@ -24,9 +24,9 @@ The full brief text passes through verbatim to the system prompt so
 free-form guidance the operator wrote outside the two structured
 sections still reaches the model.
 
-Section headings are matched case-insensitively and either ``#`` or
-``##`` is accepted; everything until the next heading at the same or
-shallower level is treated as the section body. Bullet markers are
+Section headings are matched case-insensitively at any level from ``#``
+to ``######``; everything until the next heading of any level is treated
+as the section body. Bullet markers are
 ``-``, ``*``, or ``+``.
 """
 

@@ -1,8 +1,9 @@
 """``zicato epoch register`` — record adapter entrypoint and mutable trees.
 
-ADVANCED / DEBUGGING — off the happy path. ``zicato evolve`` resolves
-and uses the evaluation contract on its own; you only run ``register``
-by hand to set the contract paths up front or to inspect/change them.
+Run once after ``zicato init`` and before the first ``zicato evolve``,
+which refuses to seed a baseline without the registered source trees.
+``zicato init --example`` registers its example project itself. Run it
+again to change the contract source paths.
 
 After ``zicato init`` creates the workspace, ``zicato epoch register``
 records *which* agent to run and *which* source trees the proposer is
@@ -29,8 +30,10 @@ these paths back on every ``evolve`` to decide whether the evaluation
 contract has drifted (see ``docs/design/EPOCHS-AND-JOURNALING.md``).
 
 ``--proposer-path`` optionally points the workspace at a proposer dir
-(``proposers/<name>/`` — skills, plus an optional custom ``agent.py``).
-Absent ⇒ the built-in default proposer. The proposer is itself a
+(``proposers/<name>/``) whose ``skills/*.md`` steer the proposer; a
+directory holding an ``agent.py`` is refused. Absent ⇒ the proposer runs
+without skills. The proposer runtime is declared separately, in the
+``proposer`` block of the workspace config. The proposer is a
 contract input: configuring a proposer dir — or editing one of its
 skills — rolls the epoch on the next ``evolve`` (see
 ``docs/design/PROPOSER.md``).
@@ -108,7 +111,7 @@ def _validate_entrypoint(entrypoint: str, mutable_trees: tuple[str, ...] = ()) -
 
 @click.command(
     name="register",
-    short_help="Advanced: record the adapter entrypoint, mutable trees, and contract paths.",
+    short_help="Record the adapter entrypoint, mutable trees, and contract paths.",
 )
 @click.option(
     "--workspace",
@@ -167,8 +170,8 @@ def _validate_entrypoint(entrypoint: str, mutable_trees: tuple[str, ...] = ()) -
     default=None,
     type=click.Path(),
     help=(
-        "Proposer dir (proposers/<name>/ — skills + optional agent.py). "
-        "Absent ⇒ the built-in default proposer. Part of the contract: "
+        "Proposer dir (proposers/<name>/ holding skills/*.md; an agent.py is "
+        "refused). Absent ⇒ the proposer runs without skills. Part of the contract: "
         "configuring it (or editing a skill) rolls the epoch."
     ),
 )
@@ -204,11 +207,13 @@ def register_cmd(
     scoring_path: str | None,
     proposer_path: str | None,
 ) -> None:
-    """Advanced: record the adapter entrypoint, mutable trees, and contract paths.
+    """Record the adapter entrypoint, mutable trees, and contract paths.
 
-    Off the happy path — `zicato evolve` resolves the contract itself.
-    Run `register` by hand only to pin the contract source paths up
-    front, or to point the workspace at a different agent / brief.
+    Run once after `zicato init` and before the first `zicato evolve`,
+    which refuses to seed a baseline without the registered source
+    trees. A workspace made by `zicato init --example` is already
+    registered. Run it again to change the contract source paths or to
+    point the workspace at a different agent / brief.
 
     Merges into the existing config.json rather than replacing it, so
     any keys `zicato init` wrote (instance_id, created_at) are
@@ -223,8 +228,9 @@ def register_cmd(
     key as `contract.proposer_path` (absolutised). It is itself a
     contract input — configuring a proposer dir, or editing one of its
     skills, rolls the epoch on the next `evolve`. Omitting the flag
-    leaves the key unset, which resolves to the built-in default
-    proposer.
+    leaves the key unset, and the proposer runs without skills. The
+    proposer runtime is declared separately, in the `proposer` block of
+    the workspace config; a round refuses to open without it.
     """
     if bool(entrypoint) == bool(factory):
         raise click.UsageError("select exactly one of --adk or --factory")
@@ -276,8 +282,8 @@ def register_cmd(
     }
     # ``contract.proposer_path`` is optional. It is written only when the
     # operator passes ``--proposer-path`` — an absent flag leaves the key
-    # out so ``resolve_contract_inputs`` falls back to the built-in
-    # default proposer (``None``). Absolutised like the other contract
+    # out so ``resolve_contract_inputs`` resolves ``None`` and the proposer
+    # runs without skills. Absolutised like the other contract
     # paths so the persisted value is stable regardless of CWD.
     if proposer_path is not None:
         contract_block["proposer_path"] = str(Path(proposer_path).resolve())

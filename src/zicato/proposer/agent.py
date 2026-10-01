@@ -94,12 +94,11 @@ class ProposerContext:
     #: binds it onto the tool context, and the external-proposer launch
     #: forwards it into the MCP server's per-round context file.
     #:
-    #: ``None`` (the default) means "no orchestrator populated this" — the
-    #: ADK path then falls back to deriving it, which is exactly the
-    #: duplication this field removes, so the fallback is a compatibility
-    #: shim for contexts built by hand (tests, a standalone propose) and NOT
-    #: a supported production shape. ``_propose_child`` takes it as a
-    #: REQUIRED argument so the real path cannot reach the fallback.
+    #: ``None`` (the default) means "no orchestrator populated this". The
+    #: Foe-backed proposer refuses such a context, because an episode reads
+    #: the parent snapshot and has nothing to propose against without it.
+    #: ``_propose_child`` takes the root as a REQUIRED argument, so the
+    #: evolve loop always populates it.
     generation_root: Path | None = None
     mutation_policy: MutationPolicy | None = None
     validate_experiment: ExperimentValidator | None = None
@@ -299,9 +298,9 @@ class ProposerContext:
 class ProposerAgent(Protocol):
     """A proposer that turns a :class:`ProposerContext` into an experiment.
 
-    The protocol is the single seam the orchestrator drives, regardless of
-    whether the proposer is the built-in single-shot agent or a custom
-    agent that calls tools. An implementation MUST raise
+    The protocol is the one interface the orchestrator drives, whether the
+    implementation is the Foe-backed agent or an operator's own class. An
+    implementation MUST raise
     :class:`zicato.proposer.proposer.ProposerError` when it cannot produce
     a schema-valid experiment within its budget, matching the contract the
     orchestrator already handles at each propose site.

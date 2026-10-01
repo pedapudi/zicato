@@ -5,7 +5,7 @@ with the same observable semantics. This module is the canonical contract:
 a backend that passes every test here is a drop-in for any zicato domain
 routed through the storage seam.
 
-Adding a third backend (the v0+1 git backend) is a one-line change —
+Adding another backend is a one-line change —
 append a :class:`BackendSpec` to ``BACKENDS`` describing how to build a
 started backend for the test; the parametrised ``backend`` fixture does
 the rest.

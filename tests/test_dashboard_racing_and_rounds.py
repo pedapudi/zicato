@@ -572,7 +572,11 @@ def test_bracket_tournaments_carry_the_elim_model(tmp_path: Path, static_dir: Pa
 
 
 def test_active_tournament_serves_the_elim_model(tmp_path: Path, static_dir: Path) -> None:
-    """The LIVE path: /api/active-tournament carries the same fold."""
+    """The LIVE path: /api/active-tournament carries the same fold.
+
+    Tournament execution publishes the fold with the active tournament
+    (:func:`zicato.tournament.structure.attach_elim_states`).
+    """
     ws = _base_workspace(tmp_path)
     write_tournament(
         ws,

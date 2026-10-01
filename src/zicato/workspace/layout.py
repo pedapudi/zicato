@@ -185,13 +185,14 @@ class WorkspaceLayout:
     def inconclusive_dir(self) -> Path:
         """The dead-letter directory for inconclusive crowning duels.
 
-        The opt-in Bradley-Terry promotion pre-gate records here any crowning
-        duel whose rating confidence intervals never separated before its
-        replicate budget was spent. One file per generation
+        The Bradley-Terry promotion pre-gate records here any crowning duel
+        whose rating confidence intervals never separated before its replicate
+        budget was spent. The default racing structure enables the pre-gate
+        by setting ``promote_confidence_threshold``; an absent, null, or zero
+        threshold disables it. One file per generation
         (:meth:`inconclusive_record`) captures the unresolved duel and its
         final intervals, so nothing is dropped silently. An absent directory
-        means no such duel was ever recorded, which is the default for every
-        run that did not opt into the pre-gate.
+        means no such duel was ever recorded.
         """
         return self.runtime_dir / "inconclusive"
 

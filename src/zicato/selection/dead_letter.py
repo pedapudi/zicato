@@ -8,9 +8,9 @@ must not be silently dropped. This module persists one record per such duel to
 operator (and the dashboard) can see exactly which challenger could neither be
 crowned nor cleanly rejected, and on what evidence.
 
-The record is an additive runtime artifact: it exists ONLY on a run that opted
-into the pre-gate AND reached the inconclusive terminal state, so every other
-run's runtime tree is byte-identical to before this module existed.
+The record is an additive runtime artifact: it exists ONLY on a run whose
+structure enables the pre-gate (the default racing structure does) AND that
+reached the inconclusive terminal state.
 """
 
 from __future__ import annotations

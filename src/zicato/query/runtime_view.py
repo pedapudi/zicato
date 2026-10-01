@@ -1,4 +1,10 @@
-"""runtime_view — extracted from the former dashboard state_reader monolith (pure move)."""
+"""Read the live runtime state of an evolve invocation.
+
+This module reads the pause flag, heartbeat, workspace lock, active
+tournament, active runs, and effective settings under ``runtime/``, derives
+run freshness and loop liveness from them, and assembles the dashboard
+snapshot.
+"""
 
 from __future__ import annotations
 

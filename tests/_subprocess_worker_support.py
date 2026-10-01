@@ -45,9 +45,9 @@ class _SnapshotWritingSession:
     Mimics a real target agent (e.g. the target-1 presentation agent's
     ``write_webpage`` tool) that writes near its own code — here, into an
     ``output/`` directory under the generation source root it was handed.
-    The L3 isolation fix exists precisely so this write lands in a
-    discarded per-run working copy, NOT in the canonical generation
-    snapshot. The worker owns the telemetry file.
+    Each run executes against its own per-run working copy, so this write
+    lands in a discarded copy, NOT in the canonical generation snapshot. The
+    worker owns the telemetry file.
     """
 
     def __init__(self, generation_root: Path) -> None:
@@ -97,7 +97,8 @@ class _SleepingSession:
     own cooperative ``asyncio.wait_for`` budget CANNOT fire. That is what
     forces the PARENT's ``wait_for`` + SIGTERM/SIGKILL escalation (and,
     in production, the supervisor) to be the layer that stops the run —
-    exactly the wedged-run scenario the L3 layer exists for.
+    exactly the wedged-run scenario that per-run subprocess workers exist
+    to contain.
     """
 
     async def run(self, entry: Any, sinks: Any, config: Any) -> None:

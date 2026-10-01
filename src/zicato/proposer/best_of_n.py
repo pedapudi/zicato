@@ -1668,9 +1668,9 @@ def wrap_with_proposer_quality(
     accompany the callables (typically ``config.proposer_breadth_model`` /
     ``config.proposer_depth_model`` off the :class:`RuntimeConfig`, set only
     when the role was configured via a *model spec*). The wrapper swaps them
-    onto ``ctx.model`` at the sampling/revise sites so the default ADK
-    proposer — which binds the model STRING, not ``ctx.aux_call_llm`` — honors
-    the role. ``None`` (the common case, a callable-only or absent role) leaves
+    onto ``ctx.model`` at the sampling/revise sites so an inner proposer that
+    binds the model STRING, rather than ``ctx.aux_call_llm``, honors the
+    role. ``None`` (the common case, a callable-only or absent role) leaves
     ``ctx.model`` at its own value.
 
     ``propose_parallelism`` (typically ``config.propose_parallelism`` off the
