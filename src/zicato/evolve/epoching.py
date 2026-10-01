@@ -11,8 +11,9 @@ roll-at-evolve-time decision and its supporting helpers:
   the epoch a round runs against, auto-rolling a fresh epoch on drift;
 * :func:`_create_epoch_from_contract` — create an epoch from resolved
   contract inputs;
-* :func:`_promoted_head_snapshot` — locate an epoch's promoted-head
-  snapshot dir (the cross-epoch lineage seed source);
+* :func:`_promoted_head_snapshot` — materialize an epoch's promoted-head
+  source tree through the generation store (the cross-epoch lineage seed
+  source);
 * the per-component sub-hash reader and drift labeling
   (:func:`_component_diff_label`).
 
@@ -266,13 +267,16 @@ def _create_epoch_from_contract(
 
 
 def _promoted_head_snapshot(workspace_root: Path, epoch_id: str) -> Path | None:
-    """Return the snapshot dir of an epoch's last promoted generation.
+    """Return the source tree of an epoch's last promoted generation.
 
-    Reads the epoch's champion from committed round decisions
-    and returns that generation's ``snapshot/`` directory. Returns
-    ``None`` when the epoch has no promoted generation beyond a seed
-    that was never run, or when the snapshot directory is absent — the
-    caller then falls back to seeding from the registered mutable trees.
+    Reads the epoch's champion from committed round decisions and
+    materializes that generation's tree through the configured generation
+    store: a git worktree under the git store, a ``snapshot/`` directory
+    under the directory store. Returns ``None`` when the epoch has no
+    champion or the champion's tree is empty — the caller then seeds the
+    next epoch from the registered mutable trees. A champion the store does
+    not hold raises :class:`FileNotFoundError` rather than silently
+    dropping the carried-over champion.
     """
     from zicato.evolve.generation_phase import (  # noqa: PLC0415
         current_generation,

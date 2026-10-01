@@ -128,11 +128,12 @@ def check_containment(
 ) -> ContainmentReport:
     """Compute the out-of-bounds diff between a parent and child snapshot.
 
-    ``parent_root`` / ``child_root`` are the two ``.../snapshot/``
-    directories; ``mutable_trees`` are the registered mutable-tree paths
-    (their basenames name the in-bounds surface). Returns a clean
-    ``contained`` report, the ordered out-of-bounds violations, or a
-    fail-open skip when either snapshot is unreadable.
+    ``parent_root`` / ``child_root`` are the two generations' source trees
+    as the generation store materializes them; ``mutable_trees`` are the
+    registered mutable-tree paths (their basenames name the in-bounds
+    surface). Returns a clean ``contained`` report, the ordered
+    out-of-bounds violations, or a fail-open skip when either snapshot is
+    unreadable.
     """
     parent_hashes = _hash_tree(Path(parent_root))
     if parent_hashes is None:

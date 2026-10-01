@@ -98,9 +98,10 @@ def find_manifest(source_root: Path) -> Path | None:
 
     Walks the conventional candidate locations in order and returns
     the first that exists. When the source root is a *parent* directory
-    that contains a goldfive worktree as a sub-directory (the typical
-    ``v0/snapshot/`` layout the orchestrator's baseline-seeder produces
-    when a single ``--mutable-tree /path/to/goldfive`` is registered),
+    that contains a goldfive worktree as a sub-directory (the layout of a
+    generation's source tree, which holds each registered mutable tree
+    under its basename, when a single ``--mutable-tree /path/to/goldfive``
+    is registered),
     we also probe one level deep — checking each immediate child
     directory for the same conventional locations. This keeps the bridge
     invariant under the orchestrator's snapshot-into-named-subdir

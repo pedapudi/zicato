@@ -23,10 +23,10 @@ shape). The worker:
    OWN pid, which is what lets the supervisor kill this one run rather
    than the orchestrator;
 2. loads the harness from the ``snapshot_root`` it was handed — a per-run
-   ephemeral working copy of the generation's code snapshot, NOT the
-   canonical ``generations/vN/snapshot/`` (the parent makes the copy so
-   any runtime write the agent does near its own code cannot pollute the
-   canonical snapshot) — and drives the one entry under goldfive;
+   ephemeral checkout of the generation's source tree, never the generation
+   store's canonical tree (the parent takes the checkout so any runtime
+   write the agent does near its own code cannot pollute the canonical
+   tree) — and drives the one entry under goldfive;
 3. captures every regular file produced under the run scratch directory,
    writes a deterministic artifact manifest, and exposes that inventory to
    expectation evaluators;
