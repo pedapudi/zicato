@@ -51,12 +51,11 @@ log = logging.getLogger("zicato.orchestrator")
 CallLLM = Callable[[str, str, str], Awaitable[str]]
 
 from zicato.evolve.decision_support import (
-    _build_events_paths,
-    _load_parent_losses,
     _render_failure_profile,
     _render_loss_summary,
     _render_process_exemplars_block,
     build_metric_priorities,
+    parent_training_evidence,
 )
 from zicato.evolve.round_api import EvolveRoundOutcome, _declared_custom_judge_names
 from zicato.evolve.round_baseline import (
@@ -147,13 +146,7 @@ async def _evolve_once(
     from zicato.epoch import load_epoch  # noqa: PLC0415
     from zicato.epoch.lifecycle import current_epoch_id  # noqa: PLC0415
     from zicato.mutation.enumerator import enumerate_mutations  # noqa: PLC0415
-    from zicato.patterns.detectors import (  # noqa: PLC0415
-        ALL_DETECTORS,
-        DetectorInput,
-        detect_patterns,
-    )
     from zicato.proposer.agent import build_proposer_agent  # noqa: PLC0415
-    from zicato.telemetry.reducer import read_loss_profile  # noqa: PLC0415
 
     # --- 1. Workspace + epoch artifacts ---
     workspace_config = invocation.workspace_config
@@ -462,40 +455,12 @@ async def _evolve_once(
             WorkspaceLayout.from_root(workspace_root).mutations(resolved_epoch_id), mutations
         )
     # --- 4. Patterns ---
-    # The proposer + detectors + loss summary see the TRAIN slice ONLY
-    # (OVERFITTING.md §11.1, §12 #1): the holdout's per-entry behaviour is
-    # never surfaced to the proposer, so it cannot be memorized. When the
-    # board is too small to split (the default-safe degrade), the train
-    # slice IS the full board and every downstream artifact is byte-
-    # identical to the pre-split behaviour. The mutation manifest (code
-    # spans) is unrelated to the split and is left untouched.
-    from zicato.board.split import rotation_seed, split_board  # noqa: PLC0415
-
-    # Thread the epoch id as the rotation seed (OVERFITTING.md §12 #6) so the
-    # holdout slice is stable within this epoch but rotates across epochs.
-    # ``rotation_seed`` returns ``None`` (the unseeded, byte-identical split)
-    # when ``rotate_holdout`` is off.
-    train_seed = rotation_seed(weights.overfitting, resolved_epoch_id)
-    train_ids, _holdout_ids = split_board(board, weights.overfitting, seed=train_seed)
-    train_id_set = set(train_ids)
-    train_board = [e for e in board if e.id in train_id_set]
-    losses = _load_parent_losses(
-        workspace_root,
-        resolved_epoch_id,
-        parent_id,
-        train_board,
-        read_loss_profile,
-        base_seed=config.seed,
+    # The proposer, detectors and loss summary see the training slice only;
+    # the mutation manifest (code spans) is unrelated to the split.
+    evidence = parent_training_evidence(
+        workspace_root, resolved_epoch_id, parent_id, board, weights, base_seed=config.seed
     )
-    events_paths = _build_events_paths(
-        workspace_root, resolved_epoch_id, parent_id, train_board, base_seed=config.seed
-    )
-    detector_input = DetectorInput(
-        losses=losses,
-        entries={e.id: e for e in train_board},
-        events_paths=events_paths,
-    )
-    patterns = detect_patterns(detector_input, detectors=ALL_DETECTORS)
+    train_board, losses, patterns = evidence.train_board, evidence.losses, evidence.patterns
     # Best-effort: the close-of-epoch retrospective reads which patterns each
     # round observed. A failed write must never abort the round.
     with best_effort(

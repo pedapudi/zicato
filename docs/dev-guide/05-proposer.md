@@ -1805,7 +1805,9 @@ the round proceeds untouched (`_render_process_exemplars_block` wraps it in
 
 ### 5.8.4 Train-slice plumbing (where the slice is decided)
 
-One place: `evolve_once` step 4 (`src/zicato/evolve/round_entry.py`).
+One place: `parent_training_evidence`
+(`src/zicato/evolve/decision_support.py`), which `evolve_once` step 4 and
+`zicato proposer propose` call.
 `rotation_seed(weights.overfitting, epoch_id)` + `split_board(board, …)`
 produce `train_ids`; `train_board` filters the board; the champion's
 `losses` are loaded for train entries only. Everything downstream —
@@ -2326,18 +2328,28 @@ It is the **same episode**: the command resolves the agent through
 builds is the request the loop builds. What differs is what it does around
 that episode:
 
+- the parent is the epoch's current champion, resolved by the round's own
+  `generation_phase.current_generation` (the primary promotion of the most
+  recent committed settlement record, or `v0` before any promotion), so a
+  rejected challenger is never the parent; the proposal is named for the
+  next unused generation id;
 - the mutation manifest is enumerated from the parent generation's own
-  SNAPSHOT (the tree the episode edits), the patterns come from
-  `--patterns-from <file>` (a JSON array of pattern objects, decoded by the
-  `pattern_from_dict` that reads `rounds/{round}/patterns.json`) or fresh
-  detectors, and the brief from the
+  SNAPSHOT (the tree the episode edits), and the brief comes from the
   epoch's `brief.md` (a missing brief is an error);
 - `restrict_visibility` comes from the epoch's frozen
   `overfitting.restrict_proposer_visibility`, the field the round reads,
-  through `_load_restrict_visibility`; unreadable scoring yields the
-  restricted posture. Experiment-memory deltas are therefore banded, and
-  patterns, a `--patterns-from` file included, are projected, whenever
-  a round's would be;
+  through the epoch's execution contract (`_load_contract`); a contract
+  that cannot be loaded stops the command before any request is built.
+  Experiment-memory deltas are therefore banded, and patterns, a
+  `--patterns-from` file included, are projected, whenever a round's would
+  be;
+- the patterns come from `--patterns-from <file>` (a JSON array of pattern
+  objects, decoded by the `pattern_from_dict` that reads
+  `rounds/{round}/patterns.json`) or, without it, from
+  `evolve.decision_support.parent_training_evidence`, the function the
+  round calls: the detectors run over the parent's losses and transcripts
+  on the training slice of the epoch's frozen board, at the base seed the
+  workspace configures;
 - the round's per-round DERIVED channels are absent — the failure-mode
   profile, the metric priorities, the process exemplars, the genealogy
   sample and the calibration record. Each is computed by a round from the

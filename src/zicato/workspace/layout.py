@@ -293,16 +293,6 @@ class WorkspaceLayout:
         """One epoch's persisted Ladder governor state (``ladder_state.json``)."""
         return self.epoch_dir(epoch_id) / "ladder_state.json"
 
-    def roll_seed_marker(self, epoch_id: str) -> Path:
-        """One epoch's cross-epoch v0-seed marker (``v0_seed_from``).
-
-        Written when an epoch is opened by a contract-roll: it records the
-        absolute path to the predecessor epoch's promoted-head snapshot, so
-        the new epoch's ``v0`` is seeded from there rather than the
-        registered source. Absent for a fresh (non-rolled) epoch.
-        """
-        return self.epoch_dir(epoch_id) / "v0_seed_from"
-
     def field_tournament(self, epoch_id: str, first_challenger_id: str) -> Path:
         """One round's durable field-tournament snapshot JSON.
 

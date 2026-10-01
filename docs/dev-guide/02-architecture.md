@@ -522,10 +522,13 @@ construction to Goldfive's `RuntimeConfigDocument` API.
 
 ### 3.5 Step 2 — baseline and parent
 
-`_ensure_baseline_snapshot` materializes `v0` from the registered mutable
-trees if the epoch has no generations yet (byte-for-byte copy of the
-operator's source; on a contract roll it seeds from the previous epoch's
-promoted head via the roll-seed marker — see 03-contract-and-epochs.md).
+`_ensure_baseline_snapshot` materializes `v0` if the epoch has no
+generations yet. An epoch opened by a contract roll carries a baseline seed
+record (`baseline_seed.json`) naming the previous epoch's promoted head and a
+retained copy of its tree, and `v0` is that tree with the head's losses
+carried over; any other epoch seeds
+`v0` as a byte-for-byte copy of the registered mutable trees (see
+03-contract-and-epochs.md).
 A resumed round keeps the parent its persisted experiment recorded;
 otherwise `generation_phase.current_generation` returns the primary
 generation from the most recent committed promotion, or `v0` before any
@@ -568,27 +571,21 @@ parent_gen.snapshot_root))` — zero mutation points is a hard `RuntimeError`
 abort execution.
 
 Then the anti-overfitting boundary — worth reading verbatim because
-every downstream proposer input flows through it:
+every downstream proposer input flows through it. Step 4 calls
+`parent_training_evidence`, which `zicato proposer propose` also calls:
 
 ```python
-    # --- 4. Patterns ---
-    # The proposer + detectors + loss summary see the TRAIN slice ONLY
-    # (OVERFITTING.md §11.1, §12 #1): the holdout's per-entry behaviour is
-    # never surfaced to the proposer, so it cannot be memorized. When the
-    # board is too small to split (the default-safe degrade), the train
-    # slice IS the full board and every downstream artifact is byte-
-    # identical to the pre-split behaviour. The mutation manifest (code
-    # spans) is unrelated to the split and is left untouched.
-    from zicato.board.split import rotation_seed, split_board  # noqa: PLC0415
-
-    # Thread the epoch id as the rotation seed (OVERFITTING.md §12 #6) so the
-    # holdout slice is stable within this epoch but rotates across epochs.
-    # ``rotation_seed`` returns ``None`` (the unseeded, byte-identical split)
-    # when ``rotate_holdout`` is off.
-    train_seed = rotation_seed(weights.overfitting, resolved_epoch_id)
-    train_ids, _holdout_ids = split_board(board, weights.overfitting, seed=train_seed)
+    train_ids, _holdout_ids = split_board(
+        board, weights.overfitting, seed=rotation_seed(weights.overfitting, epoch_id)
+    )
+    train_id_set = set(train_ids)
+    train_board = [e for e in board if e.id in train_id_set]
 ```
-*(src/zicato/evolve/round_entry.py, `_evolve_once` step 4 — excerpt)*
+*(src/zicato/evolve/decision_support.py, `parent_training_evidence` — excerpt)*
+
+The epoch id seeds the split when the contract rotates its holdout, so the
+holdout slice is stable within an epoch and rotates across epochs. When the
+board is too small to split, the train slice is the full board.
 
 Everything the proposer will see is computed from the TRAIN slice only:
 `_load_parent_losses` (the champion's per-entry loss profiles),

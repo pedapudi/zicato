@@ -50,9 +50,9 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 470,314 | +61,653 |
-| Production | 197,702 | 187,290 | -10,412 |
-| Production logic | 110,276 | 109,254 | -1,022 |
+| Total | 408,661 | 470,524 | +61,863 |
+| Production | 197,702 | 187,309 | -10,393 |
+| Production logic | 110,276 | 109,256 | -1,020 |
 
 The baseline row is the reference `f9052dd` measured by the classification the
 checker holds, which counts the console's hand-written entry point
@@ -86,13 +86,13 @@ production-logic series per subsystem along a branch's first-parent commits.
 |---|---:|---:|---:|---:|
 | src/zicato/dashboard | 63,349 | 32,474 | 22,403 | 31.0% |
 | src/zicato/query | 17,763 | 17,763 | 11,165 | 37.1% |
-| src/zicato/epoch | 13,995 | 13,995 | 7,849 | 43.9% |
-| src/zicato/evolve | 11,285 | 11,285 | 7,198 | 36.2% |
+| src/zicato/epoch | 13,988 | 13,988 | 7,842 | 43.9% |
+| src/zicato/evolve | 11,262 | 11,262 | 7,183 | 36.2% |
 | src/zicato/tournament | 11,221 | 11,221 | 6,647 | 40.8% |
-| src/zicato/reflection | 9,844 | 9,844 | 6,578 | 33.2% |
+| src/zicato/reflection | 9,853 | 9,853 | 6,579 | 33.2% |
 | crates/supervisor | 13,091 | 11,405 | 5,030 | 55.9% |
 | src/zicato/proposer | 9,537 | 9,537 | 4,771 | 50.0% |
-| src/zicato/cli | 7,141 | 7,141 | 4,718 | 33.9% |
+| src/zicato/cli | 7,190 | 7,190 | 4,743 | 34.0% |
 | src/zicato/analyzer | 7,359 | 7,359 | 4,691 | 36.3% |
 | src/zicato/selection | 5,281 | 5,281 | 3,063 | 42.0% |
 | src/zicato/core | 6,375 | 6,375 | 2,793 | 56.2% |
@@ -104,12 +104,12 @@ production-logic series per subsystem along a branch's first-parent commits.
 | src/zicato/mutation | 2,954 | 2,954 | 1,405 | 52.4% |
 | src/zicato/check | 1,769 | 1,769 | 1,144 | 35.3% |
 | src/zicato/board | 2,412 | 2,412 | 1,096 | 54.6% |
-| src/zicato/workspace | 1,973 | 1,973 | 939 | 52.4% |
+| src/zicato/workspace | 1,963 | 1,963 | 937 | 52.3% |
 | src/zicato/adapters | 2,197 | 2,197 | 821 | 62.6% |
 | src/zicato/judge_runtime | 1,778 | 1,778 | 801 | 54.9% |
 | src/zicato/testing | 1,455 | 1,455 | 767 | 47.3% |
 | src/zicato/_tournament_worker.py | 1,197 | 1,197 | 704 | 41.2% |
-| src/zicato/synthetic | 1,202 | 1,202 | 574 | 52.2% |
+| src/zicato/synthetic | 1,203 | 1,203 | 574 | 52.3% |
 | src/zicato/models_config.py | 635 | 635 | 490 | 22.8% |
 | src/zicato/scoring | 1,402 | 1,402 | 475 | 66.1% |
 | src/zicato/patterns | 766 | 766 | 419 | 45.3% |
@@ -554,3 +554,7 @@ dropped rows named.
 | Fleet card stats fit the card (total) | 470,229 | +85 | 470,314 | A fleet card's stat row wraps and each stat holds one line, so no stat leaves the card. A node test pins those rules and the settings drawer's stacking and opaque background. |
 | Fleet card stats fit the card (production) | 187,287 | +3 | 187,290 | A fleet card's stat row wraps and each stat holds one line, so no stat leaves the card. A node test pins those rules and the settings drawer's stacking and opaque background. |
 | Fleet card stats fit the card (production logic) | 109,251 | +3 | 109,254 | A fleet card's stat row wraps and each stat holds one line, so no stat leaves the card. A node test pins those rules and the settings drawer's stacking and opaque background. |
+| Generation store readers and round detectors in the propose command (total) | 470,314 | +170 | 470,484 | Admission probes and the propose command read through the configured generation store and the round's detectors. `zicato inspect reflection suggest --probe` materializes each generation through `default_generation_store`; `zicato proposer propose` runs the detectors through `parent_training_evidence`, the function the round now calls, and reads the board, scoring and visibility setting from the epoch's execution contract. Moving the round's pattern step into that function and deleting the cross-epoch seed marker, its path parser and layout path, and the command's separate visibility reader leave production one line shorter and production logic five lines shorter. The total's increase is tests: admission under both stores (+100 lines) and the propose command's detector patterns (+64), less the deleted marker tests; and the atlas page's corrected workspace tree (+14). |
+| Debugging proposals start from the current champion (total) | 470,484 | +41 | 470,525 | `zicato proposer propose` proposes from the epoch's current champion through the round's resolver, `generation_phase.current_generation`, instead of the newest generation, so a rejected challenger is never the parent. The production increase is the resolver call with its error reporting and the docstrings that state the rule; the test increase is a committed rejected round followed by a proposal. |
+| Debugging proposals start from the current champion (production) | 187,289 | +20 | 187,309 | `zicato proposer propose` proposes from the epoch's current champion through the round's resolver, `generation_phase.current_generation`, instead of the newest generation, so a rejected challenger is never the parent. The production increase is the resolver call with its error reporting and the docstrings that state the rule; the test increase is a committed rejected round followed by a proposal. |
+| Debugging proposals start from the current champion (production logic) | 109,249 | +7 | 109,256 | `zicato proposer propose` proposes from the epoch's current champion through the round's resolver, `generation_phase.current_generation`, instead of the newest generation, so a rejected challenger is never the parent. The production increase is the resolver call with its error reporting and the docstrings that state the rule; the test increase is a committed rejected round followed by a proposal. |

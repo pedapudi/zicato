@@ -458,13 +458,6 @@ def _prepare_epoch(
                 source_coordinates=baseline_coordinates,
             )
             atomic_write_json(epoch_content / "baseline_seed.json", seed.body())
-            if baseline_coordinates is not None:
-                source_snapshot = default_generation_store(workspace_root).snapshot_path(
-                    *baseline_coordinates
-                )
-                (epoch_content / "v0_seed_from").write_text(
-                    str(source_snapshot) + "\n", encoding="utf-8"
-                )
         if contract_adoption is not None:
             from zicato.contract_draft.publication import validate_prepared_contract
 

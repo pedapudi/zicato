@@ -6,6 +6,7 @@ from __future__ import annotations
 import logging
 import time  # noqa: F401  — kept as the ``orch.time`` clock seam (see __all__)
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -347,6 +348,64 @@ def _build_events_paths(
         )
         for entry in board
     }
+
+
+@dataclass(frozen=True)
+class ParentTrainingEvidence:
+    """The parent generation's training-slice evidence a proposal is built from."""
+
+    #: The epoch board's training slice, in board order.
+    train_board: list[Any]
+    #: One loss profile per training entry the parent has a measurement for.
+    losses: list[Any]
+    #: The detector findings over ``losses`` and the parent's transcripts.
+    patterns: list[Any]
+
+
+def parent_training_evidence(
+    workspace_root: Path,
+    epoch_id: str,
+    parent_id: str,
+    board: list[Any],
+    weights: Any,
+    *,
+    base_seed: BaseSeed = UNKNOWN_SEED,
+) -> ParentTrainingEvidence:
+    """Split ``board``, read the parent's training-slice losses, and run the detectors.
+
+    The proposer, the detectors and the loss summary see the training slice
+    only (OVERFITTING.md §11.1, §12 #1): the holdout's per-entry behaviour is
+    never surfaced to the proposer, so it cannot be memorized. When the board
+    is too small to split, the training slice is the full board. The epoch id
+    seeds the split when the contract rotates its holdout (OVERFITTING.md
+    §12 #6), so the slice is stable within an epoch and rotates across
+    epochs. The evolve round and ``zicato proposer propose`` both call this,
+    so a debugging proposal sees the patterns the round would compute.
+    """
+    from zicato.board.split import rotation_seed, split_board  # noqa: PLC0415
+    from zicato.patterns.detectors import (  # noqa: PLC0415
+        ALL_DETECTORS,
+        DetectorInput,
+        detect_patterns,
+    )
+    from zicato.telemetry.reducer import read_loss_profile  # noqa: PLC0415
+
+    train_ids, _holdout_ids = split_board(
+        board, weights.overfitting, seed=rotation_seed(weights.overfitting, epoch_id)
+    )
+    train_id_set = set(train_ids)
+    train_board = [e for e in board if e.id in train_id_set]
+    losses = _load_parent_losses(
+        workspace_root, epoch_id, parent_id, train_board, read_loss_profile, base_seed=base_seed
+    )
+    events_paths = _build_events_paths(
+        workspace_root, epoch_id, parent_id, train_board, base_seed=base_seed
+    )
+    detector_input = DetectorInput(
+        losses=losses, entries={e.id: e for e in train_board}, events_paths=events_paths
+    )
+    patterns = detect_patterns(detector_input, detectors=ALL_DETECTORS)
+    return ParentTrainingEvidence(train_board, losses, list(patterns))
 
 
 def _render_failure_profile(

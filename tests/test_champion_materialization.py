@@ -19,10 +19,7 @@ from tests._workspace_support import write_epoch
 from zicato.core.measurement import TOURNAMENT_DRAW
 from zicato.core.types import LossProfile, MetricCount
 from zicato.core.workspace import loss_profile_path, run_id_for_unit
-from zicato.evolve.round_baseline import (
-    _materialize_carried_champion,
-    _source_epoch_generation,
-)
+from zicato.evolve.round_baseline import _materialize_carried_champion
 from zicato.index.ingest import ingest_run
 from zicato.index.query import loss_profiles_for_generation
 from zicato.telemetry.reducer import read_loss_profile, write_loss_profile
@@ -57,20 +54,6 @@ def _write_source_epoch(ws: Path, *, epoch: str, gen: str, entries: dict[str, fl
             loss_profile_path(ws, epoch, gen, entry),
         )
     write_gen_score(ws, epoch, gen, {"generation_id": gen, "scalar": 0.42, "base_seed": None})
-
-
-# ---------------------------------------------------------------------------
-# _source_epoch_generation — derive (epoch, gen) from the roll-seed path
-# ---------------------------------------------------------------------------
-
-
-def test_source_epoch_generation_from_seed_path(tmp_path: Path) -> None:
-    seed = tmp_path / "epochs" / "e1" / "generations" / "v3" / "snapshot"
-    assert _source_epoch_generation(seed) == ("e1", "v3")
-
-
-def test_source_epoch_generation_rejects_unexpected_layout(tmp_path: Path) -> None:
-    assert _source_epoch_generation(tmp_path / "somewhere" / "else") is None
 
 
 # ---------------------------------------------------------------------------

@@ -996,7 +996,7 @@ index/ (projection)   telemetry/ (reducer)   analyzer/   dashboard/readers/
 ### Layout authority (`workspace/layout.py`)
 
 `WorkspaceLayout` owns every path the audit found scattered: the marker files
-(`current_generation`, `v0_seed_from`, `contract_components.json`), `gen_score.json`,
+(`current_epoch`, `contract_components.json`), `gen_score.json`,
 `index.db`, the field-tournament dir, and the *entire dashboard read surface*
 (which today re-derives layout with literal filename joins at dozens of sites).
 `core/workspace.py` is the seed of this; the work is to make it the *only* path

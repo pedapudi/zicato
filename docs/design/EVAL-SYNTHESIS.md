@@ -333,6 +333,14 @@ flag, and decides. Thresholds (a recommended flip-rate ceiling, a minimum
 discrimination) render as **advisory banners** and never drop a suggestion
 silently, which keeps the posture recommend-only end to end.
 
+**Probes run the trees the generation store holds.** The execution, noise
+and discrimination probes run each generation's source tree as the
+workspace's configured generation store materializes it: a git worktree under
+the git store, a `snapshot/` directory under the directory store. A pair with
+a side the store does not hold is not counted. When the store holds no tree
+for the champion, admission spends nothing and every live stage stays
+`unmeasured`.
+
 **Live probes need an operator go-ahead.** The execution, noise and
 discrimination probes spend real champion budget and are gated the same way
 the adjudication in `inspect reflection run` is: never without an explicit operator go-ahead

@@ -577,8 +577,11 @@ the alternatives that were rejected.
 - **Cross-epoch parentage.** A proposal to parent a new epoch's `v0`
   commit to the previous epoch's promoted head was adjusted. The
   backend creates each epoch branch from `zicato-root`, and cross-epoch
-  seeding is handled one layer up by the orchestrator's `v0_seed_from`
-  marker, which hands `seed_generation` the predecessor's tree. Keeping
+  seeding is handled one layer up: the epoch roll retains a copy of the
+  predecessor's promoted-head tree and records the head's epoch and
+  generation coordinates in the new epoch's baseline seed record
+  (`baseline_seed.json`), and the first round seeds `v0` from that copy
+  through `seed_generation`. Keeping
   cross-epoch lineage in the orchestrator, where the promotion decision
   lives, keeps the git backend's contract identical to the directory
   backend's, which the parity conformance suite requires.

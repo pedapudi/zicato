@@ -8,18 +8,22 @@ It is the same episode. The command assembles the round's proposal
 context and hands it to the agent the round resolves, which builds its
 request through :func:`zicato.proposer.foe_request.build_request` — so
 what an operator debugs here is what the loop runs, rather than a second
-stitching of the same inputs that drifts from it.
+stitching of the same inputs that drifts from it. The parent is the
+epoch's current champion, resolved as the round resolves it, so a rejected
+challenger is never proposed from.
 
 What it includes of the round's inputs, and what it does not:
 
 * Included: the epoch's frozen proposer brief and skills, the mutation
   manifest enumerated from the parent generation's own snapshot, the
-  cross-run loss patterns, the loss summary, the board's declared judge
-  names, the settled experiment-memory digest, and the most recent
+  detector patterns, the loss summary, the board's declared judge names,
+  the settled experiment-memory digest, and the most recent
   training-slice telemetry insight. These are what make a proposal
-  grounded, and every one of them is already train-slice-only. The epoch's
-  frozen ``overfitting.restrict_proposer_visibility`` setting, read as the
-  round reads it (:func:`_load_restrict_visibility`), switches the same
+  grounded, and every one of them is train-slice-only. The patterns come
+  from the detectors the round runs, over the parent's losses on the
+  training slice of the epoch's frozen board. The epoch's frozen
+  ``overfitting.restrict_proposer_visibility`` setting, read from the
+  epoch's execution contract as the round reads it, switches the same
   rendering the round's does: experiment-memory deltas are banded and
   patterns, including a ``--patterns-from`` file, are projected to their
   identity-free form.
@@ -30,12 +34,14 @@ What it includes of the round's inputs, and what it does not:
   outside a round without opening one.
 
 The command is read-only with respect to the loop. It appends nothing
-to the lineage, opens no tournament, records no outcome and reads no
-unit cache. Of the board it reads one thing, the set of declared judge
-names, because that is what makes a predicted movement valid — never an
-entry's content, and so never a holdout entry's content. Its one write
-is the experiment document, under ``epochs/<epoch>/proposals/``, a
-directory nothing in the loop reads.
+to the lineage, opens no tournament, records no outcome and writes no
+unit cache; it reads the parent's training-slice losses and transcripts,
+as the round does, for the detectors. Of the board, the episode receives
+the set of declared judge names, because that is what makes a predicted
+movement valid, and the detector findings — never an entry's content.
+Holdout entries never reach the detectors. Its one write is the
+experiment document, under ``epochs/<epoch>/proposals/``, a directory
+nothing in the loop reads.
 
 Standalone command file. Auto-discovered under
 ``zicato/cli/commands/``; intentionally does not import from
@@ -48,7 +54,7 @@ import asyncio
 import importlib
 import json
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import click
 
@@ -64,6 +70,9 @@ from zicato.proposer.brief import load_brief
 from zicato.proposer.proposer import ProposerError
 from zicato.workspace import WorkspaceLayout, generation_ids, next_generation_id
 from zicato.workspace.config_io import WorkspaceConfig, read_workspace_config
+
+if TYPE_CHECKING:
+    from zicato.core.types import BoardEntry, ScoringWeights
 
 # ---------------------------------------------------------------------------
 # Workspace loading helpers
@@ -115,6 +124,24 @@ def _list_generations(workspace_dir: Path, epoch_id: str) -> list[str]:
     return generation_ids(WorkspaceLayout.from_root(workspace_dir), epoch_id)
 
 
+def _current_champion(workspace_dir: Path, epoch_id: str) -> str:
+    """The generation a round would propose from: the epoch's current champion.
+
+    Resolved by the round's own resolver,
+    :func:`zicato.evolve.generation_phase.current_generation`: the primary
+    promotion of the most recent committed settlement record, or ``v0``
+    before any promotion. A rejected challenger is newer than the champion
+    but is never a parent.
+    """
+    from zicato.epoch._storage import RecordError  # noqa: PLC0415
+    from zicato.evolve.generation_phase import current_generation  # noqa: PLC0415
+
+    try:
+        return current_generation(workspace_dir, epoch_id)
+    except (FileNotFoundError, ValueError, RecordError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
 def _load_mutations(workspace_dir: Path, generation_root: Path) -> list[MutationPoint]:
     """Enumerate the mutation points of the tree the episode will edit.
 
@@ -142,8 +169,17 @@ def _load_patterns(
     epoch_id: str,
     parent_gen: str,
     patterns_from: str | None,
+    *,
+    board: list[BoardEntry],
+    weights: ScoringWeights,
+    base_seed: int | None,
 ) -> list[Pattern]:
-    """Load cross-run patterns either from a file or by running detectors."""
+    """Load patterns from ``patterns_from``, or run the round's detectors.
+
+    Without a file, the patterns are the ones a round proposing from
+    ``parent_gen`` computes: the detectors run over the parent's losses at
+    ``base_seed`` on the training slice of the epoch's frozen board.
+    """
 
     if patterns_from is not None:
         path = Path(patterns_from)
@@ -162,17 +198,38 @@ def _load_patterns(
         except ValueError as exc:
             raise click.ClickException(f"{path}: {exc}") from exc
 
-    try:
-        detector_pkg = importlib.import_module("zicato.patterns")
-    except ImportError:
-        # Detectors unavailable — proceed with no patterns, the proposer
-        # will still propose something based on the loss summary.
-        return []
+    from zicato.evolve.decision_support import parent_training_evidence  # noqa: PLC0415
 
-    run_detectors = getattr(detector_pkg, "run_detectors", None)
-    if run_detectors is None:
-        return []
-    return list(run_detectors(workspace_dir, epoch_id, parent_gen))
+    return parent_training_evidence(
+        workspace_dir, epoch_id, parent_gen, board, weights, base_seed=base_seed
+    ).patterns
+
+
+def _load_contract(workspace_dir: Path, epoch_id: str) -> tuple[list[BoardEntry], ScoringWeights]:
+    """The epoch's frozen board and scoring, read as the round reads them.
+
+    Both come from the epoch's execution contract. A contract that cannot be
+    loaded or parsed stops the command before any request is built, so a
+    debugging call never shows the model more than a round would.
+    """
+    from zicato.epoch.execution import load_epoch_execution_contract  # noqa: PLC0415
+
+    try:
+        contract = load_epoch_execution_contract(workspace_dir, epoch_id)
+        board, _disable_drift, _judge_only = contract.board_with_meta
+        return list(board), contract.scoring
+    except (OSError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
+def _configured_seed(config: WorkspaceConfig) -> int | None:
+    """The base seed a round would measure under, from the workspace config."""
+    from zicato.core.settings import resolve_configuration  # noqa: PLC0415
+
+    try:
+        return resolve_configuration(config.raw).values.runtime.seed
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
 
 
 def _load_loss_summary(workspace_dir: Path, epoch_id: str, parent_gen: str) -> str:
@@ -221,23 +278,6 @@ def _load_custom_judge_names(workspace_dir: Path) -> frozenset[str]:
                 names.add(str(judge_name))
     names.update(str(k) for k in (getattr(weights, "per_judge_weights", None) or {}))
     return frozenset(names)
-
-
-def _load_restrict_visibility(workspace_dir: Path, epoch_id: str) -> bool:
-    """The epoch's frozen ``overfitting.restrict_proposer_visibility`` setting.
-
-    The round reads the same field off the epoch's frozen scoring. Missing,
-    unreadable or invalid scoring yields ``True``, the restricted posture,
-    so a debugging call can show the model less than a round would but
-    never more.
-    """
-    from zicato.workspace_loader import scoring_weights_from_dict  # noqa: PLC0415
-
-    try:
-        raw = json.loads((epoch_dir(workspace_dir, epoch_id) / "scoring.json").read_text("utf-8"))
-        return bool(scoring_weights_from_dict(raw).overfitting.restrict_proposer_visibility)
-    except Exception:  # noqa: BLE001 — fail closed to the restricted posture
-        return True
 
 
 def _write_proposal(
@@ -416,7 +456,7 @@ async def _propose(
             raise click.ClickException(
                 f"Epoch {epoch_id!r} has no generations yet; cannot propose a child."
             )
-        parent_gen = existing[-1]
+        parent_gen = _current_champion(workspace_dir, epoch_id)
         new_gen = next_generation_id(existing)
 
         agent, generation_root = _resolve_agent(workspace_dir, config, epoch_id, parent_gen)
@@ -427,7 +467,16 @@ async def _propose(
                 "No mutation points were enumerated; cannot propose a patch set."
             )
 
-        patterns = _load_patterns(workspace_dir, epoch_id, parent_gen, patterns_from)
+        board, weights = _load_contract(workspace_dir, epoch_id)
+        patterns = _load_patterns(
+            workspace_dir,
+            epoch_id,
+            parent_gen,
+            patterns_from,
+            board=board,
+            weights=weights,
+            base_seed=_configured_seed(config),
+        )
         loss_summary = _load_loss_summary(workspace_dir, epoch_id, parent_gen)
         aux_call_llm = _resolve_aux_llm(config)
         model = config.evaluation_model
@@ -472,7 +521,7 @@ async def _propose(
                     custom_judge_names=custom_judge_names,
                     prior_experiments=tuple(prior),
                     insights=insights,
-                    restrict_visibility=_load_restrict_visibility(workspace_dir, epoch_id),
+                    restrict_visibility=weights.overfitting.restrict_proposer_visibility,
                 )
             )
         except ProposerError as exc:

@@ -807,8 +807,8 @@ pre .hi { color: var(--v2-accent); }
       </div>
       <p class="caption">
         A round contains many runs — one per board entry per generation — so run and round are
-        never interchangeable. A generation is a version of the source; a snapshot is the
-        directory holding that source; a run is one execution of it.
+        never interchangeable. A generation is a version of the source; a snapshot is that
+        version's tree as the generation store holds it; a run is one execution of it.
       </p>
     </section>
 
@@ -1132,19 +1132,19 @@ pre .hi { color: var(--v2-accent); }
 <pre><span class="cm"># 1. Scaffold a workspace next to the source you want improved.</span>
 <span class="hi">zicato init</span>
 
-<span class="cm"># 2. Describe the tasks. One JSON object per line; frozen once the epoch opens.</span>
-$EDITOR .zicato/epochs/&lt;epoch&gt;/board.jsonl
+<span class="cm"># 2. Describe the tasks, beside .zicato/. One JSON object per line.</span>
+$EDITOR board.jsonl
 
-<span class="cm"># 3. Steer the proposer. Re-read from disk at the start of every round.</span>
-$EDITOR .zicato/epochs/&lt;epoch&gt;/brief.md
+<span class="cm"># 3. Steer the proposer. An edit to either file opens a new epoch.</span>
+$EDITOR brief.md
 
 <span class="cm"># 4. Run the loop. It resolves the contract, opens an epoch on any change,</span>
 <span class="cm">#    and spawns a watchdog plus the console on http://127.0.0.1:7892.</span>
 <span class="hi">zicato evolve</span>
 
-<span class="cm"># 5. Read what happened — in the browser, in the terminal, or on disk.</span>
-<span class="hi">zicato tui</span>
-cat .zicato/epochs/&lt;epoch&gt;/journal.md</pre>
+<span class="cm"># 5. Read what happened — in the console, or on disk.</span>
+<span class="hi">zicato dashboard</span>
+cat .zicato/epochs/&lt;epoch&gt;/rounds/&lt;round&gt;/field_settlement.json</pre>
 
       <p>
         Before trusting a long run, ask whether the loop can see anything at all.
@@ -1170,14 +1170,13 @@ cat .zicato/epochs/&lt;epoch&gt;/journal.md</pre>
         <div class="cmd"><span class="name">zicato init</span><span class="what">Scaffold a fresh workspace. Once per project.</span></div>
         <div class="cmd"><span class="name">zicato evolve</span><span class="what">Resolve the contract, auto-open an epoch on any change, and run the loop.</span></div>
         <div class="cmd"><span class="name">zicato dashboard</span><span class="what">Serve the console for an existing workspace. <code>evolve</code> already spawns it.</span></div>
-        <div class="cmd"><span class="name">zicato tui</span><span class="what">Review a workspace in the terminal — the console's peer surface, rendering the same served payloads.</span></div>
         <div class="cmd"><span class="name">zicato health</span><span class="what">Report whether the loop has real optimization signal.</span></div>
       </div>
       <h3>Namespaces</h3>
       <div class="cmds">
         <div class="cmd"><span class="name">board</span><span class="what">Inspect and hand-edit a per-epoch board.</span></div>
         <div class="cmd"><span class="name">epoch</span><span class="what">Inspect and force epochs. <code>evolve</code> opens them for you.</span></div>
-        <div class="cmd"><span class="name">proposer</span><span class="what">Score, diagnose, and improve the proposer itself.</span></div>
+        <div class="cmd"><span class="name">proposer</span><span class="what">Run one proposal episode by hand and score proposal quality per epoch.</span></div>
         <div class="cmd"><span class="name">tournament</span><span class="what">Run isolated tournament operations.</span></div>
         <div class="cmd"><span class="name">inspect</span><span class="what">Inspect workspace state and derived analysis, including the mutation-surface audit.</span></div>
         <div class="cmd"><span class="name">repair</span><span class="what">Rebuild derived and legacy workspace data, such as the analytical index.</span></div>
@@ -1201,39 +1200,53 @@ cat .zicato/epochs/&lt;epoch&gt;/journal.md</pre>
         <code>ls</code> and <code>cat</code>.
       </p>
 
-<pre>.zicato/
-  config.json                    <span class="cm"># adapter, call_llm wiring, instance id</span>
+<pre>board.jsonl  brief.md  scoring.json  <span class="cm"># the live contract, beside the workspace</span>
+.zicato/
+  config.json                    <span class="cm"># adapter, model roles, generation store, instance id</span>
+  current_epoch                  <span class="cm"># the epoch evolve runs against</span>
+  lineage.json                   <span class="cm"># cross-epoch generation graph</span>
+  <span class="hi">index.db</span>                       <span class="cm"># derived SQLite projection; rebuilt from the files</span>
+  repo/                          <span class="cm"># git store: one commit and tag per generation</span>
+  repo-worktrees/{epoch_id}/v{N}/  <span class="cm"># git store: a generation's checked-out source</span>
+  runtime/                       <span class="cm"># lock, heartbeat, in-flight runs, operator controls</span>
   epochs/
     {epoch_id}/
-      board.jsonl                <span class="cm"># frozen for this epoch</span>
-      brief.md                   <span class="cm"># operator-edited; read fresh each round</span>
-      scoring.json               <span class="cm"># weights + tournament thresholds</span>
+      config.json                <span class="cm"># contract hash, goal, open or closed</span>
+      board.jsonl                <span class="cm"># frozen copies of the contract</span>
+      brief.md
+      scoring.json
+      mutations.json             <span class="cm"># the mutation surface a round enumerated</span>
       generations/
         v0/                      <span class="cm"># the baseline</span>
-          snapshot/              <span class="cm"># full source at this generation</span>
-          runs/{entry_id}/
-            events.jsonl         <span class="cm"># one file per run</span>
-            loss.json            <span class="cm"># reducer output</span>
-          gen_score.json
+          snapshot/              <span class="cm"># directory store only: full source</span>
+          experiment.json
+          gen_score.json         <span class="cm"># aggregate score</span>
+          runs/{entry_id}/seed-{seed}/
+            events.tournament.r0.jsonl  <span class="cm"># one file per run</span>
+            loss.tournament.r0.json     <span class="cm"># reducer output</span>
         v1/
-          snapshot/
-          experiment.json        <span class="cm"># hypothesis + patch ids + outcome</span>
+          experiment.json        <span class="cm"># hypothesis + patch ids</span>
           patches/{patch_id}.json
           runs/...
-      current_generation         <span class="cm"># marker: the promoted head</span>
-      rounds/{round}/patterns.json
-      loop_health/round_{NNN}.json
-      journal.md                 <span class="cm"># running narrative</span>
-      analysis.md                <span class="cm"># written at epoch close</span>
-  <span class="hi">index.db</span>                       <span class="cm"># derived SQLite projection; rebuilt from the files above</span>
-  lineage.json                   <span class="cm"># cross-epoch generation graph</span></pre>
+      rounds/{round}/
+        round_log.jsonl          <span class="cm"># what the round did, in order</span>
+        patterns.json            <span class="cm"># detector findings handed to the proposer</span>
+        field_settlement.json    <span class="cm"># every candidate's outcome</span>
+      health/round_{N}.json      <span class="cm"># loop health after each round</span>
+      analysis.md                <span class="cm"># written at epoch close</span></pre>
 
       <p>
-        A snapshot is a full copy rather than a reference, so copying or deleting one affects no
-        other generation. The one non-text file is the analytical index, and it holds no fact
-        that is not also on disk — <code>zicato repair index</code> reconstructs it in full. The
-        filesystem stays the source of truth; the index is a sidecar that makes cross-run queries
-        fast without walking every file.
+        Generation source lives in the generation store that <code>config.json</code> names.
+        The git store, which <code>zicato init</code> configures, keeps each generation as a
+        commit and tag in <code>repo/</code> and checks one out under
+        <code>repo-worktrees/</code> when a run needs it; the directory store keeps a full copy
+        in each generation's <code>snapshot/</code>. Either way a generation's records stay
+        under <code>generations/</code> when its source is pruned. The journal is not a file:
+        the console renders it from the experiment and settlement records. The one non-text
+        file is the analytical index, and it holds no fact that is not also on disk —
+        <code>zicato repair index</code> reconstructs it in full. The filesystem stays the
+        source of truth; the index is a sidecar that makes cross-run queries fast without
+        walking every file.
       </p>
     </section>
 
@@ -1318,7 +1331,7 @@ cat .zicato/epochs/&lt;epoch&gt;/journal.md</pre>
           <polygon class="fhead" points="514,113 506,109 506,117"></polygon>
 
           <rect class="fbox" x="514" y="24" width="230" height="150" rx="2"></rect>
-          <text class="fdata" x="524" y="42">v2/snapshot/agent/agent.py</text>
+          <text class="fdata" x="524" y="42">v2: agent/agent.py</text>
           <line class="fline" x1="514" y1="52" x2="744" y2="52"></line>
           <rect class="fill-empty" x="524" y="62" width="210" height="22" rx="2"></rect>
           <text class="fdata" x="532" y="77">unchanged</text>
@@ -2170,7 +2183,7 @@ cat .zicato/epochs/&lt;epoch&gt;/journal.md</pre>
     { id: "bestofn", col: 3, name: "Best-of-N", def: "Taking several proposal samples in one step, each with a different edit-class hint, and choosing one with a critique pass instead of keeping the first valid sample. A single call takes one sample and retries only on invalid output, so without this a valid but mediocre proposal is never reconsidered. Screening can veto a sample that breaks entries the champion passes; the critique, not the screen, chooses among the survivors." },
     { id: "diversity", col: 3, name: "Field diversity", def: "How much the challengers in one field actually differ, measured as the overlap between the sets of mutation points each one touches. A field of near-identical ideas costs a full round of evaluation and answers almost one question, so the overlap summary informs whether to soft-reject a near-duplicate." },
     { id: "generation", col: 3, name: "Generation", def: "A specific version of the system under test's source, named by sequence within the epoch. The first is the baseline — the registered source at epoch start, or the final promoted generation of the previous epoch. Every later one is the applier's output." },
-    { id: "snapshot", col: 3, name: "Snapshot", def: "The directory holding one generation's full source. A complete copy rather than a reference, so copying or deleting it affects no other generation." },
+    { id: "snapshot", col: 3, name: "Snapshot", def: "One generation's full source tree, as the generation store holds it: a commit checked out as a git worktree under the default git store, or a complete directory copy under the directory store. Pruning one generation's tree affects no other generation." },
 
     { id: "round", col: 0, name: "Round", def: "One turn of the loop inside an epoch: run, measure, propose, apply, compare, record. A round mints one experiment and either advances the generation counter or leaves the parent standing. Round numbers run continuously across the epoch, so an epoch usually holds more rounds than generations." },
     { id: "field", col: 3, name: "Field", def: "The several challengers a single round can mint at once, competing together rather than one at a time. The round runs as named phases over the whole field — propose and apply, run, gate, decide — and two of those phases can end it early with an outcome already written to disk." },
@@ -2197,7 +2210,7 @@ cat .zicato/epochs/&lt;epoch&gt;/journal.md</pre>
     { id: "falsepromote", col: 4, name: "False promotion", def: "Crowning a challenger that is not actually better. It is the failure this whole design is arranged against, because the loop builds the next round on the champion, so a wrong crowning corrupts everything proposed after it. Every margin, replicate and confirmation exists to make it rarer." },
     { id: "regressiongate", col: 4, name: "Regression gate", def: "Runs the candidate's own test suite against its snapshot, and any failure rejects it however strong the scoring signal was. A patch can improve the drift loss and the pass rate on the board while breaking an invariant the board never exercises, and the scoring channel cannot see that." },
     { id: "deadletter", col: 4, name: "Dead letter", def: "Where a crowning duel goes when the evidence gate spends its replicate budget and the two ratings still cannot be separated. Recording it as unresolved keeps an undecidable comparison from being read later as a decision that went one way." },
-    { id: "journal", col: 4, name: "Journal", def: "The running narrative of the epoch, appended every round with the core idea, the score deltas, and the decision. A closing analysis pass runs over it when the epoch closes." },
+    { id: "journal", col: 4, name: "Journal", def: "The running narrative of the epoch: one section per generation with the core idea, the score deltas, and the decision, rendered from the experiment and settlement records rather than stored. A closing analysis pass runs over it when the epoch closes." },
     { id: "lineage", col: 4, name: "Lineage", def: "The cross-epoch graph of generations, recording each epoch's identity, its promoted and rejected versions, and the parent generation in the epoch before it." }
   ];
 
@@ -2698,13 +2711,13 @@ cat .zicato/epochs/&lt;epoch&gt;/journal.md</pre>
 
   /* ============================================ round stepper */
   var PHASES = [
-    { name: "Run the champion", body: "Every board entry runs against the parent generation, one run each. Under the default fast mode a run already recorded for this generation and entry is reused rather than repeated, so a long-standing champion is not re-evaluated every round.", writes: ".zicato/epochs/{epoch}/generations/v{N}/runs/{entry_id}/events.jsonl" },
-    { name: "Reduce to loss", body: "The reducer walks each run's event stream once and writes one loss profile beside it: drift counts by kind and severity, plan revisions, task failure ratio, runtime, whether the run aborted, and the pass or fail the entry's expectations decided.", writes: ".../runs/{entry_id}/loss.json" },
-    { name: "Detect patterns", body: "Detectors read every loss profile in the epoch so far and emit typed aggregates — drift concentrated in one kind, a tag slice regressing, multi-turn memory failing, a mutation surface nothing has moved. These reset at the epoch boundary, because the contract they summarize has changed.", writes: ".zicato/epochs/{epoch}/rounds/{round}/patterns.json" },
+    { name: "Run the champion", body: "Every board entry runs against the parent generation, one run each. Under the default fast mode a run already recorded for this generation and entry is reused rather than repeated, so a long-standing champion is not re-evaluated every round.", writes: ".zicato/epochs/{epoch}/generations/v{N}/runs/{entry_id}/seed-{seed}/events.tournament.r0.jsonl" },
+    { name: "Reduce to loss", body: "The reducer walks each run's event stream once and writes one loss profile beside it: drift counts by kind and severity, plan revisions, task failure ratio, runtime, whether the run aborted, and the pass or fail the entry's expectations decided.", writes: ".../runs/{entry_id}/seed-{seed}/loss.tournament.r0.json" },
+    { name: "Detect patterns", body: "Detectors read the parent generation's loss profiles and transcripts on the board's training slice, never the holdout, and emit typed aggregates — a drift kind recurring across runs, tasks that often fail or block, drift concentrated in one agent, frequent plan revisions, multi-turn memory failing. Each round recomputes them for its own parent and hands them to the proposer.", writes: ".zicato/epochs/{epoch}/rounds/{round}/patterns.json" },
     { name: "Propose", body: "The proposer reads the patterns, the operator's brief, and a digest of what has already been tried, and emits an experiment: a structured hypothesis plus the patches that test it. A schema-invalid response is rejected and re-prompted with the error rather than coerced into shape.", writes: ".../generations/v{N+1}/experiment.json" },
-    { name: "Apply and validate", body: "The applier resolves each patch's mutation-point id to a source location, rewrites the span, and checks the result — the tree must still parse and import. A patch failing any validator is rejected outright. What survives is published as a new candidate snapshot.", writes: ".../generations/v{N+1}/snapshot/" },
+    { name: "Apply and validate", body: "The applier resolves each patch's mutation-point id to a source location, rewrites the span, and checks the result — the tree must still parse and import. A patch failing any validator is rejected outright. What survives is published as a new candidate in the generation store.", writes: ".zicato/repo · repo-worktrees/{epoch}/v{N+1}/ (git store) · .../generations/v{N+1}/snapshot/ (directory store)" },
     { name: "Hold the tournament", body: "Champion and challenger are compared on the board frozen for this epoch, and each generation gets an aggregate score. Full mode re-runs every entry against both; fast mode reuses the champion's recorded results.", writes: ".../generations/v{N+1}/gen_score.json" },
-    { name: "Gate, then record", body: "The gate applies its rules in order — margin on the scalar score, then no regression on any entry the champion already passed — and a hidden-holdout confirmation may revise a provisional promotion. Either way the reason is written down: the outcome block is appended to the same experiment record, and a row is appended to the journal.", writes: ".../generations/v{N+1}/experiment.json · epochs/{epoch}/journal.md" }
+    { name: "Gate, then record", body: "The gate applies its rules in order — margin on the scalar score, then no regression on any entry the champion already passed — and a hidden-holdout confirmation may revise a provisional promotion. Either way the reason is written down: the round records every candidate's outcome in its settlement record, and the journal shows it from there.", writes: ".zicato/epochs/{epoch}/rounds/{round}/field_settlement.json" }
   ];
 
   var steplist = document.getElementById("steplist");

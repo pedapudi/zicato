@@ -30,10 +30,17 @@ from click.testing import CliRunner
 from tests._contract_pins import deterministic_weights
 from tests._foe_support import stand_in_proposer_block
 from tests._source_tree_builders import mutable_tree
+from tests.test_settlement_receipt_records import REJECTED_RECEIPT
 from zicato.cli.commands.propose import propose_cmd
+from zicato.core import LossProfile, MetricCount
 from zicato.core.experiment import PriorExperiment
+from zicato.core.measurement import TOURNAMENT_DRAW
 from zicato.core.types import OverfittingConfig
+from zicato.core.workspace import run_id_for_unit
 from zicato.epoch.lifecycle import new_epoch
+from zicato.epoch.settlement_receipt import decode_settlement_receipt, write_settlement_receipt
+from zicato.telemetry.reducer import write_loss_profile
+from zicato.tournament.unit_cache import _unit_loss_path
 
 #: A board whose one holdout-tagged entry carries a phrase that appears
 #: nowhere else, so its presence anywhere in the episode's context is
@@ -106,6 +113,36 @@ def _workspace(
     snapshot = workspace / "epochs" / cfg.id / "generations" / "v0" / "snapshot"
     mutable_tree(snapshot, instr="Route the message.")
     return workspace, cfg.id
+
+
+def _write_parent_loss(workspace: Path, epoch_id: str, entry_id: str) -> None:
+    """Record a ``v0`` tournament measurement of ``entry_id`` that fired off-topic drift."""
+    write_loss_profile(
+        LossProfile(
+            run_id=run_id_for_unit("v0", entry_id, epoch_id=epoch_id),
+            measurement=TOURNAMENT_DRAW,
+            entry_id=entry_id,
+            generation_id="v0",
+            epoch_id=epoch_id,
+            metric_counts=(MetricCount(name="drift:off_topic", severity="warning", count=2),),
+            plan_revisions=0,
+            task_failure_ratio=0.0,
+            runtime_ms=10,
+            wall_clock_budget_exceeded=False,
+            expectation_result=None,
+            drift_loss=2.0,
+            pass_fail=False,
+        ),
+        _unit_loss_path(workspace, epoch_id, "v0", entry_id, TOURNAMENT_DRAW),
+    )
+
+
+def _proposal_task(workspace: Path, epoch_id: str) -> str:
+    from zicato.proposer.input_capture import ROLE_PROPOSAL, read_proposer_inputs
+
+    records = [r for r in read_proposer_inputs(workspace, epoch_id) if r["role"] == ROLE_PROPOSAL]
+    assert len(records) == 1
+    return str(records[0]["user"])
 
 
 def _run(workspace: Path, *args: str) -> Any:
@@ -322,3 +359,51 @@ def test_the_documented_flags_are_accepted(tmp_path: Path, flag: str) -> None:
     value = epoch_id if flag == "--epoch" else "0"
 
     assert _run(workspace, flag, value).exit_code == 0
+
+
+def test_the_episode_receives_the_round_s_detector_patterns(tmp_path: Path) -> None:
+    """The parent's training-slice losses feed the detectors; the holdout's do not."""
+    workspace, epoch_id = _workspace(tmp_path)
+    _write_parent_loss(workspace, epoch_id, "entry_train")
+    _write_parent_loss(workspace, epoch_id, "entry_held")
+
+    assert _run(workspace).exit_code == 0
+
+    task = _proposal_task(workspace, epoch_id)
+    assert "(no patterns detected in the current generation)" not in task
+    # The restricted rendering the round uses: counts, no entry ids, and one
+    # run, because the holdout entry's measurement never reaches the detectors.
+    assert "Recurring drift (drift:off_topic)" in task
+    assert "run_count=1" in task
+    assert "entry_train" not in task
+
+
+def test_an_unrestricted_epoch_renders_patterns_verbatim(tmp_path: Path) -> None:
+    """The epoch's visibility setting decides the rendering, as it does in a round."""
+    workspace, epoch_id = _workspace(tmp_path, restrict_visibility=False)
+    _write_parent_loss(workspace, epoch_id, "entry_train")
+
+    assert _run(workspace).exit_code == 0
+
+    task = _proposal_task(workspace, epoch_id)
+    assert "kind=drift_metric_frequency" in task
+    assert "affected_entry_ids=entry_train" in task
+
+
+def test_the_parent_is_the_champion_after_a_rejected_round(tmp_path: Path) -> None:
+    """A rejected challenger is newer than the champion but is not the parent."""
+    workspace, epoch_id = _workspace(tmp_path)
+    rejected = workspace / "epochs" / epoch_id / "generations" / "v1" / "snapshot"
+    mutable_tree(rejected, instr="Route the message loudly.")
+    receipt = json.loads(json.dumps(REJECTED_RECEIPT))
+    receipt.update(epoch_id=epoch_id, state="committed")
+    write_settlement_receipt(workspace, decode_settlement_receipt(receipt))
+
+    result = _run(workspace)
+
+    assert result.exit_code == 0, result.output
+    body = json.loads(
+        (workspace / "epochs" / epoch_id / "proposals" / "v2.json").read_text(encoding="utf-8")
+    )
+    assert body["parent_generation_id"] == "v0"
+    assert body["generation_id"] == "v2"
