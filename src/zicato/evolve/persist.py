@@ -145,7 +145,7 @@ async def _round_epilogue(
                 meta_loop_emitter=meta_loop_emitter,
                 # The insight is read back into the next round's proposal
                 # evidence, so it is computed over the training slice only.
-                entry_ids=analyzer_entry_ids,
+                training_entry_ids=analyzer_entry_ids,
             )
 
     await _regenerate_epoch_report(workspace_root, epoch_id, evaluation_call_llm, evaluation_model)

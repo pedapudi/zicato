@@ -3,9 +3,8 @@
 The analyzer's job for one epoch:
 
 1. Walk the workspace's ``epochs/{epoch}/generations/{*}/runs/{*}/events.jsonl``
-   tree and collect every events file the epoch has accumulated, narrowed
-   to the board entries the caller names (the training slice, when the
-   insight is meant for the proposer).
+   tree and collect the events files of the training-slice entries the
+   caller names.
 2. Aggregate the five decision-telemetry event types into a
    :class:`zicato.analyzer.aggregator.DecisionEventSummary`.
 3. Render the system + user prompts.
@@ -190,7 +189,8 @@ async def analyze_epoch_telemetry(
     mutation_ids: Sequence[str] | None = None,
     meta_loop_emitter: MetaLoopEmitter | None = None,
     aux_config: AuxConfig | None = None,
-    entry_ids: Collection[str] | None = None,
+    *,
+    training_entry_ids: Collection[str],
 ) -> Path:
     """Build the decision-event summary, call the LLM, persist the insight.
 
@@ -221,11 +221,11 @@ async def analyze_epoch_telemetry(
         mutation target ids absent from the agent's surface. When
         ``None`` the prompt still renders, with a "none provided"
         marker, and the system prompt forbids inventing an id.
-    entry_ids:
-        The board entries whose runs are analyzed. The insight is read
-        back into the next round's proposal evidence, so both production
-        callers pass the epoch's training slice and no holdout run reaches
-        the analysis. ``None`` analyzes every run in the epoch.
+    training_entry_ids:
+        The board entries whose runs are analyzed: the epoch's training
+        slice. Required, because the insight is read back into the next
+        round's proposal evidence and carries the training-slice
+        provenance line; no holdout run may reach it.
 
     Returns
     -------
@@ -242,7 +242,7 @@ async def analyze_epoch_telemetry(
     right behaviour for the orchestrator's ``try / except`` wrapper.
     """
 
-    events_paths = _collect_events_jsonl_paths(workspace_root, epoch_id, entry_ids)
+    events_paths = _collect_events_jsonl_paths(workspace_root, epoch_id, training_entry_ids)
     summary = aggregate_decision_events(events_paths)
 
     target = _insight_target(workspace_root, epoch_id, round_n)

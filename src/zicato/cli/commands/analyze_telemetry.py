@@ -139,7 +139,7 @@ def analyze_telemetry_cmd(workspace: str, epoch: str | None, round_n: int | None
             model=model,
             aux_config=resolve_configuration(config.raw).values.aux,
             round_n=round_n,
-            entry_ids=entry_ids,
+            training_entry_ids=entry_ids,
         )
     )
     click.echo(f"Wrote decision-telemetry insight for epoch {epoch_id!r} to {out_path}")

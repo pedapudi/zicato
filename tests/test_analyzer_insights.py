@@ -20,6 +20,8 @@ import json
 import stat
 from pathlib import Path
 
+import pytest
+
 from zicato.analyzer import analyze_epoch_telemetry, load_latest_insight
 from zicato.analyzer.insights import proposer_visible_entry_ids
 
@@ -31,18 +33,25 @@ TRAINING_SLICE_ANALYSIS_MARKER = (
 
 _MARK = TRAINING_SLICE_ANALYSIS_MARKER + "\n"
 
+# The training slice of the one-entry epochs these tests build.
+_SLICE = ("e1",)
+
 
 def test_report_replacement_preserves_an_open_reader(tmp_path: Path) -> None:
     async def unused_aux(_system: str, _user: str, _model: str) -> str:
         raise AssertionError("an empty epoch requires no evaluation call")
 
-    out = asyncio.run(analyze_epoch_telemetry(tmp_path, "epoch", unused_aux))
+    out = asyncio.run(
+        analyze_epoch_telemetry(tmp_path, "epoch", unused_aux, training_entry_ids=_SLICE)
+    )
     previous = "Previous complete report.\n" * 20
     out.write_text(previous, encoding="utf-8")
     out.chmod(0o600)
     with out.open("rb", buffering=0) as reader:
         prefix = reader.read(10)
-        asyncio.run(analyze_epoch_telemetry(tmp_path, "epoch", unused_aux))
+        asyncio.run(
+            analyze_epoch_telemetry(tmp_path, "epoch", unused_aux, training_entry_ids=_SLICE)
+        )
         observed = prefix + reader.read()
 
     assert observed == previous.encode("utf-8")
@@ -131,7 +140,9 @@ def test_analyze_epoch_telemetry_writes_markdown(tmp_path: Path) -> None:
         return "## Headline observations\n- saw 1 ladder transition\n"
 
     out = asyncio.run(
-        analyze_epoch_telemetry(workspace, epoch_id, fake_aux, model="opaque-1", round_n=3)
+        analyze_epoch_telemetry(
+            workspace, epoch_id, fake_aux, model="opaque-1", round_n=3, training_entry_ids=_SLICE
+        )
     )
 
     assert out.exists()
@@ -193,6 +204,7 @@ def test_analyze_epoch_telemetry_grounds_prompt_in_mutation_ids(tmp_path: Path) 
             fake_aux,
             round_n=1,
             mutation_ids=mutation_ids,
+            training_entry_ids=_SLICE,
         )
     )
 
@@ -238,7 +250,9 @@ def test_analyze_epoch_telemetry_marks_absent_mutation_surface(tmp_path: Path) -
         captured["user"] = user
         return "## Headline observations\n- ok\n"
 
-    asyncio.run(analyze_epoch_telemetry(workspace, epoch_id, fake_aux, round_n=1))
+    asyncio.run(
+        analyze_epoch_telemetry(workspace, epoch_id, fake_aux, round_n=1, training_entry_ids=_SLICE)
+    )
     assert "Available mutation targets" in captured["user"]
     assert "none observed" in captured["user"].lower()
 
@@ -276,7 +290,9 @@ def test_analyze_epoch_telemetry_empty_epoch_short_circuits(tmp_path: Path) -> N
         invoked = True
         return "this should not appear"
 
-    out = asyncio.run(analyze_epoch_telemetry(workspace, epoch_id, fake_aux, round_n=0))
+    out = asyncio.run(
+        analyze_epoch_telemetry(workspace, epoch_id, fake_aux, round_n=0, training_entry_ids=_SLICE)
+    )
 
     assert out.exists()
     body = out.read_text(encoding="utf-8")
@@ -312,7 +328,11 @@ def test_analyze_epoch_telemetry_latest_filename(tmp_path: Path) -> None:
     async def fake_aux(_system: str, _user: str, _model: str) -> str:
         return "# insight\n"
 
-    out = asyncio.run(analyze_epoch_telemetry(workspace, epoch_id, fake_aux, round_n=None))
+    out = asyncio.run(
+        analyze_epoch_telemetry(
+            workspace, epoch_id, fake_aux, round_n=None, training_entry_ids=_SLICE
+        )
+    )
 
     assert out.name == "latest.md"
 
@@ -346,7 +366,11 @@ def test_load_latest_insight_withholds_a_placeholder(tmp_path: Path) -> None:
     insights_dir.mkdir(parents=True, exist_ok=True)
     (insights_dir / "round_0001.md").write_text(_MARK + "# real analysis\n", encoding="utf-8")
     # No telemetry at all: the analyzer writes the empty-epoch placeholder.
-    out = asyncio.run(analyze_epoch_telemetry(workspace, epoch_id, unused_aux, round_n=2))
+    out = asyncio.run(
+        analyze_epoch_telemetry(
+            workspace, epoch_id, unused_aux, round_n=2, training_entry_ids=_SLICE
+        )
+    )
 
     assert not out.read_text(encoding="utf-8").startswith(TRAINING_SLICE_ANALYSIS_MARKER)
     assert load_latest_insight(workspace, epoch_id) == ""
@@ -425,6 +449,16 @@ def test_load_latest_insight_empty_when_no_round_file(tmp_path: Path) -> None:
     assert load_latest_insight(workspace, epoch_id) == ""
 
 
+def test_the_training_slice_is_a_required_argument(tmp_path: Path) -> None:
+    """No default analyzes every run: a caller must name the slice."""
+
+    async def unused_aux(_system: str, _user: str, _model: str) -> str:
+        raise AssertionError("unreachable")
+
+    with pytest.raises(TypeError, match="training_entry_ids"):
+        analyze_epoch_telemetry(tmp_path, "epoch", unused_aux, round_n=1)  # type: ignore[call-arg]
+
+
 def test_entry_ids_narrow_the_analysis_to_the_named_entries(tmp_path: Path) -> None:
     """Runs of entries outside ``entry_ids`` contribute nothing to the prompt."""
 
@@ -453,7 +487,7 @@ def test_entry_ids_narrow_the_analysis_to_the_named_entries(tmp_path: Path) -> N
 
     asyncio.run(
         analyze_epoch_telemetry(
-            workspace, epoch_id, recording_aux, round_n=1, entry_ids=("train_a",)
+            workspace, epoch_id, recording_aux, round_n=1, training_entry_ids=("train_a",)
         )
     )
 
@@ -518,7 +552,12 @@ def test_analyze_epoch_telemetry_timeout_bounded(tmp_path: Path) -> None:
 
     out = asyncio.run(
         analyze_epoch_telemetry(
-            workspace, epoch_id, hung_aux, round_n=1, aux_config=AuxConfig(call_timeout_s=0.1)
+            workspace,
+            epoch_id,
+            hung_aux,
+            round_n=1,
+            aux_config=AuxConfig(call_timeout_s=0.1),
+            training_entry_ids=_SLICE,
         )
     )
 
@@ -554,7 +593,11 @@ def test_analyze_epoch_telemetry_handles_aux_exception(tmp_path: Path) -> None:
     async def broken_aux(_system: str, _user: str, _model: str) -> str:
         raise RuntimeError("simulated provider outage")
 
-    out = asyncio.run(analyze_epoch_telemetry(workspace, epoch_id, broken_aux, round_n=0))
+    out = asyncio.run(
+        analyze_epoch_telemetry(
+            workspace, epoch_id, broken_aux, round_n=0, training_entry_ids=_SLICE
+        )
+    )
 
     body = out.read_text(encoding="utf-8")
     assert "simulated provider outage" in body

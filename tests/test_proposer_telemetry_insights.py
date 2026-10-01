@@ -100,7 +100,9 @@ def test_round_after_a_placeholder_insight_carries_no_insight_block(
     # The epoch has no runs yet, so the analyzer writes its no-telemetry
     # placeholder as round 2 without an evaluation call.
     asyncio.run(
-        insights_module.analyze_epoch_telemetry(workspace, epoch_id, evaluation_call_llm, round_n=2)
+        insights_module.analyze_epoch_telemetry(
+            workspace, epoch_id, evaluation_call_llm, round_n=2, training_entry_ids=("entry_a",)
+        )
     )
 
     run_evolve_once(workspace, epoch_id, evaluation_call_llm)
