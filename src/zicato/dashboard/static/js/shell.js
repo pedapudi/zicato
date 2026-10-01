@@ -598,7 +598,9 @@ export function mountShell(root) {
   root.appendChild(topbar);
 
   _treeHost = el('aside', { class: 'dt-sidebar', 'aria-label': 'Data model navigation' });
-  _viewHost = el('main', { class: 'dt-viewhost', role: 'main' });
+  // index.html's skip link targets this id; tabindex -1 lets the link move
+  // keyboard focus here without adding the region to the tab order.
+  _viewHost = el('main', { class: 'dt-viewhost', role: 'main', id: 'main-content', tabindex: '-1' });
 
   // CHANGE 2 — the draggable RAIL-RESIZE handle on the rail's right edge. It is
   // a focusable separator (role="separator") so it is keyboard-accessible

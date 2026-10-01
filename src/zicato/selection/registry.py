@@ -47,9 +47,14 @@ EXPERIMENTAL_STRATEGY_REGISTRY: dict[str, type[SelectionStrategy]] = {
 }
 
 
+def strategy_class_for(structure: str) -> type[SelectionStrategy] | None:
+    """Return the class either registry holds for ``structure``, or ``None``."""
+    return STRATEGY_REGISTRY.get(structure) or EXPERIMENTAL_STRATEGY_REGISTRY.get(structure)
+
+
 def default_replicates_for(structure: str) -> int:
     """Read the replicate default directly from the declaring strategy class."""
-    strategy = STRATEGY_REGISTRY.get(structure) or EXPERIMENTAL_STRATEGY_REGISTRY.get(structure)
+    strategy = strategy_class_for(structure)
     return strategy._default_replicates if strategy is not None else 1
 
 
@@ -145,4 +150,5 @@ __all__ = [
     "STRATEGY_REGISTRY",
     "default_replicates_for",
     "make_strategy",
+    "strategy_class_for",
 ]

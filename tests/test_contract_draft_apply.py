@@ -12,7 +12,7 @@ import pytest
 from zicato.contract_draft import operations as ops
 from zicato.contract_draft.draft import TournamentDraft
 from zicato.core.scoring_config import scoring_weights_from_dict
-from zicato.core.types import BoardEntry, ScoringWeights
+from zicato.core.types import VALID_TOURNAMENT_STRUCTURES, BoardEntry, ScoringWeights
 from zicato.epoch.contract import compute_contract_hash, resolve_contract_inputs
 from zicato.epoch.lifecycle import current_epoch_id, load_epoch, new_epoch
 from zicato.workspace.config_io import write_workspace_config
@@ -365,6 +365,85 @@ def test_tournament_edit_preserves_partial_scoring_and_unrelated_parameters(
     assert ops.candidate_scoring(draft) == expected
     ops.apply(draft, workspace, confirm=True)
     assert json.loads(scoring.read_text()) == expected
+
+
+def test_switching_racing_to_gauntlet_keeps_only_the_params_gauntlet_accepts(
+    workspace: Path,
+) -> None:
+    from zicato.cli.commands.evolve import _tournament_draft
+
+    scoring = workspace.parent / "scoring.json"
+    racing_params = {
+        "field_size": 4,
+        "eta": 2,
+        "board_fraction": 0.25,
+        "replicates": 1,
+        "promote_confidence_threshold": 0.9,
+        "promote_confidence_replicates": 3,
+    }
+    scoring.write_text(json.dumps({"tournament": {"structure": "racing", "params": racing_params}}))
+    draft = _tournament_draft(workspace, "gauntlet", ("replicates=2",))
+    assert ops.candidate_scoring(draft)["tournament"] == {
+        "structure": "gauntlet",
+        "params": {
+            "replicates": 2,
+            "promote_confidence_threshold": 0.9,
+            "promote_confidence_replicates": 3,
+        },
+    }
+
+
+@pytest.mark.parametrize("authored", [{}, {"tournament": {"structure": "racing"}}])
+def test_switching_default_racing_to_gauntlet_keeps_the_evidence_gate(
+    workspace: Path, authored: dict[str, object]
+) -> None:
+    from zicato.cli.commands.evolve import _tournament_draft
+
+    scoring = workspace.parent / "scoring.json"
+    scoring.write_text(json.dumps(authored))
+    draft = _tournament_draft(workspace, "gauntlet", ())
+    resolved = scoring_weights_from_dict(ops.candidate_scoring(draft)).tournament_structure
+    assert resolved.structure == "gauntlet"
+    assert resolved.params["promote_confidence_threshold"] == 0.8
+    assert resolved.params["promote_confidence_replicates"] == 32
+    ops.apply(draft, workspace, confirm=True)
+    published = scoring_weights_from_dict(json.loads(scoring.read_text()))
+    assert published.tournament_structure == draft.scoring.tournament_structure
+
+
+@pytest.mark.parametrize("target", sorted(VALID_TOURNAMENT_STRUCTURES))
+@pytest.mark.parametrize("source", sorted(VALID_TOURNAMENT_STRUCTURES))
+@pytest.mark.parametrize("params_authored", [False, True])
+def test_every_tournament_edit_resolves_to_the_draft(
+    workspace: Path, source: str, target: str, params_authored: bool
+) -> None:
+    tournament: dict[str, object] = {"structure": source}
+    if params_authored:
+        tournament["params"] = {"replicates": 3}
+    scoring = workspace.parent / "scoring.json"
+    authored = {"experimental": {"tournament_structures": True}, "tournament": tournament}
+    scoring.write_text(json.dumps(authored))
+    draft = TournamentDraft.from_workspace(workspace)
+    ops.set_structure(draft, target)
+    ops.set_param(draft, "replicates", 4)
+    if target == "swiss":
+        ops.set_param(draft, "rounds_n", 2)
+    resolved = scoring_weights_from_dict(ops.candidate_scoring(draft))
+    assert resolved.tournament_structure == draft.scoring.tournament_structure
+
+
+def test_switching_structure_still_refuses_an_explicit_unsupported_param(
+    workspace: Path,
+) -> None:
+    import click
+
+    from zicato.cli.commands.evolve import _tournament_draft
+
+    scoring = workspace.parent / "scoring.json"
+    scoring.write_text(json.dumps({"tournament": {"structure": "racing", "params": {"eta": 2}}}))
+    refusal = "gauntlet has unsupported tournament parameters: eta"
+    with pytest.raises(click.ClickException, match=refusal):
+        _tournament_draft(workspace, "gauntlet", ("eta=3",))
 
 
 def test_to_dict_is_json_serializable(workspace: Path) -> None:

@@ -158,17 +158,17 @@ zicato evolve \
     --rounds 2
 ```
 
-- `--tournament-structure {gauntlet|racing}` sets the structure and keeps
-  the existing params. The validated edit is written into the live
+- `--tournament-structure {gauntlet|racing}` sets the structure, keeps the
+  existing params the new structure accepts, and drops the others. The validated edit is written into the live
   `scoring.json` BEFORE the contract hash is computed, so it participates in
   the hash like a hand edit.
 - `--tournament-param KEY=VALUE` is repeatable and works with or without
   `--tournament-structure`; `VALUE` is parsed as JSON when possible (so
   `field_size=4` is the integer `4`), else taken as a string, and `KEY=null`
-  removes the key. Switching racing to gauntlet therefore also needs
-  `--tournament-param field_size=null --tournament-param eta=null
-  --tournament-param board_fraction=null`, because the gauntlet refuses those
-  keys.
+  removes the key. The params apply after the structure switch, so
+  switching racing to gauntlet drops `field_size`, `eta` and
+  `board_fraction`, and passing one of them explicitly is refused because the
+  gauntlet does not accept it.
 - Neither flag combines with `--epoch`. Under `--dry-run` the edit is checked
   in memory and not saved.
 - There is **no** `--field-size` flag — set it via `--tournament-param

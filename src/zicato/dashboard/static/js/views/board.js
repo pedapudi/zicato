@@ -1132,7 +1132,7 @@ function reflectionLinks(dossier, ctx, epochId) {
   const findings = (dossier && Array.isArray(dossier.reflection_findings)) ? dossier.reflection_findings : [];
   const card = el('div', { class: 'dn-panel' });
   if (!findings.length) {
-    card.appendChild(empty('No reflection findings touch this entry. Run zicato reflect to diagnose the instrument (recommend-only — it never edits the contract).'));
+    card.appendChild(empty('No reflection findings touch this entry. Run zicato inspect reflection run to diagnose the instrument (recommend-only — it never edits the contract).'));
     return card;
   }
   for (const item of findings) {

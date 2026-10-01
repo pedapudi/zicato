@@ -56,6 +56,16 @@ def test_set_structure_changes_structure_and_keeps_params() -> None:
     assert patch.to_dict()["changed"]["structure"] == {"from": "gauntlet", "to": "racing"}
 
 
+def test_set_structure_records_the_params_it_drops() -> None:
+    draft = _gauntlet_draft()
+    ops.set_structure(draft, "racing")
+    ops.set_param(draft, "eta", 3)
+    ops.set_param(draft, "replicates", 2)
+    patch = ops.set_structure(draft, "gauntlet")
+    assert draft.scoring.tournament_structure.params == {"replicates": 2}
+    assert patch.changed["eta"] == {"from": 3, "to": None}
+
+
 def test_set_param_and_remove() -> None:
     draft = TournamentDraft()
     ops.set_param(draft, "replicates", 3)

@@ -150,7 +150,8 @@ only to keep it from growing without bound.
 ## Accessibility
 
 - `role` and `aria-label` on interactive regions
-- a skip link at the top of the page (visible on focus)
+- a skip link at the top of the page (visible on focus) that moves focus
+  to the region holding the active view (`#main-content`)
 - keyboard activation (Enter / Space) on clickable figure marks, the
   lifecycle DAG's nodes, and the live standings and trace rows
 - `aria-live="polite"` on the live activity ticker, the run-state pill

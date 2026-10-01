@@ -598,9 +598,15 @@ zicato evolve \
 in the hash the way a hand edit does. Each `--tournament-param KEY=VALUE`
 is repeatable; `VALUE` is parsed as JSON when possible (so `field_size=4`
 is the integer `4`), else taken as a string, and the other params are
-preserved. Either flag works alone; `--tournament-structure` keeps the
-existing params, so switching a racing contract to `gauntlet` also needs
-the racing-only keys removed. `--dry-run` checks the edit without saving
+preserved. Either flag works alone. `--tournament-structure` keeps the
+existing params the new structure accepts and drops the rest, so switching
+a racing contract to `gauntlet` removes `field_size`, `eta` and
+`board_fraction` and keeps `replicates` and the `promote_confidence_*`
+keys. `--tournament-param` applies after the switch, and a key the new
+structure does not accept is refused. An edit that changes the tournament
+writes the whole `tournament` block, structure and every parameter, so a
+workspace that relied on the omitted-block racing defaults keeps the
+confirmation threshold of 0.8 and the budget of 32 explicitly. `--dry-run` checks the edit without saving
 it, and neither flag combines with `--epoch`. `zicato evolve --help` is
 the authoritative flag reference, and [`CLI.md`](CLI.md) is generated
 from it.
