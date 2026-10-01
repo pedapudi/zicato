@@ -46,7 +46,7 @@ test('structure: single-elim renders a fit-to-width RADIAL bracket (elimRadial s
   await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
 
   // the structure pill names the configured structure (NOT the gauntlet ladder).
-  assert(allByClass(host, 'dt-structure-pill').length >= 1, 'a structure pill labels the configured structure');
+  assert(allByClass(host, 'dt-structure-label').length >= 1, 'a structure pill labels the configured structure');
   assert(host.textContent.includes('Single elimination'), 'the pill names single-elim');
   assertEqual(allByClass(host, 'dt-champ-banner').length, 0, 'NO gauntlet champion-defends banner for a non-gauntlet structure');
 
@@ -630,7 +630,7 @@ test('structure: the epoch view shows the structure pill from the epoch tourname
   const epoch = await import('../js/views/epoch.js');
   const host = document.createElement('div');
   await epoch.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
-  assert(allByClass(host, 'dt-structure-pill').length >= 1, 'the epoch header carries a structure pill');
+  assert(allByClass(host, 'dt-structure-label').length >= 1, 'the epoch header carries a structure pill');
   assert(host.textContent.includes('Swiss'), 'the epoch pill names the configured swiss structure');
 });
 
@@ -722,7 +722,7 @@ test('gauntlet (default): the match-ups page renders the FIELD as the duel-flow 
   assert(flow, 'the field renders as the duel-flow structure-graphic');
   assertEqual(allByClass(flow, 'dn-duelflow-lane').length, 2, 'one challenger lane per round (v0→v1, v0→v2)');
   assertEqual(allByClass(host, 'dn-sbracket').length, 0, 'NO bracket SVG for the gauntlet default');
-  assertEqual(allByClass(host, 'dt-structure-pill').length, 0, 'NO structure pill for a gauntlet epoch with no tournament block');
+  assertEqual(allByClass(host, 'dt-structure-label').length, 0, 'NO structure pill for a gauntlet epoch with no tournament block');
 });
 
 await run();

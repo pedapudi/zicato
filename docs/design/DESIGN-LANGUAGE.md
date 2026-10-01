@@ -37,9 +37,11 @@ rather than a consumer report. Five principles:
    stroke and drops decoration — no gridlines for their own sake, no 3-D, no
    chart frames, no chartjunk. Just the band, the dot, the rule, the label.
    (Edward Tufte, *The Visual Display of Quantitative Information*.)
-2. **Monospace-forward.** The default typeface is all-monospace (Google Sans
-   Mono) — a terminal/console aesthetic where data, labels and code read on a
-   fixed advance grid.
+2. **Sans for prose and controls, mono for data.** Prose, controls and the
+   chrome (the top bar, the tree, buttons, headings) are set in a sans. The
+   monospace face is reserved for data, code, ids, hashes, key names and the
+   numbers in tables, so values read on a fixed advance grid and the chrome
+   reads as text. Chrome set entirely in mono is a defect (§3).
 3. **A single green accent on a calm ground.** The brand carries **one**
    non-foreground colour, the green plucked-note (`--zicato-accent`); everything
    else is ink on a quiet paper. The good/bad signal colours are earned by data
@@ -86,7 +88,7 @@ identity**. A challenger is not red because it is a challenger; it is red only
 when it regressed or was cut. An unscored / in-flight candidate is *neutral*
 (pending → `--v2-accent`), never `bad` — an undecided outcome must never
 collapse into a rejection, which is what the code guards against
-(`.dn-pill.dn-pending`, `.ezn-edge-neutral` in `console.css`).
+(`.dn-state.dn-pending`, `.ezn-edge-neutral` in `console.css`).
 
 The single brand accent is a **separate** token from the structural `--v2-accent`:
 
@@ -185,64 +187,83 @@ component — derive it from a token.
 
 ## 3. Typography
 
-Typography is a **separate axis** from colour. A typeface picker stamps one of
-twelve face ids on the root as `[data-t-type]`; the default is
-`google-sans-mono`.
+Typography is a **separate axis** from colour. Two tokens carry the rule
+"sans for prose and controls, mono for data":
+
+- `--v2-sans` sets prose, controls and chrome. `#console-root` is set in it,
+  so every element inherits it unless it is data.
+- `--v2-mono` sets data, code, ids, hashes, key names and the numbers in
+  tables and figures. An element opts in by its role: `.dn-mono`, a table
+  (`.dn-mtx`), a tile or stat value (`.dn-tile-value`, `.dn-stat .v`), a tree
+  row named by an id (`.dt-leaf[data-kind^="gen"] .dt-text`), the figure text
+  classes that hold numbers or ids (tick values, losses, candidate names).
+
+Inside a figure the same split holds. Axis captions, column heads, legends,
+gate labels and sentences (`LOSS FLOOR ↓ IMPROVING · ROUNDS →`, `← worse`,
+`vs champion v0 · every Δ is vs v0`) take the sans; tick values, losses,
+deltas, candidate and entry ids take the mono. A displayed value led by a word
+(`open`, `provisional · 1 game`, `single-turn`) is prose and takes the sans
+through `ui.valueFace`, which adds `.dn-wordval`.
+
+A typeface picker stamps one of twelve option ids on the root as
+`[data-t-type]`; the default is `google-sans-mono`.
 
 ### 3.1 The three modes
 
-The picker groups its twelve faces under three **modes**, four faces each
-(`TYPE_OPTIONS` in `ui.js`). Each face sets a heading voice, a prose voice, and
-a data/code voice:
+The picker groups its twelve pairings under three **modes**, four each
+(`TYPE_OPTIONS` in `ui.js`). Each option sets a heading face, a prose face and
+a data face, and every option keeps the rule true: the prose face is always a
+sans, the data face is always a monospace, and the heading face is never a
+monospace. `test/interface_rules.test.mjs` checks all twelve.
 
-| mode | voice | faces (heading face; + the body/data face where it differs) |
-| --- | --- | --- |
-| `technical` **(default)** | console technical | **Google Sans Mono** (default) · Source Sans 3 + Source Code Pro · Inconsolata · Ubuntu + Ubuntu Mono |
-| `editorial` | typeset, literary reading serif | Fraunces · Bitter · Literata · Domine |
-| `display` | punchy headline | Archivo Narrow + Space Grotesk · Hanken Grotesk · Barlow Condensed + Space Grotesk · Bricolage Grotesque |
+| mode | heading face | prose face | data face |
+| --- | --- | --- | --- |
+| `technical` **(default)** | Open Sans · Source Sans 3 · Open Sans · Ubuntu | the same as the heading | **Google Sans Mono** (default) · Source Code Pro · Inconsolata · Ubuntu Mono |
+| `editorial` | Fraunces · Bitter · Literata · Domine (serif) | Open Sans | JetBrains Mono |
+| `display` | Archivo Narrow · Hanken Grotesk · Barlow Condensed · Bricolage Grotesque | Space Grotesk · Hanken Grotesk · Space Grotesk · Bricolage Grotesque | JetBrains Mono |
 
-An editorial face routes every role — data included — to its serif, so data
-and prose share one face. A display face sets headings in a condensed or
-grotesque display face and the body in a geometric grotesque.
+An option's id names the face it is chosen for: the heading face, or for the
+two monospace faces (Google Sans Mono, Inconsolata) the data face. A
+monospace face therefore sets data only and is paired with Open Sans for prose
+and headings. An editorial option sets headings and the publication title in
+its serif; a display option sets headings in its display face.
 
 ### 3.2 The token map
 
-The marks read two tokens — `--v2-sans` (body) and `--v2-mono` (all data,
-labels, axis text, code) — plus `--n-font-head` (headings, big numerals) and
-`--n-font-paper` (the publication body). Each `[data-t-type]` rule in
-`console.css` sets all four to literal font stacks. The unconditional default
-on `#console-root` is Google Sans Mono in every role, so a root with no
-`data-t-type` still lands on the default voice:
+Each `[data-t-type]` rule in `console.css` sets all four tokens to literal
+font stacks. The unconditional default on `#console-root` is the
+`google-sans-mono` pairing, so a root with no `data-t-type` still lands on the
+default:
 
 ```css
 #console-root {
   /* the brand wordmark pins to a FIXED mono, independent of the user's choice */
   --v2-brand-mono: "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
 
-  /* DEFAULT (Google Sans Mono): all four roles */
-  --v2-sans:      'Google Sans Mono', 'Noto Sans Mono', ui-monospace, monospace;
+  /* DEFAULT (Open Sans + Google Sans Mono) */
+  --v2-sans:      'Open Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
   --v2-mono:      'Google Sans Mono', 'Noto Sans Mono', ui-monospace, monospace;
-  --n-font-head:  'Google Sans Mono', 'Noto Sans Mono', ui-monospace, monospace;
-  --n-font-paper: 'Google Sans Mono', 'Noto Sans Mono', ui-monospace, monospace;
+  --n-font-head:  'Open Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --n-font-paper: 'Open Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
 }
-/* a face that pairs two families: head/prose Source Sans 3, data/code Source Code Pro */
-#console-root[data-t-type="source-sans-3"] {
-  --v2-sans:      'Source Sans 3', system-ui, sans-serif;
-  --v2-mono:      'Source Code Pro', ui-monospace, monospace;
-  --n-font-head:  'Source Sans 3', system-ui, sans-serif;
-  --n-font-paper: 'Source Sans 3', system-ui, sans-serif;
+/* an editorial option: a serif heading and paper-title voice */
+#console-root[data-t-type="fraunces"] {
+  --v2-sans:      'Open Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --v2-mono:      'JetBrains Mono', ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
+  --n-font-head:  'Fraunces', Georgia, serif;
+  --n-font-paper: 'Fraunces', Georgia, serif;
 }
 ```
 
 | token | set from the option's | which surface |
 | --- | --- | --- |
-| `--v2-sans` | prose face | body text |
-| `--v2-mono` | data / code face | data / labels / axis / code |
+| `--v2-sans` | prose face | prose, controls, chrome |
+| `--v2-mono` | data face | data, ids, code, key names, table and figure numbers |
 | `--n-font-head` | heading face | `.dn-h1`, big numerals |
-| `--n-font-paper` | prose face | the publication body |
+| `--n-font-paper` | heading face (editorial) or prose face | the publication title |
 
-The font stacks match the ones in the [typeface study](typeface-study/README.md)
-the picker was chosen from.
+The faces come from the [typeface study](typeface-study/README.md); the
+pairings put each face in the role the interface rule allows.
 
 ### 3.3 Self-hosted vs loaded
 
@@ -250,12 +271,15 @@ the picker was chosen from.
   `src/zicato/dashboard/static/fonts/` — `iAWriterMonoS-Regular/Bold.woff2` and
   `JetBrainsMono-Regular/Bold.woff2` — declared with `@font-face` +
   `font-display: swap` at the top of `console.css`. JetBrains Mono backs the
-  fixed brand mono (`--v2-brand-mono`).
-- **The twelve picker faces load from Google Fonts** — the only external
+  fixed brand mono (`--v2-brand-mono`) and is the data face of the editorial
+  and display options. No token names iA Writer Mono.
+- **The other picker faces load from Google Fonts** — the only external
   dependency — injected by `console.js` `ensureFonts()` with `display=swap`
   and a preconnect to the font origins. Every stack lists a system fallback,
   so a slow or blocked font never breaks layout; with the network blocked, the
-  default face falls back to Noto Sans Mono or the system monospace.
+  default prose face falls back to the system sans (`-apple-system`,
+  `Segoe UI`, `system-ui`) and the default data face to Noto Sans Mono or the
+  system monospace. The fallbacks are the same in light and dark themes.
 
 ### 3.4 Type scale and weights
 
@@ -270,12 +294,13 @@ control. Representative sizes from `console.css`, before the multiplier:
 | --- | --- | --- |
 | page title | `.dn-h1` | 19px / 600 |
 | section heading | `.dn-h2` | 13px / 600 |
-| subhead (eyebrow) | `.dn-subhead` | 11px / uppercase / `0.07em` tracking |
+| subhead (eyebrow) | `.dn-subhead` | 11px sans / uppercase / `0.07em` tracking |
 | tile value (big number) | `.dn-tile-value` | 20px mono, `tabular-nums` |
 | tile key | `.dn-tile-key` | 10px / uppercase / `0.06em` |
 | lede / prose | `.dn-lede` | 12.5px, line-height 1.45, `max-width: 78ch` |
 | publication title | `.dn-paper-title` | 28px / 700, `--n-font-paper` |
-| SVG axis / labels | (mark classes) | 9–11px `var(--v2-mono)` |
+| SVG captions, axis titles, legends | (mark classes) | 9–11px `var(--v2-sans)` |
+| SVG tick values, losses, ids | (mark classes) | 9–11px `var(--v2-mono)`, `tabular-nums` |
 
 Numerics use `font-variant-numeric: tabular-nums` everywhere they appear in a
 column or animate, so digits do not jitter.
@@ -313,8 +338,9 @@ root in `console.css`. The page scale (§4.4) is the sizing control.
 | `--dt-reel-scale` | `1.18` | vertical scale of the round-timeline spine |
 | `--dt-font-scale` | `1` (the shell stamps the chosen size over it) | global text-size multiplier (§3.4) |
 
-Radii: panels `4px`, cards/buttons `5px`, pills `8–11px` (full-round), hovercard
-`6px`. Hairlines are always `1px solid var(--v2-rule)` (or `--v2-rule-soft` for a
+Radii: panels `4px`, cards/buttons `5px`, hovercard and popovers `6px`. A
+rounded box holds content (a panel, a card, a popover) or takes input (a
+button, a field); a label never sits in one (§6.2). Hairlines are always `1px solid var(--v2-rule)` (or `--v2-rule-soft` for a
 fainter inner rule). SVG strokes use `vector-effect: non-scaling-stroke` so a
 hairline stays a hairline under the page-zoom.
 
@@ -333,16 +359,29 @@ hairline stays a hairline under the page-zoom.
 
 ### 4.3 Top-bar anatomy (`.dt-topbar`)
 
-Sticky and hairline-bottomed, assembled in `shell.js` `mountShell`. Left →
-right:
+Sticky and hairline-bottomed, assembled in `shell.js` `mountShell`, and set
+in the sans. At desktop widths it holds **one line**: nothing wraps, and an id
+never breaks inside itself. The breadcrumb shrinks first: each crumb truncates
+with an ellipsis, while its DOM text keeps the full value and a crumb of ten
+or more characters shows it in a hovercard. The lower-priority items then
+yield as the viewport narrows:
+
+| viewport width | yields |
+| --- | --- |
+| ≤ 1480px | the research-preview note |
+| ≤ 1220px | the words beside the log and settings marks, and the colour theme's name (each control keeps its `aria-label`) |
+| ≤ 1080px | the "last seen" note, the in-flight count and the `console` sub-word |
+| ≤ 760px (phone) | the bar wraps to two lines, the breadcrumb takes its own line, and the wordmark and phase label hide, so the page never scrolls sideways |
+
+Left → right:
 
 1. **`.dt-back`** — the `↑ up` control. Navigates *up the selection hierarchy*
    (candidate → rounds → epoch → environment) rather than browser-back. Disabled
    state `.dt-back-off`.
 2. **`.dt-brand`** — the inline-SVG mark (`.dt-brand-mark`) + the inline-SVG
-   wordmark (`.dt-brand-name`, `zıcato`) + a `.dt-brand-tag` tag reading
+   wordmark (`.dt-brand-name`, `zıcato`) + a `.dt-brand-sub` tag reading
    `console` + a stacked "research preview" note (`.dt-respreview`).
-3. **`.dt-crumbs`** — breadcrumb trail (mono, faint), `.dt-crumb` links +
+3. **`.dt-crumbs`** — breadcrumb trail (sans, faint), `.dt-crumb` links +
    `.dt-crumb-sep`.
 4. `.dt-topbar-spacer` (flex spacer).
 5. **`.dt-nav-exec`** — the liveness-gated `execution` link (with the external-link
@@ -357,7 +396,7 @@ right:
    Appearance.
 9. **`.dt-loopctl`** — the pause/resume and skip-round controls, rendered only
    while the loop is live and the workspace is writable.
-10. **`.dt-status`** — the status pill (§4.5).
+10. **`.dt-status`** — the status line (§4.5).
 
 > **Note — there is no command palette.** Nothing under `static/js/**`
 > implements one. Navigation is via the tree sidebar
@@ -374,9 +413,9 @@ page-wide via `zoom` on the app root (`shell.applyScale`), which **reflows**
 (not a transform) so the page re-wraps at the scaled size and never clips.
 Persisted under `zicato.console.scale`. Focus ring `2px --v2-accent`.
 
-### 4.5 The status pill (`.dt-status`)
+### 4.5 The status line (`.dt-status`)
 
-A connection dot + a connection word, plus ONE liveness pill (`.dt-run-state`)
+A connection dot + a connection word, plus ONE liveness label (`.dt-run-state`)
 that reads `● <STATE> · <structure · phase> · <N units>`, or
 `· last seen Ns ago` when the heartbeat has frozen (`shell.js` `mountShell`,
 `livestatus.runStateLabel`):
@@ -400,9 +439,9 @@ heartbeat timestamp, and speak the colour roles by direction: LIVE = good,
 STALLED = caution, SETTLED = calm ink (a clean end), DEAD = bad (gone without
 settling). Only the LIVE dot pulses (`@keyframes dt-run-pulse`, a 1.6s
 expanding box-shadow ring), and the pulse is disabled under
-`prefers-reduced-motion`. The `LIVE` pill (`.dt-live-pill`) and the structure
-pill (`.dt-structure-pill`, `structure: Racing · 3 rungs`) ride in the view
-header rather than the top bar.
+`prefers-reduced-motion`. The `LIVE` word (`.dt-live-state`) and the structure
+label (`.dt-structure-label`, `structure Racing (successive halving)`) ride in
+the view header rather than the top bar, as plain text.
 
 ---
 
@@ -549,7 +588,8 @@ match, dots sit relative to a reference rule, the spine is the one accent line.
 
 Hover-for-detail is first-class. `hovercard.js` mounts a **singleton** card
 *inside* `#console-root`, so it inherits the live per-theme tokens
-(`--v2-panel` bg, `--v2-ink` text, `--v2-rule` border, mono face). Every mark
+(`--v2-panel` bg, `--v2-ink` text, `--v2-rule` border, the sans face for its
+prose; an id or value inside it takes `.dn-mono`). Every mark
 calls `hov(node, tip)`. Crucially it is a **transient overlay outside the
 digest-gated render** (§7) — showing and hiding it only toggles the singleton
 `.dn-hovercard`'s visibility, so it can never trigger a repaint loop. It is
@@ -567,31 +607,51 @@ All scoped under `#console-root`; all token-only.
 
 | element | class | look |
 | --- | --- | --- |
-| primary action / themed link-button | `a.dn-linkbtn` | mono, `1px solid var(--v2-accent)`, transparent → on hover fills `--v2-accent` with `--v2-paper` text |
-| up / back | `.dt-back` | mono, `1px solid var(--v2-rule)`, hover → accent fill |
+| primary action / themed link-button | `.dn-linkbtn` (on an `<a>` or a `<button>`) | sans, `1px solid var(--v2-accent)`, transparent → on hover fills `--v2-accent` with `--v2-paper` text |
+| up / back | `.dt-back` | sans, `1px solid var(--v2-rule)`, hover → accent fill |
+| an id that links to its page (a generation, a judge) | `.dn-idlink` | the id in `--v2-mono` and the accent colour, no box, underlined on hover |
 | icon button (reset) | `.dn-set-reset` | the `reset` icon, hover → accent fill |
 
 ```html
 <a class="dn-linkbtn" href="#/e/epoch-3">open transcript <svg class="zi zi-forward" data-icon="forward" …/></a>
 ```
 
-Do: keep buttons mono and outline-first, filling the accent only on hover/active.
-Do not: leave a link unstyled.
+Do: keep buttons sans and outline-first, filling the accent only on hover.
+Do not: leave a link or a native `<button>` unstyled.
 
-### 6.2 Pills & badges
+### 6.2 States and verdicts are plain text, never chips
+
+A state reads as plain text in its semantic colour, led by a drawn mark from
+`js/icons.js` where the state has one. No state, verdict, role or kind sits
+in a pill, a tag or a badge: nothing draws a rounded box, a fill or a border
+round a label. `test/interface_rules.test.mjs` fails on any class named for a
+pill, chip, tag or badge, and on any rounded, filled or bordered box that is
+not a container or a control.
 
 ```html
-<span class="dn-pill dn-promoted">promoted</span>
-<span class="dn-pill dn-rejected">rejected</span>
-<span class="dn-pill dn-pending">racing</span>   <!-- accent, NOT red -->
+<span class="dn-state dn-promoted"><svg class="zi zi-up" …/>promoted</span>
+<span class="dn-state dn-rejected"><svg class="zi zi-fail" …/>rejected</span>
+<span class="dn-state dn-pending"><svg class="zi zi-more" …/>racing…</span>   <!-- accent, NOT red -->
 ```
 
-`.dn-pill` is mono, `2px 8px`, `border-radius:10px`, `1px solid`. Variants:
-`.dn-promoted` (good), `.dn-rejected` (bad), `.dn-deferred` (caution),
-`.dn-baseline` (rule), `.dn-pending` (**accent** — an in-flight candidate is
-neutral, never red), `.dn-live` (good + soft fill). Smaller chips: `.dn-chip`
-(8px-radius, lowercase) with `.dn-chip-live` (caution) / `-open` (good) /
-`-closed` (faint).
+- `verdictLabel(decision)` in `ui.js` builds a decision: `.dn-promoted` (good,
+  the `up` mark), `.dn-rejected` (bad, `fail`), `.dn-deferred` (caution,
+  `timeout`), `.dn-pending` (**accent**, `more` — an in-flight candidate is
+  neutral, never red), `.dn-baseline` (ink, no mark).
+- `stateLabel(tone, word)` colours a caller's word by a decision tone without
+  a mark (a role such as `champion`, a severity).
+- `flagLabel(tone, word)` builds a `.dn-flag` word: lowercase, coloured by
+  `.dn-flag-live` (caution) / `-open` (good) / `-closed` (faint) and the loop
+  verdict tones.
+- A tree row's role (`champion`, `former champion`, `current`, `workspace`) is
+  a `.dt-role` word at the row's right edge.
+- A held-out board entry is marked by the drawn `holdout` padlock and the
+  accent colour, in the evals matrix and in the board-status entry grid.
+- A pane letter in the side-by-side compare (`.dt-split-letter`, A or B) is
+  bold text in the pane's colour.
+
+A filter or level toggle (`.dn-evals-filter`, `.dt-logs-level`) is a text
+button; the selected one reads in the accent colour.
 
 ### 6.3 Cards
 
@@ -622,30 +682,58 @@ get `.dn-num` (`text-align:right; tabular-nums`). The champion row tints
 
 The mark-level hovercard is §5.5. For richer board-status popovers, the same card
 hosts a titled body: `.dn-hc-body` > `.dn-hc-title` + `.dn-hc-row` +
-`.dn-hc-link`. The lifecycle DAG's `?` info badge (`.ezn-dag-info`) and the gate
+`.dn-hc-link`. The lifecycle DAG's `?` info mark (`.ezn-dag-info`) and the gate
 node (`.ezn-gate-node { cursor: help }`) open the full how-to in the hovercard
 rather than crowding the figure.
 
-### 6.6 Tabs / section rails
+### 6.6 Tabs / section lists
 
-The Settings surface (`.dn-settings`) is a section **rail + host**:
-`a.dn-set-railitem` (active → `.dn-set-railitem-active`, the section icon in
+The Settings surface (`.dn-settings`) is a section **list + host**:
+`a.dn-set-railitem` (the open section, `.dn-set-railitem-active`, renders its
+name in the accent colour with no fill; the section icon sits in
 `.dn-set-railglyph` in accent). Disclosure sections use `.dn-brief` (a `<details>` with a
 rotating `.chev` chevron icon). The epoch publication renders as panels rather than a tab
 strip.
 
+### 6.7 Selection and edges
+
+The selected item renders its **name in the accent colour**, with no fill and
+no edge bar: the selected tree row (`.dt-tree .dt-node.dt-sel .dt-text`), the
+pinned mutation-surface row (`.dn-mtx-pinned .dn-mtx-file`), the selected
+trace episode (`.dn-trace-ep-on .dn-trace-ep-sum`), the open Settings
+section, the selected filter or text size, and the selected option in a
+picker.
+
+No container and no selection draws an **accent left rail**: no coloured
+`border-left`, no inset edge shadow, no `::before` bar. A meaning a container
+must show rides a drawn mark or the text colour:
+
+- a transcript turn names its role with a mark in its head (`agent`,
+  `message` for the user, `note` for the system), coloured by role;
+- a held-out entry carries the `holdout` padlock and the accent colour;
+- a finding row leads with its tone mark and its tone-coloured verdict word;
+- a trace episode leads with its signal mark in the signal's tone;
+- a deferred or inconclusive caption leads with the `caution` mark in the
+  caution colour.
+
+A neutral 1px hairline in `--v2-rule` or `--v2-rule-soft` is structure and
+stays: the execution outline's tree connectors, the side-by-side diff's column
+divider, the settings drawer's edge. `test/interface_rules.test.mjs` fails on
+any other left edge, in the stylesheet or in an inline style.
+
 ### 6.8 The swatch / typeface pickers
 
 - **Colour** — `.dt-cd` swatch dropdown: a `.dt-cd-trigger` (current name + a
-  6-chip `.dt-swatch-strip` preview + a `.dt-cd-caret`) opens a
+  six-swatch `.dt-swatch-strip` preview + a `.dt-cd-caret`) opens a
   `.dt-cd-list` listbox (`role` listbox; options `.dt-cd-option` with
   `aria-selected`; selected name in `--v2-accent`).
 - **Typeface** — a **grouped popover** (`typefacedropdown.js`): a trigger
-  (current face + a micro-specimen) opens a listbox grouped under three mode
-  headers (Technical · Editorial · Display), each over four real faces (twelve
-  total), every option a true type specimen. The popover also carries an
-  **S/M/L** font-size segmented control (`FONTSIZE_OPTIONS`), orthogonal to the
-  page scale. It lives in Settings → Appearance; the colour dropdown appears
+  (current pairing + a micro-specimen) opens a listbox grouped under three mode
+  headers (Technical · Editorial · Display), each over four pairings (twelve
+  total, §3.1), every option a true type specimen of its heading, prose and
+  data faces. The popover also carries an **S/M/L** font-size segmented control
+  (`FONTSIZE_OPTIONS`), orthogonal to the page scale; the selected size reads
+  in the accent colour. It lives in Settings → Appearance; the colour dropdown appears
   both there and in the top bar.
 
 The theme + typeface persist to `localStorage` (`zicato.console.theme`,
@@ -812,8 +900,8 @@ skipped phases `--v2-flat`. Axis ticks and gridlines read `--v2-ink-faint` /
 `--v2-rule-soft`.
 
 **2 — Typeface roles.** The panel heading takes `--n-font-head`; phase labels and
-the time axis take `--v2-mono` with `font-variant-numeric: tabular-nums` (so
-durations align). Nothing in the figure needs the body sans.
+the axis title take `--v2-sans`; the time-axis tick values and durations take
+`--v2-mono` with `font-variant-numeric: tabular-nums` (so durations align).
 
 **3 — Draw it in-language (clone `reignGantt`, §5.3).** One row per phase, a bar
 spanning `[startT, endT]` mapped through `scale([t0, t1], [padL, w-padR])`:
@@ -903,6 +991,12 @@ zicato surface is built the same way.
 - Do not rebuild the DOM on a no-op heartbeat (the flashing bug, §7.1).
 - Do not add chartjunk — no gridframes, 3-D, decorative rails, or a line drawn
   through a label.
+- Do not draw an accent left rail on a container or a selection; render the
+  selected name in the accent colour (§6.7).
+- Do not put a state, verdict, role or kind in a pill, tag or badge; set it as
+  plain text in its colour, led by its drawn mark (§6.2).
+- Do not set chrome (the top bar, the tree, buttons, headings, prose) in the
+  mono token; mono is for data, code, ids and key names (§3).
 - Do not introduce a second accent colour or recolour the brand dot away from
   green; do not recolour the mark stroke (it is `currentColor`).
 - Do not force horizontal scroll on a panel; wrap a table wider than its pane in

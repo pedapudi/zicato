@@ -35,8 +35,8 @@ import { icon, CROWN } from './icons.js';
 // `toggles` is a Set of manually-opened node keys (owned by the shell).
 // `live` is the LIVE-ACTIVITY set — the gen ids and/or board-entry ids that
 // currently have an in-flight run (derived from state.activeRuns). It drives a
-// subtle pulsing badge on the running rows. It is folded into the digest as a
-// SORTED set so the badge re-stamps when a gen/entry ENTERS or LEAVES the set,
+// subtle pulsing mark on the running rows. It is folded into the digest as a
+// SORTED set so the mark re-stamps when a gen/entry ENTERS or LEAVES the set,
 // but a steady heartbeat with the SAME set is a no-op (the pulse is CSS-animated,
 // so an unchanged set needs no DOM). A null/absent set is treated as empty.
 export function treeDigest(model, route, toggles, live) {
@@ -47,7 +47,7 @@ export function treeDigest(model, route, toggles, live) {
     epochs: model.epochs.map((e) => [e.id, !!e.current]),
     by: model.epochs.map((e) => {
       const b = model.byEpoch[e.id] || { gens: [], boards: [] };
-      // include the current/former champion split so the badge re-stamps when
+      // include the current/former champion split so the mark re-stamps when
       // the crown moves (a steady heartbeat with the same crown is a no-op).
       // the round grouping (Task 5) folds in so the tree re-stamps when a gen's
       // birth-round / a round's gate outcome changes, but stays stable on a beat.
@@ -145,7 +145,7 @@ export function buildTree(host, model, route, toggles, ctx, onToggle, live) {
       const genLeaf = (g, depth) => {
         const selected = (sel === 'candidate' || sel === 'diff') && p.epochId === epoch.id && p.gen === g.id;
         // Only the CURRENT champion (the last id in champion_lineage) gets the
-        // solid-crown (CROWN.current) "champion" badge; a FORMER champion (held
+        // solid-crown (CROWN.current) "champion" mark; a FORMER champion (held
         // the title, then was succeeded) gets the distinct, dimmer hollow-crown
         // (CROWN.former) "former" marker.
         const isCurrent = g.currentChampion === true;
@@ -363,7 +363,7 @@ function leafRow(o) {
     // board entry). It is a clue rather than a banner — reuses the dn-inflight-pulse
     // animation. Re-stamped only when the row ENTERS/LEAVES the live set (digest).
     o.live ? el('span', { class: 'dt-node-pulse dn-inflight-pulse', title: 'running', 'aria-label': 'running' }) : null,
-    o.tag ? el('span', { class: 'dt-tag dt-tag-' + o.kind, text: o.tag }) : null,
+    o.tag ? el('span', { class: 'dt-role dt-role-' + o.kind, text: o.tag }) : null,
   ].filter(Boolean));
   if (o.selected) label.setAttribute('aria-current', 'true');
   label.addEventListener('click', () => o.onSelect());

@@ -576,7 +576,7 @@ test('live: an idle racing epoch still renders the static completed funnel/summa
   // the static completed funnel still renders (idle view unchanged) + names v0.
   const funnel = svgsByClass(host, 'dn-funnel')[0];
   assert(funnel, 'the static completed survival funnel renders when idle');
-  assert(allByClass(host, 'dt-live-pill').length === 0, 'no LIVE pill on an idle epoch funnel');
+  assert(allByClass(host, 'dt-live-state').length === 0, 'no LIVE pill on an idle epoch funnel');
 });
 
 // ---- (f) the live engine's pure derivations ----
@@ -765,7 +765,7 @@ test('epoch view (cross-epoch): viewing e1 shows ONLY e1 gens — no leaked e0 c
   // the timeline's challenger fan reflects e1's OWN minted field (v1, v2) — a
   // leak would add e0's v3/v4 chips. The single-round episode lists exactly
   // {v1, v2} (v0 is the carried champion on the spine rather than a chip).
-  const chips = allByClass(host, 'dn-roundtl-chip').map((c) => { const mono = allByClass(c, 'dn-mono')[0]; return mono ? (mono.textContent || '').trim() : ''; });
+  const chips = allByClass(host, 'dn-roundtl-member').map((c) => { const mono = allByClass(c, 'dn-mono')[0]; return mono ? (mono.textContent || '').trim() : ''; });
   assertDeep(chips.filter((s, i) => chips.indexOf(s) === i).sort(), ['v1', 'v2'], 'the e1 challenger fan is EXACTLY e1’s minted field {v1,v2} (no leaked v3/v4)');
 });
 
@@ -788,7 +788,7 @@ test('epoch view (cross-epoch): viewing e0 is unchanged — its full field {v0..
   const cols = colLabels.filter((s, i) => colLabels.indexOf(s) === i).sort();
   assertDeep(cols, ['v0', 'v1', 'v2', 'v3', 'v4'], 'e0 still shows its FULL field {v0..v4} (unchanged)');
   // e0's challenger fan is its own full minted field {v1..v4} (v0 carried on spine).
-  const chips = allByClass(host, 'dn-roundtl-chip').map((c) => { const mono = allByClass(c, 'dn-mono')[0]; return mono ? (mono.textContent || '').trim() : ''; });
+  const chips = allByClass(host, 'dn-roundtl-member').map((c) => { const mono = allByClass(c, 'dn-mono')[0]; return mono ? (mono.textContent || '').trim() : ''; });
   assertDeep(chips.filter((s, i) => chips.indexOf(s) === i).sort(), ['v1', 'v2', 'v3', 'v4'], 'e0 reads its own full challenger fan {v1..v4}');
 });
 

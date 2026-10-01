@@ -15,7 +15,7 @@
 // dropped — a pin that stopped asserting a sentence asserts the same words in
 // the popover that replaced it.
 
-import { installDom, test, run, assert, assertEqual, assertDeep } from './harness.mjs';
+import { installDom, test, run, assert, assertEqual, assertDeep, iconNames } from './harness.mjs';
 
 installDom();
 
@@ -113,9 +113,9 @@ test('boardStatusModel: derives the gap when only the two losses are present', (
 test('renderBoardStatus: paints train (outline) + holdout (accent fill) chips', () => {
   const node = bs.renderBoardStatus(bs.boardStatusModel(EP_FULL), {});
   const train = allByClass(node, 'dn-bs-train').filter((n) => n.localName === 'span'
-    && (n.getAttribute('class') || '').includes('dn-bs-chip'));
+    && (n.getAttribute('class') || '').includes('dn-bs-entry'));
   const holdout = allByClass(node, 'dn-bs-holdout').filter((n) => n.localName === 'span'
-    && (n.getAttribute('class') || '').includes('dn-bs-chip'));
+    && (n.getAttribute('class') || '').includes('dn-bs-entry'));
   assertEqual(train.length, 2, 'two train chips');
   assertEqual(holdout.length, 1, 'one holdout chip');
 });
@@ -141,8 +141,8 @@ test('renderBoardStatus: ladder budget falls back to "—" + "after a run" when 
 test('renderBoardStatus: the legend keeps its swatch key, collapses the sentences behind "?"', () => {
   const node = bs.renderBoardStatus(bs.boardStatusModel(EP_FULL), {});
   const key = allByClass(node, 'dn-bs-legrow')[0];
-  assertEqual(allByClass(key, 'dn-bs-sw').length, 2, 'both swatches stay visible');
-  assertEqual(key.textContent.replace('?', ''), 'trainholdout', 'the key names the two slices, nothing more');
+  assertDeep(iconNames(key), ['holdout'], 'the key draws the holdout mark the entry grid uses');
+  assertEqual(key.textContent.replace('?', '').replace(/\s+/g, ''), 'trainholdout', 'the key names the two slices, nothing more');
   const mark = allByClass(key, 'dn-figcap-more')[0];
   assert(mark != null, 'the shared "?" affordance (the #199 figCaption idiom) carries the rest');
   const text = hovercardTextOf(mark);
@@ -185,7 +185,7 @@ test('renderBoardStatus: empty gap shows the "after a run" empty state, no spark
 test('renderBoardStatus: per-entry hovercard carries id, slice, weight, why-held-out', () => {
   const node = bs.renderBoardStatus(bs.boardStatusModel(EP_FULL), {});
   const holdoutChip = allByClass(node, 'dn-bs-holdout').filter((n) => n.localName === 'span'
-    && (n.getAttribute('class') || '').includes('dn-bs-chip'))[0];
+    && (n.getAttribute('class') || '').includes('dn-bs-entry'))[0];
   assert(hovercard.hasHovercard(holdoutChip), 'the chip is hovercard-wired (accessible popover)');
   const text = hovercardTextOf(holdoutChip);
   assert(text.includes('b2'), 'card names the entry');
@@ -216,7 +216,7 @@ test('boardStatusModel: an entry missing from ep.board joins null kind / empty t
 
 test('renderBoardStatus: the entry hovercard names the kind (full five-kind vocabulary) + tags', () => {
   const node = bs.renderBoardStatus(bs.boardStatusModel(EP_FULL), {});
-  const chips = allByClass(node, 'dn-bs-chip');
+  const chips = allByClass(node, 'dn-bs-entry');
   const held = chips.find((n) => (n.textContent || '').includes('b2'));
   const text = hovercardTextOf(held);
   assert(text.includes('kind: synthetic adversarial'), 'a SYNTHETIC kind is labelled, not left blank');
@@ -330,7 +330,7 @@ test('renderBoardStatus: the ladder readout has an explainer hovercard with the 
 test('renderBoardStatus: a board chip activates the per-board view via onEntry', () => {
   let opened = null;
   const node = bs.renderBoardStatus(bs.boardStatusModel(EP_FULL), { onEntry: (id) => { opened = id; } });
-  const chip = allByClass(node, 'dn-bs-chip')[0];
+  const chip = allByClass(node, 'dn-bs-entry')[0];
   chip.dispatchEvent({ type: 'click', target: chip });
   assert(opened != null, 'clicking a chip opens its board');
 });

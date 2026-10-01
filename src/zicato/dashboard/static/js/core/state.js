@@ -32,7 +32,7 @@ export class AppState {
     // `lastSeq` is the highest progress `seq` seen (SSE frame or heartbeat)
     // — the TRUE liveness cursor: it advances ONLY on a genuine transition,
     // never on the heartbeat timer. Backs the seq no-op-skip gate (sse.js)
-    // + the four-state run pill. -1 = no seq seen yet (vs a real seq 0 = a
+    // + the four-state run label. -1 = no seq seen yet (vs a real seq 0 = a
     // never-run / empty log). `terminal` flips once a frame marks a cleanly-
     // ended loop; `lastSeqAdvanceAt` = wall-clock ms the cursor last advanced.
     this.contentRevision = 0;
@@ -121,7 +121,7 @@ export class AppState {
     // The heartbeat `seq` MIRRORS the SSE frame seq (Heartbeat.to_dict),
     // so fold it into the progress cursor too — this keeps the cursor
     // current under plain /api/environment polling (no SSE) and gives the
-    // run-state pill a consistent advance timestamp. A heartbeat with no
+    // run-state label a consistent advance timestamp. A heartbeat with no
     // seq key reads back as 0 server-side; the merge above
     // may also leave `seq` undefined on a minimal beat — noteProgress no-ops
     // on a non-numeric/unchanged seq, so a steady beat never moves the cursor.

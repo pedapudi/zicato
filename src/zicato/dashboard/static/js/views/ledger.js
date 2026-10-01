@@ -12,7 +12,7 @@
 //
 // DISCIPLINE
 //   * The verdict is the SERVER-STAMPED token, rendered through the shared
-//     verdictPill. Nothing is re-classified here.
+//     verdictLabel. Nothing is re-classified here.
 //   * The rejection reason is the RECORDED field, printed verbatim. It is
 //     never parsed, split, or pattern-matched for a rule name.
 //   * The core idea truncates to one line and expands IN PLACE — the choice
@@ -22,7 +22,7 @@
 import { el } from '../core/dom.js';
 import * as svg from '../svg.js';
 import { iconLabel } from '../icons.js';
-import { dataTable, deltaCell, empty, truncate, verdictPill } from '../ui.js';
+import { dataTable, deltaCell, empty, truncate, verdictLabel } from '../ui.js';
 
 // How much of a core idea / rejection reason rides the row before it clips.
 const IDEA_CHARS = 96;
@@ -100,7 +100,7 @@ function ledgerRow(r, epochId, o) {
       { class: 'dn-mono', el: genCell(gen, r, o) },
       { class: 'dn-ledger-ideacell', el: ideaCell(r.core_idea, epochId, gen) },
       { class: 'dn-ledger-sites', el: sitesCell(r.mutation_ids) },
-      { el: verdictPill(decision, { live, label: r.decision_label }) },
+      { el: verdictLabel(decision, { live, label: r.decision_label }) },
       deltaCell(delta, { base: 'dn-num dn-mono', text: delta == null ? '—' : svg.fmtSigned(delta, 3) }),
       {
         class: 'dn-ledger-reason dn-faint',
@@ -117,7 +117,7 @@ function genCell(gen, r, o) {
   if (!gen) return el('span', { class: 'dn-faint', text: '—' });
   const label = r.promoted === true ? iconLabel(svg.CROWN.current, gen, { after: true }) : [gen];
   if (typeof o.hrefFor !== 'function') return el('span', null, label);
-  return el('a', { class: 'dn-linkbtn dn-mono', href: o.hrefFor(gen) }, label);
+  return el('a', { class: 'dn-idlink', href: o.hrefFor(gen) }, label);
 }
 
 // The core idea: one clipped line that expands IN PLACE on click. An absent

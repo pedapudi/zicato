@@ -7,7 +7,7 @@
 //     click; the bare cell shows only an "override" arm button.
 //   * a confirmed POST stamps an OPTIMISTIC 'queued' override (markPending) that
 //     survives the digest-gated re-render via the module pending registry, and
-//     flows straight into overrideChip / overrideDigest like the durable readback.
+//     flows straight into overrideLabel / overrideDigest like the durable readback.
 //   * DISABLED (not POST-and-fail) when read_only — the button is present but
 //     inert and never calls the POSTer.
 //   * a SETTLED round / an already-overridden row takes no new override.
@@ -93,7 +93,7 @@ test('overrideControlCell: confirm → POSTs with the structured body + stamps a
   assert(pend && pend.action === 'promote' && pend.state === 'queued', 'an optimistic queued promote is stamped');
   assertEqual(pend.reason, 'BT was too uncertain', 'the reason is carried on the stamp');
   // it flows into the chip primitive as a queued (caution) override.
-  const chip = ui.overrideChip(pend);
+  const chip = ui.overrideLabel(pend);
   assert(hasClass(chip, 'dn-override-queued'), 'the optimistic stamp renders as a queued (caution) chip');
 });
 

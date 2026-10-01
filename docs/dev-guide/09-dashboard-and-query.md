@@ -1595,13 +1595,19 @@ A live surface ships only if it ticks every box:
 Render discipline (§9.7) keeps a view from *flashing*; this rule keeps a view
 from *drifting off the design language*. A new surface speaks the console's
 existing grammars — it does not bolt a fresh component vocabulary on beside
-them. Three durable rules, each load-bearing for "one console rather than a fleet of
+them. Five durable rules, each load-bearing for "one console rather than a fleet of
 mini-apps":
 
-- **Tags/chips are ONLY for a semantic state the console already pills** — a
-  `verdict` or a `severity` (the `chip`/`verdictPill` family). Everything else is
-  text. A metric, a count, a relation, a model name is **not** semantic state, so
-  it never earns a chip.
+- **No pill, tag or badge.** A semantic state — a `verdict`, a `severity`, a
+  row's role — is plain text in its tone colour, led by a drawn icon where it
+  has one (the `verdictLabel` / `stateLabel` / `flagLabel` family). A metric, a
+  count, a relation, a model name is **not** semantic state, so it stays
+  uncoloured text.
+- **No accent left rail.** A selected item renders its name in the accent
+  colour; no container or selection carries a coloured left edge.
+- **Sans for chrome, mono for data.** The top bar, the tree, buttons, headings
+  and prose resolve to `--v2-sans`; only data, code, ids and key names take
+  `--v2-mono`. `test/interface_rules.test.mjs` pins these three rules.
 - **Metadata is a caption.** Fidelity tier, adjudicator model, prompt version,
   self-agreement, a verdict tally — all ride ONE `dn-faint` caption line under
   the relevant figure or section, never a per-row tag (which would read as
@@ -1619,7 +1625,7 @@ mini-apps":
 > glyph + a headline + a `dn-faint` rationale); the judge scorecards rendered
 > rates as the `dn-stat` idiom and the redundancy/conflict relations as one faint
 > inline sentence; evidence became inline x-ray links; metadata collapsed to a
-> caption; and the ONE surviving pill is the adjudication verdict. Nav rode the
+> caption; and the ONE coloured state word is the adjudication verdict. Nav rode the
 > routes + tree, never a lens-local rail. See
 > `docs/design/CONSOLE-DESIGN-LANGUAGE.md` and BOARD-REFLECTION.md §"UI — the Instrument lens".
 
@@ -1865,7 +1871,7 @@ review should question.
 |---|---|---|
 | `renderView(host, ctx, spec)` | the ~11-view opening: first-paint placeholder (`loading()`), optional `await D.epoch` + no-epoch gate, an optional secondary `guard`, digest fold, `gatedSwap` | a view whose flow genuinely diverges (parallel-fused fetches, multiple hosts, a non-epoch gate, conditional sub-render dispatch) keeps its hand scaffold |
 | `dataTable(spec)` | the ~14 hand-rolled `thead`/`tbody` scaffolds | per-cell `{class,text}` / `{el}` / `{title}`; conditional columns + cells via `filter(Boolean)`; row-level `class`/`dataset`/`style`/`onClick`. `deltaCell(v)` is the sign-coloured Δ cell |
-| `chip(cls, word)` / `pill(cls, word)` | the inline `dn-chip` / `dn-pill` spans | `pill` is the custom-word sibling of `verdictPill` (which derives its own label) |
+| `flagLabel(cls, word)` / `stateLabel(cls, word)` | the inline `dn-flag` / `dn-state` spans | `stateLabel` is the custom-word sibling of `verdictLabel` (which derives its own label and leads with the decision's icon) |
 | `hovercardBody(...children)` | the 7 `dn-hc-body` wrappers | accepts a single array too (the `lines`-array sites) |
 | `truncate(s, n)` | the four clip/shorten copies (dag / candidate / boardstatus) | the ONE string-truncate; `svg.fmt`/`fmtSigned`/`isNum` stay the numeric home, re-exported from `ui.js` |
 | `emptyState(parent, w, h, label)` | the ~13 centred "no data yet" SVG placeholders | `svg.js`-side (a figure primitive) |

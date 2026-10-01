@@ -10,7 +10,7 @@
 import { el, svgEl } from '../core/dom.js';
 import * as svg from '../svg.js';
 import { icon, iconLabel } from '../icons.js';
-import { section, empty, stat, verdictPill, overrideChip, overrideControlCell, pendingOverride, clearPendingOverride, chip, hovercardBody, dataTable, ratingCellEl, coreIdeaLine } from '../ui.js';
+import { section, empty, stat, verdictLabel, overrideLabel, overrideControlCell, pendingOverride, clearPendingOverride, flagLabel, hovercardBody, dataTable, ratingCellEl, coreIdeaLine } from '../ui.js';
 import { structureStatusLabel } from '../livestatus.js';
 import { attachHovercard } from '../hovercard.js';
 import { state } from '../core/state.js';
@@ -19,11 +19,11 @@ import * as D from '../data.js';
 import { structureLabel, elimModel, splitBand, swissModel, racingModel, championScalarOf, gauntletModel, diversityMembership } from '../tournament_model.js';
 const CROWN = svg.CROWN;
 
-// The structure pill (shown in the epoch header + the match-ups header).
+// The structure label (shown in the epoch header + the match-ups header).
 export function structurePill(structure, params) {
-  return el('span', { class: 'dt-structure-pill', 'data-structure': String(structure || 'gauntlet') }, [
-    el('span', { class: 'dt-structure-pill-k', text: 'structure' }),
-    el('span', { class: 'dt-structure-pill-v', text: structureLabel(structure, params) }),
+  return el('span', { class: 'dt-structure-label', 'data-structure': String(structure || 'gauntlet') }, [
+    el('span', { class: 'dt-structure-key', text: 'structure' }),
+    el('span', { class: 'dt-structure-value', text: structureLabel(structure, params) }),
   ]);
 }
 
@@ -87,10 +87,10 @@ function diversitySection(st, ctx, epochId) {
     ]));
   }
 
-  // a soft-reject chip reuses the DEFERRED pill vocabulary: held rather than
+  // a soft-reject label reuses the DEFERRED label vocabulary: held rather than
   // promoted.
   const softChip = soft > 0
-    ? (() => { const p = verdictPill('deferred'); p.textContent = soft + ' soft-rejected'; return p; })()
+    ? verdictLabel('deferred', { label: soft + ' soft-rejected' })
     : null;
 
   // the overlap matrix — challenger × mutation-site (the dn-mtx grammar). The
@@ -175,7 +175,7 @@ function proposedFieldSection(st, ctx, epochId) {
   // SAY: LIVE (proposals applying/rejecting in real time — the count + per-row
   // states update as the field mints) or a COMPLETED run WITH REJECTIONS to
   // triage (which proposals failed to apply, and why). A completed, all-applied
-  // field is already shown by the ladder/standings + the "field of N" pill, so a
+  // field is already shown by the ladder/standings + the "field of N" label, so a
   // lone "N proposed · N applied" line just reads as an empty section — omit it.
   if (!live && rejected === 0) return null;
   const onCompetitor = (gen) => { if (gen && ctx && ctx.navigate) ctx.navigate('candidate', { epochId, gen }); };
@@ -388,7 +388,7 @@ function standingsTable(st, ctx, epochId, live) {
   const standings = (st && Array.isArray(st.standings)) ? st.standings.slice() : [];
   if (!standings.length) return null;
   const structure = (st && st.structure) || 'gauntlet';
-  // track whether any row resolves to the DEFERRED status-pill state (still in
+  // track whether any row resolves to the DEFERRED status-label state (still in
   // contention — no crown / no elimination committed) so the table can carry an
   // explicit field-level "deferred · winner resolves after the duels" caption,
   // making a held-but-not-rejected field read intentionally rather than blank.
@@ -398,9 +398,9 @@ function standingsTable(st, ctx, epochId, live) {
   // pre-feature run → no chip → byte-identical to today.
   const overrides = (st && st.override_status && typeof st.override_status === 'object') ? st.override_status : null;
   // per-slot diversity status (field_status[].diversity_status ∈ applied /
-  // penalized / soft_rejected), keyed by generation_id for a per-row badge. Only
+  // penalized / soft_rejected), keyed by generation_id for a per-row mark. Only
   // attached for a real field with the diversity block (≥2 challengers) → no
-  // badge on a gauntlet / single-challenger / pre-feature run (byte-identical).
+  // mark on a gauntlet / single-challenger / pre-feature run (byte-identical).
   const divStatus = diversityStatusByGen(st);
   // the per-challenger CORE IDEA (§3): the proposing step already records each
   // applied challenger's one-line hypothesis on its field_status row, and a
@@ -456,12 +456,12 @@ function standingsTable(st, ctx, epochId, live) {
     const status = undecided ? 'undecided when the run ended'
       : structureStatusLabel(raw, structure);
     // the statusPill verdict-state mirror: anything that is NOT a committed
-    // champion / eliminated reads as the DEFERRED pill (still in contention).
+    // champion / eliminated reads as the DEFERRED label (still in contention).
     if (status !== 'champion' && status !== 'eliminated') anyDeferred = true;
     // PROJECTED — an in-flight row (boards still streaming) shows a projected
-    // scalar rather than a settled one: dashed/dimmed row + a "proj" badge + the
+    // scalar rather than a settled one: dashed/dimmed row + a "proj" mark + the
     // ~prefix on the number + a scored board-progress sub-bar.
-    // The PROJ badge and its progress bar are a claim that boards are streaming
+    // The PROJ mark and its progress bar are a claim that boards are streaming
     // in RIGHT NOW. They expire with liveness: an interrupted row shows the
     // committed boards_done/total as a settled tally, never an animated bar.
     const proj = !live && st.interrupted
@@ -475,7 +475,7 @@ function standingsTable(st, ctx, epochId, live) {
     const scalarCell = proj
       ? { class: 'dn-num dn-mono dt-proj-val', title: 'projected — boards still streaming in', el: [
           el('span', { text: '~' + svg.fmt(s.projected_scalar, 1) }),
-          el('span', { class: 'dt-proj-badge', text: 'proj' }),
+          el('span', { class: 'dt-proj-mark', text: 'proj' }),
         ] }
       : strandedBoards
       ? { class: 'dn-num dn-mono dn-faint',
@@ -483,11 +483,11 @@ function standingsTable(st, ctx, epochId, live) {
           el: [
             el('span', { text: svg.isNum(s.projected_scalar) ? '~' + svg.fmt(s.projected_scalar, 1)
                                : (svg.isNum(s.scalar) ? svg.fmt(s.scalar, 1) : '—') }),
-            el('span', { class: 'dt-interrupted-pill',
+            el('span', { class: 'dt-interrupted-state',
                          text: (bd != null && bt != null) ? bd + '/' + bt + ' scored' : 'uncommitted' }),
           ] }
       : { class: 'dn-num dn-mono', text: svg.isNum(s.scalar) ? svg.fmt(s.scalar, 1) : '—' };
-    // operator-override provenance rides BESIDE the status pill (overrideChip),
+    // operator-override provenance rides BESIDE the status label (overrideLabel),
     // never recoloring the verdict — durable readback wins, else the optimistic
     // queued stamp, else (settled never-landed promote) drained. Absent → null.
     const gidStr = String(s.generation_id);
@@ -502,7 +502,7 @@ function standingsTable(st, ctx, epochId, live) {
       else if (a === 'promote') forced.promote += 1;
       else if (a === 'reject') forced.reject += 1;
     }
-    const ovChip = overrideChip(ovProv);
+    const ovChip = overrideLabel(ovProv);
     if (ovChip && ovProv) {
       const act = ovProv.action === 'promote' ? 'force-promoted' : 'force-rejected';
       attachHovercard(ovChip, () => hovercardBody([
@@ -519,8 +519,8 @@ function standingsTable(st, ctx, epochId, live) {
       gid: gidStr, epochId, tournamentId, structure,
       readOnly, settled, existingOverride: durable, onPost, onChange,
     }) : null;
-    // the per-row diversity badge — soft-rejected reuses the DEFERRED pill
-    // (held rather than promoted); penalized reads as a caution chip. Absent → null.
+    // the per-row diversity mark — soft-rejected reuses the DEFERRED label
+    // (held rather than promoted); penalized reads as a caution label. Absent → null.
     const divBadge = diversityBadge(divStatus ? divStatus[gidStr] : null);
     return {
       class: rowCls,
@@ -563,7 +563,7 @@ function standingsTable(st, ctx, epochId, live) {
   });
   const caps = [];
   // a field-level DEFERRED caption — when at least one standing is held in
-  // contention (the deferred pill state) and nothing has yet been crowned /
+  // contention (the deferred label state) and nothing has yet been crowned /
   // eliminated, surface WHY the field reads unsettled: the winner resolves once
   // the duels separate the strengths. Only while LIVE (an uncommitted run) and
   // only when no terminal verdict has landed, so a settled board stays quiet.
@@ -572,8 +572,8 @@ function standingsTable(st, ctx, epochId, live) {
     return r === 'champion' || r === 'eliminated';
   });
   if (live && anyDeferred && !anyTerminal) {
-    caps.push(el('p', { class: 'dn-faint dt-standings-deferred', style: 'font-size:11px;margin:8px 0 0;',
-      text: 'deferred — no winner committed yet · the standing resolves once the duels separate the strengths (held, not rejected)' }));
+    caps.push(el('p', { class: 'dt-standings-deferred', style: 'font-size:11px;margin:8px 0 0;' },
+      iconLabel('caution', 'deferred — no winner committed yet · the standing resolves once the duels separate the strengths (held, not rejected)')));
   }
   // the OVERRIDE PROVENANCE caption — 'gate said X · operator forced Y' — reads
   // only when an override is present (durable/queued/drained); a clean gate-
@@ -592,13 +592,11 @@ function standingsTable(st, ctx, epochId, live) {
 
 function statusPill(status) {
   const s = status || 'alive';
-  // map the standings vocabulary onto verdict-pill semantics so the pill
+  // map the standings vocabulary onto verdict-label semantics so the label
   // reads in every theme: champion→promoted, eliminated→rejected, else→deferred
   // (alive / playing / in bracket / racing — still in contention).
   const verdict = s === 'champion' ? 'promoted' : s === 'eliminated' ? 'rejected' : 'deferred';
-  const pill = verdictPill(verdict);
-  pill.textContent = s;
-  return pill;
+  return verdictLabel(verdict, { label: s });
 }
 
 // {gid: diversity_status} off the field_status records, ONLY when the diversity
@@ -632,14 +630,13 @@ function diversityStatusByGen(st) {
   return any ? by : null;
 }
 
-// The per-row diversity badge. `soft_rejected` reuses the DEFERRED pill (held,
+// The per-row diversity mark. `soft_rejected` reuses the DEFERRED label (held,
 // not promoted — the field's most legible "this idea was cut for overlap"
-// signal); `penalized` is a softer caution chip. `applied` / absent → null (no
-// badge), so a clean diverse field is byte-identical to today.
+// signal); `penalized` is a softer caution label. `applied` / absent → null (no
+// mark), so a clean diverse field is byte-identical to today.
 function diversityBadge(ds) {
   if (ds === 'soft_rejected') {
-    const p = verdictPill('deferred');
-    p.textContent = 'soft-rejected';
+    const p = verdictLabel('deferred', { label: 'soft-rejected' });
     p.setAttribute('class', (p.getAttribute('class') || '') + ' dn-div-softrej');
     attachHovercard(p, () => hovercardBody([
       el('div', { class: 'dn-hc-title', text: 'diversity · soft-rejected' }),
@@ -648,7 +645,7 @@ function diversityBadge(ds) {
     return p;
   }
   if (ds === 'penalized') {
-    const c = chip('live', 'div-penalized', 'dn-div-penalized');
+    const c = flagLabel('live', 'div-penalized', 'dn-div-penalized');
     attachHovercard(c, () => hovercardBody([
       el('div', { class: 'dn-hc-title', text: 'diversity · penalized' }),
       el('div', { class: 'dn-hc-row dn-faint', text: 'idea overlap incurred a diversity penalty but the challenger still entered the field' }),
@@ -660,5 +657,5 @@ function diversityBadge(ds) {
 
 function linkGen(gen, ctx, epochId) {
   if (!gen) return el('span', { class: 'dn-faint', text: 'bye' });
-  return el('a', { class: 'dn-linkbtn dn-mono', href: ctx.href('candidate', { epochId, gen }), text: String(gen) });
+  return el('a', { class: 'dn-idlink', href: ctx.href('candidate', { epochId, gen }), text: String(gen) });
 }

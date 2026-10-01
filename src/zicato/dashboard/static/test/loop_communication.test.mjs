@@ -104,7 +104,7 @@ test('stalled: both surfaces render it, and neither surface can call a 0-promoti
   assertEqual(verdictChips.length, 1, 'the epoch panel prints exactly one verdict chip');
   assertEqual(verdictChips[0].textContent, 'stalled (no promotions)',
     'the epoch view says the same word as the fleet card — never a green "improving"');
-  assert(hasClass(verdictChips[0], 'dn-chip-stalled'), 'and wears the stalled class, not dn-chip-open');
+  assert(hasClass(verdictChips[0], 'dn-flag-stalled'), 'and wears the stalled class, not dn-flag-open');
 });
 
 // ── 1c. warming_up: nothing has settled yet. Quiet on BOTH surfaces — there is
@@ -204,7 +204,7 @@ test('buildTrajectoryPanel: renders the rate + verdict chip + noise band + the h
   assertEqual(chips.length, 1, 'one verdict chip');
   assertEqual(chips[0].textContent, 'no detectable signal (below noise floor)',
     'the chip carries the exact honest phrase');
-  assert(hasClass(chips[0], 'dn-chip-nosignal'), 'no_signal wears the faint class');
+  assert(hasClass(chips[0], 'dn-flag-nosignal'), 'no_signal wears the faint class');
   assertEqual(allByClass(host, 'dn-spark-noise').length, 1, 'the floor renders as a sparkline band');
   assert(host.textContent.includes('2/3 · 67%'), 'the promotion rate renders');
   assert(host.textContent.includes('no detectable signal (below noise floor)'),

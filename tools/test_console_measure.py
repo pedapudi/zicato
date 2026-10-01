@@ -53,7 +53,7 @@ def test_css_prefix_rule_reads_both_forms() -> None:
     strings = console_measure.js_strings(
         "const a = 'dn-turn dn-turn-' + role;\n"
         "const b = `dt-glyph-${kind}`;\n"
-        "const c = `dn-pill dn-${verdict}`;\n"
+        "const c = `dn-state dn-${verdict}`;\n"
         "const d = 'dn-plain';\n"
     )
     prefixes, families = console_measure._dynamic_prefixes(strings)

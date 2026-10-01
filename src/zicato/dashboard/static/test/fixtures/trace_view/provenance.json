@@ -20,7 +20,6 @@
     {
       "episode_id": "ep-34b1baef",
       "episode_type": "imported_signal",
-      "glyph": "✕",
       "segment_strip_model": {
         "budget": {
           "fill": 0.02,
@@ -35,7 +34,6 @@
           {
             "anchor": "signal",
             "episode_id": "ep-34b1baef",
-            "glyph": "✕",
             "kind": "imported_signal",
             "severity_rank": 5,
             "signal_kind": "error_cascade",
@@ -49,7 +47,6 @@
           {
             "anchor": "signal",
             "episode_id": "ep-60505383",
-            "glyph": "✕",
             "kind": "imported_signal",
             "severity_rank": 5,
             "signal_kind": "abort_pattern",
@@ -63,7 +60,6 @@
           {
             "anchor": "signal",
             "episode_id": "ep-c4fabf76",
-            "glyph": "↻",
             "kind": "imported_signal",
             "severity_rank": 3,
             "signal_kind": "retry_loop",
@@ -77,7 +73,6 @@
           {
             "anchor": "signal",
             "episode_id": "ep-a22bc598",
-            "glyph": "⇄",
             "kind": "imported_signal",
             "severity_rank": 2,
             "signal_kind": "transfer_churn",
@@ -114,7 +109,6 @@
         "signals": [
           {
             "count": 3,
-            "glyph": "✕",
             "kind": "error_cascade",
             "label": "1 tool err · 2/2 failed",
             "positioned": false,
@@ -123,7 +117,6 @@
           },
           {
             "count": 2,
-            "glyph": "✕",
             "kind": "abort_pattern",
             "label": "2/2 failed",
             "positioned": false,
@@ -132,7 +125,6 @@
           },
           {
             "count": 1,
-            "glyph": "↻",
             "kind": "retry_loop",
             "label": "1 retry loop",
             "positioned": false,
@@ -141,7 +133,6 @@
           },
           {
             "count": 3,
-            "glyph": "⇄",
             "kind": "transfer_churn",
             "label": "3 transfers",
             "positioned": false,

@@ -1185,20 +1185,20 @@ test('back button: navigates UP and renders the destination into the MAIN detail
 
 // ---- pickers + digest no-op ----------------------------------------
 
-test('pickers: typeface (Google Sans Mono default, 12 faces / 4 per mode) + colour (monokai default) switch + persist', () => {
+test('pickers: typeface (Open Sans + Google Sans Mono default, 12 faces / 4 per mode) + colour (monokai default) switch + persist', () => {
   freshState();
   const root = document.createElement('div');
   assertEqual(ui.DEFAULT_COLOR, 'monokai', 'monokai is the default colour theme');
-  // The DEFAULT typeface is Google Sans Mono, the first Technical face.
-  assertEqual(ui.DEFAULT_TYPE, 'google-sans-mono', 'Google Sans Mono is the default typeface');
+  // The DEFAULT typeface is Open Sans with Google Sans Mono, the first Technical pairing.
+  assertEqual(ui.DEFAULT_TYPE, 'google-sans-mono', 'the Google Sans Mono pairing is the default typeface');
   // TWELVE options — FOUR per mode across THREE modes.
   assertEqual(ui.TYPE_OPTIONS.length, 12, 'exactly 12 typeface options');
   assertDeep(ui.TYPE_MODE_ORDER, ['technical', 'editorial', 'display'], 'three mode groups in order');
   for (const mode of ui.TYPE_MODE_ORDER) {
     assertEqual(ui.TYPE_OPTIONS.filter((o) => o.mode === mode).length, 4, 'four options in the ' + mode + ' group');
   }
-  // every id names the face it selects, in the kebab-case form the colour
-  // themes use.
+  // every id names the face the option is chosen for, in the kebab-case form
+  // the colour themes use.
   const typeIds = ui.TYPE_OPTIONS.map((o) => o.id);
   assertDeep(typeIds,
     ['google-sans-mono', 'source-sans-3', 'inconsolata', 'ubuntu',
@@ -1231,7 +1231,7 @@ test('pickers: typeface (Google Sans Mono default, 12 faces / 4 per mode) + colo
   assertEqual(ui.normaliseColor('nonsense'), 'monokai', 'unknown colour → monokai');
   assertEqual(ui.normaliseType('nonsense'), 'google-sans-mono', 'unknown typeface → the default');
   // typeOption resolves to the full option object (real faces).
-  assertEqual(ui.typeOption('google-sans-mono').label, 'Google Sans Mono', 'typeOption resolves the option object');
+  assertEqual(ui.typeOption('google-sans-mono').label, 'Open Sans + Google Sans Mono', 'typeOption resolves the option object');
 });
 
 // ---- the brand wordmark: dotless ı + the accent dot CENTRED on its stem ----

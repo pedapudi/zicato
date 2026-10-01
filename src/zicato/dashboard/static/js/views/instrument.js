@@ -22,8 +22,8 @@
 // redundancy/conflict relations as ONE faint inline sentence, and the evidence
 // as inline x-ray links (NOT chip strips); metadata (fidelity tier / adjudicator
 // model / prompt version / self-agreement) is a single dn-faint CAPTION under
-// the relevant figure (NEVER a per-row tag). Tags/chips are reserved for the ONE
-// semantic state the console already pills: the adjudication VERDICT on the x-ray.
+// the relevant figure (NEVER a per-row tag). Tags/labels are reserved for the ONE
+// semantic state the console already labels: the adjudication VERDICT on the x-ray.
 // Navigation lives in the shell (the hash routes + the tree) — the lens grows no
 // internal nav rail of its own.
 //
@@ -40,7 +40,7 @@
 import { el } from '../core/dom.js';
 import { icon } from '../icons.js';
 import * as D from '../data.js';
-import { section, empty, chip, dataTable, renderView, stat, isNum, fmt, fmtPercent, fidelityLabel } from '../ui.js';
+import { section, empty, flagLabel, dataTable, renderView, stat, isNum, fmt, fmtPercent, fidelityLabel } from '../ui.js';
 
 // ---- small local coercions (display-only) ---------------------------
 function num(v, d) { return isNum(v) ? fmt(v, isNum(d) ? d : 3) : '—'; }
@@ -773,8 +773,8 @@ function verdictPane(jv, adj) {
     jv && jv.claim ? el('p', { class: 'dn-instr-xclaim', text: String(jv.claim) }) : null,
   ].filter(Boolean)));
 
-  // the meta-judge ADJUDICATION. The VERDICT keeps ONE pill (verdict IS the
-  // semantic state the console pills); everything else is a dn-faint caption.
+  // the meta-judge ADJUDICATION. The VERDICT keeps ONE label (verdict IS the
+  // semantic state the console labels); everything else is a dn-faint caption.
   if (!adj) {
     pane.appendChild(el('div', { class: 'dn-instr-xsub' }, [
       el('div', { class: 'dn-instr-xsub-h', text: 'adjudication' }),
@@ -790,7 +790,7 @@ function verdictPane(jv, adj) {
   if (isNum(adj.adjudicator_self_agreement)) metaBits.push('self-agreement ' + fmt(adj.adjudicator_self_agreement, 2));
   pane.appendChild(el('div', { class: 'dn-instr-xsub' }, [
     el('div', { class: 'dn-instr-xsub-h' }, [
-      'adjudication ', chip('instr-verdict-' + tone, String(adj.verdict || 'ambiguous')),
+      'adjudication ', flagLabel('instr-verdict-' + tone, String(adj.verdict || 'ambiguous')),
     ]),
     adj.meta_judge_rationale ? el('p', { class: 'dn-instr-xwhy', text: String(adj.meta_judge_rationale) }) : null,
     severityMatchLine(adj, jv),
@@ -803,7 +803,7 @@ function verdictPane(jv, adj) {
 // correctness is tracked APART from fire/silence (BOARD-REFLECTION.md, judge
 // audit — confusion-matrix definitions):
 // a judge that fires on the right span at the wrong severity passes the 2×2
-// and still mis-weights the loss, so the verdict pill alone overstates it.
+// and still mis-weights the loss, so the verdict label alone overstates it.
 // The adjudicator scores this on a TP only, so
 // `severity_match` is null everywhere else — and a null renders NOTHING (the
 // aggregate `severity_accuracy` on the scorecard is the only other home).

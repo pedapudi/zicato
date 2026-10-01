@@ -451,12 +451,12 @@ def test_bundle_under_size_envelope() -> None:
     # byte-identical to the prior always-refresh path). The envelope is raised
     # to 1.11 MB to cover it with headroom.
     #
-    # The UNIFIED DECISION-STATE TAXONOMY + overrideChip primitive (the
+    # The UNIFIED DECISION-STATE TAXONOMY + overrideLabel primitive (the
     # evidence-cockpit foundation BT/field-override consume) then threads the
-    # dormant `deferred` verdict end-to-end and adds `overrideChip`/
-    # `overrideDigest` in ui.js — a SIBLING to verdictPill that layers operator-
+    # dormant `deferred` verdict end-to-end and adds `overrideLabel`/
+    # `overrideDigest` in ui.js — a SIBLING to verdictLabel that layers operator-
     # override provenance (forced↑ / forced✕ / queued / drained) BESIDE the gate
-    # verdict / standings status pill WITHOUT recoloring it — wired into
+    # verdict / standings status label WITHOUT recoloring it — wired into
     # gatePanel (candidate.js) + standingsTable (structure.js) and folded into
     # the candidate/structure digests (no timestamp leak). ~0.4 KB of new
     # primitive + two consumers (back-compat: absent override → byte-identical

@@ -259,7 +259,7 @@ def _dynamic_prefixes(strings: Iterable[JsString]) -> tuple[set[str], set[str]]:
     A literal whose last whitespace-separated token ends in ``-`` and is
     followed by ``+`` (``'dn-turn dn-turn-' + role``) or a template hole
     (`` `dt-glyph-${kind}` ``) yields that token as a prefix. A token that is
-    only a family name (``dn-`` or ``dt-``, as in `` `dn-pill dn-${verdict}` ``)
+    only a family name (``dn-`` or ``dt-``, as in `` `dn-state dn-${verdict}` ``)
     is returned separately: it names every class of the family, so it explains
     a class only together with the value vocabulary the caller supplies.
     """

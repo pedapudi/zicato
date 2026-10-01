@@ -145,7 +145,7 @@ test('bill of health: findings are DE-TAGGED quiet rows — a tone glyph + word,
   const frows = allByClass(host, 'dn-instr-frow');
   assert(frows.length === 3 + 4, 'three finding rows + four practice rows, one grammar');
   // the de-tagging: NO bespoke severity chip survives.
-  assert(!hasClass(host, 'dn-chip-instr-sev-crit'), 'no severity chip (de-tagged to a glyph/tone)');
+  assert(!hasClass(host, 'dn-flag-instr-sev-crit'), 'no severity chip (de-tagged to a glyph/tone)');
   assert(allByClass(host, 'dn-instr-mark').length >= 3, 'each row leads with a tone glyph');
   assert(hasClass(host, 'dn-instr-fs-bad'), 'the critical finding carries the bad tone accent');
   const t = textOf(host);
@@ -388,7 +388,7 @@ test('x-ray: renders the span highlight + verbatim fidelity + verdict chip', asy
   const t = textOf(host);
   assert(hasClass(host, 'dn-instr-span'), 'the evidence span is highlighted (it matched the transcript text)');
   assert(t.includes('verbatim'), 'the fidelity tier is labelled');
-  assert(hasClass(host, 'dn-chip-instr-verdict-fp'), 'the FP verdict chip');
+  assert(hasClass(host, 'dn-flag-instr-verdict-fp'), 'the FP verdict chip');
   assert(t.includes('independent-adjudicator'), 'the meta-judge model is shown');
   assert(t.includes('self-agreement'), 'adjudicator self-agreement is surfaced when present');
 });

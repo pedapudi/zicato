@@ -144,7 +144,7 @@ test('render: paints the entries × candidates matrix with the spine crown + dec
   assertEqual(allByClass(host, 'dn-evalmtx-gen').length, 3, 'one header cell per candidate');
   // the champion spine: g0 + g2 carry the crown (g1 does not).
   assertEqual(allByClass(host, 'dn-evalmtx-crown').length, 2, 'the two spine candidates are crowned');
-  // the shipped decision vocabulary is reused (dn-pill dn-promoted / dn-rejected).
+  // the shipped decision vocabulary is reused (dn-state dn-promoted / dn-rejected).
   assert(hasClass(host, 'dn-promoted'), 'a promoted candidate carries the shipped promoted pill');
   assert(hasClass(host, 'dn-rejected'), 'a non-spine candidate carries the shipped rejected pill');
   // the round grouping header spans the two round-1 columns.
@@ -229,7 +229,7 @@ async function renderFiltered(host, clickFilter) {
   installFixtureMap({ [EVALS_PATH]: matrixFixture() });
   await evals.render(host, CTX, { epochId: EPOCH });
   if (clickFilter) {
-    const chip = allByClass(host, 'dn-evals-chip').find((c) => c.getAttribute('data-filter') === clickFilter);
+    const chip = allByClass(host, 'dn-evals-filter').find((c) => c.getAttribute('data-filter') === clickFilter);
     assert(chip, 'the ' + clickFilter + ' filter chip exists');
     chip.dispatchEvent({ type: 'click', target: chip });
   }
@@ -245,7 +245,7 @@ test('filter failures-only: keeps rows with a failing cell (login + flat + clean
   assert(!allByClass(host, 'dn-evalmtx-site').some((n) => n.getAttribute('data-entry') === 'task_hold'),
     'the all-pass holdout row is filtered out');
   // toggle it back off so module-level state does not leak into the next test.
-  const chip = allByClass(host, 'dn-evals-chip').find((c) => c.getAttribute('data-filter') === 'failures');
+  const chip = allByClass(host, 'dn-evals-filter').find((c) => c.getAttribute('data-filter') === 'failures');
   chip.dispatchEvent({ type: 'click', target: chip });
 });
 
@@ -260,7 +260,7 @@ test('filter flips-only: keeps CROSS-COLUMN changes (login + clean), NOT flip_ra
   const shown = allByClass(host, 'dn-evalmtx-site').map((n) => n.getAttribute('data-entry'));
   assert(shown.includes('task_login') && shown.includes('task_clean'), 'the changing rows are login + clean');
   assert(!shown.includes('task_flat'), 'a flip_rate>0 row with no cross-column change is EXCLUDED');
-  const chip = allByClass(host, 'dn-evals-chip').find((c) => c.getAttribute('data-filter') === 'flips');
+  const chip = allByClass(host, 'dn-evals-filter').find((c) => c.getAttribute('data-filter') === 'flips');
   chip.dispatchEvent({ type: 'click', target: chip });
 });
 
@@ -271,7 +271,7 @@ test('filter holdout-only: keeps only the holdout-slice row (task_hold)', async 
   assertEqual(allByClass(host, 'dn-evalmtx-row').length, 1, 'exactly one holdout row');
   assert(allByClass(host, 'dn-evalmtx-site').some((n) => n.getAttribute('data-entry') === 'task_hold'),
     'the holdout row is task_hold');
-  const chip = allByClass(host, 'dn-evals-chip').find((c) => c.getAttribute('data-filter') === 'holdout');
+  const chip = allByClass(host, 'dn-evals-filter').find((c) => c.getAttribute('data-filter') === 'holdout');
   chip.dispatchEvent({ type: 'click', target: chip });
 });
 

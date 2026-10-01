@@ -69,7 +69,7 @@ test('absoluteScalars: a live (mid-flight) pair reads the challenger endpoint in
   // champion is a settled plain chip; challenger is the projected one.
   assert(allByClass(host, 'dt-proj').length === 1, 'exactly the challenger endpoint is projected (projStat)');
   assert(host.textContent.includes('55.21') && host.textContent.includes('challenger scalar'), 'the projected challenger scalar reads (2dp)');
-  assert(allByClass(host, 'dt-proj-badge').length === 1, 'carries the "proj" badge (in-flight, not settled)');
+  assert(allByClass(host, 'dt-proj-mark').length === 1, 'carries the "proj" badge (in-flight, not settled)');
   assert(host.textContent.includes('6/10'), 'the projStat board-progress bar reads boards_done/total');
   // champion is still the settled plain chip beside it.
   assert(host.textContent.includes('47.58') && host.textContent.includes('champion scalar'), 'the champion endpoint stays the settled floor');
@@ -183,7 +183,7 @@ test('gatePanel: re-rendering the SAME gate twice (a no-op beat) the head still 
   const host1 = mountInto(candidate.gatePanel(gate));
   const host2 = mountInto(candidate.gatePanel(gate));
   assertEqual(host1.textContent.replace(/\s+/g, ' '), host2.textContent.replace(/\s+/g, ' '), 'two builds of the same gate read identically');
-  assertEqual(allByClass(host1, 'dt-proj-badge').length, allByClass(host2, 'dt-proj-badge').length, 'the projected challenger endpoint is stable across beats');
+  assertEqual(allByClass(host1, 'dt-proj-mark').length, allByClass(host2, 'dt-proj-mark').length, 'the projected challenger endpoint is stable across beats');
 });
 
 await run();

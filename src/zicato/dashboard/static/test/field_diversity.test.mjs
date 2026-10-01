@@ -125,7 +125,7 @@ test('diversity meter: no tolerance (enforcement off) reads FLAT (diagnostic onl
 test('diversity: a soft-rejected count rides the deferred pill vocabulary', () => {
   const host = renderStruct(structFor({ diversity: diversityBlock({ soft_rejected_count: 2 }) }));
   const ribbon = byClass(host, 'dn-divribbon');
-  const pill = allByClass(ribbon, 'dn-pill').find((p) => /soft-rejected/.test(p.textContent || ''));
+  const pill = allByClass(ribbon, 'dn-state').find((p) => /soft-rejected/.test(p.textContent || ''));
   assert(pill, 'the soft-reject count renders a chip');
   assert(hasClass(pill, 'dn-deferred'), 'it reuses the DEFERRED pill (held, not promoted)');
   assert(/2 soft-rejected/.test(pill.textContent), 'the chip reads the count');
@@ -134,7 +134,7 @@ test('diversity: a soft-rejected count rides the deferred pill vocabulary', () =
 test('diversity: zero soft-rejects renders no soft-reject chip', () => {
   const host = renderStruct(structFor({ diversity: diversityBlock({ soft_rejected_count: 0 }) }));
   const ribbon = byClass(host, 'dn-divribbon');
-  assert(!allByClass(ribbon, 'dn-pill').some((p) => /soft-rejected/.test(p.textContent || '')),
+  assert(!allByClass(ribbon, 'dn-state').some((p) => /soft-rejected/.test(p.textContent || '')),
     'no soft-reject chip when the count is zero');
 });
 

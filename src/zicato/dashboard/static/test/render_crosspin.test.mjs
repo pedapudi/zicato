@@ -58,7 +58,7 @@ test('crosspin: ratingModel — the integer register + the provisional threshold
 
 test('crosspin: the verdict pill preserves the served label', () => {
   for (const c of CASES.verdict_label) {
-    assertEqual(ui.verdictPill(c.decision, { label: c.expect }).textContent, c.expect, String(c.decision));
+    assertEqual(ui.verdictLabel(c.decision, { label: c.expect }).textContent, c.expect, String(c.decision));
   }
 });
 

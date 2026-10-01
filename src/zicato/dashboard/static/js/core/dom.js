@@ -12,7 +12,7 @@
 //                                  for structure).
 //   * patchText / patchClass     — write only when the value actually
 //                                  changed, for the few long-lived chrome
-//                                  nodes (status pill, readouts) that are
+//                                  nodes (status label, readouts) that are
 //                                  patched in place rather than swapped.
 //   * clearChildren              — explicit child teardown for a rebuild.
 

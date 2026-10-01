@@ -3,9 +3,15 @@
 import { el } from './core/dom.js';
 import { icon } from './icons.js';
 
+// The drawn mark that names a turn's role in its head; the role's colour
+// comes from the stylesheet (`.dn-turn-<role> .dn-turn-role`).
+const ROLE_ICON = { agent: 'agent', user: 'message', system: 'note' };
+
 export function buildTurnNode(t, annBySeq, execution) {
-  const turn = el('div', { class: 'dn-turn dn-turn-' + (t.role || 'agent') }, [
+  const role = t.role || 'agent';
+  const turn = el('div', { class: 'dn-turn dn-turn-' + role }, [
     el('div', { class: 'dn-turn-head dn-faint dn-mono' }, [
+      icon(ROLE_ICON[role] || 'agent', { class: 'dn-turn-role' }),
       el('span', { text: t.agent || t.role || 'turn' }),
       t.kind ? el('span', { text: ' · ' + t.kind }) : null,
       t.ts ? el('time', { class: 'dn-turn-time', datetime: t.ts, text: ' · ' + t.ts }) : null,

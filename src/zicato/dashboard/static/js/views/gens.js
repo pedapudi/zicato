@@ -7,9 +7,9 @@
 // standings are the hero of this page:
 //
 //   * a CHAMPION-DEFENDS banner — the reigning champion id · loss · N title
-//     defences · a promoted badge;
+//     defences · a promoted mark;
 //   * a RESPONSIVE WRAPPING GRID of COMPACT challenger MATCH CARDS (one per
-//     challenger round): `<challenger> vs <champion>` · verdict pill · Δscalar
+//     challenger round): `<challenger> vs <champion>` · verdict label · Δscalar
 //     · a ONE-LINE (truncated) hypothesis · the decisive-driver judge · a status
 //     link (dead-branch / promoted) that opens the candidate.
 //
@@ -28,13 +28,13 @@ import { state } from '../core/state.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
 import { icon, iconLabel } from '../icons.js';
-import { gatedSwap, section, empty, verdictPill, decisionOf, dataTable, deltaCell, ratingCellEl, ratingTripleDigest, coreIdeaLine } from '../ui.js';
+import { gatedSwap, section, empty, verdictLabel, decisionOf, dataTable, deltaCell, ratingCellEl, ratingTripleDigest, coreIdeaLine } from '../ui.js';
 import { renderStructure, structurePill } from './structure.js';
 import { structureDigest, isNonGauntlet, normalizeStructure, resolveNonGauntletSt } from '../tournament_model.js';
 // `epochIsLive` composes the clock and the epoch scope, and every present-tense
-// claim in this view consumes it: the projected scalars, the PROJ badges and
-// progress bars, the in-flight round and its "racing" / "deciding…" pills, and
-// the verdict pills' tense.
+// claim in this view consumes it: the projected scalars, the PROJ marks and
+// progress bars, the in-flight round and its "racing" / "deciding…" labels, and
+// the verdict labels' tense.
 import { epochIsLive } from '../livestatus.js';
 import { roundsFromTimeline, roundModelDigest } from '../rounds.js';
 
@@ -147,7 +147,7 @@ export async function render(host, ctx, params) {
 
   const digest = JSON.stringify({
     id, championId,
-    // rendered: the pending verdict pill's TENSE moves with it, so the beat that
+    // rendered: the pending verdict label's TENSE moves with it, so the beat that
     // settles the loop must repaint the roster rather than leave "racing…" up.
     live: isLiveForThisEpoch ? 1 : 0,
     champScalar: svg.isNum(champScalar) ? champScalar.toFixed(3) : null,
@@ -202,9 +202,9 @@ export async function render(host, ctx, params) {
                 el('span', null, g.promoted ? iconLabel(svg.CROWN.current, g.id, { after: true }) : [g.id]),
                 coreIdeaLine(ideaByGen.get(String(g.id))),
               ].filter(Boolean) },
-              // the pending pill reads "racing…" only while THIS epoch's loop is
+              // the pending label reads "racing…" only while THIS epoch's loop is
               // running; on a settled / interrupted epoch it reads "undecided".
-              { el: verdictPill(decision, { live: isLiveForThisEpoch, label: g.decisionLabel }) },
+              { el: verdictLabel(decision, { live: isLiveForThisEpoch, label: g.decisionLabel }) },
               { class: 'dn-mono', text: g.parent || 'seed' },
               { class: 'dn-num dn-mono', text: svg.isNum(sc) ? svg.fmt(sc, 1) : '—' },
               // the visibility rating (server-joined; never the gate).
@@ -447,8 +447,8 @@ async function renderConfiguredStructure(host, ctx, id, ep, bracket, structure, 
       el('h1', { class: 'dn-h1', text: `Rounds · ${id}` }),
       el('div', { class: 'dt-structure-line' }, [
         structurePill(shownStructure, (shown && shown.structure_params) || params),
-        liveUsable ? el('span', { class: 'dt-live-pill', text: 'LIVE' }) : null,
-        interrupted ? el('span', { class: 'dt-interrupted-pill', text: 'INTERRUPTED' }) : null,
+        liveUsable ? el('span', { class: 'dt-live-state', text: 'LIVE' }) : null,
+        interrupted ? el('span', { class: 'dt-interrupted-state', text: 'INTERRUPTED' }) : null,
       ].filter(Boolean)),
       el('p', { class: 'dn-lede', text: liveUsable
         ? 'A run is in flight — the live tournament fills in as runs land. In-flight competitors are shown racing, not rejected; the winner is not committed until the final gate.'

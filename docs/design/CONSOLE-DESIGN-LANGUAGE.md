@@ -154,34 +154,41 @@ the Gogh lineage in full.
 Typography is a separate axis from colour: a **typeface** picker swaps the
 family tokens via the `[data-t-type]` attribute on the root. It is a **grouped
 popover** (`typefacedropdown.js`) in Settings → Appearance. It carries three **mode** headers — **Technical
-(default) · Editorial · Display** — each over **four** real faces, twelve in
-all. Every option row is a true micro-specimen rendered in its own faces. The
-three voices differ across the whole surface, body text included, so a switch
-is immediately recognizable. Representative faces per mode:
+(default) · Editorial · Display** — each over **four** pairings, twelve in
+all. Every option row is a true micro-specimen rendered in its own faces.
 
-| mode | voice | example faces (`TYPE_OPTIONS`) |
+The picker governs both faces, and every pairing keeps the interface rule
+"sans for prose and controls, mono for data": the prose face is a sans, the
+data face is a monospace, and the heading face is never a monospace. A
+monospace face (Google Sans Mono, Inconsolata) is therefore offered as a data
+face paired with Open Sans; a serif or display face is offered as a heading
+face over a sans prose face and JetBrains Mono data.
+
+| mode | heading voice | pairings (`TYPE_OPTIONS`) |
 | --- | --- | --- |
-| `technical` (default) | a console technical voice | Google Sans Mono · Source Sans 3 + Source Code Pro · Inconsolata · Ubuntu + Ubuntu Mono |
-| `editorial` | a typeset, literary reading voice | Fraunces · Bitter · Literata · Domine |
-| `display` | a punchy headline voice | Archivo Narrow + Space Grotesk · Hanken Grotesk · Barlow Condensed · Bricolage Grotesque |
+| `technical` (default) | the prose sans | Open Sans + Google Sans Mono · Source Sans 3 + Source Code Pro · Open Sans + Inconsolata · Ubuntu + Ubuntu Mono |
+| `editorial` | a typeset serif | Fraunces · Bitter · Literata · Domine, each over Open Sans and JetBrains Mono |
+| `display` | a punchy display face | Archivo Narrow + Space Grotesk · Hanken Grotesk · Barlow Condensed + Space Grotesk · Bricolage Grotesque, each with JetBrains Mono data |
 
 Alongside the face picker the popover carries an **S/M/L font-size** segmented
 control (`FONTSIZE_OPTIONS`). `applyFontSize` stamps a text-only multiplier
 (`--dt-font-scale`) and syncs every live picker instance; it is orthogonal to
 the page scale, which zooms figures and text together.
 
-Each `[data-t-type]` rule sets the four font tokens to literal stacks: the
-two the marks read, **`--v2-sans`** (body) and **`--v2-mono`** (all data,
-labels, axis text, code), plus `--n-font-head` (headings) and `--n-font-paper`
-(the publication body). An editorial face routes *everything* —
-including the mono token — to its serif, so data and prose share one face; a
-display face gives the body a geometric grotesque and the headings a condensed
-display face. The twelve faces load from Google Fonts in `console.js` with
-`display=swap` and system fallbacks — the only external dependency; the two
-self-hosted monos under `fonts/` back the fixed brand mono.
-
-(There is no separate sans typeface: Technical already carries a sans body, and
-the `sans` id normalises to Technical.)
+Each `[data-t-type]` rule sets the four font tokens to literal stacks:
+**`--v2-sans`** (prose, controls and chrome; the console root is set in it),
+**`--v2-mono`** (data, code, ids, hashes, key names, the numbers in tables and
+figures), `--n-font-head` (headings) and `--n-font-paper` (the publication
+title). The top bar, the tree, buttons, section headings and prose resolve to
+the sans; an element opts into the mono by its data role (`.dn-mono`, a
+table, a numeric tile value, a tree row named by an id, a figure's tick
+values and ids). A figure's captions, axis titles, legends and sentences are
+sans, and so is a tile value led by a word (`ui.valueFace`). The Google
+Fonts families load in `console.js` with `display=swap` and system sans or
+monospace fallbacks — the only external dependency; the self-hosted JetBrains
+Mono under `fonts/` backs the fixed brand mono and the editorial and display
+data face. `test/interface_rules.test.mjs` fails if a chrome rule sets the
+mono token or if any option breaks the pairing rule.
 
 ## 4. The visual-vocabulary grammar
 
@@ -234,7 +241,7 @@ Every figure above honours this table:
 | `up` icon | this competitor **survives** the rung / round — the winner's lane **continues** | funnel rail names, swiss ladder, elim-radial spokes, duel-flow lanes |
 | `fail` icon | this competitor was **cut** — the loser's lane **terminates** | funnel cut marks, swiss ladder, elim-radial spokes, duel-flow lanes |
 | `ring` icon | this competitor is **pending** (still racing, undecided) | duel-flow lanes |
-| `crown` icon (solid) | the **current champion** (the crowned survivor of the gate) | gate labels, round-timeline spine, reign-gantt bar, tree badge, candidate / board / publication accents |
+| `crown` icon (solid) | the **current champion** (the crowned survivor of the gate) | gate labels, round-timeline spine, reign-gantt bar, tree mark, candidate / board / publication accents |
 | `crown-former` icon (open) | a **former champion** — the displaced incumbent / a transient round-leader before the gate decides | swiss ladder, bump chart, standings |
 | drawn icons | every mark is an icon from `js/icons.js` (16-unit grid, 1.5-unit round-capped stroke, `currentColor`, `aria-hidden`); a figure places one with `svg.figIcon` / `svg.iconBeside`. No mark is a typed Unicode symbol, because the bundled faces lack them | every module; pinned by `test/icons.test.mjs` |
 | reference rule | a Δ-vs-champion baseline at Δ=0; **good = below / lower loss, bad = above / higher loss** | dot-plot `dn-ref-rule`, the racing track's champion benchmark line |
@@ -262,7 +269,7 @@ Four further conventions hold within this grammar:
   shows a compact at-a-glance figure with a *"See Match-ups →"* link into the
   full detail.
 - **"unscored" orphan labeling.** A generation with no parent and no resolved
-  outcome is an *orphan* (`g.orphan` in `shell.js`); the tree badges it with
+  outcome is an *orphan* (`g.orphan` in `shell.js`); the tree marks it with
   the dashed `unscored` ring and the `unscored` tag (`gen-orphan`) — never a misleading "seed", never a default
   rejection.
 
@@ -270,23 +277,30 @@ Four further conventions hold within this grammar:
 
 Hover-for-detail is a first-class, intentional choice. `hovercard.js` mounts a
 **singleton** card *inside* `#console-root`, so it inherits the live per-theme
-tokens (`--v2-panel` background, `--v2-ink` text, `--v2-rule` border, the mono
-face) and reads correctly across all sixteen themes. It is positioned with
+tokens (`--v2-panel` background, `--v2-ink` text, `--v2-rule` border, the sans
+face for its prose) and reads correctly across all sixteen themes. It is positioned with
 viewport flip/clamp so it never clips, honours `prefers-reduced-motion`, and is
 keyboard-accessible (focusable target + `role="tooltip"` via `aria-describedby`).
 It is a **transient overlay that sits outside the digest-gated render** (§6):
 showing and hiding it only toggles a class, so it can never trigger a repaint
 loop.
 
-### 4.4 Tags, captions, and where navigation lives
+### 4.4 States, captions, selection and where navigation lives
 
 A durable discipline for any new surface: **reuse the grammars Console already
-speaks; do not invent chrome beside them.** Three rules:
+speaks; do not invent chrome beside them.** Five rules:
 
-- **Tags/chips are ONLY for a semantic state the console already pills** — a
-  `verdict` or a `severity` (the `chip` / `verdictPill` family, coloured by a
-  ROLE token). Everything else is text. A metric, a count, a relation, or a
-  model name is not semantic state and never earns a chip.
+- **No pill, tag or badge.** A semantic state — a `verdict`, a `severity`, a
+  row's role — is plain text in its ROLE-token colour, led by a drawn mark
+  from `js/icons.js` where it has one (`verdictLabel`, `stateLabel`,
+  `flagLabel` in `ui.js`). Nothing draws a rounded box, a fill or a border
+  round a label. A metric, a count, a relation, or a model name is not
+  semantic state and stays uncoloured text.
+- **No accent left rail.** Neither a container nor a selection carries a
+  coloured left edge. The selected item renders its name in the accent colour
+  (the tree row, the pinned matrix row, the selected trace episode, the open
+  Settings section). A meaning a container must show (a turn's role, a
+  held-out entry, a finding's tone) rides a drawn mark and the text colour.
 - **Metadata is a caption.** Fidelity tier, adjudicator model, prompt version,
   self-agreement, a verdict tally — all ride ONE `dn-faint` caption line under
   the relevant figure or section, never a per-row tag.
@@ -298,8 +312,8 @@ Findings and the practice review render as the loop-health findings panel's
 quiet verdict-led rows: a tone mark, a headline, and a `dn-faint` rationale.
 Scorecard rates use the `dn-stat` idiom, redundancy and conflict read as one
 faint inline sentence, and evidence appears as inline x-ray links. Metadata
-collapses to a caption, the one pill is the adjudication verdict, and
-navigation rides the routes and the tree. The lens carries no internal rail and
+collapses to a caption, the one coloured state word is the adjudication
+verdict, and navigation rides the routes and the tree. The lens carries no internal rail and
 no per-row tags. See [BOARD-REFLECTION.md](BOARD-REFLECTION.md#ui--the-instrument-lens)
 and [dev-guide §9.7.7](../dev-guide/09-dashboard-and-query.md#977-the-console-grammar-discipline--reuse-grammars-dont-invent-chrome).
 
@@ -386,12 +400,13 @@ A live run must feel alive **without faking completed state** — the rule is
 poll*. `live.js` owns one persistent `LiveController` patched in place on every
 `state:changed` tick.
 
-- **Live pills / markers.** A structure-agnostic status pill (`.dt-status`,
-  `livestatus.deriveLiveStatus`) folds a non-idle heartbeat phase, the
-  in-flight active-runs count, and the active-tournament phase into one
-  verdict. While a run is going it shows a pulsing RUN badge naming the
-  structure and phase (`racing · rung 0`, `swiss · round 2`, `proposing
-  field`). A `LIVE` pill (`.dt-live-pill`) rides beside the structure pill.
+- **Live state words / markers.** A structure-agnostic status line
+  (`.dt-status`, `livestatus.deriveLiveStatus`) folds a non-idle heartbeat
+  phase, the in-flight active-runs count, and the active-tournament phase into
+  one verdict. While a run is going it shows a pulsing dot and the state word,
+  naming the structure and phase (`racing · rung 0`, `swiss · round 2`,
+  `proposing field`). A `LIVE` word (`.dt-live-state`) rides beside the
+  structure label, as plain text.
 - **Structure-aware pending labels — never a faked verdict.** A rung with no
   recorded cut/survivors renders **pending** (neutral, nobody struck), and the
   gate reads **"deciding…"** rather than crowning a not-yet-committed winner. A
@@ -461,9 +476,9 @@ the console aesthetic (§8.3).
 ### 8.3 The terminal / console technical aesthetic
 
 The `CONSOLE` chrome brand, the monospace data face (the default Technical
-typeface sets data, labels and code in Google Sans Mono), and the
-terminal-derived palettes together give the surface a **terminal-and-console
-voice**. The instrument reads like a power-user's console rather than a
+pairing sets data, ids and code in Google Sans Mono beside Open Sans prose),
+and the terminal-derived palettes together give the surface a
+**terminal-and-console voice** while the chrome reads as text. The instrument reads like a power-user's console rather than a
 consumer report.
 
 ### 8.4 The chess / tournament metaphor
@@ -486,7 +501,7 @@ tournament structure. (The champion/challenger vs parent/child terminology is in
   emitter imports it — the `svg.js` funnel, swiss ladder, elim-radial and
   duel-flow gate labels, the `waterfall` / `reignGantt` / `roundTimeline` crowns,
   `views/structure.js` gate notes, legends and standings, the `live.js`
-  activity feed, `tree.js` badges, the `dag.js` terminal, and `views/epoch.js`
+  activity feed, `tree.js` marks, the `dag.js` terminal, and `views/epoch.js`
   overview captions. No site types a crown character.
 - **Which token names carry the typeface families.** The marks read two tokens,
   `--v2-sans` and `--v2-mono`, which each `[data-t-type]` rule sets to literal

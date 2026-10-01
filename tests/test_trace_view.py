@@ -108,8 +108,11 @@ def test_lane_marks_zero_char_even_spacing() -> None:
 def test_signal_ticks_evenly_distributed_and_unpositioned() -> None:
     ticks = signal_ticks([("error_cascade", 3, "3 err"), ("retry_loop", 1, "1 loop")])
     assert [t["x"] for t in ticks] == [0.3333, 0.6667]
-    assert ticks[0]["tone"] == "bad" and ticks[0]["glyph"] == "✕"
-    assert ticks[1]["tone"] == "caution" and ticks[1]["glyph"] == "↻"
+    assert ticks[0]["tone"] == "bad"
+    assert ticks[1]["tone"] == "caution"
+    # The console draws each signal's mark from its kind; no tick carries a
+    # typed symbol for it.
+    assert all("glyph" not in t for t in ticks)
     assert all(t["positioned"] is False for t in ticks)
 
 

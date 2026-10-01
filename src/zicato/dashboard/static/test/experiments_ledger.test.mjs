@@ -186,7 +186,7 @@ test('ledger: absent fields degrade to "—" PER COLUMN — an unsettled row nev
 
 test('ledger: the generation links to its dossier when the caller supplies a route', () => {
   const host = mount(ledgerFixture(), { epochId: 'e0', hrefFor: (g) => '#/candidate/e0/' + g });
-  const links = allByClass(host, 'dn-linkbtn');
+  const links = allByClass(host, 'dn-idlink');
   assert(links.some((a) => a.getAttribute('href') === '#/candidate/e0/v2'), 'each row opens its candidate');
 });
 

@@ -12,7 +12,7 @@
 //
 // The shell owns:
 //   * a COMPACT top bar — branding · breadcrumb · colour-theme picker (monokai
-//     default) · status pill. The TYPEFACE and PAGE-SCALE controls live in
+//     default) · status label. The TYPEFACE and PAGE-SCALE controls live in
 //     Settings → Appearance now (not the top bar), driving the same stores;
 //   * the persistent tree sidebar (its own digest gate);
 //   * ONE persistent detail host (never recreated per repaint);
@@ -35,6 +35,7 @@ import { buildTree, treeDigest } from './tree.js';
 import { roundsForTree } from './rounds.js';
 import { livenessFor, liveStatusDigest, treeLiveSet, staleLabel, runStateLabel, LIVENESS } from './livestatus.js';
 import { LiveController } from './live.js';
+import { attachHovercard } from './hovercard.js';
 import { buildSwatchDropdown, syncSwatchDropdowns } from './swatchdropdown.js';
 import { syncTypefaceDropdowns, syncFontSizeSegments } from './typefacedropdown.js';
 import {
@@ -460,9 +461,9 @@ function brandWordmark() {
   }, [text, dot]);
 }
 
-// THE RESEARCH-PREVIEW PILL — a quiet product-status tag pinned NEXT TO the
+// THE RESEARCH-PREVIEW LABEL — a quiet product-status tag pinned NEXT TO the
 // "zıcato console" wordmark in the top bar. It echoes the wordmark's own
-// register (the .dt-brand-tag "console" tag): small, faint, monospace,
+// register (the .dt-brand-sub "console" tag): small, faint, monospace,
 // uppercase tracking, theme-adaptive (the muted ink-faint token + currentColor).
 // The label is STACKED on two lines ("research" / "preview") so it reads as a
 // compact corner tag beside the wordmark rather than a wide strip. It is purely
@@ -512,23 +513,22 @@ export function mountShell(root) {
   // choosing a face in Settings still applies live + persists, and any other
   // apply path (keyboard / restore) keeps the Settings picker in lockstep.
 
-  // PAGE-SCALE pill — REMOVED from the top-bar chrome, following the typeface
-  // picker: it is a set-once appearance preference, and a live range slider is
-  // the widest, busiest control on a bar that has to make room for the run
-  // state. It now lives ONLY in Settings → Appearance (views/settings.js's
-  // scalePicker), which already drives the same applyScale/resetScale path.
+  // The PAGE-SCALE slider lives in Settings → Appearance (views/settings.js's
+  // scalePicker), not in the top bar: it is a set-once appearance preference,
+  // and a live range slider is the widest control a bar that holds the run
+  // state could carry. The picker drives the applyScale/resetScale path.
   // applyScale stamps and persists without syncing any top-bar node, so every
   // apply path (restore, keyboard, the Settings picker) shares one route.
 
-  // The live-status pill: a connection dot + the connection word, plus a
-  // RUN badge that lights up whenever the loop is active for ANY tournament
+  // The live-status label: a connection dot + the connection word, plus a
+  // RUN mark that lights up whenever the loop is active for ANY tournament
   // structure (read from the live APIs in renderStatus rather than the gauntlet-only
-  // activeTournament). The run badge carries the structure + phase label and an
+  // activeTournament). The run mark carries the structure + phase label and an
   // in-flight board-unit count; it is hidden when idle/done.
   _statusTextEl = el('span', { class: 'dt-status-text', text: 'connecting…' });
-  // ONE consolidated LIVENESS pill — the three competing "live" signals (the
-  // bare four-state word, a separate run-badge phase label, a separate "last
-  // seen Ns ago" affordance) fold into a single `dt-run-state` pill reading
+  // ONE consolidated LIVENESS label — the three competing "live" signals (the
+  // bare four-state word, a separate run-mark phase label, a separate "last
+  // seen Ns ago" affordance) fold into a single `dt-run-state` label reading
   // `● <STATE> · <structure · phase> · <N units>` (or `· last seen Ns ago` when
   // frozen). The four-state word keeps its `dt-rs-<state>` CSS modifier.
   _runStateTextEl = el('span', { class: 'dt-rs-text', text: '' });
@@ -548,7 +548,7 @@ export function mountShell(root) {
     _runStateEl,
   ]);
 
-  // THE LOOP CONTROLS: Pause/Resume toggle + Skip-round, beside the status pill. Rendered ONLY while the loop is controllable
+  // THE LOOP CONTROLS: Pause/Resume toggle + Skip-round, beside the status label. Rendered ONLY while the loop is controllable
   // (live + a writable workspace); read-only / idle keeps the host empty.
   // renderLoopControls fills it, digest-gated on {shown, paused} so a
   // steady heartbeat writes zero DOM here.
@@ -571,7 +571,7 @@ export function mountShell(root) {
     el('div', { class: 'dt-brand' }, [
       brandMark(),
       brandWordmark(),
-      el('span', { class: 'dt-brand-tag', text: 'console' }),
+      el('span', { class: 'dt-brand-sub', text: 'console' }),
       researchPreviewPill(),
     ]),
     _crumbHost,
@@ -679,7 +679,7 @@ export function mountShell(root) {
     }
   });
 
-  // (The research-preview status tag is a pill NEXT TO the wordmark in the top
+  // (The research-preview status tag is a label NEXT TO the wordmark in the top
   // bar — see researchPreviewPill() in brandWordmark's topbar block.)
 
   applyTheme(readColor());
@@ -915,6 +915,10 @@ async function renderTree(route) {
   _lastTreeDigest = digest;
 }
 
+// A crumb label at least this long carries a hovercard with its full value,
+// since it is the one likely to be cut by the ellipsis.
+const CRUMB_HOVER_MIN = 10;
+
 function renderCrumbs(route) {
   if (!_crumbHost) return;
   const trail = crumbTrail(route);
@@ -926,11 +930,15 @@ function renderCrumbs(route) {
     const out = [];
     trail.forEach((c, i) => {
       if (i > 0) out.push(el('span', { class: 'dt-crumb-sep', 'aria-hidden': 'true' }, [icon('separator')]));
-      if (c.current || !c.view) {
-        out.push(el('span', { class: 'dt-crumb dt-crumb-current', 'aria-current': 'page', text: c.label }));
-      } else {
-        out.push(el('a', { class: 'dt-crumb', href: href(c.view, c.params), text: c.label }));
+      const crumb = (c.current || !c.view)
+        ? el('span', { class: 'dt-crumb dt-crumb-current', 'aria-current': 'page', text: c.label })
+        : el('a', { class: 'dt-crumb', href: href(c.view, c.params), text: c.label });
+      // A crumb truncates with an ellipsis when the bar is short of room; its
+      // DOM text keeps the full value, and a long one also shows it on hover.
+      if (String(c.label).length >= CRUMB_HOVER_MIN) {
+        attachHovercard(crumb, () => el('span', { class: 'dn-mono', text: c.label }));
       }
+      out.push(crumb);
     });
     return out;
   });
@@ -946,9 +954,9 @@ function renderCrumbs(route) {
 function renderStatus() {
   if (!_statusEl) return;
   // The CONNECTION word is the SSE/transport status — distinct from the run-state
-  // pill's LIVE/STALLED/SETTLED/DEAD verdict that rides right after it. It must
+  // label's LIVE/STALLED/SETTLED/DEAD verdict that rides right after it. It must
   // NOT also say "live" (two adjacent "live" markers read as a redundant bug);
-  // "connected" names the transport without colliding with the run pill.
+  // "connected" names the transport without colliding with the run-state label.
   // TRANSPORT SURFACES ONLY WHEN BROKEN. A healthy socket is silence: the
   // operator saw "connected / STALLED / · racing · rung 0 / · 7 units" — four
   // status tokens, three truth sources, no hierarchy, and the tail of it
@@ -956,7 +964,7 @@ function renderStatus() {
   // as a claim about the RUN, so it says nothing while the socket is fine.
   const conn = state.connected ? '' : state.connecting ? 'connecting…' : 'disconnected — retrying';
   // THE TRI-STATE — the one verdict every present-tense claim in the chrome
-  // consumes, so the pill cannot read LIVE against a
+  // consumes, so the label cannot read LIVE against a
   // workspace the server has already called interrupted. The four-state
   // verdict rides alongside it; it only refines a LIVE run into LIVE vs
   // STALLED and supplies the phase label.
@@ -975,10 +983,10 @@ function renderStatus() {
   patchClass(_statusEl, 'dt-transport-quiet', !conn);
   patchClass(_statusEl, 'dt-running', liveness.live && status.running);
   // A frozen heartbeat (stale rather than live) gets a distinct chrome class so the
-  // dot/badge can read "not live" rather than borrowing the running accent.
+  // dot/mark can read "not live" rather than borrowing the running accent.
   patchClass(_statusEl, 'dt-stale', !liveness.live && !!status.heartbeatStale);
 
-  // The FOUR-STATE run pill — show the LIVE/STALLED/SETTLED/DEAD word only
+  // The FOUR-STATE run label — show the LIVE/STALLED/SETTLED/DEAD word only
   // while there is SOMETHING to report (a never-run workspace would read
   // SETTLED, which is misleading). One `dt-rs-<state>` modifier maps onto
   // the console states (no new hue — the class is toggled, never the accent).
@@ -1001,9 +1009,9 @@ function renderStatus() {
     patchClass(_runStateEl, 'dt-rs-on', !!word);
   }
 
-  // THE PHASE rides INSIDE the pill after the state word ("LIVE · racing · rung
-  // 0"); shown only while alive (LIVE / STALLED) so a settled/dead pill carries
-  // no stale phase. The leading "· " is the in-pill separator.
+  // THE PHASE rides INSIDE the label after the state word ("LIVE · racing · rung
+  // 0"); shown only while alive (LIVE / STALLED) so a settled/dead label carries
+  // no stale phase. The leading "· " is the in-label separator.
   if (_runLabelEl) {
     patchText(_runLabelEl, liveness.live && status.label ? ('· ' + status.label) : '');
   }
@@ -1011,7 +1019,7 @@ function renderStatus() {
     const n = status.inFlight;
     patchText(_runCountEl, liveness.live && n > 0 ? ('· ' + n + (n === 1 ? ' unit' : ' units')) : '');
   }
-  // "· last seen Ns ago" inside the pill when the heartbeat has frozen (not
+  // "· last seen Ns ago" inside the label when the heartbeat has frozen (not
   // alive) — never a silent freeze; cleared while alive / when no heartbeat.
   if (_staleEl) {
     patchText(_staleEl, (!liveness.live && status.heartbeatStale)
@@ -1334,7 +1342,7 @@ function onStateChanged() {
   renderStatus();
   // The zicato-level execution link flips with liveness (server up ⇄ run
   // ended ⇄ meta-session learned) — refresh it on every tick alongside the
-  // status pill. Digest-gated internally so a no-op beat writes zero DOM.
+  // status label. Digest-gated internally so a no-op beat writes zero DOM.
   renderExecLink();
   // SSE-DRIVEN: refresh the live surfaces on EVERY tick (sub-second — the SSE
   // heartbeat frame fires state:changed directly), so live state (phase /

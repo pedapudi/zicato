@@ -476,7 +476,7 @@ test('live tournament: during a racing RUN the match-ups ladder fills from /api/
   const ladder = svgsByClass(host, 'dn-funnel')[0];
   assert(ladder, 'the survival funnel rendered from the live active-tournament');
   assert(!/No tournament has run|unavailable/i.test(host.textContent), 'NOT the empty "nothing ran yet" state during a live run');
-  assert(allByClass(host, 'dt-live-pill')[0], 'a LIVE badge marks the in-flight tournament');
+  assert(allByClass(host, 'dt-live-state')[0], 'a LIVE badge marks the in-flight tournament');
   assert(host.textContent.includes('Rung 1') && host.textContent.includes('Rung 2'), 'both rungs (incl. the still-racing one) render');
 
   // the eventual winner v1 is NOT mislabeled rejected/eliminated mid-run: the
@@ -700,7 +700,7 @@ test('live racing (e2e): the match-ups page fills progressively from the publish
   const ladder = svgsByClass(host, 'dn-funnel')[0];
   assert(ladder, 'a survival funnel rendered on the match-ups page (not the empty state)');
   assert(!/being seeded|No tournament has run|unavailable/i.test(host.textContent), 'NOT the "being seeded"/"nothing ran" empty state during a live race with empty rounds');
-  assert(allByClass(host, 'dt-live-pill')[0], 'a LIVE badge marks the in-flight tournament');
+  assert(allByClass(host, 'dt-live-state')[0], 'a LIVE badge marks the in-flight tournament');
   for (const id of ['v5', 'v6', 'v7', 'v8']) assert(ladder.textContent.includes(id), 'the full challenger field renders — ' + id);
   assert(/boards|running/.test(ladder.textContent), 'lanes show live board progress');
 
@@ -1186,7 +1186,7 @@ test('racing reconstruct: the LIVE /api/active-tournament path still renders the
 
   const ladder = svgsByClass(host, 'dn-funnel')[0];
   assert(ladder, 'the LIVE survival funnel rendered from /api/active-tournament');
-  assert(allByClass(host, 'dt-live-pill')[0], 'a LIVE badge marks the in-flight tournament');
+  assert(allByClass(host, 'dt-live-state')[0], 'a LIVE badge marks the in-flight tournament');
   assert(host.textContent.includes('Rung 1') && host.textContent.includes('Rung 2'), 'both rungs render (incl. the still-racing one)');
   // the not-yet-decided rung stays neutral (nobody struck) and the gate reads "deciding…".
   const struck = allByClass(host, 'dn-out');
@@ -1223,7 +1223,7 @@ test('racing reconstruct: the match-ups page rebuilds the full ladder from the p
   assert(iconNames(ladder).includes('fail'), 'cut runners carry the fail mark');
   assert(iconNames(ladder).includes('up'), 'survivors carry the up mark');
   assert(labelledWith(ladder, 'v3', 'crown'), 'the champion-gate crowns v3 as the new champion (not tbd)');
-  assert(allByClass(host, 'dt-live-pill').length === 0, 'idle reconstruction carries NO live badge');
+  assert(allByClass(host, 'dt-live-state').length === 0, 'idle reconstruction carries NO live badge');
 });
 
 // ---- (d) current-vs-former champion badge in the tree ---------------

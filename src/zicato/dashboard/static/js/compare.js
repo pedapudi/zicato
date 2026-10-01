@@ -58,7 +58,7 @@ function splitSide(side, which) {
   const col = el('section', { class: 'dt-split-side dt-split-' + which });
   if (side.title) {
     col.appendChild(el('div', { class: 'dt-split-head' }, [
-      el('span', { class: 'dt-split-tag', text: which === 'a' ? 'A' : 'B' }),
+      el('span', { class: 'dt-split-letter', text: which === 'a' ? 'A' : 'B' }),
       el('span', { class: 'dt-split-title' }, side.mark ? iconLabel(side.mark, side.title, { after: true }) : [side.title]),
       side.sub ? el('span', { class: 'dt-split-sub', text: side.sub }) : null,
     ].filter(Boolean)));

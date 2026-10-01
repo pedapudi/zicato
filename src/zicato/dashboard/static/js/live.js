@@ -603,15 +603,15 @@ function liveMatchRow(e, onCompetitor, ctl) {
   // glyph (✓/✗/⏱) once decided, "queued" before the side starts.
   let tag;
   if (proj) {
-    tag = el('span', { class: 'dt-live-match-tag dt-proj-badge', text: 'PROJ' });
+    tag = el('span', { class: 'dt-live-match-kind dt-proj-mark', text: 'PROJ' });
   } else if (settled) {
     const mark = blockOutcomeIcon(e.outcome);
-    tag = el('span', { class: 'dt-live-match-tag dt-live-match-state' + (e.outcome === 'win' ? ' dn-good' : e.outcome === 'loss' ? ' dn-bad' : ''),
+    tag = el('span', { class: 'dt-live-match-kind dt-live-match-state' + (e.outcome === 'win' ? ' dn-good' : e.outcome === 'loss' ? ' dn-bad' : ''),
       role: mark ? 'img' : null, 'aria-label': mark ? String(e.outcome) : null }, mark ? [icon(mark)] : null);
   } else if (queued) {
-    tag = el('span', { class: 'dt-live-match-tag dt-live-match-state dn-faint', text: 'queued' });
+    tag = el('span', { class: 'dt-live-match-kind dt-live-match-state dn-faint', text: 'queued' });
   } else {
-    tag = el('span', { class: 'dt-live-match-tag dt-live-match-state dn-faint', text: 'live' });
+    tag = el('span', { class: 'dt-live-match-kind dt-live-match-state dn-faint', text: 'live' });
   }
 
   row.appendChild(name);
@@ -636,7 +636,7 @@ function liveMatchRow(e, onCompetitor, ctl) {
 // A persistent, shell-owned focal panel that LEADS the page while a run is in
 // flight. It is built ONCE (its nodes keep identity across ticks) and the
 // controller patches it IN PLACE on each SSE-driven tick:
-//   * the LIVE pill breathes (CSS) + the current phase reads prominently;
+//   * the LIVE label breathes (CSS) + the current phase reads prominently;
 //   * a determinate tournament-progress bar animates toward 100% (CSS width
 //     transition) with a "rung k of N · m/n matchups" caption;
 //   * the survival funnel re-renders ONLY when the structure digest changes
@@ -646,7 +646,7 @@ function liveMatchRow(e, onCompetitor, ctl) {
 //
 // THE LIVE SURFACE IS TWO THINGS. A single hero occupying the top of every
 // view, shown whenever the runtime FILES look busy, would open every page of a
-// long-idle workspace with a breathing LIVE pill and units "running". Instead:
+// long-idle workspace with a breathing LIVE label and units "running". Instead:
 //
 //   * a ONE-LINE STATUS BAND, always present, that speaks in whatever tense
 //     is true: `● LIVE · racing · rung 1 · 7 units` while live,
@@ -716,12 +716,12 @@ export class LiveController {
     // (liveProgress.stepIndex/stepCount) — never the 0-indexed raw phase string —
     // so the header and the stepper can never contradict ("rung 0" vs "rung 2 of
     // 2" was the bug: the title read the phase string, the subline read topology).
-    // The pill carries the SAME four-state liveness word the chrome reads
+    // The label carries the SAME four-state liveness word the chrome reads
     // (LIVE / STALLED), keyed off the derived run-state — NOT a hard-coded
     // "LIVE". This is the hero's single liveness read; the phase rides in
     // `_meta` beside it (so the two never duplicate a bare "LIVE").
-    this._pillText = el('span', { class: 'dt-live-hero-pilltext', text: 'LIVE' });
-    this._pill = el('span', { class: 'dt-live-hero-pill' }, [
+    this._pillText = el('span', { class: 'dt-live-hero-statetext', text: 'LIVE' });
+    this._pill = el('span', { class: 'dt-live-hero-state' }, [
       el('span', { class: 'dt-live-hero-dot', 'aria-hidden': 'true' }),
       this._pillText,
     ]);
@@ -864,7 +864,7 @@ export class LiveController {
     const inFlight = status && isNum(status.inFlight) ? status.inFlight : (Array.isArray(activeRuns) ? activeRuns.length : 0);
     const structure = (status && status.structure) || (activeTournament && activeTournament.structure) || null;
     const meta = this._metaLine(prog, structure, inFlight);
-    // the four-state liveness word for the pill (LIVE / STALLED), defaulting to
+    // the four-state liveness word for the label (LIVE / STALLED), defaulting to
     // LIVE when a caller supplies no runState. Folded into the meta digest so a
     // steady tick writes ZERO DOM and a real transition flips word + line.
     const pillWord = (status && status.runState && runStateLabel(status.runState))

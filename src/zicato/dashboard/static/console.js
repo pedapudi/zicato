@@ -5,14 +5,13 @@
 // Publication}) drives a single detail pane, with a first-class side-by-side
 // COMPARE detail, generous proportional spacing, and a top-left up button that
 // renders the destination into the MAIN detail pane. It defaults to the Monokai
-// colour theme and the Google Sans Mono typeface pairing. index.html loads this
-// entry, which:
+// colour theme and the Open Sans + Google Sans Mono typeface pairing. index.html
+// loads this entry, which:
 //   1. injects the console's scoped stylesheet (self-contained), which itself
 //      @font-faces the SELF-HOSTED monospace woff2 (iA Writer Mono + JetBrains
-//      Mono) the default Technical mode uses,
-//   2. injects the Google Fonts link for the NON-self-hosted families that
-//      Editorial (serif) and Display (geometric/condensed) read (fonts only,
-//      with system fallbacks + font-display: swap),
+//      Mono),
+//   2. injects the Google Fonts link for the families the typeface options
+//      read (fonts only, with system fallbacks + font-display: swap),
 //   3. paints the dashboard into #console-root,
 //   4. reuses the shared data layer (core/{api,sse,state}) untouched.
 //
@@ -43,7 +42,8 @@ function ensureStylesheet() {
 // FONTS — a SPLIT loading strategy:
 //   * The two self-hosted monos — iA Writer Mono + JetBrains Mono — stay SELF-
 //     HOSTED woff2 under static/fonts/ via @font-face in console.css (JetBrains
-//     Mono still backs the fixed brand mono), so the brand never touches a CDN.
+//     Mono backs the fixed brand mono and the Editorial and Display data face),
+//     so the brand never touches a CDN.
 //   * The TYPEFACE PICKER's finalized 12 faces (4 per mode) read families that
 //     are NOT self-hosted. They load from the ONLY permitted external dependency:
 //     Google Fonts (fonts only). `display=swap` so a slow font never blocks paint;
@@ -55,7 +55,8 @@ function ensureStylesheet() {
 //       Editorial — Fraunces, Bitter, Literata, Domine
 //       Display   — Archivo Narrow, Space Grotesk, Hanken Grotesk,
 //                   Barlow Condensed, Bricolage Grotesque
-//     (Open Sans is loaded as the display-family fallback the stylesheet names.)
+//     Open Sans is the prose face of the default pairing, the Inconsolata
+//     pairing and the four Editorial options.
 function ensureFonts() {
   const id = 'console-fonts';
   if (document.getElementById(id)) return;

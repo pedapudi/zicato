@@ -48,7 +48,7 @@ bare `#/`:
 | View | Route | What it shows / what to look for |
 |---|---|---|
 | **Environment** | `#/` | the workspace as a **FLEET** of epochs: an overview strip (epochs / generations / best scalar / LIVE-or-IDLE), one console card per epoch with its own loss **trendline** + best/gens/promoted, the **loop-health** panel, and the **cross-epoch META-LOOP LEDGER** (a per-epoch-row matrix braiding the held-floor staircase / effort / outcomes — the cross-epoch overview, content-gated so a no-op heartbeat churns no DOM). Read health first: a finding here means the eval may be toothless. |
-| **Epoch** | `#/e/<epoch>` | the **objective**, the collapsible **proposer brief** (the operator's brief to the proposer), the structure pill, then the **champion-spine ROUND TIMELINE** hero (one node per evolve round along the descending champion spine) with the **loss-floor waterfall** riding above it, then the **board × generation drift-loss HEATMAP**. Quicklinks to Generations / Boards / Mutation surface / Publication. |
+| **Epoch** | `#/e/<epoch>` | the **objective**, the collapsible **proposer brief** (the operator's brief to the proposer), the structure label, then the **champion-spine ROUND TIMELINE** hero (one node per evolve round along the descending champion spine) with the **loss-floor waterfall** riding above it, then the **board × generation drift-loss HEATMAP**. Quicklinks to Generations / Boards / Mutation surface / Publication. |
 | **Generations / round Match-ups** | `#/e/<epoch>/gens` (all rounds) · `#/e/<epoch>/gens/r/<round>` (one round) | the **Match-ups** — the per-structure tournament figure (see §3), the standings, and (for gauntlet) the per-round Δ-vs-champion lanes + roster. A `/r/<round>` drill scopes it to ONE evolve round's tournament. |
 | **Candidate** | `#/e/<epoch>/gen/<gen>[/<entry>]` | one challenger's life as a lifecycle DAG → gate; comparison-first (a **"compare with…"** picker sets a `~cmp=<gen>` hash suffix and splits the pane side-by-side). `/diff` shows its patch diff. |
 | **Boards** | `#/e/<epoch>/boards` · `#/e/<epoch>/board/<entry>[/<gen>]` | the small-multiples **board trellis** (one sparkbar + pass/fail dot row per entry); a board entry opens per-board scoring with champion-vs-challenger transcripts read **side-by-side inline**. Per-entry rows fold in the **continuous score** (a float in [0,1]) and its **precision/recall** decomposition when a scorer populated them — so a row shows *how well* as well as pass/fail. |
@@ -63,12 +63,15 @@ workspace-scoped rather than epoch-scoped.
 
 Navigation: the top-left **`↑ up`** control climbs the selection hierarchy
 (candidate → generations → epoch → environment; a compare split collapses to the
-bare candidate first). A page-wide **scale** pill `zoom`s the WHOLE page
+bare candidate first). A page-wide **scale** slider (Settings → Appearance) `zoom`s the WHOLE page
 (figures included), while a separate **S/M/L** text-size control (in the
 typeface picker) is a TEXT-ONLY multiplier (`--dt-font-scale`) that grows the
 type without rescaling figures; a **color theme** swatch dropdown (16 themes,
-monokai default) and a **typeface** picker (Technical default) re-skin without
-re-render. **Settings** opens as a routed right-side **drawer overlay** that
+monokai default) and a **typeface** picker (Technical default: Open Sans prose
+with Google Sans Mono data) re-skin without re-render. Chrome and prose are
+always set in a sans; only data, ids and code are monospace. A selected item
+reads as its name in the accent colour, and states read as coloured words led
+by a drawn mark, never as chips. **Settings** opens as a routed right-side **drawer overlay** that
 paints over the current view. Its Contract and Models sections are read-only;
 Appearance changes the local theme, typeface, and scale.
 
@@ -117,9 +120,9 @@ misleading "seed" or a default "rejected".
 
 ## 5. Liveness — what "live" means, and the no-flash rule
 
-- **The status pill** has two parts. The connection **word** (`live` /
+- **The status line** has two parts. The connection **word** (`live` /
   `connecting…` / `offline`) = the **SSE connection** state, nothing more. The
-  separate pulsing **RUN badge** names the structure + phase (`racing · rung 0`,
+  separate run-state word with its pulsing dot names the structure + phase (`racing · rung 0`,
   `swiss · round 2`, `proposing field`) and the in-flight unit count.
 - **A tournament reads running ONLY when the heartbeat is FRESH.** The
   supervisor rewrites the heartbeat every few seconds; a frozen heartbeat from a

@@ -109,10 +109,10 @@ function e4Matrix(pendingLabel = 'undecided') {
 // 1 — the pill vocabulary is tense-bound
 // ════════════════════════════════════════════════════════════════════
 
-test('verdictPill preserves server-owned labels without consulting liveness', () => {
-  assertEqual(ui.verdictPill('pending', { label: 'racing…' }).textContent, 'racing…', 'live label');
-  assertEqual(ui.verdictPill('pending', { label: 'undecided' }).textContent, 'undecided', 'settled label');
-  assertEqual(ui.verdictPill('baseline', { label: 'seed (v0)' }).textContent, 'seed (v0)', 'seed label');
+test('verdictLabel preserves server-owned labels without consulting liveness', () => {
+  assertEqual(ui.verdictLabel('pending', { label: 'racing…' }).textContent, 'racing…', 'live label');
+  assertEqual(ui.verdictLabel('pending', { label: 'undecided' }).textContent, 'undecided', 'settled label');
+  assertEqual(ui.verdictLabel('baseline', { label: 'seed (v0)' }).textContent, 'seed (v0)', 'seed label');
 });
 
 test('evals matrix: an INTERRUPTED epoch reads "undecided", never "racing…"', async () => {
