@@ -75,7 +75,7 @@ two never contend when `evolve` starts both.
 | `--run-deadline-kill-disabled`        | off         | Do not kill runs that pass their wall-clock deadline           |
 | `--run-kill-grace SECS`               | `5`         | SIGTERM-to-SIGKILL grace for a run past its deadline           |
 | `--max-run-seconds SECS`              | `21600`     | Ceiling on any run's enforced window, from its `started_at`    |
-| `--diff-containment`                  | off         | Audit each generation's source changes against its mutation spans (alarm only) |
+| `--mutation-containment`              | off         | Check each generation's source change against its byte-range mutation evidence (alarm only) |
 | `--promotion-gate`                    | off         | Re-check each recorded promotion against its recorded scores (alarm only) |
 | `--divergence-audit`                  | off         | Compare the SQLite index against the canonical files (report only) |
 | `--divergence-stuck-age-seconds SECS` | `3600`      | Age past which the divergence audit reports a stuck generation |
@@ -101,8 +101,27 @@ Files consumed:
 
 The supervisor removes a kill-request marker once it has acted on it.
 With `--ledger-dir` it also appends to its audit ledger, and with
-`--diff-containment` it writes the audit's findings into the epoch's
-health directory.
+`--mutation-containment` it writes each parent-to-child pair's result to
+`epochs/{epoch}/health/mutation_containment_{generation}.json`.
+
+The containment audit reads each pair's source trees from the configured
+generation store and the child's `containment.json` evidence. A pair is
+`contained`, `violated` (the records bind the files and show a change outside
+the mutation units, or the child tree holds a `.pyc`, `.pyo` or `.pyd` file),
+`evidence_mismatch` (a record contradicts the files, for example a source
+file edited after its evidence was written), or `unverified` (evidence
+missing, malformed or unreadable). A decided pair that verified earlier and
+is now unverified is marked `evidence_withdrawn`. A pair that moves into
+`violated`, `evidence_mismatch` or withdrawn evidence is logged as a
+`MUTATION-CONTAINMENT ALERT` and, with a ledger, recorded as a
+`diff_containment_alert`. A changed frozen `brief.md` or `scoring.json`
+affects every pair in the epoch, so it is recorded once as
+`epoch_evidence_changed` naming the input. When a parent's tree changed or
+became unreadable after its children's policies were captured, the children
+carry `introduced_by` naming the parent and only the parent alarms. A pair with a
+recorded decision is re-checked only when the metadata of a file it reads
+changes. [`docs/dev-guide/08-supervisor.md`](../../docs/dev-guide/08-supervisor.md)
+§8.8.1 has the full rule.
 
 ## Audit ledger
 

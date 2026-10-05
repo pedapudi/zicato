@@ -154,6 +154,29 @@ def test_run_regression_suite_returns_passed_when_no_tests_dir(tmp_path: Path) -
 
 @pytest.mark.integration
 @pytest.mark.usefixtures("_isolated_inner_pytest")
+def test_run_regression_suite_leaves_the_snapshot_unwritten(tmp_path: Path) -> None:
+    """The suite runs in a throwaway copy: its bytecode and caches never
+    reach the snapshot, and the copy is removed afterwards."""
+    snapshot_root = _make_snapshot_with_test(
+        tmp_path,
+        """
+        from pathlib import Path
+
+        def test_writes_beside_itself():
+            Path(__file__).with_name("written.txt").write_text("run output")
+        """,
+    )
+    before = sorted(path.relative_to(snapshot_root) for path in snapshot_root.rglob("*"))
+
+    result = asyncio.run(run_regression_suite(snapshot_root, test_command=_PYTEST_CMD))
+
+    assert result.passed is True, result.summary
+    after = sorted(path.relative_to(snapshot_root) for path in snapshot_root.rglob("*"))
+    assert after == before
+
+
+@pytest.mark.integration
+@pytest.mark.usefixtures("_isolated_inner_pytest")
 def test_run_regression_suite_passes_on_green_suite(tmp_path: Path) -> None:
     """A snapshot whose pytest suite passes yields ``passed=True``."""
     snapshot_root = _make_snapshot_with_test(

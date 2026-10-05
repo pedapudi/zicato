@@ -67,7 +67,7 @@ fn start_with(paths: &WorkspacePaths, ledger_dir: &Path, audits: bool) -> Runnin
         Duration::from_millis(50),
         Arc::new(WatchdogLog::new()),
         Some(ledger),
-        watchdog::DiffContainmentConfig {
+        watchdog::ContainmentConfig {
             enabled: false,
             findings: Default::default(),
         },

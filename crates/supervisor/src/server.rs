@@ -77,10 +77,10 @@ pub struct ServeOptions {
     /// `/api/audit/verify` then report it as "not configured". Shared with
     /// the watchdog loops, which append their actions to it.
     pub ledger: Option<Arc<crate::ledger::AuditLedger>>,
-    /// The latest diff-containment scan result, shared with the watchdog loop
-    /// (which fills it when `--diff-containment` is set). `/statusz` surfaces
+    /// The latest mutation-containment scan result, shared with the watchdog
+    /// loop (filled when `--mutation-containment` is set). `/statusz` surfaces
     /// it; empty/not-scanned when the scan is disabled.
-    pub diff_findings: Arc<crate::diff_containment::DiffContainmentFindings>,
+    pub containment_findings: Arc<crate::range_containment::ContainmentFindings>,
     /// The latest promotion-gatekeeping scan result, shared with the watchdog
     /// loop (filled when `--promotion-gate` is set). `/statusz` surfaces it.
     pub promotion_gate_findings: Arc<crate::promotion_gate::PromotionGateFindings>,
@@ -113,7 +113,7 @@ pub async fn serve(
         action_log: options.action_log,
         seq_liveness: options.seq_liveness,
         ledger: options.ledger,
-        diff_findings: options.diff_findings,
+        containment_findings: options.containment_findings,
         promotion_gate_findings: options.promotion_gate_findings,
         divergence_findings: options.divergence_findings,
     };

@@ -733,7 +733,7 @@ the crate is NOT a `query/` duplicate but crash-survival and
 integrity infrastructure with no Python equivalent: `reader.rs`'s in-flight
 lineage node (the tri-state in-flight generation the audits read),
 `divergence.rs`'s dead-worker/dead-pid audit
-(`divergence.rs:23`), `ledger.rs` + `diff_containment.rs` (the
+(`divergence.rs:23`), `ledger.rs` + `range_containment.rs` (the
 tamper-evident integrity notary), `signal.rs` (POSIX `/proc` liveness), and
 `statusz.rs`/`watchdog.rs` (heartbeat freshness + escalation). These exist
 *because* the index — and the orchestrator writing it — can be stale when
@@ -762,7 +762,7 @@ that made the failure possible.
   that overlap Python `query/` (epoch / tournament / lineage / gate / racing
   / ratings). It must NOT touch the liveness/integrity surface named in
   *Observed* — `reader.rs`'s in-flight lineage node, `divergence.rs`'s dead-pid audit, `ledger.rs`,
-  `diff_containment.rs`, `signal.rs`//proc, and `statusz.rs`/watchdog
+  `range_containment.rs`, `signal.rs`//proc, and `statusz.rs`/watchdog
   heartbeat — which reads canonical files directly *by design*, so
   it can still report when the index (and the orchestrator writing it) has
   gone stale. Folding those into an index-only projection would delete the

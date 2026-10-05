@@ -1234,7 +1234,9 @@ and the Ladder budget that governs *when* the confirmation counts.
 
 When `regression_gate_enabled` is true, `_gate_with_regression` in
 `tournament/runner.py` runs the child snapshot's regression suite before
-applying the numerical gate. Failure rejects the candidate regardless of its
+applying the numerical gate. The suite runs in a throwaway copy of the
+snapshot (`copy_checkout_ephemeral`), so what it writes, bytecode included,
+never reaches the canonical tree that the containment audit checks. Failure rejects the candidate regardless of its
 scores. The runner records the suite's actual result and summary in the gate
 explanation; a disabled suite is recorded as skipped.
 

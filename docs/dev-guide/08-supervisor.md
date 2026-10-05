@@ -3,7 +3,7 @@
 > **Covers.** The Rust supervisor (`crates/supervisor/`) as zicato's
 > out-of-band notary: its process model, the module map, every guarantee it
 > makes (warn-only heartbeat, pid-safety, clamped deadlines,
-> confirmed-dead-only reaping, the hash-chained ledger, diff-containment,
+> confirmed-dead-only reaping, the hash-chained ledger, mutation containment,
 > promotion gatekeeping, the divergence auditor, the read-only SQLite
 > discipline), the kill-request single-escalator handshake, build/packaging
 > and binary resolution, and the Rust dev workflow.
@@ -28,9 +28,9 @@
 > | S7 | the ledger-records-never-gates rule | The audit ledger is append-only, hash-chained over the exact payload bytes written, and fsynced per append. Opening it removes a partial final line and records the removed bytes; every integrity tick verifies the chain and records each break once, across restarts. It records; it never gates. |
 > | S8 | the read-only version-pinned index rule | The supervisor opens `index.db` read-only and refuses a `user_version` that does not equal its pinned `EXPECTED_SCHEMA_VERSION`. A missing, stale or unreadable index makes the promotion-gate and divergence audits report no finding; it never fails a route or a watchdog loop. |
 > | S9 | coordinated worker termination | The parent delegates termination through a kill-request marker when a supervisor is reachable. A bounded fallback uses the captured process identity if delegation does not confirm group termination. |
-> | S10 | the read-only fail-open integrity check | Every integrity-notary check (diff containment, promotion gate, divergence) is read-only and fail-open on the supervisor side: it alarms on positive observed evidence and reports nothing when the attestation cannot be made. |
+> | S10 | the read-only fail-open integrity check | Every integrity-notary check (mutation containment, promotion gate, divergence) is read-only and fail-open on the supervisor side: it alarms only on positive observed evidence. Missing mutation evidence is reported as `unverified` and never alarms; the promotion-gate and divergence audits report nothing when they cannot check. |
 > | S11 | independent enforcement with fixed trigger priority | Run enforcement applies confirmed-death reap, kill-request, deadline, then staleness. Each verified owner has one concurrent escalation, recorded in the action ring and optional ledger. Integrity scans run separately. |
-> | S12 | the no-cached-state-across-ticks rule | The supervisor holds NO cached state across ticks except the explicitly-carried trackers (`SeqLiveness`, pending process owners and their guarded orphan snapshots, integrity de-dup sets and the `TransitionObserver`, both loaded from the ledger, and the ledger tail with its recorded-break and break-logged markers) and the process-lifetime action ring. `WorkspacePaths` is read fresh every tick and is the Rust twin of `zicato.runtime.paths`. |
+> | S12 | the no-cached-state-across-ticks rule | The supervisor holds NO cached state across ticks except the explicitly-carried trackers (`SeqLiveness`, pending process owners and their guarded orphan snapshots, integrity de-dup sets and the `TransitionObserver`, both loaded from the ledger, finished pairs' containment results keyed by an input digest, and the ledger tail with its recorded-break and break-logged markers) and the process-lifetime action ring. `WorkspacePaths` is read fresh every tick and is the Rust twin of `zicato.runtime.paths`. |
 > | S13 | the operational-not-analytical HTTP surface rule | The HTTP read surface is operational. Analytical tournament and health projections belong to `zicato.query`; the supervisor may inspect the index for alarms but never serves it as business truth. |
 
 ---
@@ -77,7 +77,7 @@ producer death, competing writer leases and asynchronous enforcement.
 
 | Module | Role |
 |---|---|
-| `main.rs` | CLI (`clap`) + wiring: spawns the two watchdog loops and the HTTP server; opt-in flags for the integrity notary (`--diff-containment`, `--promotion-gate`, `--divergence-audit`, `--ledger-dir`). |
+| `main.rs` | CLI (`clap`) + wiring: spawns the two watchdog loops and the HTTP server; opt-in flags for the integrity notary (`--mutation-containment`, `--promotion-gate`, `--divergence-audit`, `--ledger-dir`). |
 | `lib.rs` | Library facade so the integration tests exercise the same code paths without spawning the binary. |
 | `watchdog.rs` | Heartbeat, run enforcement, and independent integrity scan tasks, with their decision functions and timing state. |
 | `reader.rs` | Reads runtime state files; `WorkspacePaths` (the path map twin of `zicato.runtime.paths`); kill-request read/clear; the lineage view the audits read. |
@@ -85,9 +85,8 @@ producer death, competing writer leases and asynchronous enforcement.
 | `signal.rs` | POSIX signal helpers: liveness, `pid_start_time`, `verified_process`, pgid guards, and identity-checked escalation (`escalate_owned_target`). |
 | `reap.rs` | Confirmed-dead determination + prefix-guarded `ztw-snap-*` snapshot GC. |
 | `ledger.rs` | The tamper-evident hash-chained audit ledger, its per-tick self-verification, and `TransitionObserver` (records decisions and contract hashes once, alarms when one changes). |
-| `sha256.rs` | Small dependency-free SHA-256 (ledger digests, diff-containment file hashes). |
-| `diff_containment.rs` | Integrity record #2: out-of-bounds mutation scan (parent↔child snapshot diff vs the registered mutable surface). |
-| `range_containment.rs` | Integrity record #2's byte-range attestation: verifies recorded mutation spans against the captured mutation policy and patch records (`attest_generation`). |
+| `sha256.rs` | Small dependency-free SHA-256 (ledger digests, source and record hashes, containment input digests). |
+| `range_containment.rs` | Integrity record #2, mutation containment: verifies each generation's recorded mutation spans against both source trees, the captured mutation policy, and the patch records (`attest_generation`); `ContainmentAudit` reuses finished pairs' results, attributes inherited findings, and alerts. |
 | `promotion_gate.rs` | Integrity record #3: re-derive the gate's scalar rule per recorded promotion (`check_row`). |
 | `divergence.rs` | Integrity record #4: canonical-vs-index join auditor. |
 | `index_db.rs` | Read-only SQLite access; `EXPECTED_SCHEMA_VERSION` pin; best-effort row readers. |
@@ -357,7 +356,8 @@ again can come out as different digits, which would read as an altered record.
 `prev` is the previous record's digest; genesis links to 64 zeros
 (`GENESIS_PREV`). Record kinds (`RecordKind`) are `supervisor_start`,
 `watchdog_action`, `decision_observed`, `contract_change`,
-`diff_containment_alert`, `promotion_contradiction`, `divergence_finding`,
+`diff_containment_alert` (a mutation-containment alarm, §8.8.1),
+`promotion_contradiction`, `divergence_finding`,
 `history_changed` and `ledger_integrity`. The digest covers the raw kind string
 and the verifier reads the kind as a string, so a new kind is additive: an
 older verifier still checks a record whose kind it does not recognize.
@@ -414,8 +414,9 @@ in-memory tail is NOT advanced, so the next append retries the same
 (`decision_observed`) and each epoch's contract hash (`contract_change`) the
 first time it sees them. When the integrity loop starts, and again after a
 scan panics, `LedgerHistory::load` reads what the ledger already holds: the
-recorded decisions, contract hashes and alarms, and the keys of the recorded
-diff-containment, promotion-gate and divergence findings. A restarted
+recorded decisions, contract hashes and alarms, each pair's latest recorded
+mutation-containment alarm and each recorded changed epoch input, and the
+keys of the recorded promotion-gate and divergence findings. A restarted
 supervisor records none of them again, including a finding that still
 stands. When the
 orchestrator's records later state a different decision for a recorded
@@ -454,52 +455,121 @@ stamps it with `scanned_at` and that
 `/statusz` surfaces and (when configured) the ledger records. All three obey
 the read-only fail-open integrity check: read-only, alarm-only, fail-open.
 
-### 8.8.1 Diff containment (`--diff-containment`, record #2)
+### 8.8.1 Mutation containment (`--mutation-containment`, record #2)
 
-For each materialised child generation, independently recompute the on-disk
-diff of the child snapshot against its PARENT snapshot and assert every file
-OUTSIDE the registered mutable surface is byte-identical. A changed / added /
-deleted out-of-bounds file is a mutation that escaped its sandbox
-(`DiffKind::{Changed, Added, Deleted}` in
-`crates/supervisor/src/diff_containment.rs`). This is the coarse file-level
-check; fail-open-to-alarm — an unreadable snapshot or missing parent yields
-*no violation* ("the attestation cannot be made"), never a false quarantine.
+For each lineage pair (a parent generation and its child), the scan reads both
+source trees from the configured generation store (`repo-worktrees/` for the
+git store, `snapshot/` for the directory store) and checks the child's
+`containment.json` byte-range evidence. Python writes that evidence when it
+applies the patches (MUTATION-SURFACE.md, "Accepted source and byte-range
+evidence"); the supervisor re-derives every binding from the files. The
+result has one of four statuses:
 
-The same scan also runs `range_containment::attest_generation` for every
-child with a parent. That check binds the child to the captured mutation
-policy and the patch records, then verifies byte ranges. A change outside the
-recorded mutation spans, a change to a forbidden point, a metadata change, or
-a changed file set is `violated`; missing or inconsistent evidence is
-`unverified`; otherwise the child is `contained`. The scan writes its results as finding files under
-the epoch's `health/` directory — `diff_containment_{generation}.json` for a
-quarantined generation and `mutation_containment_{generation}.json` for each
-byte-range attestation. These files are the only writes the supervisor makes
-into `epochs/`; no Python reader consumes them.
+- `contained` — every changed byte lies inside a permitted mutation unit and
+  every record agrees with the files.
+- `violated` — the evidence binds the files, and it shows a change outside the
+  mutation units, a change to a forbidden unit, an executable-bit change, a
+  created or deleted file, or an interpreter-loadable build artifact in the
+  child tree (`artifact_present`, below).
+- `evidence_mismatch` — a record contradicts the observed files. About the
+  child: a recorded hash or executable bit differs (`source_binding`), the
+  manifest omits a child file (`source_inventory`), or recorded byte changes
+  miss a changed byte (`byte_coverage`). About the parent: the captured
+  policy's inventory (`policy_inventory`), a recorded parent hash
+  (`parent_binding`), or the manifest's parent inventory (`parent_inventory`)
+  differs from the parent tree. A file edited after its evidence was written
+  lands here.
+- `unverified` — evidence is missing or malformed, names other records, or
+  cannot be read (`source_unreadable` for the child tree, `parent_unreadable`
+  for the parent tree), or a frozen epoch input differs from the captured
+  policy (`contract_binding`, below).
 
-**The Python blocking-mode mirror.** The supervisor's scan is alarm-only by
-design; the in-band twin on the exact same rule surface is
-`zicato.evolve.containment.check_containment`, consulted by the orchestrator
-immediately before finalizing a promotion when the contract opts into
-`ScoringWeights.block_on_containment_violation`:
+A violation needs every finding to be a violation; any contradiction makes
+the pair `evidence_mismatch`; any other finding makes it `unverified`. A
+finding about the captured policy (`policy_binding`, `policy_inventory`, or
+`contract_binding`) does not stop the remaining checks, so the child's own files are still
+compared.
 
-```python
-The Rust supervisor's integrity notary re-hashes child snapshots
-OUT-OF-BAND and alarms when a mutation escaped the registered mutable
-surface (``crates/supervisor/src/diff_containment.rs`` — alarm-only by
-design). This module is the IN-BAND twin on the exact same rule surface,
-consulted by the orchestrator immediately before finalizing a promotion
-when the contract opts into
-:attr:`~zicato.core.scoring_config.ScoringWeights.block_on_containment_violation`:
-```
-— `src/zicato/evolve/containment.py` (module docstring)
+**Build artifacts.** Every store excludes the names and suffixes in
+`src/zicato/epoch/source_scope.json` when it writes a generation's tree, and
+the source inventory skips them. A file whose suffix marks an
+interpreter-loadable artifact (`.pyc`, `.pyo`, `.pyd`) is therefore reported
+wherever it appears in a child tree, including inside `__pycache__`: a cached
+`.pyc` can be imported in place of its source and a sourceless `.pyc` imports
+as a module. Artifact directories such as tool caches are not reported; they
+hold no code the interpreter imports. The git store's worktree link file
+`.git` is an artifact name with no artifact suffix, so it is not reported.
 
-The two are kept in lockstep — mutable-tree basenames as the
-in-bounds surface, empty `mutable_trees` ⇒ the whole snapshot is in-bounds,
-coarse file granularity, fail-open skips. If you change the rule on either
-side, change both in the same commit and say so in both docstrings; a skew
-here means the blocking gate and the alarm disagree about what "escaped"
-means. (A sibling knob, `block_on_gate_contradiction`, does the same in-band
-promotion of record #3 below.)
+**Evidence withdrawal.** A pair with a recorded decision that verified on an
+earlier scan (`contained`, `violated`, or `evidence_mismatch`) and is now
+`unverified` carries `evidence_withdrawn: true`: its manifest was deleted, a
+tree became unreadable, or a record it binds changed. The pair's
+earlier result comes from this process's memory or, after a restart, from its
+health file. Two cases are exempt: a generation still in flight, whose records
+a resume may be discarding, and a rejected generation whose source tree is
+absent because `zicato epoch gc` pruned it.
+
+**Attribution.** The orchestrator captures a child's mutation policy from the
+parent tree before proposal, and the child's manifest records the parent's
+bytes. If the parent tree changes or becomes unreadable afterwards, every
+child of that parent reports a parent-side finding (`policy_inventory`,
+`parent_binding`, `parent_inventory`, or `parent_unreadable`). When the
+parent's own pair is `violated`, `evidence_mismatch`, or withdrawn, each such
+child carries `introduced_by: <parent>` and only the parent alarms. A child
+that also has a finding about its own files keeps its own alarm. A root
+generation has no pair, so a change to its tree is reported on each child.
+
+**Changed epoch inputs.** Every pair in an epoch binds the epoch's frozen
+`brief.md` and `scoring.json` through its captured policy. When one of them no
+longer matches the policy's digest, each pair reports `contract_binding` with
+the input's name as its path and carries `introduced_by_input: <name>`. The
+change is reported once for the epoch, and a pair whose evidence is otherwise
+intact stays silent; a pair with its own finding still alarms.
+
+**Alerts.** A pair alarms when its own finding moves it into `violated`,
+`evidence_mismatch`, or withdrawn evidence, or from one of these to another.
+The scan logs a `MUTATION-CONTAINMENT ALERT` warning and, with a ledger,
+appends a `diff_containment_alert` record carrying the pair, the alarm
+(`violated`, `evidence_mismatch`, or `evidence_withdrawn`), the status, and
+the findings. A changed epoch input appends one record with alarm
+`epoch_evidence_changed`, the epoch, the input, and the affected generations.
+A standing alarm is reported once: `LedgerHistory::load` restores each pair's
+latest recorded alarm and each recorded input change when the integrity loop
+starts or restarts after a panic, and without a ledger the pair's health file
+restores it. A pair that clears and recurs alarms again.
+
+**Cost.** A finished pair (one with a recorded promote or reject decision)
+reuses its earlier result while one digest is unchanged. The digest covers the
+store selection, the metadata of every entry in both source trees (build
+artifacts included), and the metadata of the manifest, the experiment record,
+the patch records, the parent's captured policies, and the epoch's brief and
+scoring files. Entry metadata is the inode, mode, size, and modification and
+status-change times; any write moves the status-change time, which a writer
+cannot set back. A rewrite that keeps a file's size and inode and lands within
+the file system's timestamp granularity of that file's previous change can
+keep the digest, so such a change is found only when another input changes. A
+generation still in flight is checked on every scan. The integrity loop builds
+the lineage view once per tick and passes it to this scan, the ledger's
+transition observer, and the divergence audit.
+
+The scan writes each pair's result to
+`epochs/{epoch}/health/mutation_containment_{generation}.json` (rewritten only
+when it changes). These files are the only writes the supervisor makes into
+`epochs/`; no Python reader consumes them.
+
+**The in-band twin.** `zicato.epoch.containment.verify_manifest` applies the
+same rule in Python, and the shared corpus
+`tests/fixtures/mutation_containment.json` pins both verifiers to the same
+status and the same set of finding codes for every case. When a contract sets
+`ScoringWeights.block_on_containment_violation` (default off), the
+orchestrator checks the crowned pair through
+`zicato.epoch.containment.attest_generation` immediately before finalizing a
+gate-decided promotion and rejects a `violated` or `evidence_mismatch` child
+with a `containment_violation: <status> — <findings>` reason; an `unverified`
+pair does not block. If you change the rule on either side, change both in
+the same commit and regenerate the corpus (`tests/_containment_corpus.py`);
+a skew means the alarm and the blocking gate disagree. A sibling knob,
+`block_on_gate_contradiction`, does the same for record #3 below.
 
 ### 8.8.2 Promotion gatekeeping (`--promotion-gate`, record #3)
 
@@ -854,13 +924,15 @@ tamper-evident audit trail (§8.7, §8.19).
 
 ### 8.14.4 The integrity-scan de-dup sets
 
-`integrity_loop` retains three sets to report an unchanged violation once:
-diff-containment findings keyed by epoch and generation, promotion-gate findings
-with the same key, and divergence findings keyed by code and generation. It also
-retains `TransitionObserver`. `LedgerHistory::load` fills the observer and
-all three sets from the ledger when the loop starts and again after a scan
-panics, so a finding the ledger already records is not recorded again. Each scan returns this state to the next scan;
-run enforcement has its own pending-owner set.
+`integrity_loop` retains state so an unchanged finding is reported once:
+`ContainmentAudit` (each pair's own alarm keyed by epoch and generation, each
+changed epoch evidence input, and the reusable results of finished pairs,
+§8.8.1), promotion-gate findings keyed by epoch and generation, and divergence
+findings keyed by code and generation. It also retains `TransitionObserver`.
+`LedgerHistory::load` fills the observer, the containment alarms, and both
+sets from the ledger when the loop starts and again after a scan panics, so a
+finding the ledger already records is not recorded again. Each scan returns
+this state to the next scan; run enforcement has its own pending-owner set.
 
 ---
 
@@ -1132,8 +1204,8 @@ demand.
 
 §8.8 gave the three scans' contracts; this is the re-derivation code, because a
 notary that re-derives a rule WRONG is worse than no notary. All three read the
-index or the snapshots. Only the diff-containment scan writes, and only its
-finding files under the epoch's `health/` directory (§8.8.1).
+index or the source trees. Only the mutation-containment scan writes, and only
+its finding files under the epoch's `health/` directory (§8.8.1).
 
 ### 8.20.1 `check_row` — re-applying the gate's scalar rule (record #3)
 
@@ -1218,31 +1290,23 @@ language pin — bump it in lockstep with the Python `SCHEMA_VERSION`
 (07-runtime-and-durability.md §7.1.2), and a cargo test in this module reds if
 they drift (§8.12's canonical "Python change requires Rust parity" example).
 
-### 8.20.3 The diff-containment mutable surface (record #2)
+### 8.20.3 Byte coverage and the evidence statuses (record #2)
 
-The diff-containment scan (§8.8.1) re-derives the in-bounds surface from the
-registered `mutable_trees`, and the derivation is the exact twin of the Python
-in-band mirror's — a snapshot copies each mutable tree under its BASENAME, so
-inside a snapshot root the mutable surface is `snapshot/<basename>`:
-
-```rust
-/// When `mutable_trees` is empty the surface is the WHOLE snapshot ...
-/// every file is in-bounds ...
-pub fn mutable_basenames(mutable_trees: &[String]) -> BTreeSet<String> { ... }
-```
-— `crates/supervisor/src/diff_containment.rs`, `mutable_basenames`
-
-`is_in_bounds(rel, basenames)` is true iff `rel`'s first path component is a
-mutable basename; an EMPTY `basenames` means the whole snapshot is in-bounds
-(mirroring `mutable_subpaths`' fallback). A file OUTSIDE that surface that is not
-byte-identical parent↔child is a `DiffKind::{Changed, Added, Deleted}`
-`Violation` — a mutation that escaped its sandbox. Every failure mode is
-fail-open-to-alarm: an unreadable file is skipped, a missing parent snapshot
-yields *no* violation ("the attestation cannot be made"), never a false
-quarantine. This is the same coarse file-level rule the Python
-`check_containment` blocking mirror enforces (§8.8.1) — the two MUST change
-together, because a skew means the alarm and the blocking gate disagree about
-what "escaped" means.
+`range_containment::attest` reads both trees with the artifact filter shared
+with Python (`src/zicato/epoch/source_scope.json`), then checks in order: the
+manifest's coordinates and source locations, build artifacts in the child
+tree, the captured policy and its parent inventory, the parent and child
+inventories, each file's parent and child hashes and executable bits, each
+mutation span's recorded bytes, and the byte changes. Only unreadable
+coordinates, manifests, locations, or trees stop the checks early. For every recorded
+change the bytes between changes must be identical in parent and child, and
+the change must lie inside a non-forbidden span in both trees; the bytes after
+the last change must match too. Malformed change coordinates are a
+`manifest_shape` finding, and the suffix comparison is skipped for that file
+because no recorded suffix exists. `status_of` maps the findings to the four
+statuses (§8.8.1); `zicato.epoch.containment.range_status` is its Python twin.
+`ContainmentAudit` adds what one pair cannot know: evidence withdrawal against
+the pair's earlier result, attribution to an alarmed parent, and alerts.
 
 ---
 

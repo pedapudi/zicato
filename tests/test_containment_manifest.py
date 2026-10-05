@@ -43,6 +43,7 @@ def test_shared_corpus(case: dict, tmp_path: Path) -> None:
         child_root=tmp_path / "child",
     )
     assert result.status == case["expected_status"], result
+    assert sorted({finding.code for finding in result.findings}) == case["expected_codes"], result
 
 
 def test_shared_corpus_uses_actual_mutation_and_applier_semantics() -> None:

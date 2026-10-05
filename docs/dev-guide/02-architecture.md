@@ -920,11 +920,12 @@ block carries the rating CIs plus the full `ci_history` trail. Each
 refit's CI state also lands as an `evidence_replicated` RoundLog event.
 
 **Opt-in integrity blocking.** `_integrity_block_reason` guards a
-GATE-DECIDED promotion only (never an operator force-promote): (a) diff
-containment — every file outside the registered mutable trees must be
-byte-identical parent↔child (`zicato.evolve.containment`, mirroring
-`crates/supervisor/src/diff_containment.rs`; fail-open on unreadable
-snapshots); (b) gate-contradiction re-derivation
+GATE-DECIDED promotion only (never an operator force-promote): (a) mutation
+containment — the crowned pair's byte-range evidence must bind both source
+trees and keep every changed byte inside a permitted mutation unit
+(`zicato.epoch.containment.attest_generation`, the rule
+`crates/supervisor/src/range_containment.rs` checks; a `violated` or
+`evidence_mismatch` pair is refused, an `unverified` one is not); (b) gate-contradiction re-derivation
 (`delta_scalar <= -promote_margin`, the supervisor's
 `promotion_gate.rs check_row` semantics applied pre-persist). Both
 default OFF, so the default posture matches the supervisor's alarm-only
@@ -1702,7 +1703,7 @@ The seams, and what each owns:
 | `_persist_rejected_round` | `evolve/persist.py` | one-candidate proposer-exhaustion tail | a one-candidate field whose slot failed |
 | `_defer_round_infra_outage` | `evolve/decision_support.py` | deferral tail with no outcome or journal write | every strategy |
 | `_mint_challenger_field`, `_apply_field_overrides`, `_confirm_crowning_on_holdout` | `evolve/propose_apply.py`, `evolve/gate.py` | diversity, overrides, and holdout re-resolution | every applicable round |
-| `_integrity_block_reason` | `evolve/gate.py` | opt-in diff-containment and gate-contradiction block | every strategy |
+| `_integrity_block_reason` | `evolve/gate.py` | opt-in mutation-containment and gate-contradiction block | every strategy |
 | `_RoundLogEmitter`, `_emit_tournament_units`, `_emit_gate_evaluated` | `evolve/round_reporting.py` | best-effort RoundLog emission | every strategy |
 | lifecycle services (`_beat`, `_record_progress`, `_now_iso`, `_resolve_or_launch_harmonograf`, `_build_meta_loop_emitter_safe`, the no-op shutdown handle) | `evolve/lifecycle_services.py` | heartbeat/harmonograf/emitter plumbing | loop and round pipeline |
 | placebo minting + cadence | `evolve/placebo.py` + `_mint_placebo_challenger`/`_maybe_run_placebo_arm_gauntlet` | control arms | strategy-specific cadence through the shared tail |
@@ -1744,7 +1745,7 @@ signals:
   loop is wedged") and run-staleness (`last_progress` not advancing).
   The kill decisions are pure functions of `(state, now, thresholds)`.
 - **What it never does:** decide tournaments, write canonical records, or
-  block a promotion. Its integrity surfaces (`diff_containment.rs`,
+  block a promotion. Its integrity checks (`range_containment.rs`,
   `promotion_gate.rs`) are alarm-only findings on `/statusz`; the opt-in
   IN-BAND blocking twins live in Python
   (`_integrity_block_reason`, §3.11) so that the supervisor stays a pure

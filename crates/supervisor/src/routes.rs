@@ -40,9 +40,9 @@ pub struct AppState {
     /// `None` → no ledger. `/api/audit/verify` walks its chain and `/statusz`
     /// surfaces a chain-break indicator.
     pub ledger: Option<Arc<crate::ledger::AuditLedger>>,
-    /// The latest diff-containment scan result; `/statusz` surfaces it as a
-    /// hard ALERT when any generation escaped its mutable surface.
-    pub diff_findings: Arc<crate::diff_containment::DiffContainmentFindings>,
+    /// The latest mutation-containment scan result; `/statusz` surfaces each
+    /// pair's status and findings.
+    pub containment_findings: Arc<crate::range_containment::ContainmentFindings>,
     /// The latest promotion-gatekeeping scan result; `/statusz` surfaces it as
     /// an ALERT when a recorded promotion contradicts its recorded scores.
     pub promotion_gate_findings: Arc<crate::promotion_gate::PromotionGateFindings>,
@@ -110,7 +110,7 @@ fn build_statusz_view(s: &AppState) -> statusz::StatuszView {
         seq_age_seconds,
         &s.action_log,
         audit_ledger,
-        s.diff_findings.view(),
+        s.containment_findings.view(),
         s.promotion_gate_findings.view(),
         s.divergence_findings.view(),
     )

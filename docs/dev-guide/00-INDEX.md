@@ -79,7 +79,7 @@ chapter 01.
 | 05 | `05-proposer.md` | how a proposal resolves behind `ProposerAgent` (the Foe runtime or an operator class), `ProposerContext`, best-of-N + screen + critique + align-tree, the **restricted-visibility envelope** | you change how candidates are generated or what the proposer sees |
 | 06 | `06-tournament-and-selection.md` | `run_tournament`/`resolve_tournament`, the five structures, the **worker boundary**, the **unit cache** | you touch tournament execution, structures, the worker, or caching |
 | 07 | `07-runtime-and-durability.md` | CQRS persistence, atomic writes, the git generation store, GC, crash-resume, the control protocol, RoundLog | you touch state files, storage, resume, or the round log |
-| 08 | `08-supervisor.md` | the Rust watchdog/notary — heartbeat, reaping, the hash-chained ledger, diff-containment, the read-only index | you change the supervisor or a state file it reads |
+| 08 | `08-supervisor.md` | the Rust watchdog/notary — heartbeat, reaping, the hash-chained ledger, mutation containment, the read-only index | you change the supervisor or a state file it reads |
 | 09 | `09-dashboard-and-query.md` | `zicato/query` (lib) vs `zicato/dashboard` (driver), **server-authority**, **digest gating**, the add-a-panel recipe | you change a reader, an endpoint, or a view |
 | 10 | `10-cli-and-configuration.md` | contract preparation and publication, the command contract, explicit configuration transport, the library facade and import boundaries | you change contract editing, change a command, or extend the public API |
 | 11 | `11-testing.md` | the suites, the two oracles, the parity gates, the import contracts, **complete validation** | before merge; when you add a test |
