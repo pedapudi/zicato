@@ -125,13 +125,16 @@ binds (it walks `+1` from its preferred port if taken), so `evolve`
 can read back the *actually-bound* port rather than assume one. The
 watchdog supervisor is auto-spawned by `evolve` as a child process. It
 prints one line on standard output once its `/statusz` server has bound;
-`evolve` reads that line, prints the address, and writes
+`evolve` reads its standard output in chunks of at most 64 KiB, so a line
+of any length is forwarded rather than overrunning a buffer. When the
+address line arrives, `evolve` prints the address and writes
 `supervisor.json` as `{"pid", "statusz_url", "ledger_dir"}`
-(`SupervisorRecord`, `src/zicato/runtime/state.py`). `statusz_url` is
-`null` when the supervisor did not report an address, and `ledger_dir` is
-`null` when it runs without an audit ledger. The record stays after the
-supervisor exits and is replaced when the next one starts. The
-supervisor's logs go to standard error, which it inherits from `evolve`.
+(`SupervisorRecord`, `src/zicato/runtime/state.py`); `ledger_dir` is
+`null` when the supervisor runs without an audit ledger. `evolve` removes
+the record when the supervisor's output ends or when it stops the
+supervisor, so the record exists only while a supervisor that reported its
+address is running. The supervisor's logs go to standard error, which it
+inherits from `evolve`.
 `control_log/` is created by the runtime helpers, and every consumed
 command is archived into it with a JSON sidecar — see §2.5.
 
@@ -488,8 +491,9 @@ dashboard's from `runtime/dashboard.json`.
 │  5. Run the meta-loop (rounds 1..N).                            │
 │  6. On exit: join owned work and finish worker cleanup; stop    │
 │     telemetry (and the dashboard, after a failure); run the     │
-│     final index repair; SIGTERM the supervisor and wait up to   │
-│     30s for it to exit; release the writer.                     │
+│     final index repair; SIGTERM the supervisor's process group, │
+│     wait up to 30s, then SIGKILL it and wait up to 5s; release  │
+│     the writer.                                                 │
 └─────────────────────────────────────────────────────────────────┘
                           │ spawns (×2)
                           ▼
@@ -636,7 +640,7 @@ Inside `.zicato/runtime/` the writer rules are strict:
 | `heartbeat.json` | orchestrator | supervisor, dashboard |
 | `progress.events.jsonl` | Invocation appends through its exclusive workspace writer | supervisor (via the heartbeat's `seq`), dashboard |
 | `dashboard.json` | dashboard service | orchestrator (URL readback) |
-| `supervisor.json` | orchestrator, after the supervisor reports its address | operator tools that need the `/statusz` address or the ledger directory |
+| `supervisor.json` | orchestrator, from the supervisor's address line until its output ends or it is stopped | operator tools that need the `/statusz` address or the ledger directory |
 | `active_tournament.events.jsonl` | Invocation publishes snapshots and field replacements through its exclusive workspace writer | dashboard |
 | `active_runs/{run_id}.json` | Tournament worker or proposal producer publishes its owned record; its parent finalizes after confirmed exit; the supervisor finalizes a confirmed orphan under the writer guard | supervisor, dashboard |
 | `control/<command>` | dashboard service | orchestrator, at its safe points |

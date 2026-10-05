@@ -165,8 +165,9 @@ class WorkspaceLayout:
     def supervisor_record(self) -> Path:
         """The running supervisor's address and ledger (``runtime/supervisor.json``).
 
-        ``zicato evolve`` writes it after starting the supervisor, from the
-        address the supervisor prints once its ``/statusz`` server has bound.
+        ``zicato evolve`` writes it from the address the supervisor prints once
+        its ``/statusz`` server has bound, and removes it when the supervisor's
+        output ends or evolve stops it.
         """
         return self.runtime_dir / "supervisor.json"
 

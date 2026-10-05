@@ -78,12 +78,11 @@ def write_dashboard_endpoint(workspace_root: Path, endpoint: DashboardEndpoint) 
 class SupervisorRecord:
     """Where one supervisor process serves ``/statusz`` and keeps its audit ledger.
 
-    ``statusz_url`` is ``None`` when the supervisor did not report the address
-    it bound; ``ledger_dir`` is ``None`` when it was started without a ledger.
+    ``ledger_dir`` is ``None`` when the supervisor was started without a ledger.
     """
 
     pid: int
-    statusz_url: str | None
+    statusz_url: str
     ledger_dir: str | None
 
 

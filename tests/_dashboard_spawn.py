@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import signal
 from pathlib import Path
 from typing import Any
 
@@ -84,5 +85,13 @@ def install_spawn_mock(monkeypatch: pytest.MonkeyPatch) -> list[FakeDashboardPro
             )
         return proc
 
+    def _fake_signal_group(proc: FakeDashboardProc, sig: int) -> None:
+        # The fake has no process group; route evolve's group signals to it.
+        if sig == signal.SIGTERM:
+            proc.terminate()
+        else:
+            proc.kill()
+
     monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_exec)
+    monkeypatch.setattr("zicato.cli.commands.evolve._signal_group", _fake_signal_group)
     return spawned

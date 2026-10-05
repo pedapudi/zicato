@@ -688,15 +688,24 @@ disjoint from the supervisor's 7920–7930 (see the `--port` doc in
 **The address handshake.** The binary's standard output carries one
 line, `zicato-supervisor listening on http://<addr>`, printed once the server
 has bound; `tracing` logs go to standard error (`log.rs`). `evolve` spawns the
-child with a standard-output pipe, reads lines until that one (forwarding any
-other line), prints `Supervisor: http://<addr>/statusz`, writes
+child with a standard-output pipe, and one task (`_forward_output`) reads it in
+chunks of at most 64 KiB for the life of the child, forwarding every other line
+so the pipe never fills and no line length can overrun a buffer. On the address
+line it prints `Supervisor: http://<addr>/statusz` and writes
 `runtime/supervisor.json` (`SupervisorRecord`: pid, `/statusz` address, ledger
-directory or `null`), and keeps forwarding the pipe so it never fills.
+directory or `null`); when the output ends it removes the record.
 
 **The stop sequence.** `evolve` registers the supervisor's stop on
 `InvocationContext.observers`, which closes after the final index repair and
-before the workspace writer is released (chapter 07). Stopping sends SIGTERM and
-waits up to `_SUPERVISOR_STOP_TIMEOUT_S` (30 s) before SIGKILL. On SIGTERM
+before the workspace writer is released (chapter 07). The supervisor leads its
+own session, so stopping signals its whole process group: a wrapper script or
+launcher in front of the binary, and anything it started, stops with it.
+Stopping sends SIGTERM and waits up to `_SUPERVISOR_STOP_TIMEOUT_S` (30 s) for
+the leader to be reaped and its output to close, then sends SIGKILL and waits at
+most `_SUPERVISOR_KILL_WAIT_S` (5 s). The wait reads the process's return code
+rather than awaiting `Process.wait()`, which does not return while any
+descendant still holds the pipe; forwarding is then cancelled, and its failure
+is never raised. On SIGTERM
 `main.rs` broadcasts shutdown and awaits `runs_loop`, which finishes admitted
 escalations and then awaits `integrity_loop`'s final scan.
 

@@ -15,8 +15,11 @@ import asyncio
 import json
 import os
 import signal
+import subprocess
 import sys
+import time
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -271,57 +274,187 @@ def test_supervisor_audits_name_the_workspace_proctor_ledger(
     )
 
 
-def _write_announcing_supervisor(tmp_path: Path) -> Path:
-    """A stand-in that logs a line, announces its address, then waits for SIGTERM.
-
-    On SIGTERM it takes a second before writing ``final-scan`` and exiting,
-    like the supervisor finishing its last integrity scan.
-    """
-    script = tmp_path / "announcing-supervisor.sh"
-    script.write_text(
-        "#!/usr/bin/env bash\n"
-        f"trap 'sleep 1; touch {tmp_path / 'final-scan'}; exit 0' TERM\n"
-        "echo 'a log line'\n"
-        "echo 'zicato-supervisor listening on http://127.0.0.1:7921'\n"
-        "while true; do sleep 0.1; done\n"
-    )
+def _write_supervisor(tmp_path: Path, body: str) -> Path:
+    """A stand-in supervisor binary running ``body`` under bash."""
+    script = tmp_path / "stand-in-supervisor.sh"
+    script.write_text("#!/usr/bin/env bash\n" + body)
     script.chmod(0o755)
     return script
+
+
+_ANNOUNCE = "echo 'zicato-supervisor listening on http://127.0.0.1:7921'\n"
+
+
+async def _run_supervisor(workspace: Path, supervisor: Path, during: Any = None) -> int:
+    """Start, announce, optionally inspect, and stop a stand-in supervisor."""
+    from zicato.cli.commands.evolve import _SupervisorChild
+
+    proc = await _maybe_spawn_supervisor(
+        workspace, IntegrationConfig(supervisor_binary=str(supervisor))
+    )
+    assert proc is not None
+    child = _SupervisorChild(proc)
+    try:
+        await child.announce(workspace, workspace / "proctor")
+        if during is not None:
+            await during(proc)
+    finally:
+        await child.stop()
+    return proc.pid
 
 
 def test_supervisor_reports_its_address_and_finishes_its_final_scan(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """evolve prints the /statusz address, records it, and waits for the final scan."""
-    from zicato.cli.commands.evolve import _SupervisorChild
+    """evolve prints the address, records it while the supervisor runs, and waits for its scan."""
     from zicato.runtime.paths import supervisor_record_path
 
     workspace = tmp_path / ".zicato"
     workspace.mkdir()
-    supervisor = _write_announcing_supervisor(tmp_path)
+    # On SIGTERM the stand-in takes a second before writing ``final-scan``
+    # and exiting, like the supervisor finishing its last integrity scan.
+    supervisor = _write_supervisor(
+        tmp_path,
+        f"trap 'sleep 1; touch {tmp_path / 'final-scan'}; exit 0' TERM\n"
+        "echo 'a log line'\n" + _ANNOUNCE + "while true; do sleep 0.1; done\n",
+    )
+    records: list[tuple[int, Any]] = []
 
-    async def _scenario() -> int:
-        proc = await _maybe_spawn_supervisor(
-            workspace, IntegrationConfig(supervisor_binary=str(supervisor))
-        )
-        assert proc is not None
-        child = _SupervisorChild(proc)
-        try:
-            await child.announce(workspace, workspace / "proctor")
-        finally:
-            await child.stop()
-        return proc.pid
+    async def _read_record(proc: Any) -> None:
+        records.append((proc.pid, json.loads(supervisor_record_path(workspace).read_text())))
 
-    pid = asyncio.run(_scenario())
+    asyncio.run(_run_supervisor(workspace, supervisor, _read_record))
     out = capsys.readouterr().out
     assert "a log line" in out
     assert "Supervisor: http://127.0.0.1:7921/statusz" in out
-    assert json.loads(supervisor_record_path(workspace).read_text()) == {
+    pid, record = records[0]
+    assert record == {
         "pid": pid,
         "statusz_url": "http://127.0.0.1:7921/statusz",
         "ledger_dir": str(workspace / "proctor"),
     }
     assert (tmp_path / "final-scan").exists(), "stop returned before the final scan finished"
+    assert not supervisor_record_path(workspace).exists(), "the record outlived the supervisor"
+
+
+def test_supervisor_record_is_withdrawn_when_the_supervisor_dies(tmp_path: Path) -> None:
+    """A supervisor that exits during the loop leaves no record naming it."""
+    from zicato.runtime.paths import supervisor_record_path
+
+    workspace = tmp_path / ".zicato"
+    workspace.mkdir()
+    supervisor = _write_supervisor(tmp_path, _ANNOUNCE + "sleep 0.2\n")
+    present: list[bool] = []
+
+    async def _outlive(proc: Any) -> None:
+        await asyncio.sleep(1.0)
+        present.append(supervisor_record_path(workspace).exists())
+
+    asyncio.run(_run_supervisor(workspace, supervisor, _outlive))
+    assert present == [False]
+
+
+@pytest.mark.parametrize("where", ["before the address", "after the address"])
+def test_an_output_line_longer_than_the_read_buffer_is_forwarded(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], where: str
+) -> None:
+    """A 200 000-byte line neither hides the address nor fails the stop."""
+    workspace = tmp_path / ".zicato"
+    workspace.mkdir()
+    long_line = "head -c 200000 /dev/zero | tr '\\0' x; echo\n"
+    lines = [long_line, _ANNOUNCE] if where == "before the address" else [_ANNOUNCE, long_line]
+    supervisor = _write_supervisor(tmp_path, "".join(lines) + "while true; do sleep 0.1; done\n")
+
+    async def _let_it_print(proc: Any) -> None:
+        await asyncio.sleep(0.5)
+
+    asyncio.run(_run_supervisor(workspace, supervisor, _let_it_print))
+    out = capsys.readouterr().out
+    assert "Supervisor: http://127.0.0.1:7921/statusz" in out
+    assert "x" * 200000 + "\n" in out
+
+
+_STOP_DRIVER = """
+import asyncio, json, sys, time
+from pathlib import Path
+
+import zicato.check
+import zicato.cli.commands.evolve as ev
+from zicato.config import IntegrationConfig
+from zicato.evolve.invocation import validated_invocation
+
+zicato.check.require_workspace_valid = lambda *a, **k: None
+ev._SUPERVISOR_STOP_TIMEOUT_S = 1.0
+ev._SUPERVISOR_KILL_WAIT_S = 1.0
+workspace, binary = Path(sys.argv[1]), sys.argv[2]
+
+
+async def main():
+    async with validated_invocation(workspace, None, "owner") as invocation:
+        child = ev._SupervisorChild(
+            await ev._maybe_spawn_supervisor(workspace, IntegrationConfig(supervisor_binary=binary))
+        )
+        invocation.observers.push_async_callback(child.stop)
+        await child.announce(workspace, None)
+
+
+started = time.monotonic()
+asyncio.run(main())
+print(json.dumps({"elapsed": time.monotonic() - started}))
+"""
+
+
+@pytest.mark.integration
+def test_stop_kills_a_supervisor_group_that_ignores_sigterm_and_keeps_its_output_open(
+    tmp_path: Path,
+) -> None:
+    """A launcher whose background child holds the output pipe cannot hold the workspace.
+
+    The stand-in ignores SIGTERM and leaves a background child that also
+    ignores it and keeps standard output open. Stopping must kill the whole
+    process group within the stop and kill windows and release the writer.
+    """
+    from zicato.runtime.lock import acquire_workspace_lock, release_workspace_lock
+
+    workspace = tmp_path / ".zicato"
+    workspace.mkdir()
+    child_pid, group = tmp_path / "child.pid", tmp_path / "group.pid"
+    supervisor = _write_supervisor(
+        tmp_path,
+        f"trap '' TERM\necho $$ > {group}\n"
+        "( trap '' TERM; while true; do sleep 0.1; done ) &\n"
+        f"echo $! > {child_pid}\n" + _ANNOUNCE + "while true; do sleep 0.1; done\n",
+    )
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", _STOP_DRIVER, str(workspace), str(supervisor)],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            cwd=Path(__file__).resolve().parents[1],
+        )
+        assert result.returncode == 0, result.stderr
+        elapsed = json.loads(result.stdout.splitlines()[-1])["elapsed"]
+        assert elapsed < 10, f"stopping took {elapsed:.1f}s against a two-second window"
+        release_workspace_lock(acquire_workspace_lock(workspace, "following-invocation"))
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and _alive(int(child_pid.read_text())):
+            time.sleep(0.1)
+        assert not _alive(int(child_pid.read_text())), "the background child survived the stop"
+    finally:
+        if group.exists():
+            try:
+                os.killpg(int(group.read_text()), signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
 
 
 def test_spawn_and_terminate_round_trip(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

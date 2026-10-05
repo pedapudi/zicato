@@ -15,6 +15,8 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -98,29 +100,36 @@ def _contents(root: Path) -> dict[str, bytes | None]:
     }
 
 
-@pytest.fixture
-def proctor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
-    """A bootstrapped workspace whose ``proctor/`` holds a ledger, under observation."""
-    workspace, epoch_id = bootstrap_workspace(tmp_path)
+@contextmanager
+def _observed(workspace: Path) -> Iterator[None]:
+    """Seed ``proctor/`` with ledger files and fail if anything changes them."""
     proctor_dir = WorkspaceLayout.from_root(workspace).proctor_dir
     (proctor_dir / "archive").mkdir(parents=True)
     (proctor_dir / "audit_ledger.jsonl").write_text('{"seq": 0}\n', encoding="utf-8")
     (proctor_dir / "archive" / "audit_ledger.1.jsonl").write_bytes(b"\x00older chain\n")
     before = _contents(proctor_dir)
+    _TOUCHES.clear()
+    _WATCHED.append(os.path.abspath(proctor_dir))
+    try:
+        yield
+    finally:
+        _WATCHED.clear()
+    assert _TOUCHES == []
+    assert _contents(proctor_dir) == before
+
+
+@pytest.fixture
+def proctor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
+    """A bootstrapped directory-store workspace whose ``proctor/`` is under observation."""
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
     install_stub_adapter_factory(monkeypatch)
     install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 2.0, "v1": 1.0, "v2": 1.5},
         canned_pass_by_gen={"v0": True, "v1": True, "v2": True},
     )
-    _TOUCHES.clear()
-    _WATCHED.append(os.path.abspath(proctor_dir))
-    try:
+    with _observed(workspace):
         yield workspace, epoch_id
-    finally:
-        _WATCHED.clear()
-    assert _TOUCHES == []
-    assert _contents(proctor_dir) == before
 
 
 def _cli(*args: str) -> None:
@@ -130,10 +139,25 @@ def _cli(*args: str) -> None:
     assert result.exit_code == 0, result.output
 
 
+def _read_through_the_dashboard(workspace: Path, tmp_path: Path) -> None:
+    from starlette.testclient import TestClient
+
+    from zicato.dashboard.server import create_app
+
+    static = tmp_path / "static"
+    static.mkdir()
+    (static / "index.html").write_text("<!doctype html>", encoding="utf-8")
+    with TestClient(create_app(workspace, static, read_only=True)) as client:
+        for route in ("/api/state", "/api/health", "/api/environment", "/api/logs"):
+            assert client.get(route).status_code == 200, route
+
+
 def test_loop_maintenance_and_reinitialisation_leave_proctor_untouched(
-    proctor: tuple[Path, str],
+    proctor: tuple[Path, str], tmp_path: Path
 ) -> None:
-    """Rounds, resume cleanup, repairs, epoch close and gc, and a forced init."""
+    """Rounds, dashboard reads, repairs, a contract publication, epoch close and gc, and init."""
+    from zicato.contract_draft import operations
+    from zicato.contract_draft.draft import TournamentDraft
     from zicato.orchestrator import evolve_n_rounds
 
     workspace, epoch_id = proctor
@@ -148,10 +172,14 @@ def test_loop_maintenance_and_reinitialisation_leave_proctor_untouched(
             stop_on_degenerate_health=False,
         )
     )
+    _read_through_the_dashboard(workspace, tmp_path)
     ws = str(workspace)
     for command in ("index", "generations", "v0-baseline"):
         _cli("repair", command, "--workspace", ws)
     _cli("repair", "report", "--workspace", ws, "--no-llm")
+    draft = TournamentDraft.from_workspace(workspace)
+    operations.set_brief(draft, "Published while the ledger is observed.\n")
+    operations.apply(draft, workspace, confirm=True)
     _cli("epoch", "close", epoch_id, "--workspace", ws)
     _cli("epoch", "gc", epoch_id, "--workspace", ws, "--keep-promoted-only", "--apply")
     _cli("init", "--workspace", ws, "--force", "--reset-lineage")
@@ -193,3 +221,17 @@ def test_interrupted_generation_discard_leaves_proctor_untouched(
     snapshot.mkdir()
     (snapshot / "agent.py").write_text("GREETING = 'hi'\n", encoding="utf-8")
     assert prepare_resume(workspace, epoch_id).classification == "discard_no_progress"
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_git_store_round_and_gc_leave_proctor_untouched(tmp_path: Path) -> None:
+    """The default git generation store: a measured round, an index repair, and gc."""
+    from tests._recommended_loop_support import bootstrap, run_round
+
+    workspace, epoch_id, _ = bootstrap(tmp_path)
+    with _observed(workspace):
+        asyncio.run(run_round(workspace, epoch_id))
+        ws = str(workspace)
+        _cli("repair", "index", "--workspace", ws)
+        _cli("epoch", "gc", epoch_id, "--workspace", ws, "--keep-promoted-only", "--apply")

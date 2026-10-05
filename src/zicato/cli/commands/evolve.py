@@ -66,6 +66,7 @@ import asyncio
 import json
 import shutil
 import signal
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -219,6 +220,12 @@ _SUPERVISOR_AUDIT_FLAGS = ("--mutation-containment", "--promotion-gate", "--dive
 #: integrity scan and exit before killing it.
 _SUPERVISOR_STOP_TIMEOUT_S = 30.0
 
+#: Seconds evolve waits for the supervisor's process group after SIGKILL.
+_SUPERVISOR_KILL_WAIT_S = 5.0
+
+#: The most bytes evolve reads from the supervisor's standard output at once.
+_SUPERVISOR_READ_BYTES = 65536
+
 #: The line the supervisor prints on standard output once ``/statusz`` is bound.
 _SUPERVISOR_ANNOUNCE = b"zicato-supervisor listening on "
 
@@ -282,7 +289,11 @@ async def _maybe_spawn_supervisor(
 
 
 class _SupervisorChild:
-    """A started supervisor: its reported address, then its output until it exits."""
+    """A started supervisor: its reported address, its forwarded output, and its stop.
+
+    The supervisor leads its own session, so every signal goes to its process
+    group: a wrapper script or launcher in front of the binary stops with it.
+    """
 
     def __init__(self, proc: asyncio.subprocess.Process | None) -> None:
         self.proc = proc
@@ -291,59 +302,120 @@ class _SupervisorChild:
     async def announce(
         self, workspace_root: Path, ledger_dir: Path | None, *, timeout_seconds: float = 10.0
     ) -> None:
-        """Print the ``/statusz`` address and write ``runtime/supervisor.json``.
+        """Print the ``/statusz`` address once the supervisor reports it.
 
-        The supervisor prints one line on standard output once its server
-        has bound. Any other line it writes there, before or after, is
-        forwarded to evolve's own standard output so the pipe never fills.
+        The forwarding task writes ``runtime/supervisor.json`` when the address
+        line arrives and removes it when the supervisor's output ends.
         """
+        from zicato.runtime.paths import supervisor_record_path  # noqa: PLC0415
         from zicato.runtime.state import (  # noqa: PLC0415
             SupervisorRecord,
             write_supervisor_record,
         )
 
-        if self.proc is None:
+        if self.proc is None or self.proc.stdout is None:
             return
-        url = None
-        stdout = self.proc.stdout
-        if stdout is not None:
-            try:
-                url = await asyncio.wait_for(_read_statusz_url(stdout), timeout_seconds)
-            except TimeoutError:
-                pass
-            if url is None:
-                click.echo("warning: the supervisor did not report its /statusz address", err=True)
-            else:
-                click.echo(f"Supervisor: {url}")
-            self._forwarding = asyncio.create_task(_forward_output(stdout))
-        write_supervisor_record(
-            workspace_root,
-            SupervisorRecord(self.proc.pid, url, None if ledger_dir is None else str(ledger_dir)),
+        pid, ledger = self.proc.pid, None if ledger_dir is None else str(ledger_dir)
+        address: asyncio.Future[str | None] = asyncio.get_running_loop().create_future()
+        self._forwarding = asyncio.create_task(
+            _forward_output(
+                self.proc.stdout,
+                address,
+                lambda url: write_supervisor_record(
+                    workspace_root, SupervisorRecord(pid, url, ledger)
+                ),
+                lambda: supervisor_record_path(workspace_root).unlink(missing_ok=True),
+            )
         )
+        try:
+            url = await asyncio.wait_for(asyncio.shield(address), timeout_seconds)
+        except TimeoutError:
+            url = None
+        if url is None:
+            click.echo("warning: the supervisor did not report its /statusz address", err=True)
+        else:
+            click.echo(f"Supervisor: {url}")
 
     async def stop(self) -> None:
-        """Ask the supervisor to stop, allowing time for its final integrity scan."""
-        await _terminate_child(self.proc, timeout=_SUPERVISOR_STOP_TIMEOUT_S)
+        """Stop the supervisor's process group, allowing time for its final integrity scan.
+
+        Waits up to :data:`_SUPERVISOR_STOP_TIMEOUT_S` after SIGTERM for the
+        supervisor to exit and its output to close, then sends SIGKILL and
+        waits at most :data:`_SUPERVISOR_KILL_WAIT_S`. A descendant that keeps
+        the output pipe open past that cannot hold evolve: forwarding is
+        cancelled, and a forwarding failure is never raised from here.
+        """
+        proc = self.proc
+        if proc is not None:
+
+            def finished() -> bool:
+                return proc.returncode is not None and (
+                    self._forwarding is None or self._forwarding.done()
+                )
+
+            for sig, seconds in (
+                (signal.SIGTERM, _SUPERVISOR_STOP_TIMEOUT_S),
+                (signal.SIGKILL, _SUPERVISOR_KILL_WAIT_S),
+            ):
+                if finished():
+                    break
+                _signal_group(proc, sig)
+                deadline = asyncio.get_running_loop().time() + seconds
+                while not finished() and asyncio.get_running_loop().time() < deadline:
+                    await asyncio.sleep(0.05)
         if self._forwarding is not None:
-            try:
-                await asyncio.wait_for(self._forwarding, 1.0)
-            except TimeoutError:
-                pass
+            self._forwarding.cancel()
+            await asyncio.gather(self._forwarding, return_exceptions=True)
 
 
-async def _read_statusz_url(stream: asyncio.StreamReader) -> str | None:
-    """Forward lines until the supervisor announces its address; ``None`` at end of output."""
-    while line := await stream.readline():
-        if line.startswith(_SUPERVISOR_ANNOUNCE):
-            return line[len(_SUPERVISOR_ANNOUNCE) :].decode(errors="replace").strip() + "/statusz"
-        click.echo(line.decode(errors="replace"), nl=False)
-    return None
+def _signal_group(proc: asyncio.subprocess.Process, sig: int) -> None:
+    """Signal the process group a session-leading child leads."""
+    import os  # noqa: PLC0415
+
+    # A non-positive pid would name evolve's own process group or every process.
+    if proc.pid > 0:
+        try:
+            os.killpg(proc.pid, sig)
+        except ProcessLookupError:
+            pass
 
 
-async def _forward_output(stream: asyncio.StreamReader) -> None:
-    """Copy a child's standard output to evolve's own until the child closes it."""
-    while line := await stream.readline():
-        click.echo(line.decode(errors="replace"), nl=False)
+async def _forward_output(
+    stream: asyncio.StreamReader,
+    address: asyncio.Future[str | None],
+    publish: Callable[[str], None],
+    withdraw: Callable[[], None],
+) -> None:
+    """Copy the supervisor's standard output to evolve's, resolving its address line.
+
+    Output is read in bounded chunks, so a line of any length is forwarded
+    rather than overrunning a line buffer. Lines before the address line are
+    forwarded whole; a partial line longer than one chunk is forwarded as it
+    arrives. ``publish`` receives the address; ``withdraw`` runs when the
+    output ends.
+    """
+    pending = b""
+    try:
+        while chunk := await stream.read(_SUPERVISOR_READ_BYTES):
+            if address.done():
+                click.echo(chunk, nl=False)
+                continue
+            *lines, pending = (pending + chunk).split(b"\n")
+            for line in lines:
+                if not address.done() and line.startswith(_SUPERVISOR_ANNOUNCE):
+                    url = line[len(_SUPERVISOR_ANNOUNCE) :].decode(errors="replace").strip()
+                    publish(url + "/statusz")
+                    address.set_result(url + "/statusz")
+                else:
+                    click.echo(line + b"\n", nl=False)
+            if address.done() or len(pending) >= _SUPERVISOR_READ_BYTES:
+                click.echo(pending, nl=False)
+                pending = b""
+        click.echo(pending, nl=False)
+    finally:
+        withdraw()
+        if not address.done():
+            address.set_result(None)
 
 
 def _dashboard_spawn_argv(
@@ -555,13 +627,11 @@ def _read_dashboard_endpoint(endpoint_file: Path) -> tuple[str, int | None]:
     return (endpoint.host, endpoint.port) if endpoint else (_DASHBOARD_HOST, None)
 
 
-async def _terminate_child(
-    proc: asyncio.subprocess.Process | None, *, timeout: float = 5.0
-) -> None:
+async def _terminate_child(proc: asyncio.subprocess.Process | None) -> None:
     """Shut down a previously-spawned child process; idempotent.
 
-    Used to tear down both the watchdog supervisor and the Python
-    dashboard service. Sends ``SIGTERM``, waits up to ``timeout`` seconds
+    Used to tear down the Python dashboard service, whose standard
+    streams are not pipes. Sends ``SIGTERM``, waits up to five seconds
     for a clean exit, then escalates to ``SIGKILL``.
     """
     if proc is None:
@@ -573,7 +643,7 @@ async def _terminate_child(
     except ProcessLookupError:
         return
     try:
-        await asyncio.wait_for(proc.wait(), timeout=timeout)
+        await asyncio.wait_for(proc.wait(), timeout=5)
     except TimeoutError:
         try:
             proc.kill()
