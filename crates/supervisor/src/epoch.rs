@@ -1,11 +1,9 @@
 //! Assemble the current epoch's full evaluation contract for the integrity
-//! audits (diff containment, promotion gatekeeping, divergence).
+//! audits (ledger transitions, promotion gatekeeping, divergence).
 //!
 //! An epoch is defined by a handful of files under
 //! `.zicato/epochs/{epoch_id}/` (`board.jsonl`, `brief.md`,
-//! `scoring.json`, `config.json`, optional `mutations.json`) plus the
-//! workspace-level `.zicato/config.json` (registered harness entrypoint
-//! and mutable trees).
+//! `scoring.json`, `config.json`, optional `mutations.json`).
 //!
 //! Every component degrades gracefully: a missing or malformed file
 //! yields an empty/`null` value for that component rather than failing
@@ -32,8 +30,6 @@ pub struct EpochView {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub closed: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub harness: Option<Harness>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub board: Option<Vec<BoardEntry>>,
     /// The epoch's frozen proposer brief. Serialized as `brief`.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -42,14 +38,6 @@ pub struct EpochView {
     pub scoring: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mutations: Option<Vec<Mutation>>,
-}
-
-/// Registered harness: the adapter entrypoint and the trees a proposer
-/// is allowed to mutate.
-#[derive(Debug, Clone, Default, Serialize)]
-pub struct Harness {
-    pub entrypoint: Option<String>,
-    pub mutable_trees: Vec<String>,
 }
 
 /// One board entry, summarised for display.
@@ -227,28 +215,6 @@ fn parse_mutations(path: &std::path::Path) -> Option<Vec<Mutation>> {
     Some(out)
 }
 
-/// Read the registered harness from the workspace `.zicato/config.json`.
-///
-/// Harness identity is declared under `adapter.{entrypoint,mutable_trees}`.
-fn read_harness(paths: &WorkspacePaths) -> Option<Harness> {
-    let cfg = read_json_value(&paths.workspace.join("config.json"))?;
-    let adapter = cfg.get("adapter").filter(|value| value.is_object())?;
-    let entrypoint = str_field(adapter, "entrypoint");
-    let trees_value = adapter.get("mutable_trees");
-    let mutable_trees = trees_value
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|t| t.as_str().map(str::to_string))
-                .collect()
-        })
-        .unwrap_or_default();
-    Some(Harness {
-        entrypoint,
-        mutable_trees,
-    })
-}
-
 /// The contract hash frozen in `epochs/<epoch_id>/config.json`, when present.
 pub fn contract_hash(paths: &WorkspacePaths, epoch_id: &str) -> Option<String> {
     let cfg = read_json_value(&paths.epochs.join(epoch_id).join("config.json"))?;
@@ -299,7 +265,6 @@ pub fn build_epoch_view(paths: &WorkspacePaths) -> EpochView {
         contract_hash,
         created_at,
         closed,
-        harness: read_harness(paths),
         board,
         brief,
         scoring,
@@ -432,35 +397,6 @@ mod tests {
         assert_eq!(m[0].lines.as_deref(), Some("12-34"));
         assert_eq!(m[1].lines.as_deref(), Some("7"));
         assert_eq!(m[0].preview.as_deref(), Some("hello"));
-    }
-
-    #[test]
-    fn unregistered_workspace_has_no_harness() {
-        let (_t, p) = ws();
-        std::fs::write(p.current_epoch_marker(), "e1").unwrap();
-        std::fs::create_dir_all(p.epochs.join("e1")).unwrap();
-        let cfg = serde_json::json!({
-            "adk_entrypoint": "mod:agent",
-            "mutable_trees": ["/abs/agent"],
-        });
-        std::fs::write(p.workspace.join("config.json"), cfg.to_string()).unwrap();
-        let view = build_epoch_view(&p);
-        assert!(view.harness.is_none());
-    }
-
-    #[test]
-    fn harness_nested_adapter_shape() {
-        let (_t, p) = ws();
-        std::fs::write(p.current_epoch_marker(), "e1").unwrap();
-        std::fs::create_dir_all(p.epochs.join("e1")).unwrap();
-        let cfg = serde_json::json!({
-            "adapter": {"entrypoint": "mod:root", "mutable_trees": ["/x"]},
-        });
-        std::fs::write(p.workspace.join("config.json"), cfg.to_string()).unwrap();
-        let view = build_epoch_view(&p);
-        let h = view.harness.unwrap();
-        assert_eq!(h.entrypoint.as_deref(), Some("mod:root"));
-        assert_eq!(h.mutable_trees, vec!["/x".to_string()]);
     }
 
     #[test]

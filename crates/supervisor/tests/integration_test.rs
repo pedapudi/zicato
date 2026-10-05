@@ -29,8 +29,8 @@ fn serve_opts() -> server::ServeOptions {
         action_log: Arc::new(WatchdogLog::new()),
         seq_liveness: Arc::new(std::sync::Mutex::new(watchdog::SeqLiveness::new())),
         ledger: None,
-        diff_findings: Arc::new(
-            zicato_supervisor::diff_containment::DiffContainmentFindings::new(),
+        containment_findings: Arc::new(
+            zicato_supervisor::range_containment::ContainmentFindings::new(),
         ),
         promotion_gate_findings: Arc::new(
             zicato_supervisor::promotion_gate::PromotionGateFindings::new(),
@@ -125,13 +125,6 @@ fn write_full_epoch(paths: &reader::WorkspacePaths, id: &str) {
          "line_start": 12, "line_end": 34, "content": "You are a research specialist"},
     ]);
     std::fs::write(dir.join("mutations.json"), muts.to_string()).unwrap();
-
-    let ws_cfg = serde_json::json!({"adapter": {
-        "kind": "adk",
-        "entrypoint": "kossel_run:root_agent",
-        "mutable_trees": ["/abs/path/to/agent"],
-    }});
-    std::fs::write(paths.workspace.join("config.json"), ws_cfg.to_string()).unwrap();
 }
 
 /// The current epoch's contract as the integrity audits read it.
@@ -149,9 +142,6 @@ fn epoch_view_reads_the_full_definition() {
     assert_eq!(r["contract_hash"], "abc123hash");
     assert_eq!(r["created_at"], "2026-05-15T23:42:25+00:00");
     assert_eq!(r["closed"], false);
-
-    assert_eq!(r["harness"]["entrypoint"], "kossel_run:root_agent");
-    assert_eq!(r["harness"]["mutable_trees"][0], "/abs/path/to/agent");
 
     let board = r["board"].as_array().unwrap();
     assert_eq!(board.len(), 2);
@@ -417,10 +407,10 @@ async fn watchdog_sigterms_run_past_its_deadline() {
             Duration::from_millis(50),
             Arc::new(WatchdogLog::new()),
             None,
-            watchdog::DiffContainmentConfig {
+            watchdog::ContainmentConfig {
                 enabled: false,
                 findings: Arc::new(
-                    zicato_supervisor::diff_containment::DiffContainmentFindings::new(),
+                    zicato_supervisor::range_containment::ContainmentFindings::new(),
                 ),
             },
             watchdog::PromotionGateConfig {
@@ -474,10 +464,10 @@ async fn watchdog_escalates_to_sigkill_when_run_ignores_sigterm() {
             Duration::from_millis(50),
             Arc::new(WatchdogLog::new()),
             None,
-            watchdog::DiffContainmentConfig {
+            watchdog::ContainmentConfig {
                 enabled: false,
                 findings: Arc::new(
-                    zicato_supervisor::diff_containment::DiffContainmentFindings::new(),
+                    zicato_supervisor::range_containment::ContainmentFindings::new(),
                 ),
             },
             watchdog::PromotionGateConfig {
@@ -519,10 +509,10 @@ async fn watchdog_does_not_kill_run_when_deadline_disabled() {
             Duration::from_millis(50),
             Arc::new(WatchdogLog::new()),
             None,
-            watchdog::DiffContainmentConfig {
+            watchdog::ContainmentConfig {
                 enabled: false,
                 findings: Arc::new(
-                    zicato_supervisor::diff_containment::DiffContainmentFindings::new(),
+                    zicato_supervisor::range_containment::ContainmentFindings::new(),
                 ),
             },
             watchdog::PromotionGateConfig {
@@ -580,10 +570,10 @@ async fn watchdog_never_signals_orchestrator_or_init_pids() {
             Duration::from_millis(50),
             Arc::new(WatchdogLog::new()),
             None,
-            watchdog::DiffContainmentConfig {
+            watchdog::ContainmentConfig {
                 enabled: false,
                 findings: Arc::new(
-                    zicato_supervisor::diff_containment::DiffContainmentFindings::new(),
+                    zicato_supervisor::range_containment::ContainmentFindings::new(),
                 ),
             },
             watchdog::PromotionGateConfig {
@@ -935,8 +925,8 @@ async fn statusz_surfaces_recorded_watchdog_actions() {
         action_log: action_log.clone(),
         seq_liveness: Arc::new(std::sync::Mutex::new(watchdog::SeqLiveness::new())),
         ledger: None,
-        diff_findings: Arc::new(
-            zicato_supervisor::diff_containment::DiffContainmentFindings::new(),
+        containment_findings: Arc::new(
+            zicato_supervisor::range_containment::ContainmentFindings::new(),
         ),
         promotion_gate_findings: Arc::new(
             zicato_supervisor::promotion_gate::PromotionGateFindings::new(),
@@ -1019,8 +1009,8 @@ async fn audit_verify_reports_intact_chain_and_statusz_surfaces_it() {
         action_log: Arc::new(WatchdogLog::new()),
         seq_liveness: Arc::new(std::sync::Mutex::new(watchdog::SeqLiveness::new())),
         ledger: Some(ledger.clone()),
-        diff_findings: Arc::new(
-            zicato_supervisor::diff_containment::DiffContainmentFindings::new(),
+        containment_findings: Arc::new(
+            zicato_supervisor::range_containment::ContainmentFindings::new(),
         ),
         promotion_gate_findings: Arc::new(
             zicato_supervisor::promotion_gate::PromotionGateFindings::new(),
@@ -1079,8 +1069,8 @@ async fn audit_verify_detects_a_tampered_chain() {
         action_log: Arc::new(WatchdogLog::new()),
         seq_liveness: Arc::new(std::sync::Mutex::new(watchdog::SeqLiveness::new())),
         ledger: Some(ledger.clone()),
-        diff_findings: Arc::new(
-            zicato_supervisor::diff_containment::DiffContainmentFindings::new(),
+        containment_findings: Arc::new(
+            zicato_supervisor::range_containment::ContainmentFindings::new(),
         ),
         promotion_gate_findings: Arc::new(
             zicato_supervisor::promotion_gate::PromotionGateFindings::new(),
@@ -1125,87 +1115,146 @@ async fn audit_verify_detects_a_tampered_chain() {
     let _ = shutdown.send(());
 }
 
-// ---- diff containment (INTEGRITY NOTARY record #2) ----------------------
+// ---- mutation containment (INTEGRITY NOTARY record #2) ------------------
 
-/// Materialise a generation snapshot under epochs/{e}/generations/{g}/.
-fn write_gen_snapshot(
-    paths: &reader::WorkspacePaths,
-    epoch: &str,
-    gen: &str,
-    parent: Option<&str>,
-    files: &[(&str, &[u8])],
-) {
-    let gen_dir = paths.epochs.join(epoch).join("generations").join(gen);
-    std::fs::create_dir_all(&gen_dir).unwrap();
-    if let Some(parent) = parent {
-        std::fs::write(
-            gen_dir.join("experiment.json"),
-            serde_json::json!({"parent_generation_id": parent}).to_string(),
-        )
-        .unwrap();
-        std::fs::write(
-            paths.lineage(),
-            serde_json::json!({"epochs": [{"id": epoch, "generations": [{
-                "id": gen, "parent_id": parent, "promoted": false
-            }]}]})
-            .to_string(),
-        )
-        .unwrap();
-    }
-    for (rel, contents) in files {
-        let p = gen_dir.join("snapshot").join(rel);
-        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
-        std::fs::write(p, contents).unwrap();
+fn unhex(value: &Value) -> Vec<u8> {
+    let text = value.as_str().unwrap();
+    (0..text.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&text[i..i + 2], 16).unwrap())
+        .collect()
+}
+
+/// One case from the corpus the Python and supervisor verifiers share.
+fn containment_case(name: &str) -> Value {
+    let corpus: Value = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/mutation_containment.json"
+    ))
+    .unwrap();
+    corpus["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|case| case["name"] == name)
+        .unwrap()
+        .clone()
+}
+
+fn write_source(root: &std::path::Path, files: &Value) {
+    use std::os::unix::fs::PermissionsExt;
+    for (name, file) in files.as_object().unwrap() {
+        let path = root.join(name);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, unhex(&file["hex"])).unwrap();
+        let mode = if file["executable"] == true {
+            0o755
+        } else {
+            0o644
+        };
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
     }
 }
 
-#[tokio::test]
-async fn diff_containment_quarantines_an_out_of_bounds_child_end_to_end() {
-    let (_t, paths) = make_workspace();
-    // Harness: the only mutable tree is "agent".
+/// Lay out one corpus case as the directory-store pair `v0 -> v1`.
+///
+/// The corpus manifest and captured policy name the corpus's own source
+/// locations, so both are rewritten to the store's snapshot paths, and the
+/// policy's content address follows its rewritten bytes. `promoted` is the
+/// recorded decision; `None` leaves the child in flight.
+fn containment_workspace(
+    case: &Value,
+    promoted: Option<bool>,
+) -> (TempDir, reader::WorkspacePaths) {
+    let (tmp, paths) = make_workspace();
     std::fs::write(
         paths.workspace.join("config.json"),
-        serde_json::json!({"adapter": {
-            "kind": "adk", "entrypoint": "m:a", "mutable_trees": ["/reg/agent"]
-        }})
-        .to_string(),
+        serde_json::json!({"generation_source_backend": "directory"}).to_string(),
     )
     .unwrap();
-    std::fs::write(paths.current_epoch_marker(), "e1").unwrap();
-    // v0 parent + v1 child; v1 tampers with an out-of-bounds support file.
-    write_gen_snapshot(
-        &paths,
-        "e1",
-        "v0",
-        None,
-        &[("agent/main.py", b"x=1\n"), ("support/lib.py", b"shared\n")],
-    );
-    write_gen_snapshot(
-        &paths,
-        "e1",
-        "v1",
-        Some("v0"),
-        &[
-            ("agent/main.py", b"x=2\n"),
-            ("support/lib.py", b"TAMPERED\n"),
-        ],
-    );
+    std::fs::write(paths.current_epoch_marker(), "epoch").unwrap();
+    let epoch = paths.epochs.join("epoch");
+    let generation = |id: &str| epoch.join("generations").join(id);
+    let source = |id: &str| format!("epochs/epoch/generations/{id}/snapshot");
+    write_source(&generation("v0").join("snapshot"), &case["parent"]);
+    write_source(&generation("v1").join("snapshot"), &case["child"]);
+    std::fs::write(epoch.join("brief.md"), unhex(&case["brief"])).unwrap();
+    std::fs::write(epoch.join("scoring.json"), unhex(&case["scoring"])).unwrap();
+    let mut policy: Value = serde_json::from_slice(&unhex(&case["policy"])).unwrap();
+    policy["parent_source"] = source("v0").into();
+    let policy = serde_json::to_vec(&policy).unwrap();
+    let policy_sha256 = zicato_supervisor::sha256::hex_digest(&policy);
+    let policies = generation("v0").join("mutation-policies");
+    std::fs::create_dir_all(&policies).unwrap();
+    std::fs::write(policies.join(format!("{policy_sha256}.json")), policy).unwrap();
+    let mut manifest = case["manifest"].clone();
+    manifest["parent_source"] = source("v0").into();
+    manifest["child_source"] = source("v1").into();
+    manifest["policy_sha256"] = policy_sha256.into();
+    std::fs::write(
+        generation("v1").join("containment.json"),
+        manifest.to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        generation("v1").join("experiment.json"),
+        case["experiment"].to_string(),
+    )
+    .unwrap();
+    std::fs::create_dir_all(generation("v1").join("patches")).unwrap();
+    for (id, bytes) in case["patch_records"].as_object().unwrap() {
+        std::fs::write(
+            generation("v1").join("patches").join(format!("{id}.json")),
+            unhex(bytes),
+        )
+        .unwrap();
+    }
+    let mut child = serde_json::json!({"id": "v1", "parent_id": "v0"});
+    if let Some(promoted) = promoted {
+        child["promoted"] = promoted.into();
+    }
+    std::fs::write(
+        paths.lineage(),
+        serde_json::json!({"epochs": [{"id": "epoch", "generations": [{"id": "v0"}, child]}]})
+            .to_string(),
+    )
+    .unwrap();
+    (tmp, paths)
+}
 
-    // A shared findings store the loop fills and the server reads.
-    let findings = Arc::new(zicato_supervisor::diff_containment::DiffContainmentFindings::new());
+fn child_source(paths: &reader::WorkspacePaths) -> std::path::PathBuf {
+    paths.epochs.join("epoch/generations/v1/snapshot/prompt.py")
+}
+
+fn containment_alerts(ledger_dir: &std::path::Path) -> Vec<Value> {
+    std::fs::read_to_string(ledger_dir.join("audit_ledger.jsonl"))
+        .unwrap_or_default()
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .filter(|record| record["kind"] == "diff_containment_alert")
+        .map(|record| record["payload"].clone())
+        .collect()
+}
+
+#[tokio::test]
+async fn mutation_containment_violation_reaches_statusz_health_and_ledger_once() {
+    let (_t, paths) = containment_workspace(&containment_case("adjacent-expression"), Some(true));
+    let ledger_dir = paths.workspace.join("ledger");
+    let ledger = Arc::new(zicato_supervisor::ledger::AuditLedger::open(&ledger_dir));
+    let findings = Arc::new(zicato_supervisor::range_containment::ContainmentFindings::new());
 
     let (shutdown_tx, _) = broadcast::channel(4);
     let loop_paths = paths.clone();
     let loop_shutdown = shutdown_tx.clone();
     let loop_findings = findings.clone();
+    let loop_ledger = ledger.clone();
     tokio::spawn(async move {
         watchdog::runs_loop(
             loop_paths,
             fast_thresholds(false),
             Duration::from_millis(50),
             Arc::new(WatchdogLog::new()),
-            None,
-            watchdog::DiffContainmentConfig {
+            Some(loop_ledger),
+            watchdog::ContainmentConfig {
                 enabled: true,
                 findings: loop_findings,
             },
@@ -1222,26 +1271,16 @@ async fn diff_containment_quarantines_an_out_of_bounds_child_end_to_end() {
         )
         .await
     });
+    // Several scans run in this window; a standing violation alerts once.
+    tokio::time::sleep(Duration::from_millis(400)).await;
 
-    // Give the loop a few ticks to scan.
-    tokio::time::sleep(Duration::from_millis(300)).await;
-
-    // The shared store now holds the quarantine; serve /statusz over it.
     let opts = server::ServeOptions {
-        heartbeat_stale_threshold_seconds: 30,
-        action_log: Arc::new(WatchdogLog::new()),
-        seq_liveness: Arc::new(std::sync::Mutex::new(watchdog::SeqLiveness::new())),
-        ledger: None,
-        diff_findings: findings.clone(),
-        promotion_gate_findings: Arc::new(
-            zicato_supervisor::promotion_gate::PromotionGateFindings::new(),
-        ),
-        divergence_findings: Arc::new(zicato_supervisor::divergence::DivergenceFindings::new()),
+        containment_findings: findings.clone(),
+        ..serve_opts()
     };
     let (handle, server_shutdown) = start_server_with(paths.clone(), opts).await;
     let base = format!("http://{}", handle.addr);
     let client = reqwest::Client::new();
-
     let s: Value = client
         .get(format!("{base}/statusz.json"))
         .send()
@@ -1250,21 +1289,14 @@ async fn diff_containment_quarantines_an_out_of_bounds_child_end_to_end() {
         .json()
         .await
         .unwrap();
-    let dc = &s["diff_containment"];
-    assert_eq!(dc["scanned"], true);
-    let quarantined = dc["quarantined"].as_array().unwrap();
+    let mc = &s["mutation_containment"];
+    assert_eq!(mc["scanned"], true);
+    assert_eq!(mc["violated"], 1);
+    assert_eq!(mc["attestations"][0]["generation_id"], "v1");
     assert_eq!(
-        quarantined.len(),
-        1,
-        "the out-of-bounds child is quarantined"
+        mc["attestations"][0]["findings"][0]["code"],
+        "outside_mutation"
     );
-    assert_eq!(quarantined[0]["generation_id"], "v1");
-    assert_eq!(
-        quarantined[0]["violations"][0]["path"], "support/lib.py",
-        "the out-of-bounds file is named"
-    );
-
-    // The terse HTML raises the hard ALERT.
     let html = client
         .get(format!("{base}/statusz"))
         .send()
@@ -1273,86 +1305,347 @@ async fn diff_containment_quarantines_an_out_of_bounds_child_end_to_end() {
         .text()
         .await
         .unwrap();
-    assert!(html.contains("OUT-OF-BOUNDS MUTATIONS"));
+    assert!(html.contains("SOURCE DIFFERS FROM MUTATION EVIDENCE"));
 
-    // A durable quarantine finding was written into the epoch health dir.
-    let finding = paths
-        .epoch_health_dir("e1")
-        .join("diff_containment_v1.json");
-    assert!(finding.exists(), "a quarantine finding must be persisted");
+    let health: Value = serde_json::from_slice(
+        &std::fs::read(
+            paths
+                .epoch_health_dir("epoch")
+                .join("mutation_containment_v1.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(health["status"], "violated");
+
+    let alerts = containment_alerts(&ledger_dir);
+    assert_eq!(alerts.len(), 1, "{alerts:?}");
+    assert_eq!(alerts[0]["generation_id"], "v1");
+    assert_eq!(alerts[0]["status"], "violated");
 
     let _ = shutdown_tx.send(());
     let _ = server_shutdown.send(());
 }
 
-#[tokio::test]
-async fn diff_containment_passes_an_in_bounds_child_end_to_end() {
-    let (_t, paths) = make_workspace();
+#[test]
+fn mutation_containment_separates_contradicting_from_missing_evidence() {
+    use zicato_supervisor::range_containment::{ContainmentAudit, Status};
+    let (_t, paths) = containment_workspace(&containment_case("literal"), Some(false));
+    let mut audit = ContainmentAudit::new();
+    let scan = |audit: &mut ContainmentAudit| {
+        audit
+            .scan(&paths, &reader::build_lineage_view(&paths))
+            .attestations
+            .remove(0)
+    };
+    assert_eq!(scan(&mut audit).status, Status::Contained);
+
+    let mut source = std::fs::read(child_source(&paths)).unwrap();
+    source.extend_from_slice(b"ESCAPED = True\n");
+    std::fs::write(child_source(&paths), source).unwrap();
+    let edited = scan(&mut audit);
+    assert_eq!(
+        edited.status,
+        Status::EvidenceMismatch,
+        "{:?}",
+        edited.findings
+    );
+    assert!(edited.findings.iter().any(|f| f.code == "source_binding"));
+
+    std::fs::remove_file(paths.epochs.join("epoch/generations/v1/containment.json")).unwrap();
+    assert_eq!(scan(&mut audit).status, Status::Unverified);
+}
+
+#[test]
+fn mutation_containment_reuses_finished_pairs_until_an_input_changes() {
+    use zicato_supervisor::range_containment::{ContainmentAudit, Status};
+    let (_t, paths) = containment_workspace(&containment_case("literal"), Some(true));
+    let mut audit = ContainmentAudit::new();
+    let lineage = reader::build_lineage_view(&paths);
+    assert_eq!(audit.scan(&paths, &lineage).reused, 0);
+    let unchanged = audit.scan(&paths, &lineage);
+    assert_eq!(unchanged.reused, 1);
+    assert_eq!(unchanged.contained, 1);
+
+    // Same length, so only the content and change times differ.
+    let source = std::fs::read(child_source(&paths)).unwrap();
+    let edited = String::from_utf8(source)
+        .unwrap()
+        .replace("TAIL = 1", "TAIL = 2");
+    std::fs::write(child_source(&paths), edited).unwrap();
+    let rechecked = audit.scan(&paths, &lineage);
+    assert_eq!(rechecked.reused, 0);
+    assert_eq!(rechecked.attestations[0].status, Status::EvidenceMismatch);
+
+    // A generation still in flight is verified on every scan.
+    let (_t, paths) = containment_workspace(&containment_case("literal"), None);
+    let lineage = reader::build_lineage_view(&paths);
+    let mut audit = ContainmentAudit::new();
+    audit.scan(&paths, &lineage);
+    assert_eq!(audit.scan(&paths, &lineage).reused, 0);
+}
+
+#[test]
+fn mutation_containment_alerts_on_each_move_into_an_alarm_status() {
+    use zicato_supervisor::range_containment::ContainmentAudit;
+    let (_t, paths) = containment_workspace(&containment_case("literal"), Some(true));
+    let ledger_dir = paths.workspace.join("ledger");
+    let ledger = zicato_supervisor::ledger::AuditLedger::open(&ledger_dir);
+    let mut audit = ContainmentAudit::new();
+    let mut tick = || {
+        let lineage = reader::build_lineage_view(&paths);
+        audit.tick(&paths, &lineage, Some(&ledger));
+    };
+    tick();
+    assert!(containment_alerts(&ledger_dir).is_empty());
+
+    let source = std::fs::read(child_source(&paths)).unwrap();
+    std::fs::write(child_source(&paths), [source, b"X = 1\n".to_vec()].concat()).unwrap();
+    tick();
+    tick();
+    let alerts = containment_alerts(&ledger_dir);
+    assert_eq!(alerts.len(), 1, "{alerts:?}");
+    assert_eq!(alerts[0]["status"], "evidence_mismatch");
+    assert_eq!(alerts[0]["findings"][0]["code"], "source_binding");
+}
+
+/// Scan a decided pair once while its evidence verifies, apply `withdraw`,
+/// scan twice more, and return the alerts and the final attestation.
+fn withdraw_after_verification(
+    promoted: Option<bool>,
+    withdraw: impl FnOnce(&reader::WorkspacePaths),
+) -> (
+    Vec<Value>,
+    zicato_supervisor::range_containment::Attestation,
+) {
+    use zicato_supervisor::range_containment::{ContainmentAudit, Status};
+    let (_t, paths) = containment_workspace(&containment_case("literal"), promoted);
+    let ledger_dir = paths.workspace.join("ledger");
+    let ledger = zicato_supervisor::ledger::AuditLedger::open(&ledger_dir);
+    let mut audit = ContainmentAudit::new();
+    let mut tick = || {
+        let lineage = reader::build_lineage_view(&paths);
+        audit
+            .tick(&paths, &lineage, Some(&ledger))
+            .attestations
+            .remove(0)
+    };
+    assert_eq!(tick().status, Status::Contained);
+    withdraw(&paths);
+    tick();
+    let last = tick();
+    (containment_alerts(&ledger_dir), last)
+}
+
+fn assert_withdrawn_once(
+    alerts: &[Value],
+    attestation: &zicato_supervisor::range_containment::Attestation,
+    code: &str,
+) {
+    use zicato_supervisor::range_containment::Status;
+    assert_eq!(
+        attestation.status,
+        Status::Unverified,
+        "{:?}",
+        attestation.findings
+    );
+    assert!(attestation.evidence_withdrawn);
+    assert!(
+        attestation.findings.iter().any(|f| f.code == code),
+        "{:?}",
+        attestation.findings
+    );
+    assert_eq!(alerts.len(), 1, "{alerts:?}");
+    assert_eq!(alerts[0]["alarm"], "evidence_withdrawn");
+    assert_eq!(alerts[0]["generation_id"], "v1");
+}
+
+#[test]
+fn mutation_containment_alarms_when_a_link_makes_verified_source_unreadable() {
+    let (alerts, last) = withdraw_after_verification(Some(true), |paths| {
+        std::os::unix::fs::symlink(
+            "prompt.py",
+            paths.epochs.join("epoch/generations/v1/snapshot/alias.py"),
+        )
+        .unwrap();
+    });
+    assert_withdrawn_once(&alerts, &last, "source_unreadable");
+}
+
+/// Copy the decided child `v1` as a decided sibling `child` of `v0`, with its
+/// own coordinates in the manifest, experiment, and lineage.
+fn add_sibling(paths: &reader::WorkspacePaths, child: &str) {
+    let generations = paths.epochs.join("epoch/generations");
+    let copy = |from: &std::path::Path, to: &std::path::Path| {
+        for entry in walkdir::WalkDir::new(from) {
+            let entry = entry.unwrap();
+            let target = to.join(entry.path().strip_prefix(from).unwrap());
+            if entry.file_type().is_dir() {
+                std::fs::create_dir_all(&target).unwrap();
+            } else {
+                std::fs::copy(entry.path(), &target).unwrap();
+            }
+        }
+    };
+    copy(&generations.join("v1"), &generations.join(child));
+    let edit = |name: &str, change: &dyn Fn(&mut Value)| {
+        let path = generations.join(child).join(name);
+        let mut body: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        change(&mut body);
+        std::fs::write(path, body.to_string()).unwrap();
+    };
+    edit("containment.json", &|manifest| {
+        manifest["generation_id"] = child.into();
+        manifest["child_source"] = format!("epochs/epoch/generations/{child}/snapshot").into();
+    });
+    edit("experiment.json", &|experiment| {
+        experiment["generation_id"] = child.into();
+    });
+    let mut lineage: Value =
+        serde_json::from_slice(&std::fs::read(paths.lineage()).unwrap()).unwrap();
+    lineage["epochs"][0]["generations"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({"id": child, "parent_id": "v0", "promoted": false}));
+    std::fs::write(paths.lineage(), lineage.to_string()).unwrap();
+}
+
+#[test]
+fn mutation_containment_reports_a_changed_epoch_input_once() {
+    use zicato_supervisor::range_containment::{ContainmentAudit, Status};
+    let (_t, paths) = containment_workspace(&containment_case("literal"), Some(true));
+    add_sibling(&paths, "v2");
+    add_sibling(&paths, "v3");
+    let ledger_dir = paths.workspace.join("ledger");
+    let ledger = zicato_supervisor::ledger::AuditLedger::open(&ledger_dir);
+    let mut audit = ContainmentAudit::new();
+    let mut tick = || audit.tick(&paths, &reader::build_lineage_view(&paths), Some(&ledger));
+    assert_eq!(tick().contained, 3);
+
+    let brief = paths.epochs.join("epoch/brief.md");
     std::fs::write(
-        paths.workspace.join("config.json"),
-        serde_json::json!({"adapter": {
-            "kind": "adk", "entrypoint": "m:a", "mutable_trees": ["/reg/agent"]
-        }})
-        .to_string(),
+        &brief,
+        [std::fs::read(&brief).unwrap(), b"\n".to_vec()].concat(),
     )
     .unwrap();
-    std::fs::write(paths.current_epoch_marker(), "e1").unwrap();
-    write_gen_snapshot(
-        &paths,
-        "e1",
-        "v0",
-        None,
-        &[("agent/main.py", b"x=1\n"), ("support/lib.py", b"shared\n")],
-    );
-    // v1 only edits the mutable agent tree — fully contained.
-    write_gen_snapshot(
-        &paths,
-        "e1",
-        "v1",
-        Some("v0"),
-        &[("agent/main.py", b"x=2\n"), ("support/lib.py", b"shared\n")],
+    tick();
+    let view = tick();
+    assert_eq!(view.unverified, 3);
+    for attestation in &view.attestations {
+        assert!(attestation.evidence_withdrawn);
+        assert_eq!(attestation.introduced_by_input.as_deref(), Some("brief.md"));
+    }
+    let alerts = containment_alerts(&ledger_dir);
+    assert_eq!(alerts.len(), 1, "{alerts:?}");
+    assert_eq!(alerts[0]["alarm"], "epoch_evidence_changed");
+    assert_eq!(alerts[0]["input"], "brief.md");
+    assert_eq!(
+        alerts[0]["generations"],
+        serde_json::json!(["v1", "v2", "v3"])
     );
 
-    let findings = Arc::new(zicato_supervisor::diff_containment::DiffContainmentFindings::new());
-    let (shutdown_tx, _) = broadcast::channel(4);
-    let loop_paths = paths.clone();
-    let loop_shutdown = shutdown_tx.clone();
-    let loop_findings = findings.clone();
-    tokio::spawn(async move {
-        watchdog::runs_loop(
-            loop_paths,
-            fast_thresholds(false),
-            Duration::from_millis(50),
-            Arc::new(WatchdogLog::new()),
-            None,
-            watchdog::DiffContainmentConfig {
-                enabled: true,
-                findings: loop_findings,
-            },
-            watchdog::PromotionGateConfig {
-                enabled: false,
-                findings: Arc::new(zicato_supervisor::promotion_gate::PromotionGateFindings::new()),
-            },
-            watchdog::DivergenceConfig {
-                enabled: false,
-                findings: Arc::new(zicato_supervisor::divergence::DivergenceFindings::new()),
-                stuck_age_seconds: 3600,
-            },
-            loop_shutdown,
-        )
-        .await
+    // A pair with its own finding still alarms beside the epoch input.
+    let mut source = std::fs::read(child_source(&paths)).unwrap();
+    source.extend_from_slice(b"ESCAPED = True\n");
+    std::fs::write(child_source(&paths), source).unwrap();
+    let view = tick();
+    assert_eq!(view.attestations[0].status, Status::EvidenceMismatch);
+    let alerts = containment_alerts(&ledger_dir);
+    assert_eq!(alerts.len(), 2, "{alerts:?}");
+    assert_eq!(alerts[1]["alarm"], "evidence_mismatch");
+    assert_eq!(alerts[1]["generation_id"], "v1");
+
+    // A restarted audit seeds both standing alarms from the health files.
+    ContainmentAudit::new().tick(&paths, &reader::build_lineage_view(&paths), Some(&ledger));
+    assert_eq!(containment_alerts(&ledger_dir).len(), 2);
+
+    // With the health files gone, an audit loaded from the ledger, as the
+    // integrity loop loads it on start and after a panic, repeats neither.
+    std::fs::remove_dir_all(paths.epoch_health_dir("epoch")).unwrap();
+    let history = zicato_supervisor::ledger::LedgerHistory::load(&ledger);
+    ContainmentAudit::from_alarms(history.containment_alarms).tick(
+        &paths,
+        &reader::build_lineage_view(&paths),
+        Some(&ledger),
+    );
+    assert_eq!(containment_alerts(&ledger_dir).len(), 2);
+    // Without either record, both alarms are reported again.
+    std::fs::remove_dir_all(paths.epoch_health_dir("epoch")).unwrap();
+    ContainmentAudit::new().tick(&paths, &reader::build_lineage_view(&paths), Some(&ledger));
+    assert_eq!(containment_alerts(&ledger_dir).len(), 4);
+}
+
+#[test]
+fn mutation_containment_alarms_when_verified_evidence_is_deleted() {
+    let (alerts, last) = withdraw_after_verification(Some(false), |paths| {
+        std::fs::remove_file(paths.epochs.join("epoch/generations/v1/containment.json")).unwrap();
     });
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_withdrawn_once(&alerts, &last, "manifest_missing");
+}
 
-    let view = findings.view();
-    assert!(view.scanned);
-    assert_eq!(view.pairs_scanned, 1);
-    assert!(
-        view.quarantined.is_empty(),
-        "an in-bounds child must not be quarantined"
+#[test]
+fn mutation_containment_detects_withdrawal_across_a_restart() {
+    use zicato_supervisor::range_containment::ContainmentAudit;
+    let (_t, paths) = containment_workspace(&containment_case("literal"), Some(true));
+    let lineage = reader::build_lineage_view(&paths);
+    ContainmentAudit::new().tick(&paths, &lineage, None);
+    std::fs::remove_file(paths.epochs.join("epoch/generations/v1/containment.json")).unwrap();
+    let ledger_dir = paths.workspace.join("ledger");
+    let ledger = zicato_supervisor::ledger::AuditLedger::open(&ledger_dir);
+    let view = ContainmentAudit::new().tick(&paths, &lineage, Some(&ledger));
+    assert_eq!(view.evidence_withdrawn, 1);
+    let alerts = containment_alerts(&ledger_dir);
+    assert_eq!(alerts.len(), 1, "{alerts:?}");
+    assert_eq!(alerts[0]["alarm"], "evidence_withdrawn");
+}
+
+#[test]
+fn mutation_containment_does_not_alarm_for_pruned_or_in_flight_sources() {
+    // An operator prunes a rejected generation's source tree.
+    let (alerts, last) = withdraw_after_verification(Some(false), |paths| {
+        std::fs::remove_dir_all(paths.epochs.join("epoch/generations/v1/snapshot")).unwrap();
+    });
+    assert!(alerts.is_empty(), "{alerts:?}");
+    assert!(!last.evidence_withdrawn);
+    // A resume discards an in-flight generation's records.
+    let (alerts, last) = withdraw_after_verification(None, |paths| {
+        std::fs::remove_file(paths.epochs.join("epoch/generations/v1/containment.json")).unwrap();
+    });
+    assert!(alerts.is_empty(), "{alerts:?}");
+    assert!(!last.evidence_withdrawn);
+}
+
+#[test]
+fn mutation_containment_reports_bytecode_added_to_a_decided_tree() {
+    use zicato_supervisor::range_containment::{ContainmentAudit, Status};
+    let (_t, paths) = containment_workspace(&containment_case("literal"), Some(true));
+    let lineage = reader::build_lineage_view(&paths);
+    let mut audit = ContainmentAudit::new();
+    assert_eq!(audit.scan(&paths, &lineage).contained, 1);
+    let cache = paths
+        .epochs
+        .join("epoch/generations/v1/snapshot/__pycache__");
+    std::fs::create_dir_all(&cache).unwrap();
+    let scan = |audit: &mut ContainmentAudit| audit.scan(&paths, &lineage).attestations.remove(0);
+    // A first artifact creates the cache directory; a second lands in the
+    // existing one and changes no source entry's metadata.
+    std::fs::write(cache.join("prompt.cpython-312.pyc"), [0u8; 16]).unwrap();
+    assert_eq!(scan(&mut audit).status, Status::Violated);
+    std::fs::write(cache.join("sitecustomize.cpython-312.pyc"), [0u8; 16]).unwrap();
+    let flagged = scan(&mut audit);
+    let paths_flagged: Vec<_> = flagged
+        .findings
+        .iter()
+        .filter(|f| f.code == "artifact_present")
+        .map(|f| f.path.as_str())
+        .collect();
+    assert_eq!(
+        paths_flagged,
+        [
+            "__pycache__/prompt.cpython-312.pyc",
+            "__pycache__/sitecustomize.cpython-312.pyc"
+        ]
     );
-
-    let _ = shutdown_tx.send(());
 }
 
 // ---- promotion gatekeeping (INTEGRITY NOTARY record #3) -----------------
@@ -1378,10 +1671,10 @@ async fn promotion_gate_alarms_on_a_decision_that_contradicts_the_scores() {
             Duration::from_millis(50),
             Arc::new(WatchdogLog::new()),
             None,
-            watchdog::DiffContainmentConfig {
+            watchdog::ContainmentConfig {
                 enabled: false,
                 findings: Arc::new(
-                    zicato_supervisor::diff_containment::DiffContainmentFindings::new(),
+                    zicato_supervisor::range_containment::ContainmentFindings::new(),
                 ),
             },
             watchdog::PromotionGateConfig {
@@ -1405,8 +1698,8 @@ async fn promotion_gate_alarms_on_a_decision_that_contradicts_the_scores() {
         action_log: Arc::new(WatchdogLog::new()),
         seq_liveness: Arc::new(std::sync::Mutex::new(watchdog::SeqLiveness::new())),
         ledger: None,
-        diff_findings: Arc::new(
-            zicato_supervisor::diff_containment::DiffContainmentFindings::new(),
+        containment_findings: Arc::new(
+            zicato_supervisor::range_containment::ContainmentFindings::new(),
         ),
         promotion_gate_findings: findings.clone(),
         divergence_findings: Arc::new(zicato_supervisor::divergence::DivergenceFindings::new()),
@@ -1493,10 +1786,10 @@ async fn divergence_audit_flags_a_promoted_mismatch_end_to_end() {
             Duration::from_millis(50),
             Arc::new(WatchdogLog::new()),
             None,
-            watchdog::DiffContainmentConfig {
+            watchdog::ContainmentConfig {
                 enabled: false,
                 findings: Arc::new(
-                    zicato_supervisor::diff_containment::DiffContainmentFindings::new(),
+                    zicato_supervisor::range_containment::ContainmentFindings::new(),
                 ),
             },
             watchdog::PromotionGateConfig {
@@ -1519,8 +1812,8 @@ async fn divergence_audit_flags_a_promoted_mismatch_end_to_end() {
         action_log: Arc::new(WatchdogLog::new()),
         seq_liveness: Arc::new(std::sync::Mutex::new(watchdog::SeqLiveness::new())),
         ledger: None,
-        diff_findings: Arc::new(
-            zicato_supervisor::diff_containment::DiffContainmentFindings::new(),
+        containment_findings: Arc::new(
+            zicato_supervisor::range_containment::ContainmentFindings::new(),
         ),
         promotion_gate_findings: Arc::new(
             zicato_supervisor::promotion_gate::PromotionGateFindings::new(),

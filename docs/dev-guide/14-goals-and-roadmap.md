@@ -1141,7 +1141,7 @@ is no "just let the model edit the file" path, and there must never be one:
 the mutation surface is what makes changes enumerable, auditable,
 diffable-by-point, and attributable (the fertility map, diff-complexity, and
 patch journaling all key on it). A free-edit path would also dissolve the
-containment guarantees (diff containment checks, forbidden-path checks) that
+containment guarantees (byte-range mutation containment, forbidden-unit checks) that
 make an autonomous loop safe to leave running.
 
 **No vendor coupling.** Nothing in git references the model vendor — no

@@ -543,24 +543,45 @@ def _mint_placebo_challenger(
     epoch_id: str,
     parent_id: str,
     next_id: str,
-    point: Any,
+    mutations: Sequence[Any],
     round_index: int,
     enumeration_roots: Sequence[Path] | None = None,
 ) -> _AppliedChallenger:
     """Derive + persist the random-baseline placebo challenger.
 
-    The same derive → ``experiment.json`` → lineage pipeline every real
-    challenger goes through (:mod:`zicato.evolve.placebo` builds the
-    marked hypothesis + the semantics-preserving no-op patch), so the
-    placebo is a genuine lineage child with a genuine snapshot — the gate
-    scores it exactly like any challenger. Shared by the gauntlet's extra
-    scheduled duel and the multi-challenger field's extra slot.
+    The same policy → derive → ``experiment.json`` → lineage → byte-range
+    evidence pipeline every real challenger goes through
+    (:mod:`zicato.evolve.placebo` builds the marked hypothesis + the
+    semantics-preserving no-op patch on the first of ``mutations``), so the
+    placebo is a genuine lineage child with a genuine snapshot and
+    containment evidence — the gate scores it exactly like any challenger.
+    Shared by the gauntlet's extra scheduled duel and the multi-challenger
+    field's extra slot.
     """
     from zicato.epoch import append_to_lineage, write_experiment  # noqa: PLC0415
+    from zicato.epoch.containment import (  # noqa: PLC0415
+        write_containment_manifest,
+        write_mutation_policy,
+    )
+    from zicato.epoch.genstore import default_generation_store  # noqa: PLC0415
     from zicato.evolve.placebo import (  # noqa: PLC0415
         build_placebo_experiment,
         derive_placebo_snapshot,
     )
+    from zicato.proposer.brief import load_brief  # noqa: PLC0415
+    from zicato.workspace.layout import WorkspaceLayout  # noqa: PLC0415
+
+    genstore = default_generation_store(workspace_root)
+    policy = MutationPolicy.capture(
+        genstore.materialize_snapshot(epoch_id, parent_id),
+        mutations,
+        load_brief(WorkspaceLayout.from_root(workspace_root).brief(epoch_id)).forbidden_ids,
+        enumeration_roots=enumeration_roots,
+    )
+    policy_sha256 = write_mutation_policy(
+        workspace_root, epoch_id=epoch_id, parent_generation_id=parent_id, policy=policy
+    )
+    point = mutations[0]
 
     experiment = build_placebo_experiment(
         epoch_id=epoch_id,
@@ -587,6 +608,16 @@ def _mint_placebo_challenger(
     )
     append_to_lineage(workspace_root, epoch_id, child_gen, parent_id=parent_id, pending=True)
     write_experiment(workspace_root, epoch_id, next_id, experiment)
+    write_containment_manifest(
+        workspace_root,
+        epoch_id=epoch_id,
+        parent_generation_id=parent_id,
+        generation_id=next_id,
+        policy=policy,
+        policy_sha256=policy_sha256,
+        experiment=experiment,
+        genstore=genstore,
+    )
     _ingest_experiment_into_index(workspace_root, epoch_id, next_id)
     return _AppliedChallenger(
         generation_id=next_id,
@@ -652,7 +683,7 @@ async def _maybe_run_placebo_arm_gauntlet(
             epoch_id=epoch_id,
             parent_id=parent_id,
             next_id=placebo_id,
-            point=mutations[0],
+            mutations=mutations,
             round_index=round_index,
             enumeration_roots=generation_phase.mutable_trees(adapter, parent_gen.snapshot_root),
         )

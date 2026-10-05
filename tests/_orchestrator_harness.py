@@ -68,6 +68,8 @@ def bootstrap_workspace(
     mutable_trees: tuple[str, ...] = (),
     target_call_llm: Any = target_call_llm,
     evaluation_call_llm: Any = evaluation_call_llm,
+    generation_store: str = "directory",
+    extra_source: dict[str, str] | None = None,
     **proposer: Any,
 ) -> tuple[Path, str]:
     """Create a workspace + one epoch + a v0 baseline snapshot.
@@ -82,6 +84,10 @@ def bootstrap_workspace(
     rather than a substitute for the propose step. Keyword arguments are
     that helper's, so a test whose subject is a misbehaving proposer
     (``break_first``, ``idea``) steers it from here.
+
+    ``generation_store`` selects the source store: ``"directory"`` builds the
+    snapshot layout by hand, and ``"git"`` seeds ``v0`` through the git store.
+    ``extra_source`` maps further ``v0`` source paths to their text.
     """
     workspace = tmp_path / ".zicato"
     workspace.mkdir()
@@ -90,11 +96,9 @@ def bootstrap_workspace(
             {
                 "instance_id": "test",
                 "created_at": "2026-05-14T00:00:00Z",
-                # This bootstrap hand-builds the directory-backend snapshot
-                # layout (epochs/.../generations/v0/snapshot/), so it pins the
-                # directory backend explicitly — the git default reads its
-                # generations from git tags this fixture never writes.
-                "generation_source_backend": "directory",
+                # The directory store reads the hand-built snapshot below; the
+                # git store reads the generation tags its seeding writes.
+                "generation_source_backend": generation_store,
                 "runtime": {},
                 "models": {
                     "engines": {
@@ -142,7 +146,7 @@ def bootstrap_workspace(
 
     # Build v0 snapshot.
     v0_dir = workspace / "epochs" / cfg.id / "generations" / "v0"
-    snap = v0_dir / "snapshot"
+    snap = v0_dir / "snapshot" if generation_store == "directory" else tmp_path / "seed"
     snap.mkdir(parents=True)
     (snap / "agent.py").write_text(
         '"""Stub harness source for tests."""\n'
@@ -156,6 +160,13 @@ def bootstrap_workspace(
         '    return GREETING + " " + name\n'
         "    # zicato:mutable:end\n"
     )
+    for relative, text in (extra_source or {}).items():
+        (snap / relative).parent.mkdir(parents=True, exist_ok=True)
+        (snap / relative).write_text(text)
+    if generation_store == "git":
+        from zicato.epoch.git_genstore import GitGenerationStore
+
+        GitGenerationStore(workspace).seed_generation(cfg.id, "v0", sorted(snap.iterdir()))
     from zicato.epoch.journal import write_seed_experiment
 
     write_seed_experiment(workspace, cfg.id, proposed_at=cfg.created_at)

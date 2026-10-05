@@ -344,7 +344,7 @@ def _append_placebo_arm(
             epoch_id=prepared.epoch_id,
             parent_id=field_round.parent_id,
             next_id=placebo_id,
-            point=prepared.mutations[0],
+            mutations=prepared.mutations,
             round_index=prepared.round_index,
             enumeration_roots=generation_phase.mutable_trees(
                 prepared.adapter, prepared.parent_generation.snapshot_root

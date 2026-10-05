@@ -4,7 +4,11 @@ Python resolves mutation semantics through the enumerator and applier. The
 independent verifier trusts those recorded intervals, then checks their
 binding to actual source inventories, patch records, and changed bytes. This
 is an integrity record. Fabricating a policy together with matching dependent
-evidence is outside the audit's trust model. Range findings are alarm-only.
+evidence is outside the audit's trust model.
+
+The supervisor's ``range_containment.rs`` applies the same rule out of band and
+only raises alarms. In band, the rule blocks a promotion only when the contract
+enables ``block_on_containment_violation``.
 """
 
 from __future__ import annotations
@@ -12,6 +16,7 @@ from __future__ import annotations
 import difflib
 import hashlib
 import json
+import stat
 import tempfile
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
@@ -22,6 +27,7 @@ from zicato.core.mutation import Patch
 from zicato.core.types import Experiment
 from zicato.epoch.genstore import GenerationStore
 from zicato.epoch.journal import patch_body, read_experiment_body
+from zicato.epoch.snapshot_scope import ARTIFACT_SUFFIXES
 from zicato.mutation.applier import apply_patches, operation_byte_spans
 from zicato.mutation.enumerator import enumerate_mutations
 from zicato.mutation.policy import MutationPolicy, SourceFile, source_files
@@ -130,10 +136,87 @@ class ContainmentFinding:
     detail: str
 
 
+#: Findings that are violations once every other binding holds.
+VIOLATION_CODES = frozenset(
+    {"outside_mutation", "forbidden", "metadata", "file_set", "artifact_present"}
+)
+#: Findings where a record's claim about source bytes differs from the files.
+CONTRADICTION_CODES = frozenset(
+    {
+        "source_binding",
+        "source_inventory",
+        "byte_coverage",
+        "policy_inventory",
+        "parent_binding",
+        "parent_inventory",
+    }
+)
+
+RangeStatus = Literal["contained", "violated", "evidence_mismatch", "unverified"]
+
+
 @dataclass(frozen=True, slots=True)
 class RangeAttestation:
-    status: Literal["contained", "violated", "unverified"]
+    """One pair's verdict.
+
+    ``violated`` means verified evidence shows an unauthorized change.
+    ``evidence_mismatch`` means a record contradicts the observed files.
+    ``unverified`` means evidence is missing or malformed.
+    """
+
+    status: RangeStatus
     findings: tuple[ContainmentFinding, ...] = ()
+
+
+def range_status(findings: Sequence[ContainmentFinding]) -> RangeStatus:
+    """A violation needs every finding to be one; a contradiction outranks missing evidence."""
+    codes = {finding.code for finding in findings}
+    if not codes:
+        return "contained"
+    if codes <= VIOLATION_CODES:
+        return "violated"
+    if codes & CONTRADICTION_CODES:
+        return "evidence_mismatch"
+    return "unverified"
+
+
+def loadable_artifacts(root: Path) -> list[str]:
+    """Files under ``root`` whose suffix names an interpreter-loadable build artifact.
+
+    Every store excludes these when it writes a generation's tree and the
+    source inventory skips them, so one present in a canonical tree is a file
+    no patch authorized. A ``__pycache__`` entry can be imported in place of
+    its source and a sourceless ``.pyc`` imports as a module. Artifact
+    directories such as caches are descended into, never skipped.
+    """
+    found: list[str] = []
+
+    def visit(directory: Path) -> None:
+        for path in sorted(directory.iterdir()):
+            if stat.S_ISDIR(path.lstat().st_mode):
+                visit(path)
+            elif path.name.endswith(ARTIFACT_SUFFIXES):
+                found.append(path.relative_to(root).as_posix())
+
+    visit(root)
+    return found
+
+
+class ContractInputMismatch(ValueError):
+    """A frozen epoch input differs from the digest the policy captured.
+
+    ``input`` names the input (``brief.md`` or ``scoring.json``). Every pair
+    in the epoch binds the same inputs, so the supervisor reports the change
+    once for the epoch.
+    """
+
+    def __init__(self, name: str) -> None:
+        super().__init__(f"{name} differs from the digest the retained mutation policy captured")
+        self.input = name
+
+
+class PolicyInventoryMismatch(ValueError):
+    """The captured parent inventory differs from the observed parent source."""
 
 
 def _byte_changes(before: bytes, after: bytes) -> tuple[ByteChange, ...]:
@@ -433,12 +516,12 @@ def _verify_policy(
         manifest.parent_source,
     ):
         raise ValueError("retained mutation policy names a different parent")
-    if json.dumps(body["source_files"], sort_keys=True) != json.dumps(
-        [asdict(entry) for entry in parent_files], sort_keys=True
+    for name, recorded, path in (
+        ("brief.md", body["brief_sha256"], layout.brief(manifest.epoch_id)),
+        ("scoring.json", body["scoring_sha256"], layout.scoring(manifest.epoch_id)),
     ):
-        raise ValueError(
-            "retained mutation policy names different source bytes or executable state"
-        )
+        if recorded != _hash(_read_policy_input(path)):
+            raise ContractInputMismatch(name)
     roots = body["enumeration_roots"]
     if (
         not isinstance(roots, list)
@@ -452,10 +535,6 @@ def _verify_policy(
         )
     ):
         raise ValueError("retained mutation policy has invalid enumeration roots")
-    if body["brief_sha256"] != _hash(_read_policy_input(layout.brief(manifest.epoch_id))) or body[
-        "scoring_sha256"
-    ] != _hash(_read_policy_input(layout.scoring(manifest.epoch_id))):
-        raise ValueError("retained mutation policy differs from frozen contract inputs")
     points = [
         {
             "path": record.path,
@@ -477,6 +556,12 @@ def _verify_policy(
         for point in body["points"]
     ):
         raise ValueError("retained mutation points escape the selected enumeration roots")
+    if json.dumps(body["source_files"], sort_keys=True) != json.dumps(
+        [asdict(entry) for entry in parent_files], sort_keys=True
+    ):
+        raise PolicyInventoryMismatch(
+            "retained mutation policy names different source bytes or executable state"
+        )
 
 
 def _within(change: ByteChange, span: MutationSpan) -> bool:
@@ -554,13 +639,28 @@ def verify_manifest(
         return RangeAttestation("unverified", tuple(findings))
     try:
         left = {entry.path: entry for entry in source_files(parent)}
+    except (OSError, ValueError) as exc:
+        return RangeAttestation(
+            "unverified", (ContainmentFinding("parent_unreadable", "", str(exc)),)
+        )
+    try:
         right = {entry.path: entry for entry in source_files(child)}
     except (OSError, ValueError) as exc:
         return RangeAttestation(
             "unverified", (ContainmentFinding("source_unreadable", "", str(exc)),)
         )
+    for artifact in loadable_artifacts(child):
+        finding(
+            "artifact_present",
+            artifact,
+            "a canonical source tree holds no interpreter-loadable build artifacts",
+        )
     try:
         _verify_policy(manifest, workspace_root, parent, tuple(left.values()))
+    except ContractInputMismatch as exc:
+        finding("contract_binding", exc.input, str(exc))
+    except PolicyInventoryMismatch as exc:
+        finding("policy_inventory", "", str(exc))
     except (OSError, KeyError, TypeError, ValueError) as exc:
         finding("policy_binding", "", str(exc))
     if [p.id for p in manifest.patches] != list(patch_ids) or len(set(patch_ids)) != len(patch_ids):
@@ -569,9 +669,15 @@ def verify_manifest(
         if patch.id not in patch_records or _hash(patch_records[patch.id]) != patch.sha256:
             finding("patch_binding", "", f"patch record {patch.id!r} differs from the manifest")
     recorded = {record.path for record in manifest.files}
-    if len(recorded) != len(manifest.files) or recorded != left.keys() | right.keys():
+    if len(recorded) != len(manifest.files) or not right.keys() <= recorded:
         finding(
-            "source_inventory", "", "manifest does not cover the complete observed file inventory"
+            "source_inventory", "", "manifest does not cover the complete observed child inventory"
+        )
+    if not left.keys() <= recorded:
+        finding(
+            "parent_inventory",
+            "",
+            "manifest does not cover the complete observed parent inventory",
         )
     operation_ids: set[tuple[str, str]] = set()
     child_operation_ids: set[tuple[str, str]] = set()
@@ -589,19 +695,19 @@ def verify_manifest(
             continue
         before = (parent / path).read_bytes() if path in left else b""
         after = (child / path).read_bytes() if path in right else b""
-        observed = (
+        parent_bound = (
             left[path].sha256 if path in left else None,
-            right[path].sha256 if path in right else None,
             left[path].executable if path in left else None,
+        ) == (record.parent_sha256, record.parent_executable)
+        child_bound = (
+            right[path].sha256 if path in right else None,
             right[path].executable if path in right else None,
-        )
-        if observed != (
-            record.parent_sha256,
-            record.child_sha256,
-            record.parent_executable,
-            record.child_executable,
-        ):
-            finding("source_binding", path, "observed source hashes or executable state differ")
+        ) == (record.child_sha256, record.child_executable)
+        if not parent_bound:
+            finding("parent_binding", path, "observed parent hash or executable state differs")
+        if not child_bound:
+            finding("source_binding", path, "observed child hash or executable state differs")
+        if not (parent_bound and child_bound):
             continue
         if path not in left or path not in right:
             finding("file_set", path, "patches do not authorize file creation or deletion")
@@ -650,7 +756,7 @@ def verify_manifest(
                 parent_offset <= change.parent_start <= change.parent_end <= len(before)
                 and child_offset <= change.child_start <= change.child_end <= len(after)
             ):
-                finding("byte_coverage", path, "invalid or overlapping change coordinates")
+                finding("manifest_shape", path, "invalid or overlapping change coordinates")
                 break
             if (
                 before[parent_offset : change.parent_start]
@@ -664,8 +770,10 @@ def verify_manifest(
             if any(span.forbidden and _overlaps(change, span) for span in record.spans):
                 finding("forbidden", path, "changed bytes overlap a forbidden mutation unit")
             parent_offset, child_offset = change.parent_end, change.child_end
-        if before[parent_offset:] != after[child_offset:]:
-            finding("byte_coverage", path, "unrecorded source suffix changed")
+        else:
+            # Malformed coordinates leave no recorded suffix to compare.
+            if before[parent_offset:] != after[child_offset:]:
+                finding("byte_coverage", path, "unrecorded source suffix changed")
     for patch in manifest.patches:
         try:
             body = json.loads(patch_records[patch.id])
@@ -679,11 +787,22 @@ def verify_manifest(
                 finding("forbidden", "", "patch targets a forbidden mutation unit")
         except (KeyError, TypeError, ValueError):
             finding("patch_binding", "", "patch record is missing or malformed")
-    violations = {"outside_mutation", "forbidden", "metadata", "file_set"}
-    status: Literal["contained", "violated", "unverified"] = "contained"
-    if findings:
-        status = "violated" if all(f.code in violations for f in findings) else "unverified"
-    return RangeAttestation(status, tuple(findings))
+    return RangeAttestation(range_status(findings), tuple(findings))
+
+
+def containment_reason(attestation: RangeAttestation) -> str:
+    """The promotion-refusal reason for a violated or mismatched pair.
+
+    The ``containment_violation`` prefix is the stable rejection code; the
+    first findings follow, and the rest are counted.
+    """
+    shown = [
+        " ".join(filter(None, (finding.code, finding.path))) + f": {finding.detail}"
+        for finding in attestation.findings[:5]
+    ]
+    more = len(attestation.findings) - len(shown)
+    suffix = f" (+{more} more)" if more > 0 else ""
+    return f"containment_violation: {attestation.status} — " + "; ".join(shown) + suffix
 
 
 def write_containment_manifest(

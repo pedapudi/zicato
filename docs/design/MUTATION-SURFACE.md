@@ -637,8 +637,8 @@ produce repair findings. A whole-file patch cannot change a forbidden nested
 unit. Every returned candidate also passes the final application guard,
 including custom proposers and candidates selected from a slate.
 
-Applied proposer candidates publish `generations/<id>/containment.json` after
-their immutable patch records exist. The record owner is
+Applied proposer candidates and the random-baseline placebo publish
+`generations/<id>/containment.json` after their immutable patch records exist. The record owner is
 `zicato.epoch.containment`. Publication independently reconstructs the accepted
 patch set and compares it with the selected generation's materialized and
 committed source. The manifest records selected epoch, parent, and child
@@ -664,7 +664,7 @@ belongs to a unit only when its parent position and child bytes both fit that
 unit. Deletions obey the corresponding condition in both coordinate spaces.
 Forbidden units retain identical bytes even inside a larger allowed unit.
 
-The Rust supervisor's `--diff-containment` audit independently checks full
+The Rust supervisor's `--mutation-containment` audit independently checks full
 observed source inventories, patch bindings, interval hashes, unchanged bytes,
 and ownership of every change. It checks the retained policy's hash and frozen
 inputs, then compares each parent declaration with that policy. Source
@@ -683,15 +683,49 @@ with its committed bytes, even though the file-browser inventory omits it.
 File creation, deletion, and executable changes are outside patch authority.
 Symbolic links, special files, and unreadable source prevent verification.
 
-The range audit reports `contained`, `violated`, or `unverified`. Missing,
-stale, malformed, or empty mutation evidence is unverified, including older
-generations without manifests or retained policies. Reading an archived
-generation never creates missing policy evidence. Findings appear on `/statusz` and in
-`health/mutation_containment_<id>.json`. Range findings are alarm-only;
-`block_on_containment_violation` still governs the separate file-level check
-outside registered mutable trees. A shared acceptance corpus and deterministic
-tournament audits measure agreement and false positives before any change to
-blocking policy.
+The range audit reports one of four statuses for each parent-to-child pair:
+
+- `contained` — every record agrees with the files, and every changed byte
+  lies inside a permitted mutation unit.
+- `violated` — the records agree with the files and show a change outside
+  the mutation units, a forbidden-unit change, an executable-state change, a
+  created or deleted file, or an interpreter-loadable build artifact
+  (`.pyc`, `.pyo`, `.pyd`) anywhere in the child tree. No store writes such a
+  file into a generation's tree, and one can be imported in place of source.
+- `evidence_mismatch` — a record contradicts the observed files: a recorded
+  child or parent hash or executable bit, the manifest's child or parent
+  inventory, the retained policy's parent inventory, or the recorded byte
+  changes. A source file edited after its evidence was published lands here.
+- `unverified` — evidence is missing, stale, malformed, empty, or
+  unreadable, including older generations without manifests or retained
+  policies. Reading an archived generation never creates missing policy
+  evidence.
+
+A finding about the retained policy does not stop the other checks, so a
+contradiction in the child's own files is reported beside it. The supervisor
+also marks evidence withdrawal: a pair with a recorded decision that verified
+on an earlier scan, or whose health file records a verified result, and is
+now unverified. A generation still in flight and a rejected generation whose
+source tree was pruned are exempt.
+
+When a parent tree changes or becomes unreadable after its children's
+policies were captured, each child reports a parent-side finding. If the
+parent's own pair is violated, mismatched, or withdrawn, the supervisor
+attributes the children's parent-side findings to the parent and alarms on
+the parent alone; a child with a finding about its own files still alarms.
+
+A frozen brief or scoring file whose bytes differ from the retained policy's
+digest makes every pair in the epoch report `contract_binding`; the supervisor
+reports that input change once for the epoch instead of once per pair.
+
+The supervisor logs and ledgers each pair that moves into `violated`,
+`evidence_mismatch`, or withdrawn evidence; findings also appear on
+`/statusz` and in `health/mutation_containment_<id>.json`. Out of band the audit only raises
+alarms. In band, a contract that sets `block_on_containment_violation` (default
+off) applies the same rule to the crowned pair before the orchestrator
+finalizes a gate-decided promotion and rejects a violated or mismatched child.
+The shared corpus `tests/fixtures/mutation_containment.json` pins the Python and
+supervisor verifiers to the same status and finding codes for every case.
 
 ## 7. The `zicato inspect mutations` CLI
 
