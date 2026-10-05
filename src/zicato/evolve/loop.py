@@ -21,7 +21,7 @@ from zicato.core.settings import InvocationOverlay, ResolvedConfiguration
 from zicato.core.types import ScoringWeights
 from zicato.epoch.preflight import PreflightRefusedError
 from zicato.evolve.invocation import InvocationContext, validated_invocation
-from zicato.evolve.lifecycle_services import _beat, _record_progress
+from zicato.evolve.lifecycle_services import _beat
 from zicato.logging_stream import install_log_stream, set_log_context
 from zicato.runtime.heartbeat import HeartbeatBeater
 from zicato.runtime.resume import (
@@ -615,15 +615,15 @@ async def _evolve_n_rounds(
         # First genuine transition: the loop booted (epoch resolved, lock
         # held). Stamp its seq so a reader sees a live, advancing cursor
         # from the very first beat. Best-effort.
-        loop_start_seq = _record_progress(writer, progress_log.LOOP_START)
-        beater.update(
+        _beat(
+            beater,
+            progress_writer=writer,
+            progress=progress_log.LOOP_START,
             epoch_id=epoch_id or "",
             phase="evolve_n_rounds:start",
-            seq=loop_start_seq,
             harmonograf_url=harmonograf_url,
             harmonograf_meta_session=meta_session,
         )
-        beater.bump_now()
         reject_policy = ConsecutiveRejectionPolicy(max_consecutive_rejections)
         health_policy = DegenerateHealthPolicy(
             enabled=stop_on_degenerate_health,
@@ -701,15 +701,15 @@ async def _evolve_n_rounds(
                 # Re-tag the operator log with the rolled epoch id.
                 set_log_context(epoch_id=epoch_id)
 
-            round_start_seq = _record_progress(writer, progress_log.ROUND_START)
-            beater.update(
+            _beat(
+                beater,
+                progress_writer=writer,
+                progress=progress_log.ROUND_START,
                 epoch_id=epoch_id or "",
                 round_index=epoch_round_index,
                 round_started_at=_now_iso(),
-                seq=round_start_seq,
                 phase=f"evolve_once:round_{epoch_round_index}",
             )
-            beater.bump_now()
 
             # The resume plan is consumed by the first round only; clear it
             # afterwards so a later round always proposes fresh.
@@ -894,15 +894,12 @@ async def _evolve_n_rounds(
         # one (seq frozen mid-flight, no terminal event). ``budget_stopped``
         # (a budget / circuit-breaker cut) is STILL a clean end, marked
         # STOPPED to distinguish it from a fully-completed SETTLED run.
-        terminal_seq = _record_progress(
-            writer,
-            progress_log.STOPPED if budget_stopped else progress_log.SETTLED,
-        )
-        beater.update(
+        _beat(
+            beater,
+            progress_writer=writer,
+            progress=progress_log.STOPPED if budget_stopped else progress_log.SETTLED,
             phase="evolve_n_rounds:budget_exhausted" if budget_stopped else "evolve_n_rounds:done",
-            seq=terminal_seq,
         )
-        beater.bump_now()
     finally:
         # Context tokens belong to this invoking task; resource cleanup runs
         # in the invocation's shielded task after the binding is restored.

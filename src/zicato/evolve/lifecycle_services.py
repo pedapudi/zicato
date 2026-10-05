@@ -162,10 +162,14 @@ def _beat(
 ) -> None:
     """Update and flush heartbeat fields when a beater exists.
 
-    A progress transition additionally requires the acquired workspace writer.
-    Its persisted sequence advances the heartbeat's liveness cursor. An update
-    with no transition leaves that cursor unchanged. Storage failures remain
-    best-effort; omitting a required progress owner is a caller error.
+    This is the only producer of progress-log transitions. A transition
+    additionally requires the acquired workspace writer; it is appended and
+    its ``seq`` is stamped on the same heartbeat write, so the heartbeat's
+    ``seq`` equals the log's last ``seq`` after every transition. Without a
+    beater nothing is appended: a log without a heartbeat would carry a
+    cursor no supervisor reads. An update with no transition leaves the
+    cursor unchanged. Storage failures remain best-effort; omitting a
+    required progress owner is a caller error.
     """
     if beater is None:
         return

@@ -122,7 +122,9 @@ def append_progress(writer: WorkspaceLock, type: str, payload: object | None = N
     """Append one progress transition and return the new tail ``seq``.
 
     The single producer (the evolve loop) calls this on each genuine
-    transition; ``seq`` advances by exactly one per call. The returned
+    transition, only through ``zicato.evolve.lifecycle_services._beat``, which
+    stamps the returned ``seq`` on the heartbeat in the same step; ``seq``
+    advances by exactly one per call. The returned
     ``seq`` is what the caller stamps into the heartbeat (and what the
     dashboard surfaces) — the machine-readable liveness cursor. Best-effort
     callers can ignore the return value.

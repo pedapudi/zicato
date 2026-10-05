@@ -367,6 +367,66 @@ def test_each_scored_board_unit_advances_the_heartbeat_seq(
     assert all(event.seq in written_seqs for event in unit_events), (unit_events, written_seqs)
 
 
+def test_every_heartbeat_write_carries_the_progress_log_tail_seq(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Across a full round, each heartbeat write carries the log's last ``seq``.
+
+    Every transition, including tournament start and settle, is appended and
+    stamped in one step, so no heartbeat lags the log and no log ``seq`` is
+    missing from the heartbeats.
+    """
+    from zicato.runtime import heartbeat as heartbeat_mod
+    from zicato.runtime import progress_log
+
+    workspace, epoch_id = _bootstrap_workspace(tmp_path, ("entry_a", "entry_b"))
+    _install_stub_adapter_factory(monkeypatch)
+    _install_telemetry_stubs(
+        monkeypatch,
+        canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
+        canned_pass_by_gen={"v0": True, "v1": True},
+    )
+    pairs: list[tuple[int, int]] = []
+    real_write = heartbeat_mod.write_heartbeat
+
+    def recording_write(workspace_root: Path, hb: Any) -> None:
+        pairs.append((hb.seq, progress_log.tail_seq(workspace_root)))
+        real_write(workspace_root, hb)
+
+    monkeypatch.setattr(heartbeat_mod, "write_heartbeat", recording_write)
+
+    from zicato.orchestrator import evolve_n_rounds
+
+    asyncio.run(
+        evolve_n_rounds(
+            rounds=1,
+            workspace_root=workspace,
+            epoch_id=epoch_id,
+            target_call_llm=target_call_llm,
+            evaluation_call_llm=evaluation_call_llm,
+            instance_id="seq-agreement-test",
+        )
+    )
+
+    assert pairs and all(hb_seq == log_seq for hb_seq, log_seq in pairs), pairs
+    events = progress_log._log(workspace).read()
+    assert {"TournamentStart", "TournamentSettle"} <= {event.type for event in events}
+    assert {event.seq for event in events} <= {hb_seq for hb_seq, _ in pairs}
+
+
+def test_only_the_heartbeat_writer_appends_progress() -> None:
+    """``append_progress`` has one caller, the writer that also stamps the heartbeat."""
+    import zicato
+
+    package = Path(zicato.__file__).parent
+    callers = sorted(
+        str(path.relative_to(package))
+        for path in package.rglob("*.py")
+        if "append_progress(" in path.read_text(encoding="utf-8") and path.name != "progress_log.py"
+    )
+    assert callers == ["evolve/lifecycle_services.py"]
+
+
 def test_unit_settled_is_not_recorded_outside_an_evolve_loop(tmp_path: Path) -> None:
     """Without a bound recorder, a scored unit leaves the progress log untouched.
 
