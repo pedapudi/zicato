@@ -7,6 +7,7 @@ forms and pin workflow triggers that provide before-merge results.
 
 from __future__ import annotations
 
+import shlex
 from pathlib import Path
 from typing import Any
 
@@ -95,6 +96,34 @@ def test_step_names_are_unique_within_a_job(path: Path) -> None:
         names = [step["name"] for step in job.get("steps", []) if "name" in step]
         duplicated = sorted({name for name in names if names.count(name) > 1})
         assert not duplicated, f"{path.name}: {job_name}: repeated step name(s) {duplicated}"
+
+
+@pytest.mark.parametrize("path", workflow_paths(), ids=lambda p: p.name)
+def test_verification_reports_survive_failed_checks(path: Path) -> None:
+    """Each verifier's report directory is uploaded by a later step that also runs on failure."""
+    for job_name, job in load_workflow(path)["jobs"].items():
+        steps = job.get("steps", [])
+        checks = [
+            (index, shlex.split(step["run"]))
+            for index, step in enumerate(steps)
+            if "tools/verify.py" in step.get("run", "")
+        ]
+        uploads = [
+            (index, step)
+            for index, step in enumerate(steps)
+            if step.get("uses", "").startswith("actions/upload-artifact@")
+        ]
+        for index, command in checks:
+            label = f"{path.name}: {job_name}: {steps[index].get('name', f'step {index}')!r}"
+            assert "--report-dir" in command, f"{label} writes no report to upload"
+            directory = command[command.index("--report-dir") + 1]
+            (upload,) = (
+                step
+                for upload_index, step in uploads
+                if upload_index > index and step["with"]["path"].rstrip("/") == directory
+            )
+            assert upload.get("if") == "always()", f"{label}: a failure skips the upload"
+            assert upload["with"]["if-no-files-found"] == "ignore"
 
 
 def test_statistical_oracles_are_a_visible_pull_request_lane() -> None:
