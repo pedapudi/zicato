@@ -876,7 +876,12 @@ The division of labour:
   scored. The recorder appends a `UnitSettled` transition and stamps its `seq`
   on the heartbeat. Outside an evolve loop no recorder is bound, so a
   standalone `zicato tournament run` appends nothing and cannot turn a
-  settled loop's terminal tail back into a non-terminal one.
+  settled loop's terminal tail back into a non-terminal one. Readers (the
+  dashboard's SSE stream and liveness verdict) take the last event through
+  `EventLog.tail`, which reads the file backwards from its end
+  (`StorageBackend.last_jsonl`), so a log with one event per board unit costs
+  a reader one line. The Rust supervisor does not read the log; it reads the
+  `seq` the heartbeat carries.
 - The supervisor's `SeqLiveness` tracker consumes this: seq present → age
   since the last seq *change*; seq absent (a heartbeat written without one) →
   timestamp-age fallback. Warn-only either way — see 08-supervisor.md §8.3

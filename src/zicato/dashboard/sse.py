@@ -81,7 +81,10 @@ def _progress_signal(paths: WorkspacePaths) -> tuple[int, bool]:
     try:
         from zicato.runtime import progress_log  # noqa: PLC0415
 
-        return progress_log.tail_seq(paths.root), progress_log.tail_is_terminal(paths.root)
+        last = progress_log.tail(paths.root)
+        if last is None:
+            return 0, False
+        return last.seq, progress_log.is_terminal(last.type)
     except Exception:
         return 0, False
 

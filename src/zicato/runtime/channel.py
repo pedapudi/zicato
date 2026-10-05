@@ -190,11 +190,11 @@ class EventLog:
 
         Opening a writer derives its sequence from this validated tail.
         Independent readers use it to inspect the last recorded transition.
+        The backend reads the last record only (a file is read from its end),
+        so the cost does not grow with the length of the log.
         """
-        last: Event | None = None
-        for record in self._backend.read_jsonl(self._key):
-            last = Event.from_record(record)
-        return last
+        record = self._backend.last_jsonl(self._key)
+        return None if record is None else Event.from_record(record)
 
 
 # ---------------------------------------------------------------------------

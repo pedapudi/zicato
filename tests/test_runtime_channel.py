@@ -76,19 +76,25 @@ def test_eventlog_append_returns_event_with_seq_and_ts(backend: StorageBackend) 
 def test_eventlog_seq_is_monotonic_and_gap_free(
     backend: StorageBackend, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    reads = 0
-    read = backend.read_jsonl
+    # The first append reads the last record once; no append reads the log
+    # from its start.
+    tail_reads = 0
+    last = backend.last_jsonl
 
     def counted(key: str):
-        nonlocal reads
-        reads += 1
-        return read(key)
+        nonlocal tail_reads
+        tail_reads += 1
+        return last(key)
 
-    monkeypatch.setattr(backend, "read_jsonl", counted)
+    def refuse(key: str):
+        raise AssertionError(f"{key} was read from its start")
+
+    monkeypatch.setattr(backend, "last_jsonl", counted)
+    monkeypatch.setattr(backend, "read_jsonl", refuse)
     log = EventLog(backend, "runtime/test_log.jsonl")
     seqs = [log.append("E", {"i": i}).seq for i in range(10)]
     assert seqs == list(range(1, 11))
-    assert reads == 1
+    assert tail_reads == 1
 
 
 def test_eventlog_seq_continues_across_fresh_handles(backend: StorageBackend) -> None:
