@@ -63,7 +63,6 @@ from zicato.evolve.settlement_recovery import (
 )
 from zicato.selection.strategy import SelectionDecision
 from zicato.tournament.records import field_tournament_record
-from zicato.util import best_effort
 from zicato.workspace import generation_round_number
 
 if TYPE_CHECKING:
@@ -696,11 +695,11 @@ async def _close_field_round(
     # Progress transition: the field tournament settled — record the
     # crowning (TOURNAMENT_SETTLE) then the terminal verdict so the
     # liveness seq lands on a PROMOTE/REJECT at the round's true end.
-    with best_effort(
-        "progress-log field tournament-settle",
-        on_error=lambda exc: log.debug("progress-log field tournament-settle skipped: %s", exc),
-    ):
-        progress_log.append_progress(prepared.writer, progress_log.TOURNAMENT_SETTLE)
+    _beat(
+        prepared.beater,
+        progress_writer=prepared.writer,
+        progress=progress_log.TOURNAMENT_SETTLE,
+    )
     _beat(
         prepared.beater,
         progress_writer=prepared.writer,

@@ -130,8 +130,8 @@ class Heartbeat:
     """The orchestrator's liveness pulse.
 
     Bumped every few seconds by :class:`zicato.runtime.heartbeat.HeartbeatBeater`.
-    The supervisor reads this file to detect a stalled orchestrator and
-    escalate SIGTERM/SIGKILL. Operators can also tail it for a one-shot
+    The supervisor reads this file to warn about a stalled orchestrator; it
+    never signals the orchestrator. Operators can also tail it for a one-shot
     "is anything happening?" check.
 
     Fields
@@ -139,6 +139,14 @@ class Heartbeat:
     pid:
         OS process id of the orchestrator. Used by the supervisor to
         verify the process is still alive (``os.kill(pid, 0)``).
+    pid_start_time:
+        The orchestrator's process start-time token
+        (:func:`zicato.runtime.lock.pid_start_time`). Paired with ``pid`` it
+        identifies the process: after the orchestrator exits, a later
+        process that receives the same pid has a different start time, so
+        the supervisor does not mistake it for the orchestrator. ``None``
+        when the platform exposes no start time, or for a heartbeat written
+        before the field existed; the supervisor then checks the pid alone.
     instance_id:
         Logical instance identifier (matches
         :class:`zicato.core.types.RuntimeConfig.instance_id`). Allows
@@ -168,7 +176,8 @@ class Heartbeat:
         transition. Unlike ``last_heartbeat`` — which the beater thread
         bumps on a timer regardless of progress — this advances ONLY when
         the evolve loop appends a real transition (round start, propose,
-        apply, tournament start/settle, gate, promote/reject). A watchdog
+        each settled proposal episode, tournament start, each scored board
+        unit, tournament settle, promote/reject). A watchdog
         keyed on ``seq`` advancing avoids the timestamp signal's
         false-positive (a slow LLM call ages the stamp) and false-negative
         (a wedged loop whose beater keeps stamping ``now()`` reads alive).
@@ -212,6 +221,7 @@ class Heartbeat:
     instance_id: str
     started_at: str
     last_heartbeat: str
+    pid_start_time: float | None = None
     epoch_id: str = ""
     generation_id: str = ""
     phase: str = ""
@@ -226,6 +236,7 @@ class Heartbeat:
         """Serialize to a plain dict for JSON encoding."""
         return {
             "pid": self.pid,
+            "pid_start_time": self.pid_start_time,
             "instance_id": self.instance_id,
             "started_at": self.started_at,
             "last_heartbeat": self.last_heartbeat,
@@ -248,6 +259,9 @@ class Heartbeat:
             instance_id=str(d["instance_id"]),
             started_at=str(d["started_at"]),
             last_heartbeat=str(d["last_heartbeat"]),
+            pid_start_time=(
+                float(d["pid_start_time"]) if d.get("pid_start_time") is not None else None
+            ),
             epoch_id=str(d.get("epoch_id", "")),
             generation_id=str(d.get("generation_id", "")),
             phase=str(d.get("phase", "")),

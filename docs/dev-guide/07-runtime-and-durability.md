@@ -833,7 +833,9 @@ Python-side addition never crashes an older supervisor. The path map is
 
 ### 7.6.1 `heartbeat.json` — liveness, seq-vs-timestamp, and the paused flag
 
-The `Heartbeat` dataclass carries the orchestrator's pid, instance id,
+The `Heartbeat` dataclass carries the orchestrator's pid and its process
+start-time token (`pid_start_time`, which lets the supervisor tell the
+orchestrator apart from a later process with the same pid), instance id,
 `started_at` / `last_heartbeat` timestamps, lineage coordinates
 (`epoch_id` / `generation_id`), the free-form `phase` string, `round_index` /
 `round_started_at`, harmonograf deep-link fields — and the one field whose
@@ -847,7 +849,8 @@ semantics you must not get wrong, `seq`:
         transition. Unlike ``last_heartbeat`` — which the beater thread
         bumps on a timer regardless of progress — this advances ONLY when
         the evolve loop appends a real transition (round start, propose,
-        apply, tournament start/settle, gate, promote/reject). A watchdog
+        each settled proposal episode, tournament start, each scored board
+        unit, tournament settle, promote/reject). A watchdog
         keyed on ``seq`` advancing avoids the timestamp signal's
         false-positive (a slow LLM call ages the stamp) and false-negative
         (a wedged loop whose beater keeps stamping ``now()`` reads alive).
@@ -866,10 +869,35 @@ The division of labour:
   (`runtime/progress.events.jsonl`, built on `channel.EventLog`) whose tail
   `seq` the loop stamps into the heartbeat. A terminal `SETTLED`-class event
   distinguishes "cleanly finished" from "stalled" (`tail_is_terminal`).
+- A tournament or proposal phase can run for minutes with no loop
+  transition. The evolve loop therefore binds a transition recorder
+  (`progress_log.bind_transition_recorder`) for its invocation. The
+  board-unit scorer (`_IncrementalScorer.record` in
+  `src/zicato/tournament/scheduling.py`) records `UnitSettled` as each unit's
+  losses are scored. The proposer records `EpisodeSettled` as each best-of-N
+  slate slot's episode ends (`_run_one_slot` in
+  `src/zicato/proposer/best_of_n.py`) and as each challenger's proposal ends
+  (`propose_apply.py`), with a candidate or an error. A single episode
+  records nothing while it runs: the Foe process returns its result when the
+  episode ends, and its calls to the host tools (`mutation_usage`,
+  `validate_patches`) are not counted as progress. An episode longer than the
+  warn threshold therefore still produces a stale warning. The recorder goes through `_beat`, the only producer of
+  progress transitions, which appends each transition and stamps its `seq`
+  on the heartbeat in one step. Outside an evolve loop no recorder is bound, so a
+  standalone `zicato tournament run` appends nothing and cannot turn a
+  settled loop's terminal tail back into a non-terminal one. Readers (the
+  dashboard's SSE stream and liveness verdict) take the last event through
+  `EventLog.tail`, which reads the file backwards from its end
+  (`StorageBackend.last_jsonl`) and ignores an unterminated final line, so a
+  log with one event per board unit costs a reader one line and a reader
+  racing an append sees the previous event. The Rust supervisor does not read the log; it reads the
+  `seq` the heartbeat carries.
 - The supervisor's `SeqLiveness` tracker consumes this: seq present → age
   since the last seq *change*; seq absent (a heartbeat written without one) →
   timestamp-age fallback. Warn-only either way — see 08-supervisor.md §8.3
-  (the warn-only heartbeat).
+  (the warn-only heartbeat). Once the heartbeat's `pid` has exited, the
+  supervisor logs that the heartbeat is final once instead of classifying its
+  frozen `seq` on every tick.
 
 The **paused flag is not a heartbeat field**: pause state is the presence of
 the `runtime/control/pause_epoch` flag file (`is_paused` in

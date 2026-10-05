@@ -158,6 +158,7 @@ async def _propose_child(
     """
     from zicato.proposer.agent import ProposerContext  # noqa: PLC0415
     from zicato.proposer.proposer import ProposerError  # noqa: PLC0415
+    from zicato.runtime import progress_log  # noqa: PLC0415
 
     # The mutation-point fertility map — best-effort, {} on any failure
     # (which renders a byte-identical manifest). Settled experiments only
@@ -230,7 +231,9 @@ async def _propose_child(
                 {"kind": outcome.kind, "code": outcome.code, "message": outcome.message},
                 scope,
             )
+        progress_log.record_transition(progress_log.EPISODE_SETTLED)
         raise
+    progress_log.record_transition(progress_log.EPISODE_SETTLED)
     if round_emitter is not None:
         round_emitter.emit("proposal_attempted", {}, scope)
         round_emitter.emit("proposal_episode_settled", {"kind": "completed"}, scope)

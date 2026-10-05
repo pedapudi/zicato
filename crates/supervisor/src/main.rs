@@ -41,19 +41,20 @@ struct Cli {
     interval: u64,
 
     /// Warn after this many seconds without heartbeat
-    #[arg(long, default_value_t = 30)]
+    #[arg(long, default_value_t = watchdog::DEFAULT_HEARTBEAT_STALE_WARN_SECS)]
     heartbeat_stale_warn: u64,
 
     /// Log a deep-stale warning after this many seconds; never signals the orchestrator
-    #[arg(long, default_value_t = 90)]
+    #[arg(long, default_value_t = watchdog::DEFAULT_HEARTBEAT_STALE_KILL_SECS)]
     heartbeat_stale_kill: u64,
 
     /// Warn for stalled run after this many seconds
-    #[arg(long, default_value_t = 30)]
+    #[arg(long, default_value_t = watchdog::DEFAULT_RUN_STALE_WARN_SECS)]
     run_stale_warn: u64,
 
-    /// Kill stalled run after this many seconds
-    #[arg(long, default_value_t = 120)]
+    /// Kill a stalled run without a wall-clock budget after this many seconds
+    /// (a run with a budget is killed at twice its budget)
+    #[arg(long, default_value_t = watchdog::DEFAULT_RUN_STALE_KILL_SECS)]
     run_stale_kill: u64,
 
     /// Disable per-run wall-clock deadline enforcement. Deadline killing

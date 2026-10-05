@@ -176,5 +176,10 @@ class InMemoryStorageBackend(StorageBackend):
         for record in self._streams.get(norm, []):
             yield json.loads(json.dumps(record))
 
+    def last_jsonl(self, key: str) -> Any | None:
+        """Return a deep copy of the stream's last record at ``key``, or ``None``."""
+        records = self._streams.get(_normalise_key(key), [])
+        return json.loads(json.dumps(records[-1])) if records else None
+
 
 __all__ = ["InMemoryStorageBackend"]

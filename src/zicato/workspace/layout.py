@@ -172,8 +172,9 @@ class WorkspaceLayout:
         """The orchestrator's progress EVENT LOG (``runtime/progress.events.jsonl``).
 
         A single-writer, append-only JSONL the evolve loop appends one typed
-        event to on each genuine transition (round start, propose, apply,
-        tournament start and settle, gate, promote or reject). Its monotonic
+        event to on each genuine transition (round start, propose, each settled
+        proposal episode, tournament start, each scored board unit, tournament
+        settle, promote or reject). Its monotonic
         ``seq`` is the true liveness signal: it advances only on real progress,
         never on a timer, so a wedged loop whose heartbeat thread keeps
         stamping the clock does not read as alive. The tail ``seq`` is stamped

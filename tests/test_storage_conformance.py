@@ -236,6 +236,13 @@ def test_append_jsonl_does_not_overwrite(backend: StorageBackend):
     assert records == [{"a": 1}, {"b": 2}]
 
 
+def test_last_jsonl_returns_the_last_record(backend: StorageBackend):
+    assert backend.last_jsonl("s.jsonl") is None
+    for i in range(3):
+        backend.append_jsonl("s.jsonl", {"seq": i})
+    assert backend.last_jsonl("s.jsonl") == {"seq": 2}
+
+
 def test_appended_jsonl_record_is_decoupled_from_caller(backend: StorageBackend):
     rec = {"mutable": [1]}
     backend.append_jsonl("s.jsonl", rec)

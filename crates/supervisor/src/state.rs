@@ -13,6 +13,12 @@ use serde::{Deserialize, Serialize};
 pub struct Heartbeat {
     #[serde(default)]
     pub pid: Option<i32>,
+    /// The orchestrator's process start-time token (Linux `/proc/<pid>/stat`
+    /// field 22, carried as `f64` like [`ActiveRun::pid_start_time`]). Paired
+    /// with `pid` it tells the orchestrator apart from a later process that
+    /// received the same pid. Absent for older writers → pid liveness alone.
+    #[serde(default)]
+    pub pid_start_time: Option<f64>,
     #[serde(default)]
     pub instance_id: Option<String>,
     #[serde(default)]

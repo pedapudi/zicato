@@ -373,13 +373,13 @@ def _open_tournament_envelopes(field_round: FieldRound, candidates: CandidateFie
         entries=_field_entries(candidates.competitors),
     )
     # Progress transition: the field tournament started executing. One
-    # round-level append (NOT per matchup) so the liveness seq advances on
-    # genuine progress. Best-effort — never abort the round on a log write.
-    with best_effort(
-        "progress-log field tournament-start",
-        on_error=lambda exc: log.debug("progress-log field tournament-start skipped: %s", exc),
-    ):
-        progress_log.append_progress(prepared.writer, progress_log.TOURNAMENT_START)
+    # round-level transition (NOT per matchup); each scored board unit adds
+    # its own. Best-effort — never abort the round on a log write.
+    _beat(
+        prepared.beater,
+        progress_writer=prepared.writer,
+        progress=progress_log.TOURNAMENT_START,
+    )
     _open_field_tournament(
         prepared.workspace_root,
         field_tournament_id=f"{prepared.epoch_id}:field:{candidates.first_challenger_id}",
