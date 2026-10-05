@@ -850,7 +850,7 @@ semantics you must not get wrong, `seq`:
         bumps on a timer regardless of progress — this advances ONLY when
         the evolve loop appends a real transition (round start, propose,
         each settled proposal episode, tournament start, each scored board
-        unit, tournament settle, gate, promote/reject). A watchdog
+        unit, tournament settle, promote/reject). A watchdog
         keyed on ``seq`` advancing avoids the timestamp signal's
         false-positive (a slow LLM call ages the stamp) and false-negative
         (a wedged loop whose beater keeps stamping ``now()`` reads alive).

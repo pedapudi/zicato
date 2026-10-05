@@ -66,7 +66,8 @@ def progress_log_key() -> str:
 
     A single-writer, append-only JSONL log the evolve loop appends one
     typed event to on each genuine orchestrator transition (round start,
-    propose, apply, tournament start/settle, gate, promote/reject). Its
+    propose, each settled proposal episode, tournament start, each scored
+    board unit, tournament settle, promote/reject). Its
     monotonic ``seq`` is the TRUE liveness signal: it advances only on real
     progress, never on a timer, so a wedged loop whose heartbeat thread
     keeps stamping ``now()`` does not read as alive. The tail ``seq`` is

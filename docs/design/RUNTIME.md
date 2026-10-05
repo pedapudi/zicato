@@ -203,7 +203,7 @@ supervisor treats the orchestrator as running only while a live process has
 both that `pid` and that start time. `seq` is the tail sequence number of the
 progress log `progress.events.jsonl` at the last genuine loop transition
 (round start, propose, each settled proposal episode, tournament start, each
-scored board unit, tournament settle, gate, promote or reject); the timer
+scored board unit, tournament settle, promote or reject); the timer
 rewrites the same `seq`, so it advances only on real progress. The
 per-episode and per-unit transitions keep `seq` moving through proposal and
 tournament phases that last minutes. Every transition is appended and

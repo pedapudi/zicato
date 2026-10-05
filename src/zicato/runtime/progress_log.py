@@ -16,7 +16,7 @@ This module supplies a signal that is right in both directions: a
 (built on :class:`zicato.runtime.channel.EventLog`) that the evolve loop
 appends ONE typed event to on each *genuine* orchestrator transition —
 round start, propose, each settled proposal episode, tournament start, each
-settled board unit, tournament settle, gate, promote / reject. The log's
+settled board unit, tournament settle, promote / reject. The log's
 monotonic ``seq`` therefore advances only on real progress, never on a
 timer, so it is the TRUE liveness signal:
 
@@ -70,8 +70,6 @@ LOOP_START = "LoopStart"
 ROUND_START = "RoundStart"
 #: The proposer minted (or attempted) a challenger this round.
 PROPOSE = "Propose"
-#: The challenger patch set was applied into a fresh snapshot.
-APPLY = "Apply"
 #: The tournament for this round started executing.
 TOURNAMENT_START = "TournamentStart"
 #: One proposal episode ended (a slate slot's sample, or a challenger's whole
@@ -83,8 +81,6 @@ EPISODE_SETTLED = "EpisodeSettled"
 UNIT_SETTLED = "UnitSettled"
 #: The tournament settled (a winner / decision is resolved).
 TOURNAMENT_SETTLE = "TournamentSettle"
-#: The gate evaluated the settled decision (promote-margin check).
-GATE = "Gate"
 #: The round's challenger was promoted to the new head.
 PROMOTE = "Promote"
 #: The round's challenger was rejected (champion retained).
@@ -230,12 +226,10 @@ __all__ = [
     "LOOP_START",
     "ROUND_START",
     "PROPOSE",
-    "APPLY",
     "EPISODE_SETTLED",
     "TOURNAMENT_START",
     "UNIT_SETTLED",
     "TOURNAMENT_SETTLE",
-    "GATE",
     "PROMOTE",
     "REJECT",
     "SETTLED",
