@@ -65,7 +65,12 @@ pub struct HeartbeatStatus {
     pub seq_age_seconds: Option<u64>,
     /// `true` when the age exceeds the staleness threshold. Computed from
     /// `seq_age_seconds` when seq is tracked, else from the timestamp age.
+    /// Always `false` once `finished` is set.
     pub stale: bool,
+    /// `true` once the orchestrator that wrote the heartbeat has exited (no
+    /// live process has its `pid` and `pid_start_time`). Its heartbeat is
+    /// final, so its age is no longer a staleness signal.
+    pub finished: bool,
     /// The staleness threshold the watchdog is using (seconds).
     pub stale_threshold_seconds: u64,
     /// The orchestrator's current phase string, when reported.
@@ -187,21 +192,26 @@ fn run_deadline_status(run: &ActiveRun, now: DateTime<Utc>) -> RunDeadlineStatus
 /// timestamp age — decides staleness, because the periodic timer keeps the
 /// timestamp fresh even on a wedged loop. When absent (legacy heartbeat with
 /// no `seq`), staleness falls back to the timestamp age, exactly as before.
+/// `orchestrator_alive` is [`crate::watchdog::orchestrator_alive`] for the
+/// heartbeat; when it is `false` the status is `finished` and never `stale`.
 fn heartbeat_status(
     hb: Option<&Heartbeat>,
     now: DateTime<Utc>,
     stale_threshold_seconds: u64,
     seq_age_seconds: Option<u64>,
+    orchestrator_alive: bool,
 ) -> HeartbeatStatus {
+    let finished = hb.is_some() && !orchestrator_alive;
     match hb.and_then(|h| h.last_heartbeat.map(|ts| (h, ts))) {
         Some((h, last)) => {
             let age = (now - last).num_seconds();
             // Prefer the seq-change age for the staleness verdict; fall back
             // to the timestamp age when seq is not being tracked.
-            let stale = match seq_age_seconds {
-                Some(seq_age) => seq_age >= stale_threshold_seconds,
-                None => age.max(0) as u64 >= stale_threshold_seconds,
-            };
+            let stale = !finished
+                && match seq_age_seconds {
+                    Some(seq_age) => seq_age >= stale_threshold_seconds,
+                    None => age.max(0) as u64 >= stale_threshold_seconds,
+                };
             HeartbeatStatus {
                 present: true,
                 orchestrator_pid: h.pid,
@@ -210,6 +220,7 @@ fn heartbeat_status(
                 seq: h.seq,
                 seq_age_seconds,
                 stale,
+                finished,
                 stale_threshold_seconds,
                 phase: h.phase.clone(),
                 orchestrator_uptime_seconds: h.started_at.map(|s| (now - s).num_seconds().max(0)),
@@ -223,6 +234,7 @@ fn heartbeat_status(
             seq: hb.and_then(|h| h.seq),
             seq_age_seconds,
             stale: false,
+            finished,
             stale_threshold_seconds,
             phase: hb.and_then(|h| h.phase.clone()),
             orchestrator_uptime_seconds: None,
@@ -261,6 +273,7 @@ pub fn build_statusz(
         now,
         heartbeat_stale_threshold_seconds,
         seq_age_seconds,
+        hb.as_ref().is_none_or(crate::watchdog::orchestrator_alive),
     );
 
     let runs: Vec<RunDeadlineStatus> = reader::read_active_runs(paths)
@@ -384,7 +397,9 @@ th{color:#888;font-weight:normal}\
     let h = &v.heartbeat;
     out.push_str("<h2>heartbeat</h2><table>");
     if h.present {
-        let (cls, label) = if h.stale {
+        let (cls, label) = if h.finished {
+            ("dim", "finished (orchestrator exited)")
+        } else if h.stale {
             ("bad", "STALE")
         } else {
             ("ok", "fresh")
@@ -767,6 +782,26 @@ mod tests {
         assert_eq!(st.over_by_seconds, None);
     }
 
+    /// An exited orchestrator's heartbeat reads as finished, never stale,
+    /// however old its timestamp and its last `seq` change are.
+    #[test]
+    fn exited_orchestrator_heartbeat_is_finished() {
+        let now = Utc::now();
+        let hb = Heartbeat {
+            pid: Some(10015),
+            last_heartbeat: Some(now - ChDuration::seconds(3600)),
+            seq: Some(40),
+            ..Default::default()
+        };
+        let st = heartbeat_status(Some(&hb), now, 90, Some(3600), false);
+        assert!(st.present);
+        assert!(st.finished);
+        assert!(!st.stale);
+        let live = heartbeat_status(Some(&hb), now, 90, Some(3600), true);
+        assert!(!live.finished);
+        assert!(live.stale);
+    }
+
     #[test]
     fn stale_heartbeat_is_flagged() {
         let now = Utc::now();
@@ -776,7 +811,7 @@ mod tests {
             ..Default::default()
         };
         // No seq tracked → staleness falls back to the timestamp age.
-        let st = heartbeat_status(Some(&hb), now, 90, None);
+        let st = heartbeat_status(Some(&hb), now, 90, None, true);
         assert!(st.present);
         assert!(st.stale);
         assert_eq!(st.orchestrator_pid, Some(10015));
@@ -790,13 +825,13 @@ mod tests {
             last_heartbeat: Some(now - ChDuration::seconds(3)),
             ..Default::default()
         };
-        let st = heartbeat_status(Some(&hb), now, 90, None);
+        let st = heartbeat_status(Some(&hb), now, 90, None, true);
         assert!(!st.stale);
     }
 
     #[test]
     fn missing_heartbeat_is_not_present() {
-        let st = heartbeat_status(None, Utc::now(), 90, None);
+        let st = heartbeat_status(None, Utc::now(), 90, None, true);
         assert!(!st.present);
         assert!(!st.stale);
     }
@@ -813,7 +848,7 @@ mod tests {
             seq: Some(7),
             ..Default::default()
         };
-        let st = heartbeat_status(Some(&hb), now, 90, Some(120));
+        let st = heartbeat_status(Some(&hb), now, 90, Some(120), true);
         assert!(st.stale, "stale seq age must mark the heartbeat stale");
         assert_eq!(st.seq, Some(7));
         assert_eq!(st.seq_age_seconds, Some(120));
@@ -832,7 +867,7 @@ mod tests {
             seq: Some(42),
             ..Default::default()
         };
-        let st = heartbeat_status(Some(&hb), now, 90, Some(1));
+        let st = heartbeat_status(Some(&hb), now, 90, Some(1), true);
         assert!(!st.stale);
         assert_eq!(st.seq_age_seconds, Some(1));
     }
@@ -849,7 +884,7 @@ mod tests {
                 workspace: "/tmp/ws".into(),
                 pid: 1234,
             },
-            heartbeat: heartbeat_status(None, Utc::now(), 90, None),
+            heartbeat: heartbeat_status(None, Utc::now(), 90, None, true),
             runs: vec![],
             runs_over_deadline: 0,
             summary: "no active runs".into(),
@@ -889,7 +924,7 @@ mod tests {
                 workspace: "/tmp/<evil>".into(),
                 pid: 1,
             },
-            heartbeat: heartbeat_status(None, Utc::now(), 90, None),
+            heartbeat: heartbeat_status(None, Utc::now(), 90, None, true),
             runs: vec![],
             runs_over_deadline: 0,
             summary: "no active runs".into(),

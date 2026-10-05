@@ -1038,6 +1038,7 @@ The `StatuszView` payload (`statusz.rs`) carries:
 |---|---|---|
 | version / build / bound port / `uptime_seconds` | the supervisor process | the notary itself is alive and which build |
 | `orchestrator_uptime_seconds` | `heartbeat.started_at` | how long the audited loop has run (`None` when no heartbeat) |
+| `heartbeat.stale` / `heartbeat.finished` | the seq-change age (timestamp age without a `seq`) and `orchestrator_alive` | `finished` once no live process has the heartbeat's `pid` and `pid_start_time`; a finished heartbeat is never `stale` |
 | `watchdog_actions` | the `action_log` ring (`WatchdogLog::snapshot`) | the recent SIGTERM/SIGKILL escalations, per trigger + outcome |
 | ledger chain status | `AuditLedger::verify` → `AuditStatus` | `configured` + `intact` + `records`, and `first_break_seq` + `break_reason` on a break |
 

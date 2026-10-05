@@ -235,9 +235,11 @@ raise the warning to a deep-stale warning). When the heartbeat carries a
 `seq`, the age measured is the time since `seq` last changed
 (`SeqLiveness`, `crates/supervisor/src/watchdog.rs`); otherwise it is the
 `last_heartbeat` age. Neither threshold signals the orchestrator (§3.2).
-Once the heartbeat's `pid` has exited, the supervisor logs once that the
-heartbeat is final and stops classifying its staleness until a different
-orchestrator (another `pid` or `started_at`) writes it.
+Once the orchestrator has exited (no live process has the heartbeat's `pid`
+and `pid_start_time`), the supervisor logs once that the heartbeat is final,
+`/statusz` reports it as `finished` rather than stale, and staleness is not
+classified again until a different orchestrator (another `pid` or
+`started_at`) writes the heartbeat.
 
 ### 2.3 `active_tournament.events.jsonl` — published tournament display state
 
