@@ -1,7 +1,7 @@
 //! The audit ledger against the running integrity loop: digests that survive
-//! decimal payloads, restarts that do not record a decision twice, alarms on
-//! rewritten decisions and contract hashes, and reports of a broken chain or
-//! a partial final line.
+//! decimal payloads, restarts that record nothing twice, alarms on rewritten
+//! or erased decisions and contract hashes, and reports of a broken chain,
+//! records removed while the supervisor runs, or a partial final line.
 
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -53,6 +53,12 @@ type Running = (tokio::task::JoinHandle<()>, broadcast::Sender<()>);
 
 /// Start the supervisor's loops with a ledger and 50 ms integrity ticks.
 fn start(paths: &WorkspacePaths, ledger_dir: &Path) -> Running {
+    start_with(paths, ledger_dir, false)
+}
+
+/// Like [`start`], with the promotion-gate and divergence audits on when
+/// `audits` is set.
+fn start_with(paths: &WorkspacePaths, ledger_dir: &Path, audits: bool) -> Running {
     let ledger = Arc::new(AuditLedger::open(ledger_dir));
     let (shutdown, _) = broadcast::channel(4);
     let task = tokio::spawn(watchdog::runs_loop(
@@ -66,11 +72,11 @@ fn start(paths: &WorkspacePaths, ledger_dir: &Path) -> Running {
             findings: Default::default(),
         },
         watchdog::PromotionGateConfig {
-            enabled: false,
+            enabled: audits,
             findings: Default::default(),
         },
         watchdog::DivergenceConfig {
-            enabled: false,
+            enabled: audits,
             findings: Default::default(),
             stuck_age_seconds: 3600,
         },
@@ -246,4 +252,125 @@ fn a_partial_final_line_is_recorded_when_the_ledger_opens() {
     let report = serde_json::to_value(ledger.verify()).unwrap();
     assert_eq!(report["intact"], true);
     assert!(report["partial_final_line"].is_string(), "{report}");
+}
+
+/// An index that disagrees with the canonical files and records a promotion
+/// whose loss rose, so both audits report standing findings.
+fn write_contradicting_index(paths: &WorkspacePaths) {
+    let conn = rusqlite::Connection::open(paths.index_db()).unwrap();
+    conn.execute_batch(&format!(
+        "CREATE TABLE epochs(epoch_id TEXT PRIMARY KEY, contract_hash TEXT, created_at TEXT, \
+             closed INTEGER, goal TEXT, parent_epoch_id TEXT);
+         CREATE TABLE generations(epoch_id TEXT, generation_id TEXT, \
+             parent_generation_id TEXT, promoted INTEGER);
+         CREATE TABLE experiments(epoch_id TEXT, generation_id TEXT, hypothesis_core_idea TEXT);
+         CREATE TABLE tournaments(tournament_id TEXT, epoch_id TEXT, parent_generation_id TEXT, \
+             child_generation_id TEXT, decision TEXT, parent_scalar REAL, child_scalar REAL, \
+             delta_scalar REAL, rejection_reason TEXT, ran_at TEXT);
+         INSERT INTO epochs VALUES('e1', 'hash-z', NULL, 0, NULL, NULL);
+         INSERT INTO generations VALUES('e1', 'v1', NULL, 0);
+         INSERT INTO tournaments VALUES('t1', 'e1', 'v0', 'v1', 'promoted', 1.0, 2.0, 1.0, '', \
+             '2026-01-01T00:00:00Z');
+         PRAGMA user_version = {};",
+        zicato_supervisor::index_db::EXPECTED_SCHEMA_VERSION
+    ))
+    .unwrap();
+}
+
+async fn supervise_with_audits(paths: &WorkspacePaths, ledger_dir: &Path) {
+    let running = start_with(paths, ledger_dir, true);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    stop(running).await;
+}
+
+#[tokio::test]
+async fn restarts_record_no_standing_finding_or_break_again() {
+    let (_t, paths, ledger_dir) = workspace();
+    write_contradicting_index(&paths);
+    supervise_with_audits(&paths, &ledger_dir).await;
+    assert!(!of_kind(&ledger_dir, "promotion_contradiction").is_empty());
+    assert!(!of_kind(&ledger_dir, "divergence_finding").is_empty());
+    // Edit one finding's text in place so the chain stands broken too.
+    let path = ledger_dir.join("audit_ledger.jsonl");
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(text.contains("\"detail\":\""));
+    let edited = text.replacen("\"detail\":\"", "\"detail\":\"edited ", 1);
+    std::fs::write(&path, edited).unwrap();
+
+    supervise_with_audits(&paths, &ledger_dir).await;
+    let after_first_restart = records(&ledger_dir).len();
+    for _ in 0..3 {
+        supervise_with_audits(&paths, &ledger_dir).await;
+    }
+    let all = records(&ledger_dir);
+    assert_eq!(
+        all.len(),
+        after_first_restart,
+        "{:?}",
+        &all[after_first_restart..]
+    );
+    assert_eq!(of_kind(&ledger_dir, "ledger_integrity").len(), 1);
+}
+
+#[tokio::test]
+async fn an_erased_decision_and_contract_hash_raise_one_alarm_each() {
+    let (_t, paths, ledger_dir) = workspace();
+    supervise(&paths, &ledger_dir, 4).await;
+    // v2's decision no longer resolves, and e1's config states no hash.
+    let body = serde_json::json!({"epochs": [{"id": "e1", "generations": [
+        {"id": "v1", "promoted": true},
+        {"id": "v2", "promoted": null},
+    ]}]});
+    std::fs::write(paths.lineage(), body.to_string()).unwrap();
+    let config = paths.epochs.join("e1/config.json");
+    std::fs::write(config, serde_json::json!({"id": "e1"}).to_string()).unwrap();
+    supervise(&paths, &ledger_dir, 6).await;
+    supervise(&paths, &ledger_dir, 6).await;
+
+    let alarms = of_kind(&ledger_dir, "history_changed");
+    let mut seen: Vec<(String, String, String)> = alarms
+        .iter()
+        .map(|r| {
+            let p = &r["payload"];
+            let text = |k: &str| p[k].as_str().unwrap_or_default().to_string();
+            (text("field"), text("recorded"), text("observed"))
+        })
+        .collect();
+    seen.sort();
+    let expected = [
+        ("contract_hash", "hash-a", "absent"),
+        ("decision", "reject", "absent"),
+    ]
+    .map(|(a, b, c)| (a.to_string(), b.to_string(), c.to_string()));
+    assert_eq!(seen, expected);
+}
+
+#[tokio::test]
+async fn records_removed_while_running_are_reported_once() {
+    for delete in [false, true] {
+        let (_t, paths, ledger_dir) = workspace();
+        let running = start(&paths, &ledger_dir);
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let path = ledger_dir.join("audit_ledger.jsonl");
+        if delete {
+            std::fs::remove_file(&path).unwrap();
+        } else {
+            let text = std::fs::read_to_string(&path).unwrap();
+            let kept: Vec<&str> = text.lines().take(1).collect();
+            std::fs::write(&path, kept.join("\n") + "\n").unwrap();
+        }
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        stop(running).await;
+
+        let found = of_kind(&ledger_dir, "ledger_integrity");
+        assert_eq!(found.len(), 1, "{found:?}");
+        let detail = found[0]["payload"]["detail"].as_str().unwrap();
+        let expected = if delete {
+            "is missing"
+        } else {
+            "removed from the end"
+        };
+        assert!(detail.contains(expected), "{detail}");
+        assert!(!verify_chain(&path).intact);
+    }
 }

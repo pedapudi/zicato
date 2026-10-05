@@ -22,15 +22,18 @@
 //! Editing a record, reordering records, or removing a record from the
 //! middle breaks the chain at a specific `seq`. The chain does not detect
 //! records removed from the end of the file, or the file being deleted,
-//! because what remains is still a valid chain. The digests use no secret, so
-//! a writer who recomputes every later digest after an edit also produces a
-//! valid chain.
+//! because what remains is still a valid chain. A running supervisor knows
+//! how many records the ledger held and reports a shorter or missing file;
+//! that covers only removals during its lifetime. The digests use no secret,
+//! so a writer who recomputes every later digest after an edit also produces
+//! a valid chain.
 //!
 //! [`AuditLedger::check`] verifies the chain on every integrity tick and logs
-//! and records the first break it finds. [`TransitionObserver`] records each
+//! and records each break once. [`TransitionObserver`] records each
 //! generation's decision and each epoch's contract hash once, and records a
 //! `history_changed` alarm when the orchestrator's records later state a
-//! different value.
+//! different value or no longer state one. [`LedgerHistory`] loads what the
+//! ledger holds, so a restart records nothing twice.
 //!
 //! The ledger records and alarms; it never blocks a promotion or writes the
 //! orchestrator's state. Writing is opt-in: a supervisor started without a
@@ -161,9 +164,11 @@ pub struct AuditLedger {
     /// The partial final line removed when the ledger was opened, described
     /// for `/statusz` for the life of the process.
     partial_final_line: Option<String>,
-    /// Set once [`AuditLedger::check`] has reported the current break, so a
-    /// standing break is logged and recorded once.
-    break_reported: AtomicBool,
+    /// Set once [`AuditLedger::check`] has logged a break in this process.
+    break_logged: AtomicBool,
+    /// The `first_break_seq` of each break the ledger records, loaded at open,
+    /// so a standing break is recorded once across restarts.
+    recorded_breaks: Mutex<HashSet<Option<u64>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -201,11 +206,17 @@ impl AuditLedger {
                 bytes.len()
             )
         });
+        let recorded_breaks = read_records(&path)
+            .into_iter()
+            .filter(|rec| rec.kind == RecordKind::LedgerIntegrity)
+            .filter_map(|rec| rec.payload.get("first_break_seq").map(|v| v.as_u64()))
+            .collect();
         let ledger = Self {
             state: Mutex::new(Self::seed_tail(&path)),
             path,
             partial_final_line,
-            break_reported: AtomicBool::new(false),
+            break_logged: AtomicBool::new(false),
+            recorded_breaks: Mutex::new(recorded_breaks),
         };
         if let Some(bytes) = removed {
             warn!(
@@ -350,28 +361,57 @@ impl AuditLedger {
     /// link. Reads the file fresh (not the in-memory tail) so it detects
     /// out-of-band edits since the last append. The append lock is held for
     /// the walk, so a concurrent append is never read half-written.
+    ///
+    /// An intact chain that holds fewer records than this process knows the
+    /// ledger held, or a missing file, is reported as records removed from the
+    /// end. That comparison covers only removals while this supervisor runs:
+    /// a restarted supervisor takes the file it finds as the full ledger.
     pub fn verify(&self) -> VerifyReport {
-        let _append = match self.state.lock() {
+        let state = match self.state.lock() {
             Ok(g) => g,
             Err(p) => p.into_inner(),
         };
-        VerifyReport {
+        let mut report = VerifyReport {
             partial_final_line: self.partial_final_line.clone(),
             ..verify_chain(&self.path)
+        };
+        let held = state.next_seq;
+        if report.intact && report.records < held {
+            report.intact = false;
+            report.first_break_seq = Some(report.records);
+            report.break_reason = Some(if self.path.exists() {
+                format!(
+                    "ledger ends after {} records, but it held {held} while this supervisor ran; \
+records were removed from the end",
+                    report.records
+                )
+            } else {
+                format!(
+                    "ledger file is missing, but it held {held} records while this supervisor ran"
+                )
+            });
         }
+        report
     }
 
-    /// Verify the chain and report a break the first time it is seen.
+    /// Verify the chain and report each break once.
     ///
-    /// The integrity loop calls this every tick. The first time the chain is
-    /// broken, it logs a WARN and appends a `ledger_integrity` record that
-    /// names the first broken `seq`; a standing break is not reported again.
-    /// A chain that verifies intact again re-arms the report.
+    /// The integrity loop calls this every tick. A break whose
+    /// `first_break_seq` the ledger does not yet record is logged as a WARN
+    /// and recorded as a `ledger_integrity` record (`finding: chain_break`).
+    /// A break the ledger already records is not recorded again, in this
+    /// process or after a restart; it is logged once per process.
     pub fn check(&self) -> VerifyReport {
         let report = self.verify();
         if report.intact {
-            self.break_reported.store(false, Ordering::Relaxed);
-        } else if !self.break_reported.swap(true, Ordering::Relaxed) {
+            self.break_logged.store(false, Ordering::Relaxed);
+            return report;
+        }
+        let new = match self.recorded_breaks.lock() {
+            Ok(mut g) => g.insert(report.first_break_seq),
+            Err(p) => p.into_inner().insert(report.first_break_seq),
+        };
+        if !self.break_logged.swap(true, Ordering::Relaxed) || new {
             warn!(
                 path=?self.path,
                 first_break_seq = ?report.first_break_seq,
@@ -379,6 +419,8 @@ impl AuditLedger {
                 records = report.records,
                 "AUDIT-LEDGER CHAIN BREAK: the ledger file was changed outside the supervisor",
             );
+        }
+        if new {
             self.append(
                 RecordKind::LedgerIntegrity,
                 serde_json::json!({
@@ -451,7 +493,7 @@ pub fn repair_torn_tail(path: &Path) -> Option<Vec<u8>> {
 /// nothing to tamper with). A line that fails to parse, a digest that does
 /// not recompute over the line's own payload bytes, a `prev` link that does
 /// not match the prior digest, or a non-contiguous `seq` are all chain breaks
-/// pinned to the offending seq.
+/// pinned to the first seq that is missing or fails.
 pub fn verify_chain(path: &Path) -> VerifyReport {
     let bytes = match std::fs::read(path) {
         Ok(b) => b,
@@ -493,7 +535,7 @@ pub fn verify_chain(path: &Path) -> VerifyReport {
         // seq must be contiguous from 0.
         if rec.seq != records {
             let reason = format!("seq discontinuity: expected {records}, found {}", rec.seq);
-            return broken(records, rec.seq, reason);
+            return broken(records, records, reason);
         }
         // prev must link to the previous record's digest (or genesis).
         if rec.prev != expected_prev {
@@ -521,7 +563,8 @@ pub fn verify_chain(path: &Path) -> VerifyReport {
 }
 
 /// Records each generation's decision and each epoch's contract hash once,
-/// and alarms when the orchestrator's records later state a different value.
+/// and alarms when the orchestrator's records later state a different value
+/// or no longer state one.
 ///
 /// The orchestrator can rewrite its own records, so the supervisor reads the
 /// same values it publishes (the per-generation decision and the epoch
@@ -532,11 +575,14 @@ pub fn verify_chain(path: &Path) -> VerifyReport {
 /// ledger's own record raises the same alarm. A forgery that rewrites a
 /// decision together with the scores that justify it passes the
 /// promotion-gate audit, which checks only that the two agree; it does not
-/// pass this comparison.
+/// pass this comparison. A recorded generation whose decision no longer
+/// resolves, or a recorded epoch that states no contract hash, raises the
+/// alarm with observed value `absent` once it has been missing on two
+/// consecutive ticks.
 ///
-/// [`TransitionObserver::from_ledger`] loads what an existing ledger already
-/// holds, so a restarted supervisor neither records a decision twice nor
-/// raises the same alarm twice.
+/// [`LedgerHistory::load`] fills an observer from an existing ledger, so a
+/// restarted supervisor neither records a decision twice nor raises the same
+/// alarm twice.
 #[derive(Debug, Default)]
 pub struct TransitionObserver {
     /// The decision first recorded per `(epoch_id, generation_id)`;
@@ -547,6 +593,9 @@ pub struct TransitionObserver {
     /// Alarms already recorded, keyed by
     /// `(field, epoch_id, generation_id or "", observed value)`.
     alarms: HashSet<(String, String, String, String)>,
+    /// Recorded values that did not resolve on the previous tick, keyed by
+    /// `(field, epoch_id, generation_id or "")`.
+    absent: HashSet<(String, String, String)>,
 }
 
 fn decision_label(promoted: bool) -> &'static str {
@@ -560,50 +609,6 @@ fn decision_label(promoted: bool) -> &'static str {
 impl TransitionObserver {
     pub fn new() -> Self {
         Self::default()
-    }
-
-    /// Load the decisions, contract hashes and alarms `ledger` already holds.
-    /// The first recorded value for each generation or epoch is the reference
-    /// later observations are compared against. Lines that do not parse are
-    /// skipped; the chain check reports them.
-    pub fn from_ledger(ledger: &AuditLedger) -> Self {
-        let mut observer = Self::default();
-        let bytes = std::fs::read(ledger.path()).unwrap_or_default();
-        for line in bytes.split(|b| *b == b'\n') {
-            let Ok(rec) = serde_json::from_slice::<Record>(line) else {
-                continue;
-            };
-            let field = |key: &str| {
-                let value = rec.payload.get(key).and_then(|v| v.as_str());
-                value.unwrap_or_default().to_string()
-            };
-            match rec.kind {
-                RecordKind::DecisionObserved => {
-                    let key = (field("epoch_id"), field("generation_id"));
-                    let promoted = field("decision") == "promote";
-                    observer.recorded_decisions.entry(key).or_insert(promoted);
-                }
-                RecordKind::ContractChange if !field("contract_hash").is_empty() => {
-                    let hash = field("contract_hash");
-                    observer
-                        .recorded_contract
-                        .entry(field("epoch_id"))
-                        .or_insert(hash);
-                }
-                RecordKind::HistoryChanged => {
-                    let generation_id = field("generation_id");
-                    let key = (
-                        field("field"),
-                        field("epoch_id"),
-                        generation_id,
-                        field("observed"),
-                    );
-                    observer.alarms.insert(key);
-                }
-                _ => {}
-            }
-        }
-        observer
     }
 
     /// The epochs whose contract hash is recorded.
@@ -622,11 +627,13 @@ impl TransitionObserver {
         I: IntoIterator<Item = (&'a str, &'a str, Option<bool>)>,
     {
         let mut recorded = 0;
+        let mut resolved = HashSet::new();
         for (epoch_id, generation_id, promoted) in generations {
             let Some(promoted) = promoted else {
                 continue; // still in flight — no decision yet.
             };
             let key = (epoch_id.to_string(), generation_id.to_string());
+            resolved.insert(key.clone());
             match self.recorded_decisions.get(&key) {
                 Some(&first) if first != promoted => self.alarm(
                     ledger,
@@ -651,7 +658,65 @@ impl TransitionObserver {
                 }
             }
         }
+        let missing: Vec<_> = self
+            .recorded_decisions
+            .iter()
+            .filter(|(key, _)| !resolved.contains(*key))
+            .map(|((epoch_id, generation_id), &first)| {
+                let recorded = decision_label(first).to_string();
+                (epoch_id.clone(), Some(generation_id.clone()), recorded)
+            })
+            .collect();
+        self.absences(ledger, "decision", missing);
         recorded
+    }
+
+    /// Observe the contract hash of each `(epoch_id, hash)` pair, where `hash`
+    /// is `None` when the epoch states none. A recorded epoch that states no
+    /// hash on two consecutive calls raises an alarm with observed value
+    /// `absent`.
+    pub fn observe_contracts<I>(&mut self, ledger: &AuditLedger, epochs: I)
+    where
+        I: IntoIterator<Item = (String, Option<String>)>,
+    {
+        let mut missing = Vec::new();
+        for (epoch_id, hash) in epochs {
+            match (
+                hash.filter(|h| !h.is_empty()),
+                self.recorded_contract.get(&epoch_id),
+            ) {
+                (Some(hash), _) => {
+                    self.observe_contract(ledger, &epoch_id, &hash);
+                }
+                (None, Some(first)) => missing.push((epoch_id, None, first.clone())),
+                (None, None) => {}
+            }
+        }
+        self.absences(ledger, "contract_hash", missing);
+    }
+
+    /// Alarm, with observed value `absent`, on each recorded value of `field`
+    /// that is missing now and was missing on the previous tick. Requiring two
+    /// consecutive ticks keeps a read that races a writer from raising an
+    /// alarm.
+    fn absences(
+        &mut self,
+        ledger: &AuditLedger,
+        field: &str,
+        missing: Vec<(String, Option<String>, String)>,
+    ) {
+        let mut now = HashSet::new();
+        for (epoch_id, generation_id, recorded) in missing {
+            let gen_key = generation_id.clone().unwrap_or_default();
+            let key = (field.to_string(), epoch_id.clone(), gen_key);
+            if self.absent.contains(&key) {
+                let generation_id = generation_id.as_deref();
+                self.alarm(ledger, field, &epoch_id, generation_id, &recorded, "absent");
+            }
+            now.insert(key);
+        }
+        self.absent.retain(|key| key.0 != field);
+        self.absent.extend(now);
     }
 
     /// Record an epoch's contract hash the first time it is seen, and alarm
@@ -733,6 +798,80 @@ impl TransitionObserver {
             }),
         );
     }
+}
+
+/// What the ledger already records, loaded when the integrity loop starts
+/// and after a scan panics, so the loop records no decision, contract hash,
+/// alarm or finding a second time.
+#[derive(Debug, Default)]
+pub struct LedgerHistory {
+    /// The observer, holding each recorded decision, contract hash and
+    /// `history_changed` alarm. The first recorded value for each generation
+    /// or epoch is the reference later observations are compared against.
+    pub observer: TransitionObserver,
+    /// `(epoch_id, generation_id)` of each recorded diff-containment alert.
+    pub diff_alerts: HashSet<(String, String)>,
+    /// `(epoch_id, challenger_generation_id)` of each recorded promotion
+    /// contradiction.
+    pub contradictions: HashSet<(String, String)>,
+    /// `(code, generation_id)` of each recorded divergence finding.
+    pub divergences: HashSet<(String, Option<String>)>,
+}
+
+impl LedgerHistory {
+    /// Read every parseable record of `ledger`. Lines that do not parse are
+    /// skipped; the chain check reports them.
+    pub fn load(ledger: &AuditLedger) -> Self {
+        let mut history = Self::default();
+        let observer = &mut history.observer;
+        for rec in read_records(ledger.path()) {
+            let text = |key: &str| rec.payload.get(key).and_then(|v| v.as_str());
+            let field = |key: &str| text(key).unwrap_or_default().to_string();
+            let pair = |a: &str, b: &str| (field(a), field(b));
+            match rec.kind {
+                RecordKind::DecisionObserved => {
+                    let promoted = field("decision") == "promote";
+                    let key = pair("epoch_id", "generation_id");
+                    observer.recorded_decisions.entry(key).or_insert(promoted);
+                }
+                RecordKind::ContractChange if !field("contract_hash").is_empty() => {
+                    let (epoch_id, hash) = pair("epoch_id", "contract_hash");
+                    observer.recorded_contract.entry(epoch_id).or_insert(hash);
+                }
+                RecordKind::HistoryChanged => {
+                    let (name, epoch_id) = pair("field", "epoch_id");
+                    let (generation_id, observed) = pair("generation_id", "observed");
+                    observer
+                        .alarms
+                        .insert((name, epoch_id, generation_id, observed));
+                }
+                RecordKind::DiffContainmentAlert => {
+                    history
+                        .diff_alerts
+                        .insert(pair("epoch_id", "generation_id"));
+                }
+                RecordKind::PromotionContradiction => {
+                    let key = pair("epoch_id", "challenger_generation_id");
+                    history.contradictions.insert(key);
+                }
+                RecordKind::DivergenceFinding => {
+                    let generation_id = text("generation_id").map(str::to_string);
+                    history.divergences.insert((field("code"), generation_id));
+                }
+                _ => {}
+            }
+        }
+        history
+    }
+}
+
+/// Every line of the ledger at `path` that parses as a record, in file order.
+fn read_records(path: &Path) -> Vec<Record> {
+    let bytes = std::fs::read(path).unwrap_or_default();
+    bytes
+        .split(|b| *b == b'\n')
+        .filter_map(|line| serde_json::from_slice(line).ok())
+        .collect()
 }
 
 #[cfg(test)]
@@ -827,7 +966,7 @@ mod tests {
 
         let report = verify_chain(led.path());
         assert!(!report.intact, "a dropped record must break the chain");
-        assert_eq!(report.first_break_seq, Some(2));
+        assert_eq!(report.first_break_seq, Some(1), "the first missing seq");
     }
 
     #[test]
@@ -887,6 +1026,31 @@ mod tests {
             kinds,
             [RecordKind::ContractChange, RecordKind::HistoryChanged]
         );
+    }
+
+    #[test]
+    fn an_absence_must_persist_two_ticks_to_alarm() {
+        let (_t, dir) = ledger_dir();
+        let led = AuditLedger::open(&dir);
+        let mut obs = TransitionObserver::new();
+        let both = || vec![("e1", "v1", Some(true)), ("e1", "v2", Some(false))];
+        obs.observe_decisions(&led, both());
+        // One tick without v2, then v2 again: a transient read, no alarm.
+        obs.observe_decisions(&led, vec![("e1", "v1", Some(true))]);
+        obs.observe_decisions(&led, both());
+        // Two consecutive ticks without v2: one alarm, not repeated.
+        for _ in 0..3 {
+            obs.observe_decisions(&led, vec![("e1", "v1", Some(true)), ("e1", "v2", None)]);
+        }
+        let alarms: Vec<Record> = std::fs::read_to_string(led.path())
+            .unwrap()
+            .lines()
+            .map(|l| serde_json::from_str::<Record>(l).unwrap())
+            .filter(|r| r.kind == RecordKind::HistoryChanged)
+            .collect();
+        assert_eq!(alarms.len(), 1);
+        assert_eq!(alarms[0].payload["generation_id"], "v2");
+        assert_eq!(alarms[0].payload["observed"], "absent");
     }
 
     // ---- torn-tail truncation + verify-on-startup -------------------

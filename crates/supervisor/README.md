@@ -110,12 +110,19 @@ decision or contract hash twice. When the orchestrator's files later state a
 different value for one of them, it logs a warning and appends a
 `history_changed` record.
 
-Every integrity tick verifies the chain; the first break is logged and
-recorded once as a `ledger_integrity` record. Opening a ledger that ends in a
+On restart it also loads the findings it already recorded and does not record a
+standing finding again. A recorded decision or contract hash that disappears
+from the orchestrator's files for two consecutive ticks produces a
+`history_changed` record with observed value `absent`.
+
+Every integrity tick verifies the chain; each break is logged and recorded once
+as a `ledger_integrity` record, also across restarts. Opening a ledger that ends in a
 partial line removes that line and records its bytes in a `ledger_integrity`
 record. The chain detects an edited or reordered record and a record removed
 from the middle. It does not detect records removed from the end of the file,
-or the file being deleted.
+or the file being deleted. A running supervisor knows how many records the
+ledger held and reports a shorter or missing file, but only for removals
+while it runs.
 
 ## HTTP API
 

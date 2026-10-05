@@ -25,12 +25,12 @@
 > | S4 | the clamped-deadline rule | Orchestrator-written deadlines are untrusted: the enforced cutoff is clamped to `started_at + max_run_seconds`, so a run is always killable no matter what deadline was written. |
 > | S5 | the confirmed-death-before-reaping rule | Orphan signalling and cleanup require a positively dead producer identity recorded by the run and the stable writer guard. Live, unknown or unreadable producer identity retains ownership. |
 > | S6 | the path-confined snapshot collection rule | Snapshot GC removes only a `ztw-snap-*` root that is a strict descendant of the system temp dir. Any other path is refused, however it got into the record. |
-> | S7 | the ledger-records-never-gates rule | The audit ledger is append-only, hash-chained over the exact payload bytes written, and fsynced per append. Opening it removes a partial final line and records the removed bytes; every integrity tick verifies the chain and reports the first break once. It records; it never gates. |
+> | S7 | the ledger-records-never-gates rule | The audit ledger is append-only, hash-chained over the exact payload bytes written, and fsynced per append. Opening it removes a partial final line and records the removed bytes; every integrity tick verifies the chain and records each break once, across restarts. It records; it never gates. |
 > | S8 | the read-only version-pinned index rule | The supervisor opens `index.db` read-only and refuses a `user_version` that does not equal its pinned `EXPECTED_SCHEMA_VERSION`. A missing, stale or unreadable index makes the promotion-gate and divergence audits report no finding; it never fails a route or a watchdog loop. |
 > | S9 | coordinated worker termination | The parent delegates termination through a kill-request marker when a supervisor is reachable. A bounded fallback uses the captured process identity if delegation does not confirm group termination. |
 > | S10 | the read-only fail-open integrity check | Every integrity-notary check (diff containment, promotion gate, divergence) is read-only and fail-open on the supervisor side: it alarms on positive observed evidence and reports nothing when the attestation cannot be made. |
 > | S11 | independent enforcement with fixed trigger priority | Run enforcement applies confirmed-death reap, kill-request, deadline, then staleness. Each verified owner has one concurrent escalation, recorded in the action ring and optional ledger. Integrity scans run separately. |
-> | S12 | the no-cached-state-across-ticks rule | The supervisor holds NO cached state across ticks except the explicitly-carried trackers (`SeqLiveness`, pending process owners and their guarded orphan snapshots, integrity de-dup sets, the `TransitionObserver` loaded from the ledger, the ledger tail and its break-reported flag) and the process-lifetime action ring. `WorkspacePaths` is read fresh every tick and is the Rust twin of `zicato.runtime.paths`. |
+> | S12 | the no-cached-state-across-ticks rule | The supervisor holds NO cached state across ticks except the explicitly-carried trackers (`SeqLiveness`, pending process owners and their guarded orphan snapshots, integrity de-dup sets and the `TransitionObserver`, both loaded from the ledger, and the ledger tail with its recorded-break and break-logged markers) and the process-lifetime action ring. `WorkspacePaths` is read fresh every tick and is the Rust twin of `zicato.runtime.paths`. |
 > | S13 | the operational-not-analytical HTTP surface rule | The HTTP read surface is operational. Analytical tournament and health projections belong to `zicato.query`; the supervisor may inspect the index for alarms but never serves it as business truth. |
 
 ---
@@ -351,7 +351,11 @@ older verifier still checks a record whose kind it does not recognize.
 **What the chain detects.** Editing a record, reordering records, or removing
 a record from the middle breaks the chain at a specific `seq`. It does not
 detect records removed from the end of the file, or the file being deleted,
-because what remains is still a valid chain. The digests use no secret, so a
+because what remains is still a valid chain. A running supervisor knows how
+many records the ledger held (its in-memory tail), so `verify` reports an
+intact file with fewer records, or a missing file, as records removed from the
+end. That covers only removals during the supervisor's lifetime: a restarted
+supervisor takes the file it finds as the full ledger. The digests use no secret, so a
 writer who recomputes every later digest after an edit also produces a valid
 chain. After a restart, the history audit below raises an alarm for such a
 rewrite when it changed a recorded decision or contract hash.
@@ -372,12 +376,15 @@ rewrite when it changed a recorded decision or contract hash.
    the last record so a restart continues the chain.
 3. **Verification** — one `check` (below).
 
-**Self-verification.** `check` runs at open and on every integrity tick. The
-first time it finds the chain broken, it logs a WARN and appends a
-`ledger_integrity` record (`finding: chain_break`) that names the first broken
-`seq`. A standing break is reported once per process; a chain that verifies
-intact again re-arms the report. The walk holds the append lock, so it never
-reads a half-written record.
+**Self-verification.** `check` runs at open and on every integrity tick. When
+it finds a break whose `first_break_seq` (the first seq that is missing or
+fails) the ledger does not yet record, it logs a WARN and appends a
+`ledger_integrity` record (`finding: chain_break`) with that seq and the
+reason. Open loads the seqs already recorded, so a standing break is recorded
+once across restarts; it is logged once per process. Records removed from the
+end and the record appended after them break the chain at the same seq, so
+that removal is also recorded once. The walk holds the append lock, so it
+never reads a half-written record.
 
 **Append semantics.** `append` serializes the payload once, hashes those bytes
 and writes them, then flushes and `sync_all()`s — fsync-per-append is
@@ -391,13 +398,21 @@ in-memory tail is NOT advanced, so the next append retries the same
 
 **History audit.** `TransitionObserver` records each generation's decision
 (`decision_observed`) and each epoch's contract hash (`contract_change`) the
-first time it sees them. When the integrity loop starts, it loads what the
-ledger already holds, so a restarted supervisor records neither again. When the
+first time it sees them. When the integrity loop starts, and again after a
+scan panics, `LedgerHistory::load` reads what the ledger already holds: the
+recorded decisions, contract hashes and alarms, and the keys of the recorded
+diff-containment, promotion-gate and divergence findings. A restarted
+supervisor records none of them again, including a finding that still
+stands. When the
 orchestrator's records later state a different decision for a recorded
 generation, or a different contract hash for a recorded epoch (the current
 epoch or an earlier one), the observer logs a WARN and appends one
 `history_changed` record per distinct observed value, with `field`,
-`epoch_id`, `generation_id`, `recorded` and `observed`. An epoch's contract is
+`epoch_id`, `generation_id`, `recorded` and `observed`. A recorded generation
+whose decision no longer resolves (its decision removed, or its directory
+deleted) and a recorded epoch whose config states no contract hash raise the
+same alarm with observed value `absent`, once the value has been missing on
+two consecutive ticks; one missing read is not enough. An epoch's contract is
 frozen when the epoch is created, so any change to it is a rewrite. The
 comparison sees only the disagreement, so an edit to the ledger's own record
 of a decision raises the same alarm after a restart. This
@@ -823,8 +838,9 @@ tamper-evident audit trail (§8.7, §8.19).
 `integrity_loop` retains three sets to report an unchanged violation once:
 diff-containment findings keyed by epoch and generation, promotion-gate findings
 with the same key, and divergence findings keyed by code and generation. It also
-retains `TransitionObserver`, loaded from the ledger when the loop starts or
-restarts after a panic. Each scan returns this state to the next scan;
+retains `TransitionObserver`. `LedgerHistory::load` fills the observer and
+all three sets from the ledger when the loop starts and again after a scan
+panics, so a finding the ledger already records is not recorded again. Each scan returns this state to the next scan;
 run enforcement has its own pending-owner set.
 
 ---
@@ -1012,9 +1028,11 @@ I/O error `write_line` cuts the file back to its previous length and the
 in-memory tail is NOT advanced. `verify` holds the append lock and re-reads the
 file FRESH (never the in-memory tail); `verify_chain` checks three things per
 record: the digest recomputes, `prev` links to the prior digest, and `seq` is
-contiguous from 0. Any failure pins the break to a specific `seq`. `check`
-calls `verify` and reports the first break once through the
-`break_reported` flag.
+contiguous from 0. Any failure pins the break to the first seq that is missing
+or fails. `verify` then compares an intact walk with the in-memory tail and
+reports a shorter or missing file. `check` calls `verify`, records each new
+`first_break_seq` once through `recorded_breaks` (loaded from the ledger at
+open), and logs once per process through `break_logged`.
 
 ### 8.17.4 `TransitionObserver` — record each value once, alarm on change
 
@@ -1030,13 +1048,19 @@ pub struct TransitionObserver {
     /// Alarms already recorded, keyed by
     /// `(field, epoch_id, generation_id or "", observed value)`.
     alarms: HashSet<(String, String, String, String)>,
+    /// Recorded values that did not resolve on the previous tick, keyed by
+    /// `(field, epoch_id, generation_id or "")`.
+    absent: HashSet<(String, String, String)>,
 }
 ```
 — `crates/supervisor/src/ledger.rs`, `TransitionObserver`
 
-`TransitionObserver::from_ledger` fills all three maps from the ledger's
+`LedgerHistory::load` fills the first three from the ledger's
 `decision_observed`, `contract_change` and `history_changed` records, keeping
-the first recorded value for each generation and epoch as the reference. A
+the first recorded value for each generation and epoch as the reference, and
+fills the integrity loop's three finding de-dup sets from the recorded
+findings. `absent` is not loaded, so a value missing at startup needs two
+ticks of the new process before it raises an alarm. A
 decision is recorded once, a contract hash once per epoch, and an alarm once
 per distinct observed value, so a steady-state poll appends nothing and a
 restart appends nothing it already holds. This keeps the ledger a

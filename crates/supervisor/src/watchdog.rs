@@ -14,7 +14,7 @@
 //! for blowing its wall-clock budget.
 
 use crate::action_log::{Action, Trigger, WatchdogLog};
-use crate::ledger::{AuditLedger, RecordKind, TransitionObserver};
+use crate::ledger::{AuditLedger, LedgerHistory, RecordKind, TransitionObserver};
 use crate::reader::{self, WorkspacePaths};
 use crate::reap::{self, producer_is_dead};
 use crate::signal::{self, escalate_owned_target, KillTarget};
@@ -89,7 +89,7 @@ fn record_action(ring: &WatchdogLog, ledger: Option<&Arc<AuditLedger>>, action: 
 
 /// Record promote/reject decisions and epoch contract hashes from the
 /// canonical (orchestrator-written) state into the tamper-evident ledger, and
-/// alarm on any recorded value that changed.
+/// alarm on any recorded value that changed or no longer resolves.
 ///
 /// Read-only and alarm-only: this never blocks a promotion or writes the
 /// orchestrator's trees. The current epoch's contract hash is read, plus the
@@ -115,11 +115,11 @@ fn observe_transitions(
     epochs.extend(reader::read_current_epoch(paths));
     epochs.sort();
     epochs.dedup();
-    for epoch_id in epochs {
-        if let Some(contract_hash) = crate::epoch::contract_hash(paths, &epoch_id) {
-            observer.observe_contract(ledger, &epoch_id, &contract_hash);
-        }
-    }
+    let hashes = epochs.into_iter().map(|epoch_id| {
+        let hash = crate::epoch::contract_hash(paths, &epoch_id);
+        (epoch_id, hash)
+    });
+    observer.observe_contracts(ledger, hashes);
 }
 
 /// Run one diff-containment scan over the workspace and surface its findings.
@@ -1120,9 +1120,10 @@ pub async fn runs_loop(
 
 /// Integrity reads run in the blocking pool, outside the deadline polling task.
 ///
-/// A scan that panics loses its carried state; the next tick starts again
-/// with the transition observer reloaded from the ledger and empty de-dup
-/// sets, so the loop keeps running.
+/// The carried state (the transition observer and the three finding de-dup
+/// sets) is loaded from the ledger when the loop starts. A scan that panics
+/// loses that state; the next tick loads it from the ledger again, so the
+/// loop keeps running and records nothing twice.
 async fn integrity_loop(
     paths: WorkspacePaths,
     interval: Duration,
@@ -1150,13 +1151,9 @@ async fn integrity_loop(
         );
         let task = tokio::task::spawn_blocking(move || {
             let mut state = carried.unwrap_or_else(|| {
-                let observer = ledger.as_deref().map(TransitionObserver::from_ledger);
-                (
-                    observer.unwrap_or_default(),
-                    HashSet::new(),
-                    HashSet::new(),
-                    HashSet::new(),
-                )
+                let history = ledger.as_deref().map(LedgerHistory::load);
+                let h = history.unwrap_or_default();
+                (h.observer, h.diff_alerts, h.contradictions, h.divergences)
             });
             if let Some(ledger) = ledger.as_ref() {
                 ledger.check();
