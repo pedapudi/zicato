@@ -103,7 +103,9 @@ producer death, competing writer leases and asynchronous enforcement.
 requests, confirmed-death reaping, run deadlines, and staleness. Its separate
 `integrity_loop` verifies the ledger, records decisions and contract hashes,
 and runs the enabled integrity checks; a scan that panics is restarted on the
-next tick.
+next tick. On shutdown it finishes the scan in flight and then runs one more, so
+the state the orchestrator leaves at the end of a loop is audited before the
+process exits.
 
 ---
 
@@ -343,7 +345,12 @@ Everything else the supervisor observes lands in state the orchestrator can
 rewrite. The ledger (`crates/supervisor/src/ledger.rs`) is a separate record
 that only the supervisor writes, under the ledger-records-never-gates rule:
 opt-in via `--ledger-dir`, one JSONL file `audit_ledger.jsonl`, one
-hash-chained record per line:
+hash-chained record per line. `zicato evolve` passes the workspace's `proctor/`
+directory (`WorkspaceLayout.proctor_dir`), which no zicato Python code writes,
+prunes, moves, or deletes (`tests/test_proctor_ownership.py`). Whether `evolve`
+passes it at all is the module constant `_SUPERVISOR_AUDITS` in
+`src/zicato/cli/commands/evolve.py`, which also adds the three integrity-audit
+flags; it is off by default and is not an operator setting:
 
 ```text
 {"seq":N,"prev":"<hex>","ts":"<rfc3339>","kind":"...","payload":{...},"digest":"<hex>"}
@@ -671,10 +678,36 @@ supervision is protective, never load-bearing for the loop itself.
 > certainly running the stale copy: rebuild, or pass `--supervisor-binary
 > target/release/zicato-supervisor` explicitly.
 
-`zicato evolve` spawns the resolved binary with `--workspace <root>`. The UI
+`zicato evolve` spawns the resolved binary with `--workspace <root>` for every
+loop, including one run with `--no-dashboard`, because the supervisor is the
+only process that enforces run deadlines and carries out kill requests. The UI
 is the separate Python dashboard service, whose port walk range 7892–7902 is
 disjoint from the supervisor's 7920–7930 (see the `--port` doc in
 `main.rs`).
+
+**The address handshake.** The binary's standard output carries one
+line, `zicato-supervisor listening on http://<addr>`, printed once the server
+has bound; `tracing` logs go to standard error (`log.rs`). `evolve` spawns the
+child with a standard-output pipe, and one task (`_forward_output`) reads it in
+chunks of at most 64 KiB for the life of the child, forwarding every other line
+so the pipe never fills and no line length can overrun a buffer. On the address
+line it prints `Supervisor: http://<addr>/statusz` and writes
+`runtime/supervisor.json` (`SupervisorRecord`: pid, `/statusz` address, ledger
+directory or `null`); when the output ends it removes the record.
+
+**The stop sequence.** `evolve` registers the supervisor's stop on
+`InvocationContext.observers`, which closes after the final index repair and
+before the workspace writer is released (chapter 07). The supervisor leads its
+own session, so stopping signals its whole process group: a wrapper script or
+launcher in front of the binary, and anything it started, stops with it.
+Stopping sends SIGTERM and waits up to `_SUPERVISOR_STOP_TIMEOUT_S` (30 s) for
+the leader to be reaped and its output to close, then sends SIGKILL and waits at
+most `_SUPERVISOR_KILL_WAIT_S` (5 s). The wait reads the process's return code
+rather than awaiting `Process.wait()`, which does not return while any
+descendant still holds the pipe; forwarding is then cancelled, and its failure
+is never raised. On SIGTERM
+`main.rs` broadcasts shutdown and awaits `runs_loop`, which finishes admitted
+escalations and then awaits `integrity_loop`'s final scan.
 
 ---
 
@@ -756,8 +789,9 @@ its tests.
 starts the independent integrity task. Initialization constructs workspace paths,
 thresholds, shared trackers and the optional ledger.
 It records supervisor startup, then spawns the polling loops at `--interval`.
-A broadcast channel stops polling, and run enforcement finishes admitted
-escalations before returning.
+A broadcast channel stops polling. Run enforcement finishes admitted
+escalations, then waits for the integrity task's final scan, before returning;
+`main.rs` awaits it before exiting.
 
 ```rust
     let seq_liveness = Arc::new(std::sync::Mutex::new(watchdog::SeqLiveness::new()));
@@ -769,7 +803,10 @@ escalations before returning.
     tokio::spawn(async move {
         watchdog::heartbeat_loop(hb_paths, thresholds, interval, hb_log, hb_seq, hb_shutdown).await
     });
-    tokio::spawn(async move { watchdog::runs_loop(...).await });
+    let runs = tokio::spawn(async move { watchdog::runs_loop(...).await });
+    ...
+    let _ = shutdown_tx.send(());
+    if let Err(e) = runs.await { ... }
 ```
 — `crates/supervisor/src/main.rs` (abridged)
 
@@ -838,6 +875,9 @@ integrity scans in a separate task. It uses `spawn_blocking` for filesystem and
 ledger work, so a slow scan cannot occupy the run deadline loop. A scan that
 panics loses the state it carried: the loop logs a WARN, and the next tick
 starts again with the observer reloaded from the ledger and empty de-dup sets.
+A shutdown signal is checked before each tick (`biased`), and the scan it
+starts is the last one: a signal that arrives mid-scan lets that scan finish,
+then starts the final scan.
 
 ### 8.14.3 The two graces, and `record_action` mirroring
 

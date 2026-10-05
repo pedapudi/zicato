@@ -99,6 +99,20 @@ class WorkspaceLayout:
         return self.root / "current_epoch"
 
     @property
+    def proctor_dir(self) -> Path:
+        """The supervisor's own directory (``proctor/``), holding its audit ledger.
+
+        The supervisor binary is the only writer. No zicato Python code writes,
+        prunes, moves, or deletes anything beneath it, so the ledger survives
+        epoch garbage collection, repairs, resume, and runtime cleanup; the
+        orchestrator only names this path when it starts the supervisor. It
+        sits beside ``runtime/`` rather than under it because ``runtime/``
+        holds live process records that the orchestrator replaces and removes
+        as processes start and stop.
+        """
+        return self.root / "proctor"
+
+    @property
     def logs_dir(self) -> Path:
         """The structured operator-log directory (``logs/``).
 
@@ -146,6 +160,16 @@ class WorkspaceLayout:
         URL instead of guessing.
         """
         return self.runtime_dir / "dashboard.json"
+
+    @property
+    def supervisor_record(self) -> Path:
+        """The running supervisor's address and ledger (``runtime/supervisor.json``).
+
+        ``zicato evolve`` writes it from the address the supervisor prints once
+        its ``/statusz`` server has bound, and removes it when the supervisor's
+        output ends or evolve stops it.
+        """
+        return self.runtime_dir / "supervisor.json"
 
     @property
     def active_runs_dir(self) -> Path:

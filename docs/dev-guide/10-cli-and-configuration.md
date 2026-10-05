@@ -501,7 +501,12 @@ refuses a cross-compilation target and inputs that change during preparation.
 At run time `_resolve_supervisor_binary` in `cli/commands/evolve.py` resolves
 the binary in this order: the `--supervisor-binary` invocation setting; the
 fresher of the bundled `_bin` copy and a checkout's `target/release/` build; the
-system `PATH`; and the checkout release build as a last resort. The sdist
+system `PATH`; and the checkout release build as a last resort. `evolve` starts
+the resolved binary for every loop; `--no-dashboard` suppresses only the
+dashboard service. The supervisor's audit ledger and integrity audits have no
+operator setting: the module constant `_SUPERVISOR_AUDITS` in the same file
+enables them, and the ledger directory is always the workspace's `proctor/`.
+The sdist
 carries the crate source (`crates`, `Cargo.toml`, `Cargo.lock`,
 `hatch_build.py`) so a downstream wheel build can run the hook.
 

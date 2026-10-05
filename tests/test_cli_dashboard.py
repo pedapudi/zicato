@@ -11,7 +11,8 @@ Covered:
   override (the former env override is deleted and ignored).
 * ``zicato evolve`` spawns the watchdog supervisor and ALSO spawns the
   Python dashboard service.
-* ``zicato evolve --no-dashboard`` suppresses the dashboard spawn.
+* ``zicato evolve --no-dashboard`` suppresses the dashboard spawn and
+  still spawns the watchdog supervisor.
 * Both children are torn down when the evolve loop exits.
 
 The subprocess spawns are mocked — no real supervisor binary, no real
@@ -250,10 +251,14 @@ def test_evolve_dashboard_port_flag_is_plumbed(monkeypatch: pytest.MonkeyPatch) 
     assert "Dashboard: http://127.0.0.1:9100" in result.output
 
 
-def test_evolve_no_dashboard_suppresses_both_spawns(
+def test_evolve_no_dashboard_still_starts_the_supervisor(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``--no-dashboard`` suppresses both the dashboard and the watchdog."""
+    """``--no-dashboard`` suppresses the dashboard but not the watchdog.
+
+    The supervisor enforces per-run deadlines and carries out kill
+    requests, so a loop never runs without it.
+    """
     from zicato.cli.commands.evolve import evolve_cmd
 
     spawned = _install_evolve_mocks(monkeypatch)
@@ -261,7 +266,8 @@ def test_evolve_no_dashboard_suppresses_both_spawns(
     runner = CliRunner()
     result = runner.invoke(evolve_cmd, _evolve_args("--no-dashboard"))
     assert result.exit_code == 0, result.output
-    assert spawned == [], "no children should be spawned with --no-dashboard"
+    assert [proc.argv[0] for proc in spawned] == ["/fake/zicato-supervisor"]
+    assert spawned[0].terminated, "the supervisor is stopped when the loop ends"
     assert "Dashboard:" not in result.output
 
 

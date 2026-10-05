@@ -27,7 +27,7 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast::Sender;
-use tracing::warn;
+use tracing::{info, warn};
 
 /// Diff-containment configuration threaded into [`runs_loop`].
 ///
@@ -1213,7 +1213,9 @@ pub async fn runs_loop(
     while let Some(owner) = pending.next().await {
         finish_owner(&mut owners, owner);
     }
-    audits.abort();
+    if let Err(error) = audits.await {
+        warn!(%error, "integrity scan task failed");
+    }
 }
 
 /// Integrity reads run in the blocking pool, outside the deadline polling task.
@@ -1222,6 +1224,10 @@ pub async fn runs_loop(
 /// sets) is loaded from the ledger when the loop starts. A scan that panics
 /// loses that state; the next tick loads it from the ledger again, so the
 /// loop keeps running and records nothing twice.
+///
+/// A shutdown signal starts one last scan after the scan in flight, if any,
+/// finishes, so the state the orchestrator leaves behind at the end of a
+/// loop is audited before the supervisor exits.
 async fn integrity_loop(
     paths: WorkspacePaths,
     interval: Duration,
@@ -1235,10 +1241,11 @@ async fn integrity_loop(
     let mut ticker = tokio::time::interval(interval);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
-        tokio::select! {
-            _ = ticker.tick() => {}
-            _ = shutdown.recv() => return,
-        }
+        let stopping = tokio::select! {
+            biased;
+            _ = shutdown.recv() => true,
+            _ = ticker.tick() => false,
+        };
         let (paths, ledger, diff, promotion_gate, divergence, carried) = (
             paths.clone(),
             ledger.clone(),
@@ -1268,12 +1275,13 @@ async fn integrity_loop(
             }
             Some(state)
         });
-        tokio::select! {
-            result = task => match result {
-                Ok(result) => state = result,
-                Err(error) => warn!(%error, "integrity scan panicked; restarting on the next tick"),
-            },
-            _ = shutdown.recv() => return,
+        match task.await {
+            Ok(result) => state = result,
+            Err(error) => warn!(%error, "integrity scan panicked; restarting on the next tick"),
+        }
+        if stopping {
+            info!("final integrity scan finished");
+            return;
         }
     }
 }

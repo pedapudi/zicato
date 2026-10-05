@@ -1606,3 +1606,97 @@ fn lineage_reads_the_committed_round_outcome() {
         Some("v0")
     );
 }
+
+// ---------------------------------------------------------------------
+// The binary: address announcement and the final scan on SIGTERM.
+// ---------------------------------------------------------------------
+
+fn write_lineage_decisions(paths: &reader::WorkspacePaths, decisions: &[(&str, bool)]) {
+    let mut generations = Vec::new();
+    for (id, promoted) in decisions {
+        std::fs::create_dir_all(paths.epochs.join("e0/generations").join(id)).unwrap();
+        generations.push(serde_json::json!({"id": id, "promoted": promoted}));
+    }
+    let lineage = serde_json::json!({"epochs": [{"id": "e0", "generations": generations}]});
+    std::fs::write(paths.lineage(), lineage.to_string()).unwrap();
+}
+
+fn ledger_decisions(ledger: &std::path::Path) -> Vec<String> {
+    std::fs::read_to_string(ledger)
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|record| record["payload"]["decision"].is_string())
+        .map(|record| {
+            record["payload"]["generation_id"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        })
+        .collect()
+}
+
+/// Kills the child if the test ends before it exits on its own.
+struct KillOnDrop(std::process::Child);
+
+impl Drop for KillOnDrop {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+#[tokio::test]
+async fn binary_announces_its_address_and_scans_once_more_on_sigterm() {
+    use std::io::{BufRead, Read};
+
+    let (tmp, paths) = make_workspace();
+    let ledger_dir = tmp.path().join("proctor");
+    write_lineage_decisions(&paths, &[("v0", true)]);
+    let mut child = KillOnDrop(
+        std::process::Command::new(env!("CARGO_BIN_EXE_zicato-supervisor"))
+            .arg("--workspace")
+            .arg(&paths.workspace)
+            .args(["--port", "0", "--interval", "3600", "--ledger-dir"])
+            .arg(&ledger_dir)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let mut stdout = std::io::BufReader::new(child.0.stdout.take().unwrap());
+    // Lines before the address line are collected and must be absent.
+    let mut before_address = Vec::new();
+    loop {
+        let mut line = String::new();
+        assert_ne!(stdout.read_line(&mut line).unwrap(), 0, "no address line");
+        if line.starts_with("zicato-supervisor listening on http://127.0.0.1:") {
+            break;
+        }
+        before_address.push(line);
+    }
+
+    // The first tick records v0; the hour-long interval means only the
+    // shutdown can start the scan that records v1.
+    let ledger = ledger_dir.join("audit_ledger.jsonl");
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while ledger_decisions(&ledger).is_empty() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the first scan did not record the seed decision");
+    write_lineage_decisions(&paths, &[("v0", true), ("v1", false)]);
+    // SAFETY: the pid names the child this test spawned and has not reaped.
+    assert_eq!(unsafe { libc::kill(child.0.id() as i32, libc::SIGTERM) }, 0);
+    assert!(wait_for_exit(&mut child.0, Duration::from_secs(10)).await);
+
+    assert_eq!(ledger_decisions(&ledger), ["v0", "v1"]);
+    let mut after_address = String::new();
+    stdout.read_to_string(&mut after_address).unwrap();
+    assert_eq!(
+        (before_address, after_address),
+        (Vec::new(), String::new()),
+        "standard output carries only the address line"
+    );
+}

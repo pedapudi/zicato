@@ -41,6 +41,9 @@ SLOW_TIER: dict[str, dict[str, float]] = {
     "tests/test_cascade_oc_harness.py": {
         "test_cascade_oc_smoke_end_to_end": 29.2,
     },
+    "tests/test_proctor_ownership.py": {
+        "test_git_store_round_and_gc_leave_proctor_untouched": 21.77,
+    },
 }
 
 
