@@ -70,13 +70,16 @@ _TAIL_BLOCK_BYTES = 8192
 
 
 def last_jsonl_record(path: Path) -> Any | None:
-    """Decode the last non-blank line of ``path`` without reading the whole file.
+    """Decode the last complete record of ``path`` without reading the whole file.
 
-    Reads fixed-size blocks backwards from the end until the buffer holds a
-    newline before the last non-blank line, so the cost is the length of
-    that line rather than of the file. Returns ``None`` for an absent or
-    blank file. A torn final line raises :class:`json.JSONDecodeError`, as
-    a forward read would.
+    A record is complete once its terminating newline is written. Bytes after
+    the last newline belong to an append in progress or a torn write, which
+    :func:`append_jsonl` refuses to append after; they are ignored, so a
+    reader racing the writer sees the previous record. Blank lines are
+    skipped. Reads fixed-size blocks backwards from the end until the buffer
+    holds a newline before the last complete non-blank line, so the cost is
+    the length of that line rather than of the file. Returns ``None`` for an
+    absent file or one with no complete non-blank record.
     """
     try:
         stream = path.open("rb")
@@ -90,10 +93,10 @@ def last_jsonl_record(path: Path) -> Any | None:
             position -= step
             stream.seek(position)
             buffer = stream.read(step) + buffer
-            content = buffer.rstrip()
-            newline = content.rfind(b"\n")
-            if content and (newline >= 0 or position == 0):
-                return json.loads(content[newline + 1 :].strip().decode("utf-8"))
+            complete = buffer[: buffer.rfind(b"\n") + 1].rstrip()
+            newline = complete.rfind(b"\n")
+            if complete and (newline >= 0 or position == 0):
+                return json.loads(complete[newline + 1 :].strip().decode("utf-8"))
         return None
 
 

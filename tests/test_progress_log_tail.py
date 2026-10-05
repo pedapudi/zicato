@@ -44,7 +44,6 @@ def test_large_progress_log_tail_reads_from_the_end(
     [
         (b"", None),
         (b"\n\n  \n", None),
-        (b'{"a": 1}', {"a": 1}),
         (b'{"a": 1}\n{"a": 2}\n\n\n', {"a": 2}),
         (b'{"a": 1}\n  {"a": 3}  \n', {"a": 3}),
         (
@@ -57,7 +56,7 @@ def test_large_progress_log_tail_reads_from_the_end(
 def test_last_record_matches_a_forward_read(
     tmp_path: Path, content: bytes, expected: object
 ) -> None:
-    """Blank lines, a missing final newline, and a line longer than one block."""
+    """Blank lines, surrounding spaces, a line longer than one block, multibyte text."""
     path = tmp_path / "s.jsonl"
     path.write_bytes(content)
     assert last_jsonl_record(path) == expected
@@ -65,12 +64,37 @@ def test_last_record_matches_a_forward_read(
     assert (records[-1] if records else None) == expected
 
 
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [
+        (b'{"a": 1}', None),
+        (b'{"a": 1}\n{"a": ', {"a": 1}),
+        (b'{"a": 1}\n{"a": 2}', {"a": 1}),
+        (b'{"a": 1}\n\n{"a": 2', {"a": 1}),
+        (b'{"a": 1}\n' + b"x" * 20_000, {"a": 1}),
+    ],
+)
+def test_unterminated_final_line_is_ignored(
+    tmp_path: Path, content: bytes, expected: object
+) -> None:
+    """Bytes after the last newline are an append in progress or a torn write."""
+    path = tmp_path / "s.jsonl"
+    path.write_bytes(content)
+    assert last_jsonl_record(path) == expected
+
+
 def test_absent_file_has_no_last_record(tmp_path: Path) -> None:
     assert last_jsonl_record(tmp_path / "absent.jsonl") is None
 
 
-def test_torn_final_line_raises_like_a_forward_read(tmp_path: Path) -> None:
-    path = tmp_path / "s.jsonl"
-    path.write_bytes(b'{"a": 1}\n{"a": ')
-    with pytest.raises(json.JSONDecodeError):
-        last_jsonl_record(path)
+def test_progress_tail_during_an_append_reads_the_previous_event(tmp_path: Path) -> None:
+    """A reader that races a progress append sees the last complete event."""
+    path = progress_log_path(tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({"seq": 7, "ts": "2026-10-04T00:00:00Z", "type": "UnitSettled"})
+        + "\n"
+        + '{"seq": 8, "ts": "2026-10-04T00:00:01Z", "ty',
+        encoding="utf-8",
+    )
+    assert progress_log.tail_seq(tmp_path) == 7
