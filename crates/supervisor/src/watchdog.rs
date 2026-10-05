@@ -592,6 +592,18 @@ pub enum HeartbeatReport {
     Quiet,
 }
 
+/// Whether the orchestrator that wrote `heartbeat` is still running.
+///
+/// The pid must be alive and, when the heartbeat records the orchestrator's
+/// start time, the live process must have that start time; a later process
+/// that received the same pid is not the orchestrator. A heartbeat without a
+/// pid cannot be checked and counts as running.
+pub fn orchestrator_alive(heartbeat: &crate::state::Heartbeat) -> bool {
+    heartbeat
+        .pid
+        .is_none_or(|pid| signal::is_same_process(pid, heartbeat.pid_start_time))
+}
+
 /// Remembers which orchestrator's exit the heartbeat loop has reported.
 ///
 /// The heartbeat file outlives its writer. Without this record, a supervisor
@@ -611,7 +623,7 @@ impl OrchestratorExit {
 
     /// Decide what to log this tick.
     ///
-    /// `orchestrator_alive` is the liveness of the heartbeat's `pid`; a
+    /// `orchestrator_alive` is [`orchestrator_alive`] for the heartbeat; a
     /// heartbeat without a pid is treated as live, so its staleness is
     /// reported as before.
     pub fn report(
@@ -890,10 +902,7 @@ pub async fn heartbeat_loop(
                     Ok(mut tracker) => tracker.observe(hb.as_ref(), Utc::now(), &thresholds),
                     Err(_) => continue,
                 };
-                let alive = hb
-                    .as_ref()
-                    .and_then(|h| h.pid)
-                    .is_none_or(signal::is_alive);
+                let alive = hb.as_ref().is_none_or(orchestrator_alive);
                 match exit.report(hb.as_ref(), alive, obs.action) {
                     HeartbeatReport::Quiet => {}
                     HeartbeatReport::Finished => {
@@ -2985,6 +2994,23 @@ mod tests {
             exit.report(Some(&second), true, HeartbeatAction::Stale),
             HeartbeatReport::Liveness(HeartbeatAction::Stale)
         );
+    }
+
+    /// A live pid whose start time differs from the recorded one belongs to a
+    /// later process, so the orchestrator counts as exited.
+    #[test]
+    fn recycled_orchestrator_pid_is_not_alive() {
+        let pid = std::process::id() as i32;
+        let start = signal::pid_start_time(pid).expect("own start time");
+        let heartbeat = |pid_start_time| Heartbeat {
+            pid: Some(pid),
+            pid_start_time,
+            ..Default::default()
+        };
+        assert!(orchestrator_alive(&heartbeat(Some(start))));
+        assert!(orchestrator_alive(&heartbeat(None)));
+        assert!(!orchestrator_alive(&heartbeat(Some(start + 1.0))));
+        assert!(orchestrator_alive(&Heartbeat::default()));
     }
 
     /// A heartbeat without a pid cannot be checked for exit, so its

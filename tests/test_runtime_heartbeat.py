@@ -128,6 +128,21 @@ async def test_beater_snapshot_carries_pid(tmp_path: Path) -> None:
     assert beater.snapshot.instance_id == "default"
 
 
+async def test_heartbeat_records_the_orchestrator_start_time(tmp_path: Path) -> None:
+    """The written heartbeat carries this process's start-time token."""
+    from zicato.runtime.lock import pid_start_time
+
+    beater = HeartbeatBeater(tmp_path, "default", interval_s=10.0)
+    await beater.start()
+    try:
+        hb = read_heartbeat(tmp_path)
+        assert hb is not None
+        assert hb.pid_start_time is not None
+        assert hb.pid_start_time == pid_start_time(os.getpid())
+    finally:
+        await beater.stop()
+
+
 # ---------------------------------------------------------------------------
 # RunHeartbeatBeater tests
 # ---------------------------------------------------------------------------

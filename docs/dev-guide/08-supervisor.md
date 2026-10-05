@@ -159,9 +159,11 @@ The heartbeat file outlives the orchestrator. When the heartbeat's `pid` is no
 longer alive, `OrchestratorExit` makes `heartbeat_loop` log one "heartbeat is
 final" line for that orchestrator, identified by `pid` and `started_at`, and
 nothing further until a different orchestrator writes the heartbeat. A
-heartbeat without a `pid` keeps the staleness classification. A recycled `pid`
-reads as alive, so the loop then classifies staleness as for a live
-orchestrator.
+heartbeat without a `pid` keeps the staleness classification.
+`orchestrator_alive` requires the live `pid` to carry the heartbeat's
+`pid_start_time`, so a later process that received the recycled `pid` does not
+read as the orchestrator. A heartbeat without a start time (an older writer, or
+a platform without one) falls back to `pid` liveness alone.
 
 > ⛔ NEVER add a code path that signals the pid carried by
 > `heartbeat.json`. If you believe you need one, you are re-introducing the

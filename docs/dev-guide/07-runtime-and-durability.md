@@ -833,7 +833,9 @@ Python-side addition never crashes an older supervisor. The path map is
 
 ### 7.6.1 `heartbeat.json` — liveness, seq-vs-timestamp, and the paused flag
 
-The `Heartbeat` dataclass carries the orchestrator's pid, instance id,
+The `Heartbeat` dataclass carries the orchestrator's pid and its process
+start-time token (`pid_start_time`, which lets the supervisor tell the
+orchestrator apart from a later process with the same pid), instance id,
 `started_at` / `last_heartbeat` timestamps, lineage coordinates
 (`epoch_id` / `generation_id`), the free-form `phase` string, `round_index` /
 `round_started_at`, harmonograf deep-link fields — and the one field whose

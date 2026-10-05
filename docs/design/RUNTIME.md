@@ -179,6 +179,7 @@ the primary signal that the orchestrator wedged.
 ```json
 {
   "pid": 84321,
+  "pid_start_time": 116371304.0,
   "instance_id": "default",
   "started_at": "2026-05-14T12:34:50.123Z",
   "last_heartbeat": "2026-05-14T12:35:02.418Z",
@@ -196,7 +197,10 @@ the primary signal that the orchestrator wedged.
 
 This is the shipped `Heartbeat` dataclass (`src/zicato/runtime/state.py`).
 `last_heartbeat` is the timer-driven freshness timestamp (`started_at` is
-the orchestrator's boot time). `seq` is the tail sequence number of the
+the orchestrator's boot time). `pid_start_time` is the orchestrator
+process's start-time token, the same identity the per-run records carry: the
+supervisor treats the orchestrator as running only while a live process has
+both that `pid` and that start time. `seq` is the tail sequence number of the
 progress log `progress.events.jsonl` at the last genuine loop transition
 (round start, propose, apply, tournament start, each scored board unit,
 tournament settle, gate, promote or reject); the timer rewrites the same

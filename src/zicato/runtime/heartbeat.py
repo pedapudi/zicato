@@ -32,6 +32,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+from zicato.runtime.lock import pid_start_time
 from zicato.runtime.state import Heartbeat, write_heartbeat
 from zicato.util.iso_time import now_iso as _utc_now_iso
 
@@ -78,6 +79,7 @@ class HeartbeatBeater:
         now = _utc_now_iso()
         self._snapshot = Heartbeat(
             pid=os.getpid(),
+            pid_start_time=pid_start_time(os.getpid()),
             instance_id=instance_id,
             started_at=now,
             last_heartbeat=now,
