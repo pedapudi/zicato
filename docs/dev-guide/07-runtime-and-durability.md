@@ -231,7 +231,7 @@ deciding *where a new datum belongs* and *what happens to it in a crash*.
 | RoundLog | `epochs/{e}/rounds/{n}/round_log.jsonl` | Canonical durable trace of one round's decisions (but emission is best-effort — D11) | Orchestrator's `_RoundLogEmitter` (single writer) | `fold_round_record` consumers: dashboard round timeline, tests, post-hoc analysis | Append-only, torn-tail tolerant (D4); survives resume (it lives under `epochs/`, never under `runtime/`). |
 | Round patterns | `epochs/{e}/rounds/{n}/patterns.json` | Canonical record of the detector patterns one round passed to its proposer (emission is best-effort) | Orchestrator, after `detect_patterns` in step 4 of the round, through `write_round_patterns` (`src/zicato/epoch/round_patterns.py`) | `generate_analysis` (the close-of-epoch retrospective prompt) | Atomic replace; a retried round overwrites it, and resume removes it with a discarded round's directory. A present but malformed record raises `RecordError`; the retrospective names it and continues. |
 | SQLite index | `index.db` | Derived | Live projection + `zicato repair index` | Python query layer (`zicato.query`), Rust supervisor (read-only) | Rebuildable from canonical records. Index failure cannot invalidate a committed decision. |
-| Supervisor audit ledger | `<--ledger-dir>/audit_ledger.jsonl` — kept OUTSIDE the orchestrator's trees | Canonical, supervisor-owned (the orchestrator must not be able to rewrite it) | Rust supervisor only (`AuditLedger::append`) | `/statusz`, `/api/audit/verify`, operators | Hash-chained; torn tail truncated at open; fsync per append. See 08-supervisor.md §8.7 (the hash-chained audit ledger). |
+| Supervisor audit ledger | `<--ledger-dir>/audit_ledger.jsonl` — kept OUTSIDE the orchestrator's trees | Canonical, supervisor-owned (the orchestrator must not be able to rewrite it) | Rust supervisor only (`AuditLedger::append`) | `/statusz`, `/api/audit/verify`, operators | Hash-chained over the exact payload bytes; a partial final line is removed at open and recorded with its bytes; fsync per append. See 08-supervisor.md §8.7 (the hash-chained audit ledger). |
 | Ephemeral checkouts | `${TMPDIR}/ztw-snap-{run_id}-*/` | Neither — throwaway working copies | `GenerationStore.checkout_ephemeral` | The one worker that mounted it | Discarded on clean run-end; orphans reaped by the supervisor's prefix-guarded crash-GC (D6). |
 
 Two placement rules fall out of the table:
@@ -361,7 +361,7 @@ complete list of torn-tail-tolerant stores:
 | Per-run `events.jsonl` (telemetry) | the one reader counts an unparseable line and keeps the rest, and reports whether the last line parsed | none (one writer, then read-once) |
 | `epochs/{e}/rounds/{n}/round_log.jsonl` | `RoundLog.read` ignores unterminated bytes before decoding; malformed complete rows raise | On first append or after a failed write, `RoundLog.append` validates the history and truncates an interrupted suffix |
 | `runtime/active_tournament.events.jsonl` + `runtime/progress.events.jsonl` | the Python fold | cleared wholesale on resume |
-| Supervisor `audit_ledger.jsonl` | `verify_chain` after `repair_torn_tail` | `AuditLedger::open` truncates the torn tail before verifying/chaining |
+| Supervisor `audit_ledger.jsonl` | `verify_chain` after `repair_torn_tail` | `AuditLedger::open` removes a partial final line before chaining, records the removed bytes in a `ledger_integrity` record, then verifies |
 
 And the half of the invariant that keeps this from becoming general
 sloppiness — an interior tear is never tolerated:

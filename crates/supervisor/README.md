@@ -74,7 +74,7 @@ two never contend when `evolve` starts both.
 | `--promotion-gate`                    | off         | Re-check each recorded promotion against its recorded scores (alarm only) |
 | `--divergence-audit`                  | off         | Compare the SQLite index against the canonical files (report only) |
 | `--divergence-stuck-age-seconds SECS` | `3600`      | Age past which the divergence audit reports a stuck generation |
-| `--ledger-dir PATH`                   | unset       | Write a hash-chained `audit_ledger.jsonl` of watchdog actions here |
+| `--ledger-dir PATH`                   | unset       | Write a hash-chained `audit_ledger.jsonl` of actions, decisions and findings here |
 | `--log LEVEL`                         | `info`      | Log level (`RUST_LOG` overrides)                               |
 
 ## State file contract
@@ -98,6 +98,24 @@ The supervisor removes a kill-request marker once it has acted on it.
 With `--ledger-dir` it also appends to its audit ledger, and with
 `--diff-containment` it writes the audit's findings into the epoch's
 health directory.
+
+## Audit ledger
+
+With `--ledger-dir`, the supervisor appends one hash-chained JSON record per
+line to `audit_ledger.jsonl`: watchdog escalations, integrity findings, and
+each generation's decision and each epoch's contract hash the first time it
+sees them. Each digest covers the exact payload bytes on the line. On
+restart, the supervisor loads what the ledger holds, so it does not record a
+decision or contract hash twice. When the orchestrator's files later state a
+different value for one of them, it logs a warning and appends a
+`history_changed` record.
+
+Every integrity tick verifies the chain; the first break is logged and
+recorded once as a `ledger_integrity` record. Opening a ledger that ends in a
+partial line removes that line and records its bytes in a `ledger_integrity`
+record. The chain detects an edited or reordered record and a record removed
+from the middle. It does not detect records removed from the end of the file,
+or the file being deleted.
 
 ## HTTP API
 

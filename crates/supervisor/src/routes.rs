@@ -99,6 +99,7 @@ fn build_statusz_view(s: &AppState) -> statusz::StatuszView {
                 records: report.records,
                 first_break_seq: report.first_break_seq,
                 break_reason: report.break_reason,
+                partial_final_line: report.partial_final_line,
             }
         }
     };

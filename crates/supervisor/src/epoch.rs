@@ -249,6 +249,12 @@ fn read_harness(paths: &WorkspacePaths) -> Option<Harness> {
     })
 }
 
+/// The contract hash frozen in `epochs/<epoch_id>/config.json`, when present.
+pub fn contract_hash(paths: &WorkspacePaths, epoch_id: &str) -> Option<String> {
+    let cfg = read_json_value(&paths.epochs.join(epoch_id).join("config.json"))?;
+    str_field(&cfg, "contract_hash")
+}
+
 /// Assemble the full epoch view. Never panics; missing files degrade to
 /// empty/`null` for their component.
 pub fn build_epoch_view(paths: &WorkspacePaths) -> EpochView {

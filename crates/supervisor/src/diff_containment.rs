@@ -276,6 +276,9 @@ pub struct DiffContainmentFindings {
 pub struct DiffContainmentView {
     /// `true` once at least one scan has run.
     pub scanned: bool,
+    /// When the findings store recorded this result (RFC-3339), so a reader
+    /// can tell a current result from a stale one.
+    pub scanned_at: Option<String>,
     /// Number of parent→child pairs attested in the latest scan.
     pub pairs_scanned: u64,
     /// Number of pairs skipped (fail-open: missing/unreadable snapshot).
@@ -296,7 +299,8 @@ impl DiffContainmentFindings {
     }
 
     /// Replace the stored view with the latest scan result.
-    pub fn record(&self, view: DiffContainmentView) {
+    pub fn record(&self, mut view: DiffContainmentView) {
+        view.scanned_at = Some(chrono::Utc::now().to_rfc3339());
         let mut g = match self.inner.lock() {
             Ok(g) => g,
             Err(p) => p.into_inner(),
@@ -404,6 +408,7 @@ pub fn scan_workspace(paths: &WorkspacePaths) -> DiffContainmentView {
         range_pairs_verified,
         range_pairs_unverified,
         range_attestations,
+        ..Default::default()
     }
 }
 
@@ -768,6 +773,7 @@ mod tests {
         });
         let v = store.view();
         assert!(v.scanned);
+        assert!(v.scanned_at.is_some());
         assert_eq!(v.pairs_scanned, 3);
         assert_eq!(v.pairs_skipped, 1);
     }

@@ -414,6 +414,17 @@ every decision is a pure function of the on-disk files. The separate
 Python service serves the live dashboard user interface (see §3.0 and
 [DASHBOARD.md](DASHBOARD.md)).
 
+With `--ledger-dir`, the supervisor also keeps an append-only, hash-chained
+audit ledger (`audit_ledger.jsonl`). It records watchdog escalations,
+integrity findings, and each generation's decision and each epoch's contract
+hash the first time it sees them. A later change to a recorded decision or
+contract hash in the orchestrator's files produces a `history_changed` record.
+The integrity task verifies the chain every tick and records the first break
+once. The chain detects an edited or reordered record and a record removed from
+the middle. It does not detect records removed from the end of the file, or the
+file being deleted. See
+[08-supervisor.md §8.7](../dev-guide/08-supervisor.md#87-guarantee-the-hash-chained-audit-ledger).
+
 ### 3.0 Two processes: watchdog + dashboard service
 
 `zicato evolve` spawns **two** children (unless `--no-dashboard`):
@@ -521,7 +532,9 @@ a global heartbeat alone cannot authorize it.
 Each owned process group receives SIGTERM, followed by SIGKILL if live group
 members survive the grace period. The group remains owned after its leader
 exits. Independent owners have independent grace deadlines; integrity scans run
-on a separate task and execute blocking filesystem work off-thread.
+on a separate task and execute blocking filesystem work off-thread. A scan that
+panics is restarted on the next tick, and every scan result carries the time it
+was recorded.
 
 Termination is confirmed only when the leader and every live group member have
 stopped. The parent then owns normal run finalization. A guarded orphan batch
