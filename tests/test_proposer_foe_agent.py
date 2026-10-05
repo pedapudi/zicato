@@ -39,7 +39,7 @@ from zicato.proposer.agent import ProposerContext
 from zicato.proposer.external import external_proposer_config
 from zicato.proposer.foe_agent import FoeProposerAgent
 from zicato.proposer.foe_request import SANCTIONED_TOOLS
-from zicato.proposer.foe_scratch import SCRATCH_PREFIX
+from zicato.proposer.foe_scratch import PROJECTED_RATIONALE, SCRATCH_PREFIX
 from zicato.proposer.proposer import ProposerBlocked, ProposerError, ProposerExhausted
 from zicato.runtime.lock import pid_start_time
 from zicato.runtime.state import ActiveRun, list_active_runs, remove_active_run, write_active_run
@@ -146,6 +146,41 @@ def test_a_completed_episode_becomes_an_experiment_over_its_own_edits(tmp_path: 
     assert experiment.patches[0].new_content == '"""Answer with the agent name."""'
     assert experiment.generation_id == "v1"
     assert experiment.parent_generation_id == "v0"
+
+
+def test_a_projected_patch_carries_the_episodes_core_idea_as_its_rationale(
+    tmp_path: Path,
+) -> None:
+    """The patch names the change, not the mechanism that recovered it."""
+    workspace = Workspace(tmp_path, [call_turn(_edit(_EDITED_FILE)), return_turn(_HYPOTHESIS)])
+    experiment = asyncio.run(workspace.agent().propose(workspace.context()))
+
+    assert [p.rationale for p in experiment.patches] == [_HYPOTHESIS["core_idea"]]
+    assert PROJECTED_RATIONALE not in {p.rationale for p in experiment.patches}
+
+
+@pytest.mark.parametrize(
+    ("hypothesis", "expected"),
+    [
+        ({"core_idea": "Answer with the agent name."}, "Answer with the agent name."),
+        # collapsed: the value lands in table cells and in one journal line.
+        ({"core_idea": "  two\n\nlines  "}, "two lines"),
+        # capped: untrusted model text is bounded before the canonical log.
+        ({"core_idea": "x" * 5_000}, "x" * foe_agent.PATCH_RATIONALE_CAP),
+        # blank but schema-valid: the placeholder stands as the recorded
+        # reason, since an empty rationale is what the patch schema rejects.
+        ({"core_idea": "   "}, None),
+        # malformed: the experiment parse refuses these as hypothesis errors,
+        # so the placeholder never reaches a record.
+        ({"core_idea": 7}, None),
+        ({}, None),
+        ("not a hypothesis", None),
+    ],
+)
+def test_the_episode_rationale_is_bounded_and_falls_back_when_unusable(
+    hypothesis: Any, expected: str | None
+) -> None:
+    assert foe_agent._episode_rationale(hypothesis) == expected
 
 
 def test_the_snapshot_is_untouched_and_the_working_copy_is_gone(tmp_path: Path) -> None:

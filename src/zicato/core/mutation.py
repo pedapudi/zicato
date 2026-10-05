@@ -149,9 +149,11 @@ class Patch:
     new_enum:
         New enum value for ``"set_enum"`` ops; ``None`` otherwise.
     rationale:
-        One-sentence reason this specific patch is being applied. Joined
-        with the broader :class:`HypothesisSpec` in the journal but stored
-        per-patch so multi-patch experiments don't lose granularity.
+        One-sentence reason this patch is being applied, stored per-patch so a
+        patch read on its own still names its reason. A proposal episode edits
+        a working copy rather than drafting patches, so its patches are read
+        off a diff and all carry that episode's hypothesis ``core_idea``;
+        finer granularity exists only for a directly drafted patch set.
     """
 
     id: str
