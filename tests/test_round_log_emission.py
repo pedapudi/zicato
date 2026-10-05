@@ -916,6 +916,6 @@ def test_an_unreadable_record_is_reported_rather_than_raising_nameerror(
     # Must not raise: the whole point of the handler.
     _emit_harness_loaded(emitter, tmp_path, "e0", result)
 
-    assert reported == ["round-log source record"] * 2, (
-        "each generation's unreadable record should be reported once"
-    )
+    assert (
+        reported == ["round-log source record"] * 2
+    ), "each generation's unreadable record should be reported once"
