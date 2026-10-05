@@ -168,7 +168,7 @@ class _IncrementalScorer:
         the unit on the progress log, which advances the heartbeat's
         liveness ``seq`` while the tournament runs.
         """
-        progress_log.record_unit_settled()
+        progress_log.record_transition(progress_log.UNIT_SETTLED)
         if self._state is None:
             return
         async with self._lock:

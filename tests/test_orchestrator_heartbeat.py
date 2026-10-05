@@ -412,6 +412,11 @@ def test_every_heartbeat_write_carries_the_progress_log_tail_seq(
     events = progress_log._log(workspace).read()
     assert {"TournamentStart", "TournamentSettle"} <= {event.type for event in events}
     assert {event.seq for event in events} <= {hb_seq for hb_seq, _ in pairs}
+    # Each challenger's proposal phase advances seq as its episodes settle:
+    # one per best-of-N slate slot and one for the challenger's proposal.
+    types = [event.type for event in events]
+    proposal_phase = types[types.index("Propose") : types.index("TournamentStart")]
+    assert proposal_phase.count("EpisodeSettled") > proposal_phase.count("Propose"), types
 
 
 def test_only_the_heartbeat_writer_appends_progress() -> None:
@@ -427,7 +432,7 @@ def test_only_the_heartbeat_writer_appends_progress() -> None:
     assert callers == ["evolve/lifecycle_services.py"]
 
 
-def test_unit_settled_is_not_recorded_outside_an_evolve_loop(tmp_path: Path) -> None:
+def test_transitions_are_not_recorded_outside_an_evolve_loop(tmp_path: Path) -> None:
     """Without a bound recorder, a scored unit leaves the progress log untouched.
 
     A standalone tournament must not append after a loop's terminal event:
@@ -436,17 +441,17 @@ def test_unit_settled_is_not_recorded_outside_an_evolve_loop(tmp_path: Path) -> 
     from zicato.runtime import progress_log
     from zicato.runtime.paths import progress_log_path
 
-    progress_log.record_unit_settled()
+    progress_log.record_transition(progress_log.UNIT_SETTLED)
     assert not progress_log_path(tmp_path).exists()
 
-    calls: list[int] = []
-    token = progress_log.bind_unit_recorder(lambda: calls.append(1))
+    calls: list[str] = []
+    token = progress_log.bind_transition_recorder(calls.append)
     try:
-        progress_log.record_unit_settled()
+        progress_log.record_transition(progress_log.UNIT_SETTLED)
     finally:
-        progress_log.reset_unit_recorder(token)
-    progress_log.record_unit_settled()
-    assert calls == [1]
+        progress_log.reset_transition_recorder(token)
+    progress_log.record_transition(progress_log.UNIT_SETTLED)
+    assert calls == ["UnitSettled"]
 
 
 def test_evolve_n_rounds_refuses_when_workspace_locked(

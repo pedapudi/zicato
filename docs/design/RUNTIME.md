@@ -202,10 +202,13 @@ process's start-time token, the same identity the per-run records carry: the
 supervisor treats the orchestrator as running only while a live process has
 both that `pid` and that start time. `seq` is the tail sequence number of the
 progress log `progress.events.jsonl` at the last genuine loop transition
-(round start, propose, apply, tournament start, each scored board unit,
-tournament settle, gate, promote or reject); the timer rewrites the same
-`seq`, so it advances only on real progress. The per-unit transition keeps
-`seq` moving through a tournament phase that lasts minutes. `settings` maps each effective setting's dotted name to its value
+(round start, propose, each settled proposal episode, tournament start, each
+scored board unit, tournament settle, gate, promote or reject); the timer
+rewrites the same `seq`, so it advances only on real progress. The
+per-episode and per-unit transitions keep `seq` moving through proposal and
+tournament phases that last minutes. Every transition is appended and
+stamped on the heartbeat in one step, so the heartbeat's `seq` equals the
+log's last `seq`. `settings` maps each effective setting's dotted name to its value
 and the tier that set it (`zicato.runtime.effective_settings`). The per-run
 population is tracked in the separate `active_runs/*.json` files rather
 than inlined here.

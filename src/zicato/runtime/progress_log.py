@@ -15,9 +15,10 @@ This module supplies a signal that is right in both directions: a
 **single-writer, append-only EVENT LOG**
 (built on :class:`zicato.runtime.channel.EventLog`) that the evolve loop
 appends ONE typed event to on each *genuine* orchestrator transition —
-round start, propose, apply, tournament start, each settled board unit,
-tournament settle, gate, promote / reject. The log's monotonic ``seq`` therefore advances only on
-real progress, never on a timer, so it is the TRUE liveness signal:
+round start, propose, each settled proposal episode, tournament start, each
+settled board unit, tournament settle, gate, promote / reject. The log's
+monotonic ``seq`` therefore advances only on real progress, never on a
+timer, so it is the TRUE liveness signal:
 
 * a watchdog asks "has ``seq`` advanced since I last looked?" rather than
   "is the timestamp fresh?", so a slow LLM call does not read as stalled
@@ -73,6 +74,10 @@ PROPOSE = "Propose"
 APPLY = "Apply"
 #: The tournament for this round started executing.
 TOURNAMENT_START = "TournamentStart"
+#: One proposal episode ended (a slate slot's sample, or a challenger's whole
+#: proposal), with a candidate or an error. A proposal phase with several
+#: episodes advances ``seq`` at each one.
+EPISODE_SETTLED = "EpisodeSettled"
 #: One board unit of a tournament finished and its losses were scored. A
 #: tournament phase lasts minutes; this event advances ``seq`` while it runs.
 UNIT_SETTLED = "UnitSettled"
@@ -133,51 +138,55 @@ def append_progress(writer: WorkspaceLock, type: str, payload: object | None = N
 
 
 # ---------------------------------------------------------------------------
-# Board-unit progress — the evolve loop binds a recorder; the scheduler calls it.
+# Transitions inside a phase — the evolve loop binds a recorder; the
+# tournament scheduler and the proposer call it.
 # ---------------------------------------------------------------------------
+
+_TransitionRecorder = Callable[[str], None]
 
 #: The recorder the evolve loop binds for its invocation. Unbound (``None``)
 #: outside a loop, so a standalone ``zicato tournament run`` appends nothing
 #: and cannot turn a settled loop's terminal tail back into a live one.
-_unit_recorder: contextvars.ContextVar[Callable[[], None] | None] = contextvars.ContextVar(
-    "zicato_unit_progress_recorder", default=None
+_recorder: contextvars.ContextVar[_TransitionRecorder | None] = contextvars.ContextVar(
+    "zicato_progress_transition_recorder", default=None
 )
 
 
-def bind_unit_recorder(
-    recorder: Callable[[], None],
-) -> contextvars.Token[Callable[[], None] | None]:
-    """Bind the callable that records one settled board unit for this context.
+def bind_transition_recorder(
+    recorder: _TransitionRecorder,
+) -> contextvars.Token[_TransitionRecorder | None]:
+    """Bind the callable that records one transition inside a phase.
 
     The evolve loop binds it once, beside its heartbeat beater; every asyncio
     task the loop creates afterwards inherits the binding. Pass the returned
-    token to :func:`reset_unit_recorder` at teardown.
+    token to :func:`reset_transition_recorder` at teardown.
     """
-    return _unit_recorder.set(recorder)
+    return _recorder.set(recorder)
 
 
-def reset_unit_recorder(token: contextvars.Token[Callable[[], None] | None]) -> None:
-    """Undo :func:`bind_unit_recorder`. Never raises."""
+def reset_transition_recorder(token: contextvars.Token[_TransitionRecorder | None]) -> None:
+    """Undo :func:`bind_transition_recorder`. Never raises."""
     try:
-        _unit_recorder.reset(token)
+        _recorder.reset(token)
     except (ValueError, LookupError) as exc:  # reset from a different context
-        log.debug("unit-progress recorder reset skipped: %s", exc)
+        log.debug("progress recorder reset skipped: %s", exc)
 
 
-def record_unit_settled() -> None:
-    """Record one settled board unit through the bound recorder, if any.
+def record_transition(transition: str) -> None:
+    """Record ``transition`` through the bound recorder, if any.
 
-    The tournament scheduler calls this as each unit's losses are scored. A
-    recorder failure is logged and dropped: liveness bookkeeping must never
-    abort a tournament.
+    The tournament scheduler records :data:`UNIT_SETTLED` as each unit's
+    losses are scored, and the proposer records :data:`EPISODE_SETTLED` as
+    each proposal episode ends. A recorder failure is logged and dropped:
+    liveness bookkeeping must never abort a round.
     """
-    recorder = _unit_recorder.get()
+    recorder = _recorder.get()
     if recorder is None:
         return
     try:
-        recorder()
+        recorder(transition)
     except Exception as exc:  # noqa: BLE001 — liveness bookkeeping is best-effort
-        log.debug("unit-progress record skipped: %s", exc)
+        log.debug("progress transition record skipped: %s", exc)
 
 
 def tail(workspace_root: Path) -> Event | None:
@@ -222,6 +231,7 @@ __all__ = [
     "ROUND_START",
     "PROPOSE",
     "APPLY",
+    "EPISODE_SETTLED",
     "TOURNAMENT_START",
     "UNIT_SETTLED",
     "TOURNAMENT_SETTLE",
@@ -232,9 +242,9 @@ __all__ = [
     "STOPPED",
     "is_terminal",
     "append_progress",
-    "bind_unit_recorder",
-    "reset_unit_recorder",
-    "record_unit_settled",
+    "bind_transition_recorder",
+    "reset_transition_recorder",
+    "record_transition",
     "tail",
     "tail_seq",
     "tail_is_terminal",

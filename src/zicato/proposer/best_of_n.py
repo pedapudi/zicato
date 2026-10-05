@@ -142,6 +142,7 @@ from zicato.proposer.input_capture import (
     capture_proposer_input,
 )
 from zicato.proposer.proposer import ProposerError
+from zicato.runtime import progress_log
 from zicato.scoring.diff_complexity import diff_char_size as _diff_size
 from zicato.util.async_tasks import gather_owned
 
@@ -992,6 +993,8 @@ class BestOfNProposerAgent:
                 return outcome
         finally:
             cleanup()
+            # The slot's episode ended, with a candidate or an error.
+            progress_log.record_transition(progress_log.EPISODE_SETTLED)
 
     def _slot_validate_lease(
         self, ctx: ProposerContext

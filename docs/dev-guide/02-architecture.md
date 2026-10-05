@@ -195,6 +195,7 @@ inside the function body; tests patch those owners directly.
 
 > ⚠️ **TRAP** — the progress log's monotonic `seq` advances ONLY on
 > genuine transitions (`LOOP_START`, `ROUND_START`, `PROPOSE`,
+> `EPISODE_SETTLED` per settled proposal episode,
 > `TOURNAMENT_START`, `UNIT_SETTLED` per scored board unit,
 > `TOURNAMENT_SETTLE`, `PROMOTE`/`REJECT`, terminal
 > `SETTLED`/`STOPPED`), never on the heartbeat timer. A reader
@@ -1464,8 +1465,9 @@ supervisor's staleness logic). The emitted vocabulary:
 
 **Plane 2 — progress-log transitions** (`src/zicato/runtime/progress_log.py`;
 the TRUE liveness signal): `LOOP_START`, `ROUND_START`, `PROPOSE`,
-`TOURNAMENT_START`, `UNIT_SETTLED` (one per scored board unit, recorded by the
-board-unit scorer through the recorder the loop binds),
+`EPISODE_SETTLED` (one per settled proposal episode), `TOURNAMENT_START`,
+`UNIT_SETTLED` (one per scored board unit; the proposer and the board-unit
+scorer record these two through the transition recorder the loop binds),
 `TOURNAMENT_SETTLE`, `PROMOTE`/`REJECT`, terminal
 `SETTLED` (completed) / `STOPPED` (budget or breaker — still a CLEAN
 end; a STALLED run is a frozen `seq` with no terminal event). `_beat`

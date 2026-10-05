@@ -849,8 +849,8 @@ semantics you must not get wrong, `seq`:
         transition. Unlike ``last_heartbeat`` — which the beater thread
         bumps on a timer regardless of progress — this advances ONLY when
         the evolve loop appends a real transition (round start, propose,
-        apply, tournament start, each scored board unit, tournament settle,
-        gate, promote/reject). A watchdog
+        each settled proposal episode, tournament start, each scored board
+        unit, tournament settle, gate, promote/reject). A watchdog
         keyed on ``seq`` advancing avoids the timestamp signal's
         false-positive (a slow LLM call ages the stamp) and false-negative
         (a wedged loop whose beater keeps stamping ``now()`` reads alive).
@@ -869,12 +869,21 @@ The division of labour:
   (`runtime/progress.events.jsonl`, built on `channel.EventLog`) whose tail
   `seq` the loop stamps into the heartbeat. A terminal `SETTLED`-class event
   distinguishes "cleanly finished" from "stalled" (`tail_is_terminal`).
-- A tournament phase can run for minutes with no loop transition. The evolve
-  loop therefore binds a unit recorder (`progress_log.bind_unit_recorder`) for
-  its invocation, and the board-unit scorer (`_IncrementalScorer.record` in
-  `src/zicato/tournament/scheduling.py`) calls it as each unit's losses are
-  scored. The recorder appends a `UnitSettled` transition and stamps its `seq`
-  on the heartbeat. Outside an evolve loop no recorder is bound, so a
+- A tournament or proposal phase can run for minutes with no loop
+  transition. The evolve loop therefore binds a transition recorder
+  (`progress_log.bind_transition_recorder`) for its invocation. The
+  board-unit scorer (`_IncrementalScorer.record` in
+  `src/zicato/tournament/scheduling.py`) records `UnitSettled` as each unit's
+  losses are scored. The proposer records `EpisodeSettled` as each best-of-N
+  slate slot's episode ends (`_run_one_slot` in
+  `src/zicato/proposer/best_of_n.py`) and as each challenger's proposal ends
+  (`propose_apply.py`), with a candidate or an error. A single episode
+  records nothing while it runs: the Foe process returns its result when the
+  episode ends, and its calls to the host tools (`mutation_usage`,
+  `validate_patches`) are not counted as progress. An episode longer than the
+  warn threshold therefore still produces a stale warning. The recorder goes through `_beat`, the only producer of
+  progress transitions, which appends each transition and stamps its `seq`
+  on the heartbeat in one step. Outside an evolve loop no recorder is bound, so a
   standalone `zicato tournament run` appends nothing and cannot turn a
   settled loop's terminal tail back into a non-terminal one. Readers (the
   dashboard's SSE stream and liveness verdict) take the last event through

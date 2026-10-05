@@ -12,7 +12,6 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
-from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -597,12 +596,15 @@ async def _evolve_n_rounds(
     )
 
     _emitter_token = set_current_emitter(meta_loop_emitter)
-    # Each scored board unit appends a progress transition and stamps its seq
-    # on the heartbeat, so a tournament phase lasting minutes keeps the
-    # supervisor's seq-change age below its warning thresholds.
-    _unit_recorder_token = progress_log.bind_unit_recorder(
-        partial(_beat, beater, progress_writer=writer, progress=progress_log.UNIT_SETTLED)
-    )
+
+    # Each scored board unit and each settled proposal episode appends a
+    # progress transition and stamps its seq on the heartbeat, so a phase
+    # lasting minutes keeps the supervisor's seq-change age below its warning
+    # thresholds.
+    def _record_transition(transition: str) -> None:
+        _beat(beater, progress_writer=writer, progress=transition)
+
+    _recorder_token = progress_log.bind_transition_recorder(_record_transition)
     outcomes: list[EvolveRoundOutcome] = []
     try:
         await beater.start()
@@ -903,7 +905,7 @@ async def _evolve_n_rounds(
     finally:
         # Context tokens belong to this invoking task; resource cleanup runs
         # in the invocation's shielded task after the binding is restored.
-        progress_log.reset_unit_recorder(_unit_recorder_token)
+        progress_log.reset_transition_recorder(_recorder_token)
         reset_current_emitter(_emitter_token)
     _set_stop_reason(stop_reason)
     return outcomes

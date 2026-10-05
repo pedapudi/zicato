@@ -601,8 +601,9 @@ owner, not migrating canonical records or guessing missing columns.
 `.zicato/runtime/`: `HeartbeatBeater` writes `heartbeat.json` every ~2s
 (`src/zicato/runtime/heartbeat.py`). The orchestrator progress event log
 (`src/zicato/runtime/progress_log.py`) advances a monotonic `seq` only on
-GENUINE transitions: LOOP_START, ROUND_START, PROPOSE, TOURNAMENT_START,
-UNIT_SETTLED (one per scored board unit), TOURNAMENT_SETTLE, PROMOTE/REJECT,
+GENUINE transitions: LOOP_START, ROUND_START, PROPOSE, EPISODE_SETTLED (one
+per settled proposal episode), TOURNAMENT_START, UNIT_SETTLED (one per
+scored board unit), TOURNAMENT_SETTLE, PROMOTE/REJECT,
 SETTLED/STOPPED. The timer never
 advances it, so a reader can tell live-and-working from wedged.
 
