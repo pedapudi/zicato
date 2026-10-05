@@ -378,6 +378,10 @@ through a grace period to SIGKILL on a stalled or overdue run. Each
 `active_runs/{run_id}.json` carries that run's own worker process id,
 start time and process group, so the watchdog kills exactly one run's
 process group without touching the orchestrator or any sibling run.
+The same process can also run read-only integrity audits. With
+`--mutation-containment` it alarms when a generation's source differs from
+its byte-range mutation evidence; this detects an escaped edit after the
+fact and does not confine one.
 
 See [RUNTIME.md](RUNTIME.md) §3 for the supervisor's lifecycle,
 state model, and escalation protocol. The table below names what the

@@ -11,7 +11,7 @@ from typing import Any
 
 from tests._workspace_support import experiment_record
 from zicato.core.mutation import Patch
-from zicato.epoch.containment import build_manifest, write_mutation_policy
+from zicato.epoch.containment import attest_generation, build_manifest, write_mutation_policy
 from zicato.epoch.journal import patch_body
 from zicato.mutation.applier import apply_patches
 from zicato.mutation.enumerator import enumerate_mutations
@@ -270,7 +270,12 @@ def build_cases() -> dict[str, Any]:
     ):
         case = copy.deepcopy(cases[0])
         case["name"] = corruption
-        case["expected_status"] = "unverified"
+        # Records that contradict the observed files differ from absent ones.
+        case["expected_status"] = (
+            "evidence_mismatch"
+            if corruption in ("wrong-child-hash", "extra-observed-file")
+            else "unverified"
+        )
         match corruption:
             case "missing-manifest":
                 case["manifest"] = None
@@ -301,7 +306,12 @@ def build_cases() -> dict[str, Any]:
         "policy-unselected-point",
     ):
         case = copy.deepcopy(cases[0])
-        case.update(name=corruption, expected_status="unverified")
+        case.update(
+            name=corruption,
+            expected_status=(
+                "evidence_mismatch" if corruption == "policy-inventory" else "unverified"
+            ),
+        )
         policy_body = json.loads(bytes.fromhex(case["policy"]))
         match corruption:
             case "policy-parent":
@@ -319,6 +329,50 @@ def build_cases() -> dict[str, Any]:
         data = (json.dumps(policy_body, sort_keys=True, indent=2) + "\n").encode()
         case["policy"] = data.hex()
         case["manifest"]["policy_sha256"] = hashlib.sha256(data).hexdigest()
+        cases.append(case)
+
+    def named(name: str) -> dict[str, Any]:
+        return copy.deepcopy(next(case for case in cases if case["name"] == name))
+
+    unrecorded = {"hex": "ff", "executable": False}
+    bytecode = {"hex": (b"\x00" * 16).hex(), "executable": False}
+    edited_parent = {
+        "hex": (bytes.fromhex(cases[0]["parent"]["prompt.py"]["hex"]) + b"LATE = 1\n").hex(),
+        "executable": False,
+    }
+    for name, base, change in (
+        # Several independent faults: every check still runs after the first.
+        ("policy-parent-and-wrong-child-hash", "policy-parent", "wrong-child-hash"),
+        ("policy-parent-and-extra-observed-file", "policy-parent", "extra-observed-file"),
+        ("patch-mismatch-and-wrong-child-hash", "patch-mismatch", "wrong-child-hash"),
+        # Interpreter-loadable artifacts in the child tree.
+        ("cached-bytecode", "literal", "cached-bytecode"),
+        ("sourceless-bytecode", "literal", "sourceless-bytecode"),
+        # The parent tree changed after the child's policy captured it.
+        ("parent-edited-after-capture", "literal", "parent-edited"),
+        ("parent-file-added-after-capture", "literal", "parent-file-added"),
+    ):
+        case = named(base)
+        case["name"] = name
+        match change:
+            case "wrong-child-hash":
+                case["manifest"]["files"][0]["child_sha256"] = "0" * 64
+                case["expected_status"] = "evidence_mismatch"
+            case "extra-observed-file":
+                case["child"]["unrecorded.bin"] = unrecorded
+                case["expected_status"] = "evidence_mismatch"
+            case "cached-bytecode":
+                case["child"]["__pycache__/prompt.cpython-312.pyc"] = bytecode
+                case["expected_status"] = "violated"
+            case "sourceless-bytecode":
+                case["child"]["prompt_helper.pyc"] = bytecode
+                case["expected_status"] = "violated"
+            case "parent-edited":
+                case["parent"]["prompt.py"] = edited_parent
+                case["expected_status"] = "evidence_mismatch"
+            case "parent-file-added":
+                case["parent"]["late.bin"] = unrecorded
+                case["expected_status"] = "evidence_mismatch"
         cases.append(case)
     vacuous = copy.deepcopy(cases[0])
     vacuous.update(
@@ -360,6 +414,20 @@ def build_cases() -> dict[str, Any]:
                     for span in record["spans"]:
                         span["forbidden"] = False
         cases.append(case)
+    # Both verifiers must report the same finding codes, not only the status.
+    for case in cases:
+        with tempfile.TemporaryDirectory(prefix="zi-corpus-") as directory:
+            root = Path(directory)
+            materialize_case(case, root)
+            result = attest_generation(
+                root,
+                epoch_id="epoch",
+                parent_generation_id="v0",
+                generation_id="v1",
+                parent_root=root / "parent",
+                child_root=root / "child",
+            )
+        case["expected_codes"] = sorted({finding.code for finding in result.findings})
     return {"format_version": 1, "cases": cases}
 
 

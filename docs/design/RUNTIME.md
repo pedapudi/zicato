@@ -424,8 +424,18 @@ under `active_runs/`; it warns on a stale heartbeat and escalates a
 stalled or overdue run SIGTERM → grace → SIGKILL. It also serves a terse
 `/statusz` (and `/statusz.json`) operational probe and the audit-ledger
 check `/api/audit/verify`. No LLM, no in-memory authoritative state —
-every decision is a pure function of the on-disk files. The separate
-Python service serves the live dashboard user interface (see §3.0 and
+every decision is a pure function of the on-disk files.
+
+Opt-in flags add read-only integrity audits that raise alarms and never block:
+`--mutation-containment` checks each generation's source change against its
+byte-range mutation evidence ([MUTATION-SURFACE.md](MUTATION-SURFACE.md),
+"Accepted source and byte-range evidence"), `--promotion-gate` re-checks
+recorded promotions against their scores, `--divergence-audit` compares the
+SQLite index with the canonical files, and `--ledger-dir` records watchdog
+actions and audit alarms in a hash-chained ledger. Each audit's latest result
+appears on `/statusz`.
+
+The separate Python service serves the live dashboard user interface (see §3.0 and
 [DASHBOARD.md](DASHBOARD.md)).
 
 With `--ledger-dir`, the supervisor also keeps an append-only, hash-chained

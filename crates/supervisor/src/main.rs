@@ -78,16 +78,20 @@ struct Cli {
     #[arg(long, default_value_t = 6 * 3600)]
     max_run_seconds: u64,
 
-    /// Audit source changes against registered trees and recorded mutation spans.
+    /// Audit each generation's source change against its recorded mutation spans.
     ///
     /// Each watchdog tick checks materialized parent/child source inventories,
     /// accepted patch bindings, and changed-byte ownership. Python publishes
     /// mutation spans; the supervisor independently verifies their byte ranges.
-    /// Missing or inconsistent mutation evidence is reported as unverified.
-    /// Findings appear in the epoch health directory and on `/statusz`.
-    /// This audit is alarm-only and does not block promotion. Off by default.
+    /// Each pair is contained, violated, evidence_mismatch (records contradict
+    /// the files), or unverified (records missing, malformed, or unreadable).
+    /// A pair that becomes violated or evidence_mismatch, or a decided pair
+    /// whose verified evidence becomes unverified, is logged and, with a
+    /// ledger, recorded. Findings appear in the epoch health directory and on
+    /// `/statusz`. This audit is alarm-only and does not block promotion. Off
+    /// by default.
     #[arg(long, default_value_t = false)]
-    diff_containment: bool,
+    mutation_containment: bool,
 
     /// Enable promotion gatekeeping (INTEGRITY NOTARY record #3).
     ///
@@ -204,15 +208,14 @@ async fn main() -> std::process::ExitCode {
         led
     });
 
-    // Diff-containment findings store (INTEGRITY NOTARY record #2). The runs
-    // loop scans materialised generations and records the latest result here;
-    // `/statusz` surfaces it. Shared regardless of the flag (the loop only
-    // writes into it when `--diff-containment` is set, so it stays empty/
-    // not-scanned otherwise).
-    let diff_findings =
-        Arc::new(zicato_supervisor::diff_containment::DiffContainmentFindings::new());
-    if cli.diff_containment {
-        info!("diff-containment attestation enabled (alarm-only)");
+    // Mutation-containment findings store (INTEGRITY NOTARY record #2). The
+    // integrity loop verifies every lineage pair and records the latest
+    // result here; `/statusz` surfaces it. It stays not-scanned unless
+    // `--mutation-containment` is set.
+    let containment_findings =
+        Arc::new(zicato_supervisor::range_containment::ContainmentFindings::new());
+    if cli.mutation_containment {
+        info!("mutation-containment audit enabled (alarm-only)");
     }
 
     // Promotion-gatekeeping findings store (INTEGRITY NOTARY record #3).
@@ -240,10 +243,10 @@ async fn main() -> std::process::ExitCode {
     let run_shutdown = shutdown_tx.clone();
     let run_log = action_log.clone();
     let run_ledger = ledger.clone();
-    let run_diff = diff_findings.clone();
+    let run_containment = containment_findings.clone();
     let run_gate = promotion_gate_findings.clone();
     let run_divergence = divergence_findings.clone();
-    let diff_enabled = cli.diff_containment;
+    let containment_enabled = cli.mutation_containment;
     let gate_enabled = cli.promotion_gate;
     let divergence_enabled = cli.divergence_audit;
     let divergence_stuck_age = cli.divergence_stuck_age_seconds;
@@ -254,9 +257,9 @@ async fn main() -> std::process::ExitCode {
             interval,
             run_log,
             run_ledger,
-            watchdog::DiffContainmentConfig {
-                enabled: diff_enabled,
-                findings: run_diff,
+            watchdog::ContainmentConfig {
+                enabled: containment_enabled,
+                findings: run_containment,
             },
             watchdog::PromotionGateConfig {
                 enabled: gate_enabled,
@@ -282,7 +285,7 @@ async fn main() -> std::process::ExitCode {
             action_log: action_log.clone(),
             seq_liveness: seq_liveness.clone(),
             ledger: ledger.clone(),
-            diff_findings: diff_findings.clone(),
+            containment_findings: containment_findings.clone(),
             promotion_gate_findings: promotion_gate_findings.clone(),
             divergence_findings: divergence_findings.clone(),
         },

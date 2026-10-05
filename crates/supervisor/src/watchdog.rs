@@ -29,16 +29,16 @@ use std::time::Duration;
 use tokio::sync::broadcast::Sender;
 use tracing::warn;
 
-/// Diff-containment configuration threaded into [`runs_loop`].
+/// Mutation-containment configuration threaded into [`runs_loop`].
 ///
 /// `enabled` gates the per-tick scan (off by default → the loop behaves
 /// exactly as before); `findings` is the shared store the scan writes its
 /// latest result into for `/statusz`. Bundled into a struct so the loop's
 /// signature stays readable as the integrity-notary surface grows.
 #[derive(Clone)]
-pub struct DiffContainmentConfig {
+pub struct ContainmentConfig {
     pub enabled: bool,
-    pub findings: Arc<crate::diff_containment::DiffContainmentFindings>,
+    pub findings: Arc<crate::range_containment::ContainmentFindings>,
 }
 
 /// Promotion-gatekeeping configuration threaded into [`runs_loop`].
@@ -98,11 +98,11 @@ fn record_action(ring: &WatchdogLog, ledger: Option<&Arc<AuditLedger>>, action: 
 /// so a steady-state poll appends nothing.
 fn observe_transitions(
     paths: &WorkspacePaths,
+    lineage: &reader::LineageView,
     ledger: &Arc<AuditLedger>,
     observer: &mut TransitionObserver,
 ) {
     // Decisions: every resolved generation across every epoch.
-    let lineage = reader::build_lineage_view(paths);
     observer.observe_decisions(
         ledger,
         lineage
@@ -120,59 +120,6 @@ fn observe_transitions(
         (epoch_id, hash)
     });
     observer.observe_contracts(ledger, hashes);
-}
-
-/// Run one diff-containment scan over the workspace and surface its findings.
-///
-/// READ-ONLY / ALARM-ONLY (v1): scans every materialised child generation,
-/// records the latest scan into the shared findings store for `/statusz`,
-/// writes a quarantine finding into the epoch health dir for each violating
-/// pair, and — when a ledger is configured — appends a hard alert record per
-/// quarantined generation. Never blocks a promotion, never writes the
-/// orchestrator's trees. De-duplicated against the previous scan's quarantine
-/// set so a standing violation is alerted ONCE (until it clears and recurs),
-/// not on every tick.
-fn run_diff_containment_scan(
-    paths: &WorkspacePaths,
-    diff: &DiffContainmentConfig,
-    ledger: Option<&Arc<AuditLedger>>,
-    previously_quarantined: &mut HashSet<(String, String)>,
-) {
-    let view = crate::diff_containment::scan_workspace(paths);
-    for finding in &view.range_attestations {
-        crate::range_containment::write_finding(paths, finding);
-    }
-
-    // Persist a quarantine finding for each violating pair, and alert the
-    // ledger only for generations not already quarantined in the prior scan.
-    let mut current: HashSet<(String, String)> = HashSet::new();
-    for att in &view.quarantined {
-        let key = (att.epoch_id.clone(), att.generation_id.clone());
-        current.insert(key.clone());
-        crate::diff_containment::write_quarantine_finding(paths, att);
-        if !previously_quarantined.contains(&key) {
-            warn!(
-                epoch_id = %att.epoch_id,
-                generation_id = %att.generation_id,
-                parent = %att.parent_generation_id,
-                violations = att.violations.len(),
-                "DIFF-CONTAINMENT ALERT: generation mutated files outside its mutable surface",
-            );
-            if let Some(ledger) = ledger {
-                ledger.append(
-                    crate::ledger::RecordKind::DiffContainmentAlert,
-                    serde_json::json!({
-                        "epoch_id": att.epoch_id,
-                        "generation_id": att.generation_id,
-                        "parent_generation_id": att.parent_generation_id,
-                        "violations": att.violations,
-                    }),
-                );
-            }
-        }
-    }
-    *previously_quarantined = current;
-    diff.findings.record(view);
 }
 
 /// Run one promotion-gatekeeping scan and surface its findings.
@@ -234,11 +181,12 @@ fn run_promotion_gate_scan(
 /// alerts once. Never writes the index or the canonical trees.
 fn run_divergence_audit(
     paths: &WorkspacePaths,
+    lineage: &reader::LineageView,
     divergence: &DivergenceConfig,
     ledger: Option<&Arc<AuditLedger>>,
     previously_seen: &mut HashSet<(String, Option<String>)>,
 ) {
-    let view = crate::divergence::audit(paths, Utc::now(), divergence.stuck_age_seconds);
+    let view = crate::divergence::audit(paths, Utc::now(), divergence.stuck_age_seconds, lineage);
 
     let mut current: HashSet<(String, Option<String>)> = HashSet::new();
     for f in &view.findings {
@@ -1120,7 +1068,7 @@ pub async fn runs_loop(
     interval: Duration,
     log: Arc<WatchdogLog>,
     ledger: Option<Arc<AuditLedger>>,
-    diff: DiffContainmentConfig,
+    containment: ContainmentConfig,
     promotion_gate: PromotionGateConfig,
     divergence: DivergenceConfig,
     shutdown: Sender<()>,
@@ -1132,7 +1080,7 @@ pub async fn runs_loop(
         paths.clone(),
         interval,
         ledger.clone(),
-        diff,
+        containment,
         promotion_gate,
         divergence,
         shutdown.subscribe(),
@@ -1218,15 +1166,16 @@ pub async fn runs_loop(
 
 /// Integrity reads run in the blocking pool, outside the deadline polling task.
 ///
-/// The carried state (the transition observer and the three finding de-dup
-/// sets) is loaded from the ledger when the loop starts. A scan that panics
+/// The carried state (the transition observer, the containment audit's
+/// alarms, and the two finding de-dup sets) is loaded from the ledger when
+/// the loop starts. A scan that panics
 /// loses that state; the next tick loads it from the ledger again, so the
 /// loop keeps running and records nothing twice.
 async fn integrity_loop(
     paths: WorkspacePaths,
     interval: Duration,
     ledger: Option<Arc<AuditLedger>>,
-    diff: DiffContainmentConfig,
+    containment: ContainmentConfig,
     promotion_gate: PromotionGateConfig,
     divergence: DivergenceConfig,
     mut shutdown: tokio::sync::broadcast::Receiver<()>,
@@ -1239,10 +1188,10 @@ async fn integrity_loop(
             _ = ticker.tick() => {}
             _ = shutdown.recv() => return,
         }
-        let (paths, ledger, diff, promotion_gate, divergence, carried) = (
+        let (paths, ledger, containment, promotion_gate, divergence, carried) = (
             paths.clone(),
             ledger.clone(),
-            diff.clone(),
+            containment.clone(),
             promotion_gate.clone(),
             divergence.clone(),
             state.take(),
@@ -1251,20 +1200,29 @@ async fn integrity_loop(
             let mut state = carried.unwrap_or_else(|| {
                 let history = ledger.as_deref().map(LedgerHistory::load);
                 let h = history.unwrap_or_default();
-                (h.observer, h.diff_alerts, h.contradictions, h.divergences)
+                let audit =
+                    crate::range_containment::ContainmentAudit::from_alarms(h.containment_alarms);
+                (h.observer, audit, h.contradictions, h.divergences)
             });
+            // One lineage read per tick serves every audit that walks it.
+            let lineage = if ledger.is_some() || containment.enabled || divergence.enabled {
+                reader::build_lineage_view(&paths)
+            } else {
+                reader::LineageView::default()
+            };
             if let Some(ledger) = ledger.as_ref() {
                 ledger.check();
-                observe_transitions(&paths, ledger, &mut state.0);
+                observe_transitions(&paths, &lineage, ledger, &mut state.0);
             }
-            if diff.enabled {
-                run_diff_containment_scan(&paths, &diff, ledger.as_ref(), &mut state.1);
+            if containment.enabled {
+                let view = state.1.tick(&paths, &lineage, ledger.as_deref());
+                containment.findings.record(view);
             }
             if promotion_gate.enabled {
                 run_promotion_gate_scan(&paths, &promotion_gate, ledger.as_ref(), &mut state.2);
             }
             if divergence.enabled {
-                run_divergence_audit(&paths, &divergence, ledger.as_ref(), &mut state.3);
+                run_divergence_audit(&paths, &lineage, &divergence, ledger.as_ref(), &mut state.3);
             }
             Some(state)
         });
@@ -1739,9 +1697,9 @@ mod tests {
             Duration::from_millis(10),
             log,
             ledger,
-            DiffContainmentConfig {
+            ContainmentConfig {
                 enabled: false,
-                findings: Arc::new(crate::diff_containment::DiffContainmentFindings::new()),
+                findings: Arc::new(crate::range_containment::ContainmentFindings::new()),
             },
             PromotionGateConfig {
                 enabled: false,

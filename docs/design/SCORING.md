@@ -481,8 +481,9 @@ with fields:
 Checks that run before the three scoring rules:
 
 - **Regression suite** (only when `regression_gate_enabled` is `true`).
-  The tournament runner runs `regression_test_command` against the child
-  snapshot, with `regression_timeout_s` as its limit. A failing or
+  The tournament runner runs `regression_test_command` in a throwaway copy
+  of the child snapshot, with `regression_timeout_s` as its limit; the
+  suite's bytecode, caches and output never reach the generation's tree. A failing or
   timed-out suite rejects the child with a `"regression suite failed: ..."`
   reason, whatever its scalar movement.
 - **Complete execution.** A training or holdout aggregate with unstarted

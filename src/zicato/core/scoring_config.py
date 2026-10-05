@@ -705,16 +705,17 @@ class ScoringWeights:
         Omitted from the contract canonical form at its default. An
         unknown name is refused at load.
     block_on_containment_violation:
-        When on, the orchestrator re-checks diff containment before it
-        finalises a gate-decided promotion: every file outside the
-        registered mutable trees must be byte-identical between parent and
-        child, the rule the supervisor attests out of band. A violating
+        When on, the orchestrator verifies the promoted pair's byte-range
+        mutation evidence before it finalises a gate-decided promotion,
+        the rule the supervisor checks out of band: every changed byte must
+        lie inside a permitted mutation unit, and the recorded evidence must
+        match both source trees. A ``violated`` or ``evidence_mismatch``
         child is rejected with a ``containment_violation`` reason instead
         of being promoted with an alarm. Off (default) keeps the alarm-only
-        posture. An unreadable snapshot skips the check rather than
-        quarantining a candidate, and an explicit operator force-promote
-        is never blocked; the override is recorded. Omitted from the
-        contract canonical form at its default.
+        posture. Missing or malformed evidence (``unverified``) does not
+        block, and an explicit operator force-promote is never blocked; the
+        override is recorded. Omitted from the contract canonical form at
+        its default.
     block_on_gate_contradiction:
         When on, the orchestrator re-derives the gate's scalar rule
         (``delta_scalar <= -promote_margin``) immediately before it
@@ -968,7 +969,7 @@ class ScoringWeights:
         ),
     )
     # The two integrity blocking modes share the containment rule with the
-    # supervisor (``crates/supervisor/src/diff_containment.rs``) and the gate
+    # supervisor (``crates/supervisor/src/range_containment.rs``) and the gate
     # rule with its ``promotion_gate.rs check_row``; both stay alarm-only at
     # their default.
     block_on_containment_violation: bool = field(

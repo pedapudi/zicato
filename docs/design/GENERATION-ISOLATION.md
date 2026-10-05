@@ -140,12 +140,13 @@ Two of the cautions below turned out to be load-bearing:
 **Corollary — one non-goal became a shipped mechanism.** The Non-goals
 section excluded enforcement of *"did the mutation escape its sandbox"* as an
 OS-sandbox concern. It shipped anyway, as auditing rather than confinement.
-The supervisor re-hashes every child snapshot out-of-band
-(`crates/supervisor/src/diff_containment.rs`) and alarms on a write outside
-the registered `mutable_trees`. An opt-in, default-off in-band twin
+The supervisor checks every child's source tree against its byte-range
+mutation evidence out of band (`crates/supervisor/src/range_containment.rs`)
+and alarms on a change outside the recorded mutation units or on evidence
+that contradicts the files. An opt-in, default-off in-band twin
 (`ScoringWeights.block_on_containment_violation`, enforced before the
 promotion is persisted by `_integrity_block_reason` in `zicato.evolve.gate`)
-flips a violating promotion to REJECTED. The note's claim that an overlay `upper`
+rejects a violated or mismatched promotion. The note's claim that an overlay `upper`
 layer would make this "trivial and exact" is therefore moot: the check
 exists, works on a plain tree walk, and needs no overlay to be cheap enough.
 
@@ -244,7 +245,7 @@ env-scrub remains the baseline there).
   outside the tree, syscalls) — that is the OS-sandbox layer (mount namespaces /
   Landlock), which composes with this but is driven by supervisor spawn-side
   ownership and is out of scope here. — *See §0's corollary: the* detection *half
-  of this shipped as the supervisor's diff-containment attestation. The*
+  of this shipped as the supervisor's mutation-containment audit. The*
   confinement *half remains unbuilt and out of scope.*
 
 ## The materialization strategies
@@ -277,13 +278,14 @@ mountpoint is the worker's working directory. The worker sees the full tree;
 - **Teardown:** unmount; keep `upper` (the delta) as the persisted generation
   artifact, or discard for ephemeral runs.
 - **Synergy:** because `upper` is literally the diff, the supervisor's
-  diff-containment attestation (issues #47/#48) becomes **trivial and exact** —
+  containment attestation (issues #47/#48) becomes **trivial and exact** —
   "did the mutation escape `mutable_trees`?" is a listing of the `upper` dir, no
   parent↔child tree walk required.
 - **Verdict (2026-07): rejected.** Linux-only plus a privilege/FUSE dependency,
   for a materialization win strategy D already delivered at 3–18× under the
-  status quo. The attestation synergy is moot — the parent↔child re-hash shipped
-  and is not a bottleneck (`crates/supervisor/src/diff_containment.rs`).
+  status quo. The attestation synergy is moot — the parent-to-child byte-range
+  check shipped on plain trees and reuses each finished pair's result
+  (`crates/supervisor/src/range_containment.rs`).
 
 ### B. CoW reflinks / FS snapshots — *recommended where the FS supports it* → NOT BUILT
 
@@ -425,10 +427,10 @@ the mandatory one, and the mandatory ones were dropped.*
   calculates the worktree location without I/O, and `materialize_snapshot`
   checks it out on demand.
 - **Supervisor synergy:** an overlay `upper` layer is the exact parent→child diff,
-  which makes the supervisor's diff-containment attestation (issue #48) precise and
+  which makes the supervisor's containment attestation (issue #48) precise and
   cheap, and feeds the promotion-veto work (issue #47). → **MOOT.** The
-  attestation shipped as a snapshot re-hash
-  (`crates/supervisor/src/diff_containment.rs`) and needs no overlay. Issue #47
+  attestation shipped as a byte-range check of plain trees
+  (`crates/supervisor/src/range_containment.rs`) and needs no overlay. Issue #47
   (alarm-only → promotion-veto enforcement) remains open. Issue #48 (tighten
   the coarse file-set check to inside-site ranges) is closed; it shipped as
   the byte-range containment audit described in
@@ -492,7 +494,7 @@ never applied; the fourth and fifth were addressed.)*
   the FS and use it, else fall back. → *Dropped with strategy B.*
 - **The overlay-filesystem fast path.** Best containment; the privileged mount ties to
   supervisor spawn-side ownership (or `fuse-overlayfs` unprivileged). Wire the
-  `upper` delta into the persisted artifact and the supervisor diff-containment
+  `upper` delta into the persisted artifact and the supervisor containment
   check. → *Dropped with strategy A.*
 - **Git object-store backing, marked optional here.** Content-addressed dedup +
   portability + per-generation commits, under whichever on-disk strategy is active.
@@ -507,7 +509,7 @@ never applied; the fourth and fifth were addressed.)*
 | Where the `GenerationStore` protocol and both backends sit in the persistence design | [STORAGE.md](STORAGE.md) §5.2 |
 | The artifact-exclusion set shared by `copytree_ignore` / `gitignore_lines` | [STORAGE.md](STORAGE.md) §5.2.1 |
 | Subprocess-isolated tournament runs — why per-run isolation exists at all | [ROBUSTNESS.md](ROBUSTNESS.md) |
-| The supervisor's diff-containment attestation and the promotion-gate notary | [ZICATO-SYSTEM-ANALYSIS.md](ZICATO-SYSTEM-ANALYSIS.md) |
+| The supervisor's mutation-containment audit and the promotion-gate notary | [ZICATO-SYSTEM-ANALYSIS.md](ZICATO-SYSTEM-ANALYSIS.md) |
 | `experiment.json`, per-generation directories, the contract hash and `mutable_trees` | [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) |
 | The best-of-N slate that `derive_scratch` exists to serve | [PROPOSER.md](PROPOSER.md) |
 | Operator surface (`zicato epoch gc`) | [CLI.md](CLI.md) |

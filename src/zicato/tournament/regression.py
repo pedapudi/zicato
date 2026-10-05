@@ -21,6 +21,12 @@ contract:
   zicato runtime's event loop stays responsive (the live dashboard
   keeps polling state) and the test process's globals can't leak into
   the runner's process.
+* Source isolation — pytest runs in a throwaway copy of the snapshot
+  (:func:`zicato.epoch.genstore.copy_checkout_ephemeral`, the copy a
+  tournament run of an ad-hoc tree uses), never in the canonical tree. A
+  test run writes bytecode, caches, and whatever files the suite creates;
+  in the canonical tree those writes would change the generation's source
+  and the containment audit would report the bytecode as unauthorized.
 * Execution deadline — termination begins after ``timeout_s`` seconds.
   Cleanup waits until the child is reaped and its process group has no live
   members. A timeout is reported as ``passed=False`` with the summary keyword
@@ -162,8 +168,10 @@ async def run_regression_suite(
     failed test ids parsed from pytest's stdout, a short human summary,
     and the elapsed wall-clock seconds.
 
-    If no ``tests/`` directory can be located under ``snapshot_root``
-    the function returns ``passed=True`` immediately — a silent skip is
+    The suite runs in a throwaway copy of ``snapshot_root``, so the
+    snapshot itself is never written. If no ``tests/`` directory can be
+    located under ``snapshot_root`` the function returns ``passed=True``
+    immediately — a silent skip is
     preferable to a stall when the adapter ships no regression suite.
     The summary field carries ``"no tests/ directory; skipped"`` so the
     journal records the skip explicitly.
@@ -184,11 +192,16 @@ async def run_regression_suite(
             elapsed_s=0.0,
         )
 
+    from zicato.epoch.genstore import copy_checkout_ephemeral  # noqa: PLC0415
     from zicato.runtime.process import run_process  # noqa: PLC0415
 
+    checkout = copy_checkout_ephemeral(snapshot_root, "regression")
     try:
         result = await run_process(
-            test_command, cwd=test_root, timeout_s=timeout_s, merge_stderr=True
+            test_command,
+            cwd=checkout.working_dir / test_root.relative_to(snapshot_root),
+            timeout_s=timeout_s,
+            merge_stderr=True,
         )
     except TimeoutError:
         elapsed = time.monotonic() - started
@@ -198,6 +211,8 @@ async def run_regression_suite(
             summary=f"timeout after {timeout_s}s",
             elapsed_s=elapsed,
         )
+    finally:
+        checkout.cleanup()
 
     elapsed = time.monotonic() - started
     output = (result.stdout or b"").decode("utf-8", errors="replace")
