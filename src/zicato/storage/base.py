@@ -222,12 +222,13 @@ class StorageBackend(ABC):
         """
 
     def last_jsonl(self, key: str) -> Any | None:
-        """Return the last record of the JSONL stream at ``key``, or ``None``.
+        """Return the last complete record of the JSONL stream at ``key``, or ``None``.
 
         Blank lines are skipped, as in :meth:`read_jsonl`. This default reads
         the stream from the start; a backend whose streams can be read from
         the end overrides it, so a reader of a long append-only log pays for
-        its last record only.
+        its last record only. The file backend also ignores an unterminated
+        final line, which belongs to an append in progress.
         """
         last: Any | None = None
         for record in self.read_jsonl(key):

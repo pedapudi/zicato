@@ -888,8 +888,9 @@ The division of labour:
   settled loop's terminal tail back into a non-terminal one. Readers (the
   dashboard's SSE stream and liveness verdict) take the last event through
   `EventLog.tail`, which reads the file backwards from its end
-  (`StorageBackend.last_jsonl`), so a log with one event per board unit costs
-  a reader one line. The Rust supervisor does not read the log; it reads the
+  (`StorageBackend.last_jsonl`) and ignores an unterminated final line, so a
+  log with one event per board unit costs a reader one line and a reader
+  racing an append sees the previous event. The Rust supervisor does not read the log; it reads the
   `seq` the heartbeat carries.
 - The supervisor's `SeqLiveness` tracker consumes this: seq present → age
   since the last seq *change*; seq absent (a heartbeat written without one) →

@@ -114,22 +114,28 @@ class EventLog:
     """An append-only, single-writer, monotonic-``seq`` event log.
 
     Backed by a JSONL stream at one storage ``key`` (via
-    :meth:`StorageBackend.append_jsonl` / :meth:`~StorageBackend.read_jsonl`).
+    :meth:`StorageBackend.append_jsonl`, :meth:`~StorageBackend.read_jsonl`
+    and :meth:`~StorageBackend.last_jsonl`).
     The append-only JSONL shape is the same one telemetry already uses; an
     ``EventLog`` adds the typed-record + monotonic-``seq`` contract on top.
 
     Single-writer contract
     -----------------------
-    One writer instance serves each stream for its owner's lifetime. It
-    validates existing history on first append, then advances its sequence
-    after successful writes. A failed write invalidates that state so retry
-    validates the actual bytes. Independent reader instances remain safe;
-    callers must not append through another instance while this writer is live.
+    One writer instance serves each stream for its owner's lifetime. On its
+    first append it decodes the last complete record (:meth:`tail`) and
+    continues from that record's ``seq``; earlier records are not read. It
+    then advances its sequence after each successful write. A failed write
+    discards that state, so the retry derives the sequence from the stream
+    again, and the backend refuses to append after an unterminated record.
+    Independent reader instances remain safe; callers must not append through
+    another instance while this writer is live.
 
     Runtime publication retains its two logs on the exclusive workspace lease.
     Synchronous append calls from concurrent matchups share those same objects.
-    Reads remain independent and strict: an interrupted JSONL record can raise
-    until the runtime owner clears the stream during recovery.
+    :meth:`read` is strict: an interrupted JSONL record raises until the
+    runtime owner clears the stream during recovery. :meth:`tail` reads only
+    the last complete record, and the file backend ignores an unterminated
+    final line, so a reader racing an append sees the previous event.
     """
 
     def __init__(self, backend: StorageBackend, key: str) -> None:
@@ -150,15 +156,16 @@ class EventLog:
     def append(self, type: str, payload: Any = None) -> Event:
         """Append one event and return it with its assigned ``seq`` + ``ts``.
 
-        The first sequence follows the validated tail. Subsequent appends use
-        the retained next sequence; failed writes force validation on retry.
+        The first sequence follows the last complete record. Subsequent
+        appends use the retained next sequence; a failed write makes the
+        retry derive it from the stream again.
         """
         if self._next_seq is None:
             last = self.tail()
             self._next_seq = 1 if last is None else last.seq + 1
         seq = self._next_seq
         event = Event(seq=seq, ts=_utc_now_iso(), type=type, payload=payload)
-        # A failed append may have written bytes; retry must validate them.
+        # A failed append may have written bytes; the retry rereads the stream.
         self._next_seq = None
         self._backend.append_jsonl(self._key, event.to_record())
         self._next_seq = seq + 1
@@ -188,10 +195,11 @@ class EventLog:
     def tail(self) -> Event | None:
         """Return the last appended event, or ``None`` if the log is empty.
 
-        Opening a writer derives its sequence from this validated tail.
-        Independent readers use it to inspect the last recorded transition.
-        The backend reads the last record only (a file is read from its end),
-        so the cost does not grow with the length of the log.
+        Opening a writer derives its sequence from this record. Independent
+        readers use it to inspect the last recorded transition. The backend
+        reads the last complete record only (a file is read from its end and
+        an unterminated final line is ignored), so the cost does not grow with
+        the length of the log.
         """
         record = self._backend.last_jsonl(self._key)
         return None if record is None else Event.from_record(record)
