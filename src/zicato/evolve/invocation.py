@@ -31,6 +31,9 @@ class InvocationContext:
     configuration: ResolvedConfiguration
     workspace_config_bytes: bytes
     resources: AsyncExitStack = field(default_factory=AsyncExitStack)
+    #: Closed after the final index repair and before the writer is released,
+    #: so a process auditing the invocation observes its finished state.
+    observers: AsyncExitStack = field(default_factory=AsyncExitStack)
     execution_contract: EpochExecutionContract | None = None
     runtime_config: RuntimeConfig | None = None
     telemetry: TelemetryEndpoints = TelemetryEndpoints()
@@ -143,6 +146,7 @@ async def validated_invocation(
             resources,
         )
         resources.callback(invocation._close_logs)
+        resources.push_async_callback(invocation.observers.aclose)
         resources.callback(invocation._repair_index)
         resources.callback(invocation._imports.close)
         from zicato.telemetry.sink import (  # noqa: PLC0415

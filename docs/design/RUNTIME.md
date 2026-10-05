@@ -79,8 +79,8 @@ follows from them.
    §3 and [DASHBOARD.md](DASHBOARD.md).
 4. **One mental model for the operator.** `zicato evolve` auto-spawns
    both the watchdog supervisor and the dashboard service, and prints
-   the dashboard URL. In the common case the operator does not start
-   the dashboard separately.
+   the supervisor's `/statusz` address and the dashboard URL. In the
+   common case the operator does not start the dashboard separately.
 
 ## 2. State file layout
 
@@ -97,6 +97,7 @@ Python memory or only in the supervisor's memory.
 ├── heartbeat.json                  # orchestrator pulse, bumped every 2s
 ├── progress.events.jsonl           # orchestrator progress log; its seq is the liveness cursor
 ├── dashboard.json                  # dashboard's actually-bound host/port
+├── supervisor.json                 # supervisor's pid, /statusz address, and ledger directory
 ├── active_tournament.events.jsonl  # current tournament shape + per-entry status
 ├── inconclusive/                   # opt-in rating pre-gate: unresolved crowning duels
 ├── active_runs/
@@ -122,11 +123,27 @@ the workspace layout in `src/zicato/workspace/layout.py`.
 `dashboard.json` is written by the Python dashboard service once it
 binds (it walks `+1` from its preferred port if taken), so `evolve`
 can read back the *actually-bound* port rather than assume one. The
-watchdog supervisor is auto-spawned by `evolve` as a child process; it
-does not write a `.pid` / `.stdout` / `.stderr` file under `runtime/`
-(its stdio is inherited from `evolve`). `control_log/` is created by
-the runtime helpers, and every consumed command is archived into it with
-a JSON sidecar — see §2.5.
+watchdog supervisor is auto-spawned by `evolve` as a child process. It
+prints one line on standard output once its `/statusz` server has bound;
+`evolve` reads that line, prints the address, and writes
+`supervisor.json` as `{"pid", "statusz_url", "ledger_dir"}`
+(`SupervisorRecord`, `src/zicato/runtime/state.py`). `statusz_url` is
+`null` when the supervisor did not report an address, and `ledger_dir` is
+`null` when it runs without an audit ledger. The record stays after the
+supervisor exits and is replaced when the next one starts. The
+supervisor's logs go to standard error, which it inherits from `evolve`.
+`control_log/` is created by the runtime helpers, and every consumed
+command is archived into it with a JSON sidecar — see §2.5.
+
+The supervisor's tamper-evident audit ledger, when enabled, lives in the
+workspace's `proctor/` directory, beside `runtime/` rather than under it.
+The supervisor is its only writer: no zicato Python code writes, prunes,
+moves, or deletes anything there (`tests/test_proctor_ownership.py`), so
+epoch garbage collection, repairs, crash resume, runtime cleanup, and a
+forced `zicato init` leave the ledger intact. `evolve` starts the
+supervisor without the ledger or its integrity audits; the module
+constant `_SUPERVISOR_AUDITS` in `src/zicato/cli/commands/evolve.py`
+enables both.
 
 ### 2.1 Workspace writer guard and identity metadata
 
@@ -409,9 +426,9 @@ than applied to the wrong round.
 ## 3. The watchdog supervisor binary
 
 `zicato-supervisor` is a Rust binary (`crates/supervisor/`,
-built `cargo build --release -p zicato-supervisor`). It is
-auto-spawned by `zicato evolve` (opt out with `--no-dashboard`) and
-killed when `evolve` exits. The binary is **resolved** at spawn time
+built `cargo build --release -p zicato-supervisor`). `zicato evolve`
+spawns it for every loop, including a loop run with `--no-dashboard`,
+and stops it when the loop ends. The binary is **resolved** at spawn time
 (`_resolve_supervisor_binary`, `src/zicato/cli/commands/evolve.py`) from, in
 order: the `integration.supervisor_binary` setting (`--supervisor-binary`);
 the newer of the bundled `zicato/_bin/zicato-supervisor` (placed by the
@@ -443,7 +460,8 @@ shorter or missing file only for removals during its lifetime. See
 
 ### 3.0 Two processes: watchdog + dashboard service
 
-`zicato evolve` spawns **two** children (unless `--no-dashboard`):
+`zicato evolve` spawns **two** children (only the supervisor with
+`--no-dashboard`):
 
 | Process | What it is | Default port | Role |
 |---|---|---|---|
@@ -451,9 +469,9 @@ shorter or missing file only for removals during its lifetime. See
 | `python -m zicato.dashboard` | Python/Starlette service | `7892` (walks `+1` up to 10×) | the dashboard UI + API the operator opens |
 
 They bind distinct default ports so neither walks onto the other. The
-dashboard URL that `evolve` prints is read back from
-`runtime/dashboard.json`, which records the port the dashboard bound,
-and is never assumed.
+addresses `evolve` prints are the ports each child actually bound: the
+supervisor's comes from the line it prints on standard output, and the
+dashboard's from `runtime/dashboard.json`.
 
 ### 3.1 Lifecycle
 
@@ -463,12 +481,15 @@ and is never assumed.
 │  ─────────────────────────────────────────                      │
 │  1. Acquire runtime/lock.guard; publish lock.json metadata.      │
 │  2. Start the HeartbeatBeater (writes heartbeat.json).          │
-│  3. Spawn zicato-supervisor (the watchdog) and                  │
-│     python -m zicato.dashboard (the UI service).                │
-│  4. Read runtime/dashboard.json; print the dashboard URL.       │
+│  3. Spawn zicato-supervisor (the watchdog); print its /statusz  │
+│     address and write runtime/supervisor.json.                  │
+│  4. Spawn python -m zicato.dashboard (the UI service), unless   │
+│     --no-dashboard; read runtime/dashboard.json; print its URL. │
 │  5. Run the meta-loop (rounds 1..N).                            │
-│  6. On exit: join owned work and finish worker cleanup;         │
-│     then stop telemetry and services, and release the writer.   │
+│  6. On exit: join owned work and finish worker cleanup; stop    │
+│     telemetry (and the dashboard, after a failure); run the     │
+│     final index repair; SIGTERM the supervisor and wait up to   │
+│     30s for it to exit; release the writer.                     │
 └─────────────────────────────────────────────────────────────────┘
                           │ spawns (×2)
                           ▼
@@ -481,7 +502,8 @@ and is never assumed.
 │     staleness and per-run staleness; escalate on threshold      │
 │     (see §3.3). Record escalations in a ring buffer /statusz    │
 │     reads back.                                                 │
-│  4. On SIGTERM: shut down cleanly.                              │
+│  4. On SIGTERM: finish in-flight escalations, run one last      │
+│     integrity scan of the finished workspace, then exit.        │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -614,6 +636,7 @@ Inside `.zicato/runtime/` the writer rules are strict:
 | `heartbeat.json` | orchestrator | supervisor, dashboard |
 | `progress.events.jsonl` | Invocation appends through its exclusive workspace writer | supervisor (via the heartbeat's `seq`), dashboard |
 | `dashboard.json` | dashboard service | orchestrator (URL readback) |
+| `supervisor.json` | orchestrator, after the supervisor reports its address | operator tools that need the `/statusz` address or the ledger directory |
 | `active_tournament.events.jsonl` | Invocation publishes snapshots and field replacements through its exclusive workspace writer | dashboard |
 | `active_runs/{run_id}.json` | Tournament worker or proposal producer publishes its owned record; its parent finalizes after confirmed exit; the supervisor finalizes a confirmed orphan under the writer guard | supervisor, dashboard |
 | `control/<command>` | dashboard service | orchestrator, at its safe points |
@@ -1368,8 +1391,8 @@ event — see [TELEMETRY.md](TELEMETRY.md)).
 
 ## 7. Observability of the runtime layer itself
 
-The watchdog supervisor logs via `tracing` (level set by `--log` /
-`RUST_LOG`; stdio inherited from `evolve`) and exposes its own state on
+The watchdog supervisor logs via `tracing` to standard error (level set
+by `--log` / `RUST_LOG`; inherited from `evolve`) and exposes its own state on
 `/statusz` (and `/statusz.json`). The orchestrator logs via Python's
 `logging`. What surfaces the runtime state:
 

@@ -24,10 +24,12 @@ Each invocation:
 3. **Runs the loop** for ``--rounds`` rounds. Each round proposes one
    experiment, applies it, runs the tournament, and either promotes or
    rejects the child generation.
-4. **Launches the dashboard** and prints its URL. The dashboard service
-   and the watchdog supervisor bind distinct default ports so they
-   never contend; the reported URL is the dashboard's *actually-bound*
-   port, read back from ``runtime/dashboard.json`` rather than assumed.
+4. **Starts the watchdog supervisor** for every loop and prints its
+   ``/statusz`` address, then **launches the dashboard** (unless
+   ``--no-dashboard``) and prints its URL. The two bind distinct default
+   ports so they never contend; the reported URL is the dashboard's
+   *actually-bound* port, read back from ``runtime/dashboard.json``
+   rather than assumed.
 
 See :mod:`zicato.orchestrator` for the loop implementation.
 
@@ -138,7 +140,7 @@ def _resolve_supervisor_binary(config: IntegrationConfig | None = None) -> Path 
         apply. The CLI resolves its overlay before calling this function.
 
     Returns ``None`` when nothing resolves — the caller prints a warning
-    and proceeds without a dashboard.
+    and proceeds without the watchdog.
     """
     import os  # noqa: PLC0415
 
@@ -204,33 +206,55 @@ def _resolve_supervisor_binary(config: IntegrationConfig | None = None) -> Path 
     return None
 
 
+#: Whether evolve starts the supervisor with its integrity audits and audit
+#: ledger. Off by default: the audits report false alarms on honest loops and
+#: the ledger's chain check fails on some records it wrote itself, so they stay
+#: off until those defects are fixed.
+_SUPERVISOR_AUDITS = False
+
+#: The supervisor's integrity-audit flags, passed with ``--ledger-dir``.
+_SUPERVISOR_AUDIT_FLAGS = ("--mutation-containment", "--promotion-gate", "--divergence-audit")
+
+#: Seconds evolve waits, after asking the supervisor to stop, for its final
+#: integrity scan and exit before killing it.
+_SUPERVISOR_STOP_TIMEOUT_S = 30.0
+
+#: The line the supervisor prints on standard output once ``/statusz`` is bound.
+_SUPERVISOR_ANNOUNCE = b"zicato-supervisor listening on "
+
+
 async def _maybe_spawn_supervisor(
     workspace_root: Path,
-    disabled: bool,
     config: IntegrationConfig | None = None,
+    *,
+    ledger_dir: Path | None = None,
 ) -> asyncio.subprocess.Process | None:
     """Spawn the supervisor binary as a subprocess (or return ``None``).
 
-    The supervisor is the watchdog: it runs the process-supervision loop
-    and serves the ``/statusz`` probe. The dashboard is served by the
-    separate Python service spawned by :func:`_maybe_spawn_dashboard`.
+    The supervisor is the watchdog: it enforces per-run deadlines, carries
+    out the parent's kill requests, and serves the ``/statusz`` probe.
+    evolve starts it for every loop, with or without the dashboard, which
+    is served by the separate Python service spawned by
+    :func:`_maybe_spawn_dashboard`.
 
-    The binary's stdout/stderr are inherited from the parent so log
-    output appears alongside ``zicato evolve``'s own messages. On
-    failure-to-spawn the function still returns ``None`` and prints a
-    warning — ``evolve`` continues without the watchdog rather than
-    refusing to run.
+    ``ledger_dir`` starts the supervisor's integrity audits and its
+    tamper-evident audit ledger in that directory; ``None`` starts the
+    watchdog alone.
 
-    ``disabled`` mirrors ``--no-dashboard``: with the dashboard
-    suppressed there is nothing for the watchdog to guard the lifecycle
-    of, so the supervisor is not spawned either.
+    The binary's standard output is a pipe that :class:`_SupervisorChild`
+    reads for the bound address and then forwards; standard error is
+    inherited. On failure-to-spawn the function returns ``None`` and
+    prints a warning — ``evolve`` continues without the watchdog rather
+    than refusing to run.
 
     ``start_new_session=True`` — see :func:`_maybe_spawn_dashboard` for
     the full rationale; the same blast-radius isolation applies to the
     watchdog child.
     """
-    if disabled:
-        return None
+    from zicato.runtime.paths import supervisor_record_path  # noqa: PLC0415
+
+    # A record left by an earlier supervisor would name a process that is gone.
+    supervisor_record_path(workspace_root).unlink(missing_ok=True)
     binary = _resolve_supervisor_binary(config)
     if binary is None:
         click.echo(
@@ -238,11 +262,14 @@ async def _maybe_spawn_supervisor(
             err=True,
         )
         return None
+    audits = () if ledger_dir is None else (*_SUPERVISOR_AUDIT_FLAGS, "--ledger-dir", ledger_dir)
     try:
         proc = await asyncio.create_subprocess_exec(
             str(binary),
             "--workspace",
             str(workspace_root),
+            *map(str, audits),
+            stdout=asyncio.subprocess.PIPE,
             start_new_session=True,
         )
     except (OSError, TypeError, ValueError) as exc:
@@ -252,6 +279,71 @@ async def _maybe_spawn_supervisor(
         )
         return None
     return proc
+
+
+class _SupervisorChild:
+    """A started supervisor: its reported address, then its output until it exits."""
+
+    def __init__(self, proc: asyncio.subprocess.Process | None) -> None:
+        self.proc = proc
+        self._forwarding: asyncio.Task[None] | None = None
+
+    async def announce(
+        self, workspace_root: Path, ledger_dir: Path | None, *, timeout_seconds: float = 10.0
+    ) -> None:
+        """Print the ``/statusz`` address and write ``runtime/supervisor.json``.
+
+        The supervisor prints one line on standard output once its server
+        has bound. Any other line it writes there, before or after, is
+        forwarded to evolve's own standard output so the pipe never fills.
+        """
+        from zicato.runtime.state import (  # noqa: PLC0415
+            SupervisorRecord,
+            write_supervisor_record,
+        )
+
+        if self.proc is None:
+            return
+        url = None
+        stdout = self.proc.stdout
+        if stdout is not None:
+            try:
+                url = await asyncio.wait_for(_read_statusz_url(stdout), timeout_seconds)
+            except TimeoutError:
+                pass
+            if url is None:
+                click.echo("warning: the supervisor did not report its /statusz address", err=True)
+            else:
+                click.echo(f"Supervisor: {url}")
+            self._forwarding = asyncio.create_task(_forward_output(stdout))
+        write_supervisor_record(
+            workspace_root,
+            SupervisorRecord(self.proc.pid, url, None if ledger_dir is None else str(ledger_dir)),
+        )
+
+    async def stop(self) -> None:
+        """Ask the supervisor to stop, allowing time for its final integrity scan."""
+        await _terminate_child(self.proc, timeout=_SUPERVISOR_STOP_TIMEOUT_S)
+        if self._forwarding is not None:
+            try:
+                await asyncio.wait_for(self._forwarding, 1.0)
+            except TimeoutError:
+                pass
+
+
+async def _read_statusz_url(stream: asyncio.StreamReader) -> str | None:
+    """Forward lines until the supervisor announces its address; ``None`` at end of output."""
+    while line := await stream.readline():
+        if line.startswith(_SUPERVISOR_ANNOUNCE):
+            return line[len(_SUPERVISOR_ANNOUNCE) :].decode(errors="replace").strip() + "/statusz"
+        click.echo(line.decode(errors="replace"), nl=False)
+    return None
+
+
+async def _forward_output(stream: asyncio.StreamReader) -> None:
+    """Copy a child's standard output to evolve's own until the child closes it."""
+    while line := await stream.readline():
+        click.echo(line.decode(errors="replace"), nl=False)
 
 
 def _dashboard_spawn_argv(
@@ -463,12 +555,14 @@ def _read_dashboard_endpoint(endpoint_file: Path) -> tuple[str, int | None]:
     return (endpoint.host, endpoint.port) if endpoint else (_DASHBOARD_HOST, None)
 
 
-async def _terminate_child(proc: asyncio.subprocess.Process | None) -> None:
+async def _terminate_child(
+    proc: asyncio.subprocess.Process | None, *, timeout: float = 5.0
+) -> None:
     """Shut down a previously-spawned child process; idempotent.
 
     Used to tear down both the watchdog supervisor and the Python
-    dashboard service. Sends ``SIGTERM``, waits up to five seconds for a
-    clean exit, then escalates to ``SIGKILL``.
+    dashboard service. Sends ``SIGTERM``, waits up to ``timeout`` seconds
+    for a clean exit, then escalates to ``SIGKILL``.
     """
     if proc is None:
         return
@@ -479,7 +573,7 @@ async def _terminate_child(proc: asyncio.subprocess.Process | None) -> None:
     except ProcessLookupError:
         return
     try:
-        await asyncio.wait_for(proc.wait(), timeout=5)
+        await asyncio.wait_for(proc.wait(), timeout=timeout)
     except TimeoutError:
         try:
             proc.kill()
@@ -796,8 +890,8 @@ def _dry_run_and_exit(
     is_flag=True,
     default=False,
     help=(
-        "Do not spawn the dashboard service (and the watchdog "
-        "supervisor that guards it). evolve still runs the loop."
+        "Do not spawn the dashboard service. evolve still runs the loop "
+        "and its watchdog supervisor."
     ),
 )
 @click.option(
@@ -932,8 +1026,9 @@ def evolve_cmd(
             pass
 
         # The supervisor is the watchdog; the dashboard UI is served by
-        # the separate Python dashboard service. Both are children of this evolve
-        # process and both are torn down on exit.
+        # the separate Python dashboard service. Both are children of this
+        # evolve process. The supervisor runs for every loop and stops after
+        # the final index repair, so its last scan sees the finished state.
         #
         # The two bind distinct default ports (the watchdog supervisor
         # on its own default, the dashboard on --dashboard-port) so
@@ -954,12 +1049,22 @@ def evolve_cmd(
             overlay=invocation_overlay,
             prepare_contract=prepare_contract,
         ) as invocation:
-            sup = await _maybe_spawn_supervisor(
-                workspace_root,
-                disabled=no_dashboard,
-                config=invocation.configuration.values.integration,
+            from zicato.workspace.layout import WorkspaceLayout  # noqa: PLC0415
+
+            ledger_dir = (
+                WorkspaceLayout.from_root(workspace_root).proctor_dir
+                if _SUPERVISOR_AUDITS
+                else None
             )
-            invocation.resources.push_async_callback(_terminate_child, sup)
+            supervisor = _SupervisorChild(
+                await _maybe_spawn_supervisor(
+                    workspace_root,
+                    invocation.configuration.values.integration,
+                    ledger_dir=ledger_dir,
+                )
+            )
+            invocation.observers.push_async_callback(supervisor.stop)
+            await supervisor.announce(workspace_root, ledger_dir)
             dash = await _maybe_spawn_dashboard(
                 workspace_root,
                 dashboard_port,

@@ -12,6 +12,7 @@ supervisor crate being built, and assert the dashboard spawn argv.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import signal
 import sys
@@ -204,12 +205,6 @@ def test_resolve_equal_mtime_prefers_dev_checkout(
     assert _resolve_supervisor_binary() == dev
 
 
-def test_maybe_spawn_supervisor_disabled() -> None:
-    """``disabled=True`` returns ``None`` and does not spawn."""
-    proc = asyncio.run(_maybe_spawn_supervisor(Path("/tmp"), disabled=True))
-    assert proc is None
-
-
 def test_supervisor_spawn_argv_names_only_the_workspace(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -232,7 +227,7 @@ def test_supervisor_spawn_argv_names_only_the_workspace(
 
     async def _scenario() -> None:
         proc = await _maybe_spawn_supervisor(
-            tmp_path, disabled=False, config=IntegrationConfig(supervisor_binary=str(sentinel))
+            tmp_path, config=IntegrationConfig(supervisor_binary=str(sentinel))
         )
         assert proc is not None
         await _terminate_child(proc)
@@ -241,13 +236,101 @@ def test_supervisor_spawn_argv_names_only_the_workspace(
     assert captured["argv"][1:] == ("--workspace", str(tmp_path))
 
 
+def test_supervisor_audits_name_the_workspace_proctor_ledger(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A ledger directory adds the audit flags and names it as the ledger."""
+    sentinel = _write_sentinel(tmp_path)
+    captured: list[tuple[str, ...]] = []
+    real_exec = asyncio.create_subprocess_exec
+
+    async def _spy_exec(*args: str, **kwargs: object):  # type: ignore[no-untyped-def]
+        captured.append(tuple(str(a) for a in args))
+        return await real_exec(*args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _spy_exec)
+    ledger_dir = tmp_path / "proctor"
+
+    async def _scenario() -> None:
+        proc = await _maybe_spawn_supervisor(
+            tmp_path,
+            IntegrationConfig(supervisor_binary=str(sentinel)),
+            ledger_dir=ledger_dir,
+        )
+        await _terminate_child(proc)
+
+    asyncio.run(_scenario())
+    assert captured[0][1:] == (
+        "--workspace",
+        str(tmp_path),
+        "--mutation-containment",
+        "--promotion-gate",
+        "--divergence-audit",
+        "--ledger-dir",
+        str(ledger_dir),
+    )
+
+
+def _write_announcing_supervisor(tmp_path: Path) -> Path:
+    """A stand-in that logs a line, announces its address, then waits for SIGTERM.
+
+    On SIGTERM it takes a second before writing ``final-scan`` and exiting,
+    like the supervisor finishing its last integrity scan.
+    """
+    script = tmp_path / "announcing-supervisor.sh"
+    script.write_text(
+        "#!/usr/bin/env bash\n"
+        f"trap 'sleep 1; touch {tmp_path / 'final-scan'}; exit 0' TERM\n"
+        "echo 'a log line'\n"
+        "echo 'zicato-supervisor listening on http://127.0.0.1:7921'\n"
+        "while true; do sleep 0.1; done\n"
+    )
+    script.chmod(0o755)
+    return script
+
+
+def test_supervisor_reports_its_address_and_finishes_its_final_scan(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """evolve prints the /statusz address, records it, and waits for the final scan."""
+    from zicato.cli.commands.evolve import _SupervisorChild
+    from zicato.runtime.paths import supervisor_record_path
+
+    workspace = tmp_path / ".zicato"
+    workspace.mkdir()
+    supervisor = _write_announcing_supervisor(tmp_path)
+
+    async def _scenario() -> int:
+        proc = await _maybe_spawn_supervisor(
+            workspace, IntegrationConfig(supervisor_binary=str(supervisor))
+        )
+        assert proc is not None
+        child = _SupervisorChild(proc)
+        try:
+            await child.announce(workspace, workspace / "proctor")
+        finally:
+            await child.stop()
+        return proc.pid
+
+    pid = asyncio.run(_scenario())
+    out = capsys.readouterr().out
+    assert "a log line" in out
+    assert "Supervisor: http://127.0.0.1:7921/statusz" in out
+    assert json.loads(supervisor_record_path(workspace).read_text()) == {
+        "pid": pid,
+        "statusz_url": "http://127.0.0.1:7921/statusz",
+        "ledger_dir": str(workspace / "proctor"),
+    }
+    assert (tmp_path / "final-scan").exists(), "stop returned before the final scan finished"
+
+
 def test_spawn_and_terminate_round_trip(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Spawn the sentinel, observe it's running, terminate it cleanly."""
     sentinel = _write_sentinel(tmp_path)
 
     async def _scenario() -> None:
         proc = await _maybe_spawn_supervisor(
-            tmp_path, disabled=False, config=IntegrationConfig(supervisor_binary=str(sentinel))
+            tmp_path, config=IntegrationConfig(supervisor_binary=str(sentinel))
         )
         assert proc is not None
         assert proc.pid > 0
@@ -278,7 +361,7 @@ def test_spawn_missing_binary_returns_none(monkeypatch: pytest.MonkeyPatch, tmp_
     import zicato.cli.commands.evolve as ev
 
     monkeypatch.setattr(ev, "_resolve_supervisor_binary", lambda _config=None: None)
-    proc = asyncio.run(ev._maybe_spawn_supervisor(tmp_path, disabled=False))
+    proc = asyncio.run(ev._maybe_spawn_supervisor(tmp_path))
     assert proc is None
 
 
@@ -394,7 +477,7 @@ def test_spawn_helpers_isolate_children_in_new_sessions(
 
     async def _scenario() -> None:
         await _maybe_spawn_supervisor(
-            tmp_path, disabled=False, config=IntegrationConfig(supervisor_binary=str(sentinel))
+            tmp_path, config=IntegrationConfig(supervisor_binary=str(sentinel))
         )
         await _maybe_spawn_dashboard(tmp_path, 7892, disabled=False)
 

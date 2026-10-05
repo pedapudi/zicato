@@ -27,6 +27,8 @@ class FakeDashboardProc:
 
     def __init__(self, argv: tuple[str, ...]) -> None:
         self.argv = argv
+        self.pid = 0
+        self.stdout = None
         self.returncode: int | None = None
         self.terminated = False
         self.killed = False

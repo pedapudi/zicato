@@ -372,9 +372,13 @@ orchestrator watching itself is not a defense.
 
 The watchdog supervisor is a separate Rust process with its own
 language and runtime (`crates/supervisor/`). It ships: `zicato
-evolve` auto-spawns it, and it watches
+evolve` auto-spawns it for every loop, with or without the dashboard,
+and it watches
 `heartbeat.json` and the `active_runs/*` files, escalating from SIGTERM
-through a grace period to SIGKILL on a stalled or overdue run. Each
+through a grace period to SIGKILL on a stalled or overdue run. When
+`evolve` ends, it stops the supervisor after the final index repair, and
+the supervisor runs one last integrity scan before it exits, so the
+workspace state the loop leaves behind is audited. Each
 `active_runs/{run_id}.json` carries that run's own worker process id,
 start time and process group, so the watchdog kills exactly one run's
 process group without touching the orchestrator or any sibling run.

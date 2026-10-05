@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import math
 from collections.abc import Mapping
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
@@ -72,6 +72,28 @@ def write_dashboard_endpoint(workspace_root: Path, endpoint: DashboardEndpoint) 
     atomic_write_text(
         dashboard_endpoint_path(workspace_root), json.dumps(endpoint.to_json()) + "\n"
     )
+
+
+@dataclass(frozen=True, slots=True)
+class SupervisorRecord:
+    """Where one supervisor process serves ``/statusz`` and keeps its audit ledger.
+
+    ``statusz_url`` is ``None`` when the supervisor did not report the address
+    it bound; ``ledger_dir`` is ``None`` when it was started without a ledger.
+    """
+
+    pid: int
+    statusz_url: str | None
+    ledger_dir: str | None
+
+
+def write_supervisor_record(workspace_root: Path, record: SupervisorRecord) -> None:
+    """Publish the record atomically so a reader never sees a partial one."""
+    from zicato.runtime.paths import supervisor_record_path
+    from zicato.storage import atomic_write_text
+
+    ensure_runtime_dirs(workspace_root)
+    atomic_write_text(supervisor_record_path(workspace_root), json.dumps(asdict(record)) + "\n")
 
 
 class RunStatus(StrEnum):

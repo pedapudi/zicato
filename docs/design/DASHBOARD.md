@@ -95,7 +95,7 @@ These are the flags that actually ship on `zicato evolve`:
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--no-dashboard` | off | Do not spawn the dashboard service, nor the watchdog supervisor that guards it. `evolve` still runs the loop. Useful for a non-interactive continuous-integration run. |
+| `--no-dashboard` | off | Do not spawn the dashboard service. `evolve` still runs the loop and its watchdog supervisor. Useful for a non-interactive continuous-integration run. |
 | `--dashboard-port <port>` | `7892` | Preferred port for the dashboard HTTP server (always bound on `127.0.0.1`). If taken, the service walks `+1` up to ten times. |
 
 Notes:

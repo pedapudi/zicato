@@ -15,12 +15,13 @@ import pytest
 
 from tests._orchestrator_harness import bootstrap_workspace, evaluation_call_llm, target_call_llm
 from zicato.evolve import lifecycle_services, loop, round_entry
-from zicato.evolve.invocation import validated_invocation
+from zicato.evolve.invocation import InvocationContext, validated_invocation
 from zicato.runtime.heartbeat import HeartbeatBeater
 from zicato.runtime.lock import (
     WorkspaceLock,
     WorkspaceLockHeld,
     acquire_workspace_lock,
+    release_workspace_lock,
     validate_workspace_lock,
 )
 from zicato.telemetry.meta_loop import (
@@ -180,6 +181,28 @@ def test_repeated_cancellation_waits_for_cleanup_and_preserves_primary_failure(
             await asyncio.gather(task, return_exceptions=True)
 
     asyncio.run(exercise())
+
+
+def test_observers_close_after_the_final_index_repair_while_the_writer_is_held(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An observer such as the supervisor sees the repaired, still-owned workspace."""
+    monkeypatch.setattr("zicato.check.require_workspace_valid", lambda *a, **k: None)
+    events: list[str] = []
+    monkeypatch.setattr(InvocationContext, "_repair_index", lambda self: events.append("repair"))
+
+    async def observe() -> None:
+        try:
+            release_workspace_lock(acquire_workspace_lock(tmp_path, "contender"))
+        except WorkspaceLockHeld:
+            events.append("observer while the writer is held")
+
+    async def exercise() -> None:
+        async with validated_invocation(tmp_path, None, "owner") as context:
+            context.observers.push_async_callback(observe)
+
+    asyncio.run(exercise())
+    assert events == ["repair", "observer while the writer is held"]
 
 
 def test_invocation_retains_writer_until_resistant_descendant_exits(tmp_path: Path) -> None:

@@ -37,9 +37,11 @@ def install_evolve_capture(monkeypatch: pytest.MonkeyPatch, captured: dict[str, 
     async def context(workspace_root, epoch, instance, *, overlay=None, prepare_contract=None):
         captured["workspace_root"] = workspace_root
         captured["invocation_overlay"] = overlay
-        async with AsyncExitStack() as resources:
+        async with AsyncExitStack() as resources, AsyncExitStack() as observers:
             yield SimpleNamespace(
-                configuration=resolve_configuration({}, overlay=overlay), resources=resources
+                configuration=resolve_configuration({}, overlay=overlay),
+                resources=resources,
+                observers=observers,
             )
 
     async def capture(**kwargs: Any) -> list[Any]:

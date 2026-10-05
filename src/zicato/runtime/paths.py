@@ -20,6 +20,7 @@ zicato helper uses)::
       lock.json                       # exclusive workspace lock
       heartbeat.json                  # orchestrator liveness beat
       dashboard.json                  # dashboard's actually-bound host/port
+      supervisor.json                 # supervisor's /statusz address and ledger
       active_runs/{run_id}.json       # per in-flight tournament run
       active_tournament.events.jsonl  # recorded tournament transitions
       control/                        # operator commands queued by dashboard
@@ -77,6 +78,11 @@ def dashboard_endpoint_path(workspace_root: Path) -> Path:
     for why the bound port is only knowable after the listener is up.
     """
     return _layout(workspace_root).dashboard_endpoint
+
+
+def supervisor_record_path(workspace_root: Path) -> Path:
+    """Return the path to the supervisor's address-and-ledger record."""
+    return _layout(workspace_root).supervisor_record
 
 
 def active_runs_dir(workspace_root: Path) -> Path:
@@ -169,6 +175,7 @@ __all__ = [
     "lock_guard_path",
     "heartbeat_path",
     "dashboard_endpoint_path",
+    "supervisor_record_path",
     "active_runs_dir",
     "active_run_path",
     "active_tournament_log_path",
