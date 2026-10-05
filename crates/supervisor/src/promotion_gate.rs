@@ -60,6 +60,9 @@ pub struct Contradiction {
 pub struct PromotionGateView {
     /// `true` once a scan has run.
     pub scanned: bool,
+    /// When the findings store recorded this result (RFC-3339), so a reader
+    /// can tell a current result from a stale one.
+    pub scanned_at: Option<String>,
     /// Number of resolved promotions checked in the latest scan.
     pub promotions_checked: u64,
     /// Number skipped for want of usable scalar evidence (fail-open).
@@ -210,6 +213,7 @@ pub fn scan_current_epoch(paths: &WorkspacePaths) -> PromotionGateView {
         promotions_checked,
         skipped,
         contradictions,
+        ..Default::default()
     }
 }
 
@@ -224,7 +228,8 @@ impl PromotionGateFindings {
         Self::default()
     }
 
-    pub fn record(&self, view: PromotionGateView) {
+    pub fn record(&self, mut view: PromotionGateView) {
+        view.scanned_at = Some(chrono::Utc::now().to_rfc3339());
         let mut g = match self.inner.lock() {
             Ok(g) => g,
             Err(p) => p.into_inner(),
@@ -338,9 +343,11 @@ mod tests {
             promotions_checked: 2,
             skipped: 1,
             contradictions: vec![],
+            ..Default::default()
         });
         let v = store.view();
         assert!(v.scanned);
+        assert!(v.scanned_at.is_some(), "the store timestamps each result");
         assert_eq!(v.promotions_checked, 2);
         assert_eq!(v.skipped, 1);
     }

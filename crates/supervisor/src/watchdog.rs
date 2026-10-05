@@ -14,7 +14,7 @@
 //! for blowing its wall-clock budget.
 
 use crate::action_log::{Action, Trigger, WatchdogLog};
-use crate::ledger::{AuditLedger, RecordKind};
+use crate::ledger::{AuditLedger, LedgerHistory, RecordKind, TransitionObserver};
 use crate::reader::{self, WorkspacePaths};
 use crate::reap::{self, producer_is_dead};
 use crate::signal::{self, escalate_owned_target, KillTarget};
@@ -87,18 +87,19 @@ fn record_action(ring: &WatchdogLog, ledger: Option<&Arc<AuditLedger>>, action: 
     ring.record(action);
 }
 
-/// Observe promote/reject decision transitions and epoch contract-hash
-/// changes from the canonical (orchestrator-written) state and stamp each new
-/// one into the tamper-evident ledger.
+/// Record promote/reject decisions and epoch contract hashes from the
+/// canonical (orchestrator-written) state into the tamper-evident ledger, and
+/// alarm on any recorded value that changed or no longer resolves.
 ///
 /// Read-only and alarm-only: this never blocks a promotion or writes the
-/// orchestrator's trees — it only records what it observes into the
-/// supervisor's own chain. De-duplication lives in the [`TransitionObserver`],
+/// orchestrator's trees. The current epoch's contract hash is read, plus the
+/// hash of every epoch the ledger already recorded, so a rewritten past
+/// contract is caught too. De-duplication lives in the [`TransitionObserver`],
 /// so a steady-state poll appends nothing.
 fn observe_transitions(
     paths: &WorkspacePaths,
     ledger: &Arc<AuditLedger>,
-    observer: &mut crate::ledger::TransitionObserver,
+    observer: &mut TransitionObserver,
 ) {
     // Decisions: every resolved generation across every epoch.
     let lineage = reader::build_lineage_view(paths);
@@ -110,11 +111,15 @@ fn observe_transitions(
             .map(|g| (g.epoch_id.as_str(), g.generation_id.as_str(), g.promoted)),
     );
 
-    // Contract hash: the current epoch's frozen contract.
-    let epoch = crate::epoch::build_epoch_view(paths);
-    if let (Some(epoch_id), Some(contract_hash)) = (epoch.epoch_id, epoch.contract_hash) {
-        observer.observe_contract(ledger, &epoch_id, &contract_hash);
-    }
+    let mut epochs = observer.recorded_epochs();
+    epochs.extend(reader::read_current_epoch(paths));
+    epochs.sort();
+    epochs.dedup();
+    let hashes = epochs.into_iter().map(|epoch_id| {
+        let hash = crate::epoch::contract_hash(paths, &epoch_id);
+        (epoch_id, hash)
+    });
+    observer.observe_contracts(ledger, hashes);
 }
 
 /// Run one diff-containment scan over the workspace and surface its findings.
@@ -1212,6 +1217,11 @@ pub async fn runs_loop(
 }
 
 /// Integrity reads run in the blocking pool, outside the deadline polling task.
+///
+/// The carried state (the transition observer and the three finding de-dup
+/// sets) is loaded from the ledger when the loop starts. A scan that panics
+/// loses that state; the next tick loads it from the ledger again, so the
+/// loop keeps running and records nothing twice.
 async fn integrity_loop(
     paths: WorkspacePaths,
     interval: Duration,
@@ -1221,12 +1231,7 @@ async fn integrity_loop(
     divergence: DivergenceConfig,
     mut shutdown: tokio::sync::broadcast::Receiver<()>,
 ) {
-    let mut state = (
-        crate::ledger::TransitionObserver::new(),
-        HashSet::new(),
-        HashSet::new(),
-        HashSet::new(),
-    );
+    let mut state = None;
     let mut ticker = tokio::time::interval(interval);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
@@ -1234,15 +1239,22 @@ async fn integrity_loop(
             _ = ticker.tick() => {}
             _ = shutdown.recv() => return,
         }
-        let (paths, ledger, diff, promotion_gate, divergence) = (
+        let (paths, ledger, diff, promotion_gate, divergence, carried) = (
             paths.clone(),
             ledger.clone(),
             diff.clone(),
             promotion_gate.clone(),
             divergence.clone(),
+            state.take(),
         );
         let task = tokio::task::spawn_blocking(move || {
+            let mut state = carried.unwrap_or_else(|| {
+                let history = ledger.as_deref().map(LedgerHistory::load);
+                let h = history.unwrap_or_default();
+                (h.observer, h.diff_alerts, h.contradictions, h.divergences)
+            });
             if let Some(ledger) = ledger.as_ref() {
+                ledger.check();
                 observe_transitions(&paths, ledger, &mut state.0);
             }
             if diff.enabled {
@@ -1254,12 +1266,12 @@ async fn integrity_loop(
             if divergence.enabled {
                 run_divergence_audit(&paths, &divergence, ledger.as_ref(), &mut state.3);
             }
-            state
+            Some(state)
         });
         tokio::select! {
             result = task => match result {
                 Ok(result) => state = result,
-                Err(error) => { warn!(%error, "integrity scan stopped"); return; }
+                Err(error) => warn!(%error, "integrity scan panicked; restarting on the next tick"),
             },
             _ = shutdown.recv() => return,
         }

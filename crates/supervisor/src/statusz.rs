@@ -139,6 +139,9 @@ pub struct AuditStatus {
     pub first_break_seq: Option<u64>,
     /// A human-readable reason for the first break, when the chain is broken.
     pub break_reason: Option<String>,
+    /// The partial final line removed when the ledger was opened, when there
+    /// was one.
+    pub partial_final_line: Option<String>,
 }
 
 impl Default for AuditStatus {
@@ -150,6 +153,7 @@ impl Default for AuditStatus {
             records: 0,
             first_break_seq: None,
             break_reason: None,
+            partial_final_line: None,
         }
     }
 }
@@ -313,6 +317,12 @@ pub fn build_statusz(
         promotion_gate,
         divergence,
     }
+}
+
+/// The `scanned at` row of an integrity section.
+fn scanned_at_row(scanned_at: &Option<String>) -> String {
+    let at = scanned_at.as_deref().unwrap_or("-");
+    format!("<tr><th>scanned at</th><td>{}</td></tr>", esc(at))
 }
 
 /// Minimal HTML escape for the few user-controlled strings rendered
@@ -544,6 +554,12 @@ th{color:#888;font-weight:normal}\
                 esc(reason)
             ));
         }
+        if let Some(removed) = &al.partial_final_line {
+            out.push_str(&format!(
+                "<tr><th>partial final line</th><td class=\"warn\">{}</td></tr>",
+                esc(removed)
+            ));
+        }
     }
     out.push_str("</table>");
 
@@ -565,6 +581,7 @@ th{color:#888;font-weight:normal}\
         out.push_str(&format!(
             "<tr><th>state</th><td class=\"{cls}\">{label}</td></tr>"
         ));
+        out.push_str(&scanned_at_row(&dc.scanned_at));
         out.push_str(&format!(
             "<tr><th>pairs scanned</th><td>{}</td></tr>",
             dc.pairs_scanned
@@ -644,6 +661,7 @@ th{color:#888;font-weight:normal}\
         out.push_str(&format!(
             "<tr><th>state</th><td class=\"{cls}\">{label}</td></tr>"
         ));
+        out.push_str(&scanned_at_row(&pg.scanned_at));
         out.push_str(&format!(
             "<tr><th>promotions checked</th><td>{}</td></tr>",
             pg.promotions_checked
@@ -696,6 +714,7 @@ th{color:#888;font-weight:normal}\
         out.push_str(&format!(
             "<tr><th>state</th><td class=\"{cls}\">{label}</td></tr>"
         ));
+        out.push_str(&scanned_at_row(&dv.scanned_at));
         out.push_str(&format!(
             "<tr><th>generations checked</th><td>{}</td></tr>",
             dv.generations_checked

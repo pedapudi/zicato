@@ -61,6 +61,9 @@ pub struct Finding {
 pub struct DivergenceView {
     /// `true` once an audit has run.
     pub scanned: bool,
+    /// When the findings store recorded this result (RFC-3339), so a reader
+    /// can tell a current result from a stale one.
+    pub scanned_at: Option<String>,
     /// Number of resolved generations cross-checked against the index.
     pub generations_checked: u64,
     /// The findings (empty when canonical and index agree).
@@ -277,6 +280,7 @@ pub fn audit(
         scanned: true,
         generations_checked,
         findings,
+        ..Default::default()
     }
 }
 
@@ -291,7 +295,8 @@ impl DivergenceFindings {
         Self::default()
     }
 
-    pub fn record(&self, view: DivergenceView) {
+    pub fn record(&self, mut view: DivergenceView) {
+        view.scanned_at = Some(chrono::Utc::now().to_rfc3339());
         let mut g = match self.inner.lock() {
             Ok(g) => g,
             Err(p) => p.into_inner(),
@@ -637,8 +642,10 @@ mod tests {
             scanned: true,
             generations_checked: 4,
             findings: vec![],
+            ..Default::default()
         });
         assert!(store.view().scanned);
+        assert!(store.view().scanned_at.is_some());
         assert_eq!(store.view().generations_checked, 4);
     }
 }
