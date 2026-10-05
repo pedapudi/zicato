@@ -1,14 +1,18 @@
-# The heartbeat sequence advances per scored board unit
+# The heartbeat sequence advances inside long phases
 
 | Measurement | Delta |
 |---|---:|
-| Total | +306 |
-| Production | +225 |
-| Production logic | +86 |
+| Total | +635 |
+| Production | +385 |
+| Production logic | +140 |
 
-The evolve loop binds a recorder that appends a `UnitSettled` progress
-transition and stamps its sequence number on the heartbeat as each board unit
-is scored, so the supervisor stops warning during healthy tournaments. The
-supervisor logs an exited orchestrator's final heartbeat once instead of a
-stale warning per tick, and its run-staleness defaults come from one set of
-constants. The supervisor's in-file unit tests count as production lines.
+The evolve loop binds a transition recorder, so each scored board unit and
+each settled proposal episode appends a progress transition. Every
+transition goes through the one writer that also stamps the heartbeat, so the
+heartbeat's sequence number equals the log's last one. The supervisor stops
+warning during healthy tournaments, identifies the orchestrator by pid and
+process start time, and reports an exited orchestrator's heartbeat once in
+its log and as finished on `/statusz`. Readers take the progress log's last
+event by reading the file from its end. The run-staleness defaults come from
+one set of constants. The supervisor's in-file unit tests count as production
+lines.
