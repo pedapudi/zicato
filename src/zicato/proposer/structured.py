@@ -98,7 +98,17 @@ EXPERIMENT_JSON_SCHEMA: dict[str, Any] = {
                         "required": ["metric_name", "direction", "magnitude"],
                         "additionalProperties": False,
                         "properties": {
-                            "metric_name": {"type": "string", "minLength": 1},
+                            "metric_name": {
+                                "type": "string",
+                                "minLength": 1,
+                                "description": (
+                                    "A NAMESPACED metric, written "
+                                    "'<namespace>:<metric>'. Board judges are "
+                                    "'judge:<name>' (never 'custom:'); drift "
+                                    "kinds are 'drift:<kind>'. A bare metric "
+                                    "name is refused and costs the round."
+                                ),
+                            },
                             "direction": {"enum": _DIRECTION_ENUM},
                             "magnitude": {"enum": _MAGNITUDE_ENUM},
                         },
