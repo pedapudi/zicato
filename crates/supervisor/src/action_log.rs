@@ -1,11 +1,10 @@
 //! In-memory ring buffer of recent watchdog actions.
 //!
-//! The watchdog escalates (SIGTERM -> SIGKILL) against the orchestrator
-//! and against over-deadline / stalled run workers, but until now it only
-//! emitted those decisions to the tracing log — there was no structured,
-//! queryable record. `/statusz` needs to surface "what has the watchdog
-//! actually done", so this module keeps a small bounded history of recent
-//! escalations entirely in memory.
+//! The watchdog escalates (SIGTERM -> SIGKILL) against run workers: those
+//! past their deadline, stalled, named by a kill request, or orphaned by a
+//! dead orchestrator. It never signals the orchestrator. `/statusz` surfaces
+//! what the watchdog has done, so this module keeps a small bounded history
+//! of recent escalations entirely in memory.
 //!
 //! It is deliberately tiny: a fixed-capacity ring behind a `Mutex`, shared
 //! by `Arc`. Nothing is persisted — a supervisor restart starts the
@@ -25,8 +24,6 @@ pub const CAPACITY: usize = 64;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Trigger {
-    /// The orchestrator heartbeat went stale past the kill threshold.
-    HeartbeatStale,
     /// A run blew its per-board wall-clock deadline.
     RunDeadline,
     /// A run stopped making progress (staleness trigger).
@@ -43,7 +40,6 @@ pub enum Trigger {
 impl Trigger {
     pub fn as_str(self) -> &'static str {
         match self {
-            Trigger::HeartbeatStale => "heartbeat_stale",
             Trigger::RunDeadline => "run_deadline",
             Trigger::RunStale => "run_stale",
             Trigger::KillRequest => "kill_request",
@@ -99,7 +95,7 @@ pub struct Action {
     pub trigger: Trigger,
     /// The pid the watchdog signalled.
     pub pid: i32,
-    /// The run id, when the trigger was run-scoped (`None` for heartbeat).
+    /// The run id of the signalled worker, when known.
     pub run_id: Option<String>,
     /// How far the escalation got.
     pub outcome: Outcome,

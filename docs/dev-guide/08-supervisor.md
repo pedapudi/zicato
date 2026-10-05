@@ -151,7 +151,17 @@ when the heartbeat carries a `seq`, and falls back to timestamp age for a
 heartbeat that carries none. A fresh timestamp over an unmoving seq
 reads as stale, which catches a wedged loop; a slow call between two transitions
 reads as alive, which spares a working one. Both paths share `classify_age`, and
-neither can return a kill.
+neither can return a kill. A tournament phase lasts minutes, so the evolve loop
+advances `seq` each time a board unit is scored; a tournament whose units keep
+finishing stays below the 30s warn threshold.
+
+The heartbeat file outlives the orchestrator. When the heartbeat's `pid` is no
+longer alive, `OrchestratorExit` makes `heartbeat_loop` log one "heartbeat is
+final" line for that orchestrator, identified by `pid` and `started_at`, and
+nothing further until a different orchestrator writes the heartbeat. A
+heartbeat without a `pid` keeps the staleness classification. A recycled `pid`
+reads as alive, so the loop then classifies staleness as for a live
+orchestrator.
 
 > ⛔ NEVER add a code path that signals the pid carried by
 > `heartbeat.json`. If you believe you need one, you are re-introducing the
@@ -235,10 +245,12 @@ not collapse the target to `None`.
 
 The staleness trigger (`decide_run`) is separate and complementary: it fires
 on `last_progress` not advancing. Its kill threshold is `2 × the run's own
-budget` when the record carries one; the fixed `run_stale_kill` is the backstop
-for budget-less records. The worker's `RunHeartbeatBeater` bumps every ~3s, so
-staleness past that threshold means the worker process itself is wedged rather
-than merely waiting on a slow model.
+budget` when the record carries one; the fixed `run_stale_kill` (default 120s)
+is the backstop for budget-less records, and `run_stale_warn` (default 30s)
+logs a warning first. The worker's `RunHeartbeatBeater` bumps every ~3s, so
+staleness past those thresholds means the worker process itself is wedged
+rather than merely waiting on a slow model. The binary's flag defaults and
+`Thresholds::default` read the same `DEFAULT_*` constants in `watchdog.rs`.
 
 **What goes wrong without the clamp:** one malformed deadline makes one run
 immortal; the whole point of an out-of-band budget enforcer evaporates on
@@ -723,26 +735,31 @@ of §8.3.
                     Ok(mut tracker) => tracker.observe(hb.as_ref(), Utc::now(), &thresholds),
                     Err(_) => continue,
                 };
-                match obs.action {
-                    HeartbeatAction::Nothing => {}
-                    HeartbeatAction::Warn => { warn!(?hb, ..., "heartbeat is stale (warn threshold)"); }
-                    HeartbeatAction::Stale => {
+                let alive = hb.as_ref().and_then(|h| h.pid).is_none_or(signal::is_alive);
+                match exit.report(hb.as_ref(), alive, obs.action) {
+                    HeartbeatReport::Quiet => {}
+                    HeartbeatReport::Finished => { tracing::info!(..., "orchestrator process has exited; its heartbeat is final"); }
+                    HeartbeatReport::Liveness(HeartbeatAction::Nothing) => {}
+                    HeartbeatReport::Liveness(HeartbeatAction::Warn) => { warn!(?hb, ..., "heartbeat is stale (warn threshold)"); }
+                    HeartbeatReport::Liveness(HeartbeatAction::Stale) => {
                         // Deep-stale past the former kill threshold. We do NOT
                         // signal the orchestrator: restart is an operator /
                         // process-supervisor decision. Surface it loudly and move on.
                         warn!(?hb, ..., "orchestrator heartbeat is deeply stale; NOT killing it ...");
                     }
-                    HeartbeatAction::MissingHeartbeat => { tracing::debug!("no heartbeat file present"); }
+                    HeartbeatReport::Liveness(HeartbeatAction::MissingHeartbeat) => { tracing::debug!("no heartbeat file present"); }
                 }
 ```
 — `crates/supervisor/src/watchdog.rs`, `heartbeat_loop` (abridged)
 
-There is no fourth arm. `decide_heartbeat` cannot produce a `Kill` (§8.3), so the
-loop that consumes it structurally cannot signal the orchestrator pid. That is
-the never-kill-the-orchestrator rule enforced by exhaustiveness — a reviewer
-adding a kill would have to
-add a `HeartbeatAction` variant first, which is the diff §8.3's `⛔ NEVER`
-tells you to reject.
+Every arm logs; none signals. `decide_heartbeat` cannot produce a `Kill` (§8.3),
+and `HeartbeatReport` only wraps a `HeartbeatAction` or reports the
+orchestrator's exit, so the loop structurally cannot signal the orchestrator
+pid. That is the never-kill-the-orchestrator rule enforced by exhaustiveness: a
+reviewer adding a kill would have to add a variant first, which is the diff
+§8.3's `⛔ NEVER` tells you to reject. The action ring and ledger therefore
+record only run-worker triggers (`KillRequest`, `RunDeadline`, `RunStale`,
+`OrchestratorReap`).
 
 ### 8.14.2 `runs_loop` — independent process deadlines
 

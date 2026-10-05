@@ -847,7 +847,8 @@ semantics you must not get wrong, `seq`:
         transition. Unlike ``last_heartbeat`` — which the beater thread
         bumps on a timer regardless of progress — this advances ONLY when
         the evolve loop appends a real transition (round start, propose,
-        apply, tournament start/settle, gate, promote/reject). A watchdog
+        apply, tournament start, each scored board unit, tournament settle,
+        gate, promote/reject). A watchdog
         keyed on ``seq`` advancing avoids the timestamp signal's
         false-positive (a slow LLM call ages the stamp) and false-negative
         (a wedged loop whose beater keeps stamping ``now()`` reads alive).
@@ -866,10 +867,20 @@ The division of labour:
   (`runtime/progress.events.jsonl`, built on `channel.EventLog`) whose tail
   `seq` the loop stamps into the heartbeat. A terminal `SETTLED`-class event
   distinguishes "cleanly finished" from "stalled" (`tail_is_terminal`).
+- A tournament phase can run for minutes with no loop transition. The evolve
+  loop therefore binds a unit recorder (`progress_log.bind_unit_recorder`) for
+  its invocation, and the board-unit scorer (`_IncrementalScorer.record` in
+  `src/zicato/tournament/scheduling.py`) calls it as each unit's losses are
+  scored. The recorder appends a `UnitSettled` transition and stamps its `seq`
+  on the heartbeat. Outside an evolve loop no recorder is bound, so a
+  standalone `zicato tournament run` appends nothing and cannot turn a
+  settled loop's terminal tail back into a non-terminal one.
 - The supervisor's `SeqLiveness` tracker consumes this: seq present → age
   since the last seq *change*; seq absent (a heartbeat written without one) →
   timestamp-age fallback. Warn-only either way — see 08-supervisor.md §8.3
-  (the warn-only heartbeat).
+  (the warn-only heartbeat). Once the heartbeat's `pid` has exited, the
+  supervisor logs that the heartbeat is final once instead of classifying its
+  frozen `seq` on every tick.
 
 The **paused flag is not a heartbeat field**: pause state is the presence of
 the `runtime/control/pause_epoch` flag file (`is_paused` in

@@ -8,10 +8,14 @@ standalone against an existing workspace.
 The binary does two things:
 
 1. **Watchdog.** Polls `.zicato/runtime/heartbeat.json` and the per-run
-   files under `.zicato/runtime/active_runs/`. A stale orchestrator
-   heartbeat produces a warning, and a deeply stale one a louder warning;
-   the supervisor never signals the orchestrator, so restarting it is a
-   decision for the operator or an external process supervisor. If a run's
+   files under `.zicato/runtime/active_runs/`. Staleness is the time since
+   the heartbeat's progress counter (`seq`) last advanced; the evolve loop
+   advances it at each loop transition and each scored board unit. A stale
+   orchestrator heartbeat produces a warning, and a deeply stale one a
+   louder warning; the supervisor never signals the orchestrator, so
+   restarting it is a decision for the operator or an external process
+   supervisor. Once the heartbeat's `pid` has exited, the supervisor logs
+   once that the heartbeat is final and stops classifying it. If a run's
    `last_progress` goes stale past the configured threshold, or the run
    passes its wall-clock deadline, the supervisor sends SIGTERM to the
    run's worker, waits a grace period, and escalates to SIGKILL. It is
@@ -63,10 +67,10 @@ two never contend when `evolve` starts both.
 | `--port N`                            | `7920`      | Preferred port; tries `N..=N+10` if busy                       |
 | `--bind ADDR`                         | `127.0.0.1` | Bind address                                                   |
 | `--interval SECS`                     | `2`         | Watchdog poll interval                                         |
-| `--heartbeat-stale-warn SECS`         | `30`        | Log a warning when the heartbeat is this old                   |
-| `--heartbeat-stale-kill SECS`         | `90`        | Log a deep-stale warning when the heartbeat is this old; the orchestrator is never signalled |
+| `--heartbeat-stale-warn SECS`         | `30`        | Log a warning when the heartbeat's `seq` has not advanced for this long |
+| `--heartbeat-stale-kill SECS`         | `90`        | Log a deep-stale warning when `seq` has not advanced for this long; the orchestrator is never signalled |
 | `--run-stale-warn SECS`               | `30`        | Log a warning when a run's last_progress is this old           |
-| `--run-stale-kill SECS`               | `120`       | Escalate when a run is this stalled                            |
+| `--run-stale-kill SECS`               | `120`       | Escalate when a run without a wall-clock budget is this stalled; a run with a budget escalates at twice its budget |
 | `--run-deadline-kill-disabled`        | off         | Do not kill runs that pass their wall-clock deadline           |
 | `--run-kill-grace SECS`               | `5`         | SIGTERM-to-SIGKILL grace for a run past its deadline           |
 | `--max-run-seconds SECS`              | `21600`     | Ceiling on any run's enforced window, from its `started_at`    |

@@ -264,7 +264,26 @@ fn run_divergence_audit(
     divergence.findings.record(view);
 }
 
+/// Default `--heartbeat-stale-warn`: seconds without a heartbeat `seq` change
+/// before the watchdog logs a warning.
+pub const DEFAULT_HEARTBEAT_STALE_WARN_SECS: u64 = 30;
+/// Default `--heartbeat-stale-kill`: seconds without a `seq` change before the
+/// warning becomes a deep-stale warning. The orchestrator is never signalled.
+pub const DEFAULT_HEARTBEAT_STALE_KILL_SECS: u64 = 90;
+/// Default `--run-stale-warn`. A run worker's heartbeat thread advances
+/// `last_progress` every ~3s, so 30s without an advance means that thread is
+/// stuck, not that a model call is slow.
+pub const DEFAULT_RUN_STALE_WARN_SECS: u64 = 30;
+/// Default `--run-stale-kill`: the kill threshold for a run whose record has
+/// no `wall_clock_budget_seconds`. A record with a budget is killed at twice
+/// that budget instead (see [`decide_run`]).
+pub const DEFAULT_RUN_STALE_KILL_SECS: u64 = 120;
+
 /// Thresholds for watchdog decisions.
+///
+/// [`Thresholds::default`] and the binary's flag defaults read the same
+/// `DEFAULT_*` constants, so a library caller and the shipped binary apply
+/// the same thresholds.
 #[derive(Debug, Clone, Copy)]
 pub struct Thresholds {
     pub heartbeat_stale_warn: Duration,
@@ -272,7 +291,7 @@ pub struct Thresholds {
     /// Warn threshold for per-run staleness (``last_progress`` not
     /// advancing). With the per-run heartbeat thread beating every ~3s
     /// this threshold is only reached when the thread itself is wedged,
-    /// not during a normal slow LLM call.
+    /// not during a normal slow model call.
     pub run_stale_warn: Duration,
     /// Kill threshold for per-run staleness. This is a **far backstop**
     /// for a genuinely wedged process: the primary kill trigger is the
@@ -306,14 +325,10 @@ pub struct Thresholds {
 impl Default for Thresholds {
     fn default() -> Self {
         Self {
-            heartbeat_stale_warn: Duration::from_secs(30),
-            heartbeat_stale_kill: Duration::from_secs(90),
-            // 120s warn: the per-run heartbeat thread beats every ~3s, so
-            // 120s of no progress means the worker thread itself is stuck.
-            run_stale_warn: Duration::from_secs(120),
-            // 600s backstop: used only when wall_clock_budget_seconds is
-            // absent; otherwise decide_run computes 2x the per-run budget.
-            run_stale_kill: Duration::from_secs(600),
+            heartbeat_stale_warn: Duration::from_secs(DEFAULT_HEARTBEAT_STALE_WARN_SECS),
+            heartbeat_stale_kill: Duration::from_secs(DEFAULT_HEARTBEAT_STALE_KILL_SECS),
+            run_stale_warn: Duration::from_secs(DEFAULT_RUN_STALE_WARN_SECS),
+            run_stale_kill: Duration::from_secs(DEFAULT_RUN_STALE_KILL_SECS),
             grace: Duration::from_secs(5),
             run_kill_grace: Duration::from_secs(5),
             run_deadline_kill_disabled: false,
@@ -564,6 +579,62 @@ impl SeqLiveness {
     }
 }
 
+/// What the heartbeat loop logs for one tick.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeartbeatReport {
+    /// Log the staleness classification for a live (or unidentified)
+    /// orchestrator.
+    Liveness(HeartbeatAction),
+    /// The orchestrator process named by the heartbeat has exited, so its
+    /// heartbeat is final. Logged once per orchestrator.
+    Finished,
+    /// Nothing to log: this orchestrator's exit was already reported.
+    Quiet,
+}
+
+/// Remembers which orchestrator's exit the heartbeat loop has reported.
+///
+/// The heartbeat file outlives its writer. Without this record, a supervisor
+/// that keeps running after `zicato evolve` exits would read the frozen
+/// `seq` as stale and warn on every tick. An orchestrator is identified by
+/// its pid and `started_at`, so a later orchestrator that reuses the
+/// workspace is reported afresh.
+#[derive(Debug, Default)]
+pub struct OrchestratorExit {
+    reported: Option<(i32, Option<DateTime<Utc>>)>,
+}
+
+impl OrchestratorExit {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Decide what to log this tick.
+    ///
+    /// `orchestrator_alive` is the liveness of the heartbeat's `pid`; a
+    /// heartbeat without a pid is treated as live, so its staleness is
+    /// reported as before.
+    pub fn report(
+        &mut self,
+        heartbeat: Option<&crate::state::Heartbeat>,
+        orchestrator_alive: bool,
+        action: HeartbeatAction,
+    ) -> HeartbeatReport {
+        let Some(pid) = heartbeat.and_then(|hb| hb.pid) else {
+            return HeartbeatReport::Liveness(action);
+        };
+        if orchestrator_alive {
+            return HeartbeatReport::Liveness(action);
+        }
+        let identity = (pid, heartbeat.and_then(|hb| hb.started_at));
+        if self.reported == Some(identity) {
+            return HeartbeatReport::Quiet;
+        }
+        self.reported = Some(identity);
+        HeartbeatReport::Finished
+    }
+}
+
 /// Staleness-trigger outcome for an active run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunAction {
@@ -782,6 +853,10 @@ pub fn decide_run_kill_request(
 
 /// Long-running heartbeat watchdog task.
 ///
+/// Once the heartbeat's orchestrator pid has exited, the loop logs one
+/// "heartbeat is final" line for that orchestrator and stops classifying
+/// its staleness (see [`OrchestratorExit`]).
+///
 /// **Warn-only for the orchestrator.** This loop never signals the
 /// orchestrator pid. A stale heartbeat is surfaced (`warn!` + `/statusz`)
 /// so an operator or out-of-band process supervisor can decide whether to
@@ -802,6 +877,7 @@ pub async fn heartbeat_loop(
     let mut ticker = tokio::time::interval(interval);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut shutdown_rx = shutdown.subscribe();
+    let mut exit = OrchestratorExit::new();
     loop {
         tokio::select! {
             _ = ticker.tick() => {
@@ -814,9 +890,22 @@ pub async fn heartbeat_loop(
                     Ok(mut tracker) => tracker.observe(hb.as_ref(), Utc::now(), &thresholds),
                     Err(_) => continue,
                 };
-                match obs.action {
-                    HeartbeatAction::Nothing => {}
-                    HeartbeatAction::Warn => {
+                let alive = hb
+                    .as_ref()
+                    .and_then(|h| h.pid)
+                    .is_none_or(signal::is_alive);
+                match exit.report(hb.as_ref(), alive, obs.action) {
+                    HeartbeatReport::Quiet => {}
+                    HeartbeatReport::Finished => {
+                        tracing::info!(
+                            pid = ?hb.as_ref().and_then(|h| h.pid),
+                            phase = ?hb.as_ref().and_then(|h| h.phase.clone()),
+                            seq = ?hb.as_ref().and_then(|h| h.seq),
+                            "orchestrator process has exited; its heartbeat is final"
+                        );
+                    }
+                    HeartbeatReport::Liveness(HeartbeatAction::Nothing) => {}
+                    HeartbeatReport::Liveness(HeartbeatAction::Warn) => {
                         warn!(
                             ?hb,
                             seq_age_seconds = ?obs.seq_age_seconds,
@@ -824,7 +913,7 @@ pub async fn heartbeat_loop(
                             "heartbeat is stale (warn threshold)"
                         );
                     }
-                    HeartbeatAction::Stale => {
+                    HeartbeatReport::Liveness(HeartbeatAction::Stale) => {
                         // Deep-stale past the former kill threshold. We do
                         // NOT signal the orchestrator: restart is an
                         // operator / process-supervisor decision. Surface
@@ -838,7 +927,7 @@ pub async fn heartbeat_loop(
                              — see RUNTIME.md §3.2)"
                         );
                     }
-                    HeartbeatAction::MissingHeartbeat => {
+                    HeartbeatReport::Liveness(HeartbeatAction::MissingHeartbeat) => {
                         // Don't spam: just debug-level after the initial warn.
                         tracing::debug!("no heartbeat file present");
                     }
@@ -1917,16 +2006,6 @@ mod tests {
         Thresholds::default()
     }
 
-    /// Tight thresholds for tests that need to exercise warn/kill paths
-    /// without waiting hundreds of seconds.
-    fn tight_run_thresholds() -> Thresholds {
-        Thresholds {
-            run_stale_warn: Duration::from_secs(30),
-            run_stale_kill: Duration::from_secs(120),
-            ..Thresholds::default()
-        }
-    }
-
     fn no_protected() -> HashSet<i32> {
         HashSet::new()
     }
@@ -2084,9 +2163,8 @@ mod tests {
 
     #[test]
     fn stale_run_warns_then_kills() {
-        // Uses tight thresholds (warn=30s, kill=120s, no budget) to exercise
-        // the staleness path without needing 600s of elapsed time.
-        let t = tight_run_thresholds();
+        // Default thresholds (warn=30s, kill=120s) and no budget.
+        let t = thresholds();
         let now = Utc::now();
         let mut run = ActiveRun {
             run_id: "r1".into(),
@@ -2132,37 +2210,35 @@ mod tests {
 
     #[test]
     fn stale_run_kill_falls_back_to_backstop_without_budget() {
-        // No wall_clock_budget_seconds: the static run_stale_kill (600s default)
+        // No wall_clock_budget_seconds: the static run_stale_kill (120s default)
         // is the kill threshold.
         let now = Utc::now();
         let mut run = ActiveRun {
             run_id: "r1".into(),
             pid: Some(42),
             wall_clock_budget_seconds: None,
-            last_progress: Some(now - ChDuration::seconds(200)),
+            last_progress: Some(now - ChDuration::seconds(119)),
             ..Default::default()
         };
-        // 200s < 600s backstop — not killed.
+        // 119s < 120s backstop — not killed.
         assert_ne!(
             decide_run(&run, now, &thresholds()),
             RunAction::Kill { pid: 42 },
-            "200s should not kill without budget (backstop is 600s)",
+            "119s should not kill without budget (backstop is 120s)",
         );
 
-        // 601s >= 600s backstop — killed.
-        run.last_progress = Some(now - ChDuration::seconds(601));
+        // 121s >= 120s backstop — killed.
+        run.last_progress = Some(now - ChDuration::seconds(121));
         assert_eq!(
             decide_run(&run, now, &thresholds()),
             RunAction::Kill { pid: 42 },
-            "601s should kill at the 600s backstop",
+            "121s should kill at the 120s backstop",
         );
     }
 
     #[test]
     fn run_without_pid_only_warns() {
-        // Uses tight thresholds so the test exercises the warn-only path
-        // within a normal age range.
-        let t = tight_run_thresholds();
+        let t = thresholds();
         let now = Utc::now();
         let run = ActiveRun {
             run_id: "r1".into(),
@@ -2170,7 +2246,7 @@ mod tests {
             last_progress: Some(now - ChDuration::seconds(200)),
             ..Default::default()
         };
-        // 200s > tight kill (120s) but no pid, so only Warn.
+        // 200s > the default kill threshold (120s) but no pid, so only Warn.
         assert_eq!(decide_run(&run, now, &t), RunAction::Warn);
     }
 
@@ -2844,6 +2920,85 @@ mod tests {
         assert_eq!(obs.action, HeartbeatAction::Nothing);
         assert_eq!(obs.seq_age_seconds, Some(0));
         assert_eq!(tracker.last_seq(), Some(2));
+    }
+
+    /// A ten-minute tournament whose board units finish every 20s advances
+    /// `seq` at each unit, so no tick reaches the warn threshold.
+    #[test]
+    fn finishing_units_keep_a_long_tournament_quiet() {
+        let t = thresholds();
+        let mut tracker = SeqLiveness::new();
+        let mut exit = OrchestratorExit::new();
+        let start = Utc::now();
+        for tick in 0..300i64 {
+            let now = start + ChDuration::seconds(2 * tick);
+            let hb = Heartbeat {
+                pid: Some(1),
+                last_heartbeat: Some(now),
+                seq: Some(10 + (2 * tick / 20) as u64),
+                ..Default::default()
+            };
+            let obs = tracker.observe(Some(&hb), now, &t);
+            assert_eq!(
+                exit.report(Some(&hb), true, obs.action),
+                HeartbeatReport::Liveness(HeartbeatAction::Nothing),
+                "tick {tick}"
+            );
+        }
+    }
+
+    /// After the orchestrator exits, its frozen heartbeat is reported as
+    /// final once; later ticks log nothing. A later orchestrator in the
+    /// same workspace is a new identity and is reported again.
+    #[test]
+    fn exited_orchestrator_heartbeat_is_reported_once() {
+        let t = thresholds();
+        let mut tracker = SeqLiveness::new();
+        let mut exit = OrchestratorExit::new();
+        let start = Utc::now();
+        let first = Heartbeat {
+            pid: Some(4242),
+            started_at: Some(start),
+            last_heartbeat: Some(start),
+            seq: Some(77),
+            ..Default::default()
+        };
+        let reports: Vec<HeartbeatReport> = (0..200i64)
+            .map(|tick| {
+                let now = start + ChDuration::seconds(2 * tick);
+                let obs = tracker.observe(Some(&first), now, &t);
+                exit.report(Some(&first), false, obs.action)
+            })
+            .collect();
+        assert_eq!(reports[0], HeartbeatReport::Finished);
+        assert!(reports[1..].iter().all(|r| *r == HeartbeatReport::Quiet));
+
+        let second = Heartbeat {
+            started_at: Some(start + ChDuration::seconds(500)),
+            ..first.clone()
+        };
+        assert_eq!(
+            exit.report(Some(&second), false, HeartbeatAction::Stale),
+            HeartbeatReport::Finished
+        );
+        assert_eq!(
+            exit.report(Some(&second), true, HeartbeatAction::Stale),
+            HeartbeatReport::Liveness(HeartbeatAction::Stale)
+        );
+    }
+
+    /// A heartbeat without a pid cannot be checked for exit, so its
+    /// staleness is reported every tick.
+    #[test]
+    fn heartbeat_without_pid_reports_liveness() {
+        let mut exit = OrchestratorExit::new();
+        let hb = Heartbeat::default();
+        for _ in 0..3 {
+            assert_eq!(
+                exit.report(Some(&hb), false, HeartbeatAction::Warn),
+                HeartbeatReport::Liveness(HeartbeatAction::Warn)
+            );
+        }
     }
 
     /// Back-compat: a heartbeat with NO seq (old writer) falls back to the

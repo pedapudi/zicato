@@ -15,8 +15,8 @@ This module supplies a signal that is right in both directions: a
 **single-writer, append-only EVENT LOG**
 (built on :class:`zicato.runtime.channel.EventLog`) that the evolve loop
 appends ONE typed event to on each *genuine* orchestrator transition —
-round start, propose, apply, tournament start / settle, gate,
-promote / reject. The log's monotonic ``seq`` therefore advances only on
+round start, propose, apply, tournament start, each settled board unit,
+tournament settle, gate, promote / reject. The log's monotonic ``seq`` therefore advances only on
 real progress, never on a timer, so it is the TRUE liveness signal:
 
 * a watchdog asks "has ``seq`` advanced since I last looked?" rather than
@@ -45,12 +45,17 @@ than to an error.
 
 from __future__ import annotations
 
+import contextvars
+import logging
+from collections.abc import Callable
 from pathlib import Path
 
 from zicato.runtime._storage import progress_log_key
 from zicato.runtime.channel import Event, EventLog
 from zicato.runtime.lock import WorkspaceLock
 from zicato.storage import workspace_backend
+
+log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Transition vocabulary — the single producer + every reader agree on these.
@@ -68,6 +73,9 @@ PROPOSE = "Propose"
 APPLY = "Apply"
 #: The tournament for this round started executing.
 TOURNAMENT_START = "TournamentStart"
+#: One board unit of a tournament finished and its losses were scored. A
+#: tournament phase lasts minutes; this event advances ``seq`` while it runs.
+UNIT_SETTLED = "UnitSettled"
 #: The tournament settled (a winner / decision is resolved).
 TOURNAMENT_SETTLE = "TournamentSettle"
 #: The gate evaluated the settled decision (promote-margin check).
@@ -122,6 +130,54 @@ def append_progress(writer: WorkspaceLock, type: str, payload: object | None = N
     return writer.progress_log.append(type, payload).seq
 
 
+# ---------------------------------------------------------------------------
+# Board-unit progress — the evolve loop binds a recorder; the scheduler calls it.
+# ---------------------------------------------------------------------------
+
+#: The recorder the evolve loop binds for its invocation. Unbound (``None``)
+#: outside a loop, so a standalone ``zicato tournament run`` appends nothing
+#: and cannot turn a settled loop's terminal tail back into a live one.
+_unit_recorder: contextvars.ContextVar[Callable[[], None] | None] = contextvars.ContextVar(
+    "zicato_unit_progress_recorder", default=None
+)
+
+
+def bind_unit_recorder(
+    recorder: Callable[[], None],
+) -> contextvars.Token[Callable[[], None] | None]:
+    """Bind the callable that records one settled board unit for this context.
+
+    The evolve loop binds it once, beside its heartbeat beater; every asyncio
+    task the loop creates afterwards inherits the binding. Pass the returned
+    token to :func:`reset_unit_recorder` at teardown.
+    """
+    return _unit_recorder.set(recorder)
+
+
+def reset_unit_recorder(token: contextvars.Token[Callable[[], None] | None]) -> None:
+    """Undo :func:`bind_unit_recorder`. Never raises."""
+    try:
+        _unit_recorder.reset(token)
+    except (ValueError, LookupError) as exc:  # reset from a different context
+        log.debug("unit-progress recorder reset skipped: %s", exc)
+
+
+def record_unit_settled() -> None:
+    """Record one settled board unit through the bound recorder, if any.
+
+    The tournament scheduler calls this as each unit's losses are scored. A
+    recorder failure is logged and dropped: liveness bookkeeping must never
+    abort a tournament.
+    """
+    recorder = _unit_recorder.get()
+    if recorder is None:
+        return
+    try:
+        recorder()
+    except Exception as exc:  # noqa: BLE001 — liveness bookkeeping is best-effort
+        log.debug("unit-progress record skipped: %s", exc)
+
+
 def tail(workspace_root: Path) -> Event | None:
     """Return the last progress event, or ``None`` when the log is empty."""
     return _log(workspace_root).tail()
@@ -165,6 +221,7 @@ __all__ = [
     "PROPOSE",
     "APPLY",
     "TOURNAMENT_START",
+    "UNIT_SETTLED",
     "TOURNAMENT_SETTLE",
     "GATE",
     "PROMOTE",
@@ -173,6 +230,9 @@ __all__ = [
     "STOPPED",
     "is_terminal",
     "append_progress",
+    "bind_unit_recorder",
+    "reset_unit_recorder",
+    "record_unit_settled",
     "tail",
     "tail_seq",
     "tail_is_terminal",

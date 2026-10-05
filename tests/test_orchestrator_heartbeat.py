@@ -31,7 +31,9 @@ from zicato.runtime.paths import heartbeat_path, lock_path
 from zicato.runtime.state import read_heartbeat
 
 
-def _bootstrap_workspace(tmp_path: Path) -> tuple[Path, str]:
+def _bootstrap_workspace(
+    tmp_path: Path, entry_ids: tuple[str, ...] = ("entry_a",)
+) -> tuple[Path, str]:
     workspace = tmp_path / ".zicato"
     workspace.mkdir()
     (workspace / "config.json").write_text(
@@ -60,15 +62,18 @@ def _bootstrap_workspace(tmp_path: Path) -> tuple[Path, str]:
 
     board_src = tmp_path / "board.jsonl"
     board_src.write_text(
-        json.dumps(
-            {
-                "id": "entry_a",
-                "kind": "single_turn",
-                "wall_clock_budget_seconds": 60,
-                "input": "hello",
-            }
+        "".join(
+            json.dumps(
+                {
+                    "id": entry_id,
+                    "kind": "single_turn",
+                    "wall_clock_budget_seconds": 60,
+                    "input": "hello",
+                }
+            )
+            + "\n"
+            for entry_id in entry_ids
         )
-        + "\n"
     )
     brief_src = tmp_path / "brief.md"
     brief_src.write_text("# Proposer brief\n- Be careful.\n")
@@ -306,6 +311,82 @@ def test_evolve_n_rounds_advances_progress_seq_and_marks_terminal(
     events = progress_log._log(workspace).read()
     assert events[0].seq == 1
     assert events[0].type == progress_log.LOOP_START
+
+
+def test_each_scored_board_unit_advances_the_heartbeat_seq(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A tournament advances the liveness seq once per scored board unit.
+
+    Between the tournament's start and settle transitions the progress log
+    carries one ``UnitSettled`` event per scored unit, and the heartbeat is
+    written with each of those seqs. The supervisor measures staleness as
+    the time since ``seq`` last changed, so a long tournament whose units
+    keep finishing never reads as stale.
+    """
+    from zicato.runtime import heartbeat as heartbeat_mod
+    from zicato.runtime import progress_log
+
+    entry_ids = ("entry_a", "entry_b", "entry_c", "entry_d")
+    workspace, epoch_id = _bootstrap_workspace(tmp_path, entry_ids)
+    _install_stub_adapter_factory(monkeypatch)
+    _install_telemetry_stubs(
+        monkeypatch,
+        canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
+        canned_pass_by_gen={"v0": True, "v1": True},
+    )
+    written_seqs: list[int] = []
+    real_write = heartbeat_mod.write_heartbeat
+
+    def recording_write(workspace_root: Path, hb: Any) -> None:
+        written_seqs.append(hb.seq)
+        real_write(workspace_root, hb)
+
+    monkeypatch.setattr(heartbeat_mod, "write_heartbeat", recording_write)
+
+    from zicato.orchestrator import evolve_n_rounds
+
+    asyncio.run(
+        evolve_n_rounds(
+            rounds=1,
+            workspace_root=workspace,
+            epoch_id=epoch_id,
+            target_call_llm=target_call_llm,
+            evaluation_call_llm=evaluation_call_llm,
+            instance_id="unit-seq-test",
+        )
+    )
+
+    events = progress_log._log(workspace).read()
+    types_in_order = [event.type for event in events]
+    start = types_in_order.index(progress_log.TOURNAMENT_START)
+    settle = types_in_order.index(progress_log.TOURNAMENT_SETTLE)
+    # The persisted event type, spelled as readers of the log see it.
+    unit_events = [e for e in events[start:settle] if e.type == "UnitSettled"]
+    assert len(unit_events) >= len(entry_ids), types_in_order
+    assert all(event.seq in written_seqs for event in unit_events), (unit_events, written_seqs)
+
+
+def test_unit_settled_is_not_recorded_outside_an_evolve_loop(tmp_path: Path) -> None:
+    """Without a bound recorder, a scored unit leaves the progress log untouched.
+
+    A standalone tournament must not append after a loop's terminal event:
+    the dashboard reads a non-terminal tail as an unfinished run.
+    """
+    from zicato.runtime import progress_log
+    from zicato.runtime.paths import progress_log_path
+
+    progress_log.record_unit_settled()
+    assert not progress_log_path(tmp_path).exists()
+
+    calls: list[int] = []
+    token = progress_log.bind_unit_recorder(lambda: calls.append(1))
+    try:
+        progress_log.record_unit_settled()
+    finally:
+        progress_log.reset_unit_recorder(token)
+    progress_log.record_unit_settled()
+    assert calls == [1]
 
 
 def test_evolve_n_rounds_refuses_when_workspace_locked(

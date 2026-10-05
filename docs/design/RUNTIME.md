@@ -198,9 +198,10 @@ This is the shipped `Heartbeat` dataclass (`src/zicato/runtime/state.py`).
 `last_heartbeat` is the timer-driven freshness timestamp (`started_at` is
 the orchestrator's boot time). `seq` is the tail sequence number of the
 progress log `progress.events.jsonl` at the last genuine loop transition
-(round start, propose, apply, tournament start and settle, gate, promote or
-reject); the timer rewrites the same `seq`, so it advances only on real
-progress. `settings` maps each effective setting's dotted name to its value
+(round start, propose, apply, tournament start, each scored board unit,
+tournament settle, gate, promote or reject); the timer rewrites the same
+`seq`, so it advances only on real progress. The per-unit transition keeps
+`seq` moving through a tournament phase that lasts minutes. `settings` maps each effective setting's dotted name to its value
 and the tier that set it (`zicato.runtime.effective_settings`). The per-run
 population is tracked in the separate `active_runs/*.json` files rather
 than inlined here.
@@ -230,6 +231,9 @@ raise the warning to a deep-stale warning). When the heartbeat carries a
 `seq`, the age measured is the time since `seq` last changed
 (`SeqLiveness`, `crates/supervisor/src/watchdog.rs`); otherwise it is the
 `last_heartbeat` age. Neither threshold signals the orchestrator (§3.2).
+Once the heartbeat's `pid` has exited, the supervisor logs once that the
+heartbeat is final and stops classifying its staleness until a different
+orchestrator (another `pid` or `started_at`) writes it.
 
 ### 2.3 `active_tournament.events.jsonl` — published tournament display state
 
@@ -305,9 +309,10 @@ last five fields are optional.
 
 **`last_progress` cadence.** The writer bumps `last_progress`
 (`touch_active_run_progress`) as the run makes progress. The watchdog
-treats a run whose `last_progress` is older than `--run-stale-kill`
-(default 120s) — or whose `deadline` has passed — as a candidate for
-escalation, independently of whether the orchestrator itself is
+treats a run whose `last_progress` is older than its staleness kill
+threshold — twice `wall_clock_budget_seconds` when the record carries it,
+otherwise `--run-stale-kill` (default 120s) — or whose `deadline` has
+passed as a candidate for escalation, independently of whether the orchestrator itself is
 healthy. The per-run subprocess worker is the one bumping
 `last_progress` (via its `RunHeartbeatBeater` thread), so the signal
 survives an orchestrator-side wedge.
@@ -479,12 +484,12 @@ orchestrator                           supervisor
      │                                      │
      │ ... working ...                      │  set last_seen = t+2
      │                                      │
-     │     ╳  (orchestrator wedges)         │  tick: now - last_hb = 20s  OK
-     │                                      │  tick: now - last_hb = 35s  WARN (>30)
-     │                                      │  tick: now - last_hb = 95s  STALE (>90)
+     │     ╳  (orchestrator wedges;         │  tick: seq unchanged for 20s  OK
+     │         seq stops advancing)         │  tick: seq unchanged for 35s  WARN (>30)
+     │                                      │  tick: seq unchanged for 95s  STALE (>90)
      │                                      │
      │                                      │  -> log "orchestrator stalled"
-     │                                      │  -> record in /statusz ring buffer
+     │                                      │  -> /statusz marks the heartbeat stale
      │                                      │
      │                                      │  (supervisor does NOT kill the
      │                                      │   orchestrator. The orchestrator
@@ -496,7 +501,10 @@ The two thresholds are `--heartbeat-stale-warn` (default 30s, log
 only) and `--heartbeat-stale-kill` (default 90s). On the
 kill threshold the orchestrator's stall is recorded as a deep-stale
 warning; the watchdog does not itself terminate the orchestrator. The
-decision function `decide_heartbeat` has no kill outcome.
+decision function `decide_heartbeat` has no kill outcome. A healthy
+tournament does not reach either threshold, because each scored board
+unit advances `seq`. After the orchestrator process exits, the supervisor
+logs one "heartbeat is final" line instead of a stale warning per tick.
 
 **The supervisor does not kill the orchestrator on heartbeat
 staleness.** The orchestrator can be slow for legitimate reasons: a

@@ -168,7 +168,8 @@ class Heartbeat:
         transition. Unlike ``last_heartbeat`` — which the beater thread
         bumps on a timer regardless of progress — this advances ONLY when
         the evolve loop appends a real transition (round start, propose,
-        apply, tournament start/settle, gate, promote/reject). A watchdog
+        apply, tournament start, each scored board unit, tournament settle,
+        gate, promote/reject). A watchdog
         keyed on ``seq`` advancing avoids the timestamp signal's
         false-positive (a slow LLM call ages the stamp) and false-negative
         (a wedged loop whose beater keeps stamping ``now()`` reads alive).

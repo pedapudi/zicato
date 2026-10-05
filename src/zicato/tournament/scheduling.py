@@ -27,6 +27,7 @@ from zicato.core.measurement import (
     MeasurementDraw,
     validate_measurement_count,
 )
+from zicato.runtime import progress_log
 from zicato.runtime.lock import WorkspaceLock
 from zicato.tournament import worker_execution
 from zicato.tournament.scoring import aggregate_generation_score
@@ -163,8 +164,11 @@ class _IncrementalScorer:
         ``champion_loss`` is ``None`` for a fast-mode unit (challenger
         only). Re-aggregates both sides over everything recorded so far
         and persists the running partial aggregate onto the
-        ``ActiveTournament`` record.
+        ``ActiveTournament`` record. Inside an evolve loop it also records
+        the unit on the progress log, which advances the heartbeat's
+        liveness ``seq`` while the tournament runs.
         """
+        progress_log.record_unit_settled()
         if self._state is None:
             return
         async with self._lock:

@@ -602,7 +602,8 @@ owner, not migrating canonical records or guessing missing columns.
 (`src/zicato/runtime/heartbeat.py`). The orchestrator progress event log
 (`src/zicato/runtime/progress_log.py`) advances a monotonic `seq` only on
 GENUINE transitions: LOOP_START, ROUND_START, PROPOSE, TOURNAMENT_START,
-TOURNAMENT_SETTLE, PROMOTE/REJECT, SETTLED/STOPPED. The timer never
+UNIT_SETTLED (one per scored board unit), TOURNAMENT_SETTLE, PROMOTE/REJECT,
+SETTLED/STOPPED. The timer never
 advances it, so a reader can tell live-and-working from wedged.
 
 **deferral (`deferred_infra`)** — the endpoint-outage circuit's verdict
