@@ -22,6 +22,7 @@ from zicato.evolve import generation_phase
 from zicato.evolve.invocation import InvocationContext, validated_invocation
 from zicato.evolve.lifecycle_services import (
     _now_iso,
+    heartbeat_transition_recorder,
 )
 from zicato.evolve.persist import (
     _skipped_round_outcome,
@@ -96,27 +97,41 @@ async def evolve_once(
 
     A resume plan reuses an interrupted generation's recorded experiment and
     completed measurements. The heartbeat and round counters let an embedding
-    caller report progress through the same execution path as the multi-round API.
+    caller report progress through the same execution path as the multi-round API:
+    with a beater, each scored board unit and settled proposal episode advances
+    the heartbeat's ``seq`` as it does in the multi-round loop.
     """
     async with validated_invocation(
         workspace_root, epoch_id, instance_id, overlay=invocation_overlay
     ) as invocation:
         from zicato.logging_stream import round_log_context
+        from zicato.runtime import progress_log
 
-        with round_log_context(epoch_id, round_index):
-            return await _evolve_once(
-                invocation=invocation,
-                epoch_id=epoch_id,
-                target_call_llm=target_call_llm,
-                evaluation_call_llm=evaluation_call_llm,
-                fast_mode=fast_mode,
-                max_proposer_retries=max_proposer_retries,
-                beater=beater,
-                round_index=round_index,
-                total_rounds=total_rounds,
-                meta_loop_emitter=meta_loop_emitter,
-                resume_plan=resume_plan,
+        recorder_token = (
+            progress_log.bind_transition_recorder(
+                heartbeat_transition_recorder(beater, invocation.writer)
             )
+            if beater is not None
+            else None
+        )
+        try:
+            with round_log_context(epoch_id, round_index):
+                return await _evolve_once(
+                    invocation=invocation,
+                    epoch_id=epoch_id,
+                    target_call_llm=target_call_llm,
+                    evaluation_call_llm=evaluation_call_llm,
+                    fast_mode=fast_mode,
+                    max_proposer_retries=max_proposer_retries,
+                    beater=beater,
+                    round_index=round_index,
+                    total_rounds=total_rounds,
+                    meta_loop_emitter=meta_loop_emitter,
+                    resume_plan=resume_plan,
+                )
+        finally:
+            if recorder_token is not None:
+                progress_log.reset_transition_recorder(recorder_token)
 
 
 async def _evolve_once(

@@ -419,6 +419,48 @@ def test_every_heartbeat_write_carries_the_progress_log_tail_seq(
     assert proposal_phase.count("EpisodeSettled") > proposal_phase.count("Propose"), types
 
 
+def test_evolve_once_with_a_beater_records_units_and_episodes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The single-round API advances the caller's heartbeat as the loop does."""
+    from zicato.runtime import progress_log
+    from zicato.runtime.heartbeat import HeartbeatBeater
+
+    workspace, epoch_id = _bootstrap_workspace(tmp_path, ("entry_a", "entry_b"))
+    _install_stub_adapter_factory(monkeypatch)
+    _install_telemetry_stubs(
+        monkeypatch,
+        canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
+        canned_pass_by_gen={"v0": True, "v1": True},
+    )
+
+    from zicato.orchestrator import evolve_once
+
+    async def run_round() -> None:
+        beater = HeartbeatBeater(workspace, "once-test", interval_s=60.0)
+        await beater.start()
+        try:
+            await evolve_once(
+                workspace_root=workspace,
+                epoch_id=epoch_id,
+                target_call_llm=target_call_llm,
+                evaluation_call_llm=evaluation_call_llm,
+                instance_id="once-test",
+                beater=beater,
+            )
+        finally:
+            await beater.stop()
+
+    asyncio.run(run_round())
+
+    types = [event.type for event in progress_log._log(workspace).read()]
+    assert "UnitSettled" in types, types
+    assert "EpisodeSettled" in types, types
+    hb = read_heartbeat(workspace)
+    assert hb is not None
+    assert hb.seq == progress_log.tail_seq(workspace)
+
+
 def test_only_the_heartbeat_writer_appends_progress() -> None:
     """``append_progress`` has one caller, the writer that also stamps the heartbeat."""
     import zicato

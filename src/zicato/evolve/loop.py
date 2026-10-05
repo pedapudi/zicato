@@ -20,7 +20,7 @@ from zicato.core.settings import InvocationOverlay, ResolvedConfiguration
 from zicato.core.types import ScoringWeights
 from zicato.epoch.preflight import PreflightRefusedError
 from zicato.evolve.invocation import InvocationContext, validated_invocation
-from zicato.evolve.lifecycle_services import _beat
+from zicato.evolve.lifecycle_services import _beat, heartbeat_transition_recorder
 from zicato.logging_stream import install_log_stream, set_log_context
 from zicato.runtime.heartbeat import HeartbeatBeater
 from zicato.runtime.resume import (
@@ -601,10 +601,9 @@ async def _evolve_n_rounds(
     # progress transition and stamps its seq on the heartbeat, so a phase
     # lasting minutes keeps the supervisor's seq-change age below its warning
     # thresholds.
-    def _record_transition(transition: str) -> None:
-        _beat(beater, progress_writer=writer, progress=transition)
-
-    _recorder_token = progress_log.bind_transition_recorder(_record_transition)
+    _recorder_token = progress_log.bind_transition_recorder(
+        heartbeat_transition_recorder(beater, writer)
+    )
     outcomes: list[EvolveRoundOutcome] = []
     try:
         await beater.start()

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import logging
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -151,6 +152,23 @@ def _record_progress(writer: WorkspaceLock, transition: str) -> int | None:
 
         return progress_log.append_progress(writer, transition)
     return None
+
+
+def heartbeat_transition_recorder(
+    beater: HeartbeatBeater, writer: WorkspaceLock
+) -> Callable[[str], None]:
+    """Return the recorder that appends a transition and stamps it on ``beater``.
+
+    Bound through :func:`zicato.runtime.progress_log.bind_transition_recorder`
+    by the multi-round loop and by :func:`zicato.evolve.round_entry.evolve_once`
+    when its caller supplies a beater, so board units and proposal episodes
+    advance the heartbeat's ``seq`` on both entry points.
+    """
+
+    def record(transition: str) -> None:
+        _beat(beater, progress_writer=writer, progress=transition)
+
+    return record
 
 
 def _beat(
