@@ -31,6 +31,9 @@ the corresponding path. Two flavors:
 * **Payload command** (``rubric_replacement.txt``) — one file whose body
   IS the new rubric. The orchestrator reads it on consume and overwrites
   the epoch's rubric.
+* **Queued candidate** (``candidate/<queue_id>``) — a targeted command whose
+  JSON body is an operator candidate that ``zicato proposer submit`` wrote.
+  :mod:`zicato.runtime.operator_queue` owns its format and its consumption.
 """
 
 from __future__ import annotations
@@ -68,6 +71,11 @@ CMD_PROMOTE_PREFIX = "promote"
 #: Targeted command prefix. Files live at ``control/reject/<generation_id>``.
 #: Force-rejects the named generation regardless of tournament outcome.
 CMD_REJECT_PREFIX = "reject"
+
+#: Targeted command prefix. Files live at ``control/candidate/<queue_id>``.
+#: The JSON body is one queued operator candidate. The next evolve round
+#: enters it into the field (:mod:`zicato.runtime.operator_queue`).
+CMD_CANDIDATE_PREFIX = "candidate"
 
 #: Payload command. Single file ``control/rubric_replacement.txt`` whose
 #: body is the operator-supplied replacement rubric text.
@@ -320,6 +328,7 @@ __all__ = [
     "CMD_SKIP_ROUND",
     "CMD_PROMOTE_PREFIX",
     "CMD_REJECT_PREFIX",
+    "CMD_CANDIDATE_PREFIX",
     "CMD_RUBRIC_REPLACEMENT",
     "ControlCommand",
     "list_pending_commands",

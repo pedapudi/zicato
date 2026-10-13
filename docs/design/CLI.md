@@ -38,7 +38,7 @@ board
 epoch
   close | gc | list | new | register | rounds | set-goal | switch
 proposer
-  propose | scorecard
+  checkout | propose | scorecard | submit
 tournament
   run
 inspect
@@ -58,6 +58,8 @@ for the full flags.
 | Register the harness and contract paths | `zicato epoch register` |
 | Validate setup without model requests | `zicato inspect setup` |
 | Generate one candidate | `zicato proposer propose` |
+| Copy the champion for an operator candidate | `zicato proposer checkout --into DIR` |
+| Queue operator candidates as the next round | `zicato proposer submit --from DIR [--from DIR ...] --author NAME [--exclusive]` |
 | Run one isolated comparison | `zicato tournament run PARENT CHILD` |
 | Audit mutation points | `zicato inspect mutations` |
 | Read structured logs | `zicato inspect logs` |
@@ -74,6 +76,11 @@ for the full flags.
 
 - `evolve` remains self-orchestrating. The advanced commands are debugging
   and recovery tools, and no setup step requires them.
+- `proposer checkout` and `proposer submit` take no workspace lock and
+  administer no git worktrees, so they can run while `evolve` runs. `submit`
+  only queues a round of candidates, at most one per field slot; the next
+  round mints, measures, and settles them like proposer candidates. Both
+  print one JSON object, also when they refuse, and then exit 1.
 - Every `evolve` invocation runs the workspace validators at the public spend
   boundary before auto-epoching or model spend, and refuses to start on any
   finding that would make the round unmeasurable. `--dry-run` runs the same

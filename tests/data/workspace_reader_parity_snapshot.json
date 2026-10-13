@@ -5767,6 +5767,7 @@
           "why": ""
         },
         "id": "",
+        "operator": null,
         "outcome": null,
         "parent_generation_id": null,
         "patches": [],
@@ -5802,6 +5803,7 @@
           "why": "Plan thrash dominates the drift profile."
         },
         "id": "exp-e10-v1",
+        "operator": null,
         "outcome": {
           "champion_eval_mode": "full",
           "drift_loss_delta": -0.02,
@@ -5875,6 +5877,7 @@
           "why": ""
         },
         "id": "",
+        "operator": null,
         "outcome": null,
         "parent_generation_id": null,
         "patches": [],
@@ -5910,6 +5913,7 @@
           "why": "Plan thrash dominates the drift profile."
         },
         "id": "exp-e2-v1",
+        "operator": null,
         "outcome": {
           "champion_eval_mode": "full",
           "drift_loss_delta": -0.02,
@@ -5994,6 +5998,7 @@
           "why": "Plan thrash dominates the drift profile."
         },
         "id": "exp-e2-v2",
+        "operator": null,
         "outcome": {
           "champion_eval_mode": "full",
           "drift_loss_delta": -0.04,
@@ -6078,6 +6083,7 @@
           "why": "Plan thrash dominates the drift profile."
         },
         "id": "exp-e2-v3",
+        "operator": null,
         "outcome": {
           "champion_eval_mode": "full",
           "drift_loss_delta": -0.06,
@@ -6162,6 +6168,7 @@
           "why": "Plan thrash dominates the drift profile."
         },
         "id": "exp-e2-v4",
+        "operator": null,
         "outcome": {
           "champion_eval_mode": "full",
           "drift_loss_delta": -0.08,
@@ -6246,6 +6253,7 @@
           "why": "Plan thrash dominates the drift profile."
         },
         "id": "exp-e2-v5",
+        "operator": null,
         "outcome": {
           "champion_eval_mode": "full",
           "drift_loss_delta": -0.1,
@@ -6330,6 +6338,7 @@
           "why": "Plan thrash dominates the drift profile."
         },
         "id": "exp-e2-v6",
+        "operator": null,
         "outcome": {
           "champion_eval_mode": "full",
           "drift_loss_delta": -0.12,
@@ -6414,6 +6423,7 @@
           "why": "Plan thrash dominates the drift profile."
         },
         "id": "exp-e2-v7",
+        "operator": null,
         "outcome": {
           "champion_eval_mode": "full",
           "drift_loss_delta": -0.14,
@@ -6498,6 +6508,7 @@
           "why": "Plan thrash dominates the drift profile."
         },
         "id": "exp-e2-v8",
+        "operator": null,
         "outcome": {
           "champion_eval_mode": "full",
           "drift_loss_delta": -0.16,
@@ -6582,6 +6593,7 @@
           "why": "Plan thrash dominates the drift profile."
         },
         "id": "exp-e2-v9",
+        "operator": null,
         "outcome": {
           "champion_eval_mode": "full",
           "drift_loss_delta": -0.18,
@@ -6666,6 +6678,7 @@
           "why": "Plan thrash dominates the drift profile."
         },
         "id": "exp-e2-v10",
+        "operator": null,
         "outcome": {
           "champion_eval_mode": "full",
           "drift_loss_delta": -0.2,
@@ -6736,6 +6749,7 @@
       "why": ""
     },
     "id": "",
+    "operator": null,
     "outcome": null,
     "parent_generation_id": null,
     "patches": [],
@@ -6768,6 +6782,7 @@
       "why": "Plan thrash dominates the drift profile."
     },
     "id": "exp-e2-v10",
+    "operator": null,
     "outcome": {
       "champion_eval_mode": "full",
       "drift_loss_delta": -0.2,
@@ -6849,6 +6864,7 @@
       "why": "Plan thrash dominates the drift profile."
     },
     "id": "exp-e2-v2",
+    "operator": null,
     "outcome": {
       "champion_eval_mode": "full",
       "drift_loss_delta": -0.04,

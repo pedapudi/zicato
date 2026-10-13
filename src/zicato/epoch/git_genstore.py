@@ -75,6 +75,7 @@ from __future__ import annotations
 import io
 import json
 import logging
+import os
 import re
 import shutil
 import subprocess
@@ -523,6 +524,44 @@ class GitGenerationStore:
             discard_ephemeral_parent(parent)
 
         return EphemeralCheckout(working_dir=working_dir, scratch_dir=scratch_dir, cleanup=_cleanup)
+
+    def export_snapshot(self, epoch_id: str, generation_id: str, destination: Path) -> Path:
+        """Check a generation's tagged tree out to ``destination`` through a private index.
+
+        ``read-tree`` loads the tag into a temporary index file and
+        ``checkout-index --prefix`` writes the files, with the modes,
+        symbolic links and checkout conversions a worktree gets. Nothing
+        shared changes: no worktree is added or pruned, and the repository's
+        own index is never read or written. Worktree admin from a second
+        process races the evolve loop's own (12-bug-casebook.md Case 2), and
+        :meth:`materialize_snapshot` serialises that admin only inside one
+        process. Unlike ``git archive``, the checkout ignores the
+        ``export-ignore`` and ``export-subst`` attributes, so the copy is the
+        tree a round derives from.
+        """
+        if not self.has_generation(epoch_id, generation_id):
+            raise FileNotFoundError(
+                f"generation {epoch_id}/{generation_id} has no commit in the generation repo"
+            )
+        tag = self._generation_tag(epoch_id, generation_id)
+        destination.mkdir(parents=True)
+        with tempfile.TemporaryDirectory(prefix="zicato-export-index-") as temporary:
+            env = {**os.environ, "GIT_INDEX_FILE": str(Path(temporary) / "index")}
+            for argv in (
+                ["git", "read-tree", f"refs/tags/{tag}"],
+                ["git", "checkout-index", "--all", "--force", f"--prefix={destination}/"],
+            ):
+                proc = subprocess.run(  # noqa: S603 — fixed-shape argv, never shell
+                    argv,
+                    cwd=str(self._repo),
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if proc.returncode != 0:
+                    raise GitCommandError(tuple(argv[1:]), proc.returncode, proc.stderr)
+        return destination
 
     def has_generation(self, epoch_id: str, generation_id: str) -> bool:
         """Return ``True`` iff a generation commit/tag exists for the coordinate."""

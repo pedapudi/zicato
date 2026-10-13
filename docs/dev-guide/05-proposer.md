@@ -291,7 +291,7 @@ folded to counts), **REDACTED** (mechanically scrubbed content), **SANITIZED**
 | `validate_experiment` | `ExperimentValidator \| None = None` | orchestrator: `build_post_apply_validator(...)` (`src/zicato/evolve/round.py`) | the agent, after the episode; best-of-N `_mount_chosen` / `_revalidate` — the shared hook is what mounts the canonical `next_id` tree | MACHINERY |
 | `scratch_validator_factory` | `Callable[[], tuple[ExperimentValidator, Callable[[], None]]] \| None = None` | orchestrator: `build_scratch_validator_factory(...)` (`src/zicato/evolve/round.py`) | best-of-N only: one `(validate, cleanup)` lease per slate slot, each over its OWN disjoint scratch tree, so the slate can gather. `None` ⇒ the wrapper falls back to `validate_experiment` and runs the slate serially | MACHINERY |
 | `meta_loop_emitter` | `MetaLoopEmitter \| None = None` | orchestrator (one per `evolve_n_rounds`) | `proposer_call_started`/`proposer_call_completed` bookends, one pair per EPISODE | MACHINERY (telemetry, best-effort) |
-| `custom_judge_names` | `frozenset[str] \| None = None` | orchestrator: `_declared_custom_judge_names(board, weights)` (board `JudgeSpec.name` ∪ `per_judge_weights` keys) | `parse_experiment_json` (drift-metric validation) ONLY — permissive by design, including zero-weight judges, so the prompt-side priority filter can never turn an accepted movement into a rejected proposal; the prompt vocabulary comes from `metric_priorities` | IDENTITY-FREE (judge names are contract identity rather than board-entry identity) |
+| `custom_judge_names` | `frozenset[str] \| None = None` | orchestrator: `declared_custom_judge_names(board, weights)` (board `JudgeSpec.name` ∪ `per_judge_weights` keys) | `parse_experiment_json` (drift-metric validation) ONLY — permissive by design, including zero-weight judges, so the prompt-side priority filter can never turn an accepted movement into a rejected proposal; the prompt vocabulary comes from `metric_priorities` | IDENTITY-FREE (judge names are contract identity rather than board-entry identity) |
 | `prior_experiments` | `tuple[PriorExperiment, ...] = ()` | orchestrator: `_load_prior_experiments` (+ the field loop appends in-flight `siblings`) | `render_prior_experiments_block` (prompt); `recent_prediction_accuracy` (best-of-N calibration) | BANDED under `restrict_visibility` (Δscalar bucketed; accuracy always banded); curated + capped at 12 (§5.10) |
 | `restrict_visibility` | `bool = False` (context default) — **default-ON in production** via `weights.overfitting.restrict_proposer_visibility` | orchestrator from the contract | `render_evidence` → `render_pattern_block(restrict=…)`, `_render_prior_experiment_line(restrict=…)`; the best-of-N critic renders the SAME evidence | MACHINERY (the envelope switch itself) |
 | `failure_profile` | `str = ""` | orchestrator: `_render_failure_profile(TRAIN losses, weights)` — pre-rendered, **already banded** | spliced as `## Failure-mode profile`; `hint_for_slot` parses its stable line shapes for the dominant mode | BANDED + AGGREGATED (every number through `band_rate`/`_band_quality`; board-anonymous by construction) |
@@ -1837,6 +1837,12 @@ degrade). The split mechanics are `zicato.board.split`
   snapshot, and `validate_patches` consumes no board data and runs no board
   entry.
 
+One channel is outside the envelope by an operator decision: the hypothesis
+text of an **operator candidate** (§5.14a). It reaches the proposer as
+written, as an in-flight sibling and in experiment memory, and the code does
+not redact it. The operator who writes it is responsible for keeping
+entry-identifying data out of it.
+
 ### 5.8.6 Bands and buckets — the exact vocabulary
 
 | Function | Input | Output vocabulary | Notes |
@@ -2333,7 +2339,10 @@ touches. (Full definitions: `src/zicato/core/patterns.py`,
 (`HypothesisSpec`, §5.4.3), `patches` (frozen tuple of `Patch`), `outcome`
 (`None` until the tournament settles), `round_index` (stamped by
 `_propose_child` from the EVOLVE round — the authoritative birth round;
-the proposer's default is 0).
+the proposer's default is 0), `recombined_from` (the two rejected parents
+of a recombined mint, §5.6.11; empty otherwise), and `operator` (an
+`OperatorProvenance` for a candidate that `zicato proposer submit` queued,
+§5.14a; `None` for a proposer candidate).
 
 **`PriorExperiment`** — one memory-digest entry: `generation_id`, `epoch_id`,
 `core_idea`, `modulating`, `decision`
@@ -2413,6 +2422,121 @@ byte-identical afterwards.
 
 ---
 
+## 5.14a Operator rounds — `zicato proposer checkout` and `submit`
+
+An operator, or an agent that works for one, can put candidates into the
+next evolve round without proposal episodes (issue #570). Each candidate goes
+through the same projection, validation, board, replicates, gate, holdout
+confirmation and settlement as a proposer candidate. Only its source differs.
+
+**The commands** (`src/zicato/cli/commands/operator_candidate.py`):
+
+- `checkout --into DIR` copies the current champion to `DIR/source/`, and
+  writes `DIR/hypothesis.json` (a template in the proposer schema),
+  `DIR/evidence/` (the epoch's `brief.md`, `mutations.json` and
+  `proposer_inputs.jsonl`, when present) and `DIR/checkout.json` (the
+  workspace, the epoch and the parent, `based_on`). Before round 1 seeds
+  `v0`, the copy comes from the seed source that round 1 will use.
+- `submit --from DIR [--from DIR ...] --author NAME [--exclusive]
+  [--holdout-access yes|no]` queues the copies as one round. It reads each
+  edit back with `project_working_copy`, under the frozen adapter's mutable
+  trees (`generation_phase.mutable_trees`), so an edit outside a mutation
+  point fails with the episode's own message. The patches then go through
+  `validate_patches` with the contract's static checks and the frozen
+  adapter configuration for the load probe, and each hypothesis goes
+  through `parse_experiment_json`. Each patch carries the capped
+  `core_idea` as its rationale, as a Foe patch does. A round cannot hold
+  more candidates than the epoch's field has slots
+  (`SelectionStrategy.field_size`): the field size is a contract value, and a
+  wider round would change how a promotion is measured (§3.13 of
+  03-contract-and-epochs.md).
+
+Both commands print one JSON object, also when they refuse, and then exit 1.
+Neither takes the writer lock, and neither administers git worktrees: the
+tree comes from `GenerationStore.export_snapshot`, which for the git backend
+is a `git archive` read of the object store. Worktree admin from a second
+process races the loop's own (12-bug-casebook.md Case 2). A copy belongs to
+the workspace in its `checkout.json`: `submit --workspace` with any other
+workspace is an error.
+
+**The queue** (`src/zicato/runtime/operator_queue.py`) is one targeted
+control command per round, `runtime/control/candidate/<queue_id>`, whose
+JSON body is a `QueuedRound`: the author, the flags, and one
+`QueuedCandidate` (edits relative to `based_on`, and the hypothesis) per
+candidate. The decoder checks every key and value type, so a malformed file
+is consumed with a reason and cannot fail a round. The queue id sorts by
+submit time. Every consumption goes through `consume_command`, so the
+control log keeps the full body and the reason.
+
+**The slots** (`produce_candidate_batch`, `src/zicato/evolve/candidate_batch.py`).
+At the start of the candidate step, `next_operator_round` returns the
+oldest usable round. On the way, it consumes the items that cannot run: an
+unreadable body, an item for another epoch, an item with more candidates than
+slots, and an item whose candidates are all minted into settled generations.
+The candidates take slots 0 to k-1. The proposer fills the other slots,
+unless the round is exclusive, which runs no proposal episode. The
+field-diversity soft-reject never compares two operator candidates, because
+the operator chose them on purpose. A proposer candidate is still compared
+with every earlier sibling, operator candidates included. A round that
+resumes a candidate in place takes no queued round.
+
+`mint_operator_experiment` (`src/zicato/evolve/operator_slot.py`) never
+applies the queued edits to the champion directly. It derives the operator's
+tree from `based_on` with `derive_scratch`, then reads that tree back
+against the round's champion with `project_working_copy`. A patch replaces
+the whole content of one mutation point, and no candidate can add files or
+change file modes, so this reproduces the operator's tree byte for byte. When
+a promotion happened after the checkout, the operator's version thus runs
+as written against the new champion, and its patches also take back the
+promoted change wherever the two trees differ. `OperatorProvenance.reverted_points`
+names those points, and the journal prints them. The experiment's parent is
+always the round's champion, so every field keeps one parent, which recovery
+requires (`_pending_lineage_groups`, `src/zicato/runtime/resume.py`).
+
+`_propose_and_apply_challenger` receives each minted experiment as
+`operator_experiment`, runs `check_patch_manifest_and_forbidden` and the
+shared post-apply validator on it, and persists it on the normal path. A
+failure rejects that slot. It never falls back to the proposer, because the
+operator asked for this candidate.
+
+**The record.** `Experiment.operator` is an `OperatorProvenance` (`author`,
+`based_on`, `queue_id`, `submitted_at`, `holdout_access`,
+`reverted_points`). The journal writes the `operator` key only when it is
+set, so a proposer `experiment.json` is byte-identical to one written before
+the field existed.
+
+**Leaving the queue.**
+
+| When | Who consumes the item | Recorded reason |
+|---|---|---|
+| No candidate of the round could be minted or validated | `produce_candidate_batch` | `rejected before the tournament: vN: …` |
+| Its round settled | `settle_field_round`, after the commit | `minted as vN, vM; round R settled` |
+| A restarted round finds every candidate minted into a settled generation | `next_operator_round` | `operator round already minted as …` |
+
+An item with a candidate minted into a generation that is still pending
+stays queued. If recovery resumes that generation, its settlement consumes
+the item. If recovery discards the field, no experiment carries the queue
+id any more, and the item runs again.
+
+> ⚠️ TRAP — operator text is NOT inside the restricted-visibility envelope
+> (§5.8, G8). An operator, or an agent that reads the whole workspace, can
+> see holdout results and raw per-entry outcomes. The operator's
+> `core_idea` and `why` reach the proposer as written: as an in-flight
+> sibling in the same round, and in experiment memory after the round
+> settles. This is a deliberate operator decision, so that the proposer can
+> learn from operator ideas; the code does not redact the text. An operator
+> must keep entry ids, task text and holdout results out of the hypothesis.
+> `evidence/` gives an agent a proposer-level view to write from, and
+> `holdout_access` records what the author says they could see. A crowned
+> operator candidate still spends one Ladder holdout query, because it goes
+> through `confirm_crowning_holdout`.
+
+Not built yet: index columns and dashboard markers for the source and the
+author (the index `experiments` table has no source column), and a source
+field on `PriorExperiment`.
+
+---
+
 ## 5.15 Test map for the subsystem
 
 Where to add (and what will catch) a regression, by concern:
@@ -2432,6 +2556,7 @@ Where to add (and what will catch) a regression, by concern:
 | skills / frontmatter / spec resolution | `tests/test_proposer_skills.py` |
 | what the builder resolves, and what it refuses | `tests/test_proposer_agent.py` |
 | the standalone propose command, and what it must not touch | `tests/test_cli_propose.py` |
+| operator rounds: the queue, the record, checkout/submit, and the round slots | `tests/test_operator_candidate.py`, `export_snapshot` in `tests/test_genstore_conformance.py` |
 | tools: sandbox, caps, contextvar, error texts | `tests/test_proposer_tools.py` |
 | best-of-N: slate, critique, heuristic, screen wiring, revise | `tests/test_proposer_best_of_n.py` |
 | the tree/record agreement invariant, end to end with subprocess workers | `tests/test_best_of_n_tree_integrity.py` (+ the scripted slates in `tests/_best_of_n_slate_support.py`) |

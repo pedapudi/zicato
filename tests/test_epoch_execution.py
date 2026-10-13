@@ -78,7 +78,7 @@ async def test_round_uses_selected_epoch_and_retained_skills(workspace: Path, mo
         raise PreparationObserved
 
     monkeypatch.setattr("zicato.proposer.agent.build_proposer_agent", build_agent)
-    monkeypatch.setattr("zicato.evolve.round_entry._declared_custom_judge_names", inspect_inputs)
+    monkeypatch.setattr("zicato.evolve.round_entry.declared_custom_judge_names", inspect_inputs)
     from zicato.evolve.invocation import validated_invocation
     from zicato.evolve.round_entry import _evolve_once
 

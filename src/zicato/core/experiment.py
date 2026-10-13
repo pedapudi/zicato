@@ -196,6 +196,32 @@ PLACEBO_HYPOTHESIS_MARKER = "[placebo:random-baseline]"
 
 
 @dataclass(frozen=True, slots=True)
+class OperatorProvenance:
+    """Who submitted an operator candidate, and which generation they edited.
+
+    An operator candidate enters a round through ``zicato proposer submit``
+    instead of a proposal episode. ``based_on`` is the generation the
+    operator copied and edited. It differs from the experiment's parent when
+    a promotion happened between the submit and the round: the round then
+    expresses the operator's tree as patches against the new champion.
+    ``holdout_access`` is the author's own statement of whether they could
+    read holdout results, or ``None`` when they did not state it.
+    ``queue_id`` names the queued round, so a restarted round can see that
+    the item was already minted. ``reverted_points`` names the mutation
+    points where the champion changed after ``based_on`` and the operator
+    left the point as it was: the candidate puts the ``based_on`` content
+    back there, so it takes back that promoted change.
+    """
+
+    author: str
+    based_on: str
+    queue_id: str
+    submitted_at: str
+    holdout_access: bool | None = None
+    reverted_points: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class PriorExperiment:
     """One prior experiment as surfaced to the proposer's memory section.
 
@@ -333,3 +359,7 @@ class Experiment:
     #: parse the ``[recombined]`` display prefix on ``hypothesis.core_idea``.
     #: An on-disk record without the key reads back as ``()``.
     recombined_from: tuple[str, ...] = ()
+    #: Provenance of an operator candidate, or ``None`` for a proposer
+    #: candidate. The journal writer omits the key when it is ``None``, so a
+    #: proposer ``experiment.json`` carries no operator key at all.
+    operator: OperatorProvenance | None = None

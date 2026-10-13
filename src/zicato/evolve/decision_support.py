@@ -631,7 +631,7 @@ def build_metric_priorities(board: list[Any], weights: Any, losses: list[Any]) -
       rides the same change as the baseline-loss reader.
 
     This does NOT touch the validator's accept-list
-    (``_declared_custom_judge_names``): that set stays permissive, so a
+    (``declared_custom_judge_names``): that set stays permissive, so a
     zero-weight judge that the prompt does not advertise is still parsed
     without a burned retry.
     """

@@ -72,7 +72,7 @@ class EvolveRoundOutcome:
     health_critical: bool = False
 
 
-def _declared_custom_judge_names(board: list[Any], weights: Any) -> frozenset[str]:
+def declared_custom_judge_names(board: list[Any], weights: Any) -> frozenset[str]:
     """Return the names of the custom judges declared by the contract.
 
     A custom judge is addressable in a proposer hypothesis as a

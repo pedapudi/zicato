@@ -572,3 +572,16 @@ def test_seed_hardens_private_objects_and_refs_without_changing_global_config(
         store.read_file("evaluation", "v0", "agent/prompts.py")
         == (source / "prompts.py").read_bytes()
     )
+
+
+def test_export_snapshot_ignores_export_attributes(tmp_path: Path) -> None:
+    """The export is the checked-out tree, so ``export-ignore`` does not drop a file."""
+    tree = mutable_tree(tmp_path / "src")
+    (tree / ".gitattributes").write_text("kept.txt export-ignore\n", encoding="utf-8")
+    (tree / "kept.txt").write_text("source\n", encoding="utf-8")
+    store = GitGenerationStore(tmp_path / "ws")
+    store.seed_generation("e1", "v0", [tree])
+
+    exported = store.export_snapshot("e1", "v0", tmp_path / "export")
+
+    assert (exported / "agent" / "kept.txt").read_text(encoding="utf-8") == "source\n"

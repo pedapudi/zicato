@@ -44,6 +44,7 @@ def _advanced_groups() -> tuple[click.Group, ...]:
     from zicato.cli.commands.epoch import epoch_grp
     from zicato.cli.commands.logs import logs_cmd
     from zicato.cli.commands.mutations import mutations_cmd
+    from zicato.cli.commands.operator_candidate import checkout_cmd, submit_cmd
     from zicato.cli.commands.propose import propose_cmd
     from zicato.cli.commands.proposer import proposer_grp
     from zicato.cli.commands.reflect import reflect_grp
@@ -97,7 +98,10 @@ def _advanced_groups() -> tuple[click.Group, ...]:
         ),
         (tournament, {"run": tournament_cmd}),
         (epoch_grp, {"register": register_cmd}),
-        (proposer_grp, {"propose": propose_cmd}),
+        (
+            proposer_grp,
+            {"propose": propose_cmd, "checkout": checkout_cmd, "submit": submit_cmd},
+        ),
     ):
         for name, command in commands.items():
             group.add_command(command, name)

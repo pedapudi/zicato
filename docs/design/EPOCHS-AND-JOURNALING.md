@@ -303,6 +303,13 @@ The schema is enforced when the episode's result is parsed (a JSON
 Schema pass plus a cross-check pass in `zicato.proposer.structured`).
 A recombined candidate's body also carries `recombined_from`, the ids of
 the two rejected parents it combines; the key is absent otherwise.
+An operator candidate (queued by `zicato proposer submit`) also carries
+`operator`: `{author, based_on, queue_id, submitted_at, holdout_access,
+reverted_points}`. `based_on` is the generation the operator edited. It can
+differ from `parent_generation_id` when a promotion happened before the
+round; `reverted_points` then names the mutation points where the candidate
+takes back that promotion's change. The key is absent for a proposer
+candidate.
 
 ### 3.2 Patch storage (per-patch files)
 

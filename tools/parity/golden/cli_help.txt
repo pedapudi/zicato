@@ -841,8 +841,27 @@ Options:
   --help  Show this message and exit.
 
 Commands:
+  checkout   Copy the current champion for an operator candidate.
   propose    Advanced: generate one Experiment for the next generation.
   scorecard  Per-epoch proposal quality + the trend.
+  submit     Validate edited copies and queue them as the next round.
+
+===== zicato proposer checkout --help =====
+Usage: zicato proposer checkout [OPTIONS]
+
+  Copy the current epoch's champion so an operator can edit a candidate.
+
+  Writes source/ (the editable copy), hypothesis.json (a template in the
+  proposer schema), evidence/ (the epoch's brief, mutation inventory and
+  captured proposer inputs, when present) and checkout.json (where the copy came
+  from). Edit only inside the declared mutation points, then run `zicato
+  proposer submit`. Prints JSON.
+
+Options:
+  --workspace PATH  Path to the zicato workspace directory.  [default: .zicato]
+  --into DIRECTORY  New directory for the copy. It must not exist, or must be
+                    empty.  [required]
+  --help            Show this message and exit.
 
 ===== zicato proposer propose --help =====
 Usage: zicato proposer propose [OPTIONS]
@@ -881,6 +900,33 @@ Options:
                          [default: 10; x>=1]
   --json                 Emit the raw card dicts.
   --help                 Show this message and exit.
+
+===== zicato proposer submit --help =====
+Usage: zicato proposer submit [OPTIONS]
+
+  Validate edited copies and queue them as one round of candidates.
+
+  Each edit is read back as patches with the proposal episode's own projection,
+  so an edit outside the declared mutation points fails with the message a
+  proposer gets. The patches then pass the proposer's validation (structure,
+  application, declared static checks and the load probe), and each
+  FROM/hypothesis.json passes the proposer's parser. The candidates fill the
+  next round's first slots; the round cannot hold more candidates than its field
+  has slots. Prints JSON and exits 1 when a check fails; nothing is queued then.
+
+Options:
+  --from DIRECTORY           A directory that `zicato proposer checkout` made.
+                             Repeat it to queue several candidates in one round.
+                             [required]
+  --author TEXT              Who wrote the candidates: a person or an agent.
+                             Recorded with each.  [required]
+  --holdout-access [yes|no]  Whether the author could read holdout results.
+                             Recorded with each candidate.
+  --exclusive                Run these candidates alone in their round, with no
+                             proposal episodes.
+  --workspace PATH           Workspace to queue into. Defaults to the one the
+                             copies came from; any other workspace is an error.
+  --help                     Show this message and exit.
 
 ===== zicato repair --help =====
 Usage: zicato repair [OPTIONS] COMMAND [ARGS]...

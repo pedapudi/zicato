@@ -27,7 +27,7 @@ script or note that uses one of those names translates as follows:
 | `zicato run --generation vN --entry <id>` | *(none)* | No standalone runner. Runs happen *inside* `tournament run` / `evolve`, which execute every board entry against each generation. |
 | `zicato analyze` | `zicato inspect telemetry` | Decision-telemetry analyzer for an epoch. |
 | `zicato propose --output <file>` | `zicato proposer propose` | No `--output`; it writes the experiment to `epochs/<epoch>/proposals/<vN>.json`. |
-| `zicato patch apply --experiment <file> --as vN` | *(none)* | Only `evolve` applies patches and mints a generation. A proposal written by `proposer propose` is never applied. |
+| `zicato patch apply --experiment <file> --as vN` | *(none)* | Only `evolve` applies patches and mints a generation. A proposal written by `proposer propose` is never applied. To enter hand-written candidates, use `proposer checkout` and `proposer submit` (below); the next round mints them. |
 | `zicato tournament vN vM` | `zicato tournament run PARENT CHILD` | Positional generation ids of generations that already exist. |
 
 Always confirm with `.venv/bin/zicato <cmd> --help` before relying on a flag.
@@ -62,6 +62,36 @@ $Z tournament run v3 v4 --skip-regression     # bypass the regression-suite gate
 $Z tournament run v3 v4 --replicates 1        # force a replicate count for this call
 ```
 
+## Hand-written candidates for the next round
+
+An operator, or an agent, can write candidates and queue them as one round.
+The next `evolve` round runs them in its first slots under the normal gate.
+Neither command takes the workspace lock, so both work while `evolve` runs,
+and neither calls a model.
+
+```sh
+$Z proposer checkout --into /tmp/a            # copies the current champion
+$Z proposer checkout --into /tmp/b            # once for each candidate
+#   edit each source/ inside the declared mutation points only
+#   fill in each hypothesis.json (the proposer's hypothesis schema)
+$Z proposer submit --from /tmp/a --from /tmp/b --author <who> --holdout-access no
+$Z evolve --rounds 1                          # LLM — gated: runs the round
+```
+
+- `submit` prints one JSON object. It exits 1 with `findings` when an edit
+  leaves a mutation point, a hypothesis does not parse, or the round has more
+  candidates than the field has slots; nothing is queued then.
+- Without `--exclusive`, the proposer fills the other slots of a wide field.
+  With it, the round runs only your candidates.
+- If a promotion happens before the round, each candidate runs as written
+  against the new champion, and its record names the points where it takes
+  back the promoted change.
+- Read only `evidence/` and the source when you write a candidate as an
+  agent. The workspace also holds holdout results, and a candidate written
+  from them can fit the holdout. Your hypothesis text reaches the proposer
+  as written, so keep entry ids, task text and holdout results out of it.
+  Say what you read with `--holdout-access`.
+
 `proposer propose` runs the same episode a round runs, but it assembles only
 part of the round's context: the brief and skills, the mutation manifest, the
 loss patterns and summary, the declared judge names and the experiment-memory
@@ -94,6 +124,9 @@ All paths are under `.zicato/epochs/<epoch>/`:
 - `rounds/<round>/field_settlement.json` — the settled outcome of every
   candidate in the round.
 - `proposals/<vN>.json` — experiments written by `proposer propose` only.
+- `.zicato/runtime/control/candidate/<queue_id>` — a queued operator
+  round. It leaves the queue, with a record in `runtime/control_log/`, when
+  its round settles or when the round rejects every candidate.
 
 Read these between stages rather than re-running. After any hand-edit of a
 canonical file, run `zicato repair index` so `index.db` re-derives (see

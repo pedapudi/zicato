@@ -30,7 +30,7 @@ from zicato.core import (
     ScoringWeights,
 )
 from zicato.evolve.decision_support import _render_loss_summary, build_metric_priorities
-from zicato.evolve.round_api import _declared_custom_judge_names
+from zicato.evolve.round_api import declared_custom_judge_names
 from zicato.proposer.prompts import (
     render_metric_priorities_block,
     render_metric_targets_block,
@@ -80,7 +80,7 @@ def test_a_zeroed_judge_is_unadvertised_but_still_validator_accepted() -> None:
     sets are deliberately separate.
     """
     assert "ignored_judge" not in _block(_WEIGHTED)
-    assert "ignored_judge" in _declared_custom_judge_names([], _WEIGHTED)
+    assert "ignored_judge" in declared_custom_judge_names([], _WEIGHTED)
 
     experiment = parse_experiment_json(
         """
@@ -99,7 +99,7 @@ def test_a_zeroed_judge_is_unadvertised_but_still_validator_accepted() -> None:
         parent_gen="v0",
         new_gen="v1",
         mutations_by_id={"m1": _MutationStub()},
-        custom_judge_names=_declared_custom_judge_names([], _WEIGHTED),
+        custom_judge_names=declared_custom_judge_names([], _WEIGHTED),
     )
     assert experiment.hypothesis.expected_metric_movements[0].metric_name == "judge:ignored_judge"
 

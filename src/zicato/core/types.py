@@ -88,6 +88,7 @@ from zicato.core.experiment import (
     MetricMovementActual,
     MovementDirection,
     MovementMagnitude,
+    OperatorProvenance,
     OutcomeRecord,
     PriorExperiment,
 )
@@ -195,6 +196,7 @@ __all__ = [
     "TournamentStructure",
     "OutcomeRecord",
     "Experiment",
+    "OperatorProvenance",
     "PriorExperiment",
     "EXPERIMENT_MEMORY_MAX_ENTRIES",
     # Proposer
