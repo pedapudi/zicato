@@ -80,7 +80,8 @@ for the full flags.
   administer no git worktrees, so they can run while `evolve` runs. `submit`
   only queues a round of candidates, at most one per field slot; the next
   round mints, measures, and settles them like proposer candidates. Both
-  print one JSON object, also when they refuse, and then exit 1.
+  print one JSON object, also when they refuse, and then exit 1. The
+  operator guide is `skills/zicato-submit-candidates`.
 - Every `evolve` invocation runs the workspace validators at the public spend
   boundary before auto-epoching or model spend, and refuses to start on any
   finding that would make the round unmeasurable. `--dry-run` runs the same

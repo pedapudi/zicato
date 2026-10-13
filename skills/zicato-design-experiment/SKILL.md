@@ -136,7 +136,7 @@ one proposal episode on its own and writes the result to
 `zicato-step-loop`. Both spend budget: get the operator's go-ahead first.
 
 To test candidates that you write yourself, use `zicato proposer checkout`
-and `zicato proposer submit` (see `zicato-step-loop`). Each `hypothesis.json`
+and `zicato proposer submit` (see `zicato-submit-candidates`). Each `hypothesis.json`
 uses the schema above, and `submit` rejects it with the proposer's own
 message when it does not parse. The proposer later reads your hypothesis as
 written, so keep holdout details out of it.

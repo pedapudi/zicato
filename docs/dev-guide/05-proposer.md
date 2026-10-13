@@ -2425,7 +2425,8 @@ byte-identical afterwards.
 ## 5.14a Operator rounds — `zicato proposer checkout` and `submit`
 
 An operator, or an agent that works for one, can put candidates into the
-next evolve round without proposal episodes (issue #570). Each candidate goes
+next evolve round without proposal episodes (issue #570). The operator-facing
+guide is `skills/zicato-submit-candidates`; this section is how it works. Each candidate goes
 through the same projection, validation, board, replicates, gate, holdout
 confirmation and settlement as a proposer candidate. Only its source differs.
 

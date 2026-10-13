@@ -76,6 +76,7 @@ compound entry. This invariant applies throughout the catalog.
 | Skill | What it does |
 |---|---|
 | `zicato-evolve` | Drive the meta-loop: choose rounds / mode / wall-clock budget / stop conditions, launch with the dashboard, report the URL. Enforces the live-run gate. The flagship operating skill. |
+| `zicato-submit-candidates` | Write candidates by hand and queue them as the next round: `zicato proposer checkout` copies the champion, `zicato proposer submit` validates edited copies with the proposer's own checks and queues them (alone with `--exclusive`, or beside proposer candidates). Covers the hypothesis, the JSON output, the promotion rule, and how to read the result. Keeps holdout data out of the hypothesis, which the proposer reads. |
 | `zicato-mutation-audit` | Audit the mutable surface with `zicato inspect mutations`: enumerate span/file/code mutation points, preview current text, copy exact ids for the brief's `## Forbidden edits` list, decide what the proposer is allowed to change. |
 
 ### Observe a run in flight
@@ -96,7 +97,7 @@ compound entry. This invariant applies throughout the catalog.
 ### Manual control and forensics
 | Skill | What it does |
 |---|---|
-| `zicato-step-loop` | Drive individual loop stages for debugging: `zicato inspect telemetry` for the decision analysis, `zicato proposer propose` to run one proposal episode without a tournament, `zicato tournament run PARENT CHILD` to re-score an existing pair, `zicato proposer checkout` / `submit` to queue hand-written candidates as the next round. (`evolve` orchestrates these internally; there is no standalone `run`/`patch apply`.) |
+| `zicato-step-loop` | Drive individual loop stages for debugging: `zicato inspect telemetry` for the decision analysis, `zicato proposer propose` to run one proposal episode without a tournament, `zicato tournament run PARENT CHILD` to re-score an existing pair, `zicato proposer checkout` / `submit` to queue hand-written candidates as the next round (full guide: `zicato-submit-candidates`). (`evolve` orchestrates these internally; there is no standalone `run`/`patch apply`.) |
 | `zicato-index-ops` | Rebuild the SQLite analytical index (`zicato repair index`, `zicato repair generations`) and run cross-run read-only SQL against `.zicato/index.db` — the schema table-by-table, including which measurements each table projects. |
 
 ### Strategy

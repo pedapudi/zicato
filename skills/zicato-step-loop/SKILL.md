@@ -64,7 +64,8 @@ $Z tournament run v3 v4 --replicates 1        # force a replicate count for this
 
 ## Hand-written candidates for the next round
 
-An operator, or an agent, can write candidates and queue them as one round.
+The full guide is `skills/zicato-submit-candidates`. In short: an operator,
+or an agent, can write candidates and queue them as one round.
 The next `evolve` round runs them in its first slots under the normal gate.
 Neither command takes the workspace lock, so both work while `evolve` runs,
 and neither calls a model.

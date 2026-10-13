@@ -50,6 +50,36 @@ EVIDENCE_DIR = "evidence"
 #: The hypothesis template ``checkout`` writes and ``submit`` reads.
 HYPOTHESIS_FILE = "hypothesis.json"
 
+#: The workflow both commands' help ends with, so either one shows the whole path.
+_WORKFLOW_EPILOG = (
+    "\b\n"
+    "Workflow (one checkout for each candidate):\n"
+    "  zicato proposer checkout --into /tmp/a\n"
+    "  zicato proposer checkout --into /tmp/b\n"
+    "  # edit /tmp/a/source/ and /tmp/b/source/ inside the mutation points\n"
+    "  # fill in /tmp/a/hypothesis.json and /tmp/b/hypothesis.json\n"
+    "  zicato proposer submit --from /tmp/a --from /tmp/b --author NAME\n"
+    "  zicato evolve --rounds 1      # or let a running loop take the round\n"
+    "\n"
+    "\b\n"
+    "Hypothesis fields (the proposer's schema; no other keys):\n"
+    "  core_idea                  the change, in one sentence\n"
+    "  why                        the observation behind the change\n"
+    "  expected_pass_rate_delta   free text, for example +0 to +5 points\n"
+    "  modulating                 mutation point ids, at least one\n"
+    "  expected_metric_movements  at least one {metric_name, direction,\n"
+    "                             magnitude}; metric_name is namespace:name\n"
+    "  risks                      optional text\n"
+    "\n"
+    "\b\n"
+    "The proposer later reads the hypothesis as written: never name holdout\n"
+    "entries or their results in it.\n"
+    "\n"
+    "\b\n"
+    "Guide: skills/zicato-submit-candidates/SKILL.md\n"
+    "Schema: docs/design/EPOCHS-AND-JOURNALING.md section 3.1\n"
+)
+
 
 class _Refused(Exception):
     """A command refuses; ``payload`` is the JSON it prints."""
@@ -207,6 +237,7 @@ def _hypothesis_template() -> dict[str, Any]:
 @click.command(
     name="checkout",
     short_help="Copy the current champion for an operator candidate.",
+    epilog=_WORKFLOW_EPILOG,
 )
 @click.option(
     "--workspace",
@@ -445,6 +476,7 @@ def _check_copy(
 @click.command(
     name="submit",
     short_help="Validate edited copies and queue them as the next round.",
+    epilog=_WORKFLOW_EPILOG,
 )
 @click.option(
     "--from",
