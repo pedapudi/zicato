@@ -24,7 +24,7 @@ from __future__ import annotations
 import json
 import tempfile
 from collections.abc import Mapping, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -48,6 +48,49 @@ class OperatorCandidateRejected(Exception):
         super().__init__("; ".join(self.findings))
 
 
+@dataclass(frozen=True, slots=True)
+class OperatorGeneration:
+    """A generation minted from a queued operator round, with its result so far.
+
+    ``settled`` is whether the generation has an outcome; ``decision`` and
+    ``rejection_reason`` come from that outcome.
+    """
+
+    generation_id: str
+    based_on: str
+    settled: bool
+    decision: str | None
+    rejection_reason: str
+    reverted_points: tuple[str, ...]
+
+
+def operator_generations(
+    workspace_root: Path, epoch_id: str
+) -> dict[str, list[OperatorGeneration]]:
+    """Map each queue id minted in this epoch to its generations, in id order."""
+    bodies, _errors = read_epoch_experiment_bodies(workspace_root, epoch_id)
+    minted: dict[str, list[OperatorGeneration]] = {}
+    for generation_id, body in bodies:
+        operator = body.get("operator")
+        if not isinstance(operator, dict) or not isinstance(operator.get("queue_id"), str):
+            continue
+        outcome = body.get("outcome")
+        outcome = outcome if isinstance(outcome, dict) else None
+        minted.setdefault(operator["queue_id"], []).append(
+            OperatorGeneration(
+                generation_id=generation_id,
+                based_on=str(operator.get("based_on") or ""),
+                settled=outcome is not None,
+                decision=None if outcome is None else outcome.get("tournament_decision"),
+                rejection_reason=""
+                if outcome is None
+                else str(outcome.get("rejection_reason") or ""),
+                reverted_points=tuple(operator.get("reverted_points") or ()),
+            )
+        )
+    return minted
+
+
 def minted_operator_queue_ids(
     workspace_root: Path, epoch_id: str
 ) -> dict[str, list[MintedQueueItem]]:
@@ -56,17 +99,12 @@ def minted_operator_queue_ids(
     A generation with an outcome is settled. A generation without one is
     pending: recovery resumes or discards it.
     """
-    bodies, _errors = read_epoch_experiment_bodies(workspace_root, epoch_id)
-    minted: dict[str, list[MintedQueueItem]] = {}
-    for generation_id, body in bodies:
-        operator = body.get("operator")
-        if isinstance(operator, dict) and isinstance(operator.get("queue_id"), str):
-            minted.setdefault(operator["queue_id"], []).append(
-                MintedQueueItem(
-                    generation_id=generation_id, settled=body.get("outcome") is not None
-                )
-            )
-    return minted
+    return {
+        queue_id: [
+            MintedQueueItem(generation_id=g.generation_id, settled=g.settled) for g in generations
+        ]
+        for queue_id, generations in operator_generations(workspace_root, epoch_id).items()
+    }
 
 
 def queued_patch_body(patch: Patch) -> dict[str, Any]:
@@ -229,8 +267,10 @@ def mint_operator_experiment(
 
 __all__ = [
     "OperatorCandidateRejected",
+    "OperatorGeneration",
     "mint_operator_experiment",
     "minted_operator_queue_ids",
+    "operator_generations",
     "operator_rationale",
     "parse_operator_experiment",
     "patch_document",

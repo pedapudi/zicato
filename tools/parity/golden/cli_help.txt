@@ -843,6 +843,7 @@ Options:
 Commands:
   checkout   Copy the current champion for an operator candidate.
   propose    Advanced: generate one Experiment for the next generation.
+  queue      Show what happened to submitted operator rounds.
   scorecard  Per-epoch proposal quality + the trend.
   submit     Validate edited copies and queue them as the next round.
 
@@ -870,6 +871,7 @@ Options:
     # fill in /tmp/a/hypothesis.json and /tmp/b/hypothesis.json
     zicato proposer submit --from /tmp/a --from /tmp/b --author NAME
     zicato evolve --rounds 1      # or let a running loop take the round
+    zicato proposer queue --queue-id ID   # what the round did
 
   Hypothesis fields (the proposer's schema; no other keys):
     core_idea                  the change, in one sentence
@@ -905,6 +907,29 @@ Options:
   --max-retries INTEGER RANGE  How many times to ask the proposer to fix a
                                malformed response.  [default: 2; 0<=x<=10]
   --help                       Show this message and exit.
+
+===== zicato proposer queue --help =====
+Usage: zicato proposer queue [OPTIONS]
+
+  Show the state of submitted operator rounds. Read-only; prints JSON.
+
+  Reads the queue, the control log and the experiments that carry each queue id.
+  It takes no lock, so it is safe while `zicato evolve` runs. With --queue-id it
+  prints one round, and exits 1 when no submitted round has that id.
+
+Options:
+  --workspace PATH  Path to the zicato workspace directory.  [default: .zicato]
+  --queue-id TEXT   The queue_id that `zicato proposer submit` printed. Omit it
+                    to list every round.
+  --help            Show this message and exit.
+
+  States:
+    queued    waiting for an evolve round
+    running   minted into a round that has not settled yet
+    settled   ran; each generation carries its decision
+    rejected  left the queue without running; see reason
+
+  Guide: skills/zicato-submit-candidates/SKILL.md
 
 ===== zicato proposer scorecard --help =====
 Usage: zicato proposer scorecard [OPTIONS]
@@ -958,6 +983,7 @@ Options:
     # fill in /tmp/a/hypothesis.json and /tmp/b/hypothesis.json
     zicato proposer submit --from /tmp/a --from /tmp/b --author NAME
     zicato evolve --rounds 1      # or let a running loop take the round
+    zicato proposer queue --queue-id ID   # what the round did
 
   Hypothesis fields (the proposer's schema; no other keys):
     core_idea                  the change, in one sentence

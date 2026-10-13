@@ -2519,6 +2519,16 @@ stays queued. If recovery resumes that generation, its settlement consumes
 the item. If recovery discards the field, no experiment carries the queue
 id any more, and the item runs again.
 
+**Reading the state.** `zicato proposer queue [--queue-id ID]` is read-only
+and takes no lock. `operator_round_records` lists every round from the queue
+and from the audit records in `control_log/`; `operator_generations` maps
+each queue id to its generations and their outcomes. The state comes from
+those records, never from the `reason` text: still queued with no generation
+is `queued`, a generation without an outcome is `running`, a consumed item
+whose generations all settled is `settled`, and a consumed item with no
+generation is `rejected`. The minted scan that `next_operator_round` uses is
+the same `operator_generations` read.
+
 > ⚠️ TRAP — operator text is NOT inside the restricted-visibility envelope
 > (§5.8, G8). An operator, or an agent that reads the whole workspace, can
 > see holdout results and raw per-entry outcomes. The operator's

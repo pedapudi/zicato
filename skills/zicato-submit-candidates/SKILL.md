@@ -1,6 +1,6 @@
 ---
 name: zicato-submit-candidates
-description: Write candidates by hand and queue them as the next evolve round with `zicato proposer checkout` and `zicato proposer submit` — copy the champion, edit inside the declared mutation points, write the hypothesis, submit one or more copies, read the JSON, and find out what the round did with them. Use when an operator or an agent wants to test its own change, race several of its own variants, or improve the seed step by step under the normal gate. The hypothesis text reaches the proposer as written, so it must never name holdout entries or their results.
+description: Write candidates by hand and queue them as the next evolve round with `zicato proposer checkout`, `zicato proposer submit` and `zicato proposer queue` — copy the champion, edit inside the declared mutation points, write the hypothesis, submit one or more copies, read the JSON, and find out what the round did with them. Use when an operator or an agent wants to test its own change, race several of its own variants, or improve the seed step by step under the normal gate. The hypothesis text reaches the proposer as written, so it must never name holdout entries or their results.
 ---
 
 # zicato submit-candidates — queue a round of your own candidates
@@ -66,8 +66,8 @@ $Z proposer submit --from /tmp/a --from /tmp/b --author alice --holdout-access n
 # 5. Run the round (LLM — gated: get the user's go-ahead first).
 $Z evolve --workspace .zicato --rounds 1
 
-# 6. Read what the round did (see "Reading the result").
-ls .zicato/runtime/control_log/ | grep _candidate_
+# 6. Read what the round did, with the queue_id that submit printed.
+$Z proposer queue --workspace .zicato --queue-id <queue_id>
 ```
 
 If an `evolve` loop is already running, skip step 5: the next round that
@@ -238,31 +238,65 @@ installed, for example). They do not reject a copy.
 
 ## Reading the result
 
-`submit` does not wait for the round. After the round, read:
+`submit` does not wait for the round. Ask `zicato proposer queue` instead.
+It reads the queue, the control log and the experiments; it takes no lock
+and calls no model, so poll it as often as you need.
 
-| Where | What it says |
+```sh
+$Z proposer queue --workspace .zicato --queue-id <queue_id>   # one round
+$Z proposer queue --workspace .zicato                         # every round, in submit order
+```
+
+| `state` | Meaning |
 |---|---|
-| `.zicato/runtime/control/candidate/` | Items still queued. An item leaves when its round settles, or when the round rejects every candidate in it. |
-| `.zicato/runtime/control_log/*_candidate_<queue_id>.json` | The audit record: the full queued body and a `reason`. |
-| `.zicato/epochs/<epoch>/generations/vN/experiment.json` → `operator` | Your provenance: `author`, `based_on`, `queue_id`, `submitted_at`, `holdout_access`, `reverted_points`. The `outcome` holds the decision. |
-| The epoch journal (in the epoch analysis, `skills/zicato-analyze-epoch`) | Each operator candidate shows `**source**: operator <author>, based on <gen>`. |
-| The dashboard's proposing tracker | Each slot's status, with the rejection reason. See `skills/zicato-watch-dashboard`. |
+| `queued` | Waiting for an evolve round. |
+| `running` | Minted into a round that has not settled yet. |
+| `settled` | The round ran. Each entry of `generations` carries its `decision` and `rejection_reason`. |
+| `rejected` | The item left the queue without running. `reason` says why. |
 
-The audit `reason` values:
+Before and after an exclusive round (real output from a test workspace):
+
+```json
+{"ok": true, "round": {"author": "alice", "candidates": 1, "consumed_at": null,
+  "epoch": "2026-10-13_alpha", "exclusive": true, "generations": [],
+  "queue_id": "20261013192045133390440-1fd243", "reason": null,
+  "state": "queued", "submitted_at": "2026-10-13T19:20:45Z"},
+ "workspace": "/repo/.zicato"}
+```
+
+```json
+{"ok": true, "round": {"author": "alice", "candidates": 1,
+  "consumed_at": "2026-10-13T19:20:46Z", "epoch": "2026-10-13_alpha", "exclusive": true,
+  "generations": [{"based_on": "v0", "decision": "promoted", "generation_id": "v1",
+                   "rejection_reason": "", "reverted_points": []}],
+  "queue_id": "20261013192045133390440-1fd243",
+  "reason": "minted as v1; round 0 settled",
+  "state": "settled", "submitted_at": "2026-10-13T19:20:45Z"},
+ "workspace": "/repo/.zicato"}
+```
+
+An unknown `--queue-id` prints `{"ok": false, "findings": [...]}` and exits 1.
+
+The `reason` values:
 
 | Reason | Meaning |
 |---|---|
-| `minted as v5, v6; round 3 settled` | The candidates ran. Read each generation's outcome. |
+| `minted as v5, v6; round 3 settled` | The candidates ran. Read each generation's `decision`. |
 | `rejected before the tournament: v5: …` | No candidate could enter the round; each slot's finding follows. |
 | `operator round for epoch '…' cannot run in epoch '…'; …` | The epoch rolled after the submit. Check out again. |
 | `operator round has 3 candidates, but the round has 2 slot(s)` | The field shrank after the submit. Submit fewer copies. |
 | `unreadable operator round: …` | The queue file was damaged or edited by hand. |
 | `operator round already minted as …` | A restarted round found the candidates already settled. |
 
-```sh
-jq -r .reason .zicato/runtime/control_log/*_candidate_<queue_id>.json
-jq .operator,.outcome.tournament_decision .zicato/epochs/<epoch>/generations/v5/experiment.json
-```
+The records that `queue` reads, for deeper digging:
+
+| Where | What it holds |
+|---|---|
+| `.zicato/runtime/control/candidate/<queue_id>` | A round still in the queue. |
+| `.zicato/runtime/control_log/*_candidate_<queue_id>.json` | The audit record of a consumed round: the full body and the `reason`. |
+| `.zicato/epochs/<epoch>/generations/vN/experiment.json` → `operator` | The provenance of each candidate: `author`, `based_on`, `queue_id`, `submitted_at`, `holdout_access`, `reverted_points`. The `outcome` holds the decision. |
+| The epoch journal (in the epoch analysis, `skills/zicato-analyze-epoch`) | Each operator candidate shows `**source**: operator <author>, based on <gen>`. |
+| The dashboard's proposing tracker | Each slot's status, with the rejection reason. See `skills/zicato-watch-dashboard`. |
 
 ## Common refusals
 

@@ -38,7 +38,7 @@ from tests._orchestrator_harness import (
 )
 from tests._workspace_support import read_experiment_record
 from tests.test_orchestrator_multi_challenger import _bootstrap_swiss_workspace
-from zicato.cli.commands.operator_candidate import checkout_cmd, submit_cmd
+from zicato.cli.commands.operator_candidate import checkout_cmd, queue_cmd, submit_cmd
 from zicato.core.types import (
     Experiment,
     HypothesisSpec,
@@ -330,6 +330,12 @@ def _submit(*args: str) -> Any:
     return CliRunner().invoke(submit_cmd, ["--author", "alice", *args])
 
 
+def _queue_status(workspace: Path, queue_id: str) -> dict[str, Any]:
+    result = CliRunner().invoke(queue_cmd, ["--workspace", str(workspace), "--queue-id", queue_id])
+    assert result.exit_code == 0, result.output
+    return json.loads(result.output)["round"]
+
+
 def _refusal(result: Any) -> dict[str, Any]:
     assert result.exit_code == 1, result.output
     report = json.loads(result.output)
@@ -504,6 +510,13 @@ def test_an_exclusive_round_runs_the_queued_candidate_with_no_proposal_episode(
     # Settlement took the item off the queue, with its generations.
     assert _pending_queue_ids(workspace) == []
     assert "minted as v1; round 0 settled" in _audit_reasons(workspace)
+    status = _queue_status(workspace, queue_id)
+    assert status["state"] == "settled"
+    assert status["author"] == "alice"
+    assert status["exclusive"] is True
+    assert [(g["generation_id"], g["decision"]) for g in status["generations"]] == [
+        ("v1", "promoted")
+    ]
 
 
 def test_after_a_promotion_the_operator_version_runs_against_the_new_champion(
@@ -617,6 +630,10 @@ def test_a_candidate_that_cannot_be_minted_is_rejected_without_a_proposer_fallba
     (reason,) = _audit_reasons(workspace)
     assert reason.startswith("rejected before the tournament: v1:")
     assert "does not match any known mutation point" in reason
+    status = _queue_status(workspace, "20261013000000-aaaaaaaa")
+    assert status["state"] == "rejected"
+    assert status["generations"] == []
+    assert status["reason"] == reason
 
 
 def test_a_candidate_identical_to_the_champion_is_rejected(
@@ -691,3 +708,34 @@ def test_a_store_failure_while_minting_rejects_the_item_and_the_loop_continues(
     assert _pending_queue_ids(workspace) == []
     (reason,) = _audit_reasons(workspace)
     assert "the store failed" in reason
+
+
+def test_queue_reports_a_queued_and_a_running_round_and_refuses_an_unknown_id(
+    tmp_path: Path,
+) -> None:
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    enqueue_operator_round(workspace, _round(epoch_id, queue_id="1-waiting"))
+    running = _round(epoch_id, queue_id="2-running")
+    enqueue_operator_round(workspace, running)
+    provenance = running.provenance(running.candidates[0])
+    write_experiment(
+        workspace,
+        epoch_id,
+        "v1",
+        replace(_experiment(provenance), epoch_id=epoch_id, id=f"exp_{epoch_id}_v1"),
+    )
+
+    result = CliRunner().invoke(queue_cmd, ["--workspace", str(workspace)])
+    assert result.exit_code == 0, result.output
+    rounds = {r["queue_id"]: r for r in json.loads(result.output)["rounds"]}
+    assert rounds["1-waiting"]["state"] == "queued"
+    assert rounds["1-waiting"]["generations"] == []
+    assert rounds["2-running"]["state"] == "running"
+    assert [g["generation_id"] for g in rounds["2-running"]["generations"]] == ["v1"]
+    assert rounds["2-running"]["generations"][0]["decision"] is None
+
+    unknown = CliRunner().invoke(
+        queue_cmd, ["--workspace", str(workspace), "--queue-id", "no-such-round"]
+    )
+    (finding,) = _refusal(unknown)["findings"]
+    assert "No submitted round has queue id 'no-such-round'" in finding

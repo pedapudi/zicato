@@ -220,7 +220,8 @@ uv run python tools/parity/lib/cli_help.py --update
 `zicato inspect reflection` produce diagnostics and evaluation suggestions.
 Neither exposes a contract-edit queue. `zicato proposer checkout` and
 `zicato proposer submit` queue a round of operator candidates for the
-evolve loop (05-proposer.md §5.14a). The queue holds candidates, so it
+evolve loop, and `zicato proposer queue` reports what each round did
+(05-proposer.md §5.14a). The queue holds candidates, so it
 leaves the contract and the epoch unchanged. The dashboard's Contract and Models
 sections are read-only; Appearance changes browser preferences.
 

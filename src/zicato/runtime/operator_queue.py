@@ -43,6 +43,7 @@ from zicato.runtime.control import (
     list_pending_commands,
     write_command,
 )
+from zicato.runtime.paths import control_log_dir
 
 log = logging.getLogger("zicato.runtime.operator_queue")
 
@@ -315,6 +316,60 @@ def next_operator_round(
     return None
 
 
+@dataclass(frozen=True, slots=True)
+class OperatorRoundRecord:
+    """One submitted round, as the queue and the control log record it.
+
+    ``queued`` is ``None`` when the body cannot be decoded. ``consumed_at``
+    and ``reason`` are ``None`` while the item is still queued.
+    """
+
+    queue_id: str
+    queued: QueuedRound | None
+    consumed_at: str | None = None
+    reason: str | None = None
+
+
+def _decode(payload: str) -> QueuedRound | None:
+    try:
+        return QueuedRound.from_body(json.loads(payload))
+    except ValueError:
+        return None
+
+
+def operator_round_records(workspace_root: Path) -> list[OperatorRoundRecord]:
+    """Every submitted round of the workspace, in submit order. Read-only.
+
+    A queued item comes from ``control/candidate/``; a consumed one from its
+    audit record in ``control_log/``, which keeps the body and the reason.
+    When a crash left both copies, the audit record wins: consumption writes
+    it before it deletes the queue file.
+    """
+    records: dict[str, OperatorRoundRecord] = {
+        cmd.arg: OperatorRoundRecord(queue_id=cmd.arg, queued=_decode(cmd.payload))
+        for cmd in _pending_candidate_commands(workspace_root)
+    }
+    log_dir = control_log_dir(workspace_root)
+    if log_dir.is_dir():
+        for path in sorted(log_dir.glob(f"*_{CMD_CANDIDATE_PREFIX}_*.json")):
+            try:
+                audit = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if not isinstance(audit, dict) or audit.get("command") != CMD_CANDIDATE_PREFIX:
+                continue
+            queue_id = str(audit.get("arg") or "")
+            if not queue_id:
+                continue
+            records[queue_id] = OperatorRoundRecord(
+                queue_id=queue_id,
+                queued=_decode(str(audit.get("payload") or "")),
+                consumed_at=str(audit.get("consumed_at") or "") or None,
+                reason=str(audit.get("reason") or ""),
+            )
+    return [records[queue_id] for queue_id in sorted(records)]
+
+
 def consume_operator_round(workspace_root: Path, queue_id: str, *, reason: str) -> bool:
     """Consume the queued item ``queue_id`` with ``reason``; ``False`` when absent."""
     for cmd in _pending_candidate_commands(workspace_root):
@@ -328,6 +383,7 @@ __all__ = [
     "CONSUMER_SOURCE",
     "QUEUED_ROUND_FORMAT",
     "MintedQueueItem",
+    "OperatorRoundRecord",
     "PendingOperatorRound",
     "QueuedCandidate",
     "QueuedRound",
@@ -335,4 +391,5 @@ __all__ = [
     "enqueue_operator_round",
     "new_queue_id",
     "next_operator_round",
+    "operator_round_records",
 ]

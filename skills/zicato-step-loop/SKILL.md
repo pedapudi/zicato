@@ -77,6 +77,7 @@ $Z proposer checkout --into /tmp/b            # once for each candidate
 #   fill in each hypothesis.json (the proposer's hypothesis schema)
 $Z proposer submit --from /tmp/a --from /tmp/b --author <who> --holdout-access no
 $Z evolve --rounds 1                          # LLM — gated: runs the round
+$Z proposer queue --queue-id <queue_id>       # queued / running / settled / rejected
 ```
 
 - `submit` prints one JSON object. It exits 1 with `findings` when an edit

@@ -60,6 +60,7 @@ _WORKFLOW_EPILOG = (
     "  # fill in /tmp/a/hypothesis.json and /tmp/b/hypothesis.json\n"
     "  zicato proposer submit --from /tmp/a --from /tmp/b --author NAME\n"
     "  zicato evolve --rounds 1      # or let a running loop take the round\n"
+    "  zicato proposer queue --queue-id ID   # what the round did\n"
     "\n"
     "\b\n"
     "Hypothesis fields (the proposer's schema; no other keys):\n"
@@ -645,4 +646,100 @@ def _submit(
     }
 
 
-__all__ = ["checkout_cmd", "submit_cmd"]
+def _round_status(record: Any, generations: Sequence[Any]) -> dict[str, Any]:
+    """One submitted round's state, read from its records alone."""
+    if record.consumed_at is None:
+        state = "running" if generations else "queued"
+    elif generations:
+        state = "settled" if all(g.settled for g in generations) else "running"
+    else:
+        state = "rejected"
+    queued = record.queued
+    return {
+        "queue_id": record.queue_id,
+        "state": state,
+        "epoch": None if queued is None else queued.epoch_id,
+        "author": None if queued is None else queued.author,
+        "submitted_at": None if queued is None else queued.submitted_at,
+        "exclusive": None if queued is None else queued.exclusive,
+        "candidates": None if queued is None else len(queued.candidates),
+        "generations": [
+            {
+                "generation_id": g.generation_id,
+                "based_on": g.based_on,
+                "decision": g.decision,
+                "rejection_reason": g.rejection_reason,
+                "reverted_points": list(g.reverted_points),
+            }
+            for g in generations
+        ],
+        "consumed_at": record.consumed_at,
+        "reason": record.reason,
+    }
+
+
+@click.command(
+    name="queue",
+    short_help="Show what happened to submitted operator rounds.",
+    epilog=(
+        "\b\n"
+        "States:\n"
+        "  queued    waiting for an evolve round\n"
+        "  running   minted into a round that has not settled yet\n"
+        "  settled   ran; each generation carries its decision\n"
+        "  rejected  left the queue without running; see reason\n"
+        "\n"
+        "\b\n"
+        "Guide: skills/zicato-submit-candidates/SKILL.md\n"
+    ),
+)
+@click.option(
+    "--workspace",
+    default=".zicato",
+    type=click.Path(),
+    show_default=True,
+    help="Path to the zicato workspace directory.",
+)
+@click.option(
+    "--queue-id",
+    default=None,
+    help="The queue_id that `zicato proposer submit` printed. Omit it to list every round.",
+)
+def queue_cmd(workspace: str, queue_id: str | None) -> None:
+    """Show the state of submitted operator rounds. Read-only; prints JSON.
+
+    Reads the queue, the control log and the experiments that carry each
+    queue id. It takes no lock, so it is safe while `zicato evolve` runs.
+    With --queue-id it prints one round, and exits 1 when no submitted round
+    has that id.
+    """
+    _run_json(lambda: _queue(Path(workspace).resolve(), queue_id))
+
+
+def _queue(workspace_root: Path, queue_id: str | None) -> dict[str, Any]:
+    from zicato.evolve.operator_slot import operator_generations  # noqa: PLC0415
+    from zicato.runtime.operator_queue import operator_round_records  # noqa: PLC0415
+
+    _workspace_config(workspace_root)
+    records = operator_round_records(workspace_root)
+    if queue_id is not None:
+        records = [record for record in records if record.queue_id == queue_id]
+        if not records:
+            _refuse(f"No submitted round has queue id {queue_id!r} in {workspace_root}.")
+    by_epoch: dict[str, dict[str, list[Any]]] = {}
+    rounds = []
+    for record in records:
+        epoch_id = None if record.queued is None else record.queued.epoch_id
+        if epoch_id is not None and epoch_id not in by_epoch:
+            by_epoch[epoch_id] = operator_generations(workspace_root, epoch_id)
+        generations = by_epoch.get(epoch_id, {}).get(record.queue_id, []) if epoch_id else []
+        rounds.append(_round_status(record, generations))
+    payload: dict[str, Any] = {"ok": True, "workspace": str(workspace_root)}
+    if queue_id is not None:
+        payload["round"] = rounds[0]
+    else:
+        payload["rounds"] = rounds
+    return payload
+
+
+__all__ = ["checkout_cmd", "queue_cmd", "submit_cmd"]

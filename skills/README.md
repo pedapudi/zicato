@@ -76,7 +76,7 @@ compound entry. This invariant applies throughout the catalog.
 | Skill | What it does |
 |---|---|
 | `zicato-evolve` | Drive the meta-loop: choose rounds / mode / wall-clock budget / stop conditions, launch with the dashboard, report the URL. Enforces the live-run gate. The flagship operating skill. |
-| `zicato-submit-candidates` | Write candidates by hand and queue them as the next round: `zicato proposer checkout` copies the champion, `zicato proposer submit` validates edited copies with the proposer's own checks and queues them (alone with `--exclusive`, or beside proposer candidates). Covers the hypothesis, the JSON output, the promotion rule, and how to read the result. Keeps holdout data out of the hypothesis, which the proposer reads. |
+| `zicato-submit-candidates` | Write candidates by hand and queue them as the next round: `zicato proposer checkout` copies the champion, `zicato proposer submit` validates edited copies with the proposer's own checks and queues them (alone with `--exclusive`, or beside proposer candidates), `zicato proposer queue` reports what each round did. Covers the hypothesis, the JSON output, the promotion rule, and how to read the result. Keeps holdout data out of the hypothesis, which the proposer reads. |
 | `zicato-mutation-audit` | Audit the mutable surface with `zicato inspect mutations`: enumerate span/file/code mutation points, preview current text, copy exact ids for the brief's `## Forbidden edits` list, decide what the proposer is allowed to change. |
 
 ### Observe a run in flight
