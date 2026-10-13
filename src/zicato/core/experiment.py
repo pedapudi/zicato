@@ -282,6 +282,10 @@ class PriorExperiment:
         a direction and a magnitude bucket for one metric, never its values,
         and covers the measured predictions plus at most three unpredicted
         metrics that moved by a medium or large amount.
+    source:
+        ``"operator"`` for a candidate that ``zicato proposer submit``
+        queued, else ``"proposer"``. The memory section marks an operator
+        entry, so the proposer can tell its own history from an operator's.
     """
 
     generation_id: str
@@ -299,6 +303,7 @@ class PriorExperiment:
     train_entries: int | None = None
     predicted_movements: tuple[ExpectedMetricMovement, ...] = ()
     realised_movements: tuple[ExpectedMetricMovement, ...] = ()
+    source: Literal["proposer", "operator"] = "proposer"
 
 
 @dataclass(frozen=True, slots=True)

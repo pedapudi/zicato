@@ -210,6 +210,7 @@ experiments` statement) carries, per `(epoch_id, generation_id)`:
 | `rejection_reason` | the symbolic reason when rejected |
 | `scalar_score_delta` | the Δ-scalar (sign gates promotion) |
 | `drift_loss_delta`, `pass_rate_delta` | secondary deltas, available for richer renders |
+| `source` | `"operator"` marks an operator's candidate in the render; `"proposer"` otherwise |
 
 The targeted mutation-point ids come from the `modulating` array inside
 `hypothesis_json` (decoded), which is the proposer's own declaration of
@@ -339,6 +340,11 @@ Proposed this round, not yet evaluated (diversify away from these):
 - v8 IN-FLIGHT  [researcher.instruction]
     Tighten the researcher instruction to forbid uncited claims.
 ```
+
+An entry from an operator's candidate (queued by `zicato proposer submit`)
+ends its first line with `source:operator` in place of the `prediction:`
+band. The band grades how the proposer's OWN predictions held, so an
+operator's predictions never enter it.
 
 The framing line reads **"Avoid repeating failures; build on wins."**
 rather than "only do X". The section advises; it does not constrain. The
@@ -554,10 +560,10 @@ standalone proposer call is unaffected by this surface.
 
 The frozen dataclass of §3.2 lives in `zicato.core.experiment` and is
 re-exported from `zicato.core.types`, which lists it in `__all__`. It
-carries the nine fields `generation_id`, `epoch_id`, `core_idea`,
+carries ten fields: `generation_id`, `epoch_id`, `core_idea`,
 `modulating`, `decision`, `rejection_reason`, `scalar_score_delta`,
-`same_contract`, and `prediction_accuracy`, and the six outcome-feedback
-fields of §3.6. The module-level constant
+`same_contract`, `prediction_accuracy` (`None` for an operator entry), and
+`source`, and the six outcome-feedback fields of §3.6. The module-level constant
 `EXPERIMENT_MEMORY_MAX_ENTRIES = 12` sits beside it, so the cap is
 defined once and imported wherever it is applied.
 

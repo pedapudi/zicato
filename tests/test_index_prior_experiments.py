@@ -43,6 +43,7 @@ def _insert_experiment(
     hypothesis_json: str | None = None,
     core_idea: str = "do a thing",
     outcome_json: str | None = None,
+    source: str | None = "proposer",
 ) -> None:
     """Insert one ``experiments`` row with explicit verdict / delta / ids."""
     if hypothesis_json is None:
@@ -52,8 +53,8 @@ def _insert_experiment(
         conn.execute(
             "INSERT INTO experiments (epoch_id, generation_id, hypothesis_core_idea, "
             "hypothesis_why, hypothesis_json, tournament_decision, rejection_reason, "
-            "scalar_score_delta, drift_loss_delta, pass_rate_delta, outcome_json) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "scalar_score_delta, drift_loss_delta, pass_rate_delta, outcome_json, source) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 epoch_id,
                 generation_id,
@@ -66,6 +67,7 @@ def _insert_experiment(
                 None,
                 None,
                 outcome_json,
+                source,
             ),
         )
         conn.commit()
@@ -476,3 +478,42 @@ def test_cross_epoch_entries_never_displace_same_epoch(tmp_path: Path) -> None:
     assert len(roomy) == cap + 1
     assert roomy[-1].same_contract is False
     assert roomy[-1].epoch_id == "e1"
+
+
+def test_an_operator_entry_is_marked_and_carries_no_prediction_accuracy(tmp_path: Path) -> None:
+    """An operator's predictions never enter the proposer's calibration."""
+    db = _new_index(tmp_path)
+    for generation_id, source in (("v1", "operator"), ("v2", "proposer")):
+        _insert_experiment(
+            db,
+            epoch_id="e1",
+            generation_id=generation_id,
+            decision="promoted",
+            scalar_delta=-0.1,
+            hypothesis_json=_hyp("decrease", "large"),
+            outcome_json=_outcome(10.0, 2.0),
+            source=source,
+        )
+    by_gen = {pe.generation_id: pe for pe in prior_experiments_for_epoch(db, "e1")}
+    assert (by_gen["v1"].source, by_gen["v1"].prediction_accuracy) == ("operator", None)
+    assert (by_gen["v2"].source, by_gen["v2"].prediction_accuracy) == ("proposer", 1.0)
+
+
+def test_a_cross_epoch_operator_entry_keeps_its_source(tmp_path: Path) -> None:
+    db = _cross_epoch_world(tmp_path)
+    _insert_experiment(
+        db,
+        epoch_id="e1",
+        generation_id="v6",
+        decision="promoted",
+        scalar_delta=-0.4,
+        core_idea="an operator's win",
+        source="operator",
+    )
+    tail = {
+        pe.generation_id: pe.source
+        for pe in prior_experiments_for_epoch(db, "e2", cross_epoch=True)
+        if not pe.same_contract
+    }
+    assert tail["v6"] == "operator"
+    assert tail["v3"] == "proposer"

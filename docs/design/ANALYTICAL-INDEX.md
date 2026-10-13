@@ -227,8 +227,9 @@ follows (see [RUNTIME.md](RUNTIME.md)).
 The schema is defined authoritatively in
 `src/zicato/index/schema.py` as plain SQL DDL, kept as SQL strings
 rather than an ORM so the Rust supervisor can mirror it verbatim. The
-supported `SCHEMA_VERSION` is **15**, which includes, among others, the
-`generations.elo*` visibility-rating columns (§3.2) and the
+supported `SCHEMA_VERSION` is **16**, which includes, among others, the
+`generations.elo*` visibility-rating columns (§3.2), the
+`experiments.source` / `experiments.author` provenance columns (§3.3), and the
 `ingest_cursors` self-heal table (§5.2). That module is the contract;
 this section documents it.
 
@@ -335,6 +336,8 @@ marker a `v0` baseline carries.
 | `drift_loss_delta` | REAL | `outcome.drift_loss_delta` |
 | `pass_rate_delta` | REAL | `outcome.pass_rate_delta` |
 | `outcome_json` | TEXT (JSON) | the full resolved `outcome` block, verbatim |
+| `source` | TEXT | `"operator"` when the record carries `operator` (queued by `zicato proposer submit`), `"proposer"` for a proposed candidate, NULL for the seed |
+| `author` | TEXT | `operator.author`; NULL for a proposer candidate |
 
 Primary key `(epoch_id, generation_id)`. The detail the index gives no
 dedicated column — mutation-point ids, the expected-pass-rate band, the
@@ -580,7 +583,7 @@ Rebuilt index at /home/op/myagent/.zicato/index.db.
 
 ### 4.2 One supported schema
 
-`SCHEMA_VERSION` is **15**. It identifies both the SQLite layout and the
+`SCHEMA_VERSION` is **16**. It identifies both the SQLite layout and the
 projection semantics. `apply_schema` stamps `PRAGMA user_version` and its
 `schema_meta` mirror only when creating an empty database.
 

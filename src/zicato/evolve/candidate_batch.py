@@ -468,6 +468,7 @@ async def produce_candidate_batch(
                     rejection_reason="",
                     scalar_score_delta=None,
                     same_contract=True,
+                    source="operator" if operator_slot else "proposer",
                 )
             )
             sibling_signatures.append(_diversity_signature(challenger.experiment))

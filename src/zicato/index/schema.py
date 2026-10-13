@@ -22,7 +22,7 @@ from typing import Any
 #: Bump this whenever the table/column shape below changes. Stamped
 #: into ``PRAGMA user_version`` and the ``schema_meta`` table by
 #: :func:`apply_schema`.
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 16
 
 
 class IndexSchemaError(sqlite3.DatabaseError):
@@ -71,6 +71,8 @@ _TABLE_STATEMENTS: tuple[str, ...] = (
       drift_loss_delta REAL,
       pass_rate_delta REAL,
       outcome_json TEXT,
+      source TEXT,
+      author TEXT,
       PRIMARY KEY (epoch_id, generation_id)
     )
     """,
