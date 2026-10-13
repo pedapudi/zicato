@@ -40,10 +40,10 @@ from zicato.runtime.control import (
     CMD_CANDIDATE_PREFIX,
     ControlCommand,
     consume_command,
+    list_consumed_commands,
     list_pending_commands,
     write_command,
 )
-from zicato.runtime.paths import control_log_dir
 
 log = logging.getLogger("zicato.runtime.operator_queue")
 
@@ -119,13 +119,51 @@ class QueuedCandidate:
 
 
 @dataclass(frozen=True, slots=True)
+class QueuedRejection:
+    """A candidate of a queued round that its evolve round could not enter.
+
+    ``candidate`` is the candidate's index in the round (its ``--from``
+    order), ``generation_id`` the slot it would have taken, and ``reason``
+    the findings. The round writes these into the queue item, so the
+    control log keeps them and ``zicato proposer queue`` reports them: a
+    rejected candidate has no generation and no experiment record.
+    """
+
+    candidate: int
+    generation_id: str
+    reason: str
+
+    def body(self) -> dict[str, Any]:
+        return {
+            "candidate": self.candidate,
+            "generation_id": self.generation_id,
+            "reason": self.reason,
+        }
+
+    @classmethod
+    def from_body(cls, body: Any) -> QueuedRejection:
+        if not isinstance(body, dict) or set(body) != {"candidate", "generation_id", "reason"}:
+            raise ValueError("a queued rejection must carry candidate, generation_id and reason")
+        if isinstance(body["candidate"], bool) or not isinstance(body["candidate"], int):
+            raise ValueError("a queued rejection candidate must be an integer")
+        if not isinstance(body["generation_id"], str) or not isinstance(body["reason"], str):
+            raise ValueError("a queued rejection generation_id and reason must be strings")
+        return cls(
+            candidate=body["candidate"],
+            generation_id=body["generation_id"],
+            reason=body["reason"],
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class QueuedRound:
     """One round of operator candidates, as ``zicato proposer submit`` queued it.
 
     The candidates fill the round's first slots in order. ``exclusive`` asks
     the round to run them alone, with no proposal episodes.
     ``holdout_access`` is the author's statement of whether they could read
-    holdout results, or ``None`` when they did not state it.
+    holdout results, or ``None`` when they did not state it. ``rejections``
+    starts empty; the evolve round that takes the item fills it in.
     """
 
     queue_id: str
@@ -135,6 +173,7 @@ class QueuedRound:
     candidates: tuple[QueuedCandidate, ...]
     exclusive: bool = False
     holdout_access: bool | None = None
+    rejections: tuple[QueuedRejection, ...] = ()
 
     def body(self) -> dict[str, Any]:
         """The JSON body of the queue file."""
@@ -147,6 +186,7 @@ class QueuedRound:
             "exclusive": self.exclusive,
             "holdout_access": self.holdout_access,
             "candidates": [candidate.body() for candidate in self.candidates],
+            "rejections": [rejection.body() for rejection in self.rejections],
         }
 
     @classmethod
@@ -169,6 +209,9 @@ class QueuedRound:
         candidates = body.get("candidates")
         if not isinstance(candidates, list) or not candidates:
             raise ValueError("a queued round needs a non-empty list of candidates")
+        rejections = body.get("rejections", [])
+        if not isinstance(rejections, list):
+            raise ValueError("queued round rejections must be a list")
         return cls(
             queue_id=body["queue_id"],
             epoch_id=body["epoch_id"],
@@ -177,6 +220,7 @@ class QueuedRound:
             candidates=tuple(QueuedCandidate.from_body(c) for c in candidates),
             exclusive=body["exclusive"],
             holdout_access=holdout_access,
+            rejections=tuple(QueuedRejection.from_body(r) for r in rejections),
         )
 
     def provenance(
@@ -225,11 +269,37 @@ class PendingOperatorRound:
 
 
 @dataclass(frozen=True, slots=True)
-class MintedQueueItem:
-    """A generation that a candidate of a queued round was minted into."""
+class OperatorGeneration:
+    """A generation minted from a queued operator round, with its result so far.
+
+    ``settled`` is whether the generation has an outcome; ``decision`` and
+    ``rejection_reason`` come from that outcome. The round reads ``settled``
+    to decide whether an item can be consumed; ``zicato proposer queue``
+    reports every field.
+    """
 
     generation_id: str
     settled: bool
+    based_on: str = ""
+    decision: str | None = None
+    rejection_reason: str = ""
+    reverted_points: tuple[str, ...] = ()
+
+
+def _list_pending(workspace_root: Path) -> list[ControlCommand]:
+    """``list_pending_commands``, retried when a consumer removes a directory mid-walk.
+
+    The listing walks ``control/`` and then each command directory. A
+    consumer in another process can remove ``control/candidate/`` between
+    the two steps, when it consumes the last item; the next attempt then
+    sees the directory gone.
+    """
+    for _attempt in range(3):
+        try:
+            return list_pending_commands(workspace_root)
+        except FileNotFoundError:
+            continue
+    return list_pending_commands(workspace_root)
 
 
 def _pending_candidate_commands(workspace_root: Path) -> list[ControlCommand]:
@@ -241,7 +311,7 @@ def _pending_candidate_commands(workspace_root: Path) -> list[ControlCommand]:
     item keeps an empty payload and is consumed as unreadable.
     """
     commands: list[ControlCommand] = []
-    for cmd in list_pending_commands(workspace_root):
+    for cmd in _list_pending(workspace_root):
         if cmd.name != CMD_CANDIDATE_PREFIX:
             continue
         try:
@@ -260,7 +330,7 @@ def next_operator_round(
     epoch_id: str,
     *,
     slots: int,
-    minted: Callable[[], Mapping[str, Sequence[MintedQueueItem]]],
+    minted: Callable[[], Mapping[str, Sequence[OperatorGeneration]]],
 ) -> PendingOperatorRound | None:
     """The oldest queued round that this epoch's next round can take.
 
@@ -337,37 +407,48 @@ def _decode(payload: str) -> QueuedRound | None:
         return None
 
 
-def operator_round_records(workspace_root: Path) -> list[OperatorRoundRecord]:
-    """Every submitted round of the workspace, in submit order. Read-only.
+def operator_round_records(
+    workspace_root: Path, *, queue_id: str | None = None
+) -> list[OperatorRoundRecord]:
+    """The submitted rounds of the workspace, in submit order. Read-only.
 
     A queued item comes from ``control/candidate/``; a consumed one from its
-    audit record in ``control_log/``, which keeps the body and the reason.
-    When a crash left both copies, the audit record wins: consumption writes
-    it before it deletes the queue file.
+    audit record (:func:`~zicato.runtime.control.list_consumed_commands`),
+    which keeps the body and the reason. When both exist, the queue file
+    wins: a crash after the audit write left the item queued, and the next
+    round takes it again. ``queue_id`` reads only that round's records.
     """
-    records: dict[str, OperatorRoundRecord] = {
-        cmd.arg: OperatorRoundRecord(queue_id=cmd.arg, queued=_decode(cmd.payload))
-        for cmd in _pending_candidate_commands(workspace_root)
-    }
-    log_dir = control_log_dir(workspace_root)
-    if log_dir.is_dir():
-        for path in sorted(log_dir.glob(f"*_{CMD_CANDIDATE_PREFIX}_*.json")):
-            try:
-                audit = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                continue
-            if not isinstance(audit, dict) or audit.get("command") != CMD_CANDIDATE_PREFIX:
-                continue
-            queue_id = str(audit.get("arg") or "")
-            if not queue_id:
-                continue
-            records[queue_id] = OperatorRoundRecord(
-                queue_id=queue_id,
-                queued=_decode(str(audit.get("payload") or "")),
-                consumed_at=str(audit.get("consumed_at") or "") or None,
-                reason=str(audit.get("reason") or ""),
+    records: dict[str, OperatorRoundRecord] = {}
+    for audit in list_consumed_commands(workspace_root, CMD_CANDIDATE_PREFIX, arg=queue_id):
+        if audit.arg:
+            records[audit.arg] = OperatorRoundRecord(
+                queue_id=audit.arg,
+                queued=_decode(audit.payload),
+                consumed_at=audit.consumed_at or None,
+                reason=audit.reason,
             )
-    return [records[queue_id] for queue_id in sorted(records)]
+    for cmd in _pending_candidate_commands(workspace_root):
+        if queue_id is None or cmd.arg == queue_id:
+            records[cmd.arg] = OperatorRoundRecord(queue_id=cmd.arg, queued=_decode(cmd.payload))
+    return [records[key] for key in sorted(records)]
+
+
+def record_operator_rejections(
+    workspace_root: Path, queued: QueuedRound, rejections: Sequence[QueuedRejection]
+) -> None:
+    """Write the round's rejected candidates into the queue item.
+
+    The round calls this under its writer lease, before settlement or a
+    consume copies the item into the control log. It replaces what an earlier,
+    discarded attempt recorded, and writes nothing when the list is unchanged
+    or the item is gone.
+    """
+    current = tuple(rejections)
+    if current == queued.rejections:
+        return
+    if not any(cmd.arg == queued.queue_id for cmd in _list_pending(workspace_root)):
+        return
+    enqueue_operator_round(workspace_root, replace(queued, rejections=current))
 
 
 def consume_operator_round(workspace_root: Path, queue_id: str, *, reason: str) -> bool:
@@ -382,14 +463,16 @@ def consume_operator_round(workspace_root: Path, queue_id: str, *, reason: str) 
 __all__ = [
     "CONSUMER_SOURCE",
     "QUEUED_ROUND_FORMAT",
-    "MintedQueueItem",
+    "OperatorGeneration",
     "OperatorRoundRecord",
     "PendingOperatorRound",
     "QueuedCandidate",
+    "QueuedRejection",
     "QueuedRound",
     "consume_operator_round",
     "enqueue_operator_round",
     "new_queue_id",
     "next_operator_round",
     "operator_round_records",
+    "record_operator_rejections",
 ]

@@ -2,9 +2,9 @@
 
 | Measurement | Delta |
 |---|---:|
-| Total | +2,691 |
-| Production | +1,778 |
-| Production logic | +1,307 |
+| Total | +2,942 |
+| Production | +1,926 |
+| Production logic | +1,403 |
 
 An operator, or an agent, can now queue a round of hand-written candidates
 (issue #570). The production lines are the commands that copy the

@@ -5,9 +5,9 @@ description: Write candidates by hand and queue them as the next evolve round wi
 
 # zicato submit-candidates — queue a round of your own candidates
 
-`zicato evolve` normally asks the proposer for every candidate. These two
-commands let you, or an agent that works for you, write candidates by hand
-and put them into the next round:
+`zicato evolve` normally asks the proposer for every candidate. Three
+commands let you, or an agent that works for you, write candidates by hand,
+put them into the next round, and read what the round did:
 
 1. `zicato proposer checkout` copies the epoch's current champion to a
    directory.
@@ -18,10 +18,12 @@ and put them into the next round:
 4. The next `evolve` round runs them in its first slots. The board,
    replicates, gate, holdout confirmation and settlement are the same as for
    proposer candidates.
+5. `zicato proposer queue` reports what the round did with them.
 
-Neither command calls a model, takes the workspace lock, or changes the
-contract. Both can run while `zicato evolve` runs on the same workspace.
-Both print one JSON object, also when they refuse, and then exit 1.
+None of the three commands calls a model, takes the workspace lock, or
+changes the contract. All can run while `zicato evolve` runs on the same
+workspace. Each prints one JSON object. A success exits 0; a refusal exits 1,
+with the findings in the JSON.
 
 Always invoke via `.venv/bin/zicato`. The operating rules live in the
 repo-root `AGENTS.md`.
@@ -41,10 +43,12 @@ repo-root `AGENTS.md`.
 - **Say what you could see.** Pass `--holdout-access no` only when the author
   did not read holdout results. Pass `yes` when they did. The value is
   recorded with every candidate.
-- **Many tries are a hill-climb by hand.** Every candidate that enters a
-  round stays in the journal, rejected ones included, and every queued round
-  stays in the control log. Queue a candidate because you have a reason, not
-  to sample variants until one wins by chance.
+- **Many tries are a hill-climb by hand.** Every candidate that gets a
+  generation stays in the journal, rejected ones included. A candidate that
+  the round rejects before the tournament stays in the control log, and
+  `zicato proposer queue` lists it under `rejected_candidates`. Queue a
+  candidate only when you have a reason for it. A variant that wins only by
+  chance after many tries does not win again on a new measurement.
 
 ## Walkthrough
 
@@ -252,26 +256,34 @@ $Z proposer queue --workspace .zicato                         # every round, in 
 | `queued` | Waiting for an evolve round. |
 | `running` | Minted into a round that has not settled yet. |
 | `settled` | The round ran. Each entry of `generations` carries its `decision` and `rejection_reason`. |
-| `rejected` | The item left the queue without running. `reason` says why. |
+| `rejected` | No candidate got a generation, and the item left the queue. `reason` says why. |
+
+In any state, `rejected_candidates` lists the candidates that the round could
+not enter, with their index in your `--from` order, the slot they would have
+taken, and the findings. A `settled` round can have some: the others ran.
+`record_errors` at the top level lists experiment records that could not be
+read; while it is not empty, a `queued` or `rejected` round may have run.
 
 Before and after an exclusive round (real output from a test workspace):
 
 ```json
-{"ok": true, "round": {"author": "alice", "candidates": 1, "consumed_at": null,
+{"ok": true, "record_errors": [],
+ "round": {"author": "alice", "candidates": 1, "consumed_at": null,
   "epoch": "2026-10-13_alpha", "exclusive": true, "generations": [],
-  "queue_id": "20261013192045133390440-1fd243", "reason": null,
-  "state": "queued", "submitted_at": "2026-10-13T19:20:45Z"},
+  "queue_id": "20261013193510560973556-26ecb5", "reason": null,
+  "rejected_candidates": [], "state": "queued", "submitted_at": "2026-10-13T19:35:10Z"},
  "workspace": "/repo/.zicato"}
 ```
 
 ```json
-{"ok": true, "round": {"author": "alice", "candidates": 1,
-  "consumed_at": "2026-10-13T19:20:46Z", "epoch": "2026-10-13_alpha", "exclusive": true,
+{"ok": true, "record_errors": [],
+ "round": {"author": "alice", "candidates": 1,
+  "consumed_at": "2026-10-13T19:35:12Z", "epoch": "2026-10-13_alpha", "exclusive": true,
   "generations": [{"based_on": "v0", "decision": "promoted", "generation_id": "v1",
                    "rejection_reason": "", "reverted_points": []}],
-  "queue_id": "20261013192045133390440-1fd243",
-  "reason": "minted as v1; round 0 settled",
-  "state": "settled", "submitted_at": "2026-10-13T19:20:45Z"},
+  "queue_id": "20261013193510560973556-26ecb5",
+  "reason": "minted as v1; round 0 settled", "rejected_candidates": [],
+  "state": "settled", "submitted_at": "2026-10-13T19:35:10Z"},
  "workspace": "/repo/.zicato"}
 ```
 

@@ -323,6 +323,55 @@ def consume_command(
     return log_path
 
 
+@dataclass(frozen=True, slots=True)
+class ConsumedCommand:
+    """One audit record from ``control_log/``, as :func:`consume_command` wrote it."""
+
+    name: str
+    arg: str
+    payload: str
+    consumed_at: str
+    source: str
+    reason: str
+
+
+def list_consumed_commands(
+    workspace_root: Path, name: str, *, arg: str | None = None
+) -> list[ConsumedCommand]:
+    """The audit records of consumed ``name`` commands, oldest first.
+
+    ``arg`` keeps only the records of that target. The records are read
+    through the storage backend that :func:`consume_command` writes them
+    with; a record that cannot be read or decoded is left out.
+    """
+    backend = workspace_backend(workspace_root, start=False)
+    marker = f"_{name}_{arg}.json" if arg is not None else f"_{name}"
+    out: list[ConsumedCommand] = []
+    for key in backend.list_keys(control_log_prefix()):
+        basename = key.rsplit("/", 1)[-1]
+        if marker not in basename:
+            continue
+        try:
+            record = backend.read_json(key)
+        except (OSError, ValueError):
+            continue
+        if not isinstance(record, dict) or record.get("command") != name:
+            continue
+        if arg is not None and record.get("arg") != arg:
+            continue
+        out.append(
+            ConsumedCommand(
+                name=name,
+                arg=str(record.get("arg") or ""),
+                payload=str(record.get("payload") or ""),
+                consumed_at=str(record.get("consumed_at") or ""),
+                source=str(record.get("source") or ""),
+                reason=str(record.get("reason") or ""),
+            )
+        )
+    return out
+
+
 __all__ = [
     "CMD_PAUSE_EPOCH",
     "CMD_SKIP_ROUND",
@@ -330,7 +379,9 @@ __all__ = [
     "CMD_REJECT_PREFIX",
     "CMD_CANDIDATE_PREFIX",
     "CMD_RUBRIC_REPLACEMENT",
+    "ConsumedCommand",
     "ControlCommand",
+    "list_consumed_commands",
     "list_pending_commands",
     "is_paused",
     "write_command",

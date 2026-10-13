@@ -1,4 +1,4 @@
-"""``zicato proposer checkout`` and ``zicato proposer submit`` — queue an operator round.
+"""``zicato proposer checkout`` / ``submit`` / ``queue`` — queue an operator round.
 
 An operator, or an agent that works for one, can enter candidates into the
 next evolve round without proposal episodes:
@@ -15,13 +15,14 @@ next evolve round without proposal episodes:
 The next round puts the queued candidates in its first slots
 (:mod:`zicato.runtime.operator_queue`); the proposer fills the other slots
 unless the round is exclusive. If a promotion happens first, each operator
-version runs as written against the new champion.
+version runs as written against the new champion. ``queue`` reports what
+each submitted round did.
 
-Neither command takes the workspace writer lock or administers git
-worktrees: ``checkout`` reads, and ``submit`` validates in scratch
-directories and writes one queue file. Both can run while ``zicato evolve``
-runs on the same workspace. Both print one JSON object, also on failure,
-and exit 1 when they refuse.
+None of the commands takes the workspace writer lock or administers git
+worktrees: ``checkout`` and ``queue`` read, and ``submit`` validates in
+scratch directories and writes one queue file. All can run while
+``zicato evolve`` runs on the same workspace. Each prints one JSON object,
+also when it refuses; a refusal exits 1.
 """
 
 from __future__ import annotations
@@ -38,6 +39,11 @@ from typing import Any, NoReturn
 import click
 
 from zicato.core.types import MutationPoint, Patch
+from zicato.runtime.operator_queue import (
+    OperatorGeneration,
+    OperatorRoundRecord,
+    operator_round_records,
+)
 
 #: The record ``checkout`` writes beside the copy. ``submit`` reads it.
 CHECKOUT_RECORD = "checkout.json"
@@ -59,7 +65,8 @@ _WORKFLOW_EPILOG = (
     "  # edit /tmp/a/source/ and /tmp/b/source/ inside the mutation points\n"
     "  # fill in /tmp/a/hypothesis.json and /tmp/b/hypothesis.json\n"
     "  zicato proposer submit --from /tmp/a --from /tmp/b --author NAME\n"
-    "  zicato evolve --rounds 1      # or let a running loop take the round\n"
+    "  zicato evolve --rounds 1      # calls models: needs the operator's go-ahead;\n"
+    "                                # or let a running loop take the round\n"
     "  zicato proposer queue --queue-id ID   # what the round did\n"
     "\n"
     "\b\n"
@@ -646,14 +653,20 @@ def _submit(
     }
 
 
-def _round_status(record: Any, generations: Sequence[Any]) -> dict[str, Any]:
-    """One submitted round's state, read from its records alone."""
-    if record.consumed_at is None:
-        state = "running" if generations else "queued"
-    elif generations:
+def _round_status(
+    record: OperatorRoundRecord, generations: Sequence[OperatorGeneration]
+) -> dict[str, Any]:
+    """One submitted round's state, read from its records alone.
+
+    The generations decide first: a round with generations is ``settled``
+    once every one has an outcome, else ``running``, also while a crash left
+    its queue file behind. A round with no generation is ``queued`` while its
+    file exists, else ``rejected``.
+    """
+    if generations:
         state = "settled" if all(g.settled for g in generations) else "running"
     else:
-        state = "rejected"
+        state = "queued" if record.consumed_at is None else "rejected"
     queued = record.queued
     return {
         "queue_id": record.queue_id,
@@ -673,6 +686,9 @@ def _round_status(record: Any, generations: Sequence[Any]) -> dict[str, Any]:
             }
             for g in generations
         ],
+        "rejected_candidates": []
+        if queued is None
+        else [rejection.body() for rejection in queued.rejections],
         "consumed_at": record.consumed_at,
         "reason": record.reason,
     }
@@ -718,23 +734,28 @@ def queue_cmd(workspace: str, queue_id: str | None) -> None:
 
 def _queue(workspace_root: Path, queue_id: str | None) -> dict[str, Any]:
     from zicato.evolve.operator_slot import operator_generations  # noqa: PLC0415
-    from zicato.runtime.operator_queue import operator_round_records  # noqa: PLC0415
 
     _workspace_config(workspace_root)
-    records = operator_round_records(workspace_root)
-    if queue_id is not None:
-        records = [record for record in records if record.queue_id == queue_id]
-        if not records:
-            _refuse(f"No submitted round has queue id {queue_id!r} in {workspace_root}.")
-    by_epoch: dict[str, dict[str, list[Any]]] = {}
+    records = operator_round_records(workspace_root, queue_id=queue_id)
+    if queue_id is not None and not records:
+        _refuse(f"No submitted round has queue id {queue_id!r} in {workspace_root}.")
+    by_epoch: dict[str, dict[str, list[OperatorGeneration]]] = {}
+    record_errors: list[str] = []
     rounds = []
     for record in records:
         epoch_id = None if record.queued is None else record.queued.epoch_id
         if epoch_id is not None and epoch_id not in by_epoch:
-            by_epoch[epoch_id] = operator_generations(workspace_root, epoch_id)
-        generations = by_epoch.get(epoch_id, {}).get(record.queue_id, []) if epoch_id else []
+            by_epoch[epoch_id], errors = operator_generations(workspace_root, epoch_id)
+            record_errors.extend(errors)
+        generations = by_epoch[epoch_id].get(record.queue_id, []) if epoch_id else []
         rounds.append(_round_status(record, generations))
-    payload: dict[str, Any] = {"ok": True, "workspace": str(workspace_root)}
+    # An unreadable experiment record hides its generation, so a round that
+    # reads as ``queued`` or ``rejected`` may have run; say so.
+    payload: dict[str, Any] = {
+        "ok": True,
+        "workspace": str(workspace_root),
+        "record_errors": record_errors,
+    }
     if queue_id is not None:
         payload["round"] = rounds[0]
     else:

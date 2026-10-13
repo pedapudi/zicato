@@ -870,7 +870,8 @@ Options:
     # edit /tmp/a/source/ and /tmp/b/source/ inside the mutation points
     # fill in /tmp/a/hypothesis.json and /tmp/b/hypothesis.json
     zicato proposer submit --from /tmp/a --from /tmp/b --author NAME
-    zicato evolve --rounds 1      # or let a running loop take the round
+    zicato evolve --rounds 1      # calls models: needs the operator's go-ahead;
+                                  # or let a running loop take the round
     zicato proposer queue --queue-id ID   # what the round did
 
   Hypothesis fields (the proposer's schema; no other keys):
@@ -982,7 +983,8 @@ Options:
     # edit /tmp/a/source/ and /tmp/b/source/ inside the mutation points
     # fill in /tmp/a/hypothesis.json and /tmp/b/hypothesis.json
     zicato proposer submit --from /tmp/a --from /tmp/b --author NAME
-    zicato evolve --rounds 1      # or let a running loop take the round
+    zicato evolve --rounds 1      # calls models: needs the operator's go-ahead;
+                                  # or let a running loop take the round
     zicato proposer queue --queue-id ID   # what the round did
 
   Hypothesis fields (the proposer's schema; no other keys):

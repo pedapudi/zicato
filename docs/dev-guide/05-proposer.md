@@ -2523,11 +2523,18 @@ id any more, and the item runs again.
 and takes no lock. `operator_round_records` lists every round from the queue
 and from the audit records in `control_log/`; `operator_generations` maps
 each queue id to its generations and their outcomes. The state comes from
-those records, never from the `reason` text: still queued with no generation
-is `queued`, a generation without an outcome is `running`, a consumed item
-whose generations all settled is `settled`, and a consumed item with no
-generation is `rejected`. The minted scan that `next_operator_round` uses is
-the same `operator_generations` read.
+those records, never from the `reason` text. The generations decide first:
+all with an outcome is `settled`, any without one is `running`, also when a
+crash left the queue file behind. With no generation, an item still queued
+is `queued` (its file wins over an audit record, because the next round takes
+it again), and a consumed one is `rejected`. A candidate that the round
+rejects has no generation, so `produce_candidate_batch` writes it into the
+item as a `QueuedRejection` (`record_operator_rejections`); `queue` reports
+these as `rejected_candidates`. Experiment records that cannot be read come
+back as `record_errors`, because a hidden generation can make a round that
+ran look `queued` or `rejected`. The round's own minted scan reads the same
+`operator_generations`, and the audit records come from
+`list_consumed_commands` in `runtime/control.py`, the owner of their format.
 
 > ⚠️ TRAP — operator text is NOT inside the restricted-visibility envelope
 > (§5.8, G8). An operator, or an agent that reads the whole workspace, can

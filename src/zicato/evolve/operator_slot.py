@@ -24,7 +24,7 @@ from __future__ import annotations
 import json
 import tempfile
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -37,7 +37,7 @@ from zicato.proposer.foe_scratch import (
     project_working_copy,
 )
 from zicato.proposer.structured import ExperimentParseError, parse_experiment_json
-from zicato.runtime.operator_queue import MintedQueueItem, QueuedCandidate, QueuedRound
+from zicato.runtime.operator_queue import OperatorGeneration, QueuedCandidate, QueuedRound
 
 
 class OperatorCandidateRejected(Exception):
@@ -48,63 +48,34 @@ class OperatorCandidateRejected(Exception):
         super().__init__("; ".join(self.findings))
 
 
-@dataclass(frozen=True, slots=True)
-class OperatorGeneration:
-    """A generation minted from a queued operator round, with its result so far.
-
-    ``settled`` is whether the generation has an outcome; ``decision`` and
-    ``rejection_reason`` come from that outcome.
-    """
-
-    generation_id: str
-    based_on: str
-    settled: bool
-    decision: str | None
-    rejection_reason: str
-    reverted_points: tuple[str, ...]
-
-
 def operator_generations(
     workspace_root: Path, epoch_id: str
-) -> dict[str, list[OperatorGeneration]]:
-    """Map each queue id minted in this epoch to its generations, in id order."""
-    bodies, _errors = read_epoch_experiment_bodies(workspace_root, epoch_id)
+) -> tuple[dict[str, list[OperatorGeneration]], list[str]]:
+    """Map each queue id minted in this epoch to its generations, in id order.
+
+    The second value lists the experiment records that could not be read.
+    A generation behind such a record is missing from the map, so a caller
+    that reports a round's state must say that its records were incomplete.
+    """
+    bodies, errors = read_epoch_experiment_bodies(workspace_root, epoch_id)
     minted: dict[str, list[OperatorGeneration]] = {}
     for generation_id, body in bodies:
         operator = body.get("operator")
         if not isinstance(operator, dict) or not isinstance(operator.get("queue_id"), str):
             continue
         outcome = body.get("outcome")
-        outcome = outcome if isinstance(outcome, dict) else None
+        result = outcome if isinstance(outcome, dict) else {}
         minted.setdefault(operator["queue_id"], []).append(
             OperatorGeneration(
                 generation_id=generation_id,
+                settled=isinstance(outcome, dict),
                 based_on=str(operator.get("based_on") or ""),
-                settled=outcome is not None,
-                decision=None if outcome is None else outcome.get("tournament_decision"),
-                rejection_reason=""
-                if outcome is None
-                else str(outcome.get("rejection_reason") or ""),
+                decision=result.get("tournament_decision"),
+                rejection_reason=str(result.get("rejection_reason") or ""),
                 reverted_points=tuple(operator.get("reverted_points") or ()),
             )
         )
-    return minted
-
-
-def minted_operator_queue_ids(
-    workspace_root: Path, epoch_id: str
-) -> dict[str, list[MintedQueueItem]]:
-    """Map each queue id minted in this epoch to its generations.
-
-    A generation with an outcome is settled. A generation without one is
-    pending: recovery resumes or discards it.
-    """
-    return {
-        queue_id: [
-            MintedQueueItem(generation_id=g.generation_id, settled=g.settled) for g in generations
-        ]
-        for queue_id, generations in operator_generations(workspace_root, epoch_id).items()
-    }
+    return minted, list(errors)
 
 
 def queued_patch_body(patch: Patch) -> dict[str, Any]:
@@ -267,9 +238,7 @@ def mint_operator_experiment(
 
 __all__ = [
     "OperatorCandidateRejected",
-    "OperatorGeneration",
     "mint_operator_experiment",
-    "minted_operator_queue_ids",
     "operator_generations",
     "operator_rationale",
     "parse_operator_experiment",

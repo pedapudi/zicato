@@ -80,8 +80,8 @@ for the full flags.
 - `proposer checkout`, `proposer submit` and `proposer queue` take no workspace lock and
   administer no git worktrees, so they can run while `evolve` runs. `submit`
   only queues a round of candidates, at most one per field slot; the next
-  round mints, measures, and settles them like proposer candidates. Both
-  print one JSON object, also when they refuse, and then exit 1. The
+  round mints, measures, and settles them like proposer candidates. Each
+  command prints one JSON object; a refusal exits 1, with the findings. The
   operator guide is `skills/zicato-submit-candidates`.
 - Every `evolve` invocation runs the workspace validators at the public spend
   boundary before auto-epoching or model spend, and refuses to start on any

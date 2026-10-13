@@ -49,7 +49,7 @@ from zicato.epoch.journal import read_experiment, read_journal, write_experiment
 from zicato.evolve.generation_phase import current_generation
 from zicato.runtime.control import list_pending_commands
 from zicato.runtime.operator_queue import (
-    MintedQueueItem,
+    OperatorGeneration,
     QueuedCandidate,
     QueuedRound,
     consume_operator_round,
@@ -222,10 +222,10 @@ def test_the_round_takes_the_oldest_usable_item_and_consumes_the_dead_ones(
     (candidate_dir / "0-not-utf8").write_bytes(b"\xff\xfe\xfa")
 
     minted = {
-        "2-settled": [MintedQueueItem(generation_id="v1", settled=True)],
+        "2-settled": [OperatorGeneration(generation_id="v1", settled=True)],
         "3-pending": [
-            MintedQueueItem(generation_id="v2", settled=True),
-            MintedQueueItem(generation_id="v3", settled=False),
+            OperatorGeneration(generation_id="v2", settled=True),
+            OperatorGeneration(generation_id="v3", settled=False),
         ],
     }
     pending = next_operator_round(workspace, "e1", slots=1, minted=lambda: minted)
@@ -243,7 +243,7 @@ def test_the_round_takes_the_oldest_usable_item_and_consumes_the_dead_ones(
 
 
 def test_an_empty_queue_reads_no_experiments(tmp_path: Path) -> None:
-    def _fail() -> dict[str, list[MintedQueueItem]]:
+    def _fail() -> dict[str, list[OperatorGeneration]]:
         raise AssertionError("the minted scan ran for an empty queue")
 
     assert next_operator_round(tmp_path, "e1", slots=1, minted=_fail) is None
@@ -739,3 +739,104 @@ def test_queue_reports_a_queued_and_a_running_round_and_refuses_an_unknown_id(
     )
     (finding,) = _refusal(unknown)["findings"]
     assert "No submitted round has queue id 'no-such-round'" in finding
+
+
+def test_queue_lists_the_candidates_a_round_rejected_beside_the_ones_that_ran(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    workspace, epoch_id = _bootstrap_swiss_workspace(tmp_path, field_size=2)
+    broken = _queued_candidate(hypothesis=_hypothesis(modulating=["no_such_point"]))
+    enqueue_operator_round(workspace, _round(epoch_id, _queued_candidate(), broken, exclusive=True))
+    install_stub_adapter_factory(monkeypatch)
+    install_telemetry_stubs(
+        monkeypatch,
+        canned_loss_by_gen={"v0": 2.0, "v1": 0.5},
+        canned_pass_by_gen={"v0": True, "v1": True},
+    )
+
+    run_evolve_once(workspace, epoch_id, evaluation_call_llm)
+
+    status = _queue_status(workspace, "20261013000000-aaaaaaaa")
+    assert status["state"] == "settled"
+    assert [g["generation_id"] for g in status["generations"]] == ["v1"]
+    (rejected,) = status["rejected_candidates"]
+    assert rejected["candidate"] == 1
+    assert rejected["generation_id"] == "v2"
+    assert "does not match any known mutation point" in rejected["reason"]
+
+
+def test_queue_reads_the_generations_before_the_queue_file(tmp_path: Path) -> None:
+    """A settled round whose queue file a crash left behind still reads as settled."""
+    from zicato.core.types import OutcomeRecord, TournamentDecision
+
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    queued = _round(epoch_id)
+    enqueue_operator_round(workspace, queued)
+    experiment = replace(
+        _experiment(queued.provenance(queued.candidates[0])),
+        epoch_id=epoch_id,
+        id=f"exp_{epoch_id}_v1",
+        outcome=OutcomeRecord(
+            ran_at="2026-10-13T00:00:00Z",
+            pass_rate_delta=0.0,
+            drift_loss_delta=-1.0,
+            scalar_score_delta=-1.0,
+            tournament_decision=TournamentDecision.PROMOTED,
+        ),
+    )
+    write_experiment(workspace, epoch_id, "v1", experiment)
+
+    status = _queue_status(workspace, queued.queue_id)
+    assert status["state"] == "settled"
+    assert status["generations"][0]["decision"] == "promoted"
+
+
+def test_a_queue_file_wins_over_its_audit_record(tmp_path: Path) -> None:
+    """A crash after the audit write leaves the item queued; the next round runs it."""
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    queued = _round(epoch_id)
+    enqueue_operator_round(workspace, queued)
+    consume_operator_round(workspace, queued.queue_id, reason="rejected before the tournament: x")
+    enqueue_operator_round(workspace, queued)
+
+    status = _queue_status(workspace, queued.queue_id)
+    assert status["state"] == "queued"
+    assert status["reason"] is None
+
+
+def test_the_listing_survives_a_consumer_that_removes_the_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import zicato.runtime.operator_queue as operator_queue
+
+    workspace = tmp_path / ".zicato"
+    workspace.mkdir()
+    enqueue_operator_round(workspace, _round("e1"))
+    real = operator_queue.list_pending_commands
+    calls = []
+
+    def _racing(root: Path) -> Any:
+        calls.append(root)
+        if len(calls) == 1:
+            raise FileNotFoundError("control/candidate vanished")
+        return real(root)
+
+    monkeypatch.setattr(operator_queue, "list_pending_commands", _racing)
+    assert [r.queue_id for r in operator_queue.operator_round_records(workspace)] == [
+        "20261013000000-aaaaaaaa"
+    ]
+
+
+def test_queue_reports_unreadable_experiment_records(tmp_path: Path) -> None:
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    queued = _round(epoch_id)
+    enqueue_operator_round(workspace, queued)
+    broken = workspace / "epochs" / epoch_id / "generations" / "v1"
+    broken.mkdir(parents=True)
+    (broken / "experiment.json").write_text("{")
+
+    result = CliRunner().invoke(queue_cmd, ["--workspace", str(workspace)])
+    assert result.exit_code == 0, result.output
+    report = json.loads(result.output)
+    assert report["record_errors"]
+    assert any("v1" in error for error in report["record_errors"])
