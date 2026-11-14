@@ -148,7 +148,7 @@ def test_every_metric_name_the_targets_block_advertises_is_accepted() -> None:
     round, so every advertised name is parsed as a movement.
     """
     losses = [_loss_with("critical_judge", 0.4, 0.89)]
-    judges = _declared_custom_judge_names([], _WEIGHTED)
+    judges = declared_custom_judge_names([], _WEIGHTED)
     for block in (
         _block(_WEIGHTED, losses),
         _block(ScoringWeights()),

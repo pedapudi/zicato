@@ -497,6 +497,12 @@ def test_an_operator_entry_is_marked_and_carries_no_prediction_accuracy(tmp_path
     by_gen = {pe.generation_id: pe for pe in prior_experiments_for_epoch(db, "e1")}
     assert (by_gen["v1"].source, by_gen["v1"].prediction_accuracy) == ("operator", None)
     assert (by_gen["v2"].source, by_gen["v2"].prediction_accuracy) == ("proposer", 1.0)
+    # With outcome feedback on, an operator's own predictions stay out too.
+    fed = {
+        pe.generation_id: pe for pe in prior_experiments_for_epoch(db, "e1", outcome_feedback=True)
+    }
+    assert fed["v1"].predicted_movements == ()
+    assert fed["v2"].predicted_movements != ()
 
 
 def test_a_cross_epoch_operator_entry_keeps_its_source(tmp_path: Path) -> None:
