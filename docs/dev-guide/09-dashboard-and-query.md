@@ -64,7 +64,7 @@ controls layout and interaction.
 | `src/zicato/query/paths.py` | `WorkspacePaths` (the `.zicato/` layout), `read_current_epoch`, `list_epoch_ids`, `layout_of`, the coercers `coerce_float` / `finite_float` / `_opt_bool`, `_resolve_epoch_id` (the traversal guard) | 252 |
 | `src/zicato/query/decisions.py` | the one decision projection: `experiment_decision`, `canonical_decision`, `promoted_tristate`, `decision_surface`, `stamp_experiment_decision`, all validated against `core.tournament.TournamentDecision` | 44 |
 | `src/zicato/query/contracts.py` | typed envelopes and the exhaustive JSON endpoint registry `ENDPOINT_PAYLOADS` | 187 |
-| `src/zicato/query/_sqlite.py` | `open_index_ro` / `open_index_ro_or_none` (read-only `mode=ro` through `index.query.open_index`), `_query` (swallow-to-`[]`), `_opt_json`, `_IndexAbsent`, `INDEX_NOT_BUILT_NOTE` | 107 |
+| `src/zicato/query/_sqlite.py` | `open_index_ro` / `open_index_ro_or_none` (read-only `mode=ro` through `index.query.open_index`), `_query` (swallow-to-`[]`), `_opt_json`, `_IndexAbsent`, `INDEX_NOT_BUILT_NOTE` | 101 |
 | `src/zicato/query/inputs.py` | `EpochInputs` / `GenerationInputs` — the per-response captured inputs (§ "Inputs shared within a response") | 97 |
 | `src/zicato/query/runtime_view.py` | `build_snapshot`, `derive_liveness`, `read_heartbeat_dict` (the `ts` int-ms stamp), `read_effective_settings`, `normalize_entry_status` (the four-bucket canon), `read_active_runs_view`, `read_paused` | 831 |
 | `src/zicato/query/loop_view.py` | `build_optimization_trajectory` (the uncertainty-honest verdict), `build_tournament_cost`, `build_round_pipeline` + `PIPELINE_STEPS` (the server-owned stepper projection) | 545 |
@@ -73,14 +73,14 @@ controls layout and interaction.
 | `src/zicato/query/promoted_head.py` | `current_champion`, `champion_history`, `read_recorded_heads`, `head_of_round` — the champion each committed round names | 71 |
 | `src/zicato/query/file_view.py` | `build_file_index`, `build_generation_tree`, `read_generation_file`, `build_generation_patches`, `build_generation_diff` — a generation's source tree, one file of it, its patch set, and its diff against its parent, read through the `GenerationStore` protocol; when a tree is gone the diff carries the patched spans reconstructed from records, with `provenance` saying so | 515 |
 | `src/zicato/query/mutation_view.py` | `build_mutation_index`, `build_mutation_detail`, `reconstructed_spans` — an epoch's mutation surface from the `v0` tree or, when the tree is gone, from the frozen `mutations.json`, and one site's content in every generation whose patch touched it | 786 |
-| `src/zicato/query/reflection_view.py` | `list_reflections`, `build_reflection_summary` (four-pillar bill of health), `build_judge_scorecards`, `build_practice_review`, `build_adjudication_xray` (transcript + judge verdict + meta-judge record), `entry_candidate_matrix` (reflection-independent, off the index loss tables) — the Instrument-lens feed. Index-first, file-fallback; the x-ray reads `result.json` / `judge_io` rather than re-running the adjudicator's events-preview reconstruction | 590 |
+| `src/zicato/query/reflection_view.py` | `list_reflections`, `build_reflection_summary` (four-pillar bill of health), `build_judge_scorecards`, `build_practice_review`, `build_adjudication_xray` (transcript + judge verdict + meta-judge record) — the Instrument-lens feed. Index-first, file-fallback; the x-ray reads `result.json` / `judge_io` rather than re-running the adjudicator's events-preview reconstruction | 530 |
 | `src/zicato/query/trace_view.py` | the trajectory-bootstrap traces of a reflection: `build_trace_list`, `build_trace_detail`, `build_suggestion_provenance` | 809 |
 | `src/zicato/query/epoch_view.py` | `build_epoch_view`, `build_epochs_summary`, `compute_board_split`, `build_epoch_analysis`, `read_epoch_analysis_html` | 793 |
 | `src/zicato/query/gate_view.py` | `build_gate_breakdown` (+ `deciding_rule`), `build_score_trajectory`, `build_health_report`, `build_rating_view`, `build_drift_movements` | 1052 |
 | `src/zicato/query/tournament_view.py` | `build_bracket`, `build_tournament_structure`, `build_matchup_detail`, `build_matchup_grid` | 991 |
 | `src/zicato/query/candidate_view.py` | `build_candidate_dossier` — the candidate page's one composed read | 457 |
 | `src/zicato/query/eval_view.py` | the board-as-instrument reads: `build_eval_matrix`, `build_eval_dossier`, `build_eval_health`, `facet_scores_for_generation` | 1527 |
-| `src/zicato/query/execution_plan.py` / `live_execution_plan.py` | `build_execution_plan` (the loop as one served tree) and `build_live_execution_plan` / `build_live_pipeline` (the running epoch's plan and stepper) | 1402 / 558 |
+| `src/zicato/query/live_execution_plan.py` | `build_live_pipeline` — the running epoch's stepper verdict, with the endpoint's degrade | 34 |
 | `src/zicato/query/{judge,hypothesis,lineage,ledger,transcript,conversations,journal,proposer}_view.py`, `events_index.py`, `run_log.py`, `log_stream.py`, `judge_roster.py`, `replicate_scores.py`, `ratings.py`, `board_scan.py` | per-judge matrices and `build_environment` (`judge_view`), hypothesis/calibration accuracy, the lineage feed, the experiments ledger, run transcripts and episode exports, matchup conversations, the served journal, the proposer scorecard, run and events lookup plus `build_workspace_view` / `build_meta_loop_ledger` (`events_index`), the run-log tail, the operator log view, the armed judge roster, replicate measurements, rating triples, and board-row projections. `judge_view.build_per_entry_for_generation` serves the dossier; its `facet_scores` block comes from `eval_view.facet_scores_for_generation` | — |
 | `src/zicato/query/transcript_reconstruction.py` | `reconstruct_transcript` — one goldfive `events.jsonl` or one Foe `episode.jsonl` → an ordered `Transcript` | 921 |
 | `src/zicato/query/foe_episode.py` | Reads proposal episode events and their conversation contributions; request messages remain recorded facts | 192 |
@@ -834,11 +834,9 @@ chapter leans on:
 |---|---|---|---|
 | `build_optimization_trajectory` | `/api/epoch/{id}/trajectory` | `{points, promotion_rate, plateaued, verdict, recent_movement, noise_floor}` | empty shape + `note`; floor still attached (§9.8) |
 | `build_tournament_cost` | `/api/epoch/{id}/cost` | `{per_matchup, total_runtime_ms, cost_per_promotion_ms}` | empty shape + `note` |
-| `build_live_pipeline` (`query/live_execution_plan.py`) | `/api/live/pipeline` | `{running, stale, liveness, phase, epoch_id, round_index, steps[], epoch_open_step, active_step, decision, in_flight}` — the verdict `build_round_pipeline` decodes, projected out of the SAME read of the running epoch that serves the live execution plan, so the two surfaces cannot report different phases or different counts of the same records | every input degrades independently (§9.11); an unreadable phase serves `{}`, which the stepper reads as no stepper |
+| `build_live_pipeline` (`query/live_execution_plan.py`) | `/api/live/pipeline` | `{running, stale, liveness, phase, epoch_id, round_index, steps[], epoch_open_step, active_step, decision, in_flight}` — the verdict `build_round_pipeline` decodes | every input degrades independently (§9.11); an unreadable phase serves `{}`, which the stepper reads as no stepper |
 | `build_racing_field` | `/api/epoch/{id}/racing-field` | the field-tournament record (`tournament_id`, `state`, `structure`, `structure_params`, `competitors`, `rounds[]`, `standings`, `champion_generation_id`, `promoted_generation_id`, `decision`, …) plus `present`, `source`, `champion_lineage` | `{epoch_id, present: false}`, plus `unreadable` for a malformed record (§9.2.5) |
 | `build_round_timeline` | `/api/epoch/{id}/round-timeline` | `{rounds[], waterfall[]}` | empty rounds list |
-| `build_execution_plan` | library only | `{board:{digest, entry_count}, stages[]}` — the loop as one tree: baseline + per-round propose/apply/run/gate/decide steps from the round log, work units from the per-unit loss files (never from the log's `unit_completed` aggregate), plus one `measurement_band` step per stage for the reserved ranges that are not a cell's evidence (calibration, the pre-flight's deliberately-degraded probes, the candidate screen, reflection, admission, and anything `unclaimed`), each node stating `status` and `exact`/`partial` provenance | empty stages list + `note` |
-| `build_live_execution_plan` | library only | the durable plan for the epoch the heartbeat names, plus `liveness`, an `active` flag on every node, and `overlay: {in_flight, placed, unplaced, other_epoch, active_path, phase, round_index, note}` — the active path is the round plus the step `build_round_pipeline` names (never a second decoding of the phase), and each still-beating `active_runs` record becomes a `running` `board_entry_run` keyed `run:<run_id>` under its candidate's sweep, or under the `run_scope` stage when the plan cannot place it | durable plan + empty overlay when not `live`; empty plan shape + `note` on failure |
 | `build_per_entry_for_generation` | `/api/generation/{e}/{g}/per-entry` | `{tournament_id, mean_score, facet_scores, entries[]}`; `facet_scores` is `{facets: {name: {scalar, mean_score, scored_count, entry_count, ran_count}}, overall}` — the candidate re-aggregated per `facet:` board tag at the epoch's frozen weights, so a facet scalar is comparable to the `overall` row | `{facets: {}, overall: null}` (always present) |
 | `build_snapshot` | `/api/state`, SSE `snapshot` | see above | each field independently `None` |
 | `read_active_runs_view` | `/api/active-runs` | `[{run_id, progress, elapsed_seconds, budget_seconds, last_progress_ts, fresh, …}]`; `fresh` is the server's per-row in-flight verdict — both of `fresh_run_count`'s gates, so the tally is the count of `fresh` rows | `[]` |
@@ -872,7 +870,7 @@ that aggregates the decoded rows, which is why the table has five:
 | `per_judge_loss_totals(layout, epoch_id, generation_id)` | those rows' weighted loss, summed across a generation's runs | the report's per-judge totals |
 | `read_board_entries(layout, epoch_id)` | an epoch's board as validated entries plus its `disable_drift` header | `eval_view._load_board_entries`, the report's board section |
 | `cumulative_scalars(steps)` | the cumulative scalar along a lineage, from the per-generation deltas | `epoch/analysis._scalar_trajectory`, the report's trajectory |
-| `read_round_log(root, epoch_id, index)` / `read_round_records(layout, epoch_id)` | one round's events and whether the log read cleanly; every settled round folded into a record | `execution_plan._read_round_events`, the report's round records |
+| `read_round_records(layout, epoch_id)` | every settled round folded into a record; a round whose log cannot be read or folded is skipped | the report's round records |
 
 Two aggregations of one measurement can disagree. The per-judge pair did: the
 reducer keys drift it could not pair with a judge under the empty judge name,
@@ -2014,13 +2012,10 @@ display, and the JS renders the verdict verbatim. `build_round_pipeline`
 projects it from the live tournament fold + heartbeat + active-runs count,
 staleness-gated the way the frontend gates.
 
-The pipeline endpoint and the library's live plan share one calculation.
-`build_live_surfaces` (`live_execution_plan.py`) reads the workspace once,
-calls `build_round_pipeline`, and projects that verdict onto plan nodes.
-`/api/live/pipeline` serves the pipeline projection. The execution-plan
-readers remain library functions; the dashboard exposes no plan route.
-The shared reader runs in the threadpool, leaving the event loop available
-to sibling requests while it scans per-unit files.
+`/api/live/pipeline` serves that verdict through `build_live_pipeline`
+(`live_execution_plan.py`), which calls `build_round_pipeline` and serves
+an empty object when the phase cannot be read. The reader runs in the
+threadpool, leaving the event loop available to sibling requests.
 
 The JS renderer is a straight transcription — one pip per server step, the
 active step's detail beside it, the decision word once the round settles.

@@ -451,8 +451,7 @@ the `operator_override` / `operator_override_reason` fields of
 
 The champion-vs-challenger grid of §3.3, available for any round
 and aggregable across rounds. It pairs the two generations'
-`loss_profiles` rows on `entry_id` (`per_entry_grid` in
-`src/zicato/tournament/detail.py`):
+`loss_profiles` rows on `entry_id`:
 
 ```sql
 SELECT entry_id, drift_loss, pass_fail
@@ -462,7 +461,7 @@ WHERE epoch_id = ? AND generation_id = ?   -- once for the champion, once for th
 
 (See [ANALYTICAL-INDEX.md §3.6](ANALYTICAL-INDEX.md#36-loss_profiles).)
 The dashboard's matchup panel reads the same grid straight off the
-persisted loss files when the index was never built
+persisted loss files, so it needs no index
 (`GET /api/matchup-grid/{epoch_id}/{champion_id}/{challenger_id}`).
 Aggregated across the epoch, the grid surfaces *which entries
 consistently differentiate generations and which never do* —
@@ -572,9 +571,11 @@ loop-health finding, is the *stalled loop* signal of
 Which mutation points correlate with winning? Every challenger's
 patches name the mutation-point ids they touched (the `patches`
 table, [ANALYTICAL-INDEX.md §3.4](ANALYTICAL-INDEX.md#34-patches)).
-`mutation_heat_map` (`src/zicato/tournament/detail.py`) crosses those
-ids against each challenger's `tournament_decision`, counting a
-generation once per mutation id:
+The heat map crosses those ids against each challenger's
+`tournament_decision`, counting a generation once per mutation id.
+`mutation_point_track_record` (`src/zicato/index/query.py`) computes the
+per-point touched and promoted counts over settled experiments; the query
+below states the same cross:
 
 ```sql
 SELECT p.mutation_id,

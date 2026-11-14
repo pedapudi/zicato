@@ -1035,9 +1035,9 @@ complete round record from pending to committed before refreshing the index.
 Startup can finish interrupted publication or index refresh without
 evaluating the tournament again.
 
-The phase names follow the lifecycle steps the execution plan serves
-(`zicato.query.execution_plan.ROUND_STEPS`: propose, apply, run, gate,
-decide), so a round's code and a round's served tree name the same steps.
+The phase names follow the lifecycle steps the round log records (propose,
+apply, run, gate, decide), so a round's code and a round's log name the same
+steps.
 
 ### 4.0 The structure shapes, in one table
 

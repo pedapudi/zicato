@@ -1,9 +1,9 @@
 """Read the measurements of a candidate on one board entry.
 
-Tournament and confirmation draws supply candidate evidence. Calibration,
-preflight, screening, reflection, and admission remain separately visible.
-Every reader uses the same path and record validation. Conflicting records
-remain visible for diagnosis and cannot supply reusable evidence."""
+Tournament and confirmation draws supply candidate evidence; calibration,
+preflight, screening, reflection, and admission draws do not. Every reader
+uses the same path and record validation, and a record that conflicts with
+its path supplies no evidence."""
 
 from __future__ import annotations
 
@@ -11,8 +11,7 @@ import json
 import math
 import statistics
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, replace
-from functools import cache
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from zicato.core.loss import has_execution_evidence, validate_loss_identity
@@ -28,86 +27,6 @@ from zicato.query.paths import WorkspacePaths
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from zicato.core.loss import LossProfile
-
-
-@dataclass(frozen=True, slots=True)
-class MeasurementBand:
-    """The display name and explanation of a measurement purpose."""
-
-    key: str
-    label: str
-    purpose: str
-
-    def holds(self, index: MeasurementDraw) -> bool:
-        """Whether this band claims ``index``."""
-        return self.key == index.purpose
-
-
-@cache
-def measurement_bands() -> tuple[MeasurementBand, ...]:
-    """Descriptions of the purposes that do not supply tournament evidence."""
-
-    return (
-        MeasurementBand(
-            key="calibration",
-            label="A/A noise-floor calibration",
-            purpose=(
-                "Repeated draws of this generation's own code over the frozen "
-                "board. Every pair is a duel whose true effect is zero, so their "
-                "spread is the evaluation's noise floor — not evidence about any "
-                "candidate."
-            ),
-        ),
-        MeasurementBand(
-            key="contract_preflight",
-            label="Contract pre-flight — deliberately degraded probes",
-            purpose=(
-                "Draws of DELIBERATELY DEGRADED copies of this generation's code, "
-                "cached under the generation's own id. Each probe blanks or "
-                "scrambles one mutation point to test whether the board can "
-                "out-signal its own noise. A failure here is the probe working as "
-                "designed and says NOTHING about what this generation does."
-            ),
-        ),
-        MeasurementBand(
-            key="candidate_screen",
-            label="Candidate screen",
-            purpose=(
-                "A proposed candidate's pre-tournament veto probe, run over a "
-                "rotating TRAIN panel subset rather than the frozen board, from an "
-                "ephemeral snapshot that never entered the lineage. It "
-                "disqualifies; it never ranks, and its scalar is never evidence."
-            ),
-        ),
-        MeasurementBand(
-            key="board_reflection",
-            label="Board reflection",
-            purpose=(
-                "Draws taken to evaluate the evaluation — the judges, the loss "
-                "terms, the board entries themselves — rather than the generation "
-                "they were drawn from."
-            ),
-        ),
-        MeasurementBand(
-            key="eval_synthesis_admission",
-            label="Eval-synthesis admission probes",
-            purpose=(
-                "Draws that measure whether a DRAFTED board entry discriminates "
-                "and how often it flips under noise, before it is admitted to the "
-                "board."
-            ),
-        ),
-    )
-
-
-def band_of(index: MeasurementDraw) -> MeasurementBand | None:
-    """Return the purpose description, or None for tournament evidence."""
-    if index.cell_evidence:
-        return None
-    for band in measurement_bands():
-        if band.holds(index):
-            return band
-    raise ValueError(f"measurement purpose has no description: {index.purpose}")
 
 
 def measurement(name: str) -> MeasurementDraw | None:
@@ -169,14 +88,6 @@ def _indexed_draws(
     return draws
 
 
-AMBIGUOUS_BAND = MeasurementBand(
-    key="ambiguous",
-    label="Ambiguous measurement provenance",
-    purpose="The record does not establish its measurement purpose or actual execution. "
-    "These records remain visible but supply no reusable evidence.",
-)
-
-
 def _eligible_identity(index: MeasurementDraw, profile: LossProfile) -> bool:
     try:
         recorded_measurement(index, measurement=profile.measurement)
@@ -190,11 +101,10 @@ def cell_replicate_draws_indexed(
 ) -> list[tuple[MeasurementDraw, LossProfile]]:
     """The qualifying draws for ONE cell as ``(replicate index, profile)``, ascending.
 
-    THE enumeration; :func:`cell_replicate_draws` is this without the
-    indices. A reader that must NAME a draw (the execution plan renders one
-    node per replicate) needs the index the filename carries, and deriving
-    it a second time is how two surfaces start disagreeing about which
-    files count.
+    THE enumeration; :func:`cell_replicate_draws` is this narrowed to the
+    selected seed and without the indices. A reader that must NAME a draw
+    needs the index the filename carries, and deriving it a second time is
+    how two surfaces start disagreeing about which files count.
     """
     return [
         (index, profile)
@@ -207,29 +117,6 @@ def cell_replicate_draws_indexed(
         )
         if valid and _eligible_identity(index, profile)
     ]
-
-
-def measurement_band_draws_indexed(
-    paths: WorkspacePaths, epoch_id: str, generation_id: str, entry_id: str
-) -> list[tuple[MeasurementDraw, MeasurementBand, LossProfile]]:
-    """Every NON-evidence draw of ONE cell as ``(index, band, profile)``, ascending.
-
-    The exact complement of :func:`cell_replicate_draws_indexed` over the same
-    run directory: together the two account for every persisted replicate slot
-    the cell holds, so a draw cannot be dropped by both. These draws are real
-    executions with other meanings — they are never a cell's evidence, and
-    each one carries the band that says what it measured.
-    """
-    out: list[tuple[MeasurementDraw, MeasurementBand, LossProfile]] = []
-    for index, profile, valid in _indexed_draws(
-        paths, epoch_id, generation_id, entry_id, lambda _: True
-    ):
-        band = band_of(index)
-        if not (valid and _eligible_identity(index, profile)):
-            band = AMBIGUOUS_BAND
-        if band is not None:
-            out.append((index, band, profile))
-    return out
 
 
 def cell_replicate_draws(

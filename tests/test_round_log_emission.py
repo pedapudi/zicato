@@ -799,21 +799,6 @@ class TestDuelScopeWiring:
         assert (gate.generation_id, gate.attributes) == ("", {})
 
 
-def test_the_step_vocabulary_is_the_execution_plan_s() -> None:
-    """The emitter's steps are exactly the steps the plan can place.
-
-    ``evolve`` keeps its own literal table rather than importing ``query``
-    (the layering forbids the dependency), so the two can drift apart in
-    silence. A step this table invents is a coordinate naming a position no
-    plan node has, which is worse than an absent one. The test imports both
-    sides — the #272 registry-correspondence idiom.
-    """
-    from zicato.evolve.round_reporting import _ROUND_LOG_STEP
-    from zicato.query.execution_plan import ROUND_STEPS
-
-    assert set(_ROUND_LOG_STEP.values()) == {key for key, _, _ in ROUND_STEPS}
-
-
 def test_every_event_token_is_stepped_or_declared_stepless() -> None:
     """No event token is stepless by omission — only by declaration.
 

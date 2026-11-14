@@ -52,7 +52,6 @@ from zicato.epoch.round_log import (
     fold_round_record,
 )
 from zicato.query.eval_view import _load_board_entries
-from zicato.query.execution_plan import _read_round_events
 from zicato.query.judge_view import build_per_judge_for_entry, build_per_judge_for_generation
 from zicato.query.paths import WorkspacePaths
 from zicato.telemetry.reducer import write_loss_profile
@@ -244,12 +243,10 @@ def test_board_entries_match_the_query_layer(workspace: Path) -> None:
 
 
 def test_round_records_match_the_query_layer(workspace: Path) -> None:
-    """The report folds the same round logs the execution plan reads."""
-    paths = WorkspacePaths(workspace)
+    """The report folds the round logs the workspace holds."""
     data = gather_epoch_report_data(workspace, EPOCH)
 
-    events, readable = _read_round_events(paths, EPOCH, 0)
-    assert readable is True
+    events = RoundLog(workspace, EPOCH, 0).read()
     assert list(data.round_records) == [fold_round_record(events)]
 
 

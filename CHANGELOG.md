@@ -10,6 +10,31 @@
 > only in the git history. The design documents under
 > [`docs/design/`](docs/design/) describe the current system.
 
+### Readers that no served surface called are removed
+
+The execution-plan tree (`zicato.query.execution_plan`) and its live
+overlay had no route: `/api/live/pipeline` built the whole plan and
+returned only the stepper verdict. `build_live_pipeline` now returns that
+verdict directly, and the route's response is unchanged. Removed with the
+plan are the helpers only it reached: the measurement-band descriptions in
+`zicato.query.replicate_scores`, `zicato.workspace.read_round_log`, the
+board-row iterator in `zicato.query.board_scan`, and the screen-id round
+parser in `zicato.epoch.screen`. The round log still records each event's
+lifecycle step.
+
+`zicato.tournament.detail` keeps the hypothesis ledger, the optimization
+trajectory and the tournament cost; its bracket, lineage, per-entry grid,
+scalar breakdown, matchup detail, mutation heat map and pooled calibration
+rate, which only tests called, are removed. Seven index readers with no
+production caller are removed from `zicato.index.query`
+(`runs_for_generation`, `runs_for_tournament`,
+`loss_profiles_for_tournament`, `epoch_ancestry`, `metric_counts_for_run`,
+`tournaments_for_epoch`, `judge_scorecards_for_reflection`); the index
+schema and its ingest are unchanged, and the tests of what ingest writes
+read the tables directly. `query.reflection_view.entry_candidate_matrix`,
+`query.events_index.find_generation_entry_events` and `query._sqlite._opt_str`
+are removed for the same reason.
+
 ### The builder's knob help is the scoring configuration's documentation
 
 Each help popover in the tournament builder shows the docstring of the

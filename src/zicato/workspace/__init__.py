@@ -62,7 +62,6 @@ from zicato.workspace.aggregates import (
     judge_loss_rows,
     per_judge_loss_totals,
     read_board_entries,
-    read_round_log,
     read_round_records,
 )
 from zicato.workspace.epochs import (
@@ -110,7 +109,6 @@ __all__ = [
     "read_epoch_config",
     "read_events_history",
     "read_loss",
-    "read_round_log",
     "read_round_records",
     "round_indices",
     "run_entry_ids",

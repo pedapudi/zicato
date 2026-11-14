@@ -24,10 +24,7 @@ from zicato.index.query import (
     index_counts,
     index_schema_version,
     loss_profiles_for_generation,
-    metric_counts_for_run,
     open_index,
-    runs_for_generation,
-    tournaments_for_epoch,
 )
 from zicato.index.schema import SCHEMA_VERSION
 from zicato.telemetry.reducer import write_loss_profile
@@ -173,27 +170,11 @@ def test_generations_for_epoch_returns_rows(tmp_path: Path) -> None:
     assert gens[1]["parent_generation_id"] == "v0"
 
 
-def test_runs_for_generation_returns_rows(tmp_path: Path) -> None:
-    _, db, eid = _build_indexed_workspace(tmp_path)
-    runs = runs_for_generation(db, eid, "v1")
-    assert len(runs) == 1
-    assert runs[0]["run_id"] == run_id_for_unit("v1", "e1", epoch_id=eid)
-
-
 def test_loss_profiles_for_generation_returns_rows(tmp_path: Path) -> None:
     _, db, eid = _build_indexed_workspace(tmp_path)
     profiles = loss_profiles_for_generation(db, eid, "v0")
     assert len(profiles) == 1
     assert profiles[0]["drift_loss"] == pytest.approx(1.5)
-
-
-def test_metric_counts_for_run_returns_rows(tmp_path: Path) -> None:
-    _, db, eid = _build_indexed_workspace(tmp_path)
-    metrics = metric_counts_for_run(db, run_id_for_unit("v0", "e1", epoch_id=eid))
-    drift = [m for m in metrics if m["namespace"] == "drift"]
-    assert len(drift) == 1
-    assert drift[0]["name"] == "drift:off_topic"
-    assert drift[0]["severity"] == "info"
 
 
 def test_experiments_for_epoch_returns_rows(tmp_path: Path) -> None:
@@ -203,24 +184,14 @@ def test_experiments_for_epoch_returns_rows(tmp_path: Path) -> None:
     assert exps[0]["generation_id"] == "v1"
 
 
-def test_tournaments_for_epoch_returns_rows(tmp_path: Path) -> None:
-    _, db, eid = _build_indexed_workspace(tmp_path)
-    tournaments = tournaments_for_epoch(db, eid)
-    assert len(tournaments) == 1
-    assert tournaments[0]["decision"] == "promoted"
-
-
 def test_selectors_tolerate_missing_db(tmp_path: Path) -> None:
     # Every selector returns an empty list rather than raising when the
     # index has never been built.
     absent = tmp_path / "absent.db"
     assert all_epochs(absent) == []
     assert generations_for_epoch(absent, "e") == []
-    assert runs_for_generation(absent, "e", "v0") == []
     assert loss_profiles_for_generation(absent, "e", "v0") == []
-    assert metric_counts_for_run(absent, "r") == []
     assert experiments_for_epoch(absent, "e") == []
-    assert tournaments_for_epoch(absent, "e") == []
 
 
 def test_index_counts_tolerates_missing_db(tmp_path: Path) -> None:

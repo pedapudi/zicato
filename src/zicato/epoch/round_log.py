@@ -458,7 +458,7 @@ class RoundEventScope:
     Two coordinates are named fields, because two have writers today:
 
     * ``generation_id`` — the challenger the event belongs to.
-    * ``step`` — the execution plan's lifecycle step: propose, apply, run,
+    * ``step`` — the round's lifecycle step: propose, apply, run,
       gate or decide. The round's own boundaries are not steps within it, so
       ``round_opened`` and ``round_closed`` carry none.
 
