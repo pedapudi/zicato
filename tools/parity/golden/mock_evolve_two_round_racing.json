@@ -1557,7 +1557,7 @@
     "0/round_log.jsonl": [
       {
         "payload": {
-          "contract_hash": "aba634b56055531de7c3751332fada28f020684547541f797646bb8d1415cff4"
+          "contract_hash": "d3710e8f09316c1295ff5447e506ed03d9983992e31d701f08d788a1a32402fa"
         },
         "scope": {},
         "seq": 1,
@@ -2531,7 +2531,7 @@
     "1/round_log.jsonl": [
       {
         "payload": {
-          "contract_hash": "aba634b56055531de7c3751332fada28f020684547541f797646bb8d1415cff4"
+          "contract_hash": "d3710e8f09316c1295ff5447e506ed03d9983992e31d701f08d788a1a32402fa"
         },
         "scope": {},
         "seq": 1,
