@@ -11,6 +11,39 @@
 > formats — are recorded only in the git history. The design documents
 > under [`docs/design/`](docs/design/) describe the current system.
 
+### An operator or an agent can queue a round of hand-written candidates
+
+`zicato proposer checkout --into DIR` copies the epoch's current champion
+with a hypothesis template and the evidence the proposer may see. `zicato
+proposer submit --from DIR [--from DIR ...] --author NAME --holdout-access
+yes|no [--exclusive]` reads each edited copy back with the proposal
+episode's projection, validates it as a proposer's output is validated,
+and queues the copies as one round (issue #570). The next `evolve` round
+runs them in its first slots, with the same board, replicates, gate,
+holdout confirmation, holdout query budget and settlement as a proposer
+candidate; the proposer fills the other slots unless the round is
+exclusive. Neither command takes the workspace lock or calls a model, and
+each prints one JSON object.
+
+No free text an operator wrote reaches the proposer or its critic, because
+an operator can read holdout results. Experiment memory, in-flight
+siblings and the genealogy show an operator candidate by its source, its
+mutation points and its decision and banded outcome; the calibration
+record, the prediction band and the recombination pool leave it out.
+`--holdout-access` is required and is a recorded declaration only: the
+experiment record keeps it and the journal prints it.
+
+A candidate must edit the current champion. `submit` refuses a copy of an
+older generation, and a round consumes a queued one with a reason that
+says to check out again; it never rebuilds the older tree, which would
+take back promoted edits at points the operator did not touch.
+
+The experiment record gains an optional `operator` object, and the index
+`experiments` table gains `source` and `author`, so `SCHEMA_VERSION` is 16
+and an older index rebuilds from the canonical records. A queued item
+leaves `runtime/control/candidate/` with its body and the reason in
+`runtime/control_log/`.
+
 ### A restricted experiment memory shows a rejection's code, never its detail
 
 The `## What's already been tried` section rendered a rejected experiment's

@@ -843,7 +843,6 @@ Options:
 Commands:
   checkout   Copy the current champion for an operator candidate.
   propose    Advanced: generate one Experiment for the next generation.
-  queue      Show what happened to submitted operator rounds.
   scorecard  Per-epoch proposal quality + the trend.
   submit     Validate edited copies and queue them as the next round.
 
@@ -869,10 +868,12 @@ Options:
     zicato proposer checkout --into /tmp/b
     # edit /tmp/a/source/ and /tmp/b/source/ inside the mutation points
     # fill in /tmp/a/hypothesis.json and /tmp/b/hypothesis.json
-    zicato proposer submit --from /tmp/a --from /tmp/b --author NAME
+    zicato proposer submit --from /tmp/a --from /tmp/b --author NAME \
+        --holdout-access no
     zicato evolve --rounds 1      # calls models: needs the operator's go-ahead;
                                   # or let a running loop take the round
-    zicato proposer queue --queue-id ID   # what the round did
+    # the result: journal.md and generations/<id>/experiment.json of the epoch;
+    # control_log/ keeps the queued item and the reason it left the queue
 
   Hypothesis fields (the proposer's schema; no other keys):
     core_idea                  the change, in one sentence
@@ -883,10 +884,11 @@ Options:
                                magnitude}; metric_name is namespace:name
     risks                      optional text
 
-  The proposer later reads the hypothesis as written: never name holdout
-  entries or their results in it.
+  The proposer and its critic never read the hypothesis text. They see only
+  that an operator candidate exists, its mutation points, and its banded
+  outcome. A candidate is refused once another generation is the champion.
 
-  Guide: skills/zicato-submit-candidates/SKILL.md
+  Guide: skills/zicato-step-loop/SKILL.md
   Schema: docs/design/EPOCHS-AND-JOURNALING.md section 3.1
 
 ===== zicato proposer propose --help =====
@@ -908,29 +910,6 @@ Options:
   --max-retries INTEGER RANGE  How many times to ask the proposer to fix a
                                malformed response.  [default: 2; 0<=x<=10]
   --help                       Show this message and exit.
-
-===== zicato proposer queue --help =====
-Usage: zicato proposer queue [OPTIONS]
-
-  Show the state of submitted operator rounds. Read-only; prints JSON.
-
-  Reads the queue, the control log and the experiments that carry each queue id.
-  It takes no lock, so it is safe while `zicato evolve` runs. With --queue-id it
-  prints one round, and exits 1 when no submitted round has that id.
-
-Options:
-  --workspace PATH  Path to the zicato workspace directory.  [default: .zicato]
-  --queue-id TEXT   The queue_id that `zicato proposer submit` printed. Omit it
-                    to list every round.
-  --help            Show this message and exit.
-
-  States:
-    queued    waiting for an evolve round
-    running   minted into a round that has not settled yet
-    settled   ran; each generation carries its decision
-    rejected  left the queue without running; see reason
-
-  Guide: skills/zicato-submit-candidates/SKILL.md
 
 ===== zicato proposer scorecard --help =====
 Usage: zicato proposer scorecard [OPTIONS]
@@ -969,8 +948,11 @@ Options:
                              [required]
   --author TEXT              Who wrote the candidates: a person or an agent.
                              Recorded with each.  [required]
-  --holdout-access [yes|no]  Whether the author could read holdout results.
-                             Recorded with each candidate.
+  --holdout-access [yes|no]  Whether the author could read holdout results. A
+                             declaration only: it is recorded with each
+                             candidate and printed in the journal, and it
+                             changes nothing about how the round runs.
+                             [required]
   --exclusive                Run these candidates alone in their round, with no
                              proposal episodes.
   --workspace PATH           Workspace to queue into. Defaults to the one the
@@ -982,10 +964,12 @@ Options:
     zicato proposer checkout --into /tmp/b
     # edit /tmp/a/source/ and /tmp/b/source/ inside the mutation points
     # fill in /tmp/a/hypothesis.json and /tmp/b/hypothesis.json
-    zicato proposer submit --from /tmp/a --from /tmp/b --author NAME
+    zicato proposer submit --from /tmp/a --from /tmp/b --author NAME \
+        --holdout-access no
     zicato evolve --rounds 1      # calls models: needs the operator's go-ahead;
                                   # or let a running loop take the round
-    zicato proposer queue --queue-id ID   # what the round did
+    # the result: journal.md and generations/<id>/experiment.json of the epoch;
+    # control_log/ keeps the queued item and the reason it left the queue
 
   Hypothesis fields (the proposer's schema; no other keys):
     core_idea                  the change, in one sentence
@@ -996,10 +980,11 @@ Options:
                                magnitude}; metric_name is namespace:name
     risks                      optional text
 
-  The proposer later reads the hypothesis as written: never name holdout
-  entries or their results in it.
+  The proposer and its critic never read the hypothesis text. They see only
+  that an operator candidate exists, its mutation points, and its banded
+  outcome. A candidate is refused once another generation is the champion.
 
-  Guide: skills/zicato-submit-candidates/SKILL.md
+  Guide: skills/zicato-step-loop/SKILL.md
   Schema: docs/design/EPOCHS-AND-JOURNALING.md section 3.1
 
 ===== zicato repair --help =====

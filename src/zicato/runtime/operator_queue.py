@@ -279,7 +279,7 @@ def next_operator_round(
     called only when an item is queued.
 
     A candidate is a set of edits to the generation its author copied. Once
-    another generation is the champion, the edits no longer describe a
+    another generation is the champion, the edits do not describe a
     change to it, so the round refuses them and never rebuilds the older
     tree: that would take back the promoted change at every point the author
     left alone.

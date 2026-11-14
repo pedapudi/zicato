@@ -1856,7 +1856,7 @@ every channel reads:
 
 What the envelope cannot hide is the edit itself once the gate promotes it:
 the promoted candidate is the champion, and the mutation manifest shows the
-champion's source. That is the system under test, not a note about the board.
+champion's source. That text is the system under test.
 
 ### 5.8.6 Bands and buckets — the exact vocabulary
 
@@ -2460,7 +2460,7 @@ as a proposer candidate. Only its source differs.
   use.
 - `submit --from DIR [--from DIR ...] --author NAME --holdout-access yes|no
   [--exclusive] [--workspace PATH]` queues the copies as one round. It
-  refuses a copy whose `based_on` is no longer the champion. It reads each
+  refuses a copy whose `based_on` differs from the current champion. It reads each
   edit back with `project_working_copy`, under the frozen adapter's mutable
   trees (`generation_phase.mutable_trees`), so an edit outside a mutation
   point fails with the episode's own message. The patches then go through
@@ -2568,7 +2568,7 @@ or the index `source` column where the two sources must not mix:
 | Mutation-point track record | counted | it describes the point (touches, promotions, banded deltas), whoever wrote the edit |
 | Pareto frontier record | counted | the frontier is over generations that ran, and an operator candidate ran |
 | Health detectors (stalled loop, generalization gap, placebo, …) | counted | they describe the loop and the instrument; a reserved-marker check keeps an operator hypothesis from posing as a placebo |
-| Reflection mining | counted | episodes are demand for instrument changes and go to the operator, not the proposer |
+| Reflection mining | counted | episodes are demand for instrument changes, and their reader is the operator |
 
 A crowned operator candidate spends one Ladder holdout query, because it
 goes through `confirm_crowning_holdout` like any other

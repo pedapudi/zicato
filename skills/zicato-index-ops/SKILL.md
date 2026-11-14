@@ -45,7 +45,7 @@ A cheap stand-in for a `--verify`: copy the workspace, rebuild the copy, and
 compare the printed counts or the row counts from the SQL below against the
 live index. Exit-1-on-drift behaviour does not exist.
 
-## Schema (`src/zicato/index/schema.py`, SCHEMA_VERSION 15)
+## Schema (`src/zicato/index/schema.py`, SCHEMA_VERSION 16)
 
 `PRAGMA user_version` is authoritative; a mismatch means run `zicato repair index`.
 (The version number rises as columns are added — read `SCHEMA_VERSION` in
@@ -66,7 +66,7 @@ live index. Exit-1-on-drift behaviour does not exist.
 - **experiments** — (`epoch_id`,`generation_id`) PK, `hypothesis_core_idea`,
   `hypothesis_why`, `hypothesis_json`, `tournament_decision`,
   `rejection_reason`, `scalar_score_delta`, `drift_loss_delta`,
-  `pass_rate_delta`, `outcome_json`.
+  `pass_rate_delta`, `outcome_json`, `source` (`operator` or `proposer`; NULL for the seed), `author`.
 - **patches** — `patch_id` (PK), `epoch_id`, `generation_id`, `mutation_id`,
   `op`, `rationale`.
 - **runs** — `run_id` (PK), `epoch_id`, `generation_id`, `entry_id`,
