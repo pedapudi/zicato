@@ -1770,10 +1770,10 @@ const candidateMod = await import('../js/views/candidate.js');
 
 // ── A5 · WHICH JUDGE DECIDED THE ROUND (per-judge comparison) ────────────────
 //
-// /api/round/{epoch}/{champion}/{challenger}/per-judge-comparison
-// (build_per_judge_comparison) had NO client at all — no fetcher, no view, no
-// CLI reader. The gate named ONE `primary_driver`; the ledger it came from was
-// unreachable. These pin the fetcher, the render, and the digest fold.
+// The per-judge comparison (build_per_judge_comparison) once had NO client at
+// all — no fetcher, no view, no CLI reader. The gate named ONE
+// `primary_driver`; the ledger it came from was unreachable. It now rides each
+// gate of the candidate dossier; these pin the render and the digest fold.
 
 const CMP_FIXTURE = {
   epoch_id: EPOCH_ID, champion: 'v0', challenger: 'v1',
@@ -1927,7 +1927,7 @@ test('A16 · a candidate cut before the final gets NO opponent chip (byte-identi
 
 // ── A17 · RAW loss beside WEIGHTED in the per-entry drill-down ───────────────
 //
-// /api/run/{e}/{g}/{entry}/per-judge serves {judge_name, weighted_loss,
+// The dossier's drill-down `judges` serves {judge_name, weighted_loss,
 // raw_loss, weight}; the drill rendered ONLY weighted_loss, so a tall bar was
 // ambiguous — a judge that FIRED HARD and a judge that merely CARRIES A BIG
 // WEIGHT looked identical.

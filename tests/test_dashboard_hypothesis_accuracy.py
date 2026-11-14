@@ -1,9 +1,10 @@
 """Tests for the hypothesis prediction-accuracy + calibration endpoints.
 
-``GET /api/hypothesis-accuracy/{epoch}/{gen}`` projects one experiment's
-falsifiable movement claims joined against the realised movements, lifting
-the ``hypothesis_match`` verdict STAMPED at outcome-write time verbatim, so
-the endpoint can never disagree with the outcome on disk.
+``build_hypothesis_accuracy``, served as the candidate dossier's
+``hypothesis_accuracy``, projects one experiment's falsifiable movement
+claims joined against the realised movements, lifting the
+``hypothesis_match`` verdict STAMPED at outcome-write time verbatim, so the
+scorecard can never disagree with the outcome on disk.
 
 ``GET /api/calibration-trend[?epoch=<id>]`` walks the lineage and reports
 the per-generation score fraction with rolling aggregates. It is purely
@@ -29,11 +30,8 @@ from zicato.core import (
 )
 from zicato.dashboard.server import create_app
 from zicato.epoch.journal import write_experiment
-from zicato.query import (
-    WorkspacePaths,
-    build_calibration_trend,
-    build_hypothesis_accuracy,
-)
+from zicato.query import WorkspacePaths, build_calibration_trend
+from zicato.query.hypothesis_view import build_hypothesis_accuracy
 from zicato.testing.fixtures import make_experiment, make_hypothesis_spec
 
 EPOCH_ID = "2026-05-28_e0"
@@ -319,54 +317,6 @@ def test_hypothesis_accuracy_missing_experiment(tmp_path: Path) -> None:
         "score": {"hits": 0, "total": 0, "fraction": None, "brier": None},
         "pass_rate": {"predicted": "", "observed": None},
     }
-
-
-# ---------------------------------------------------------------------------
-# hypothesis-accuracy: HTTP endpoint.
-# ---------------------------------------------------------------------------
-
-
-def test_hypothesis_accuracy_endpoint(tmp_path: Path, static_dir: Path) -> None:
-    ws = _make_workspace(tmp_path)
-    hypothesis = make_hypothesis_spec(
-        expected_metric_movements=(
-            ExpectedMetricMovement(
-                metric_name="drift:off_topic", direction="decrease", magnitude="small"
-            ),
-        )
-    )
-    outcome = _outcome(
-        metric_movements=(
-            MetricMovementActual(
-                metric_name="drift:off_topic", from_value=0.4, to_value=0.2, hypothesis_match=True
-            ),
-        )
-    )
-    _persist(ws, generation_id="v1", hypothesis=hypothesis, outcome=outcome)
-
-    client = _client(ws, static_dir)
-    resp = client.get(f"/api/hypothesis-accuracy/{EPOCH_ID}/v1")
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["score"] == {
-        "hits": 1,
-        "total": 1,
-        "fraction": 1.0,
-        "brier": None,
-    }
-    assert body["claims"][0]["hypothesis_match"] is True
-
-
-def test_hypothesis_accuracy_endpoint_unsafe_id(tmp_path: Path, static_dir: Path) -> None:
-    ws = _make_workspace(tmp_path)
-    client = _client(ws, static_dir)
-    # A routable-but-unsafe id (a space the strict ``_SAFE_ID`` rejects)
-    # exercises the handler's own guard: it degrades to an empty scorecard
-    # at HTTP 200 rather than raising.
-    resp = client.get(f"/api/hypothesis-accuracy/{EPOCH_ID}/bad%20id")
-    assert resp.status_code == 200
-    assert resp.json()["claims"] == []
-    assert resp.json()["score"] == {"hits": 0, "total": 0, "fraction": None, "brier": None}
 
 
 # ---------------------------------------------------------------------------

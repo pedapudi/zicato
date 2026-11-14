@@ -7,9 +7,7 @@ from typing import Any
 
 from zicato.epoch._storage import RecordError
 from zicato.query._sqlite import (
-    INDEX_NOT_BUILT_NOTE,
     _IndexAbsent,
-    _opt_json,
     _query,
     open_index_ro,
     with_index_not_built_note,
@@ -21,13 +19,11 @@ from zicato.query.epoch_view import (
 from zicato.query.inputs import EpochInputs
 from zicato.query.paths import (
     WorkspacePaths,
-    _opt_bool,
     _read_json_value,
     _resolve_epoch_id,
     coerce_float,
     finite_float,
     layout_of,
-    read_current_epoch,
 )
 from zicato.query.promoted_head import champion_history
 from zicato.query.ratings import RATING_FIELDS, rating_by_generation
@@ -173,188 +169,13 @@ def _bracket_from_conn(
     }
 
 
-def _verdict(parent: float | None, child: float | None) -> str:
-    if parent is not None and child is not None:
-        if child < parent:
-            return "improved"
-        if child > parent:
-            return "regressed"
-    return "flat"
-
-
-def build_matchup_detail(paths: WorkspacePaths, generation_id: str) -> dict[str, Any]:
-    """``GET /api/tournaments/:generation_id`` — full matchup detail."""
-    epoch_id = read_current_epoch(paths)
-    try:
-        with open_index_ro(paths.index_db) as conn:
-            tour = _query(
-                conn,
-                "SELECT t.tournament_id, t.parent_generation_id, t.child_generation_id, "
-                "t.decision, t.parent_scalar, t.child_scalar, t.delta_scalar, "
-                "t.rejection_reason, t.ran_at "
-                "FROM tournaments t WHERE t.child_generation_id = ? LIMIT 1",
-                (generation_id,),
-            )
-            tour_row = tour[0] if tour else None
-
-            exp = _query(
-                conn,
-                "SELECT hypothesis_core_idea, hypothesis_why, hypothesis_json, "
-                "tournament_decision, rejection_reason, scalar_score_delta, "
-                "drift_loss_delta, pass_rate_delta "
-                "FROM experiments WHERE generation_id = ? LIMIT 1",
-                (generation_id,),
-            )
-            exp_row = exp[0] if exp else None
-
-            champion = tour_row["parent_generation_id"] if tour_row else None
-
-            child_losses = _query(
-                conn,
-                "SELECT entry_id, drift_loss, pass_fail, loss_json FROM loss_profiles "
-                "WHERE generation_id = ? ORDER BY entry_id ASC",
-                (generation_id,),
-            )
-            parent_losses = (
-                _query(
-                    conn,
-                    "SELECT entry_id, drift_loss, pass_fail, loss_json FROM loss_profiles "
-                    "WHERE generation_id = ? ORDER BY entry_id ASC",
-                    (champion,),
-                )
-                if champion
-                else []
-            )
-            ab: dict[str, dict[str, Any]] = {}
-            for r in parent_losses:
-                key = r["entry_id"] or ""
-                cell = ab.setdefault(key, {"entry_id": r["entry_id"]})
-                cell["entry_id"] = r["entry_id"]
-                cell["parent_drift_loss"] = r["drift_loss"]
-                cell["parent_pass_fail"] = _opt_bool(r["pass_fail"])
-                lj = _opt_json(r["loss_json"])
-                if isinstance(lj, dict):
-                    sid = lj.get("adk_session_id")
-                    if isinstance(sid, str) and sid:
-                        cell["parent_adk_session_id"] = sid
-            for r in child_losses:
-                key = r["entry_id"] or ""
-                cell = ab.setdefault(key, {"entry_id": r["entry_id"]})
-                cell["entry_id"] = r["entry_id"]
-                cell["child_drift_loss"] = r["drift_loss"]
-                cell["child_pass_fail"] = _opt_bool(r["pass_fail"])
-                lj = _opt_json(r["loss_json"])
-                if isinstance(lj, dict):
-                    sid = lj.get("adk_session_id")
-                    if isinstance(sid, str) and sid:
-                        cell["child_adk_session_id"] = sid
-            ab_grid = []
-            for key in sorted(ab):
-                cell = ab[key]
-                cell.setdefault("parent_drift_loss", None)
-                cell.setdefault("child_drift_loss", None)
-                cell.setdefault("parent_pass_fail", None)
-                cell.setdefault("child_pass_fail", None)
-                cell["verdict"] = _verdict(cell["parent_drift_loss"], cell["child_drift_loss"])
-                ab_grid.append(cell)
-
-            patch_rows = _query(
-                conn,
-                "SELECT patch_id, mutation_id, op, rationale FROM patches "
-                "WHERE generation_id = ? ORDER BY patch_id ASC",
-                (generation_id,),
-            )
-            patches = [
-                {
-                    "patch_id": r["patch_id"],
-                    "mutation_id": r["mutation_id"],
-                    "op": r["op"],
-                    "rationale": r["rationale"],
-                }
-                for r in patch_rows
-            ]
-
-            decision = None
-            rejection_reason = None
-            if tour_row is not None:
-                decision = tour_row["decision"]
-                rejection_reason = tour_row["rejection_reason"]
-            if decision is None and exp_row is not None:
-                decision = exp_row["tournament_decision"]
-            if rejection_reason is None and exp_row is not None:
-                rejection_reason = exp_row["rejection_reason"]
-
-            delta_scalar = tour_row["delta_scalar"] if tour_row else None
-            if delta_scalar is None and exp_row is not None:
-                delta_scalar = exp_row["scalar_score_delta"]
-
-            detail: dict[str, Any] = {
-                "epoch_id": epoch_id,
-                "generation_id": generation_id,
-                "champion": champion,
-                "decision": decision,
-                "rejection_reason": rejection_reason,
-                "ran_at": tour_row["ran_at"] if tour_row else None,
-                "parent_scalar": tour_row["parent_scalar"] if tour_row else None,
-                "child_scalar": tour_row["child_scalar"] if tour_row else None,
-                "delta_scalar": delta_scalar,
-                "patches": patches,
-                "ab_grid": ab_grid,
-            }
-            if exp_row is not None:
-                if exp_row["drift_loss_delta"] is not None:
-                    detail["drift_loss_delta"] = exp_row["drift_loss_delta"]
-                if exp_row["pass_rate_delta"] is not None:
-                    detail["pass_rate_delta"] = exp_row["pass_rate_delta"]
-                detail["hypothesis"] = {
-                    "core_idea": exp_row["hypothesis_core_idea"],
-                    "why": exp_row["hypothesis_why"],
-                }
-                raw = _opt_json(exp_row["hypothesis_json"])
-                if raw is not None:
-                    detail["hypothesis"]["raw"] = raw
-            return detail
-    except _IndexAbsent:
-        return {
-            "epoch_id": epoch_id,
-            "generation_id": generation_id,
-            "champion": None,
-            "decision": None,
-            "rejection_reason": None,
-            "ran_at": None,
-            "parent_scalar": None,
-            "child_scalar": None,
-            "delta_scalar": None,
-            "patches": [],
-            "ab_grid": [],
-            "note": INDEX_NOT_BUILT_NOTE,
-        }
-    except sqlite3.Error:
-        return {
-            "epoch_id": epoch_id,
-            "generation_id": generation_id,
-            "champion": None,
-            "decision": None,
-            "rejection_reason": None,
-            "ran_at": None,
-            "parent_scalar": None,
-            "child_scalar": None,
-            "delta_scalar": None,
-            "patches": [],
-            "ab_grid": [],
-        }
-
-
 # ---------------------------------------------------------------------------
 # Per-entry A/B grid — read straight off the persisted per-run loss files
 # ---------------------------------------------------------------------------
 #
-# ``build_matchup_detail`` above sources its ``ab_grid`` from the SQLite
-# analytical index. That index is a best-effort dual-write: a completed
+# The SQLite analytical index is a best-effort dual-write: a completed
 # tournament whose index was never (re)built — or a workspace inspected
-# before ``zicato repair index`` ran — carries no ``loss_profiles`` rows, so
-# the matchup-detail panel renders "No per-entry grid recorded" and a
-# finished tournament loses its per-board outcomes.
+# before ``zicato repair index`` ran — carries no ``loss_profiles`` rows.
 #
 # The per-board telemetry is, however, always on disk: every board run
 # writes ``generations/{gen}/runs/{entry}/loss.json`` (the reducer's
@@ -441,9 +262,9 @@ def build_matchup_grid(
 ) -> dict[str, Any]:
     """Per-entry A/B grid for a matchup, read from the persisted loss files.
 
-    ``GET /api/matchup-grid/{epoch_id}/{champion}/{challenger}``. Unlike
-    :func:`build_matchup_detail` this never touches the SQLite index — it
-    reads ``generations/{gen}/runs/{entry}/loss.json`` for both the
+    ``GET /api/matchup-grid/{epoch_id}/{champion}/{challenger}``. This
+    never touches the SQLite index — it reads
+    ``generations/{gen}/runs/{entry}/loss.json`` for both the
     champion and the challenger generation and the two
     ``gen_score.json`` aggregates, so a *completed* tournament's
     per-board outcomes are recoverable even when the index was never
@@ -850,8 +671,8 @@ def _challenger_generation_ids(result: dict[str, Any]) -> list[str]:
 def _mutation_ids_for(conn: sqlite3.Connection, generation_id: str) -> frozenset[str]:
     """The targeted-mutation-id SET a challenger declared, from the index.
 
-    Transposes the already-persisted ``patches`` rows (the same table
-    :func:`build_matchup_detail` reads) into the order-insensitive set of
+    Transposes the already-persisted ``patches`` rows into the
+    order-insensitive set of
     ``mutation_id`` values a generation's patch set touched — the field-
     diversity signature the orchestrator soft-rejects on. An unindexed /
     patchless generation yields the empty set (it contributes no idea).

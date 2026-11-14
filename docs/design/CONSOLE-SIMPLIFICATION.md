@@ -11,7 +11,11 @@
 > three themes and one typeface pairing, removes `typefacedropdown.js`,
 > folds `dropdown.js` into `swatchdropdown.js`, deletes `fieldStatusSummary`
 > (§2.3), and ends the export of `finiteValues`, `decollide` and
-> `jitterColumn` (§2.2). For the console
+> `jitterColumn` (§2.2). A further removal of the same date deletes routes
+> no console reads: of those §2.3 lists, every one still served except
+> `/api/active-runs`, `/api/heartbeat`, `journal.md` and `analysis.html`;
+> and the granular per-judge, expectations, header, hypothesis-accuracy and
+> episode-export routes that §3.1 folded into the candidate dossier. For the console
 > as it stands, read [CONSOLE-DESIGN-LANGUAGE.md](CONSOLE-DESIGN-LANGUAGE.md)
 > and [`js/CONTRACTS.md`](../../src/zicato/dashboard/static/js/CONTRACTS.md).
 

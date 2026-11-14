@@ -2423,8 +2423,8 @@ export function gatePanel(gate, comparison, spec, opts) {
 
 // ── WHICH JUDGE DECIDED THE ROUND (per-judge comparison) ─────────────────────
 //
-// `/api/round/{epoch}/{champion}/{challenger}/per-judge-comparison`
-// (query/judge_view.py build_per_judge_comparison) joins the two sides' judge
+// Each gate of the candidate dossier carries `judge_comparison`
+// (query/judge_view.py build_per_judge_comparison), which joins the two sides' judge
 // ledgers into `{judges: [{judge_name, champion_weighted_loss,
 // challenger_weighted_loss, delta}], primary_driver}`. `delta` is
 // challenger − champion, so NEGATIVE = the challenger drifted LESS on that

@@ -671,7 +671,7 @@ persisted cost record.
 > at the epoch's measured noise floor is within `promote_margin`, or the
 > structure default when that is larger; without a usable floor the
 > structure default applies. The heartbeat's
-> effective-settings record (`/api/config`, key `tournament.replicates`)
+> effective-settings record (the `settings` map of `/api/heartbeat`, key `tournament.replicates`)
 > names the count and the tier that set it; see
 > [SELECTION.md §9.1](SELECTION.md#91-the-measured-noise-floor-sizes-the-replicate-count-and-the-racing-cuts).
 

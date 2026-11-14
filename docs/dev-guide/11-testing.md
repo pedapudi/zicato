@@ -1717,7 +1717,7 @@ empty epoch:
 (`build_workspace_view`, `build_epochs_summary`, `build_lineage_view`,
 `build_meta_loop_ledger`, `build_snapshot`, `build_environment`, …),
 per-epoch (`build_epoch_view`, `build_bracket`, `build_score_trajectory`,
-…), and per-generation (`build_matchup_detail`, `build_gate_breakdown`, …)
+…), and per-generation (`build_matchup_grid`, `build_gate_breakdown`, …)
 — so the snapshot exercises the leaf path-readers as well as the
 enumerations, and freezes the whole read surface in one diffable document.
 

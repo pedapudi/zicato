@@ -268,28 +268,6 @@ def _never_served(_paths: WorkspacePaths, _coordinates: dict[str, str]) -> dict[
     return {}
 
 
-def _degrade_matchup_detail(paths: WorkspacePaths, coordinates: dict[str, str]) -> dict[str, Any]:
-    """ "No such matchup", still scoped to the epoch the workspace is on."""
-    return {
-        "epoch_id": query.read_current_epoch(paths),
-        "generation_id": coordinates["generation_id"],
-        "patches": [],
-        "ab_grid": [],
-    }
-
-
-def _degrade_drift_movements(paths: WorkspacePaths, coordinates: dict[str, str]) -> dict[str, Any]:
-    """No movements, with the rejected id standing as the challenger."""
-    generation_id = coordinates["generation_id"]
-    return {
-        "epoch_id": query.read_current_epoch(paths),
-        "generation_id": generation_id,
-        "champion": None,
-        "challenger": generation_id,
-        "movements": [],
-    }
-
-
 _INVALID_GENERATION_COORDINATE = "invalid epoch or generation id"
 
 
@@ -333,15 +311,6 @@ def _degrade_trace_detail(_paths: WorkspacePaths, coordinates: dict[str, str]) -
 READ_ENDPOINTS: Final[tuple[ReadEndpoint, ...]] = (
     # -- workspace-wide state ------------------------------------------
     ReadEndpoint(
-        path="/api/state",
-        reader=query.build_snapshot,
-        serves=(
-            "The consolidated live snapshot the front-end opens on: heartbeat, "
-            "liveness verdict, lock, active runs, active tournament, lineage, "
-            "and the current epoch."
-        ),
-    ),
-    ReadEndpoint(
         path="/api/workspace",
         reader=query.build_workspace_view,
         serves="The workspace-level cross-epoch summary.",
@@ -371,15 +340,6 @@ READ_ENDPOINTS: Final[tuple[ReadEndpoint, ...]] = (
         serves=(
             "The orchestrator's heartbeat record, with an always-ageable "
             "timestamp; null for a workspace that never ran."
-        ),
-    ),
-    ReadEndpoint(
-        path="/api/config",
-        reader=query.read_effective_settings,
-        serves=(
-            "Every setting the running loop is operating under, each paired "
-            "with the tier that set it, read off the heartbeat record; null "
-            "when the workspace holds no run record."
         ),
     ),
     ReadEndpoint(
@@ -536,21 +496,6 @@ READ_ENDPOINTS: Final[tuple[ReadEndpoint, ...]] = (
         degrade=_echo(experiments=[]),
     ),
     ReadEndpoint(
-        path="/api/contract-diff/{epoch_id}",
-        reader=query.build_contract_diff,
-        serves="The epoch-level contract diff against the predecessor epoch.",
-        params=("epoch_id",),
-        degrade=_echo(predecessor_epoch_id=None, components=[], any_changed=False),
-    ),
-    ReadEndpoint(
-        path="/api/epoch/{epoch_id}/journal",
-        reader=query.read_epoch_journal,
-        serves="One epoch's ``journal.md`` text, as ``{epoch_id, journal}``.",
-        params=("epoch_id",),
-        degrade=_fixed(error="invalid epoch id"),
-        degrade_status=400,
-    ),
-    ReadEndpoint(
         path="/api/epoch/{epoch_id}/analysis",
         reader=query.build_epoch_analysis,
         serves="One epoch's analysis report payload; the reader owns its rendering semantics.",
@@ -602,88 +547,11 @@ READ_ENDPOINTS: Final[tuple[ReadEndpoint, ...]] = (
     ),
     # -- generation- and run-coordinate reads ---------------------------
     ReadEndpoint(
-        path="/api/generation/{epoch_id}/{generation_id}/per-judge",
-        reader=query.build_per_judge_for_generation,
-        serves="The per-judge breakdown for one generation.",
-        params=("epoch_id", "generation_id"),
-        degrade=_echo(judges=[]),
-    ),
-    ReadEndpoint(
         path="/api/generation/{epoch_id}/{generation_id}/per-entry",
         reader=query.build_per_entry_for_generation,
         serves="The per-entry breakdown for one generation, keyed by its tournament id.",
         params=("epoch_id", "generation_id"),
         degrade=_echo(tournament_id=None, entries=[]),
-    ),
-    ReadEndpoint(
-        path="/api/round/{epoch_id}/{champion_id}/{challenger_id}/per-judge-comparison",
-        reader=query.build_per_judge_comparison,
-        serves="The per-judge delta between champion and challenger for one decision.",
-        params=("epoch_id", "champion_id", "challenger_id"),
-        degrade=_echo(
-            {"champion_id": "champion", "challenger_id": "challenger"},
-            judges=[],
-            primary_driver=None,
-        ),
-    ),
-    ReadEndpoint(
-        path="/api/run/{run_id}/per-judge",
-        reader=query.build_per_judge_for_run,
-        serves="The per-judge breakdown for one run, addressed by run id.",
-        params=("run_id",),
-        degrade=_echo(judges=[]),
-    ),
-    ReadEndpoint(
-        path="/api/run/{epoch_id}/{generation_id}/{entry_id}/per-judge",
-        reader=query.build_per_judge_for_entry,
-        serves=(
-            "The per-judge breakdown for one run, addressed by board-entry "
-            "coordinates. The reader resolves the entry's canonical "
-            "replicate-0 slot; selecting a sibling replicate is a "
-            "query-layer keyword no view calls."
-        ),
-        params=("epoch_id", "generation_id", "entry_id"),
-        degrade=_fixed(run_id=None, judges=[]),
-    ),
-    ReadEndpoint(
-        path="/api/run/{epoch_id}/{generation_id}/{entry_id}/expectations",
-        reader=query.build_expectation_outcomes_for_run,
-        serves="The expectation outcomes for one run.",
-        params=("epoch_id", "generation_id", "entry_id"),
-        degrade=_echo(outcomes=[]),
-    ),
-    ReadEndpoint(
-        path="/api/run/{epoch_id}/{generation_id}/{entry_id}/header",
-        reader=query.build_run_header,
-        serves="The header metrics for one run — runtime, tokens, turns, budget.",
-        params=("epoch_id", "generation_id", "entry_id"),
-        degrade=_echo(
-            drift_loss=None,
-            pass_fail=None,
-            runtime_ms=None,
-            tokens_spent=None,
-            output_chars=None,
-            turns_completed=None,
-            plan_revisions=None,
-            wall_clock_budget_exceeded=None,
-            run_id=None,
-            adk_session_id=None,
-        ),
-    ),
-    ReadEndpoint(
-        path="/api/hypothesis-accuracy/{epoch_id}/{generation_id}",
-        reader=query.build_hypothesis_accuracy,
-        serves=(
-            "The per-experiment hypothesis prediction scorecard: the proposer's "
-            "falsifiable movement claims against the realised movements, lifting "
-            "the stamped verdict verbatim so it cannot disagree with the report."
-        ),
-        params=("epoch_id", "generation_id"),
-        degrade=_echo(
-            claims=[],
-            score={"hits": 0, "total": 0, "fraction": None, "brier": None},
-            pass_rate={"predicted": "", "observed": None},
-        ),
     ),
     # -- tournament reads ------------------------------------------------
     ReadEndpoint(
@@ -702,13 +570,6 @@ READ_ENDPOINTS: Final[tuple[ReadEndpoint, ...]] = (
             standings=[],
             source="loss_files",
         ),
-    ),
-    ReadEndpoint(
-        path="/api/tournaments/{generation_id}",
-        reader=query.build_matchup_detail,
-        serves="One matchup's patches and A/B grid.",
-        params=("generation_id",),
-        degrade=_degrade_matchup_detail,
     ),
     ReadEndpoint(
         path="/api/matchup-grid/{epoch_id}/{champion_id}/{challenger_id}",
@@ -753,13 +614,6 @@ READ_ENDPOINTS: Final[tuple[ReadEndpoint, ...]] = (
             primary_driver=None,
             rating={"present": False},
         ),
-    ),
-    ReadEndpoint(
-        path="/api/drift-movements/{generation_id}",
-        reader=query.build_drift_movements,
-        serves="The per-channel movements one candidate produced against its champion.",
-        params=("generation_id",),
-        degrade=_degrade_drift_movements,
     ),
     # -- the instrument lens (board reflection) --------------------------
     ReadEndpoint(
@@ -824,19 +678,6 @@ READ_ENDPOINTS: Final[tuple[ReadEndpoint, ...]] = (
         degrade=lambda _paths, c: _empty_provenance(c["reflection_id"], c["suggestion_id"]),
     ),
     # -- generation files and the mutation surface ----------------------
-    ReadEndpoint(
-        path="/api/files",
-        reader=query.build_file_index,
-        serves="Every epoch's generations, each with file and patch counts and ``has_tree``.",
-    ),
-    ReadEndpoint(
-        path="/api/files/{epoch_id}/{generation_id}/tree",
-        reader=query.build_generation_tree,
-        serves="One generation's source tree as a flat ``{path, is_dir, size}`` list.",
-        params=("epoch_id", "generation_id"),
-        degrade=_fixed(error=_INVALID_GENERATION_COORDINATE, entries=[]),
-        degrade_status=400,
-    ),
     ReadEndpoint(
         path="/api/files/{epoch_id}/{generation_id}/content",
         reader=query.read_generation_file,
@@ -977,16 +818,6 @@ def _make_state_endpoints(
             await run_in_threadpool(query.build_environment, paths, run_log_limit=limit)
         )
 
-    async def api_search(request: Request) -> JSONResponse:
-        """Sidebar search across entries / judges / patches / mutations.
-
-        The ``?q=`` parameter is the substring to match. An empty or
-        whitespace-only query short-circuits to empty result sets so the
-        callers cannot trigger a wide scan with a degenerate query.
-        """
-        q = request.query_params.get("q", "")
-        return JSONResponse(await run_in_threadpool(query.build_search_results, paths, q))
-
     async def api_logs(request: Request) -> JSONResponse:
         """The structured operator-log tail (LOGGING.md) for one invocation.
 
@@ -1025,7 +856,6 @@ def _make_state_endpoints(
     return {
         "api_health": api_health,
         "api_environment": api_environment,
-        "api_search": api_search,
         "api_logs": api_logs,
         "api_run_log": api_run_log,
     }
@@ -1037,10 +867,8 @@ def _make_epoch_document_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
     async def api_epoch_journal_md(request: Request) -> Response:
         """Serve the raw ``journal.md`` markdown for one epoch.
 
-        The Epoch view's "View raw journal" link points at this endpoint so
-        a fresh tab renders the human-readable markdown directly — not the
-        JSON envelope ``/api/epoch/{id}/journal`` wraps it in (which is hard
-        to skim). Served as ``text/markdown`` with UTF-8 charset; browsers
+        An operator opens this route to read the human-readable markdown
+        directly. Served as ``text/markdown`` with UTF-8 charset; browsers
         that do not have a registered markdown handler treat it as
         ``text/plain`` and render the prose unchanged. Returns 404 when
         the file is absent so the link's failure mode is unambiguous.
@@ -1082,29 +910,7 @@ def _make_epoch_document_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
 
 
 def _make_proposal_episode_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
-    """Foe's static page for one proposal episode: whether there is one, and it."""
-
-    async def api_proposal_episode_export(request: Request) -> Response:
-        """Whether one candidate has Foe's static episode page, and how to get it.
-
-        The proposer panel reads this before it renders: an available page
-        becomes a link to ``episode-export.html`` below, and an absent one
-        becomes the caption naming the episode log and the command that
-        renders it by hand.
-        """
-        epoch_id = request.path_params["epoch_id"]
-        generation_id = request.path_params["generation_id"]
-        if not _is_safe_id(epoch_id) or not _is_safe_id(generation_id):
-            return JSONResponse({"error": "invalid coordinates"}, status_code=400)
-        return JSONResponse(
-            await run_in_threadpool(
-                query.build_proposal_episode_export,
-                paths,
-                epoch_id,
-                generation_id,
-                slot=_int_query(request, "slot"),
-            )
-        )
+    """Foe's static page for one proposal episode."""
 
     async def api_proposal_episode_export_html(request: Request) -> Response:
         """Serve Foe's static page for one proposal episode.
@@ -1134,7 +940,6 @@ def _make_proposal_episode_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
         return HTMLResponse(html)
 
     return {
-        "api_proposal_episode_export": api_proposal_episode_export,
         "api_proposal_episode_export_html": api_proposal_episode_export_html,
     }
 
@@ -1179,14 +984,6 @@ def _make_conversation_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
                 {"error": f"transcript failed: {exc}", "run_id": run_id},
                 status_code=200,
             )
-
-    async def api_matchup_conversations(request: Request) -> Response:
-        entry_id = request.path_params["entry_id"]
-        if not _is_safe_id(entry_id):
-            return JSONResponse({"error": "invalid entry_id"}, status_code=400)
-        return JSONResponse(
-            await run_in_threadpool(query.build_matchup_conversations, paths, entry_id)
-        )
 
     async def api_run_transcript(request: Request) -> Response:
         """Reconstruct the transcript for one ``(epoch, gen, entry)`` run.
@@ -1270,7 +1067,6 @@ def _make_conversation_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
 
     return {
         "api_conversation": api_conversation,
-        "api_matchup_conversations": api_matchup_conversations,
         "api_run_transcript": api_run_transcript,
         "api_run_transcript_delta": api_run_transcript_delta,
     }

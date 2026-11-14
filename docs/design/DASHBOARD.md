@@ -240,7 +240,7 @@ coalesced refresh instead of a frame per file.
 
 ```
 event: snapshot
-data: {"type": "snapshot", "data": { ...the same shape as GET /api/state... },
+data: {"type": "snapshot", "data": { ...query.build_snapshot, §6.1... },
        "content_revision": 3, "seq": 41, "terminal": false}
 
 event: state_change
@@ -305,9 +305,8 @@ The endpoints in §6 follow that split. `/api/active-tournament`,
 `/api/heartbeat` are file-backed and live, and so are
 `/api/matchup-grid/...` and `/api/round/.../gate`, which read the
 recorded loss files and settlement records. `/api/tournaments`, the
-resolved decisions, and `/api/tournaments/{generation_id}`, the matchup
-detail of a resolved round, read the index. Both degrade rather than
-fail: a missing or stale `index.db` yields an empty result carrying a
+resolved decisions, reads the index. It degrades rather than
+failing: a missing or stale `index.db` yields an empty result carrying a
 `note`.
 
 ## 4. The decision-centric information architecture
@@ -324,8 +323,8 @@ The table below defines the five levels.
 | Level | Scope | The question the level answers | Primary source |
 |---|---|---|---|
 | **Workspace** | cross-epoch | Is the lineage climbing, and is any loop unhealthy? Answered by the lineage figure zoomed to epochs, the loop-health banner, and the recent-decisions strip. | `/api/workspace`, `/api/health-report`, `/api/lineage` |
-| **Epoch** | one epoch | What contract is this epoch deciding under, and how have its decisions gone? Answered by the epoch header, the lineage figure, the contract diff, and the per-entry and per-judge heatmaps. | `/api/epoch`, `/api/lineage`, `/api/contract-diff/...`, the per-judge endpoints |
-| **Generation** | one generation | Did the change this generation made pay off? Answered by the hypothesis-to-outcome panel, the drift-movement chart, and the patches. | `/api/lineage`, `/api/generation/...`, `/api/drift-movements/...`, `/api/files/...` |
+| **Epoch** | one epoch | What contract is this epoch deciding under, and how have its decisions gone? Answered by the epoch header, the lineage figure, the contract diff, and the per-entry and per-judge heatmaps. | `/api/epoch`, `/api/lineage`, the `ledger` of `/api/workspace`, `/api/epoch/{epoch_id}/per-judge-trend` |
+| **Generation** | one generation | Did the change this generation made pay off? Answered by the hypothesis-to-outcome panel, the drift-movement chart, and the patches. | `/api/lineage`, `/api/generation/...`, `/api/epoch/{epoch_id}/candidate/{generation_id}`, `/api/files/...` |
 | **Decision (round)** | one promote/reject | Was this promote or reject right, and why? The centerpiece: gate ladder, per-entry diverging champion-versus-challenger chart, scalar waterfall, primary-driver judge, margin band, and the promote/reject controls. | live `active_tournament.events.jsonl` for the in-flight decision; `/api/round/.../gate` and `/api/epoch/{epoch_id}/candidate/{generation_id}` for closed ones |
 | **Run** | one run | What did this single side actually do? Answered by the transcript diff, the drift annotations, and the harmonograf deep-link. | `/api/run/...`, transcript endpoints, `/api/run-log` |
 
@@ -561,7 +560,8 @@ inspecting.
 **⑤ Primary-driver judge call-out.** A single emphasized line naming
 the judge that moved the loss the most (the largest single waterfall
 component). It names what the decision turned on in one line, fed by
-the `primary_driver` field of `/api/round/.../per-judge-comparison`.
+the `primary_driver` field of the `judge_comparison` each gate of the
+candidate dossier carries.
 
 **⑥ Promote and reject controls.** The POST
 `/api/control/promote/{gen}` and `/api/control/reject/{gen}` endpoints
@@ -633,7 +633,7 @@ its decisions have gone:
   and the running decision counts: promotions, rejections, and
   consecutive rejections measured against the stop threshold;
 - the **lineage ribbon** zoomed to this epoch's generations (§4.1);
-- the **contract diff** (`/api/contract-diff/{epoch_id}`) — what
+- the **contract diff** (the `ledger` of `/api/workspace`) — what
   changed in the evaluation contract against the parent epoch, covering
   the scoring configuration with its nested weight dictionaries
   including `per_judge_weights`, the board, the proposer brief, the
@@ -730,10 +730,10 @@ change it made paid off:
   structured-hypothesis discipline visible: the proposer writes the
   hypothesis before the run and the orchestrator fills in the outcome
   after it.
-- the **drift-movement chart** (`/api/drift-movements/{generation_id}`)
-  — which drift kinds moved, and in which direction, for this generation
-  versus its champion. The endpoint is served, but no console view reads
-  it; the candidate page shows per-judge and per-entry movement instead.
+- the **drift-movement chart** — which drift kinds moved, and in which
+  direction, for this generation versus its champion. It is not built and
+  no route serves it; the candidate page shows per-judge and per-entry
+  movement instead.
 - the **patches** — the actual edits (`/api/files/.../patches` and
   `.../diff`), each linking the mutation point it touched.
 
@@ -907,11 +907,9 @@ with the route's degraded shape rather than a `500`.
 | Route | Purpose |
 |---|---|
 | `GET /api/environment?run-log-limit=N` | One coalesced read of the whole environment — the front end refreshes its state from this instead of fanning out to many endpoints. |
-| `GET /api/state` | Composite live snapshot, the same shape as the SSE `snapshot` frame. |
 | `GET /api/active-tournament` | In-progress decision shape (live) — feeds the in-flight decision view. |
 | `GET /api/active-runs` | In-flight runs with computed progress fields and a served freshness verdict. |
 | `GET /api/heartbeat` | Heartbeat record (status pill). |
-| `GET /api/config` | Every setting the running loop operates under, each paired with the tier that set it. |
 | `GET /api/live/pipeline` | The propose → apply → run → gate position the live stepper renders. |
 | `GET /api/run-log?limit=N&after=<cursor>` | Tail of the active run's `events.jsonl`. |
 | `GET /api/logs?invocation=&level=&limit=&after=` | The structured operator-log tail for one `evolve` or `reflect` invocation. |
@@ -928,7 +926,6 @@ with the route's degraded shape rather than a `500`.
 | `GET /api/calibration-trend?epoch=` | The proposer's calibration per generation with rolling aggregates; diagnostic only. |
 | `GET /api/proposer/scorecard?epoch=` | The proposer scorecard trend. |
 | `GET /api/tournaments?epoch=` | Resolved decisions (index). |
-| `GET /api/contract-diff/{epoch_id}` | Contract diff against the parent epoch (epoch level). |
 | `GET /api/epoch/{epoch_id}/per-judge-trend` | Per-judge loss trend across the epoch (the epoch-level heatmap). |
 | `GET /api/epoch/{epoch_id}/trajectory` | The promoted-lineage trajectory with the promotion rate and plateau verdict. |
 | `GET /api/epoch/{epoch_id}/cost` | Wall-clock and run-count cost accounting. |
@@ -939,43 +936,32 @@ with the route's degraded shape rather than a `500`.
 | `GET /api/epoch/{epoch_id}/eval/{entry_id}` | One board entry's instrument-quality dossier. |
 | `GET /api/epoch/{epoch_id}/eval-health` | The instrument-quality panel. |
 | `GET /api/epoch/{epoch_id}/judge-roster` | What is armed to judge a run on the epoch's board. |
-| `GET /api/epoch/{epoch_id}/journal` and `.../journal.md` | Journal as data or as the raw markdown file. |
+| `GET /api/epoch/{epoch_id}/journal.md` | The journal as the raw markdown file. |
 | `GET /api/epoch/{epoch_id}/analysis` and `.../analysis.html` | Analysis as data or as the rendered HTML page. |
 
 **Candidates, decisions, and runs**
 
 | Route | Purpose |
 |---|---|
-| `GET /api/epoch/{epoch_id}/candidate/{generation_id}?entry=` | One candidate's dossier: per-board results against the champion, the gates it faced and defended, the prediction scorecard, the proposal episode, the `?entry=` drill-down, and the racing field. |
-| `GET /api/generation/{epoch_id}/{generation_id}/per-judge` | Per-judge breakdown for one generation. |
+| `GET /api/epoch/{epoch_id}/candidate/{generation_id}?entry=` | One candidate's dossier: per-board results against the champion, its per-judge losses, the gates it faced and defended with each gate's per-judge comparison and `primary_driver`, the prediction scorecard, the proposal episode, the `?entry=` drill-down (expectation outcomes, per-judge losses and run header), and the racing field. |
 | `GET /api/generation/{epoch_id}/{generation_id}/per-entry` | Per-entry breakdown for one generation — the continuous outcome score and, where the scorer carries them, the precision / recall metrics per entry, plus `drift_present`. |
-| `GET /api/generation/{epoch_id}/{generation_id}/episode-export` and `...episode-export.html` | Whether the candidate's proposal episode has a static page, and the page itself. |
-| `GET /api/hypothesis-accuracy/{epoch_id}/{generation_id}` | The proposer's movement predictions against the realised movements. |
+| `GET /api/generation/{epoch_id}/{generation_id}/episode-export.html` | The static page of the candidate's proposal episode; the dossier's `episode_export` says whether there is one. |
 | `GET /api/tournament-structure/{epoch_id}/{tournament_id}` | The full bracket, standings and racing state for one tournament. |
-| `GET /api/tournaments/{generation_id}` | One resolved decision's matchup detail (index). |
 | `GET /api/matchup-grid/{epoch_id}/{champion_id}/{challenger_id}` | Per-entry champion-versus-challenger grid (feeds the diverging comparison chart). |
 | `GET /api/round/{epoch_id}/{champion_id}/{challenger_id}/gate` | Recorded gate breakdown for the decision view (detail below). |
-| `GET /api/round/{epoch_id}/{champion_id}/{challenger_id}/per-judge-comparison` | Per-judge champion-versus-challenger comparison plus `primary_driver`. |
-| `GET /api/drift-movements/{generation_id}` | Per-channel movements against the champion; no console view reads it. |
-| `GET /api/run/{run_id}/per-judge` | Per-judge breakdown for one run. |
-| `GET /api/run/{epoch_id}/{generation_id}/{entry_id}/per-judge` | Same, addressed by triple. |
-| `GET /api/run/{epoch_id}/{generation_id}/{entry_id}/expectations` | Outcome-check (expectations) results. |
-| `GET /api/run/{epoch_id}/{generation_id}/{entry_id}/header` | Run header metadata. |
 | `GET /api/run/{epoch_id}/{generation_id}/{entry_id}/transcript` | Run transcript (the run-level diff). |
 | `GET /api/run/{epoch_id}/{generation_id}/{entry_id}/transcript/delta?after=` | Only the transcript turns past a cursor, for following a live run. |
 | `GET /api/conversation/{run_id}` | Multi-turn conversation for a run. |
-| `GET /api/matchup/{entry_id}/conversations` | Side-by-side conversations for a matchup entry; served for direct callers, no console view reads it. |
 
-**Source, mutations, reflection, search**
+**Source, mutations, reflection**
 
 | Route | Purpose |
 |---|---|
-| `GET /api/files` and `GET /api/files/{epoch_id}/{generation_id}/{tree,content,patches,diff}` | Snapshot file tree, content, patches, and diffs (the generation-level patches panel). |
+| `GET /api/files/{epoch_id}/{generation_id}/{content,patches,diff}` | One snapshot file's content, the patch set, and the diff (the generation-level patches panel). |
 | `GET /api/mutations/{epoch_id}` and `.../{mutation_id}` | Mutation surface listing and detail. |
 | `GET /api/reflections?epoch=` and `GET /api/reflection/{reflection_id}/{summary,scorecards,practices,traces}` | Board reflections and their bill of health ([BOARD-REFLECTION.md](BOARD-REFLECTION.md)). |
 | `GET /api/reflection/{reflection_id}/xray/{judge_name}/{run_ref}` | One adjudicated judge decision beside its run's transcript. |
 | `GET /api/reflection/{reflection_id}/trace/{trace_id}` and `.../suggestion/{suggestion_id}/provenance` | One imported trace, and one suggestion's provenance ([TRAJECTORY-UI.md](TRAJECTORY-UI.md)). |
-| `GET /api/search?q=` | Substring search over entries, judges, patches and mutations; no console view or CLI command reads it. |
 
 **Control**
 
@@ -1026,18 +1012,13 @@ siblings do: an unsafe id, or a decision with no recorded result,
 returns the same envelope with an empty `rules` list and a `deferred`
 decision rather than a `500`.
 
-#### `GET /api/state`
-
-Returns a complete live snapshot (`query.build_snapshot`): the
-heartbeat, the liveness verdict, the lock, the active runs, the active
-tournament, the lineage, the current epoch, and the paused flag. It is
-the same shape sent inside the SSE `snapshot` frame on connect and on
-reconnect.
-
 #### `GET /events`
 
 Server-Sent Events stream. On connect it sends one `event: snapshot`,
-then `event: state_change` frames as workspace files change and
+whose `data` is a complete live snapshot (`query.build_snapshot`): the
+heartbeat, the liveness verdict, the lock, the active runs, the active
+tournament, the lineage, the current epoch, and the paused flag. It
+then sends `event: state_change` frames as workspace files change and
 `event: run_log` frames as a run's `events.jsonl` grows. State-change
 frames are **coalesced** over a short debounce window and carry the set
 of changed `kinds` (§3.3). A keep-alive comment keeps idle connections
@@ -1048,7 +1029,7 @@ open through proxy read-timeouts.
 The in-flight decision's data only. It feeds the live decision view:
 the gate ladder rendered against partial results, the diverging
 comparison chart as entries finish, and the deterministic verdict
-projection. It is cheaper than `/api/state`.
+projection. It is cheaper than `/api/environment`.
 
 #### `GET /api/active-runs`
 
@@ -1233,8 +1214,8 @@ Either stands alone.
 | The loop-health banner (§4.5), backed by `/api/health-report` | Shipped. |
 | Replicate standard errors and the Bradley–Terry rating with its credible interval and `p_stronger` (§4.6) | Shipped. |
 | The lineage ribbon as the unified navigation figure (§4.1) | Not adopted; the console navigates by a tree sidebar and a round timeline. |
-| The drift-movement chart (§4.7) and the recent-decisions strip (§4.3) | Not built; `/api/drift-movements/{generation_id}` is served for direct callers. |
-| A search affordance or command palette over `/api/search` | Not built. |
+| The drift-movement chart (§4.7) and the recent-decisions strip (§4.3) | Not built. |
+| A search affordance or command palette | Not built; no route serves search. |
 | A console control for the proposer-brief replacement (`POST /api/control/brief`) | Not built; the endpoint serves direct callers. |
 | A per-entry paired rank test carried as its own rung of the gate ladder (§4.6) | Not built. |
 | A separate confirmation step for a gate override (§6.2) | Not built. |

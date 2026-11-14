@@ -122,8 +122,8 @@ Build it in the first stage and run it at the end of every sub-step.
     derived projection, so it must reproduce byte for byte after
     `zicato repair index`)
   - analyzer report markdown + HTML, `report_figures` SVG output
-  - dashboard JSON envelopes (`/api/state`, `/api/epoch`, `/api/tournaments`,
-    `/api/round/.../gate`, per-judge endpoints) captured from a fixture workspace
+  - dashboard JSON envelopes (`/api/environment`, `/api/epoch`, `/api/tournaments`,
+    `/api/round/.../gate`, the candidate dossier) captured from a fixture workspace
   - `zicato <command> --help` text for every command (the CLI is the contract)
 - **Rule of thumb**: a step that changes any golden output has changed behavior
   by definition — investigate before merging.

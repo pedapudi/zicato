@@ -3,7 +3,7 @@
 //
 // Two orthogonal-to-the-gate reads:
 //   * candidate.buildPredictionScorecard(scorecard) — the dossier card consuming
-//     /api/hypothesis-accuracy/{epoch}/{gen}: predicted-vs-realised movements per
+//     the dossier's hypothesis_accuracy: predicted-vs-realised movements per
 //     claim with hit/miss/band/unpredicted glyphs + the calibration fraction.
 //   * svg.calibrationTrend(opts) — the home meta-loop ledger figure consuming
 //     /api/calibration-trend: the score fraction over the epoch's lineage,

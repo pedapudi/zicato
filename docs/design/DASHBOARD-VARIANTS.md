@@ -200,8 +200,8 @@ appears in that variant rather than that the variants share code.
   restrained improve/regress color. Round 4 fixed label≠value (the per-board
   node's loss value gets its own right-aligned baseline, never overprinting the
   label).
-- **Binds:** `/api/files/{e}/{g}/patches` + `/api/drift-movements/{g}` (cause/
-  effect), `/api/generation/{e}/{g}/per-entry` (per-board loss), `/api/round/.../gate`.
+- **Binds:** `/api/files/{e}/{g}/patches` + the drift-kind movements (cause/
+  effect; the route that served them is removed), `/api/generation/{e}/{g}/per-entry` (per-board loss), `/api/round/.../gate`.
 - **Used by:** C (origin, pannable), F, G (pannable → flagged); fit-to-width
   Tufte version in H, I, J, K, L, M, N. (Q/S/T carry the fit-to-width version on
   the match-ups/candidate surfaces.)

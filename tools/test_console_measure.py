@@ -87,7 +87,7 @@ def test_routes_pass_matches_holes_to_segments(run_json) -> None:
         "unread",
         "unread_routes",
     }
-    assert result["served"] > 70
+    assert result["served"] > 50
     assert "/api/heartbeat" in result["unread_routes"]
 
 

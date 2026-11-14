@@ -133,8 +133,7 @@ POST /api/control/{pause,resume,skip-round,promote,reject,brief}
 ```
 
 `js/CONTRACTS.md` lists the payload shapes and names the routes no
-client reads (`/api/tournaments/{gen}`, `/api/drift-movements/{gen}`,
-`/api/matchup/{entry}/conversations`, `/api/search`, the raw
+client reads (`/api/active-runs`, `/api/heartbeat`, the raw
 `journal.md`), which stay served for direct HTTP callers. The route
 table itself is `READ_ENDPOINTS` in `zicato/dashboard/endpoints.py` plus
 the routes `server.py` binds by hand.

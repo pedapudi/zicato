@@ -35,6 +35,8 @@ from zicato import query as sr
 from zicato.core.measurement import TOURNAMENT_DRAW
 from zicato.query.epoch_view import build_epochs_summary
 from zicato.query.events_index import build_meta_loop_ledger
+from zicato.query.hypothesis_view import build_hypothesis_accuracy
+from zicato.query.judge_view import build_per_judge_for_generation
 from zicato.telemetry.reducer import write_loss_profile
 from zicato.testing import make_loss_profile
 
@@ -253,14 +255,11 @@ def capture_snapshot(ws: Path) -> dict[str, Any]:
     snap["snapshot"] = sr.build_snapshot(paths)
     snap["run_log"] = sr.build_run_log(paths, limit=50)
     snap["environment"] = sr.build_environment(paths)
-    snap["search_empty"] = sr.build_search_results(paths, "")
-    snap["search_hello"] = sr.build_search_results(paths, "hello")
 
     # --- per-epoch scoped ---------------------------------------------------
     for eid in CANONICAL_EPOCH_ORDER:
         snap[f"epoch_view::{eid}"] = sr.build_epoch_view(paths, eid)
         snap[f"bracket::{eid}"] = sr.build_bracket(paths, eid)
-        snap[f"contract_diff::{eid}"] = sr.build_contract_diff(paths, eid)
         snap[f"tournament_structure::{eid}"] = sr.build_tournament_structure(paths, eid, "v1")
         snap[f"score_trajectory::{eid}"] = sr.build_score_trajectory(paths, eid)
         snap[f"calibration_trend::{eid}"] = sr.build_calibration_trend(paths, eid)
@@ -270,10 +269,8 @@ def capture_snapshot(ws: Path) -> dict[str, Any]:
     # (champion v0, challenger v1) is the matchup the e1 epoch carries; the
     # leaf readers exercise the per-gen path math for both.
     for eid, gid in [("e1", "v0"), ("e1", "v1"), ("e0", "v0")]:
-        snap[f"hypothesis_accuracy::{eid}::{gid}"] = sr.build_hypothesis_accuracy(paths, eid, gid)
-        snap[f"drift_movements::{eid}::{gid}"] = sr.build_drift_movements(paths, gid)
-        snap[f"matchup_detail::{eid}::{gid}"] = sr.build_matchup_detail(paths, gid)
-        snap[f"per_judge_for_generation::{eid}::{gid}"] = sr.build_per_judge_for_generation(
+        snap[f"hypothesis_accuracy::{eid}::{gid}"] = build_hypothesis_accuracy(paths, eid, gid)
+        snap[f"per_judge_for_generation::{eid}::{gid}"] = build_per_judge_for_generation(
             paths, eid, gid
         )
         snap[f"per_entry_for_generation::{eid}::{gid}"] = sr.build_per_entry_for_generation(

@@ -87,23 +87,17 @@ workspace }`. It is NOT in the environment payload.
 
 The drill-down / lazy endpoints:
 - `GET /api/run-log?after=<cursor>` — append-only tail batch.
-- `GET /api/tournaments/{gen}` — per-matchup detail. **No client reads
-  it**; it is an operator surface for direct HTTP requests. The match-up
-  surfaces read `/api/tournaments` (the bracket) and
-  `/api/matchup-grid/...` instead.
-- `GET /api/drift-movements/{gen}` — drift-kind movements. **No client
-  reads it**; operator surface only.
 - `GET /api/score-trajectory` — `{ epoch_id, points:[{generation_id,
   parent_generation_id, promoted, scalar, entry_count, created_at}] }`.
-- `GET /api/files...`, `GET /api/mutations/...` — the patch-diff and
-  mutation-surface panes.
+- `GET /api/files/{epoch}/{gen}/...`, `GET /api/mutations/...` — the
+  patch-diff and mutation-surface panes.
 - `GET /api/conversation/{run}` — the run_id-keyed transcript
   (`D.conversation()`; `D.runTranscript()` is the preferred gen×entry read).
-- `GET /api/generation/{epoch}/{gen}/episode-export` — whether that
-  candidate's proposal episode has Foe's static page, plus the episode log's
-  path and the command that renders one (`D.episodeExport()`). The page
-  itself is a whole HTML document served at the same path with an `.html`
-  suffix (`D.episodeExportHref()`), opened in a new tab and never fetched.
+- `GET /api/generation/{epoch}/{gen}/episode-export.html` — Foe's static
+  page for that candidate's proposal episode, a whole HTML document
+  (`D.episodeExportHref()`), opened in a new tab and never fetched. Whether
+  the page exists, plus the episode log's path and the command that renders
+  one, is the candidate dossier's `episode_export` field.
 - `GET /api/run/{epoch}/{gen}/{entry}/transcript/delta?after=<cursor>` — the
   live conversation pane's **cursor-append** read. It returns only what
   changed since `after`, so following a running unit never re-sends a
@@ -134,19 +128,13 @@ The drill-down / lazy endpoints:
   run-log's own `clamp_run_log_limit`. This is a SEPARATE route from
   `/transcript` above, which keeps its full-payload shape for the
   side-by-side panes.
-- `GET /api/matchup/{entry_id}/conversations` — **no client reads it.**
-  It is an operator surface for direct HTTP requests. The champion-versus-
-  challenger transcript comparison the console offers is the board view's
-  inline side-by-side, which resolves each side through the deterministic
-  `(epoch, gen, entry)` triple (`D.runTranscript()`) rather than through
-  an entry-keyed pair. The endpoint stays served for external callers.
+- The champion-versus-challenger transcript comparison the console offers
+  is the board view's inline side-by-side, which resolves each side through
+  the deterministic `(epoch, gen, entry)` triple (`D.runTranscript()`).
 - `GET /api/epoch/{epoch_id}/journal.md` — **no client reads it.** The raw
   `journal.md` bytes are an operator surface; the console renders the same
   text from the `journal` field the `/api/epoch` payload already carries,
   so a second fetch of the same file would duplicate it.
-- `GET /api/search` — **no client and no CLI command read it.** Consuming
-  it requires a search affordance in the chrome and a results route; the
-  console has neither.
 - `GET /api/epoch/{epoch}/candidate/{gen}[?entry=<id>]` — one candidate's
   dossier (`D.candidateDossier()`), the one read the candidate page makes
   per candidate shown: the candidate's `generation`, `experiment`,
@@ -157,15 +145,14 @@ The drill-down / lazy endpoints:
   `gates` (each `{champion, challenger, role, gate, judge_comparison}` — the
   candidate's own round as `challenger`, then each round it defended as
   `champion`), the `drilldown` of `?entry=` (`expectations`, `judges`,
-  `header`) and `racing_field` on a racing epoch. Every field is what the
-  granular route for it serves; the server joins, the page renders.
+  `header`) and `racing_field` on a racing epoch. Each field is one
+  query-layer reader's payload; the server joins, the page renders.
 - `GET /api/matchup-grid/{epoch}/{champion}/{challenger}` — the
   per-entry A/B grid for a **completed** matchup, read straight off the
-  persisted per-run loss files (NOT the SQLite index). `/api/tournaments/{gen}`
-  sources its `ab_grid` from the analytical index, a best-effort
-  dual-write; a finished tournament whose index was never rebuilt
-  carries an empty `ab_grid`, so a match-up detail read off that payload
-  has no per-board outcomes. This endpoint reconstructs them from
+  persisted per-run loss files (NOT the SQLite index). The analytical
+  index is a best-effort dual-write; a finished tournament whose index was
+  never rebuilt carries no per-board rows there. This endpoint reconstructs
+  them from
   `generations/{gen}/runs/{entry}/seed-{seed}/loss.{purpose}.r{draw}.json` (the reducer's `LossProfile`)
   for both generations plus the `generations/{gen}/gen_score.json`
   aggregates. Shape:
@@ -254,15 +241,6 @@ response carries `provenance_note`, the caption the view MUST render
 unreachable); the client does not, and must not re-word it.
 
 The file and mutation endpoints in full:
-- `GET /api/files` — `{ epochs:[{ epoch_id, generations:[{ generation_id,
-  file_count, patch_count, has_tree }] }] }`. Generations are listed in
-  store order; the last element is the latest generation. `has_tree:false`
-  with `file_count:0` means the tree was pruned rather than empty.
-- `GET /api/files/{epoch}/{gen}/tree` — `{ epoch_id, generation_id,
-  entries:[{ path, is_dir, size }], error? }`. Served and covered by
-  tests, but no client reads it: the console offers the changed-files
-  diff and the mutation-site browser instead of a per-generation file
-  browser. Reserved for external callers.
 - `GET /api/files/{epoch}/{gen}/content?path=` — one file's content
   (`D.fileContent()`). The patch diff reads it to expand the context
   around a patched span, because the patch record holds only the span; a
@@ -366,9 +344,9 @@ publish on the bus (§5).
 
 **AppState holds no per-matchup cache.** There are no `matchupDetail`,
 `driftMovements` or `selectedMatchup` fields and no `loadMatchupDetail()`
-loader: caching `/api/tournaments/{gen}` and `/api/drift-movements/{gen}`
-on every change signal would cost two round-trips per beat that no view
-reads. The beat path makes ONE consolidated `/api/environment`
+loader: caching per-matchup detail on every change signal would cost
+round-trips per beat that no view reads. The beat path makes ONE
+consolidated `/api/environment`
 read, and per-matchup detail is an on-demand drill-down through
 `js/data.js`.
 
@@ -682,16 +660,12 @@ harmonograf keys its session views by the **ADK session id** — the
 `sessionId` present on every goldfive event envelope. The backend
 surfaces this as `adk_session_id` on run-like records:
 - active-run rows from `/api/environment`;
-- the per-run header `/api/run/{epoch}/{gen}/{entry}/header`
-  (`D.runHeader()`) — the read the candidate drill-down's
-  `harmonografLink()` actually uses;
+- the per-run `header` of the candidate dossier's `drilldown`
+  (`D.candidateDossier()` with `?entry=`) — the read the candidate
+  drill-down's `harmonografLink()` actually uses;
 - `entry_grid` rows from `/api/matchup-grid/{epoch}/{champion}/{challenger}`
   (`parent_session_id` / `child_session_id`) — the per-board deep links in
   the Epoch publication's per-match-up tables;
-- `ab_grid` cells from `/api/tournaments/{gen}` (`parent_adk_session_id`
-  / `child_adk_session_id`) carry the ids too, but **no client fetches that
-  endpoint** (§1 drill-down list), so that path deep-links nothing.
-  `harmonografSessionId()` still accepts those key names;
 - `active_tournament.entries[]` rows — the runner stamps the run's
   `adk_session_id` onto the per-(entry × side) row the instant the run
   finishes (read from the run's `LossProfile`, never from `events.jsonl`

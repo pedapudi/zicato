@@ -241,7 +241,6 @@ def test_wrong_coordinates_remain_auditable_without_becoming_cell_evidence(tmp_p
 
 @pytest.mark.parametrize("seed", [None, 17])
 def test_selected_conversation_uses_its_seed(tmp_path: Path, seed: int | None) -> None:
-    from zicato.query.conversations_view import build_matchup_conversations
     from zicato.query.events_index import find_generation_run
 
     _write(tmp_path, 31)
@@ -255,7 +254,6 @@ def test_selected_conversation_uses_its_seed(tmp_path: Path, seed: int | None) -
         run_id,
         selected.with_name("events.tournament.r0.jsonl"),
     )
-    assert build_matchup_conversations(paths, "entry")["champion"]["run_id"] == run_id
     from zicato.query.transcript_view import resolve_conversation
 
     assert resolve_transcript_events(paths, "e0", "v0", "entry") == selected.with_name(

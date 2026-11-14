@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -90,12 +89,3 @@ def _query(conn: sqlite3.Connection, sql: str, params: tuple[Any, ...]) -> list[
         return list(conn.execute(sql, params))
     except sqlite3.Error:
         return []
-
-
-def _opt_json(value: Any) -> Any:
-    if not isinstance(value, str):
-        return None
-    try:
-        return json.loads(value)
-    except json.JSONDecodeError:
-        return None

@@ -77,11 +77,11 @@ test('harmonografSessionId: does NOT fall back to synthetic run-id', () => {
 
 // --- A1/A2: the beat path makes ONE consolidated read, never fetch-and-discard.
 //
-// No `loadMatchupDetail()` pulls `/api/tournaments/{gen}` (the whole
-// matchup-detail payload, ab_grid included) AND `/api/drift-movements/{gen}`
-// into `state.matchupDetail` / `state.driftMovements` on EVERY SSE beat — and no
-// view read either field. Both the loader and the caches are gone; these pin
-// that they cannot come back silently.
+// No `loadMatchupDetail()` pulls a per-matchup detail payload and a
+// drift-movements payload into `state.matchupDetail` / `state.driftMovements`
+// on EVERY SSE beat — no view read either field. The loader, the caches and
+// the two routes behind them are gone; these pin that they cannot come back
+// silently.
 
 const api = await import('../js/core/api.js');
 const { state } = await import('../js/core/state.js');

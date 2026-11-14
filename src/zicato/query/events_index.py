@@ -633,18 +633,6 @@ def build_workspace_view(paths: WorkspacePaths) -> dict[str, Any]:
     }
 
 
-# The contract view displays these evaluation components. Proposer identity
-# appears in the ledger; future stored keys remain readable without widening this view.
-_CONTRACT_COMPONENT_NAMES = (
-    "board",
-    "brief",
-    "scoring",
-    "evaluator_revision",
-    "adapter",
-    "mutable_trees",
-)
-
-
 def _read_contract_components(
     paths: WorkspacePaths, epoch_id: str
 ) -> tuple[dict[str, str], str | None]:
@@ -655,86 +643,8 @@ def _read_contract_components(
         return {}, str(exc)
 
 
-def build_contract_diff(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any]:
-    """The epoch-level contract diff against the predecessor epoch.
-
-    Compares the named epoch's ``contract_components.json`` against the
-    immediately preceding epoch's. The predecessor is resolved as the
-    epoch whose id sorts just before ``epoch_id`` in the on-disk listing
-    (matches the convention :func:`build_epochs_summary` uses).
-
-    Returns::
-
-        {
-            "epoch_id": str,
-            "predecessor_epoch_id": str | None,
-            "components": [
-                { "name": str, "current_hash": str|None,
-                  "previous_hash": str|None, "changed": bool }
-            ],
-            "any_changed": bool,
-        }
-
-    A component is listed even when both hashes are missing, so the
-    contract-diff view renders a stable six-row matrix. ``changed`` is ``True``
-    iff the two hashes differ AND both are non-empty: an unknown predecessor
-    hash is "no diff signal" rather than "everything changed".
-
-    The first epoch on disk reports ``predecessor_epoch_id = None`` and
-    every component as not-changed: there is nothing to diff against.
-    """
-    cur, error = _read_contract_components(paths, epoch_id)
-
-    # Resolve predecessor: the epoch immediately before ``epoch_id`` in the
-    # CANONICAL (timestamp-first) order — the same single authority every
-    # epoch-list view orders by, so the contract diff attributes against the
-    # true chronological predecessor rather than the lexically-prior id.
-    predecessor: str | None = None
-    ids = list_epoch_ids(paths)
-    if epoch_id in ids:
-        idx = ids.index(epoch_id)
-        if idx > 0:
-            predecessor = ids[idx - 1]
-
-    prev: dict[str, str] = {}
-    if predecessor is not None:
-        prev, previous_error = _read_contract_components(paths, predecessor)
-        error = "; ".join(filter(None, (error, previous_error))) or None
-
-    components: list[dict[str, Any]] = []
-    any_changed = False
-    for name in _CONTRACT_COMPONENT_NAMES:
-        cur_hash = cur.get(name) or None
-        prev_hash = prev.get(name) or None
-        changed = (
-            predecessor is not None
-            and cur_hash is not None
-            and prev_hash is not None
-            and cur_hash != prev_hash
-        )
-        if changed:
-            any_changed = True
-        components.append(
-            {
-                "name": name,
-                "current_hash": cur_hash,
-                "previous_hash": prev_hash,
-                "changed": changed,
-            }
-        )
-
-    return {
-        "epoch_id": epoch_id,
-        "predecessor_epoch_id": predecessor,
-        "components": components,
-        "any_changed": any_changed,
-        **({"error": error} if error else {}),
-    }
-
-
-# The surfaced ledger components, in heatstrip column order. This SUPERSETS
-# :data:`_CONTRACT_COMPONENT_NAMES` with the two levers the per-epoch
-# contract-diff endpoint omits:
+# The surfaced ledger components, in heatstrip column order: the six
+# evaluation components of the contract, and two further levers:
 #
 #   * ``structure`` — NOT a ``contract_components.json`` sub-hash (structure is
 #     a per-epoch tournament attribute rather than a contract-hash component).
@@ -742,11 +652,9 @@ def build_contract_diff(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any]:
 #     derived from each epoch's frozen ``scoring.json`` ``tournament.structure``
 #     and folded in as its own change signal so a structure roll is attributed.
 #   * ``proposer`` — IS persisted in ``contract_components.json`` (the
-#     orchestrator's :func:`compute_component_hashes` emits it), but the epoch
-#     contract-diff endpoint surfaces only six contract sub-hashes. The
-#     meta-loop
-#     ledger restores it: "proposer/skills change rolls the epoch", so it must
-#     read as a first-class lever in the cross-epoch attribution.
+#     orchestrator's :func:`compute_component_hashes` emits it) beside the
+#     six evaluation components. "proposer/skills change rolls the epoch", so
+#     it must read as a first-class lever in the cross-epoch attribution.
 _LEDGER_COMPONENT_NAMES = (
     "board",
     "brief",

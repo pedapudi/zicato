@@ -21,8 +21,8 @@ export class AppState {
     this.heartbeat = null;
 
     // The SERVER's liveness verdict — { state, last_heartbeat?, ended_at? }
-    // from runtime_view.derive_liveness, riding on /api/state + the SSE
-    // snapshot + /api/environment. It is the only reader that can see the
+    // from runtime_view.derive_liveness, riding on the SSE snapshot +
+    // /api/environment. It is the only reader that can see the
     // terminal progress marker; freshness still ages on the client clock.
     // Read it through livestatus.deriveLiveness, never raw. Null on a
     // server that does not serve the block (the fold degrades).

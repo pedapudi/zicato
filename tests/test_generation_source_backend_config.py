@@ -208,27 +208,14 @@ def keyless_client(tmp_path: Path) -> TestClient:
         yield client
 
 
-def test_file_index_lists_recorded_generations_and_names_the_reason(
+def test_generation_file_degrades_without_blaming_snapshot_gc(
     keyless_client: TestClient,
 ) -> None:
-    response = keyless_client.get("/api/files")
+    response = keyless_client.get("/api/files/e1/v1/content", params={"path": "agent.py"})
 
     assert response.status_code == 200
     body = response.json()
-    generations = body["epochs"][0]["generations"]
-    assert [g["generation_id"] for g in generations] == ["v0", "v1"]
-    assert all(g["has_tree"] is False for g in generations)
-    assert GENERATION_SOURCE_BACKEND_KEY in body["error"]
-
-
-def test_generation_tree_degrades_without_blaming_snapshot_gc(
-    keyless_client: TestClient,
-) -> None:
-    response = keyless_client.get("/api/files/e1/v1/tree")
-
-    assert response.status_code == 200
-    body = response.json()
-    assert body["entries"] == []
+    assert "content" not in body
     assert "pruned by snapshot GC" not in body["error"], body["error"]
     assert GENERATION_SOURCE_BACKEND_KEY in body["error"]
 

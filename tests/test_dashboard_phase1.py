@@ -20,15 +20,17 @@ from zicato.index.schema import apply_schema
 from zicato.query import (
     WorkspacePaths,
     build_epoch_view,
-    build_per_judge_comparison,
-    build_per_judge_for_entry,
-    build_per_judge_for_generation,
-    build_per_judge_for_run,
     build_per_judge_trend,
     build_workspace_view,
 )
 from zicato.query.epoch_view import build_epochs_summary
-from zicato.query.judge_view import build_workspace_identity
+from zicato.query.judge_view import (
+    build_per_judge_comparison,
+    build_per_judge_for_entry,
+    build_per_judge_for_generation,
+    build_per_judge_for_run,
+    build_workspace_identity,
+)
 from zicato.telemetry.reducer import loss_profile_to_dict
 from zicato.testing import make_loss_profile
 from zicato.workspace import WorkspaceLayout
@@ -621,46 +623,8 @@ def test_endpoint_per_judge_trend(phase1_client: TestClient) -> None:
     assert isinstance(body["judges"], list)
 
 
-def test_endpoint_per_judge_for_generation(phase1_client: TestClient) -> None:
-    r = phase1_client.get("/api/generation/2026-05-16_e0/v1/per-judge")
-    assert r.status_code == 200
-    body = r.json()
-    assert body["generation_id"] == "v1"
-    assert any(j["judge_name"] == "critic_A" for j in body["judges"])
-
-
-def test_endpoint_per_judge_comparison(phase1_client: TestClient) -> None:
-    r = phase1_client.get("/api/round/2026-05-16_e0/v1/v2/per-judge-comparison")
-    assert r.status_code == 200
-    body = r.json()
-    assert body["champion"] == "v1"
-    assert body["challenger"] == "v2"
-    assert body["primary_driver"] in {"critic_A", "critic_B"}
-
-
-def test_endpoint_per_judge_for_run(phase1_client: TestClient) -> None:
-    r = phase1_client.get("/api/run/run_v1/per-judge")
-    assert r.status_code == 200
-    body = r.json()
-    assert body["run_id"] == "run_v1"
-    assert any(j["judge_name"] == "critic_A" for j in body["judges"])
-
-
-def test_endpoint_per_judge_for_run_by_entry(
-    phase1_client: TestClient, phase1_workspace: Path
-) -> None:
-    r = phase1_client.get("/api/run/2026-05-16_e0/v1/entry_alpha/per-judge")
-    assert r.status_code == 200
-    body = r.json()
-    # The entry's loss.json carries run_id "run_v1"; the endpoint
-    # resolves it and returns the same shape as the run_id-keyed route.
-    assert body["run_id"] == "run_v1"
-
-
-def test_per_judge_by_entry_agrees_across_its_two_sources(
-    phase1_client: TestClient, phase1_workspace: Path
-) -> None:
-    """The by-entry route answers from ``loss.json`` OR the index, never differently.
+def test_per_judge_by_entry_agrees_across_its_two_sources(phase1_workspace: Path) -> None:
+    """The by-entry reader answers from ``loss.json`` OR the index, never differently.
 
     ``build_per_judge_for_entry`` prefers the run directory's own
     ``per_judge_loss`` block and falls back to the ``judge_losses`` index
@@ -669,8 +633,10 @@ def test_per_judge_by_entry_agrees_across_its_two_sources(
     read comes from the index; writing the SAME rows into the file must
     leave the response byte-identical.
     """
-    url = "/api/run/2026-05-16_e0/v1/entry_alpha/per-judge"
-    from_index = phase1_client.get(url).json()
+    paths = WorkspacePaths(phase1_workspace)
+    from_index = build_per_judge_for_entry(paths, E0, "v1", "entry_alpha")
+    # The entry's loss.json carries run_id "run_v1"; the reader resolves it.
+    assert from_index["run_id"] == "run_v1"
     assert [row["judge_name"] for row in from_index["judges"]] == ["critic_A", "critic_B"]
 
     loss_path = (
@@ -692,7 +658,7 @@ def test_per_judge_by_entry_agrees_across_its_two_sources(
             "per_judge_loss": from_index["judges"],
         },
     )
-    from_file = phase1_client.get(url).json()
+    from_file = build_per_judge_for_entry(paths, E0, "v1", "entry_alpha")
     assert from_file == from_index
 
 
@@ -704,14 +670,6 @@ def test_environment_workspace_is_structured(phase1_client: TestClient) -> None:
     assert isinstance(ws, dict)
     assert ws.get("adk_entrypoint") == "kossel_run:root_agent"
     assert isinstance(ws.get("mutation_point_count"), int)
-
-
-def test_endpoint_rejects_unsafe_ids(phase1_client: TestClient) -> None:
-    """Path-traversal ids degrade rather than 500."""
-    r = phase1_client.get("/api/generation/..%2Fbad/v1/per-judge")
-    # Starlette may match the path with the dot segments; the handler
-    # itself returns an empty payload for an unsafe id.
-    assert r.status_code in (200, 404)
 
 
 # ---------------------------------------------------------------------------

@@ -85,23 +85,6 @@ class DetailPayload(ObjectPayload, total=False):
     annotations: list[dict[str, Any]]
 
 
-class ProposalEpisodeExportPayload(ObjectPayload, total=False):
-    """Whether one candidate has Foe's static episode page, and how to get it.
-
-    ``export_available`` is what the proposer panel branches on. The other
-    two fields are what it shows when there is no page: ``episode_log`` is
-    the log on disk, and ``command`` renders it by hand with the same
-    binary the episode ran. Both are empty for a candidate with no proposal
-    episode at all. ``slot`` names one best-of-N slate slot, and is null
-    when the caller named the generation alone.
-    """
-
-    slot: int | None
-    episode_log: str
-    export_available: bool
-    command: str
-
-
 # Every JSON GET has one declared boundary contract. Routes that share an
 # envelope share one type, so each wire spelling is declared here once rather
 # than in a per-route wrapper.
@@ -115,7 +98,6 @@ ENDPOINT_PAYLOADS: Final[dict[str, type[Any]]] = {
         "/api/reflections",
         "/api/run-log",
         "/api/score-trajectory",
-        "/api/search",
         "/api/tournaments",
         "/api/workspace",
         "/api/epoch/{epoch_id}/evals",
@@ -123,7 +105,6 @@ ENDPOINT_PAYLOADS: Final[dict[str, type[Any]]] = {
         "/api/epoch/{epoch_id}/per-judge-trend",
         "/api/epoch/{epoch_id}/round-timeline",
         "/api/generation/{epoch_id}/{generation_id}/per-entry",
-        "/api/generation/{epoch_id}/{generation_id}/per-judge",
         "/api/reflection/{reflection_id}/scorecards",
         "/api/reflection/{reflection_id}/traces",
     )
@@ -133,10 +114,7 @@ ENDPOINT_PAYLOADS.update(
         path: DetailPayload
         for path in (
             "/api/active-tournament",
-            "/api/config",
-            "/api/contract-diff/{epoch_id}",
             "/api/conversation/{run_id}",
-            "/api/drift-movements/{generation_id}",
             "/api/environment",
             "/api/epoch",
             "/api/epoch/{epoch_id}/analysis",
@@ -145,21 +123,16 @@ ENDPOINT_PAYLOADS.update(
             "/api/epoch/{epoch_id}/eval-health",
             "/api/epoch/{epoch_id}/eval/{entry_id}",
             "/api/epoch/{epoch_id}/experiments-ledger",
-            "/api/epoch/{epoch_id}/journal",
             "/api/epoch/{epoch_id}/racing-field",
             "/api/epoch/{epoch_id}/trajectory",
-            "/api/files",
             "/api/files/{epoch_id}/{generation_id}/content",
             "/api/files/{epoch_id}/{generation_id}/diff",
             "/api/files/{epoch_id}/{generation_id}/patches",
-            "/api/files/{epoch_id}/{generation_id}/tree",
             "/api/health",
             "/api/health-report",
             "/api/heartbeat",
-            "/api/hypothesis-accuracy/{epoch_id}/{generation_id}",
             "/api/live/pipeline",
             "/api/matchup-grid/{epoch_id}/{champion_id}/{challenger_id}",
-            "/api/matchup/{entry_id}/conversations",
             "/api/mutations/{epoch_id}",
             "/api/mutations/{epoch_id}/{mutation_id}",
             "/api/proposer/scorecard",
@@ -169,19 +142,9 @@ ENDPOINT_PAYLOADS.update(
             "/api/reflection/{reflection_id}/trace/{trace_id}",
             "/api/reflection/{reflection_id}/xray/{judge_name}/{run_ref}",
             "/api/round/{epoch_id}/{champion_id}/{challenger_id}/gate",
-            "/api/round/{epoch_id}/{champion_id}/{challenger_id}/per-judge-comparison",
-            "/api/run/{epoch_id}/{generation_id}/{entry_id}/expectations",
-            "/api/run/{epoch_id}/{generation_id}/{entry_id}/header",
-            "/api/run/{epoch_id}/{generation_id}/{entry_id}/per-judge",
             "/api/run/{epoch_id}/{generation_id}/{entry_id}/transcript",
             "/api/run/{epoch_id}/{generation_id}/{entry_id}/transcript/delta",
-            "/api/run/{run_id}/per-judge",
-            "/api/state",
             "/api/tournament-structure/{epoch_id}/{tournament_id}",
-            "/api/tournaments/{generation_id}",
         )
     }
-)
-ENDPOINT_PAYLOADS["/api/generation/{epoch_id}/{generation_id}/episode-export"] = (
-    ProposalEpisodeExportPayload
 )

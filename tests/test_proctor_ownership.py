@@ -148,7 +148,7 @@ def _read_through_the_dashboard(workspace: Path, tmp_path: Path) -> None:
     static.mkdir()
     (static / "index.html").write_text("<!doctype html>", encoding="utf-8")
     with TestClient(create_app(workspace, static, read_only=True)) as client:
-        for route in ("/api/state", "/api/health", "/api/environment", "/api/logs"):
+        for route in ("/api/heartbeat", "/api/health", "/api/environment", "/api/logs"):
             assert client.get(route).status_code == 200, route
 
 

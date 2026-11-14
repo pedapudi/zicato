@@ -10,7 +10,7 @@ import pytest
 from zicato.board.jsonl import save_board
 from zicato.core.board import BoardEntry, ScriptedTurn, UserPersona
 from zicato.epoch._storage import RecordError
-from zicato.query import WorkspacePaths, build_epoch_view, build_search_results
+from zicato.query import WorkspacePaths, build_epoch_view
 from zicato.query.epoch_view import build_epochs_summary
 from zicato.workspace import WorkspaceLayout, read_board
 from zicato.workspace_loader import load_current_brief
@@ -45,8 +45,7 @@ def test_present_invalid_board_is_not_a_shorter_board(
     assert "line 3" in view["unreadable"]
 
 
-@pytest.mark.parametrize("reader", [build_epoch_view, build_search_results])
-def test_board_is_read_once_per_response(workspace: WorkspaceLayout, monkeypatch, reader) -> None:
+def test_board_is_read_once_per_response(workspace: WorkspaceLayout, monkeypatch) -> None:
     original = Path.read_text
     reads = []
 
@@ -57,16 +56,12 @@ def test_board_is_read_once_per_response(workspace: WorkspaceLayout, monkeypatch
 
     monkeypatch.setattr(Path, "read_text", read)
     paths = WorkspacePaths(workspace.root)
-    view = reader(paths, "sample") if reader is build_search_results else reader(paths, "e0")
-    if reader is build_search_results:
-        assert view["entries"] == [{"id": "sample", "match_kind": "exact"}]
-        assert view["judges"] == [{"name": "sample_judge", "match_kind": "substring"}]
-    else:
-        assert view["board"][0]["entry_id"] == "sample"
-        assert view["board"][0]["wall_clock_budget_seconds"] == 1.0
-        assert "budget_s" not in view["board"][0]
-        assert view["board_meta"] == {"disable_drift": ["tool_error"], "judge_only": False}
-        assert list(view["board_judges"]) == ["sample"]
+    view = build_epoch_view(paths, "e0")
+    assert view["board"][0]["entry_id"] == "sample"
+    assert view["board"][0]["wall_clock_budget_seconds"] == 1.0
+    assert "budget_s" not in view["board"][0]
+    assert view["board_meta"] == {"disable_drift": ["tool_error"], "judge_only": False}
+    assert list(view["board_judges"]) == ["sample"]
     assert len(reads) == 1
 
 

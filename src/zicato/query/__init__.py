@@ -22,7 +22,6 @@ endpoint built on top of this ever returns a 500.
 from __future__ import annotations
 
 from zicato.query.candidate_view import build_candidate_dossier
-from zicato.query.conversations_view import build_matchup_conversations
 from zicato.query.epoch_view import (
     build_epoch_analysis,
     build_epoch_view,
@@ -34,42 +33,29 @@ from zicato.query.eval_view import (
     build_eval_matrix,
 )
 from zicato.query.events_index import (
-    build_contract_diff,
     build_workspace_view,
 )
 from zicato.query.file_view import (
-    build_file_index,
     build_generation_diff,
     build_generation_patches,
-    build_generation_tree,
     read_generation_file,
 )
 from zicato.query.gate_view import (
-    build_drift_movements,
     build_gate_breakdown,
     build_health_report,
     build_score_trajectory,
 )
 from zicato.query.hypothesis_view import (
     build_calibration_trend,
-    build_hypothesis_accuracy,
 )
 from zicato.query.journal_view import (
-    read_epoch_journal,
     read_epoch_journal_md,
 )
 from zicato.query.judge_roster import build_judge_roster
 from zicato.query.judge_view import (
     build_environment,
-    build_expectation_outcomes_for_run,
     build_per_entry_for_generation,
-    build_per_judge_comparison,
-    build_per_judge_for_entry,
-    build_per_judge_for_generation,
-    build_per_judge_for_run,
     build_per_judge_trend,
-    build_run_header,
-    build_search_results,
 )
 from zicato.query.ledger_view import build_experiments_ledger
 from zicato.query.lineage_view import build_lineage_view
@@ -107,12 +93,10 @@ from zicato.query.runtime_view import (
     build_snapshot,
     read_active_runs_view,
     read_active_tournament_dict,
-    read_effective_settings,
     read_heartbeat_dict,
 )
 from zicato.query.tournament_view import (
     build_bracket,
-    build_matchup_detail,
     build_matchup_grid,
     build_tournament_structure,
 )
@@ -122,7 +106,6 @@ from zicato.query.trace_view import (
     build_trace_list,
 )
 from zicato.query.transcript_view import (
-    build_proposal_episode_export,
     build_run_transcript,
     build_run_transcript_delta,
     empty_run_transcript,
@@ -137,52 +120,37 @@ __all__ = [
     "build_bracket",
     "build_calibration_trend",
     "build_candidate_dossier",
-    "build_contract_diff",
-    "build_drift_movements",
     "build_environment",
     "build_epoch_analysis",
     "build_epoch_view",
     "build_eval_dossier",
     "build_eval_health",
     "build_eval_matrix",
-    "build_expectation_outcomes_for_run",
     "build_experiments_ledger",
-    "build_file_index",
     "build_gate_breakdown",
     "build_generation_diff",
     "build_generation_patches",
-    "build_generation_tree",
     "build_health_report",
-    "build_hypothesis_accuracy",
     "build_judge_roster",
     "build_judge_scorecards",
     "build_lineage_view",
     "build_live_pipeline",
     "build_log_view",
-    "build_matchup_conversations",
-    "build_matchup_detail",
     "build_matchup_grid",
     "build_mutation_detail",
     "build_mutation_index",
     "build_optimization_trajectory",
     "build_per_entry_for_generation",
-    "build_per_judge_comparison",
-    "build_per_judge_for_entry",
-    "build_per_judge_for_generation",
-    "build_per_judge_for_run",
     "build_per_judge_trend",
     "build_practice_review",
-    "build_proposal_episode_export",
     "build_proposer_scorecard",
     "build_racing_field",
     "build_reflection_summary",
     "build_round_timeline",
-    "build_run_header",
     "build_run_log",
     "build_run_transcript",
     "build_run_transcript_delta",
     "build_score_trajectory",
-    "build_search_results",
     "build_snapshot",
     "build_suggestion_provenance",
     "build_tournament_cost",
@@ -198,9 +166,7 @@ __all__ = [
     "read_active_runs_view",
     "read_active_tournament_dict",
     "read_current_epoch",
-    "read_effective_settings",
     "read_epoch_analysis_html",
-    "read_epoch_journal",
     "read_epoch_journal_md",
     "read_generation_file",
     "read_heartbeat_dict",

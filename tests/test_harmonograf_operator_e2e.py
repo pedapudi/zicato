@@ -9,7 +9,7 @@ board-run session and a zicato meta-loop session through the REAL
 on-disk artifacts the dashboard reads (``loss.json`` +
 ``meta_loop_events.jsonl``), then drives the dashboard over HTTP and asserts:
 
-* ``/api/state`` carries ``harmonograf_url`` (the persistent server) and
+* ``/api/environment`` carries ``harmonograf_url`` (the persistent server) and
   ``harmonograf_meta_session`` (the meta-loop session id);
 * the per-run deep-link the frontend builds resolves to the SAME
   ``adk_session_id`` that was emitted (resolved, not just non-empty);
@@ -245,20 +245,23 @@ def test_operator_sees_harmonograf_at_both_levels(
         #    dashboard — we never touch port 7892).
         app = create_app(workspace, _STATIC_DIR, harmonograf_url=handle.web_url)
         with TestClient(app) as client:
-            # (a) /api/state carries the persistent URL + the meta session id.
-            state = client.get("/api/state").json()
+            # (a) /api/environment carries the persistent URL + the meta session id.
+            state = client.get("/api/environment").json()
             hb = state.get("heartbeat") or {}
             assert (
                 hb.get("harmonograf_url") == handle.web_url
             ), "the dashboard must surface the persistent harmonograf URL"
             assert hb.get("harmonograf_persistent") is True
             assert hb.get("harmonograf_meta_session") == meta_sid, (
-                "the zicato-level meta-loop session id must reach /api/state "
+                "the zicato-level meta-loop session id must reach /api/environment "
                 "(recovered off meta_loop_events.jsonl post-mortem)"
             )
 
             # (b) the per-run deep-link resolves to the SAME emitted board sid.
-            header = client.get(f"/api/run/{epoch_id}/{gen_id}/{entry_id}/header").json()
+            dossier = client.get(
+                f"/api/epoch/{epoch_id}/candidate/{gen_id}?entry={entry_id}"
+            ).json()
+            header = dossier["drilldown"]["header"]
             assert header.get("adk_session_id") == board_sid, (
                 "the run header must carry the emitted board session id so the "
                 "frontend deep-links /#/session/<board_sid>"

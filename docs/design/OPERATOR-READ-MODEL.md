@@ -9,7 +9,7 @@ the browser renders served decisions rather than reconstructing them.
 
 Wire spellings are stable and declared with `TypedDict` payloads in
 `zicato.query.contracts`. `ENDPOINT_PAYLOADS` inventories every JSON GET and
-assigns it a collection, detail, or proposal-episode-export contract; a
+assigns it a collection or detail contract; a
 correspondence test fails the build when a row of the dashboard's
 `READ_ENDPOINTS` table has no entry. Contracts live
 at the query boundary rather than in the HTTP driver. An optional key means the
