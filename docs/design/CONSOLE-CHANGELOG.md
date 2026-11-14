@@ -4,9 +4,9 @@
 > file is the round-by-round changelog of the shipped console, and keeps its
 > chronology on purpose. A heading or sentence that calls a state "current",
 > "converged" or "the default" describes the console as of that entry. The
-> console has changed since: it has no builder view, and its typeface, text
-> size and page-scale controls live in Settings → Appearance rather than the
-> top bar. For the visual design language it settled on — the colour-role
+> console has changed since: it has no builder view and no typeface picker,
+> it ships three colour themes, and its text size and page-scale controls
+> live in Settings → Appearance rather than the top bar. For the visual design language it settled on — the colour-role
 > system, typography, the mark grammar, and render discipline — read
 > [CONSOLE-DESIGN-LANGUAGE.md](CONSOLE-DESIGN-LANGUAGE.md), which is the
 > source of truth for the present state.

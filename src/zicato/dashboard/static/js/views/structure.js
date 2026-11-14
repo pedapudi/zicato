@@ -5,18 +5,20 @@
 // field-diversity ribbon, drawn from the models in ../tournament_model.js as
 // fit-to-width SVG (width:100% + viewBox, no pan/zoom, token-themed, page-scale
 // aware). The match-ups page (views/gens.js) renders the default gauntlet with
-// its own ladder.
+// its own ladder. `structureFigure` is the one table that names the figure
+// each structure draws on each surface (these sections, the live band's hero,
+// the epoch overview and its round timeline).
 
 import { el, svgEl } from '../core/dom.js';
 import * as svg from '../svg.js';
 import { icon, iconLabel } from '../icons.js';
 import { section, empty, stat, verdictLabel, overrideLabel, overrideControlCell, pendingOverride, clearPendingOverride, flagLabel, hovercardBody, dataTable, ratingCellEl, coreIdeaLine } from '../ui.js';
-import { structureStatusLabel } from '../livestatus.js';
+import { structureStatusLabel, structureLabel } from '../livestatus.js';
 import { attachHovercard } from '../hovercard.js';
 import { state } from '../core/state.js';
 import { postFieldOverride } from '../core/api.js';
 import * as D from '../data.js';
-import { structureLabel, elimModel, splitBand, swissModel, racingModel, championScalarOf, gauntletModel, diversityMembership } from '../tournament_model.js';
+import { elimModel, splitBand, swissModel, swissOverviewModel, racingModel, championScalarOf, gauntletModel, gauntletModelDigest, diversityMembership } from '../tournament_model.js';
 const CROWN = svg.CROWN;
 
 // The structure label (shown in the epoch header + the match-ups header).
@@ -30,12 +32,8 @@ export function structurePill(structure, params) {
 // ── the structure render dispatch — DOM sections per structure ──────
 export function renderStructure(st, ctx, epochId) {
   const structure = String((st && st.structure) || 'gauntlet');
-  let nodes;
-  if (structure === 'swiss') nodes = renderSwiss(st, ctx, epochId);
-  else if (structure === 'racing') nodes = renderRacing(st, ctx, epochId);
-  else if (structure === 'gauntlet') nodes = renderGauntlet(st, ctx, epochId);
-  // single_elim + double_elim share the bracket renderer.
-  else nodes = renderBracket(st, ctx, epochId, structure);
+  // A structure the table does not name draws the bracket.
+  const nodes = (structureFigure(structure, 'sections') || renderBracket)(st, ctx, epochId, structure);
   // The PROPOSED FIELD section leads so a completed epoch's proposing
   // outcomes are visible (e.g. "4 proposed · 0 applied — all rejected" with
   // per-challenger reasons). Absent field_status ⇒ no section (back-compat).
@@ -47,6 +45,166 @@ export function renderStructure(st, ctx, epochId) {
   const diversity = diversitySection(st, ctx, epochId);
   const lead = [proposed, diversity].filter(Boolean);
   return lead.length ? [...lead, ...nodes] : nodes;
+}
+
+// ── the figure each structure draws, by surface ──────────────────────
+//
+// ONE table maps (structure, mode) to its builder, so no surface switches on
+// the structure name to pick a figure. Single and double elimination share
+// every builder. The modes:
+//   sections — the match-ups sections: (st, ctx, epochId, structure) → nodes
+//   hero     — the live band's full-width figure:
+//              (st, { structure, onCompetitor }) → { node, digest } | null
+//   overview — the model the epoch overview and its round timeline draw from:
+//              (st) → model | null (null when the structure has no topology)
+//   round    — the epoch timeline's per-round figure, from an `overview`
+//              model: (model, { structure, onCompetitor }) → node
+// The default gauntlet has no overview or round figure: the champion spine
+// and the challenger fan tell that round's story.
+const ELIM_FIGURES = { sections: renderBracket, hero: elimHero, overview: elimOverview, round: elimRound };
+const STRUCTURE_FIGURES = {
+  racing: { sections: renderRacing, hero: racingHero, overview: racingOverview, round: racingRound },
+  swiss: { sections: renderSwiss, hero: swissHero, overview: swissOverviewModel, round: swissRound },
+  single_elim: ELIM_FIGURES,
+  double_elim: ELIM_FIGURES,
+  gauntlet: { sections: renderGauntlet, hero: gauntletHero },
+};
+
+// The builder for `structure` on the surface `mode`, or null when that
+// structure draws no figure there.
+export function structureFigure(structure, mode) {
+  const row = Object.prototype.hasOwnProperty.call(STRUCTURE_FIGURES, String(structure)) ? STRUCTURE_FIGURES[String(structure)] : null;
+  return (row && row[mode]) || null;
+}
+
+// ── the LIVE HERO figures (the live band, js/live.js) ────────────────
+//
+// The SAME tournament figure the single-round page leads with, rendered
+// RESPONSIVE so it scales aspect-locked to fill the hero width up to its
+// `svg.dn-*-hero` max-width cap. Each returns null when the structure carries
+// no topology yet. The digest the gated swap compares is each builder's own
+// `*Digest` (or, for swiss, the model digest below), prefixed by the figure
+// kind so a structure change is itself a digest change.
+
+function racingHero(st, { onCompetitor }) {
+  // the racing model recovers championScalar from the live aggregate /
+  // projected standings — it degrades gracefully to a delta-only domain when
+  // the champion scalar is unrecoverable mid-race.
+  const model = racingModel(st);
+  if (!model || !model.hasRungs) return null;
+  // the scalar number-line IS the primary viz. `mini` keeps the compact
+  // label/tick treatment (the rung stepper carries the structural progress, so
+  // no wide caption).
+  const opts = {
+    rungs: model.rungs, championId: model.championId, benchmarkId: model.benchmarkId,
+    championScalar: model.championScalar, live: model.live, gateState: model.gateState,
+    mini: true, responsive: true, onCompetitor,
+  };
+  return { node: svg.racingScalarTrack(opts), digest: 'racing|' + svg.racingScalarTrackDigest(opts) };
+}
+
+function swissHero(st, { onCompetitor }) {
+  const model = swissModel(st);
+  if (!model || !model.hasRounds) return null;
+  const opts = {
+    rounds: model.rounds, standings: model.standings,
+    championId: model.championId, benchmarkId: model.benchmarkId,
+    live: model.live, gateState: model.gateState, gateDelta: model.gateDelta,
+    responsive: true, onCompetitor,
+  };
+  return { node: svg.swissLadder(opts), digest: 'swiss|' + swissDigest(model) };
+}
+
+function elimHero(st, { structure, onCompetitor }) {
+  const model = elimModel(st);
+  if (!model || !model.hasMatches) return null;
+  // the concentric-ring radial — the single-round PRIMARY for both
+  // elimination structures, reading the SERVED gen_states verbatim. Double
+  // elimination puts the winners' bracket on the upper arc and the losers' on
+  // the lower one. As a SQUARE figure the svg.dn-elimradial-hero cap centres
+  // it under the cap (margin-inline:auto).
+  const opts = {
+    rounds: model.rounds, gen_states: model.gen_states,
+    championId: model.championId, benchmarkId: model.benchmarkId,
+    gateState: model.gateState, live: model.live, double: structure === 'double_elim',
+    mini: true, responsive: true, onCompetitor,
+  };
+  return { node: svg.elimRadial(opts), digest: 'elim|' + svg.elimRadialDigest(opts) };
+}
+
+function gauntletHero(st, { onCompetitor }) {
+  // the wave-of-challengers-vs-the-champion-standard field bars, in mini.
+  // Built from the unified live model so in-flight challengers carry their
+  // board-progress lane + projected scalar.
+  const model = gauntletModel(st);
+  if (!model || !model.hasField) return null;
+  const opts = {
+    championId: model.championId, championScalar: model.championScalar,
+    promoteMargin: model.promoteMargin, challengers: model.challengers,
+    live: model.live, mini: true, responsive: true, onCompetitor,
+  };
+  return { node: svg.gauntletFieldBars(opts), digest: 'gauntlet|' + gauntletModelDigest(model) };
+}
+
+// The swiss hero's digest (swissLadder carries no companion `*Digest`
+// export). ROUNDED projection encoders so a no-op heartbeat yields a
+// byte-identical digest (ZERO DOM writes) but a real board landing / re-rank
+// fires the swap: `.toFixed(3)` the scalar; integer board counts.
+function projMatch(m) {
+  return m && m.projected ? Object.keys(m.projected).sort().map((g) => {
+    const p = m.projected[g];
+    return g + ':' + (svg.isNum(p.scalar) ? p.scalar.toFixed(3) : '?')
+      + '/' + (p.boards_done == null ? '?' : p.boards_done) + '/' + (p.boards_total == null ? '?' : p.boards_total);
+  }).join(',') : '';
+}
+function swissDigest(model) {
+  return JSON.stringify({
+    b: model.benchmarkId || null, c: model.championId || null, g: model.gateState || null,
+    // points are NOT projected (swiss); but the per-row projected scalar +
+    // boards progress is part of the digest so a board landing repaints.
+    s: (model.standings || []).map((s) => [s.id, s.points, s.wins, s.draws, s.losses, s.rank,
+      s.in_flight ? 'j' + (svg.isNum(s.projected_scalar) ? s.projected_scalar.toFixed(3) : '?') + '/' + (s.boards_done == null ? '?' : s.boards_done) + '/' + (s.boards_total == null ? '?' : s.boards_total) : '']),
+    r: (model.rounds || []).map((r) => [r.label, r.queued,
+      (r.pairings || []).map((p) => [p.a, p.b, p.winner, p.bye, p.pending, p.done, p.total, p.inflight, projMatch(p)])]),
+  });
+}
+
+// ── the EPOCH OVERVIEW models and the per-round figures (views/epoch.js) ──
+//
+// An overview builder returns the model only when it holds something to
+// draw, so a caller tests the result for null and nothing else.
+
+function racingOverview(st) {
+  const m = racingModel(st);
+  return (m && m.hasRungs) ? m : null;
+}
+
+function elimOverview(st) {
+  const m = elimModel(st);
+  return (m && m.hasMatches !== false && m.winners.length) ? m : null;
+}
+
+function racingRound(m, { onCompetitor }) {
+  return svg.survivalFunnel({
+    rungs: m.rungs, championId: m.championId, benchmarkId: m.benchmarkId, live: m.live,
+    gateState: m.gateState, gateDelta: m.gateDelta, onCompetitor,
+  });
+}
+
+function swissRound(m, { onCompetitor }) {
+  return svg.swissOverview({
+    series: m.series, bars: m.bars, labels: m.labels,
+    championId: m.championId, benchmarkId: m.benchmarkId, live: m.live,
+    gateState: m.gateState, gateDelta: m.gateDelta, onCompetitor,
+  });
+}
+
+function elimRound(m, { structure, onCompetitor }) {
+  return svg.elimRadial({
+    rounds: m.rounds, gen_states: m.gen_states,
+    championId: m.championId, benchmarkId: m.benchmarkId,
+    gateState: m.gateState, live: m.live, double: structure === 'double_elim', onCompetitor,
+  });
 }
 
 // ── the FIELD-DIVERSITY ribbon — mean/max pairwise-Jaccard + overlap matrix ──

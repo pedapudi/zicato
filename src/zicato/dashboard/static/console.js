@@ -9,8 +9,8 @@
 // loads this entry, which:
 //   1. injects the console's scoped stylesheet (self-contained), which itself
 //      @font-faces the SELF-HOSTED monospace woff2 (JetBrains Mono),
-//   2. injects the Google Fonts link for the families the typeface options
-//      read (fonts only, with system fallbacks + font-display: swap),
+//   2. injects the Google Fonts link for the interface faces
+//      (fonts only, with system fallbacks + font-display: swap),
 //   3. paints the dashboard into #console-root,
 //   4. reuses the shared data layer (core/{api,sse,state}) untouched.
 //
@@ -40,21 +40,14 @@ function ensureStylesheet() {
 
 // FONTS — a SPLIT loading strategy:
 //   * JetBrains Mono stays SELF-HOSTED woff2 under static/fonts/ via
-//     @font-face in console.css. It backs the fixed brand mono and the
-//     Editorial and Display data face, so the brand never touches a CDN.
-//   * The TYPEFACE PICKER's finalized 12 faces (4 per mode) read families that
-//     are NOT self-hosted. They load from the ONLY permitted external dependency:
-//     Google Fonts (fonts only). `display=swap` so a slow font never blocks paint;
-//     system fallbacks live in the stylesheet. A preconnect to the Google-Fonts
-//     origins shaves the connection-setup latency. The families requested cover
-//     every face the 12 options reference:
-//       Technical — Google Sans Mono, Noto Sans Mono, Source Sans 3,
-//                   Source Code Pro, Inconsolata, Ubuntu, Ubuntu Mono
-//       Editorial — Fraunces, Bitter, Literata, Domine
-//       Display   — Archivo Narrow, Space Grotesk, Hanken Grotesk,
-//                   Barlow Condensed, Bricolage Grotesque
-//     Open Sans is the prose face of the default pairing, the Inconsolata
-//     pairing and the four Editorial options.
+//     @font-face in console.css. It backs the fixed brand mono, so the brand
+//     never touches a CDN.
+//   * The interface pairing — Open Sans for prose, Google Sans Mono for data,
+//     with Noto Sans Mono as the data fallback — is NOT self-hosted. It loads
+//     from the ONLY permitted external dependency: Google Fonts (fonts only).
+//     `display=swap` so a slow font never blocks paint; system fallbacks live
+//     in the stylesheet. A preconnect to the Google-Fonts origins shaves the
+//     connection-setup latency.
 function ensureFonts() {
   const id = 'console-fonts';
   if (document.getElementById(id)) return;
@@ -79,20 +72,6 @@ function ensureFonts() {
     + '?family=Open+Sans:ital,wght@0,400;0,600;0,700;1,400'
     + '&family=Google+Sans+Mono:wght@400;500;700'
     + '&family=Noto+Sans+Mono:wght@400;500;700'
-    + '&family=Source+Sans+3:wght@400;500;700'
-    + '&family=Source+Code+Pro:wght@400;500;700'
-    + '&family=Inconsolata:wght@400;500;700'
-    + '&family=Ubuntu:wght@400;500;700'
-    + '&family=Ubuntu+Mono:wght@400;700'
-    + '&family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700'
-    + '&family=Bitter:wght@400;500;700'
-    + '&family=Literata:opsz,wght@7..72,400;7..72,500;7..72,700'
-    + '&family=Domine:wght@400;500;700'
-    + '&family=Archivo+Narrow:wght@400;500;700'
-    + '&family=Space+Grotesk:wght@400;500;700'
-    + '&family=Hanken+Grotesk:wght@400;500;700'
-    + '&family=Barlow+Condensed:wght@400;500;700'
-    + '&family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,700'
     + '&display=swap';
   document.head.appendChild(link);
 }

@@ -2,7 +2,7 @@
 // one persistent detail pane, with digest-gated dispatch.
 //
 // Variant P ("Console III") is the direct successor to Variant N — the same
-// dense, data-ink-maximal aesthetic (Monokai default + Technical typeface) —
+// dense, data-ink-maximal aesthetic (Monokai default) —
 // but it REPLACES N's top-tab nav with a persistent, collapsible LEFT TREE
 // grounded in the real data model: Environment → Epoch(s) → {Rounds → Round n
 // → <gen>; Boards → <entry>; Evals; Instrument; Mutation surface; Publication}.
@@ -12,14 +12,14 @@
 //
 // The shell owns:
 //   * a COMPACT top bar — branding · breadcrumb · colour-theme picker (monokai
-//     default) · status label. The TYPEFACE and PAGE-SCALE controls live in
+//     default) · status label. The TEXT-SIZE and PAGE-SCALE controls live in
 //     Settings → Appearance now (not the top bar), driving the same stores;
 //   * the persistent tree sidebar (its own digest gate);
 //   * ONE persistent detail host (never recreated per repaint);
 //   * digest-gated dispatch — a `state:changed` tick that only re-stamps a
 //     heartbeat writes ZERO DOM to either the tree or the detail pane.
 //
-// Theme + typeface are CSS-only swaps (data-t-theme / data-t-type on the root).
+// A theme change is a CSS-only swap (data-t-theme on the root).
 
 import { el, svgEl, clearChildren, patchText, patchClass } from './core/dom.js';
 import { icon, iconLabel, patchIconLabel } from './icons.js';
@@ -37,10 +37,8 @@ import { livenessFor, liveStatusDigest, treeLiveSet, staleLabel, runStateLabel, 
 import { LiveController } from './live.js';
 import { attachHovercard } from './hovercard.js';
 import { buildSwatchDropdown, syncSwatchDropdowns } from './swatchdropdown.js';
-import { syncTypefaceDropdowns, syncFontSizeSegments } from './typefacedropdown.js';
 import {
-  COLOR_THEMES, DEFAULT_COLOR, normaliseColor, readColor, persistColor,
-  TYPE_THEMES, DEFAULT_TYPE, normaliseType, readType, persistType,
+  DEFAULT_COLOR, normaliseColor, readColor, persistColor,
   SCALE_MIN, SCALE_MAX, SCALE_STEP, DEFAULT_SCALE, normaliseScale, readScale, persistScale,
   normaliseFontSize, readFontSize, persistFontSize, fontSizeScale,
   RAIL_MIN, RAIL_MAX, DEFAULT_RAIL, normaliseRail, readRail, persistRail, pageScaleOf,
@@ -64,8 +62,6 @@ import * as settings from './views/settings.js';
 
 const RENDERERS = { home, epoch, gens, candidate, diff, boards, board, mutations, instrument, traces, evals, publication,  logs, settings };
 
-export const THEMES = COLOR_THEMES.map((t) => t[0]);
-export const TYPEFACES = TYPE_THEMES.map((t) => t[0]);
 
 const KIND_TAG = {
   single_turn: '1-turn', multi_turn_scripted: 'scripted', multi_turn_emulated: 'emulated',
@@ -149,25 +145,12 @@ export function applyTheme(theme, rootEl) {
   return t;
 }
 
-export function applyTypeface(typeface, rootEl) {
-  const t = normaliseType(typeface);
-  const root = rootEl || _root;
-  if (root) root.setAttribute('data-t-type', t);
-  persistType(t);
-  // Sync EVERY live typeface dropdown (top bar AND settings) — one source of
-  // truth, so choosing in either place lockstep-updates the other.
-  syncTypefaceDropdowns(t);
-  return t;
-}
-
-// GLOBAL TEXT FONT-SIZE — the S/M/L control in the typeface picker. DISTINCT
+// GLOBAL TEXT FONT-SIZE — the S/M/L control in Settings → Appearance. DISTINCT
 // from the page scale (which `zoom`s the WHOLE page incl. figures): this is
 // a TEXT-ONLY multiplier. It stamps `--dt-font-scale` (the number every html
 // `font-size: calc(Npx * var(--dt-font-scale,1))` rule reads) + a `data-t-fontsize`
-// attribute on the app root, persists under its own key, and syncs every live
-// S/M/L segment (top bar + Settings). SMALL (1.0) is the current look — the
-// literal px render unchanged — so the default is byte-identical to today. SVG
-// figures are sized in svg.js (the `font:` shorthand), so they never grow here.
+// attribute on the app root and persists under its own key. SVG figures are
+// sized in svg.js (the `font:` shorthand), so they never grow here.
 export function applyFontSize(size, rootEl) {
   const v = normaliseFontSize(size);
   const root = rootEl || _root;
@@ -176,8 +159,6 @@ export function applyFontSize(size, rootEl) {
     root.setAttribute('data-t-fontsize', v);
   }
   persistFontSize(v);
-  // Sync EVERY live S/M/L segment (top bar AND settings) — one source of truth.
-  syncFontSizeSegments(v);
   return v;
 }
 
@@ -186,7 +167,7 @@ export function applyFontSize(size, rootEl) {
 // ROOT (NOT per-pane). `zoom` reflows rather than transforms, so the layout
 // re-wraps at the scaled size and never clips. We also stamp `--dt-page-scale`
 // (a 0–1 ratio) for any rule that wants the raw factor. Persisted under its own
-// key, so it composes with — and survives — colour / typeface changes.
+// key, so it composes with — and survives — a colour change.
 //
 // The CONTROL lives in Settings → Appearance (views/settings.js scalePicker),
 // which owns its own readout; this function only stamps + persists, so it is
@@ -412,8 +393,8 @@ function brandMark() {
 // pinned GEOMETRICALLY rather than by eye:
 //
 //   * the letters render in a FIXED BRAND MONOSPACE (`--v2-brand-mono`) — NOT
-//     the user-selectable `--v2-mono` — so every glyph has the SAME advance
-//     width AND the brand never reflows with the UI typeface choice; the ı stem
+//     the interface's `--v2-mono` — so every glyph has the SAME advance
+//     width AND the brand never reflows with the UI data face; the ı stem
 //     center is therefore deterministic, theme-independent, and not subject to
 //     per-glyph kerning;
 //   * with a left text anchor at x=WORDMARK_X0 and a per-glyph advance of
@@ -444,8 +425,8 @@ function brandWordmark() {
   const text = svgEl('text', {
     class: 'dt-brand-letters',
     x: String(WORDMARK_X0), y: String(WORDMARK_BASELINE),
-    // PIN to the FIXED brand mono (not the user-selectable --v2-mono) so the dot
-    // stays centred on the advance grid regardless of the chosen UI typeface.
+    // PIN to the FIXED brand mono (not the interface's --v2-mono) so the dot
+    // stays centred on the advance grid regardless of the UI data face.
     'font-family': 'var(--v2-brand-mono)', 'font-size': '15', 'font-weight': '700',
     'letter-spacing': '0', 'textLength': String(WORDMARK_TEXT.length * WORDMARK_ADV),
     'lengthAdjust': 'spacing', fill: 'currentColor', 'xml:space': 'preserve',
@@ -493,26 +474,16 @@ export function mountShell(root) {
   _settingsOpen = false;
   _underlyingRoute = { view: 'home', params: {}, cmp: null };
   root.setAttribute('data-t-theme', readColor());
-  root.setAttribute('data-t-type', readType());
   root.setAttribute('data-t-scale', String(readScale()));
   root.setAttribute('data-t-fontsize', readFontSize());
 
   _crumbHost = el('nav', { class: 'dt-crumbs', 'aria-label': 'Breadcrumb' });
 
-  // COLOUR PICKER — a SWATCH DROPDOWN (Change 6). Sixteen themes now, so the inline
-  // buttons are replaced by a keyboard-accessible dropdown: each option shows a
+  // COLOUR PICKER — a keyboard-accessible SWATCH DROPDOWN: each option shows a
   // small swatch strip (ground · surface · ink · improve · regress · accent) plus
   // the theme name; the closed control echoes the current theme's swatch + name.
   _colorDropdown = buildSwatchDropdown(readColor(), (id) => applyTheme(id));
   const colorSwitch = _colorDropdown.node;
-
-  // TYPEFACE PICKER — REMOVED from the top-bar chrome (operator's call): it now
-  // lives ONLY in Settings → Appearance (views/settings.js's typefacePicker).
-  // The store + sync path is unchanged: applyTypeface still calls
-  // syncTypefaceDropdowns, which fans out to every LIVE dropdown via the
-  // typefacedropdown.js instance registry — now just the Settings one — so
-  // choosing a face in Settings still applies live + persists, and any other
-  // apply path (keyboard / restore) keeps the Settings picker in lockstep.
 
   // The PAGE-SCALE slider lives in Settings → Appearance (views/settings.js's
   // scalePicker), not in the top bar: it is a set-once appearance preference,
@@ -648,7 +619,7 @@ export function mountShell(root) {
   // OVER the current view rather than a full-page view. The shell
   // owns a single scrim + drawer-panel pair, mounted once here and hidden until
   // `#/settings[/<section>]` is the route. The underlying view stays rendered in
-  // `_viewHost` behind a scrim, so an Appearance change (theme / typeface / font
+  // `_viewHost` behind a scrim, so an Appearance change (theme / font
   // size) applies LIVE to the page visible behind the panel. Esc, a scrim click,
   // and the close button all close the overlay by navigating to the underlying route.
   _settingsPanelHost = el('div', { class: 'dt-drawer-body', role: 'region', 'aria-label': 'Settings' });
@@ -683,7 +654,6 @@ export function mountShell(root) {
   // bar — see researchPreviewPill() in brandWordmark's topbar block.)
 
   applyTheme(readColor());
-  applyTypeface(readType());
   applyFontSize(readFontSize());
   applyScale(readScale());
   applyRail(initialRail, root);
@@ -1377,5 +1347,5 @@ function onStateChanged() {
   }, 400);
 }
 
-export { DEFAULT_COLOR, DEFAULT_TYPE, DEFAULT_SCALE, SCALE_MIN, SCALE_MAX, SCALE_STEP };
+export { DEFAULT_COLOR, DEFAULT_SCALE, SCALE_MIN, SCALE_MAX, SCALE_STEP };
 export { RAIL_MIN, RAIL_MAX, DEFAULT_RAIL };

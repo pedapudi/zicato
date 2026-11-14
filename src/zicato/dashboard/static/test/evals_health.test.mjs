@@ -11,7 +11,15 @@ import { installDom, test, run, assert, assertEqual } from './harness.mjs';
 
 installDom();
 
-const eh = await import('../js/panels/evals_health.js');
+const eh = { ...await import('../js/panels/evals_health.js') };
+// The strip and the section mount into two hosts; the tests read both
+// through one node.
+eh.renderEvalHealth = (model, opts) => {
+  const wrap = document.createElement('div');
+  wrap.appendChild(eh.renderEvalHealthStrip(model, opts));
+  wrap.appendChild(eh.renderEvalHealthSection(model, opts));
+  return wrap;
+};
 const ui = await import('../js/ui.js');
 
 function allByClass(host, cls) {

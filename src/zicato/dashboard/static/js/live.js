@@ -27,21 +27,16 @@
 
 import { el, patchText, patchClass } from './core/dom.js';
 import { icon, patchIconLabel } from './icons.js';
-import {
-  isNum, swissLadder,
-  racingScalarTrack, racingScalarTrackDigest,
-  elimRadial, elimRadialDigest,
-  gauntletFieldBars,
-  proposingTracker, proposingDigest, CROWN,
-} from './svg.js';
+import { isNum, proposingTracker, proposingDigest, CROWN } from './svg.js';
 import { fieldStatus as readFieldStatus } from './data.js';
 import { gatedSwap } from './ui.js';
-import { runStateLabel, LIVENESS, livenessBandText } from './livestatus.js';
+import { runStateLabel, LIVENESS, livenessBandText, structureLabel } from './livestatus.js';
 import {
-  racingModel, swissModel, elimModel, gauntletModel, gauntletModelDigest, normalizeStructure,
+  racingModel, normalizeStructure,
   buildLiveModel,
   liveMatchBlocks, liveMatchBlocksDigest,
 } from './tournament_model.js';
+import { structureFigure } from './views/structure.js';
 
 // ── tournament-level progress ────────────────────────────────────────
 //
@@ -267,17 +262,6 @@ function humanPhase(p) {
     .replace(/_/g, ' ');
 }
 function label(s) { return s == null ? '—' : String(s); }
-
-// the structure word for the metadata baseline (racing / single elim / …).
-function prettyStructureName(structure) {
-  const s = String(structure || '').toLowerCase();
-  switch (s) {
-    case 'single_elim': return 'single elim';
-    case 'double_elim': return 'double elim';
-    case '': return '';
-    default: return s.replace(/_/g, ' ');
-  }
-}
 
 // ── the RUNG STEPPER (the structural progress cap on the race track) ──
 //
@@ -940,7 +924,7 @@ export class LiveController {
   // already implied by the rung label's matchup detail.
   _metaLine(prog, structure, inFlight) {
     const out = [];
-    if (structure) out.push(prettyStructureName(structure));
+    if (structure) out.push(structureLabel(structure, null, 'short'));
     if (prog.label) out.push(prog.label);
     // the per-step detail ("m/n matchups" / "field of K") — the rung label's
     // companion. Skip the bare "field of K" when there is no rung label (avoids a
@@ -1047,26 +1031,14 @@ export class LiveController {
     this._funnelHost.appendChild(node);
   }
 
-  // Build the FULL-WIDTH LIVE structure figure (the study "hero opt 3"): the SAME
-  // final tournament-viz design the single-round page leads with, rendered
-  // RESPONSIVE so it scales aspect-locked to fill the hero width up to its
-  // `svg.dn-*-hero` max-width cap — every structure matching the racing scalar
-  // track's full-width treatment (wide figures fill to their cap). The hero and
-  // the full page agree on the model + read consistently.
+  // Build the FULL-WIDTH LIVE structure figure: the SAME tournament figure the
+  // single-round page leads with, rendered responsive for the hero. The figure
+  // for each structure is the `hero` builder views/structure.js names for it.
   //
-  //   racing      → racingScalarTrack({ mini, responsive })   (the single-round PRIMARY)
-  //   single_elim → elimRadial({ mini, responsive })          (square — centres under its cap)
-  //   double_elim → elimRadial({ double, mini, responsive })  (the same square, WB/LB arcs)
-  //   gauntlet    → gauntletFieldBars({ mini, responsive })   (the wave-vs-standard hero)
-  //   swiss       → swissLadder({ responsive })               (no mini mode in the builder)
-  //
-  // The model is reused from tournament_model.js (buildLive*Model + the *Model
-  // helpers + championScalarOf) so the hero mini stays byte-consistent with the
-  // full figure through all four lifecycle states (queued / in-flight via
-  // live_progress / projected / settled, converging once settled). The digest the
-  // gated swap compares is each builder's own `*Digest` (or the structure.js
-  // model digest), so a real content change repaints and a no-op heartbeat does
-  // NOT — keyed by structure so a structure change is itself a digest change.
+  // The model is the unified LIVE model (published rounds + active-runs
+  // overlay), so the hero stays consistent with the full figure through all
+  // four lifecycle states (queued / in-flight via live_progress / projected /
+  // settled, converging once settled).
   //
   // Returns null when the structure carries no topology yet (the caller then
   // falls through to the proposing tracker / honest placeholder).
@@ -1075,80 +1047,9 @@ export class LiveController {
     const epochGens = (Array.isArray(at.competitors) ? at.competitors : [])
       .map((c) => c && c.generation_id).filter((g) => g != null).map(String);
     const gens = epochGens.length ? epochGens : null;
-    const onCompetitor = this.onCompetitor || undefined;
     const st = buildLiveModel(at, heartbeat, activeRuns, gens) || normalizeStructure(at, true);
-
-    if (structure === 'racing') {
-      // build the unified LIVE model (published rounds + active-runs overlay) so
-      // the rungs carry live_progress + the widened entering field, then derive
-      // the racing model (which recovers championScalar from the live aggregate /
-      // projected standings — degrades gracefully to a delta-only domain when the
-      // champion scalar is unrecoverable mid-race).
-      const model = racingModel(st);
-      if (!model || !model.hasRungs) return null;
-      // FULL-WIDTH HERO: the scalar number-line IS the primary viz, so it scales
-      // aspect-locked to fill the hero width (`responsive` → the svg.dn-scalartrack
-      // -hero max-width cap governs). `mini` keeps the compact label/tick treatment
-      // (the rung stepper carries the structural progress, so no wide caption).
-      const opts = {
-        rungs: model.rungs, championId: model.championId, benchmarkId: model.benchmarkId,
-        championScalar: model.championScalar, live: model.live, gateState: model.gateState,
-        mini: true, responsive: true, onCompetitor,
-      };
-      const node = racingScalarTrack(opts);
-      return { node, digest: 'racing|' + racingScalarTrackDigest(opts) };
-    }
-    if (structure === 'swiss') {
-      // FULL-WIDTH HERO: the swiss ladder scales aspect-locked to fill the hero
-      // width (`responsive` → the svg.dn-swissladder-hero max-width cap governs),
-      // matching racing's full-width track. A wide figure → fills to its cap.
-      const model = swissModel(st);
-      if (!model || !model.hasRounds) return null;
-      const opts = {
-        rounds: model.rounds, standings: model.standings,
-        championId: model.championId, benchmarkId: model.benchmarkId,
-        live: model.live, gateState: model.gateState, gateDelta: model.gateDelta,
-        responsive: true, onCompetitor,
-      };
-      const node = swissLadder(opts);
-      return { node, digest: 'swiss|' + swissDigest(model) };
-    }
-    if (structure === 'single_elim' || structure === 'double_elim') {
-      const model = elimModel(st);
-      if (!model || !model.hasMatches) return null;
-      // ELIM hero: the concentric-ring radial — the single-round PRIMARY for
-      // both elimination structures, reading the SERVED gen_states verbatim.
-      // Double elimination puts the winners' bracket on the upper arc and the
-      // losers' on the lower one. FULL-WIDTH HERO: aspect-locked + responsive;
-      // as a SQUARE figure the svg.dn-elimradial-hero cap centres it under the
-      // cap (margin-inline:auto).
-      const opts = {
-        rounds: model.rounds, gen_states: model.gen_states,
-        championId: model.championId, benchmarkId: model.benchmarkId,
-        gateState: model.gateState, live: model.live, double: structure === 'double_elim',
-        mini: true, responsive: true, onCompetitor,
-      };
-      return { node: elimRadial(opts), digest: 'elim|' + elimRadialDigest(opts) };
-    }
-    if (structure === 'gauntlet') {
-      // GAUNTLET hero: the wave-of-challengers-vs-the-champion-standard field
-      // bars — the SAME final liked gauntlet figure, in mini. Built from the
-      // unified live model so in-flight challengers carry their board-progress
-      // lane + projected scalar.
-      const model = gauntletModel(st);
-      if (!model || !model.hasField) return null;
-      // FULL-WIDTH HERO: the field bars scale aspect-locked to fill the hero width
-      // (`responsive` → svg.dn-fieldbars-hero cap governs), a wide figure filling
-      // to its cap — matching racing's full-width treatment.
-      const opts = {
-        championId: model.championId, championScalar: model.championScalar,
-        promoteMargin: model.promoteMargin, challengers: model.challengers,
-        live: model.live, mini: true, responsive: true, onCompetitor,
-      };
-      const node = gauntletFieldBars(opts);
-      return { node, digest: 'gauntlet|' + gauntletModelDigest(model) };
-    }
-    return null;
+    const hero = structureFigure(structure, 'hero');
+    return hero ? hero(st, { structure, onCompetitor: this.onCompetitor || undefined }) : null;
   }
 
   // Build the proposing-step tracker + its digest from the active tournament's
@@ -1192,7 +1093,7 @@ function writeCollapsed(on) {
 //
 // GAUNTLET is included now that the hero leads with gauntletFieldBars (mini) —
 // but it earns the figure only when the gauntlet model actually builds a field
-// (handled in _buildLiveFigure → gauntletModel().hasField; an empty/early
+// (the gauntlet `hero` builder returns null without a field; an empty/early
 // gauntlet returns null there and falls through to the proposing tracker /
 // generic summary). The eligibility gate itself is structure + running + epoch.
 function structureEligible(at, heartbeat) {
@@ -1206,8 +1107,7 @@ function structureEligible(at, heartbeat) {
 // stand in for a transiently-lagging epoch tag.
 function structureDrawableRunning(at) {
   if (!at || typeof at !== 'object') return false;
-  const s = String(at.structure);
-  if (s !== 'racing' && s !== 'swiss' && s !== 'single_elim' && s !== 'double_elim' && s !== 'gauntlet') return false;
+  if (!structureFigure(at.structure, 'hero')) return false;
   const phase = String(at.phase == null ? '' : at.phase).trim().toLowerCase();
   const running = phase === 'running' || (phase !== '' && phase !== 'idle'
     && phase !== 'complete' && phase !== 'completed' && phase !== 'done');
@@ -1299,35 +1199,4 @@ function liveBelongsToEpoch(at, heartbeat) {
   const hbEpoch = (heartbeat && heartbeat.epoch_id != null && String(heartbeat.epoch_id) !== '') ? String(heartbeat.epoch_id) : null;
   if (tEpoch == null || hbEpoch == null) return true;
   return tEpoch === hbEpoch;
-}
-
-// stable digests of the structure-relevant model so the swap fires only on a
-// real change (a steady heartbeat writes ZERO DOM): each captures the gate + the
-// per-round/match progress (a board landing fires it; a no-op stays equal).
-// ROUNDED projection encoders so a no-op heartbeat yields a byte-identical
-// digest (ZERO DOM writes) but a real board landing / re-rank fires the swap.
-// `.toFixed(3)` the scalar; integer board counts.
-//
-// NOTE: racing, elimination and gauntlet digest via their builders' own
-// `*Digest` (racingScalarTrackDigest / elimRadialDigest / gauntletModelDigest)
-// so the hero mini's swap compares the exact model those builders draw. Swiss
-// uses this local model digest (swissLadder carries no companion `*Digest`
-// export).
-function projMatch(m) {
-  return m && m.projected ? Object.keys(m.projected).sort().map((g) => {
-    const p = m.projected[g];
-    return g + ':' + (isNum(p.scalar) ? p.scalar.toFixed(3) : '?')
-      + '/' + (p.boards_done == null ? '?' : p.boards_done) + '/' + (p.boards_total == null ? '?' : p.boards_total);
-  }).join(',') : '';
-}
-function swissDigest(model) {
-  return JSON.stringify({
-    b: model.benchmarkId || null, c: model.championId || null, g: model.gateState || null,
-    // points are NOT projected (swiss); but the per-row projected scalar +
-    // boards progress is part of the digest so a board landing repaints.
-    s: (model.standings || []).map((s) => [s.id, s.points, s.wins, s.draws, s.losses, s.rank,
-      s.in_flight ? 'j' + (isNum(s.projected_scalar) ? s.projected_scalar.toFixed(3) : '?') + '/' + (s.boards_done == null ? '?' : s.boards_done) + '/' + (s.boards_total == null ? '?' : s.boards_total) : '']),
-    r: (model.rounds || []).map((r) => [r.label, r.queued,
-      (r.pairings || []).map((p) => [p.a, p.b, p.winner, p.bye, p.pending, p.done, p.total, p.inflight, projMatch(p)])]),
-  });
 }

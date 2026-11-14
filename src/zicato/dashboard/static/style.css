@@ -180,14 +180,6 @@ h4 {
   white-space: nowrap;
 }
 .harmonograf-mini:hover { text-decoration: none; background: rgba(127, 127, 127, 0.22); }
-.harmonograf-sup {
-  margin-left: 6px;
-  font-size: 10px;
-  line-height: 1;
-  opacity: 0.6;
-  vertical-align: super;
-}
-.harmonograf-sup:hover { opacity: 1; text-decoration: none; }
 
 /* ---- print + narrow viewport ----------------------------------------- */
 

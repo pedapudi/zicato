@@ -2,14 +2,12 @@
  * Monokai by default.
  *
  * The console is the dashboard's sole front end: a dense, data-ink-maximal skin
- * for power users. SIXTEEN switchable colour themes — monokai (default),
- * solarized-dark, solarized-light, plus thirteen Gogh palettes (google-light,
- * google-dark, lunaria-light, lunaria-eclipse, belafonte-day, belafonte-night,
- * paper, zenburn, selenized-black, relaxed, espresso, dracula, ubuntu) — each a
- * CSS custom-property set mapping to the `--v2-*` token names the marks read,
- * swapped via [data-t-theme] on the console root and chosen from a swatch
- * DROPDOWN. The semantic mapping (improve / regress / caution) holds across all
- * sixteen and every mark reads with sufficient contrast in each.
+ * for power users. THREE switchable colour themes — monokai (default, dark),
+ * solarized-dark and solarized-light — each a CSS custom-property set mapping
+ * to the `--v2-*` token names the marks read, swapped via [data-t-theme] on
+ * the console root and chosen from a swatch DROPDOWN. The semantic mapping
+ * (improve / regress / caution) holds across all three and every mark reads
+ * with sufficient contrast in each.
  *
  * EVERYTHING is scoped under #console-root so it cannot leak into the
  * shared document shell. Marks use `dn-*`; the lifecycle
@@ -24,13 +22,12 @@
  *
  * One SIL-OFL monospace face ships as woff2 under ../../../fonts/ (relative to
  * this stylesheet at css/), so it never depends on a font CDN: JetBrains Mono,
- * the fixed brand mono of the wordmark and the data face of the Editorial and
- * Display typeface options. Its licence ships beside it as
+ * the fixed brand mono of the wordmark. Its licence ships beside it as
  * fonts/JetBrainsMono-OFL.txt.
  *
- * The other faces the typeface options name load from Google Fonts (see the
- * loader in console.js). `font-display: swap` so a slow font never blocks
- * paint.
+ * The interface faces (Open Sans, Google Sans Mono) load from Google Fonts
+ * (see the loader in console.js). `font-display: swap` so a slow font never
+ * blocks paint.
  */
 @font-face {
   font-family: "JetBrains Mono"; font-style: normal; font-weight: 400;
@@ -45,7 +42,7 @@
 
 /* ===================  the three theme token sets  =================== */
 
-/* Monokai (DEFAULT for J) — warm dark, classic editor palette. */
+/* Monokai (DEFAULT) — warm dark, classic editor palette. */
 #console-root,
 #console-root[data-t-theme="monokai"] {
   --v2-paper:      #1e1f1c;
@@ -106,298 +103,7 @@
   --v2-cell-empty: #F2E9CE;
 }
 
-/* ===================  six Gogh palettes (gogh-co.github.io/Gogh)  ===================
- *
- * Each is a real Gogh terminal palette mapped to T's `--v2-*` token contract.
- * The mapping is principled and identical for every palette so all marks read:
- *   paper       ← background            panel      ← background nudged to fg/host
- *   ink         ← bright-white/host     ink-soft   ← foreground
- *   ink-faint   ← fg mixed toward bg    rule/-soft ← bg mixed toward fg (.18/.09)
- *   good        ← green (bright on dark) bad       ← red (bright on dark)
- *   caution     ← yellow               accent     ← cyan (or blue where the
- *                                         palette's cyan is a neutral grey)
- *   flat        ← bright-black/grey     cell-empty ← bg mixed toward fg (.04)
- * The improve/regress/caution semantics + the ink-opacity heatmap ramp hold in
- * all nine themes. "Belafonte Light" does not exist in Gogh; per the brief we
- * ship Belafonte Day (light) + Belafonte Night (dark), and key Belafonte's
- * accent off the palette's blue (its cyan is a low-contrast neutral). */
-
-/* Gogh: Google Light. */
-#console-root[data-t-theme="google-light"] {
-  --v2-paper:      #FFFFFF;
-  --v2-panel:      #F4F4F4;
-  --v2-ink:        #474A4E;
-  --v2-ink-soft:   #5F6368;
-  --v2-ink-faint:  #9FA1A4;
-  --v2-rule:       #E2E3E4;
-  --v2-rule-soft:  #F1F1F1;
-  --v2-good:       #34A853;
-  --v2-good-soft:  #D2ECD9;
-  --v2-bad:        #EA4335;
-  --v2-bad-soft:   #FAD6D3;
-  --v2-caution:    #C99700;
-  --v2-accent:     #1B9CB8;
-  --v2-flat:       #9AA0A6;
-  --v2-cell-empty: #F8F8F8;
-}
-
-/* Gogh: Google Dark. */
-#console-root[data-t-theme="google-dark"] {
-  --v2-paper:      #202124;
-  --v2-panel:      #2C2D30;
-  --v2-ink:        #FFFFFF;
-  --v2-ink-soft:   #E8EAED;
-  --v2-ink-faint:  #989A9D;
-  --v2-rule:       #444548;
-  --v2-rule-soft:  #323336;
-  --v2-good:       #34A853;
-  --v2-good-soft:  #243F2E;
-  --v2-bad:        #EA4335;
-  --v2-bad-soft:   #4C2828;
-  --v2-caution:    #FBBC05;
-  --v2-accent:     #24C1E0;
-  --v2-flat:       #5F6368;
-  --v2-cell-empty: #28292C;
-}
-
-/* Gogh: Lunaria Light. */
-#console-root[data-t-theme="lunaria-light"] {
-  --v2-paper:      #EBE4E1;
-  --v2-panel:      #E2DCD9;
-  --v2-ink:        #363434;
-  --v2-ink-soft:   #484646;
-  --v2-ink-faint:  #898584;
-  --v2-rule:       #CEC8C5;
-  --v2-rule-soft:  #DCD6D3;
-  --v2-good:       #497D46;
-  --v2-good-soft:  #C7CDBF;
-  --v2-bad:        #783C1F;
-  --v2-bad-soft:   #D2BFB6;
-  --v2-caution:    #8F750B;
-  --v2-accent:     #3778A9;
-  --v2-flat:       #898584;
-  --v2-cell-empty: #E6DFDC;
-}
-
-/* Gogh: Lunaria Eclipse. */
-#console-root[data-t-theme="lunaria-eclipse"] {
-  --v2-paper:      #323F46;
-  --v2-panel:      #3B484F;
-  --v2-ink:        #DFE2ED;
-  --v2-ink-soft:   #C9CDD7;
-  --v2-ink-faint:  #8D949D;
-  --v2-rule:       #4D5960;
-  --v2-rule-soft:  #404C53;
-  --v2-good:       #BEDBC1;
-  --v2-good-soft:  #516161;
-  --v2-bad:        #BA9088;
-  --v2-bad-soft:   #505155;
-  --v2-caution:    #F1DFB4;
-  --v2-accent:     #C8429F;
-  --v2-flat:       #6B767D;
-  --v2-cell-empty: #38454C;
-}
-
-/* Gogh: Belafonte Day (light). */
-#console-root[data-t-theme="belafonte-day"] {
-  --v2-paper:      #D5CCBA;
-  --v2-panel:      #CCC3B2;
-  --v2-ink:        #34292D;
-  --v2-ink-soft:   #45373C;
-  --v2-ink-faint:  #7F736E;
-  --v2-rule:       #BBB1A3;
-  --v2-rule-soft:  #C8BFAF;
-  --v2-good:       #6E6A4E;
-  --v2-good-soft:  #C3BCA7;
-  --v2-bad:        #BE100E;
-  --v2-bad-soft:   #D0A394;
-  --v2-caution:    #B57A1E;
-  --v2-accent:     #426A79;
-  --v2-flat:       #5E5252;
-  --v2-cell-empty: #D0C6B5;
-}
-
-/* Gogh: Belafonte Night (dark). */
-#console-root[data-t-theme="belafonte-night"] {
-  --v2-paper:      #20111B;
-  --v2-panel:      #271821;
-  --v2-ink:        #D5CCBA;
-  --v2-ink-soft:   #968C83;
-  --v2-ink-faint:  #675B59;
-  --v2-rule:       #35272E;
-  --v2-rule-soft:  #2B1C24;
-  --v2-good:       #A6A07A;
-  --v2-good-soft:  #362A2B;
-  --v2-bad:        #D6403E;
-  --v2-bad-soft:   #431118;
-  --v2-caution:    #EAA549;
-  --v2-accent:     #6F8E97;
-  --v2-flat:       #5E5252;
-  --v2-cell-empty: #25161F;
-}
-
-/* ===================  four more Gogh palettes (round 9)  ===================
- *
- * Paper (light), Zenburn (dark), Selenized Black (dark), Relaxed (dark) — same
- * principled mapping as the six above. Two nudges for legibility:
- *   Paper  — ink keyed off near-black (the palette's white #aaaaaa is too low
- *            contrast for ink on the cream ground); accent keyed off the
- *            palette's blue (its cyan #158c86 is a deep teal — blue reads cleaner
- *            on the light ground).
- *   Zenburn — the palette's "green" channel is a yellow-green (#efef87/#ffff87)
- *            that collides with its yellow; good is nudged to a true sage green
- *            and accent to Zenburn's canonical cyan #8cd0d3 (the yml's cyan
- *            #93bea3 is a near-neutral grey-green) so improve/caution/accent
- *            stay separable. */
-
-/* Gogh: Paper (light). */
-#console-root[data-t-theme="paper"] {
-  --v2-paper:      #F2EEDE;
-  --v2-panel:      #E6E2D3;
-  --v2-ink:        #1A1A1A;
-  --v2-ink-soft:   #33312B;
-  --v2-ink-faint:  #85837A;
-  --v2-rule:       #C6C3B6;
-  --v2-rule-soft:  #DCD9CA;
-  --v2-good:       #216609;
-  --v2-good-soft:  #CCD6B8;
-  --v2-bad:        #CC3E28;
-  --v2-bad-soft:   #EBCEBD;
-  --v2-caution:    #B58900;
-  --v2-accent:     #1E6FCC;
-  --v2-flat:       #6E6A5E;
-  --v2-cell-empty: #E8E4D5;
-}
-
-/* Gogh: Zenburn (dark). */
-#console-root[data-t-theme="zenburn"] {
-  --v2-paper:      #3A3A3A;
-  --v2-panel:      #424241;
-  --v2-ink:        #DCDCCC;
-  --v2-ink-soft:   #C5C5B8;
-  --v2-ink-faint:  #83837C;
-  --v2-rule:       #575754;
-  --v2-rule-soft:  #494947;
-  --v2-good:       #8FB28F;
-  --v2-good-soft:  #2E3A2E;
-  --v2-bad:        #CC9393;
-  --v2-bad-soft:   #402F2F;
-  --v2-caution:    #FFD7A7;
-  --v2-accent:     #8CD0D3;
-  --v2-flat:       #757575;
-  --v2-cell-empty: #404040;
-}
-
-/* Gogh: Selenized Black (dark). */
-#console-root[data-t-theme="selenized-black"] {
-  --v2-paper:      #181818;
-  --v2-panel:      #202020;
-  --v2-ink:        #DEDEDE;
-  --v2-ink-soft:   #B9B9B9;
-  --v2-ink-faint:  #606060;
-  --v2-rule:       #353535;
-  --v2-rule-soft:  #262626;
-  --v2-good:       #83C746;
-  --v2-good-soft:  #243218;
-  --v2-bad:        #FF5E56;
-  --v2-bad-soft:   #3A1B19;
-  --v2-caution:    #EFC541;
-  --v2-accent:     #56D8C9;
-  --v2-flat:       #3B3B3B;
-  --v2-cell-empty: #1E1E1E;
-}
-
-/* Gogh: Relaxed (dark). */
-#console-root[data-t-theme="relaxed"] {
-  --v2-paper:      #353A44;
-  --v2-panel:      #3D424B;
-  --v2-ink:        #F7F7F7;
-  --v2-ink-soft:   #D9D9D9;
-  --v2-ink-faint:  #7F8287;
-  --v2-rule:       #53575F;
-  --v2-rule-soft:  #444851;
-  --v2-good:       #A0AC77;
-  --v2-good-soft:  #353D2E;
-  --v2-bad:        #BC5653;
-  --v2-bad-soft:   #3F2A2C;
-  --v2-caution:    #EBC17A;
-  --v2-accent:     #7EAAC7;
-  --v2-flat:       #636363;
-  --v2-cell-empty: #3C404A;
-}
-
-/* ===================  three more Gogh palettes (round 10)  ===================
- *
- * Espresso (dark), Dracula (dark), Ubuntu (dark) — same principled mapping as
- * the palettes above. Notes on accent choices:
- *   Espresso — the palette's "cyan" #BED6FF is itself a pale blue; it reads as a
- *            clean accent on the dark ground, so accent keys off it directly.
- *   Dracula  — accent keys off the palette's signature purple #BD93F9, the
- *            defining Dracula hue, so the LIVE label / highlights / active state
- *            carry the famous purple. Comment grey #6272A4 is the natural flat
- *            (unchanged) tone; pink #FF79C6 + cyan #8BE9FD remain in palette.
- *   Ubuntu   — accent keys off the bright cyan #34E2E2 (the dim cyan #06989A is a
- *            muted teal); good keys off the bright green #8AE234 so the LIVE label
- *            and improve marks read crisply on the signature aubergine ground. */
-
-/* Gogh: Espresso (dark). */
-#console-root[data-t-theme="espresso"] {
-  --v2-paper:      #323232;
-  --v2-panel:      #3A3A3A;
-  --v2-ink:        #FFFFFF;
-  --v2-ink-soft:   #D9D9D9;
-  --v2-ink-faint:  #8A8A8A;
-  --v2-rule:       #4C4C4C;
-  --v2-rule-soft:  #3E3E3E;
-  --v2-good:       #A5C261;
-  --v2-good-soft:  #353D24;
-  --v2-bad:        #D25252;
-  --v2-bad-soft:   #3D2424;
-  --v2-caution:    #FFC66D;
-  --v2-accent:     #6C99BB;
-  --v2-flat:       #6E6E6E;
-  --v2-cell-empty: #383838;
-}
-
-/* Gogh: Dracula (dark). */
-#console-root[data-t-theme="dracula"] {
-  --v2-paper:      #282A36;
-  --v2-panel:      #343746;
-  --v2-ink:        #F8F8F2;
-  --v2-ink-soft:   #D4D4CF;
-  --v2-ink-faint:  #6272A4;
-  --v2-rule:       #44475A;
-  --v2-rule-soft:  #353848;
-  --v2-good:       #50FA7B;
-  --v2-good-soft:  #213A2A;
-  --v2-bad:        #FF5555;
-  --v2-bad-soft:   #3C2329;
-  --v2-caution:    #F1FA8C;   /* dracula yellow */
-  --v2-accent:     #BD93F9;   /* dracula purple: signature accent — LIVE label, highlights, active state */
-  --v2-flat:       #6272A4;   /* dracula comment: unchanged / muted */
-  --v2-cell-empty: #2E303D;
-}
-
-/* Gogh: Ubuntu (dark — the classic aubergine terminal). */
-#console-root[data-t-theme="ubuntu"] {
-  --v2-paper:      #300A24;
-  --v2-panel:      #3D1530;
-  --v2-ink:        #EEEEEC;
-  --v2-ink-soft:   #CBC3C9;
-  --v2-ink-faint:  #8A7383;
-  --v2-rule:       #4B2640;
-  --v2-rule-soft:  #3E1A32;
-  --v2-good:       #8AE234;
-  --v2-good-soft:  #2E3320;
-  --v2-bad:        #CC0000;
-  --v2-bad-soft:   #45161F;
-  --v2-caution:    #FCE94F;
-  --v2-accent:     #34E2E2;
-  --v2-flat:       #847683;
-  --v2-cell-empty: #371129;
-}
-
-/* ===================  the typeface OPTIONS (12 faces)  ===================
+/* ===================  the typeface  ===================
  *
  * Two font tokens carry the interface rule "sans for prose and controls, mono
  * for data, code and key names":
@@ -407,121 +113,25 @@
  *   --n-font-head   headings and big numerals
  *   --n-font-paper  the publication's title
  *
- * The typeface picker is a grouped popover offering twelve pairings, four per
- * mode (Technical, Editorial, Display). The picker stamps an option's id on
- * the root as `[data-t-type]`, and the matching rule below sets all four
- * tokens. Every option keeps the rule true: `--v2-sans` is always a sans-serif
- * stack, `--v2-mono` is always a monospace stack, and the heading face is never
- * monospace. `test/interface_rules.test.mjs` checks all twelve.
+ * The console ships ONE pairing, Open Sans with Google Sans Mono; there is no
+ * typeface picker. `--v2-sans` is a sans-serif stack, `--v2-mono` is a
+ * monospace stack, and the heading face is not monospace;
+ * `test/interface_rules.test.mjs` checks it.
  *
  * Every stack ends in a generic family, so a slow or blocked font never breaks
  * layout. The Google Fonts families load in console.js (display=swap); the
- * self-hosted JetBrains Mono (@font-face above) is the data face of the
- * Editorial and Display options, and it backs the fixed brand mono.
- * DEFAULT: Open Sans with Google Sans Mono, the first Technical option.
+ * self-hosted JetBrains Mono (@font-face above) backs the fixed brand mono.
  */
 #console-root {
   /* THE BRAND MONO — a FIXED monospace the wordmark pins to, INDEPENDENT of the
-   * user's typeface choice, so its dot stays centred on the advance grid no
-   * matter which option is selected (the brand never reflows with the UI). */
+   * interface faces, so its dot stays centred on the advance grid. */
   --v2-brand-mono: "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
 
-  /* DEFAULT (Open Sans + Google Sans Mono), applied unconditionally so a
-   * missing data-t-type still lands on the default pairing. */
+  /* Open Sans + Google Sans Mono. */
   --v2-sans: 'Open Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
   --v2-mono: 'Google Sans Mono', 'Noto Sans Mono', ui-monospace, monospace;
   --n-font-head: 'Open Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
   --n-font-paper: 'Open Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-}
-
-/* ----- Technical group ----- */
-/* Open Sans + Google Sans Mono */
-#console-root[data-t-type="google-sans-mono"] {
-  --v2-sans: 'Open Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-  --v2-mono: 'Google Sans Mono', 'Noto Sans Mono', ui-monospace, monospace;
-  --n-font-head: 'Open Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-  --n-font-paper: 'Open Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-}
-/* Source Sans 3 + Source Code Pro */
-#console-root[data-t-type="source-sans-3"] {
-  --v2-sans: 'Source Sans 3', system-ui, sans-serif;
-  --v2-mono: 'Source Code Pro', ui-monospace, monospace;
-  --n-font-head: 'Source Sans 3', system-ui, sans-serif;
-  --n-font-paper: 'Source Sans 3', system-ui, sans-serif;
-}
-/* Open Sans + Inconsolata */
-#console-root[data-t-type="inconsolata"] {
-  --v2-sans: 'Open Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-  --v2-mono: 'Inconsolata', ui-monospace, monospace;
-  --n-font-head: 'Open Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-  --n-font-paper: 'Open Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-}
-/* Ubuntu + Ubuntu Mono */
-#console-root[data-t-type="ubuntu"] {
-  --v2-sans: 'Ubuntu', system-ui, sans-serif;
-  --v2-mono: 'Ubuntu Mono', ui-monospace, monospace;
-  --n-font-head: 'Ubuntu', system-ui, sans-serif;
-  --n-font-paper: 'Ubuntu', system-ui, sans-serif;
-}
-
-/* ----- Editorial group: a serif heading and paper-title voice over Open Sans prose and JetBrains Mono data ----- */
-/* Fraunces */
-#console-root[data-t-type="fraunces"] {
-  --v2-sans: 'Open Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-  --v2-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
-  --n-font-head: 'Fraunces', Georgia, serif;
-  --n-font-paper: 'Fraunces', Georgia, serif;
-}
-/* Bitter */
-#console-root[data-t-type="bitter"] {
-  --v2-sans: 'Open Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-  --v2-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
-  --n-font-head: 'Bitter', Georgia, serif;
-  --n-font-paper: 'Bitter', Georgia, serif;
-}
-/* Literata */
-#console-root[data-t-type="literata"] {
-  --v2-sans: 'Open Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-  --v2-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
-  --n-font-head: 'Literata', Georgia, serif;
-  --n-font-paper: 'Literata', Georgia, serif;
-}
-/* Domine */
-#console-root[data-t-type="domine"] {
-  --v2-sans: 'Open Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-  --v2-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
-  --n-font-head: 'Domine', Georgia, serif;
-  --n-font-paper: 'Domine', Georgia, serif;
-}
-
-/* ----- Display group: a display heading voice over a grotesque sans, with JetBrains Mono data ----- */
-/* Archivo Narrow + Space Grotesk */
-#console-root[data-t-type="archivo-narrow"] {
-  --v2-sans: 'Space Grotesk', system-ui, sans-serif;
-  --v2-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
-  --n-font-head: 'Archivo Narrow', 'Space Grotesk', system-ui, sans-serif;
-  --n-font-paper: 'Space Grotesk', system-ui, sans-serif;
-}
-/* Hanken Grotesk */
-#console-root[data-t-type="hanken-grotesk"] {
-  --v2-sans: 'Hanken Grotesk', system-ui, sans-serif;
-  --v2-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
-  --n-font-head: 'Hanken Grotesk', system-ui, sans-serif;
-  --n-font-paper: 'Hanken Grotesk', system-ui, sans-serif;
-}
-/* Barlow Condensed + Space Grotesk */
-#console-root[data-t-type="barlow-condensed"] {
-  --v2-sans: 'Space Grotesk', system-ui, sans-serif;
-  --v2-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
-  --n-font-head: 'Barlow Condensed', 'Archivo Narrow', system-ui, sans-serif;
-  --n-font-paper: 'Space Grotesk', system-ui, sans-serif;
-}
-/* Bricolage Grotesque */
-#console-root[data-t-type="bricolage-grotesque"] {
-  --v2-sans: 'Bricolage Grotesque', system-ui, sans-serif;
-  --v2-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
-  --n-font-head: 'Bricolage Grotesque', system-ui, sans-serif;
-  --n-font-paper: 'Bricolage Grotesque', system-ui, sans-serif;
 }
 
 /* ===================  the COZY spacing baseline (density removed)  ===================
@@ -546,8 +156,8 @@
   --dt-card-gap: 18px;
   --dt-card-pad: 16px;
   --dt-reel-scale: 1.18;
-  /* GLOBAL TEXT-SIZE multiplier — the S/M/L font-size control in the typeface
-   * picker drives this (small=1.0 · medium=1.15 · large=1.3). EVERY html-text
+  /* GLOBAL TEXT-SIZE multiplier — the S/M/L text-size control in
+   * Settings → Appearance drives this (small=1.0 · medium=1.15 · large=1.3). EVERY html-text
    * `font-size` below is `calc(Npx * var(--dt-font-scale,1))`, so small renders
    * the literal px (byte-identical to the prior look) and medium/large step the
    * whole text up. SVG FIGURE text is sized by svg.js / the `font:` shorthand,
@@ -567,7 +177,7 @@
   min-height: 100vh;
   transition: background 0.18s ease, color 0.18s ease;
 
-  /* headings + big numbers take the typeface theme's heading voice */
+  /* headings + big numbers take the heading face */
   .dn-h1, .dn-tile-value { font-family: var(--n-font-head); }
 
   /* ===================  compact Console chrome  =================== */
@@ -857,7 +467,7 @@
      The cell fill is a per-cell color-mix (set inline by svg.js heatmap())
      between a COOL low-drift token and a HOT high-drift token, on top of a
      value-driven fill-opacity. Both tokens default to the theme's own
-     accent/bad inks so the gradient stays correct across all 16 themes (light
+     accent/bad inks so the gradient stays correct across every theme (light
      + dark) without per-theme overrides; a theme can still re-point them.
      The empty cell keeps the flat --v2-cell-empty token so a low (cool) cell
      stays clearly distinct from an empty one. The cool/hot tokens default to
@@ -1551,7 +1161,7 @@
   .ezn-dag-info:focus .ezn-dag-info-mark { fill: var(--v2-accent); }
   /* ── the styled, theme-aware HOVERCARD (replaces native <title> tooltips) ──
    * A transient OVERLAY mounted inside the console root, so it inherits the
-   * per-theme tokens and reads correctly across all 16 themes (light + dark).
+   * per-theme tokens and reads correctly across every theme (light + dark).
    * Position is fixed (set inline by hovercard.js, flipped/clamped to the
    * viewport). Hidden by default; shown via the .dn-hovercard-on class. It is
    * NOT part of any digest-gated panel, so toggling it never repaints a figure.
@@ -1678,7 +1288,6 @@
    * The board read as a measuring device: the mono floor + MDE strip and the
    * ranked instrument-quality findings. All theme tokens; no new hue, no chips —
    * reuses dn-stat / dn-faint / dn-board-table / dn-good / dn-bad (§6). */
-  .dn-evalhealth-wrap { display: flex; flex-direction: column; gap: 14px; }
   .dn-evalhealth { display: flex; flex-direction: column; gap: 6px; }
 
   /* the floor + MDE strip (mounts above the matrix): mono + quiet. */
@@ -1792,16 +1401,7 @@
  * flips dark/light on its own — only the accent needs a per-theme value. */
 #console-root { --zicato-accent: #2FA46A; }
 #console-root[data-t-theme="monokai"],
-#console-root[data-t-theme="solarized-dark"],
-#console-root[data-t-theme="google-dark"],
-#console-root[data-t-theme="lunaria-eclipse"],
-#console-root[data-t-theme="belafonte-night"],
-#console-root[data-t-theme="zenburn"],
-#console-root[data-t-theme="selenized-black"],
-#console-root[data-t-theme="relaxed"],
-#console-root[data-t-theme="espresso"],
-#console-root[data-t-theme="dracula"],
-#console-root[data-t-theme="ubuntu"] { --zicato-accent: #3FB87A; }
+#console-root[data-t-theme="solarized-dark"] { --zicato-accent: #3FB87A; }
 
 #console-root {
   /* ---- compact top bar (chrome lives above the body split) ---- */
@@ -1916,7 +1516,7 @@
     .dt-brand-name, .dt-run-label { display: none; }
   }
 
-  /* ---- the COLOUR SWATCH DROPDOWN (13 themes) ---- */
+  /* ---- the COLOUR SWATCH DROPDOWN ---- */
   .dt-cd { position: relative; display: inline-flex; }
   .dt-cd-trigger { display: inline-flex; align-items: center; gap: 6px;
     border: 1px solid var(--v2-rule); border-radius: 5px; padding: 2px 7px;
@@ -1947,80 +1547,18 @@
   .dt-cd-option[aria-selected="true"] { color: var(--v2-ink); }
   .dt-cd-option[aria-selected="true"] .dt-cd-name { color: var(--v2-accent); }
 
-  /* ---- the TYPEFACE GROUPED POPOVER (12 finalized faces, 4 per mode) ---- */
-  /* Reuses the dt-cd popover idiom; adds mode-group headers + per-option type
-   * specimens. A wider list so the face names + micro-previews read. */
-  .dt-tf-list { min-width: 248px; }
-  /* group headers — uppercase mode labels separating the four-option blocks */
-  .dt-cd-group { padding: 7px 7px 3px; font-family: var(--v2-sans); font-size: calc(8.5px * var(--dt-font-scale, 1));
-    text-transform: uppercase; letter-spacing: 0.1em; color: var(--v2-ink-faint);
-    border-top: 1px solid var(--v2-rule-soft); margin-top: 3px; }
-  .dt-cd-group:first-child { border-top: none; margin-top: 0; }
-  /* each option stacks its label over its micro-preview specimen. It mirrors
-   * the dt-cd-option base styling (hover/active/selected) but carries its OWN
-   * class so the colour-picker's dt-cd-option queries never match it. */
-  .dt-tf-option { display: flex; flex-direction: column; align-items: stretch; gap: 3px;
-    padding: 5px 7px; border-radius: 4px; cursor: pointer; color: var(--v2-ink-soft);
-    transition: background 0.12s, color 0.12s; }
-  .dt-tf-option:hover, .dt-tf-option.dt-cd-active { background: var(--v2-rule-soft); color: var(--v2-ink); }
-  .dt-tf-option[aria-selected="true"] { color: var(--v2-ink); }
-  .dt-tf-option[aria-selected="true"] .dt-tf-name { color: var(--v2-accent); }
-  .dt-tf-option .dt-tf-name { font-family: var(--v2-sans); font-size: calc(10.5px * var(--dt-font-scale, 1)); }
-  /* the type specimen — head "Aa", a prose word, a tabular sample, each in the
-   * option's REAL faces (font-family inlined per span) so the row is a true
-   * specimen independent of the active data-t-type. */
-  .dt-tf-spec { display: inline-flex; align-items: baseline; gap: 9px; color: var(--v2-ink-soft); }
-  .dt-tf-spec-head { font-size: calc(15px * var(--dt-font-scale, 1)); line-height: 1; }
-  .dt-tf-spec-prose { font-size: calc(12px * var(--dt-font-scale, 1)); }
-  .dt-tf-spec-data { font-size: calc(11px * var(--dt-font-scale, 1)); font-variant-numeric: tabular-nums; }
-  /* the closed trigger carries a small specimen beside the current face name */
-  .dt-tf-trigger .dt-tf-spec-sm { gap: 5px; }
-  /* The trigger stays inside its column: a pairing name such as "Open Sans +
-   * Google Sans Mono" wraps onto a second line rather than widening the
-   * control past the row that holds it. */
-  .dt-cd.dt-tf { max-width: 100%; min-width: 0; }
-  .dt-tf .dt-tf-trigger { max-width: 100%; min-width: 0; text-align: left; }
-  .dt-tf .dt-tf-trigger .dt-tf-spec-sm { flex: none; }
-  .dt-tf .dt-tf-trigger .dt-cd-name { white-space: normal; min-width: 0; line-height: 1.25; }
-  .dt-tf .dt-tf-trigger .dt-tf-face { white-space: nowrap; }
-  .dt-tf-spec-sm .dt-tf-spec-head { font-size: calc(12px * var(--dt-font-scale, 1)); }
-  .dt-tf-spec-sm .dt-tf-spec-prose { font-size: calc(10px * var(--dt-font-scale, 1)); }
-  .dt-tf-spec-sm .dt-tf-spec-data { font-size: calc(9.5px * var(--dt-font-scale, 1)); }
-
-  /* ---- the typeface POPOVER container (listbox + S/M/L footer) ----
-   * The typeface dropdown wraps its listbox in `.dt-tf-pop` so the S/M/L text-
-   * size segmented control can ride in a FOOTER below the faces. The popover
-   * chrome (position / panel / shadow / open-toggle) moves onto `.dt-tf-pop`;
-   * the nested `.dt-tf-list` becomes a plain scrolling region inside it. The
-   * colour picker is untouched — it still uses `.dt-cd-list` as its popover. */
-  .dt-tf .dt-tf-pop { display: none; flex-direction: column; position: absolute;
-    top: calc(100% + 5px); right: 0; z-index: 30; min-width: 248px;
-    background: var(--v2-panel); border: 1px solid var(--v2-rule); border-radius: 6px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28); padding: 4px; }
-  .dt-tf.dt-cd-open .dt-tf-pop { display: flex; }
-  /* the listbox INSIDE the popover: drop its own positioning/panel chrome (the
-   * `.dt-tf-pop` owns it now) and just scroll within the popover. */
-  .dt-tf .dt-tf-pop .dt-cd-list { position: static; display: block; min-width: 0;
-    max-height: 56vh; overflow-y: auto; background: transparent; border: none;
-    box-shadow: none; padding: 0; }
-
-  /* the S/M/L text-size footer — a compact segmented control under the faces.
-   * Sits in the popover footer with a quiet rule above it; matches the picker
-   * idiom (mono label · segmented buttons that read/apply the text size). */
-  .dt-tf-foot { display: flex; align-items: center; justify-content: space-between;
-    gap: 8px; margin-top: 4px; padding: 6px 4px 2px; border-top: 1px solid var(--v2-rule-soft); }
-  .dt-tf-foot-lab { font-family: var(--v2-sans); font-size: calc(8.5px * var(--dt-font-scale, 1));
-    text-transform: uppercase; letter-spacing: 0.1em; color: var(--v2-ink-faint); }
-  .dt-tf-sizeseg-wrap { display: inline-flex; border: 1px solid var(--v2-rule); border-radius: 5px;
+  /* the S/M/L text-size control in Settings → Appearance — a compact segmented
+   * control whose buttons read and apply the text size. */
+  .dn-set-sizeseg-wrap { display: inline-flex; border: 1px solid var(--v2-rule); border-radius: 5px;
     overflow: hidden; }
-  .dt-tf-sizeseg { font-family: var(--v2-sans); font-size: calc(10px * var(--dt-font-scale, 1));
+  .dn-set-sizeseg { font-family: var(--v2-sans); font-size: calc(10px * var(--dt-font-scale, 1));
     min-width: 26px; padding: 3px 8px; background: transparent; color: var(--v2-ink-soft);
     border: none; border-left: 1px solid var(--v2-rule); cursor: pointer;
     transition: background 0.12s, color 0.12s; }
-  .dt-tf-sizeseg:first-child { border-left: none; }
-  .dt-tf-sizeseg:hover { background: var(--v2-rule-soft); color: var(--v2-ink); }
-  .dt-tf-sizeseg[aria-checked="true"] { color: var(--v2-accent); font-weight: 700; }
-  .dt-tf-sizeseg:focus-visible { outline: 2px solid var(--v2-accent); outline-offset: -2px; }
+  .dn-set-sizeseg:first-child { border-left: none; }
+  .dn-set-sizeseg:hover { background: var(--v2-rule-soft); color: var(--v2-ink); }
+  .dn-set-sizeseg[aria-checked="true"] { color: var(--v2-accent); font-weight: 700; }
+  .dn-set-sizeseg:focus-visible { outline: 2px solid var(--v2-accent); outline-offset: -2px; }
 
   .dt-status { display: inline-flex; align-items: center; gap: 5px; font-family: var(--v2-sans);
     font-size: calc(10.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); }
@@ -3399,7 +2937,7 @@
   .dn-set-v { font-size: calc(12.5px * var(--dt-font-scale, 1)); color: var(--v2-ink); overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 
   /* the EDITABLE Appearance grid — a label cell + a live control cell per row.
-   * The controls drive the SAME applyTheme/applyTypeface/applyScale/applyRail
+   * The controls drive the SAME applyTheme/applyFontSize/applyScale/applyRail
    * mechanism the top bar uses, so they stay theme-token-only. */
   .dn-set-appgrid { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; }
   .dn-set-approw { display: grid; grid-template-columns: minmax(140px, 220px) minmax(0, 1fr);

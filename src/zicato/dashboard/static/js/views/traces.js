@@ -29,15 +29,15 @@
 // reconstruction note) is a dn-faint caption, never a chip (quiet precision).
 //
 // The strip is svg.trajectoryStrip, shared with the suggestion visuals'
-// provenance mini-strip; the reconstructed conversation reuses board.js's
-// exported buildTurnNode (the transcript turn vocabulary).
+// provenance mini-strip; the reconstructed conversation reuses turns.js's
+// buildTurnNode (the transcript turn vocabulary).
 
 import { el } from '../core/dom.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
 import { icon } from '../icons.js';
 import { section, empty, renderView, dataTable } from '../ui.js';
-import { buildTurnNode } from './board.js';
+import { buildTurnNode } from '../turns.js';
 
 // Foreign traces carry no per-seq annotations, so the shared turn builder gets
 // an empty annotation map (it reads `annBySeq.get(seq)` → undefined → no annots).

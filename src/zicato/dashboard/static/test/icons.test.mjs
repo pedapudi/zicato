@@ -29,7 +29,6 @@ const ui = await import('../js/ui.js');
 const dag = await import('../js/dag.js');
 const router = await import('../js/router.js');
 const { buildSwatchDropdown } = await import('../js/swatchdropdown.js');
-const { buildTypefaceDropdown } = await import('../js/typefacedropdown.js');
 
 const STATIC = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -282,11 +281,9 @@ test('execution and transcript marks: tool, agent and artifact kinds, the disclo
   assert(iconNames(allByClass(turn, 'dn-annot')[0]).includes('note'), 'an annotation draws the note mark');
 });
 
-test('dropdown carets draw the chevron', () => {
+test('the colour picker caret draws the chevron', () => {
   const swatch = buildSwatchDropdown('monokai', () => {});
   assertDeep(iconNames(allByClass(mountInto(swatch.node), 'dt-cd-caret')[0]), ['collapse'], 'the colour picker caret');
-  const face = buildTypefaceDropdown(null, () => {});
-  assertDeep(iconNames(allByClass(mountInto(face.node), 'dt-cd-caret')[0]), ['collapse'], 'the typeface picker caret');
 });
 
 // ── 5. a mark that replaced text keeps the text's reach ───────────────────

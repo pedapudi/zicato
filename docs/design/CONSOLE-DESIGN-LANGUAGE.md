@@ -1,7 +1,7 @@
 # Console — the dashboard's application of the design language
 
 > **Canonical language doc:** the zicato design *language* — the colour tokens,
-> the three typeface modes, the line-art figure conventions, render discipline,
+> the typeface pairing, the line-art figure conventions, render discipline,
 > accessibility, and a worked "build a new surface" walkthrough — lives in
 > **[DESIGN-LANGUAGE.md](DESIGN-LANGUAGE.md)**, the single source of truth for
 > any zicato UI. **This** document is the dashboard's *specific application* of
@@ -103,79 +103,39 @@ The heatmap ramp is built from the theme tokens at draw time — a cool→hot mi
 between `--v2-hm-cool` and `--v2-hm-hot` via `color-mix(in srgb, …)` (see
 `svg.heatmap`), so the ramp is theme-correct in light and dark alike.
 
-### 2.3 The sixteen themes
+### 2.3 The three themes
 
-There are **sixteen** colour themes; `monokai` is the default. The colour
-picker is a **swatch dropdown** (`.dt-cd-trigger` / `.dt-cd-list`): sixteen
-options need a keyboard-accessible listbox rather than inline buttons, and each
-option is a 6-swatch preview strip (*ground · surface · ink · improve ·
-regress · accent*) plus the theme name.
+There are **three** colour themes; `monokai` is the default. The colour
+picker is a **swatch dropdown** (`.dt-cd-trigger` / `.dt-cd-list`), a
+keyboard-accessible listbox in which each option is a 6-swatch preview strip
+(*ground · surface · ink · improve · regress · accent*) plus the theme name.
 
-The full set, each defining the complete `--v2-*` role + secondary contract:
+Each defines the complete `--v2-*` role + secondary contract:
 
-| id | name | ground | lineage |
-| --- | --- | --- | --- |
-| `monokai` | monokai | dark | original |
-| `solarized-dark` | solarized dark | dark | original |
-| `solarized-light` | solarized light | light | original |
-| `google-light` | google light | light | Gogh |
-| `google-dark` | google dark | dark | Gogh |
-| `lunaria-light` | lunaria light | light | Gogh |
-| `lunaria-eclipse` | lunaria eclipse | dark | Gogh |
-| `belafonte-day` | belafonte day | light | Gogh |
-| `belafonte-night` | belafonte night | dark | Gogh |
-| `paper` | paper | light | Gogh |
-| `zenburn` | zenburn | dark | Gogh |
-| `selenized-black` | selenized black | dark | Gogh |
-| `relaxed` | relaxed | dark | Gogh |
-| `espresso` | espresso | dark | Gogh |
-| `dracula` | dracula | dark | Gogh |
-| `ubuntu` | ubuntu | dark | Gogh |
+| id | name | ground |
+| --- | --- | --- |
+| `monokai` | monokai | dark |
+| `solarized-dark` | solarized dark | dark |
+| `solarized-light` | solarized light | light |
 
-The thirteen Gogh palettes are adapted from the established terminal colour
-schemes at gogh-co.github.io/Gogh. One mapping rule carries each of them onto
-the 6-role contract: `paper ← background`, `panel ← background nudged toward
-the foreground/host`, `ink ← bright-white/host` with `ink-soft ← foreground`,
-`good ← green`, `bad ← red`, `caution ← yellow`, and `accent ← cyan` — or the
-palette's blue where the cyan is a low-contrast neutral, as for Belafonte. A
-few accents and cautions sit off the source palette so every mark reads on its
-ground: Paper keys `ink` off near-black and `accent` off its blue, and Zenburn
-takes a true sage for `good` and its canonical cyan for `accent`. See §8 for
-the Gogh lineage in full.
-
-> Note on the swatch preview: the `COLOR_THEMES` 6th tuple element is the
-> theme's signature accent for the *preview strip only*. `lunaria-eclipse`
-> substitutes a more distinct magenta (`#C8429F`) in the preview because its
-> true `--v2-accent` (a pale blue) would be indistinguishable from its pale ink
-> in the 6-swatch strip; the live `--v2-accent` token is unchanged.
+A stored preference naming any other theme falls back to `monokai`
+(`normaliseColor` in `ui.js`). Adding a theme is one `COLOR_THEMES` tuple in
+`ui.js` and one `#console-root[data-t-theme="<id>"]` token block in
+`console.css`; a dark theme also joins the `--zicato-accent` selector list.
 
 ## 3. The typography system
 
-Typography is a separate axis from colour: a **typeface** picker swaps the
-family tokens via the `[data-t-type]` attribute on the root. It is a **grouped
-popover** (`typefacedropdown.js`) in Settings → Appearance. It carries three **mode** headers — **Technical
-(default) · Editorial · Display** — each over **four** pairings, twelve in
-all. Every option row is a true micro-specimen rendered in its own faces.
+The console ships **one** typeface pairing, Open Sans with Google Sans Mono,
+and no typeface picker. The pairing keeps the interface rule "sans for prose
+and controls, mono for data": the prose face is a sans, the data face is a
+monospace, and the heading face is not a monospace.
 
-The picker governs both faces, and every pairing keeps the interface rule
-"sans for prose and controls, mono for data": the prose face is a sans, the
-data face is a monospace, and the heading face is never a monospace. A
-monospace face (Google Sans Mono, Inconsolata) is therefore offered as a data
-face paired with Open Sans; a serif or display face is offered as a heading
-face over a sans prose face and JetBrains Mono data.
+An **S/M/L text-size** segmented control (`FONTSIZE_OPTIONS`) sits in
+Settings → Appearance. `applyFontSize` stamps a text-only multiplier
+(`--dt-font-scale`) on the root; it is orthogonal to the page scale, which
+zooms figures and text together.
 
-| mode | heading voice | pairings (`TYPE_OPTIONS`) |
-| --- | --- | --- |
-| `technical` (default) | the prose sans | Open Sans + Google Sans Mono · Source Sans 3 + Source Code Pro · Open Sans + Inconsolata · Ubuntu + Ubuntu Mono |
-| `editorial` | a typeset serif | Fraunces · Bitter · Literata · Domine, each over Open Sans and JetBrains Mono |
-| `display` | a punchy display face | Archivo Narrow + Space Grotesk · Hanken Grotesk · Barlow Condensed + Space Grotesk · Bricolage Grotesque, each with JetBrains Mono data |
-
-Alongside the face picker the popover carries an **S/M/L font-size** segmented
-control (`FONTSIZE_OPTIONS`). `applyFontSize` stamps a text-only multiplier
-(`--dt-font-scale`) and syncs every live picker instance; it is orthogonal to
-the page scale, which zooms figures and text together.
-
-Each `[data-t-type]` rule sets the four font tokens to literal stacks:
+One rule on `#console-root` sets the four font tokens to literal stacks:
 **`--v2-sans`** (prose, controls and chrome; the console root is set in it),
 **`--v2-mono`** (data, code, ids, hashes, key names, the numbers in tables and
 figures), `--n-font-head` (headings) and `--n-font-paper` (the publication
@@ -189,9 +149,8 @@ sans: the corner naming the axes (`entry · candidate →`), the round group
 headers, the `holdout` word and the word `flip` before a flip rate. The Google
 Fonts families load in `console.js` with `display=swap` and system sans or
 monospace fallbacks — the only external dependency; the self-hosted JetBrains
-Mono under `fonts/` backs the fixed brand mono and the editorial and display
-data face. `test/interface_rules.test.mjs` fails if a chrome rule sets the
-mono token or if any option breaks the pairing rule.
+Mono under `fonts/` backs the fixed brand mono. `test/interface_rules.test.mjs`
+fails if a chrome rule sets the mono token or if the pairing breaks the rule.
 
 ## 4. The visual-vocabulary grammar
 
@@ -281,7 +240,7 @@ Four further conventions hold within this grammar:
 Hover-for-detail is a first-class, intentional choice. `hovercard.js` mounts a
 **singleton** card *inside* `#console-root`, so it inherits the live per-theme
 tokens (`--v2-panel` background, `--v2-ink` text, `--v2-rule` border, the sans
-face for its prose) and reads correctly across all sixteen themes. It is positioned with
+face for its prose) and reads correctly in every theme. It is positioned with
 viewport flip/clamp so it never clips, honours `prefers-reduced-motion`, and is
 keyboard-accessible (focusable target + `role="tooltip"` via `aria-describedby`).
 It is a **transient overlay that sits outside the digest-gated render** (§6):
@@ -333,7 +292,7 @@ and [dev-guide §9.7.7](../dev-guide/09-dashboard-and-query.md#977-the-console-g
   page-wide via `zoom` on the app root (`shell.applyScale`), which **reflows**
   the page rather than transforming it, so the page re-wraps at the scaled size
   and never clips.
-  Persisted under `zicato.console.scale`, orthogonal to colour/typeface.
+  Persisted under `zicato.console.scale`, orthogonal to colour and text size.
 - **Fluid, resolution-responsive layout.** The detail pane fills the available
   viewport width; only a generous, non-centred `max-width` guards prose
   line-length on ultra-wide displays. The side-by-side compare grid
@@ -466,22 +425,17 @@ Tufte's analytical-design principles map directly onto the figures:
   gate → terminal`).** One candidate's life reads left to right as a causal
   chain from the patch, through the per-board results, to the gate.
 
-### 8.2 Gogh terminal colour schemes
+### 8.2 Terminal colour schemes
 
-Thirteen of the sixteen themes are **adapted from the established terminal
-colour schemes catalogued at gogh-co.github.io/Gogh** — Solarized, Monokai,
-Dracula, Nord-adjacent, Gruvbox-adjacent and the like (the concrete set in §2.3:
-google-light/dark, lunaria-light/eclipse, belafonte-day/night, paper, zenburn,
-selenized-black, relaxed, espresso, dracula, ubuntu). Each Gogh palette is
-mapped onto the 6-role `--v2-*` contract by one principled rule (§2.3), so the
-provenance is a real terminal palette while the semantic role system stays
-intact across all sixteen. The choice of *terminal* palettes is itself part of
-the console aesthetic (§8.3).
+The three themes are **established terminal and editor colour schemes** —
+Monokai and the two Solarized grounds — each mapped onto the 6-role `--v2-*`
+contract (§2.3). The choice of *terminal* palettes is itself part of the
+console aesthetic (§8.3).
 
 ### 8.3 The terminal / console technical aesthetic
 
-The `CONSOLE` chrome brand, the monospace data face (the default Technical
-pairing sets data, ids and code in Google Sans Mono beside Open Sans prose),
+The `CONSOLE` chrome brand, the monospace data face (data, ids and code are
+set in Google Sans Mono beside Open Sans prose),
 and the terminal-derived palettes together give the surface a
 **terminal-and-console voice** while the chrome reads as text. The instrument reads like a power-user's console rather than a
 consumer report.
@@ -509,6 +463,6 @@ tournament structure. (The champion/challenger vs parent/child terminology is in
   activity feed, `tree.js` marks, the `dag.js` terminal, and `views/epoch.js`
   overview captions. No site types a crown character.
 - **Which token names carry the typeface families.** The marks read two tokens,
-  `--v2-sans` and `--v2-mono`, which each `[data-t-type]` rule sets to literal
+  `--v2-sans` and `--v2-mono`, which one rule on `#console-root` sets to literal
   font stacks alongside `--n-font-head` and `--n-font-paper`. There are no
   `--v2-serif` or `--v2-display` tokens. The system is as documented in §3.

@@ -3,7 +3,8 @@
 import { el, clearChildren } from '../core/dom.js';
 import { icon } from '../icons.js';
 import {
-  gatedSwap, section, empty, readColor, readType, readFontSize,
+  gatedSwap, section, empty, readColor, readFontSize,
+  FONTSIZE_OPTIONS, normaliseFontSize,
 } from '../ui.js';
 import {
   SCALE_MIN, SCALE_MAX, SCALE_STEP, readScale,
@@ -16,18 +17,13 @@ import { fetchJson } from '../core/api.js';
 // settings theme picker is the very same control, so the two render identically
 // and stay in lockstep through the shared store (applyTheme → syncSwatchDropdowns).
 import { buildSwatchDropdown } from '../swatchdropdown.js';
-// REUSE the SAME typeface grouped-popover the top bar renders (NOT a fork): the
-// settings typeface picker is the very same control, so the two render
-// identically and stay in lockstep through the shared store (applyTypeface →
-// syncTypefaceDropdowns).
-import { buildTypefaceDropdown } from '../typefacedropdown.js';
 // REUSE the SAME theme/pref mechanism the top-bar controls drive — these apply
 // to the app root, persist (the one localStorage store ui.js owns), AND sync the
 // top-bar pickers. The Appearance section is editable by calling THESE, so the
 // settings panel and the top bar are two views of ONE source of truth (changing
 // either updates the other and persists identically). NOT a fork.
 import {
-  applyTheme, applyTypeface, applyFontSize, applyScale, resetScale, applyRail,
+  applyTheme, applyFontSize, applyScale, resetScale, applyRail,
 } from '../shell.js';
 
 const SECTIONS = [
@@ -47,7 +43,7 @@ let _railHost = null;
 let _sectionHost = null;
 let _ctx = null;
 let _themeDropdown = null;
-let _typeDropdown = null;
+let _sizeSegment = null;
 
 function normaliseSection(id) {
   return SECTION_IDS.includes(id) ? id : DEFAULT_SECTION;
@@ -177,16 +173,15 @@ async function renderModels() {
 
 function renderAppearance() {
   const color = readColor();
-  const type = readType();
   const fontsize = readFontSize();
   const scale = readScale();
   const rail = readRail();
-  gatedSwap(_sectionHost, `appearance|${color}|${type}|${fontsize}|${scale}|${rail}`, () => [
+  gatedSwap(_sectionHost, `appearance|${color}|${fontsize}|${scale}|${rail}`, () => [
     section('Appearance',
-      el('p', { class: 'dn-lede', text: 'Colour theme, typeface (with text size), page scale, and side-panel width — all persistent and shared with the top-bar controls (change either, the other follows).' }),
+      el('p', { class: 'dn-lede', text: 'Colour theme, text size, page scale, and side-panel width — all persistent and shared with the top-bar controls (change either, the other follows).' }),
       el('div', { class: 'dn-set-appgrid' }, [
         appRow('Colour theme', themePicker(color)),
-        appRow('Typeface', typefacePicker(type, fontsize)),
+        appRow('Text size', fontSizePicker(fontsize)),
         appRow('Page scale', scalePicker(scale)),
         appRow('Side-panel width', railPicker(rail)),
       ])),
@@ -209,15 +204,40 @@ function themePicker(current) {
   return _themeDropdown.node;
 }
 
-function typefacePicker(current, currentSize) {
-  if (!_typeDropdown) {
-    _typeDropdown = buildTypefaceDropdown(current, (id) => { applyTypeface(id); }, {
-      size: currentSize, onSizeChoose: (id) => { applyFontSize(id); },
-    });
-  } else {
-    _typeDropdown.setValue(current);
+// The S/M/L text-size segmented control: one real <button> per size, moved
+// between with the arrow keys. A choice applies and persists through
+// applyFontSize; the control is built once and re-checked on a repaint.
+function fontSizePicker(current) {
+  if (!_sizeSegment) _sizeSegment = buildFontSizeSegment();
+  _sizeSegment.setSize(current);
+  return _sizeSegment.node;
+}
+
+function buildFontSizeSegment() {
+  const segs = FONTSIZE_OPTIONS.map((o) => el('button', {
+    class: 'dn-set-sizeseg', type: 'button', role: 'radio',
+    'data-fontsize': o.id, 'aria-checked': 'false',
+    title: o.title, 'aria-label': o.title, text: o.label,
+  }));
+  function setSize(v) {
+    const size = normaliseFontSize(v);
+    segs.forEach((b) => b.setAttribute('aria-checked', String(b.getAttribute('data-fontsize') === size)));
   }
-  return _typeDropdown.node;
+  const choose = (id) => setSize(applyFontSize(id));
+  segs.forEach((b, i) => {
+    b.addEventListener('click', () => choose(FONTSIZE_OPTIONS[i].id));
+    b.addEventListener('keydown', (ev) => {
+      const k = ev.key;
+      const dir = (k === 'ArrowRight' || k === 'ArrowDown') ? 1 : (k === 'ArrowLeft' || k === 'ArrowUp') ? -1 : 0;
+      if (!dir) return;
+      ev.preventDefault();
+      const next = (i + dir + segs.length) % segs.length;
+      choose(FONTSIZE_OPTIONS[next].id);
+      if (typeof segs[next].focus === 'function') segs[next].focus();
+    });
+  });
+  const node = el('div', { class: 'dn-set-sizeseg-wrap', role: 'radiogroup', 'aria-label': 'Text size' }, segs);
+  return { node, setSize };
 }
 
 function scalePicker(current) {

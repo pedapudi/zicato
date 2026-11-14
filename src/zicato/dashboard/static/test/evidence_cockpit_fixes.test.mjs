@@ -29,7 +29,7 @@ const shell = await import('../js/shell.js');
 const live = await import('../js/live.js');
 const STRUCT = { ...await import('../js/tournament_model.js'), ...await import('../js/views/structure.js') };
 const candidate = await import('../js/views/candidate.js');
-const board = await import('../js/views/board.js');
+const { dedupConsecutiveTurns } = await import('../js/turns.js');
 const { state } = await import('../js/core/state.js');
 const { bus } = await import('../js/core/bus.js');
 const data = await import('../js/data.js');
@@ -398,7 +398,7 @@ test('transcript: consecutive identical goal turns collapse to one (the runStart
     { seq: 1, role: 'user', text: 'Make the agent faster.' },           // goalDerived (identical)
     { seq: 2, role: 'agent', text: 'Working on it.' },
   ];
-  const out = board.dedupConsecutiveTurns(turns);
+  const out = dedupConsecutiveTurns(turns);
   assertEqual(out.length, 2, 'the duplicate goal line is folded (3 → 2 turns)');
   assertEqual(out[0].text, 'Make the agent faster.', 'the goal is kept once');
   assertEqual(out[1].text, 'Working on it.', 'the distinct agent turn survives');
@@ -406,19 +406,19 @@ test('transcript: consecutive identical goal turns collapse to one (the runStart
 
 test('transcript: dedup is CONSERVATIVE — different text, tool calls, or a gap are all kept', () => {
   // different text → both kept.
-  assertEqual(board.dedupConsecutiveTurns([
+  assertEqual(dedupConsecutiveTurns([
     { role: 'user', text: 'A' }, { role: 'user', text: 'B' },
   ]).length, 2, 'different text is not a duplicate');
   // a turn carrying tool calls is never folded (distinct content).
-  assertEqual(board.dedupConsecutiveTurns([
+  assertEqual(dedupConsecutiveTurns([
     { role: 'agent', text: 'X' }, { role: 'agent', text: 'X', tool_calls: [{ name: 't' }] },
   ]).length, 2, 'a tool-call turn is always kept');
   // a non-consecutive echo (a turn between) is kept.
-  assertEqual(board.dedupConsecutiveTurns([
+  assertEqual(dedupConsecutiveTurns([
     { role: 'user', text: 'G' }, { role: 'agent', text: 'mid' }, { role: 'user', text: 'G' },
   ]).length, 3, 'only CONSECUTIVE duplicates fold; a later echo is kept');
   // empty-text turns are never collapsed into each other.
-  assertEqual(board.dedupConsecutiveTurns([
+  assertEqual(dedupConsecutiveTurns([
     { role: 'agent', text: '' }, { role: 'agent', text: '' },
   ]).length, 2, 'empty turns are not treated as duplicates');
 });

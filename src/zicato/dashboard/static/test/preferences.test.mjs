@@ -15,28 +15,32 @@ function storage() {
 
 test('preferences persist under their supported keys', () => {
   const values = storage();
-  ui.persistType('literata');
-  ui.persistColor('dracula');
-  assertEqual(values.get('zicato.console.typeface'), 'literata');
-  assertEqual(ui.readType(), 'literata');
-  assertEqual(ui.readColor(), 'dracula');
+  ui.persistColor('solarized-light');
+  assertEqual(values.get('zicato.console.theme'), 'solarized-light');
+  assertEqual(ui.readColor(), 'solarized-light');
 });
 
 test('retired preference keys leave the appearance defaults in effect', () => {
   const values = storage();
-  values.set('zicato.T.theme', 'dracula');
-  values.set('zicato.T.typeface', 'literata');
+  values.set('zicato.T.theme', 'solarized-light');
   assertEqual(ui.readColor(), ui.DEFAULT_COLOR);
-  assertEqual(ui.readType(), ui.DEFAULT_TYPE);
   assertEqual(prefs.readPrefRaw('missing', 'absent'), 'absent');
 });
 
-test('retired typeface values use the default without translation', () => {
+test('a stored theme the console no longer ships reads as the default', () => {
   const values = storage();
-  for (const value of ['editorial', 'display', 'E8', 'D14']) {
-    values.set('zicato.console.typeface', value);
-    assertEqual(ui.readType(), ui.DEFAULT_TYPE);
+  for (const value of ['dracula', 'google-light', 'paper', 'ubuntu', '']) {
+    values.set('zicato.console.theme', value);
+    assertEqual(ui.readColor(), ui.DEFAULT_COLOR);
   }
+});
+
+test('a stored typeface preference is ignored without error', () => {
+  const values = storage();
+  values.set('zicato.console.typeface', 'literata');
+  assertEqual(ui.readColor(), ui.DEFAULT_COLOR);
+  assertEqual(ui.readType, undefined, 'the console holds no typeface preference');
+  assertEqual(values.get('zicato.console.typeface'), 'literata', 'the stored key is left alone');
 });
 
 test('unavailable browser storage leaves defaults usable', () => {
@@ -44,8 +48,8 @@ test('unavailable browser storage leaves defaults usable', () => {
     getItem() { throw new Error('storage unavailable'); },
     setItem() { throw new Error('storage unavailable'); },
   };
-  ui.persistType('literata');
-  assertEqual(ui.readType(), ui.DEFAULT_TYPE);
+  ui.persistColor('solarized-light');
+  assertEqual(ui.readColor(), ui.DEFAULT_COLOR);
 });
 
 await run();

@@ -13,8 +13,9 @@ import { svgEl } from './core/dom.js';
 import { isNum, fmt, CROWN, figIcon, iconBeside } from './svg.js';
 import { attachHovercard } from './hovercard.js';
 import { truncate, valueFace } from './ui.js';
+import { structureLabel } from './livestatus.js';
 
-export function verdictClass(verdict) {
+function verdictClass(verdict) {
   const v = String(verdict || '').toLowerCase();
   if (v.includes('promot')) return 'ezn-promoted';
   if (v.includes('reject')) return 'ezn-rejected';
@@ -237,21 +238,6 @@ const KEY_LINE_H = 12;
 // trimmed this to a flat 26, which is < a box half (24) and let the key line
 // render through the node boxes when the fan span was small — the bug this fixes.)
 const KEY_PAD = NODE_BOX_H / 2 + KEY_GAP + KEY_LINE_H;
-
-// The pending TERMINAL label is STRUCTURE-AWARE: a swiss/elim candidate awaiting
-// the gate must not read "racing". racing → "racing", swiss → "competing",
-// single/double elim → "in bracket"; an unknown/absent structure degrades to a
-// neutral "awaiting gate". The node draws the overflow mark before the words.
-function pendingTermLabel(structure) {
-  switch (String(structure || '').toLowerCase()) {
-    case 'racing': return 'racing';
-    case 'swiss': return 'competing';
-    case 'single_elim':
-    case 'double_elim': return 'in bracket';
-    case 'gauntlet': return 'at gate';
-    default: return 'awaiting gate';
-  }
-}
 
 export function lifecycleDag(spec) {
   const o = spec || {};
@@ -598,7 +584,7 @@ export function lifecycleDag(spec) {
   let termLabel, termSub, termCls, termMark = null;
   if (baseline) { termLabel = 'seed'; termSub = 'defines floor'; termCls = 'ezn-baseline'; }
   else if (promoted) { termLabel = 'promoted'; termSub = 'new champion'; termCls = 'ezn-promoted'; termMark = CROWN.current; }
-  else if (pending) { termLabel = pendingTermLabel(o.structure); termSub = 'awaiting gate'; termCls = 'ezn-running'; termMark = 'more'; }
+  else if (pending) { termLabel = structureLabel(o.structure, null, 'pending'); termSub = 'awaiting gate'; termCls = 'ezn-running'; termMark = 'more'; }
   else { termLabel = 'dead branch'; termSub = 'champion stands'; termCls = 'ezn-rejected'; termMark = 'fail'; }
   edgeLayer.appendChild(svgEl('path', { d: flow(X.gate + 0.06 * w, midY, X.term - 0.045 * w, midY), class: 'ezn-edge ' + (promoted ? 'ezn-edge-good' : pending ? 'ezn-edge-neutral' : 'ezn-edge-bad'), fill: 'none' }));
   rectNode(nodeLayer, X.term, midY, 0.1 * w, 48, termLabel, termSub, termCls, termMark);

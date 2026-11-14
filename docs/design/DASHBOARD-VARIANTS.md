@@ -116,7 +116,7 @@ appears in that variant rather than that the variants share code.
   information-architecture base of rounds 3 and 4. Back/up control — T, U, V,
   W, from the round-6 fix. Q shipped the buggy version.
 
-### Color-theme system (a 6-role token contract; 16 themes in T)
+### Color-theme system (a 6-role token contract; 3 themes in the console)
 - **Encodes:** B's themeable token system, ported and grown into a **six-role
   semantic contract** — `--v2-paper / --v2-panel / --v2-ink / --v2-good /
   --v2-bad / --v2-accent` (plus secondary `--v2-caution/flat/ink-soft/ink-faint/
@@ -131,12 +131,13 @@ appears in that variant rather than that the variants share code.
   selenized-black, relaxed, espresso, dracula and ubuntu. Each maps onto the
   same six-role contract. With sixteen options the picker became a **swatch
   dropdown** — a six-swatch preview strip and a name per option — rather than
-  a row of inline buttons.
+  a row of inline buttons. The console ships the three originals and keeps
+  the swatch dropdown.
 - **Binds:** none (presentation tokens).
 - **Used by:** B (the origin — Paper/Ink/Sepia), then the token system across H,
   I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W. (A and D ship bespoke palettes; D
   has a `prefers-color-scheme` dark mode.)
-- **Source of truth:** the full role system + the sixteen themes are documented
+- **Source of truth:** the full role system + the three shipped themes are documented
   in [CONSOLE-DESIGN-LANGUAGE.md](CONSOLE-DESIGN-LANGUAGE.md) §2.
 
 ### Typeface themes (three distinct serif / mono / display voices)
@@ -152,6 +153,8 @@ appears in that variant rather than that the variants share code.
   and big numerals. A fourth **Sans** option was dropped as redundant, and
   `sans` normalises to Technical. Google Fonts is the only
   permitted external dependency — fonts only, system fallbacks, `display=swap`.
+  The console ships one pairing, Open Sans with Google Sans Mono, and no
+  typeface picker.
 - **Binds:** none (presentation tokens).
 - **Used by:** L, M, N, O, P, Q, R, S, T, U, V, W. (Introduced in round 4.)
 - **Source of truth:** the typography system is documented in

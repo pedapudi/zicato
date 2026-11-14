@@ -129,7 +129,7 @@ function freshRunCount(runs, now) {
 //   phase "tournament:..."  , structure "single_elim"         → "single elim · …"
 export function phaseLabel(phase, structure) {
   const p = String(phase == null ? '' : phase).trim();
-  if (p === '') return structure ? prettyStructure(structure) : 'running';
+  if (p === '') return structure ? (structureLabel(structure, null, 'short') || 'tournament') : 'running';
   const segs = p.split(':').filter(Boolean);
   const head = (segs[0] || '').toLowerCase();
 
@@ -139,7 +139,7 @@ export function phaseLabel(phase, structure) {
   }
 
   if (head === 'tournament') {
-    const struct = prettyStructure(structure || 'tournament');
+    const struct = structureLabel(structure, null, 'short') || 'tournament';
     // surface the most specific round/rung token we can find.
     const detail = roundDetail(segs.slice(1), structure);
     return detail ? struct + ' · ' + detail : struct;
@@ -190,26 +190,67 @@ export function structureStatusLabel(rawStatus, structure) {
   if (s === 'alive') return 'alive';
   // the "still competing" word is structure-specific. Raw 'competing' (or any
   // other non-terminal token) maps to the structure's in-contention word.
-  const struct = String(structure || '').toLowerCase();
-  if (struct === 'single_elim' || struct === 'double_elim') return 'in bracket';
-  if (struct === 'swiss') return 'playing';
-  if (struct === 'racing') return 'racing';
+  const words = structureWords(String(structure || '').toLowerCase());
+  if (words && words.contending) return words.contending;
   // gauntlet / unknown: a neutral, structure-blind "alive".
   return s === 'competing' ? 'alive' : (s || 'alive');
 }
 
-function prettyStructure(structure) {
-  const s = String(structure || '').toLowerCase();
-  switch (s) {
-    case 'gauntlet': return 'gauntlet';
-    case 'single_elim': return 'single elim';
-    case 'double_elim': return 'double elim';
-    case 'swiss': return 'swiss';
-    case 'racing': return 'racing';
-    case '': return 'tournament';
-    default: return s.replace(/_/g, ' ');
-  }
+// ── the words a structure is named by ────────────────────────────────
+//
+// ONE table, so no surface keeps its own switch on the structure name.
+// `name` leads the full label and `detail(params)` is the key parameter that
+// follows it; `contending` is the word for a competitor still in contention
+// (absent for the gauntlet, which reads a neutral "alive"); `pending` is what
+// a candidate still awaiting its gate reads as.
+const isCount = (v) => typeof v === 'number' && isFinite(v);
+const STRUCTURE_WORDS = {
+  gauntlet: {
+    name: 'Gauntlet', pending: 'at gate',
+    detail: (p) => (isCount(p.replications) && p.replications > 1 ? `${p.replications}× replications` : ''),
+  },
+  single_elim: {
+    name: 'Single elimination', contending: 'in bracket', pending: 'in bracket',
+    detail: (p) => (p.seed_order ? `seed: ${p.seed_order}` : ''),
+  },
+  double_elim: {
+    name: 'Double elimination', contending: 'in bracket', pending: 'in bracket',
+    detail: (p) => (p.grand_final_reset === false ? 'no GF reset' : ''),
+  },
+  swiss: {
+    name: 'Swiss', contending: 'playing', pending: 'competing',
+    detail: (p) => (isCount(p.rounds) ? `${p.rounds} rounds` : ''),
+  },
+  racing: {
+    name: 'Racing (successive halving)', contending: 'racing', pending: 'racing',
+    detail: (p) => (Array.isArray(p.rungs) && p.rungs.length ? `${p.rungs.length} rungs` : ''),
+  },
+};
+function structureWords(key) {
+  return Object.prototype.hasOwnProperty.call(STRUCTURE_WORDS, key) ? STRUCTURE_WORDS[key] : null;
 }
+
+// The one label for a structure, in the `form` a surface needs:
+//   'full'    — the friendly name + its key parameter ("Swiss · 4 rounds"); an
+//               absent structure is the default gauntlet, and an unknown one
+//               reads as its own id.
+//   'short'   — the structure word for a status line ("single elim"); an
+//               absent structure is the empty string.
+//   'pending' — the word for a candidate awaiting its gate ("in bracket"); an
+//               unknown or absent structure degrades to "awaiting gate".
+export function structureLabel(structure, params, form = 'full') {
+  if (form === 'short') return String(structure || '').toLowerCase().replace(/_/g, ' ');
+  if (form === 'pending') {
+    const words = structureWords(String(structure || '').toLowerCase());
+    return words ? words.pending : 'awaiting gate';
+  }
+  const key = String(structure || 'gauntlet');
+  const words = structureWords(key);
+  if (!words) return key;
+  const detail = words.detail((params && typeof params === 'object') ? params : {});
+  return words.name + (detail ? ' · ' + detail : '');
+}
+
 
 // The structure-agnostic verdict. `running` is true when ANY live signal
 // fires; the label + structure + in-flight count describe it for the chrome.

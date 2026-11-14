@@ -15,9 +15,10 @@ Every concept was read out of the module that implements it rather than out of
 a glossary, so the definitions here and `docs/design/VOCABULARY.md` should
 agree. Where they disagree, the source decides and both should be corrected.
 
-The page borrows the console's design language: the six colour roles, the
-sixteen themes, the twelve typefaces, and the rule that improvement and
-regression colours mean direction rather than identity. The per-part colours on
+The page borrows the console's design language: the six colour roles and the
+rule that improvement and regression colours mean direction rather than
+identity. It carries sixteen themes and twelve typefaces of its own; the
+console ships three themes and one typeface pairing. The per-part colours on
 the map are a separate categorical encoding, checked for lightness, chroma,
 colour-vision separation and contrast against both grounds.
 

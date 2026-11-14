@@ -1185,53 +1185,22 @@ test('back button: navigates UP and renders the destination into the MAIN detail
 
 // ---- pickers + digest no-op ----------------------------------------
 
-test('pickers: typeface (Open Sans + Google Sans Mono default, 12 faces / 4 per mode) + colour (monokai default) switch + persist', () => {
+test('picker: the colour theme (monokai default) switches + persists; there is no typeface preference', () => {
   freshState();
   const root = document.createElement('div');
   assertEqual(ui.DEFAULT_COLOR, 'monokai', 'monokai is the default colour theme');
-  // The DEFAULT typeface is Open Sans with Google Sans Mono, the first Technical pairing.
-  assertEqual(ui.DEFAULT_TYPE, 'google-sans-mono', 'the Google Sans Mono pairing is the default typeface');
-  // TWELVE options — FOUR per mode across THREE modes.
-  assertEqual(ui.TYPE_OPTIONS.length, 12, 'exactly 12 typeface options');
-  assertDeep(ui.TYPE_MODE_ORDER, ['technical', 'editorial', 'display'], 'three mode groups in order');
-  for (const mode of ui.TYPE_MODE_ORDER) {
-    assertEqual(ui.TYPE_OPTIONS.filter((o) => o.mode === mode).length, 4, 'four options in the ' + mode + ' group');
-  }
-  // every id names the face the option is chosen for, in the kebab-case form
-  // the colour themes use.
-  const typeIds = ui.TYPE_OPTIONS.map((o) => o.id);
-  assertDeep(typeIds,
-    ['google-sans-mono', 'source-sans-3', 'inconsolata', 'ubuntu',
-     'fraunces', 'bitter', 'literata', 'domine',
-     'archivo-narrow', 'hanken-grotesk', 'barlow-condensed', 'bricolage-grotesque'],
-    'the 12 ids name their faces');
-  for (const o of ui.TYPE_OPTIONS) {
-    assert(/^[a-z0-9]+(-[a-z0-9]+)*$/.test(o.id), o.id + ' is kebab-case, like the colour-theme ids');
-    assert(!/^[A-Z]\d+ · /.test(o.label), o.id + ' label carries the face names alone, no positional prefix');
-  }
-  // every option carries the four font-role stacks.
-  for (const o of ui.TYPE_OPTIONS) {
-    for (const role of ['head', 'prose', 'data', 'code']) {
-      assert(typeof o[role] === 'string' && o[role].length > 0, o.id + ' has a ' + role + ' font stack');
-    }
-  }
-  // TYPE_THEMES exposes the options in [id, label] shape.
-  assertEqual(ui.TYPE_THEMES.length, 12, 'TYPE_THEMES exposes all 12 as [id,label] pairs');
-  assertEqual(ui.TYPE_THEMES[0][0], 'google-sans-mono', 'TYPE_THEMES first id is the default');
-
-  const colorIds = ui.COLOR_THEMES.map((t) => t[0]);
-  assert(['monokai', 'solarized-dark', 'solarized-light'].every((c) => colorIds.includes(c)), 'the three original colour themes are kept');
+  assertDeep(ui.COLOR_THEMES.map((t) => t[0]), ['monokai', 'solarized-dark', 'solarized-light'], 'the three colour themes');
   shell.applyTheme('solarized-dark', root);
   assertEqual(root.getAttribute('data-t-theme'), 'solarized-dark', 'colour applied to the T root');
   assertEqual(ui.readColor(), 'solarized-dark', 'colour persisted');
-  // apply an option id — it stamps data-t-type="<id>" and persists.
-  shell.applyTypeface('fraunces', root);
-  assertEqual(root.getAttribute('data-t-type'), 'fraunces', 'typeface option applied to the T root');
-  assertEqual(ui.readType(), 'fraunces', 'typeface persisted');
   assertEqual(ui.normaliseColor('nonsense'), 'monokai', 'unknown colour → monokai');
-  assertEqual(ui.normaliseType('nonsense'), 'google-sans-mono', 'unknown typeface → the default');
-  // typeOption resolves to the full option object (real faces).
-  assertEqual(ui.typeOption('google-sans-mono').label, 'Open Sans + Google Sans Mono', 'typeOption resolves the option object');
+  assertEqual(ui.normaliseColor('dracula'), 'monokai', 'a removed theme → monokai');
+  // The console ships one typeface pairing: no option table, no apply path.
+  for (const name of ['TYPE_OPTIONS', 'TYPE_THEMES', 'DEFAULT_TYPE', 'normaliseType', 'readType', 'persistType']) {
+    assertEqual(ui[name], undefined, 'ui.' + name + ' is gone');
+  }
+  assertEqual(shell.applyTypeface, undefined, 'shell.applyTypeface is gone');
+  assertEqual(shell.TYPEFACES, undefined, 'shell.TYPEFACES is gone');
 });
 
 // ---- the brand wordmark: dotless ı + the accent dot CENTRED on its stem ----
@@ -1282,12 +1251,10 @@ test('brand wordmark: renders "zıcato" with a dotless ı (U+0131) and the accen
   assertEqual(dot.getAttribute('fill'), 'var(--zicato-accent)', 'the dot fills with the accent token');
 });
 
-// The TYPEFACE picker has been REMOVED from the top-bar chrome (it lives ONLY in
-// Settings → Appearance now). The top bar keeps the colour SWATCH DROPDOWN, the
-// page-scale pill, and the status pill; and the wordmark dot stays centred for
-// the FIXED brand mono regardless of the selected typeface (applyTypeface still
-// works via the shared store + the Settings dropdown).
-test('top bar: NO typeface picker and NO scale pill (both → Settings only); colour dropdown + status remain; wordmark dot centred for the fixed brand mono', async () => {
+// The top bar carries no typeface picker and no page-scale pill. It keeps the
+// colour SWATCH DROPDOWN and the status label, and the wordmark dot stays
+// centred for the FIXED brand mono.
+test('top bar: NO typeface picker and NO scale pill; colour dropdown + status remain; wordmark dot centred for the fixed brand mono', async () => {
   freshState(); installFetch();
   const listeners = { hashchange: [] };
   globalThis.HashChangeEvent = function HashChangeEvent() {};
@@ -1312,17 +1279,16 @@ test('top bar: NO typeface picker and NO scale pill (both → Settings only); co
 
   const topbar = allByClass(root, 'dt-topbar')[0];
   assert(topbar, 'the top bar painted');
-  // no TYPEFACE picker — neither a grouped popover nor a button group — sits in
-  // the top bar. The picker lives only under Settings → Appearance.
-  assertEqual(allByClass(topbar, 'dt-tf').length, 0, 'no typeface picker in the top bar (moved to Settings)');
-  assertEqual(allByClass(topbar, 'dt-tf-trigger').length, 0, 'no typeface popover trigger in the top bar');
-  assertEqual(allByClass(topbar, 'dt-tf-option').length, 0, 'no typeface option rows in the top bar');
+  // no TYPEFACE picker sits in the top bar, and the root carries no typeface
+  // attribute: the console ships one pairing.
+  assertEqual(allByClass(topbar, 'dt-tf').length, 0, 'no typeface picker in the top bar');
+  assertEqual(root.getAttribute('data-t-type'), null, 'the root carries no typeface attribute');
   // the COLOUR swatch dropdown is the SOLE dt-cd popover left in the top bar.
   const cds = allByClass(topbar, 'dt-cd');
   assertEqual(cds.length, 1, 'only the colour swatch dropdown (dt-cd) remains in the top bar');
   assert(allByClass(topbar, 'dt-cd-trigger')[0], 'the colour dropdown trigger is present');
   // the PAGE-SCALE pill is GONE from the top bar too (issue #194 §7 topbar
-  // diet) — it follows the typeface picker into Settings → Appearance, which
+  // diet) — it lives in Settings → Appearance, which
   // already drives the same applyScale/resetScale store. The status pill, the
   // settings link, and the brand stay.
   assertEqual(allByClass(topbar, 'dt-scale-pill').length, 0, 'no page-scale pill in the top bar (moved to Settings)');
@@ -1331,21 +1297,16 @@ test('top bar: NO typeface picker and NO scale pill (both → Settings only); co
   assert(allByClass(topbar, 'dt-nav-build')[0], 'the settings link is still in the top bar');
   assert(allByClass(topbar, 'dt-brand')[0], 'the brand is still in the top bar');
 
-  // applyTypeface still applies live (the shared store path is intact even with
-  // no top-bar dropdown) — stamps data-t-type on the root.
-  shell.applyTypeface('source-sans-3', root);
-  assertEqual(root.getAttribute('data-t-type'), 'source-sans-3', 'applyTypeface stamps the chosen id as data-t-type on the root');
-
-  // the wordmark dot stays centred on the FIXED brand mono — switching the UI
-  // typeface (the swappable --v2-mono) must NOT move the geometrically-pinned dot.
+  // the wordmark dot stays centred on the FIXED brand mono — a theme or
+  // text-size change must NOT move the geometrically-pinned dot.
   const wm = svgsByClass(root, 'dt-brand-name')[0];
   const dot = allByClass(wm, 'dt-brand-dot')[0];
   const text = allByClass(wm, 'dt-brand-letters')[0];
   assertEqual(text.getAttribute('font-family'), 'var(--v2-brand-mono)', 'the wordmark pins to the FIXED brand mono');
   const cxBefore = Number(dot.getAttribute('cx'));
-  shell.applyTypeface('display', root);
-  shell.applyTypeface('editorial', root);
-  assertEqual(Number(dot.getAttribute('cx')), cxBefore, 'the dot cx is unchanged across typeface switches');
+  shell.applyTheme('solarized-light', root);
+  shell.applyFontSize('large', root);
+  assertEqual(Number(dot.getAttribute('cx')), cxBefore, 'the dot cx is unchanged across appearance switches');
   assertEqual(Number(dot.getAttribute('cx')), shell.wordmarkDotCx(), 'the dot cx still equals the computed brand-mono stem centre');
 });
 
