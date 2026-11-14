@@ -12,7 +12,7 @@ perform no reads, and unavailable optional evidence does not stop a round.
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -209,32 +209,26 @@ def _build_recombination_pair(
 ) -> Any:
     """Select complementary rejected edits using shared history and training outcomes."""
     quality = weights.proposer_quality
-    if not weights.experimental.recombine or quality.best_of_n <= 1:
+    experimental = weights.experimental
+    if (
+        not experimental.recombine
+        or quality.best_of_n <= 1
+        or experimental.recombine_pool != "rejects"
+    ):
         return None
     try:
-        from zicato.core.experiment import PLACEBO_HYPOTHESIS_MARKER  # noqa: PLC0415
         from zicato.epoch.recombine import (  # noqa: PLC0415
             RECOMBINE_POOL_MAX,
-            ParentCandidate,
             eligible_parents,
             rank_pairs,
         )
-        from zicato.proposer.recombine import RecombinationPair  # noqa: PLC0415
-        from zicato.tournament.scoring import pass_flips  # noqa: PLC0415
-        from zicato.workspace.reads import read_generation_losses  # noqa: PLC0415
 
-        layout = WorkspaceLayout.from_root(workspace_root)
         pool: list[Experiment] = []
-        tried: set[frozenset[str]] = set()
         for gid, exp in reversed(experiments):
-            if gid == parent_id:
-                continue
-            if len(exp.recombined_from) == 2:
-                # A prior mint records its pair as tried (any outcome) but is
-                # NEVER a pool candidate itself (predicate #4 would drop it
-                # later anyway) — skipping here keeps it from wasting one of
-                # the RECOMBINE_POOL_MAX slots and a matchup-grid read.
-                tried.add(frozenset(exp.recombined_from))
+            # A prior mint is NEVER a pool candidate itself (predicate #4
+            # would drop it later anyway) — skipping here keeps it from
+            # wasting one of the RECOMBINE_POOL_MAX slots and a grid read.
+            if gid == parent_id or len(exp.recombined_from) == 2:
                 continue
             if exp.outcome is None or exp.outcome.tournament_decision != "rejected":
                 continue
@@ -243,82 +237,246 @@ def _build_recombination_pair(
         if len(pool) < 2:
             return None
 
-        parent_losses = read_generation_losses(layout, epoch_id, parent_id)
-        candidates: list[ParentCandidate] = []
-        for exp in pool:
-            child_losses = read_generation_losses(layout, epoch_id, exp.generation_id)
-            improved, regressed = pass_flips(
-                {e: row.get("pass_fail") for e, row in parent_losses.items()},
-                {e: row.get("pass_fail") for e, row in child_losses.items()},
-                train_entry_ids,
-            )
-            hyp = exp.hypothesis
-            candidates.append(
-                ParentCandidate(
-                    generation_id=exp.generation_id,
-                    decision=exp.outcome.tournament_decision or "" if exp.outcome else "",
-                    parent_generation_id=exp.parent_generation_id,
-                    is_placebo=hyp.core_idea.startswith(PLACEBO_HYPOTHESIS_MARKER),
-                    is_recombined=bool(exp.recombined_from),
-                    patch_mutation_ids=frozenset(p.mutation_id for p in exp.patches),
-                    improved_entry_ids=improved,
-                    regressed_entry_ids=regressed,
-                    elo=elo_by_gid.get(exp.generation_id),
-                    patches=exp.patches,
-                    core_idea=hyp.core_idea,
-                    expected_metric_movements=hyp.expected_metric_movements,
-                )
-            )
-
+        candidates = _parent_candidates(
+            pool, workspace_root, epoch_id, parent_id, train_entry_ids, elo_by_gid
+        )
         manifest_ids = frozenset(str(m.id) for m in mutations)
         eligible = eligible_parents(candidates, champion_id=parent_id, manifest_ids=manifest_ids)
         # The merge mode gates the disjointness predicate: "llm" relaxes #7
         # for pair selection so an OVERLAPPING pair (which only an LLM merge
         # can compose) is eligible, while "mechanical" (the default) keeps #7
         # hard and selects only disjoint pairs.
-        merge_mode = weights.experimental.recombine_merge
-        pair = rank_pairs(eligible, tried_pairs=frozenset(tried), merge_mode=merge_mode)
-        if pair is None:
-            return None
-        a, b = pair
-        log.debug(
-            "recombine: selected pair (%s, %s) — coverage %d, cross-regression %d",
-            a.generation_id,
-            b.generation_id,
-            len(a.improved_entry_ids | b.improved_entry_ids),
-            len(a.regressed_entry_ids | b.regressed_entry_ids),
+        pair = rank_pairs(
+            eligible,
+            tried_pairs=_tried_pairs(experiments, parent_id),
+            merge_mode=experimental.recombine_merge,
         )
-        # The LLM merge prompt carries each parent's whole-candidate
-        # BANDED outcome (envelope-clean — the exact Δscalar is bucketed HERE
-        # and discarded, only the coarse label reaches the pair). Reuses the
-        # experiment-memory band vocabulary; "" for an unsettled delta.
-        from zicato.proposer.prompts import _bucket_scalar_delta  # noqa: PLC0415
-
-        exp_by_gid = {e.generation_id: e for e in pool}
-
-        def _banded_outcome(gid: str) -> str:
-            exp = exp_by_gid.get(gid)
-            delta = exp.outcome.scalar_score_delta if exp is not None and exp.outcome else None
-            return _bucket_scalar_delta(delta) if delta is not None else ""
-
-        return RecombinationPair(
-            a_generation_id=a.generation_id,
-            b_generation_id=b.generation_id,
-            a_patches=a.patches,
-            b_patches=b.patches,
-            a_core_idea=a.core_idea,
-            b_core_idea=b.core_idea,
-            a_improved_count=len(a.improved_entry_ids),
-            b_improved_count=len(b.improved_entry_ids),
-            combined_improved_count=len(a.improved_entry_ids | b.improved_entry_ids),
-            combined_regressed_count=len(a.regressed_entry_ids | b.regressed_entry_ids),
-            a_banded_outcome=_banded_outcome(a.generation_id),
-            b_banded_outcome=_banded_outcome(b.generation_id),
-            a_expected_metric_movements=a.expected_metric_movements,
-            b_expected_metric_movements=b.expected_metric_movements,
-        )
+        return _recombination_pair_value(pair, pool)
     except Exception as exc:  # noqa: BLE001 — recombination must never fail a round
         log.debug("recombine: pair selection skipped (%s)", exc)
+        return None
+
+
+def _tried_pairs(
+    experiments: Sequence[tuple[str, Experiment]], parent_id: str
+) -> frozenset[frozenset[str]]:
+    """Every pair a persisted mint other than the champion records (predicate #5)."""
+    return frozenset(
+        frozenset(exp.recombined_from)
+        for gid, exp in experiments
+        if gid != parent_id and len(exp.recombined_from) == 2
+    )
+
+
+def _parent_candidates(
+    pool: Sequence[Experiment],
+    workspace_root: Path,
+    epoch_id: str,
+    parent_id: str,
+    train_entry_ids: frozenset[str],
+    elo_by_gid: dict[str, float],
+) -> list[Any]:
+    """Each pool experiment as selector data, with its TRAIN flips against the champion."""
+    from zicato.core.experiment import PLACEBO_HYPOTHESIS_MARKER  # noqa: PLC0415
+    from zicato.epoch.recombine import ParentCandidate  # noqa: PLC0415
+    from zicato.tournament.scoring import pass_flips  # noqa: PLC0415
+    from zicato.workspace.reads import read_generation_losses  # noqa: PLC0415
+
+    layout = WorkspaceLayout.from_root(workspace_root)
+    parent_losses = read_generation_losses(layout, epoch_id, parent_id)
+    candidates: list[ParentCandidate] = []
+    for exp in pool:
+        child_losses = read_generation_losses(layout, epoch_id, exp.generation_id)
+        improved, regressed = pass_flips(
+            {e: row.get("pass_fail") for e, row in parent_losses.items()},
+            {e: row.get("pass_fail") for e, row in child_losses.items()},
+            train_entry_ids,
+        )
+        hyp = exp.hypothesis
+        candidates.append(
+            ParentCandidate(
+                generation_id=exp.generation_id,
+                decision=exp.outcome.tournament_decision or "" if exp.outcome else "",
+                parent_generation_id=exp.parent_generation_id,
+                is_placebo=hyp.core_idea.startswith(PLACEBO_HYPOTHESIS_MARKER),
+                is_recombined=bool(exp.recombined_from),
+                patch_mutation_ids=frozenset(p.mutation_id for p in exp.patches),
+                improved_entry_ids=improved,
+                regressed_entry_ids=regressed,
+                elo=elo_by_gid.get(exp.generation_id),
+                patches=exp.patches,
+                core_idea=hyp.core_idea,
+                expected_metric_movements=hyp.expected_metric_movements,
+            )
+        )
+    return candidates
+
+
+def _recombination_pair_value(pair: Any, pool: Sequence[Experiment]) -> Any:
+    """The envelope-clean value the proposer stack receives for a selected pair."""
+    if pair is None:
+        return None
+    from zicato.proposer.prompts import _bucket_scalar_delta  # noqa: PLC0415
+    from zicato.proposer.recombine import RecombinationPair  # noqa: PLC0415
+
+    a, b = pair
+    log.debug(
+        "recombine: selected pair (%s, %s) — coverage %d, cross-regression %d",
+        a.generation_id,
+        b.generation_id,
+        len(a.improved_entry_ids | b.improved_entry_ids),
+        len(a.regressed_entry_ids | b.regressed_entry_ids),
+    )
+    # The LLM merge prompt carries each parent's whole-candidate
+    # BANDED outcome (envelope-clean — the exact Δscalar is bucketed HERE
+    # and discarded, only the coarse label reaches the pair). Reuses the
+    # experiment-memory band vocabulary; "" for an unsettled delta.
+    exp_by_gid = {e.generation_id: e for e in pool}
+
+    def _banded_outcome(gid: str) -> str:
+        exp = exp_by_gid.get(gid)
+        delta = exp.outcome.scalar_score_delta if exp is not None and exp.outcome else None
+        return _bucket_scalar_delta(delta) if delta is not None else ""
+
+    return RecombinationPair(
+        a_generation_id=a.generation_id,
+        b_generation_id=b.generation_id,
+        a_patches=a.patches,
+        b_patches=b.patches,
+        a_core_idea=a.core_idea,
+        b_core_idea=b.core_idea,
+        a_improved_count=len(a.improved_entry_ids),
+        b_improved_count=len(b.improved_entry_ids),
+        combined_improved_count=len(a.improved_entry_ids | b.improved_entry_ids),
+        combined_regressed_count=len(a.regressed_entry_ids | b.regressed_entry_ids),
+        a_banded_outcome=_banded_outcome(a.generation_id),
+        b_banded_outcome=_banded_outcome(b.generation_id),
+        a_expected_metric_movements=a.expected_metric_movements,
+        b_expected_metric_movements=b.expected_metric_movements,
+    )
+
+
+#: Epochs already told that their frontier holds no pair to recombine.
+_NO_FRONTIER_PAIR_LOGGED: set[str] = set()
+
+
+def _edits_since(
+    ancestor_id: str | None, champion_id: str, exp_by_gid: dict[str, Experiment]
+) -> frozenset[str] | None:
+    """Mutation ids the champion's lineage patched after ``ancestor_id``.
+
+    ``None`` when ``ancestor_id`` is not on the champion's lineage. A frontier
+    member proposed against an earlier champion replaces whole mutation
+    points, so a point a later promotion edited would be overwritten by the
+    member's patch and lose that promotion.
+    """
+    edited: set[str] = set()
+    gid: str | None = champion_id
+    while gid != ancestor_id:
+        exp = exp_by_gid.get(gid or "")
+        if exp is None:
+            return None
+        edited.update(p.mutation_id for p in exp.patches)
+        gid = exp.parent_generation_id
+    return frozenset(edited)
+
+
+async def _build_frontier_recombination_pair(
+    *,
+    weights: Any,
+    workspace_root: Path,
+    epoch_id: str,
+    parent_id: str,
+    train_entry_ids: frozenset[str],
+    mutations: list[Any],
+    confirm: Callable[[str], Awaitable[Any]],
+) -> Any:
+    """Select a recombination pair from confirmed Pareto frontier members.
+
+    ``None`` unless the contract sets ``experimental.recombine`` with a slate
+    and ``recombine_pool: "frontier"``. The pool is then the epoch's frontier
+    members, never the rejects pool: with fewer than two usable members the
+    round mints nothing, and says so once per epoch at INFO.
+
+    A member is usable when its patches apply to the current manifest, no
+    promotion since its parent edited a mutation point it patches, and
+    ``confirm`` — :func:`~zicato.evolve.pareto.confirm_frontier_member` bound
+    to this round — upholds it against the current champion. A pair needs
+    disjoint win axes; pairs rank by the number of axes won between them,
+    then by the selector's remaining keys (PROPOSER.md §2.6.2).
+
+    Confirmation is spent on the best-ranked pair's members only, one at a
+    time, re-ranking after each result, and at most
+    :data:`~zicato.epoch.recombine.RECOMBINE_CONFIRM_MAX` times a round.
+    """
+    experimental = weights.experimental
+    if (
+        not experimental.recombine
+        or weights.proposer_quality.best_of_n <= 1
+        or experimental.recombine_pool != "frontier"
+    ):
+        return None
+    try:
+        from zicato.epoch.journal import read_epoch_experiments  # noqa: PLC0415
+        from zicato.epoch.pareto import load_frontier  # noqa: PLC0415
+        from zicato.epoch.recombine import (  # noqa: PLC0415
+            RECOMBINE_CONFIRM_MAX,
+            eligible_parents,
+            rank_pairs,
+        )
+
+        experiments, _unreadable = read_epoch_experiments(workspace_root, epoch_id)
+        exp_by_gid = dict(experiments)
+        members = {m.generation_id: m for m in load_frontier(workspace_root, epoch_id).members}
+        pool: list[Experiment] = []
+        for gid in sorted(members):
+            exp = exp_by_gid.get(gid)
+            if exp is None:
+                continue
+            edited = _edits_since(exp.parent_generation_id, parent_id, exp_by_gid)
+            if edited is not None and edited.isdisjoint(p.mutation_id for p in exp.patches):
+                pool.append(exp)
+        eligible = eligible_parents(
+            _parent_candidates(pool, workspace_root, epoch_id, parent_id, train_entry_ids, {}),
+            champion_id=None,
+            manifest_ids=frozenset(str(m.id) for m in mutations),
+        )
+        wins = {gid: frozenset(m.beats_champion_on) for gid, m in members.items()}
+        confirmed = {
+            gid
+            for gid, m in members.items()
+            if m.confirmed_round is not None and m.champion_generation_id == parent_id
+        }
+        tried = _tried_pairs(experiments, parent_id)
+        spent = 0
+        while True:
+            pair = rank_pairs(
+                eligible, tried_pairs=tried, merge_mode=experimental.recombine_merge, wins=wins
+            )
+            pending = [c.generation_id for c in pair or () if c.generation_id not in confirmed]
+            if pair is None or (pending and spent >= RECOMBINE_CONFIRM_MAX):
+                if epoch_id not in _NO_FRONTIER_PAIR_LOGGED:
+                    _NO_FRONTIER_PAIR_LOGGED.add(epoch_id)
+                    log.info(
+                        "recombine: epoch %s — the Pareto frontier holds no confirmed pair with "
+                        "disjoint wins (%d member(s), %d confirmation(s) this round); minting "
+                        "nothing. The rejects pool is not used while recombine_pool is 'frontier'.",
+                        epoch_id,
+                        len(members),
+                        spent,
+                    )
+                return None
+            if not pending:
+                return _recombination_pair_value(pair, pool)
+            spent += 1
+            member = await confirm(pending[0])
+            if member is None:
+                eligible = [c for c in eligible if c.generation_id != pending[0]]
+            else:
+                confirmed.add(pending[0])
+                wins[pending[0]] = frozenset(member.beats_champion_on)
+    except Exception as exc:  # noqa: BLE001 — recombination must never fail a round
+        log.debug("recombine: frontier pair selection skipped (%s)", exc)
         return None
 
 

@@ -572,6 +572,8 @@ def set_experimental(
     process_exemplars: int | None = None,
     recombine: bool | None = None,
     recombine_merge: str | None = None,
+    recombine_pool: str | None = None,
+    frontier_steering: bool | None = None,
     genealogy: int | None = None,
     calibration_feedback: int | None = None,
     random_baseline_every_n: int | None = None,

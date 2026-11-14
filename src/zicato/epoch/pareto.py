@@ -7,9 +7,12 @@ again. This module records those candidates — the settled ones that beat the
 reigning champion on at least one scoring axis and that nothing else on the
 record dominates — beside the champion lineage.
 
-**The record changes nothing.** It never enters the gate, selection, the
-proposer's prompt, or the champion pointer; it is an observation, in the same
-class as the Elo fold and the RoundLog. See
+**The record decides nothing.** It never enters the gate, selection, or the
+champion pointer. Its default readers are the operator's trade-off table
+(:func:`render_frontier_tradeoffs`) and :func:`confirm_member`, which
+re-checks one member against the current champion from a fresh measurement
+before anything uses it. Two opt-in consumers in ``zicato.evolve`` let it
+shape what is proposed: the recombination pool and the steering block. See
 ``docs/design/PARETO-FRONTIER.md`` for the full design, including the steps
 this deliberately does NOT build (§8) and the cross-round comparability
 assumption it writes down rather than resolves (§9).
@@ -18,12 +21,16 @@ Everything it needs already lives in the frozen epoch contract, so it adds no
 knob:
 
 * the **axes** are the non-zero keys of
-  :attr:`~zicato.core.ScoringWeights.namespace_weights`;
+  :attr:`~zicato.core.ScoringWeights.namespace_weights`, plus the
+  highest-weight judges and scored metrics inside them
+  (:func:`frontier_axes`);
 * the **units** are ``namespace_aggregates`` — which
   :func:`~zicato.tournament.scoring.aggregate_namespaced_metrics` has already
   multiplied by each namespace's SIGNED weight, so every axis is uniformly
   lower-is-better and the comparison never branches on direction (the same
-  property the gate's Rule 3 relies on);
+  property the gate's Rule 3 relies on) — and, for a dimension, the same
+  product split per metric
+  (:func:`~zicato.tournament.scoring.aggregate_dimension_metrics`);
 * the **threshold** is :attr:`~zicato.core.ScoringWeights.promote_margin`,
   which ``tournament/calibration.py`` fits to an A/A noise floor — so
   "better" means here exactly what it means at the gate;
@@ -41,7 +48,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -57,7 +64,19 @@ FRONTIER_FILENAME = "pareto_frontier.json"
 RETIRED_PROMOTED = "promoted"
 RETIRED_DOMINATED_BY_CHAMPION = "dominated_by_champion"
 RETIRED_MONOTONICITY = "monotonicity_regression"
+RETIRED_UNCONFIRMED = "unconfirmed"
 DOMINATED_BY_PREFIX = "dominated_by:"
+
+#: Aggregate key carrying one generation's per-dimension contributions, as
+#: :func:`~zicato.tournament.scoring.aggregate_dimension_metrics` returns
+#: them. The round's recorder adds it to the aggregates it offers the record;
+#: ``gen_score.json`` does not carry it.
+DIMENSION_AGGREGATES_KEY = "dimension_aggregates"
+
+#: How many dimension axes join the namespace axes. Every extra axis is one
+#: more chance to clear the margin against the champion by noise, so the set
+#: is bounded and :func:`confirm_member` re-checks a member before use.
+FRONTIER_DIMENSION_CAP = 8
 
 
 # ---------------------------------------------------------------------------
@@ -65,12 +84,35 @@ DOMINATED_BY_PREFIX = "dominated_by:"
 # ---------------------------------------------------------------------------
 
 
-def frontier_axes(weights: ScoringWeights) -> tuple[str, ...]:
-    """The sorted namespace axes the frontier compares on.
+def _dimension_weight(name: str, weights: ScoringWeights) -> float:
+    """The magnitude of the contract weight on one dimension.
 
-    Every key of :attr:`ScoringWeights.namespace_weights` whose weight is not
-    zero. Under the defaults: ``cost:``, ``drift:``, ``latency:``, ``rubric:``,
-    ``schema:``.
+    The namespace coefficient times the within-channel weight the contract
+    names for that dimension: the per-judge weight for ``judge:<name>``, the
+    two failure magnitudes for ``failure:``, and ``1.0`` for every other
+    metric. This is the weight the proposer's scored targets are ranked by.
+    """
+    namespace, _, leaf = name.partition(":")
+    if name == "failure:tasks":
+        within = weights.task_failure_weight
+    elif name == "failure:not_completed":
+        within = weights.not_completed_weight
+    elif namespace == "judge":
+        within = weights.per_judge_weights.get(leaf, weights.default_judge_weight)
+    else:
+        within = 1.0
+    return abs(float(weights.namespace_weights.get(f"{namespace}:", 0.0)) * float(within))
+
+
+def frontier_axes(
+    weights: ScoringWeights, aggregate: Mapping[str, Any] | None = None
+) -> tuple[str, ...]:
+    """The axes the frontier compares on: namespaces, then dimensions.
+
+    The namespace axes are the sorted keys of
+    :attr:`ScoringWeights.namespace_weights` whose weight is not zero. Under
+    the defaults: ``cost:``, ``drift:``, ``failure:``, ``judge:``,
+    ``latency:``, ``rubric:``, ``schema:``.
 
     ``output:`` is excluded because its default weight is ``0.0`` — a zero
     weight has neither a sign nor a scale, so there is no direction in which
@@ -82,14 +124,34 @@ def frontier_axes(weights: ScoringWeights) -> tuple[str, ...]:
     on every side. It can therefore never separate two candidates — and never
     wrongly separate them either. Filling it is a scoring change that would
     move every scalar in the workspace (PARETO-FRONTIER.md §8).
+
+    The dimension axes are the judges and scored metrics inside those
+    namespaces, named by ``aggregate`` (the reference champion's, under
+    :data:`DIMENSION_AGGREGATES_KEY`), because only the data knows which
+    metrics a board reports. They follow the namespaces, ordered by contract
+    weight then name, at most :data:`FRONTIER_DIMENSION_CAP` of them. A
+    namespace with one dimension contributes none: that dimension is the
+    namespace axis. With no ``aggregate`` the result is the namespace axes.
     """
-    return tuple(sorted(ns for ns, w in weights.namespace_weights.items() if float(w) != 0.0))
+    namespaces = tuple(sorted(ns for ns, w in weights.namespace_weights.items() if float(w) != 0.0))
+    raw = (aggregate or {}).get(DIMENSION_AGGREGATES_KEY) or {}
+    if not isinstance(raw, Mapping):
+        return namespaces
+    per_namespace: dict[str, list[str]] = {}
+    for name in raw:
+        namespace = str(name).partition(":")[0] + ":"
+        if namespace in namespaces and str(name) != namespace:
+            per_namespace.setdefault(namespace, []).append(str(name))
+    dimensions = [name for names in per_namespace.values() if len(names) > 1 for name in names]
+    dimensions.sort(key=lambda name: (-_dimension_weight(name, weights), name))
+    return namespaces + tuple(dimensions[:FRONTIER_DIMENSION_CAP])
 
 
 def axis_values(aggregate: Mapping[str, Any], axes: Sequence[str]) -> dict[str, float]:
     """Read one generation's per-axis values out of its aggregate.
 
-    The values come from ``aggregate["namespace_aggregates"]`` — already
+    The values come from ``aggregate["namespace_aggregates"]`` and, for a
+    dimension axis, ``aggregate["dimension_aggregates"]`` — both already
     weight-multiplied and sign-folded, so they are directly comparable in
     scalar points across axes whose raw units differ by orders of magnitude.
 
@@ -100,9 +162,11 @@ def axis_values(aggregate: Mapping[str, Any], axes: Sequence[str]) -> dict[str, 
     :func:`~zicato.tournament.gate.regressed_namespaces`, which skips a
     namespace it cannot see on both sides.
     """
-    raw = aggregate.get("namespace_aggregates") or {}
-    if not isinstance(raw, Mapping):
-        return {}
+    raw: dict[str, Any] = {}
+    for key in (DIMENSION_AGGREGATES_KEY, "namespace_aggregates"):
+        part = aggregate.get(key) or {}
+        if isinstance(part, Mapping):
+            raw.update(part)
     out: dict[str, float] = {}
     for ns in axes:
         if ns not in raw:
@@ -205,10 +269,20 @@ def dominates(
 class FrontierMember:
     """One candidate on the record, with the evidence for why it is there.
 
-    ``champion_generation_id`` is the champion this member was ADMITTED
-    against, which is not necessarily the epoch's current champion — keeping
-    it per-member means a member never silently re-attributes its provenance
-    to a champion that did not exist when it was admitted.
+    ``champion_generation_id`` is the champion this member's values were
+    last measured against: the one it was ADMITTED against, until
+    :func:`confirm_member` re-measures it against a later one. It is not
+    necessarily the epoch's current champion — keeping it per-member means a
+    member never silently re-attributes its provenance to a champion it was
+    never compared with.
+
+    ``beats_champion_by`` is the gain on each axis of ``beats_champion_on``,
+    in scalar points (the champion's value minus the member's). Empty on a
+    record written before the field existed.
+
+    ``confirmed_round`` is the round a fresh measurement last confirmed the
+    member, or ``None`` when its values are still the tournament draws that
+    selected it — which favour it, since it was admitted for having them.
     """
 
     generation_id: str
@@ -217,6 +291,8 @@ class FrontierMember:
     axis_values: Mapping[str, float] = field(default_factory=dict)
     beats_champion_on: tuple[str, ...] = ()
     scalar: float | None = None
+    beats_champion_by: Mapping[str, float] = field(default_factory=dict)
+    confirmed_round: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -273,11 +349,12 @@ class FrontierUpdate:
     frontier: ParetoFrontier
     admitted: tuple[str, ...] = ()
     retired: tuple[str, ...] = ()
+    confirmed: tuple[str, ...] = ()
 
     @property
     def changed(self) -> bool:
-        """True when membership moved — the only case anything is written."""
-        return bool(self.admitted or self.retired)
+        """True when the record moved — the only case anything is written."""
+        return bool(self.admitted or self.retired or self.confirmed)
 
 
 # ---------------------------------------------------------------------------
@@ -289,9 +366,11 @@ def _member_from(
     candidate: FrontierCandidate,
     *,
     values: Mapping[str, float],
+    champion_values: Mapping[str, float],
     beats: tuple[str, ...],
     champion_generation_id: str,
     round_index: int,
+    confirmed_round: int | None = None,
 ) -> FrontierMember:
     raw_scalar = candidate.aggregate.get("scalar")
     scalar: float | None
@@ -308,6 +387,8 @@ def _member_from(
         axis_values=dict(values),
         beats_champion_on=beats,
         scalar=scalar,
+        beats_champion_by={axis: champion_values[axis] - values[axis] for axis in beats},
+        confirmed_round=confirmed_round,
     )
 
 
@@ -377,7 +458,7 @@ def update_frontier(
     if champion.is_placebo:
         return FrontierUpdate(frontier=frontier)
 
-    axes = frontier_axes(weights)
+    axes = frontier_axes(weights, champion.aggregate)
     margin = float(weights.promote_margin)
     champion_values = axis_values(champion.aggregate, axes)
 
@@ -421,6 +502,7 @@ def update_frontier(
         member = _member_from(
             candidate,
             values=values,
+            champion_values=champion_values,
             beats=beats,
             champion_generation_id=champion.generation_id,
             round_index=round_index,
@@ -449,6 +531,131 @@ def update_frontier(
     )
 
 
+def confirm_member(
+    frontier: ParetoFrontier,
+    *,
+    champion: FrontierCandidate,
+    member: FrontierCandidate,
+    weights: ScoringWeights,
+    round_index: int,
+) -> FrontierUpdate:
+    """Re-evaluate one member against the CURRENT champion. Pure, no I/O.
+
+    ``champion`` and ``member`` carry aggregates from one fresh paired
+    measurement, taken under a purpose other than the tournament's. A member
+    is on the record because its tournament draws beat a champion on some
+    axis, so those draws overstate it, and after a promotion they describe a
+    comparison with a champion that has been replaced.
+
+    The member is REFRESHED when the fresh values still beat the champion by
+    ``promote_margin`` on at least one axis and regress no monotonicity
+    namespace: it takes the fresh axis values and scalar, the axes it now
+    wins on, this champion's id, and ``confirmed_round``. Otherwise it is
+    RETIRED with reason ``unconfirmed``. Dominance between members is not
+    re-run: the other members' values come from different draws.
+
+    A generation that is not a member, or a placebo champion, changes
+    nothing.
+    """
+    from zicato.tournament.gate import regressed_namespaces  # noqa: PLC0415
+
+    current = next((m for m in frontier.members if m.generation_id == member.generation_id), None)
+    if current is None or champion.is_placebo:
+        return FrontierUpdate(frontier=frontier)
+    axes = frontier_axes(weights, champion.aggregate)
+    values = axis_values(member.aggregate, axes)
+    champion_values = axis_values(champion.aggregate, axes)
+    beats = beats_on(values, champion_values, margin=float(weights.promote_margin))
+    others = tuple(m for m in frontier.members if m is not current)
+    if not beats or regressed_namespaces(dict(champion.aggregate), dict(member.aggregate), weights):
+        retired = (
+            *frontier.retired,
+            RetiredMember(member=current, round_retired=round_index, reason=RETIRED_UNCONFIRMED),
+        )
+        return FrontierUpdate(
+            frontier=replace(
+                frontier,
+                updated_round=round_index,
+                members=others,
+                retired=tuple(
+                    sorted(retired, key=lambda r: (r.round_retired, r.member.generation_id))
+                ),
+            ),
+            retired=(current.generation_id,),
+        )
+    refreshed = _member_from(
+        member,
+        values=values,
+        champion_values=champion_values,
+        beats=beats,
+        champion_generation_id=champion.generation_id,
+        round_index=current.round_admitted,
+        confirmed_round=round_index,
+    )
+    return FrontierUpdate(
+        frontier=replace(
+            frontier,
+            updated_round=round_index,
+            members=tuple(sorted((*others, refreshed), key=lambda m: m.generation_id)),
+        ),
+        confirmed=(current.generation_id,),
+    )
+
+
+def render_frontier_tradeoffs(frontier: ParetoFrontier) -> str:
+    """The record as the operator's trade-off table, in Markdown.
+
+    One row per member: the axes it beats its reference champion on and the
+    scalar points it gains on each, its scalar, the champion those values
+    were measured against, and whether a fresh measurement has confirmed
+    them. Adoption is described once, below the table. Reads the record
+    alone, so it needs no workspace. Empty when the record has no members.
+    """
+    if not frontier.members:
+        return ""
+    rows = [
+        "| Candidate | Beats the champion on (scalar points gained) | Scalar | Measured against"
+        " | Confirmed |",
+        "|---|---|---:|---|---|",
+    ]
+    for member in frontier.members:
+        gains = member.beats_champion_by
+        wins = ", ".join(
+            f"`{axis}`" + (f" ({gains[axis]:.4g})" if axis in gains else "")
+            for axis in member.beats_champion_on
+        )
+        scalar = "n/a" if member.scalar is None else f"{member.scalar:.4f}"
+        confirmed = (
+            "no (selection draws)"
+            if member.confirmed_round is None
+            else f"round {member.confirmed_round}"
+        )
+        rows.append(
+            f"| `{member.generation_id}` | {wins or 'none recorded'} | {scalar} "
+            f"| `{member.champion_generation_id}` | {confirmed} |"
+        )
+    return "\n".join(
+        [
+            "## Trade-off candidates",
+            "",
+            f"Rejected candidates of epoch `{frontier.epoch_id}` that beat the champion by at"
+            f" least the promote margin ({frontier.margin:g} scalar points) on a scored axis,"
+            " lost on the weighted scalar, and are dominated by no other candidate listed. Lower"
+            " is better on every axis and on the scalar. A row that is not confirmed rests on"
+            " the draws that selected it, which favour it.",
+            "",
+            *rows,
+            "",
+            "To adopt a candidate, queue a promote override for it while its round is still"
+            " running (`control/promote/<generation>`, or the dashboard's promote control): the"
+            " round settles with that candidate promoted and its outcome records"
+            " `operator_override`. An override queued after the round has settled is never"
+            " applied. A settled candidate's patches are in"
+            " `generations/<generation>/experiment.json` under the epoch directory.",
+        ]
+    )
+
+
 def _as_agg(member: FrontierMember) -> dict[str, Any]:
     """Re-wrap a member's stored axis values as an aggregate-shaped dict.
 
@@ -474,7 +681,7 @@ def frontier_path(workspace_root: Path, epoch_id: str) -> Path:
 
 
 def _member_to_dict(member: FrontierMember) -> dict[str, Any]:
-    return {
+    body: dict[str, Any] = {
         "generation_id": member.generation_id,
         "round_admitted": member.round_admitted,
         "champion_generation_id": member.champion_generation_id,
@@ -482,17 +689,29 @@ def _member_to_dict(member: FrontierMember) -> dict[str, Any]:
         "beats_champion_on": list(member.beats_champion_on),
         "scalar": member.scalar,
     }
+    # Written only when present, so a member from a record that predates
+    # these fields is rewritten in the shape it was read in.
+    if member.beats_champion_by:
+        body["beats_champion_by"] = dict(member.beats_champion_by)
+    if member.confirmed_round is not None:
+        body["confirmed_round"] = member.confirmed_round
+    return body
 
 
-def _member_from_dict(body: Mapping[str, Any]) -> FrontierMember:
-    raw_values = body.get("axis_values") or {}
+def _float_map(raw: Any) -> dict[str, float]:
+    """A stored ``{axis: number}`` mapping, dropping entries that are not numbers."""
     values: dict[str, float] = {}
-    if isinstance(raw_values, Mapping):
-        for ns, value in raw_values.items():
+    if isinstance(raw, Mapping):
+        for ns, value in raw.items():
             try:
                 values[str(ns)] = float(value)
             except (TypeError, ValueError):
                 continue
+    return values
+
+
+def _member_from_dict(body: Mapping[str, Any]) -> FrontierMember:
+    values = _float_map(body.get("axis_values"))
     raw_scalar = body.get("scalar")
     scalar: float | None
     try:
@@ -508,6 +727,10 @@ def _member_from_dict(body: Mapping[str, Any]) -> FrontierMember:
         axis_values=values,
         beats_champion_on=beats,
         scalar=scalar,
+        beats_champion_by=_float_map(body.get("beats_champion_by")),
+        confirmed_round=(
+            body["confirmed_round"] if type(body.get("confirmed_round")) is int else None
+        ),
     )
 
 
@@ -588,6 +811,23 @@ def save_frontier(workspace_root: Path, epoch_id: str, frontier: ParetoFrontier)
     atomic_write_json(frontier_path(workspace_root, epoch_id), frontier_to_dict(frontier))
 
 
+def frontier_tradeoffs_section(workspace_root: Path, epoch_id: str) -> str:
+    """One epoch's trade-off table read from its canonical record.
+
+    What ``analysis.md`` and the epoch-close output print. Empty when the
+    epoch has no members, and when the record is unreadable: a report must
+    still be written beside a record that needs repair.
+    """
+    import json  # noqa: PLC0415
+
+    from zicato.epoch._storage import RecordFormatError  # noqa: PLC0415
+
+    try:
+        return render_frontier_tradeoffs(load_frontier(workspace_root, epoch_id))
+    except (OSError, json.JSONDecodeError, RecordFormatError):
+        return ""
+
+
 def record_frontier(
     workspace_root: Path,
     epoch_id: str,
@@ -617,11 +857,14 @@ def record_frontier(
 
 
 __all__ = [
+    "DIMENSION_AGGREGATES_KEY",
     "DOMINATED_BY_PREFIX",
+    "FRONTIER_DIMENSION_CAP",
     "FRONTIER_FILENAME",
     "RETIRED_DOMINATED_BY_CHAMPION",
     "RETIRED_MONOTONICITY",
     "RETIRED_PROMOTED",
+    "RETIRED_UNCONFIRMED",
     "FrontierCandidate",
     "FrontierMember",
     "FrontierUpdate",
@@ -629,13 +872,16 @@ __all__ = [
     "RetiredMember",
     "axis_values",
     "beats_on",
+    "confirm_member",
     "dominates",
     "frontier_axes",
     "frontier_from_dict",
     "frontier_path",
     "frontier_to_dict",
+    "frontier_tradeoffs_section",
     "load_frontier",
     "record_frontier",
+    "render_frontier_tradeoffs",
     "save_frontier",
     "update_frontier",
 ]

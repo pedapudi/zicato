@@ -23,6 +23,7 @@ pre-fetched data always mints the same pair.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from itertools import combinations
 
@@ -39,6 +40,12 @@ DEFAULT_ELO: float = 1500.0
 #: builder reads per round. Bounds the O(N^2) pair scan and the per-entry
 #: grid reads to a small constant regardless of epoch length.
 RECOMBINE_POOL_MAX: int = 16
+
+#: How many Pareto frontier members one round may confirm when the pool is
+#: the frontier (``experimental.recombine_pool: "frontier"``). Each
+#: confirmation can run one generation's train entries, so this bounds the
+#: round's extra board units at this many train boards plus the champion's.
+RECOMBINE_CONFIRM_MAX: int = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,10 +109,14 @@ class ParentCandidate:
 def eligible_parents(
     candidates: list[ParentCandidate],
     *,
-    champion_id: str,
+    champion_id: str | None,
     manifest_ids: frozenset[str],
 ) -> list[ParentCandidate]:
     """Filter the pool by the 6 per-candidate predicates (#1–#6).
+
+    ``champion_id=None`` skips #2. The frontier pool passes it: a member
+    there is admitted on a fresh measurement against the current champion
+    instead of on its parent pointer (PROPOSER.md §2.6.2).
 
     #1 **rejected** — not deferred: a live evidence loop is not a settled
        negative, so only a decided ``rejected`` challenger is recyclable.
@@ -131,7 +142,7 @@ def eligible_parents(
     for c in candidates:
         if c.decision != "rejected":
             continue
-        if c.parent_generation_id != champion_id:
+        if champion_id is not None and c.parent_generation_id != champion_id:
             continue
         if c.is_placebo:
             continue
@@ -164,8 +175,17 @@ def rank_pairs(
     *,
     tried_pairs: frozenset[frozenset[str]] = frozenset(),
     merge_mode: str = "mechanical",
+    wins: Mapping[str, frozenset[str]] | None = None,
 ) -> tuple[ParentCandidate, ParentCandidate] | None:
     """Return the single best mergeable pair (A, B) in ascending-gid order.
+
+    ``wins`` selects the FRONTIER pool's evidence (PROPOSER.md §2.6.2): for
+    each generation id, the scoring axes on which that frontier member beats
+    the champion. With it, #8 requires the two win sets to be non-empty and
+    DISJOINT, and ranking key 1 is the size of their union; a candidate
+    absent from ``wins`` pairs with nobody. Every other predicate and key is
+    unchanged, so the per-entry cross-regression penalty still breaks ties.
+    ``None`` (the default) is the rejects pool described below.
 
     Enumerates every unordered pair of the eligible pool, drops those that
     fail a PAIR predicate, and ranks the survivors by a deterministic,
@@ -223,9 +243,15 @@ def rank_pairs(
         if overlap and not allow_overlap:
             # #7 disjointness — HARD in mechanical mode only.
             continue
-        if not _complementary(a, b):
-            continue
-        coverage = len(a.improved_entry_ids | b.improved_entry_ids)
+        if wins is None:
+            if not _complementary(a, b):
+                continue
+            coverage = len(a.improved_entry_ids | b.improved_entry_ids)
+        else:
+            wa, wb = wins.get(a.generation_id), wins.get(b.generation_id)
+            if not wa or not wb or wa & wb:
+                continue
+            coverage = len(wa | wb)
         cross_regression = len(a.regressed_entry_ids | b.regressed_entry_ids)
         summed_elo = (a.elo if a.elo is not None else DEFAULT_ELO) + (
             b.elo if b.elo is not None else DEFAULT_ELO
@@ -246,6 +272,7 @@ def rank_pairs(
 
 __all__ = [
     "DEFAULT_ELO",
+    "RECOMBINE_CONFIRM_MAX",
     "RECOMBINE_POOL_MAX",
     "ParentCandidate",
     "eligible_parents",

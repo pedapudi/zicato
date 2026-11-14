@@ -166,6 +166,14 @@ When the slice is empty (a baseline round with no parent telemetry) the
 renderer returns the empty string, so the block is omitted from the prompt,
 in the same way as the insights and prior-experiments blocks.
 
+### Opt-in: dimensions the search has not improved
+
+`experimental.frontier_steering` (default OFF) appends one block to the
+scored-targets section, naming the scored dimensions on which no confirmed
+Pareto frontier member beats the champion. It carries dimension names only
+and is specified in `docs/design/PARETO-FRONTIER.md` §6.3. Off, the prompt
+is byte-identical.
+
 ### Operator hook — `outcome_summarizer_spec`
 
 An OPTIONAL operator summarizer can contribute **board-specific** marginals.
@@ -293,6 +301,37 @@ that fails parse/validation has already spent its call, and the fallback
 fresh sample adds one more (`best_of_n + 1` for that round — rare, and the
 reason the `estimate_cost` figure is documented as an estimate rather than a
 cap).
+
+### 2.6.2 The parent pool — `rejects` (default) vs `frontier`
+
+`experimental.recombine_pool` (a string, default `"rejects"`; values
+`"rejects" | "frontier"`) chooses WHERE the selector finds its two parents.
+Like the merge mode it is meaningful only when `recombine` is on and
+`best_of_n > 1`, and a `"frontier"` value set with `recombine` off is
+accepted and inert. Changing it changes the contract.
+
+- **`rejects`** — the pool of §2.6: the current reign's rejected challengers,
+  paired by the train entries each one flipped to passing.
+- **`frontier`** — the pool is the epoch's Pareto frontier members
+  (`docs/design/PARETO-FRONTIER.md` §6.2). The current-reign predicate (#2)
+  is replaced by a fresh train measurement of the member against the current
+  champion, plus a check that no later promotion edited a mutation point the
+  member patches. Complementarity (#8) is read from the record: the two
+  members must beat the champion on disjoint scoring axes, and pairs rank by
+  how many axes they win between them, with the per-entry cross-regression
+  count as the next evidence key. Predicates #1 and #3 through #7 are
+  unchanged.
+
+The frontier pool sees what the rejects pool cannot. A pair whose halves win
+on cost and on a rubric metric has no pass flips to be complementary on, and
+is the "pure drift-side" narrowing of §2.6 in its general form. The frontier
+pool also spends board units: each member of the pair is confirmed before it
+is merged, at most four confirmations a round. With fewer than two usable
+members it mints nothing and does not fall back to the rejects pool.
+
+The value handed to the minter is the same `RecombinationPair`, so the mint,
+the `recombined` selection mode, and the gate are those of §2.6. The proposer
+stack receives that value and never reads the frontier record.
 
 ---
 

@@ -46,6 +46,7 @@ _INADMISSIBLE_VALUES: dict[tuple[type, str], object] = {
     (ExperimentalConfig, "genealogy"): -1,
     (ExperimentalConfig, "calibration_feedback"): -1,
     (ExperimentalConfig, "recombine_merge"): "union",
+    (ExperimentalConfig, "recombine_pool"): "champions",
 }
 
 

@@ -1338,7 +1338,7 @@ keyed by its `TYPE` wire token:
 | `holdout_released` | `HoldoutReleased` | `confirmed` |
 | `evidence_replicated` | `EvidenceReplicated` | `ci_state` trace row |
 | `decision_recorded` | `DecisionRecorded` | `decision`, `provenance` dict |
-| `frontier_updated` | `FrontierUpdated` | `admitted`, `retired`, `size` — emitted only when the epoch's Pareto record moved |
+| `frontier_updated` | `FrontierUpdated` | `admitted`, `retired`, `size` — emitted only when the epoch's Pareto record moved; a confirmation of one member adds `confirmed`, `units_fresh`, `units_cached` |
 | `round_closed` | `RoundClosed` | — |
 
 Forward compatibility is built into the decoder: an unknown wire token reads

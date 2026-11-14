@@ -177,6 +177,10 @@ async def ensure_epoch_for_contract(
 
     log.info("contract changed (%s) — rolled %s -> %s", changed, cur, new_id)
     print(f"contract changed ({changed}) — rolled {cur} -> {new_id}")
+    from zicato.epoch.pareto import frontier_tradeoffs_section  # noqa: PLC0415
+
+    if tradeoffs := frontier_tradeoffs_section(workspace_root, cur):
+        print("\n" + tradeoffs + "\n")
 
     # Drain any promote/reject overrides left pending across the roll. They
     # target a bare generation id (e.g. "v3"); generation ids restart at v0

@@ -165,6 +165,10 @@ def regenerate_epoch_report_deterministic(
         experiments = [experiment for _, experiment in records]
         generations = _generations_for(workspace_root, epoch_id)
         deterministic += "\n\n" + render_tournament_outcomes_section(generations, experiments)
+    from zicato.epoch.pareto import frontier_tradeoffs_section
+
+    if tradeoffs := frontier_tradeoffs_section(workspace_root, epoch_id):
+        deterministic += "\n\n" + tradeoffs
     report_md = assemble_report_markdown(data, prose, deterministic)
     existing = md_path.read_text(encoding="utf-8") if md_path.exists() else ""
     changed = report_md != existing

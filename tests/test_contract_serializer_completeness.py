@@ -80,6 +80,8 @@ _NONDEFAULT_VALUES: dict[str, dict[str, Any]] = {
         "genealogy": 4,
         "calibration_feedback": 5,
         "recombine_merge": "llm",
+        "recombine_pool": "frontier",
+        "frontier_steering": True,
         "diff_complexity_weight": 0.2,
         "diff_complexity_ceiling": 10.0,
         "cross_epoch_memory": True,

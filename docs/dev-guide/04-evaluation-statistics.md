@@ -283,6 +283,13 @@ Mechanics worth knowing before you extend this function:
   set**. Namespaces present in data but unweighted aggregate at weight `0.0`
   (visible, contributing nothing). Unnamespaced metric names are silently
   ignored.
+- `aggregate_dimension_metrics` splits each weighted non-drift namespace
+  aggregate per metric name by the same formula, so a namespace's dimensions
+  sum to its aggregate and are already in scalar points. The gate and
+  `gen_score.json` do not read it; it supplies the Pareto frontier's
+  dimension axes (`docs/design/PARETO-FRONTIER.md` §2.1). `drift:` has no
+  dimensions there, because drift reaches the scalar as one reduced
+  `drift_loss`.
 
 ### 1.6 `LossProfile` anatomy for statisticians
 
@@ -1340,7 +1347,7 @@ draws from zero. Draw counts must be positive when work is requested.
 | `calibration` | Repeated measurements of a generation’s own source for the noise floor |
 | `contract_preflight` | Degraded-copy probes of selected mutation points |
 | `candidate_screen` | Candidate panel evaluation; draw one confirms a suspected veto |
-| `evidence_confirmation` | Additional paired draws for promotion confirmation |
+| `evidence_confirmation` | Additional paired draws for promotion confirmation; draw 0 also confirms a Pareto frontier member against the current champion |
 | `board_reflection` | Active observation-corpus draws |
 | `eval_synthesis_admission` | Draft-entry noise and discrimination probes |
 

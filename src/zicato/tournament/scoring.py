@@ -526,6 +526,43 @@ def aggregate_namespaced_metrics(
     return namespace_means
 
 
+def aggregate_dimension_metrics(
+    losses: list[LossProfile],
+    weights: ScoringWeights,
+) -> dict[str, float]:
+    """Split each weighted namespace aggregate into its per-metric contributions.
+
+    ``{metric_name: namespace_weight * mean(within-channel-weighted count)}``
+    over the same per-run mean model as :func:`aggregate_namespaced_metrics`,
+    so a namespace's dimensions sum to its aggregate (up to float rounding)
+    and every value is in scalar points, lower is better. A judge appears as
+    ``judge:<name>``, a scored metric under its own name.
+
+    ``drift:`` is absent. Drift reaches the scalar as one per-run
+    ``drift_loss`` (Seam 1: severity and kind weights, plan revisions, a
+    clamp, and optionally a plugin), so its kinds have no contribution that
+    is recoverable here. Zero-weight namespaces are absent because they have
+    no direction. Runs that never started are excluded, as in
+    :func:`aggregate_generation_score`.
+
+    The promote gate does not read this: it is the Pareto frontier's finer
+    axis set (docs/design/PARETO-FRONTIER.md §2.1).
+    """
+    losses = [loss for loss in losses if getattr(loss, "execution_started", None) is not False]
+    terms: dict[str, list[float]] = {}
+    for loss in losses:
+        for mc in loss.scoring_metrics():
+            ns = _namespace_of(mc.name)
+            if not ns or ns == "drift:" or not weights.namespace_weights.get(ns, 0.0):
+                continue
+            term = mc.count * _within_channel_weight(mc.name, weights)
+            terms.setdefault(mc.name, []).append(term)
+    return {
+        name: weights.namespace_weights[_namespace_of(name)] * math.fsum(values) / len(losses)
+        for name, values in terms.items()
+    }
+
+
 def _per_judge_loss_aggregate(losses: list[LossProfile]) -> dict[str, float]:
     """Mean per-judge ``weighted_loss`` across ``losses``, keyed by judge_name.
 
@@ -809,6 +846,7 @@ __all__ = [
     "read_gen_score",
     "read_gen_score_history",
     "write_gen_score",
+    "aggregate_dimension_metrics",
     "aggregate_generation_score",
     "aggregate_namespaced_metrics",
     "entry_score",

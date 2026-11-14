@@ -56,6 +56,12 @@ KNOWN_TELEMETRY_DIALECTS: frozenset[str] = frozenset(
 #: overlap. See :attr:`ExperimentalConfig.recombine_merge`.
 RECOMBINE_MERGE_MODES: tuple[str, ...] = ("mechanical", "llm")
 
+#: Where the recombination slot draws its two parents: ``"rejects"`` is the
+#: current reign's rejected challengers, ``"frontier"`` the Pareto frontier
+#: members a fresh measurement has confirmed against the current champion.
+#: See :attr:`ExperimentalConfig.recombine_pool`.
+RECOMBINE_POOLS: tuple[str, ...] = ("rejects", "frontier")
+
 
 # ---------------------------------------------------------------------------
 # Declarative knob metadata (REIMPLEMENTATION.md — Finding 3)
@@ -309,6 +315,13 @@ class ExperimentalConfig:
     recombine_merge:
         Compose a disjoint patch union mechanically, or request a merge.
         The merge mode is inactive while recombine is false.
+    recombine_pool:
+        Draw the two parents from the reign's rejected candidates, or from
+        Pareto frontier members confirmed against the current champion.
+        Inactive while recombine is false.
+    frontier_steering:
+        Name to the proposer the scored dimensions that no confirmed Pareto
+        frontier member improves over the champion.
     genealogy:
         Maximum candidate ancestry examples added to each proposal.
     calibration_feedback:
@@ -378,6 +391,16 @@ class ExperimentalConfig:
         metadata=_knob(
             constraint=KnobConstraint(choices=RECOMBINE_MERGE_MODES),
         ),
+    )
+    recombine_pool: str = field(
+        default="rejects",
+        metadata=_knob(
+            constraint=KnobConstraint(choices=RECOMBINE_POOLS),
+        ),
+    )
+    frontier_steering: bool = field(
+        default=False,
+        metadata=_knob(),
     )
     diff_complexity_weight: float = field(
         default=0.0,

@@ -24,6 +24,7 @@ from zicato.evolve.lifecycle_services import (
     _now_iso,
     heartbeat_transition_recorder,
 )
+from zicato.evolve.pareto import frontier_confirmer, unimproved_dimensions
 from zicato.evolve.persist import (
     _skipped_round_outcome,
 )
@@ -31,6 +32,7 @@ from zicato.evolve.round_context import (
     _build_calibration_summary,
     _build_candidate_history,
     _build_candidate_screen_runner,
+    _build_frontier_recombination_pair,
 )
 from zicato.mutation.inventory import write_mutation_inventory
 from zicato.runtime.control_consumer import (
@@ -580,6 +582,50 @@ async def _evolve_once(
         train_entry_ids=frozenset(e.id for e in train_board),
         mutations=mutations,
     )
+    # The frontier pool (experimental.recombine_pool: "frontier") confirms the
+    # members it would merge against this champion first, which runs board
+    # units, so it is built here rather than with the shared history reads.
+    # A no-op returning ``None`` under every other setting.
+    if recombine_pair is None:
+        recombine_pair = await _build_frontier_recombination_pair(
+            weights=weights,
+            workspace_root=workspace_root,
+            epoch_id=resolved_epoch_id,
+            parent_id=parent_id,
+            train_entry_ids=frozenset(e.id for e in train_board),
+            mutations=mutations,
+            confirm=frontier_confirmer(
+                champion=parent_gen,
+                workspace_root=workspace_root,
+                epoch_id=resolved_epoch_id,
+                board=board,
+                weights=weights,
+                round_index=round_index,
+                round_log=round_log,
+                adapter=adapter,
+                config=config,
+                writer=writer,
+                disable_drift=disable_drift,
+                judge_only=judge_only,
+            ),
+        )
+    # Opt-in steering (experimental.frontier_steering): name the scored
+    # dimensions no confirmed frontier member improves, after this round's
+    # confirmations. Dimension names only; off, the block is untouched.
+    if weights.experimental.frontier_steering and metric_priorities_block:
+        from zicato.proposer.prompts import render_frontier_steering_block  # noqa: PLC0415
+
+        steering = render_frontier_steering_block(
+            unimproved_dimensions(
+                workspace_root,
+                resolved_epoch_id,
+                parent_id,
+                [f"judge:{t.name}" for t in metric_priorities.judges]
+                + [t.name for t in metric_priorities.namespace_metrics],
+            )
+        )
+        if steering:
+            metric_priorities_block += "\n\n" + steering
 
     # --- 5a''''. Optional critic-calibration channel ---
     # ONE summary per round, built only when the contract opts in
