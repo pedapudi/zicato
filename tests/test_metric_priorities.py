@@ -18,6 +18,9 @@ Two invariants recur and are the reason the split exists:
 
 from __future__ import annotations
 
+import json
+import re
+
 from zicato.core import (
     BoardEntry,
     ExpectationResult,
@@ -109,6 +112,77 @@ def test_pass_rate_is_named_and_not_ranked_against_drift() -> None:
     assert "high:" not in pass_section and "low:" not in pass_section
     # A pass-weight of zero removes it entirely, like any other target.
     assert "pass_rate" not in _block(ScoringWeights(pass_weight=0.0))
+
+
+def _advertised_metric_names(block: str) -> set[str]:
+    """Every ``metric_name`` the block tells the proposer it may write.
+
+    A listing line is indented by exactly two spaces and holds names alone, or
+    one name followed by a padded column; its section's heading gives the form
+    the listed names take. The worked JSON examples count too.
+    """
+    names = set(re.findall(r'\{"metric_name": "([^"]+)"', block))
+    listing = re.compile(r"  (?:(?:high|medium|low):\s+)?([\w:]+(?:, [\w:]+)*)(?:\s{2,}.*)?")
+    for section in block.split("\n\n"):
+        heading = section.splitlines()[0]
+        prefix = (
+            "judge:"
+            if heading.startswith("Declared board judges")
+            else "drift:"
+            if "drift kinds" in heading
+            else ""
+        )
+        for line in section.splitlines()[1:]:
+            listed = listing.fullmatch(line)
+            for item in listed.group(1).split(", ") if listed else ():
+                name = prefix + item
+                # A namespace with no observed metric is listed as its prefix.
+                names.add(name + "observed_metric" if name.endswith(":") else name)
+    return names
+
+
+def test_every_metric_name_the_targets_block_advertises_is_accepted() -> None:
+    """The prompt and the parser agree on what a movement may be called.
+
+    A name the block offers and the parser refuses costs the proposer the
+    round, so every advertised name is parsed as a movement.
+    """
+    losses = [_loss_with("critical_judge", 0.4, 0.89)]
+    judges = _declared_custom_judge_names([], _WEIGHTED)
+    for block in (
+        _block(_WEIGHTED, losses),
+        _block(ScoringWeights()),
+        render_metric_targets_block(judges),
+    ):
+        names = _advertised_metric_names(block)
+        assert "drift:off_topic" in names
+        for name in sorted(names):
+            movement = {"metric_name": name, "direction": "decrease", "magnitude": "small"}
+            response = {
+                "hypothesis": {
+                    "core_idea": "c",
+                    "modulating": ["m1"],
+                    "why": "w",
+                    "expected_pass_rate_delta": "+0",
+                    "expected_metric_movements": [movement],
+                },
+                "patches": [
+                    {"op": "replace", "mutation_id": "m1", "new_content": "x", "rationale": "y"}
+                ],
+            }
+            parse_experiment_json(
+                json.dumps(response),
+                epoch_id="e0",
+                parent_gen="v0",
+                new_gen="v1",
+                mutations_by_id={"m1": _MutationStub()},
+                custom_judge_names=judges,
+            )
+    assert {
+        "judge:critical_judge",
+        "failure:tasks",
+        "cost:observed_metric",
+    } <= _advertised_metric_names(_block(_WEIGHTED, losses))
 
 
 def test_the_default_contract_says_all_scored_equally() -> None:
