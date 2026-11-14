@@ -36,7 +36,7 @@ Three slides do not match the shipped system and need revising:
   that carries an `agent.py` is refused
   ([`PROPOSER.md`](../design/PROPOSER.md)).
 - **Slide 11** advertises 14 themes and a tournament builder with a chat
-  copilot. The console ships 16 themes and no builder.
+  copilot. The console ships 3 themes and no builder.
 
 ## Sources
 

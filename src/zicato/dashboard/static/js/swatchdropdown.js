@@ -1,14 +1,14 @@
 // js/swatchdropdown.js — the SHARED colour SWATCH DROPDOWN component.
 //
-// ONE source of truth for the swatch picker, used IDENTICALLY by the top bar
+// ONE source of truth for the theme picker, used IDENTICALLY by the top bar
 // (shell.js) and Settings → Appearance (views/settings.js) — NOT forked. The
 // CLOSED control is a button showing the current theme's swatch strip + name;
 // opening reveals a listbox where each option is a row with its own swatch
 // strip (ground · surface · ink · improve · regress · accent — the legibility
 // hint, rendered generically from the tuple so it is swatch-count-agnostic) +
-// name. The open/close behaviour, the keyboard map, and the cross-instance
-// registry are dropdown.js's — this module builds the swatch specimens and the
-// trigger, and owns the theme value.
+// name. The module owns the visuals, the theme value, and the interaction:
+// open/close state, active-row tracking, the keyboard map, outside-click
+// close and cross-instance sync.
 //
 // The factory takes an `onChoose(themeId)` so the caller wires the apply path
 // (applyTheme) — keeping this component free of any store import (no circular
@@ -17,16 +17,22 @@
 // checked option in lockstep when the theme changes by ANY path (top bar,
 // settings, keyboard, restore). Returns { node, setValue }.
 
-import { el, clearChildren, patchText } from './core/dom.js';
+import { el, clearChildren, patchText, patchClass } from './core/dom.js';
 import { icon } from './icons.js';
 import { COLOR_THEMES, normaliseColor } from './ui.js';
-import { createSyncRegistry, wireListboxDropdown } from './dropdown.js';
 
-const _registry = createSyncRegistry(normaliseColor);
+// The setters of the mounted pickers. The top bar and Settings → Appearance
+// each mount their own, and a choice in either must show in both.
+// Registrations are never removed: a setter left behind by a rebuilt Settings
+// panel writes to a detached node harmlessly.
+const _instances = new Set();
 
 // Sync EVERY live swatch dropdown to `value` — called from applyTheme so the
 // top-bar and settings pickers always show the same selection.
-export function syncSwatchDropdowns(value) { _registry.sync(value); }
+export function syncSwatchDropdowns(value) {
+  const v = normaliseColor(value);
+  for (const setValue of _instances) setValue(v);
+}
 
 function swatchStrip(swatches, cls) {
   return el('span', { class: cls || 'dt-swatch-strip', 'aria-hidden': 'true' },
@@ -37,6 +43,7 @@ function swatchStrip(swatches, cls) {
 // when the user selects an option (the caller applies + persists it).
 export function buildSwatchDropdown(initial, onChoose) {
   let value = normaliseColor(initial);
+  let open = false;
   const byId = new Map(COLOR_THEMES.map((t) => [t[0], t]));
 
   const triggerSwatch = swatchStrip((byId.get(value) || COLOR_THEMES[0])[2], 'dt-swatch-strip dt-swatch-strip-sm');
@@ -55,14 +62,55 @@ export function buildSwatchDropdown(initial, onChoose) {
 
   const node = el('div', { class: 'dt-cd', role: 'group', 'aria-label': 'Colour theme' }, [trigger, listbox]);
 
-  const wiring = wireListboxDropdown({
-    node, trigger, listbox, options, valueAttr: 'data-theme',
-    getValue: () => value,
-    onChoose: (id) => {
-      value = normaliseColor(id);
-      if (typeof onChoose === 'function') onChoose(value); // caller applies + persists + syncs
-    },
+  const indexOf = (v) => options.findIndex((o) => o.getAttribute('data-theme') === v);
+  let activeIdx = Math.max(0, indexOf(value));
+
+  function setActive(i) {
+    activeIdx = (i + options.length) % options.length;
+    options.forEach((o, k) => patchClass(o, 'dt-cd-active', k === activeIdx));
+  }
+  function setOpen(next) {
+    open = next;
+    patchClass(node, 'dt-cd-open', open);
+    trigger.setAttribute('aria-expanded', String(open));
+    if (open) setActive(Math.max(0, indexOf(value)));
+  }
+  function choose(id) {
+    value = normaliseColor(id);
+    if (typeof onChoose === 'function') onChoose(value); // caller applies + persists + syncs
+    setOpen(false);
+  }
+
+  for (const opt of options) {
+    opt.addEventListener('click', () => { choose(opt.getAttribute('data-theme')); });
+  }
+  trigger.addEventListener('click', () => setOpen(!open));
+  trigger.addEventListener('keydown', (ev) => {
+    const k = ev.key;
+    if (k === 'ArrowDown' || k === 'Enter' || k === ' ' || k === 'Spacebar') {
+      ev.preventDefault(); setOpen(true);
+    }
   });
+  listbox.addEventListener('keydown', (ev) => {
+    const k = ev.key;
+    if (k === 'Escape') { ev.preventDefault(); setOpen(false); }
+    else if (k === 'ArrowDown') { ev.preventDefault(); setActive(activeIdx + 1); }
+    else if (k === 'ArrowUp') { ev.preventDefault(); setActive(activeIdx - 1); }
+    else if (k === 'Enter' || k === ' ' || k === 'Spacebar') {
+      ev.preventDefault();
+      const id = options[activeIdx] && options[activeIdx].getAttribute('data-theme');
+      if (id) choose(id);
+    }
+  });
+  // a click anywhere outside the control closes it.
+  if (typeof document !== 'undefined' && document.addEventListener) {
+    document.addEventListener('click', (ev) => {
+      if (!open) return;
+      let n = ev && ev.target;
+      while (n) { if (n === node) return; n = n.parentNode; }
+      setOpen(false);
+    });
+  }
 
   function setValue(v) {
     value = normaliseColor(v);
@@ -70,11 +118,11 @@ export function buildSwatchDropdown(initial, onChoose) {
     clearChildren(triggerSwatch);
     for (const c of def[2]) triggerSwatch.appendChild(el('span', { class: 'dt-swatch', style: `background:${c}` }));
     patchText(triggerName, def[1]);
-    wiring.markSelected();
+    options.forEach((o) => o.setAttribute('aria-selected', String(o.getAttribute('data-theme') === value)));
   }
 
   // Register for cross-instance sync (top bar ↔ settings, one source of truth).
-  _registry.register(setValue);
+  _instances.add(setValue);
 
   return { node, setValue };
 }

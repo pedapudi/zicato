@@ -3,7 +3,7 @@
 // Appearance preferences are strings in `localStorage`. This module owns the
 // key namespace and guarded access; ui.js owns defaults and normalization.
 // Browsers with only retired keys use defaults until a supported preference
-// is stored. Unsupported typeface values also resolve to their default.
+// is stored, and a stored value ui.js no longer offers resolves to its default.
 //
 // Every access is wrapped: a browser in private mode throws on `localStorage`,
 // and a preference is never important enough to fail a render over.

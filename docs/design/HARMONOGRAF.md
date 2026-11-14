@@ -158,7 +158,7 @@ whenever the persistent server is up — a live evolve, or a standalone
 dashboard that resolved a persistent server — AND a meta-loop session id
 is known. It is the operator's entry point to the proposer and judge
 timeline of the evolution itself. Built by
-`harmonografMetaUrl()` / `harmonografMetaLink()` in `core/harmonograf.js`,
+`harmonografMetaUrl()` in `core/harmonograf.js`,
 keyed on `state.heartbeat.harmonograf_meta_session`.
 
 ### 3c. Tournament navigation is a metadata filter over ordinary sessions

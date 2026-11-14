@@ -64,16 +64,16 @@ workspace-scoped rather than epoch-scoped.
 Navigation: the top-left **`↑ up`** control climbs the selection hierarchy
 (candidate → generations → epoch → environment; a compare split collapses to the
 bare candidate first). A page-wide **scale** slider (Settings → Appearance) `zoom`s the WHOLE page
-(figures included), while a separate **S/M/L** text-size control (in the
-typeface picker) is a TEXT-ONLY multiplier (`--dt-font-scale`) that grows the
-type without rescaling figures; a **color theme** swatch dropdown (16 themes,
-monokai default) and a **typeface** picker (Technical default: Open Sans prose
-with Google Sans Mono data) re-skin without re-render. Chrome and prose are
+(figures included), while a separate **S/M/L** text-size control (Settings →
+Appearance) is a TEXT-ONLY multiplier (`--dt-font-scale`) that grows the
+type without rescaling figures; a **color theme** swatch dropdown (3 themes,
+monokai default) re-skins without re-render. The typeface is fixed: Open Sans
+prose with Google Sans Mono data. Chrome and prose are
 always set in a sans; only data, ids and code are monospace. A selected item
 reads as its name in the accent colour, and states read as coloured words led
 by a drawn mark, never as chips. **Settings** opens as a routed right-side **drawer overlay** that
 paints over the current view. Its Contract and Models sections are read-only;
-Appearance changes the local theme, typeface, and scale.
+Appearance changes the local theme, text size, and scale.
 
 ## 3. The per-structure Match-ups figure (consistency matters)
 

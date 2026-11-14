@@ -2,7 +2,7 @@
 // serves HTML; session ids and namespaced filter labels come from the backend.
 
 import { el } from './dom.js';
-import { icon, iconLabel } from '../icons.js';
+import { iconLabel } from '../icons.js';
 import { state } from './state.js';
 import { bus } from './bus.js';
 
@@ -143,28 +143,4 @@ export function harmonografMetaUrl() {
   const sid = harmonografMetaSession();
   if (!sid) return null;
   return `${base}/#/session/${encodeURIComponent(sid)}`;
-}
-
-export function harmonografMetaLink(label, ariaLabel) {
-  const href = harmonografMetaUrl();
-  if (!href) return null;
-  return el('a', {
-    class: 'harmonograf-link harmonograf-meta', href,
-    target: '_blank', rel: 'noopener',
-    'aria-label': ariaLabel || 'open the zicato execution timeline in harmonograf',
-  }, iconLabel('external', label || 'execution', { after: true }));
-}
-
-export function harmonografGenLink(genId) {
-  const href = harmonografFilterUrl({ 'zicato.generation_id': genId });
-  if (!href) return null;
-  return el('a', {
-    class: 'harmonograf-link harmonograf-sup', href,
-    target: '_blank', rel: 'noopener',
-    'aria-label': 'open harmonograf traces for generation ' + (genId || '?'),
-    onClick: (ev) => ev.stopPropagation(),
-    onKeydown: (ev) => {
-      if (ev.key === 'Enter' || ev.key === ' ') ev.stopPropagation();
-    },
-  }, [icon('external')]);
 }

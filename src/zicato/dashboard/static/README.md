@@ -5,10 +5,10 @@ Python dashboard service (`zicato.dashboard.server`) serves these files
 off disk from `/` and `/static/...`.
 
 No build step. No framework. No external network, with one exception:
-`console.js` loads the typeface picker's families from Google Fonts with
-`display=swap` and system fallbacks. One monospace face, JetBrains Mono,
-is self-hosted under `fonts/`; it backs the fixed brand mono and the data
-face of the editorial and display typeface options.
+`console.js` loads the interface faces (Open Sans and Google Sans Mono)
+from Google Fonts with `display=swap` and system fallbacks. One monospace
+face, JetBrains Mono, is self-hosted under `fonts/`; it backs the fixed
+brand mono.
 Everything else in this directory must remain self-contained — no CDN,
 no remote scripts.
 
@@ -52,12 +52,12 @@ in `js/CONTRACTS.md`.
   `live.js` and `livestatus.js` (the live-run controller and its status
   derivation), `hovercard.js` (the singleton hover-for-detail card),
   `compare.js` (the side-by-side compare picker and split frame),
-  `ui.js` (digest-gated swap, state labels, themes, typefaces), `data.js` (the
+  `ui.js` (digest-gated swap, state labels, themes), `data.js` (the
   per-epoch read accessors), plus `convo.js`, `facets.js`, `rounds.js`,
   `icons.js` (the one drawn icon set: every control, verdict, crown and
   tree mark is an icon from it, never a typed symbol),
-  `swatchdropdown.js`, `transcript_stream.js`, `turns.js`,
-  `typefacedropdown.js`, `dropdown.js` and `unit_liveness.js`. Each of
+  `swatchdropdown.js`, `transcript_stream.js`, `turns.js` and
+  `unit_liveness.js`. Each of
   the fourteen routed views has a module under `js/views/`: `home`,
   `epoch`, `gens`, `candidate`, `board`, `boards`, `diff`, `evals`,
   `instrument`, `logs`, `mutations`, `publication`, `settings`, `traces`.
@@ -66,9 +66,9 @@ in `js/CONTRACTS.md`.
   `boardstatus`, `ledger` and `structure` are panels of the same kind
   that sit under `js/views/` beside the epoch and rounds pages that
   mount them.
-- `css/console.css` — all console styling: the sixteen-theme `--v2-*`
+- `css/console.css` — all console styling: the three-theme `--v2-*`
   six-role token contract (swapped by `[data-t-theme]`), the typeface
-  tokens (`[data-t-type]`: `--v2-sans` for prose, controls and chrome,
+  tokens (`--v2-sans` for prose, controls and chrome,
   `--v2-mono` for data, code and ids), and every fit-to-width SVG mark's
   classes (`dn-*` / `dt-*`, and `ezn-*` for the lifecycle DAG). The
   stylesheet draws no accent left rail and no pill, tag or badge: a

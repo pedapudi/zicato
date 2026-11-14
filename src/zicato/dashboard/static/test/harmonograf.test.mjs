@@ -204,10 +204,6 @@ test('harmonograf meta: deep-links the meta-loop session while live', () => {
   const url = harmonograf.harmonografMetaUrl();
   assertEqual(url, `${HG_URL}/#/session/${encodeURIComponent(META_SID)}`,
     'the meta url deep-links the meta-loop session');
-  const link = harmonograf.harmonografMetaLink('execution');
-  assert(link, 'a meta link element is produced while live');
-  assertEqual(link.getAttribute('href'), url, 'the meta link carries the session href');
-  assert(link.textContent.includes('execution'), 'the label renders');
 });
 
 test('harmonograf meta: a PERSISTENT server (no active runs) resolves the meta link post-mortem', () => {
@@ -226,7 +222,6 @@ test('harmonograf meta: NOTHING renders when the loop is dead', () => {
   setLive(false);
   coreState.state.heartbeat = { harmonograf_url: HG_URL, harmonograf_meta_session: META_SID };
   assertEqual(harmonograf.harmonografMetaUrl(), null, 'no meta url while dead (stale url + session ignored)');
-  assertEqual(harmonograf.harmonografMetaLink('execution'), null, 'no meta link while dead');
 });
 
 test('harmonograf meta: NOTHING renders without a meta session id, even while live', () => {
@@ -234,7 +229,6 @@ test('harmonograf meta: NOTHING renders without a meta session id, even while li
   coreState.state.heartbeat = { harmonograf_url: HG_URL };
   assertEqual(harmonograf.harmonografMetaSession(), null, 'no session id ⇒ null');
   assertEqual(harmonograf.harmonografMetaUrl(), null, 'no session id ⇒ no meta url');
-  assertEqual(harmonograf.harmonografMetaLink('execution'), null, 'no session id ⇒ no meta link');
 });
 
 // --- candidate-view wiring (the dead-code fix) -----------------------------

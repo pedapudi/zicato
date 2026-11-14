@@ -841,20 +841,13 @@ test('gens (cross-epoch): the ACTIVE epoch’s Match-ups still shows the live pr
   coreState.state.activeTournament = null;
 });
 
-// ---- typeface OPTIONS: the 12 faces (4 per mode) --------------------------
+// ---- the typeface: one pairing ---------------------------------------------
 //
-// Each option id has a per-id CSS rule that swaps the four font-role tokens
-// (--v2-sans / --v2-mono / --n-font-head / --n-font-paper) to the option's
-// stacks. We assert each id's block exists AND that its head/prose/data/paper
-// faces are the option's pairing. The JS model (ui.TYPE_OPTIONS) is the source
-// of truth; the CSS must agree with it.
-test('typeface options: each of the 12 ids has a CSS rule whose font-role tokens match its faces', () => {
+// The base token block sets the four font-role tokens (--v2-sans / --v2-mono /
+// --n-font-head / --n-font-paper) to the Open Sans + Google Sans Mono pairing,
+// and no other rule re-points them.
+test('typeface: the base token block sets the Open Sans + Google Sans Mono pairing and nothing swaps it', () => {
   const css = readCss();
-  function typeBlock(id) {
-    const m = css.match(new RegExp('#console-root\\[data-t-type="' + id + '"\\]\\s*\\{([^}]*)\\}'));
-    assert(m, 'the ' + id + ' typeface block exists');
-    return m[1];
-  }
   function declIn(block, name) {
     const m = block.match(new RegExp('--' + name + '\\s*:\\s*([^;]+);'));
     return m ? m[1].trim() : null;
@@ -864,45 +857,22 @@ test('typeface options: each of the 12 ids has a CSS rule whose font-role tokens
     const m = String(stack || '').match(/'([^']+)'/);
     return m ? m[1] : null;
   }
-  // EXPECTED head/prose/data primaries per option id.
-  const expect = {
-    'google-sans-mono':    { head: 'Open Sans',        prose: 'Open Sans',        data: 'Google Sans Mono', paper: 'Open Sans' },
-    'source-sans-3':       { head: 'Source Sans 3',    prose: 'Source Sans 3',    data: 'Source Code Pro',  paper: 'Source Sans 3' },
-    inconsolata:           { head: 'Open Sans',        prose: 'Open Sans',        data: 'Inconsolata',      paper: 'Open Sans' },
-    ubuntu:                { head: 'Ubuntu',           prose: 'Ubuntu',           data: 'Ubuntu Mono',      paper: 'Ubuntu' },
-    fraunces:              { head: 'Fraunces',         prose: 'Open Sans',        data: 'JetBrains Mono',   paper: 'Fraunces' },
-    bitter:                { head: 'Bitter',           prose: 'Open Sans',        data: 'JetBrains Mono',   paper: 'Bitter' },
-    literata:              { head: 'Literata',         prose: 'Open Sans',        data: 'JetBrains Mono',   paper: 'Literata' },
-    domine:                { head: 'Domine',           prose: 'Open Sans',        data: 'JetBrains Mono',   paper: 'Domine' },
-    'archivo-narrow':      { head: 'Archivo Narrow',   prose: 'Space Grotesk',    data: 'JetBrains Mono',   paper: 'Space Grotesk' },
-    'hanken-grotesk':      { head: 'Hanken Grotesk',   prose: 'Hanken Grotesk',   data: 'JetBrains Mono',   paper: 'Hanken Grotesk' },
-    'barlow-condensed':    { head: 'Barlow Condensed', prose: 'Space Grotesk',    data: 'JetBrains Mono',   paper: 'Space Grotesk' },
-    'bricolage-grotesque': { head: 'Bricolage Grotesque', prose: 'Bricolage Grotesque', data: 'JetBrains Mono', paper: 'Bricolage Grotesque' },
-  };
-  for (const id of Object.keys(expect)) {
-    const b = typeBlock(id);
-    // role → token mapping: head→--n-font-head, prose→--v2-sans (+ --n-font-paper),
-    // data→--v2-mono.
-    assertEqual(primary(declIn(b, 'n-font-head')), expect[id].head, id + ' head face → --n-font-head');
-    assertEqual(primary(declIn(b, 'v2-sans')), expect[id].prose, id + ' prose face → --v2-sans');
-    assertEqual(primary(declIn(b, 'n-font-paper')), expect[id].paper, id + ' paper-title face → --n-font-paper');
-    assertEqual(primary(declIn(b, 'v2-mono')), expect[id].data, id + ' data/code face → --v2-mono');
-    // the CSS must agree with the JS model for the same id.
-    const opt = ui.TYPE_OPTIONS.find((o) => o.id === id);
-    assertEqual(primary(opt.head), expect[id].head, id + ' JS model head matches');
-    assertEqual(primary(opt.prose), expect[id].prose, id + ' JS model prose matches');
-    assertEqual(primary(opt.data), expect[id].data, id + ' JS model data matches');
-  }
-  // the DEFAULT block (no data-t-type) lands on the Open Sans + Google Sans Mono pairing.
   const baseM = css.match(/#console-root\s*\{([^}]*--v2-sans[^}]*)\}/);
-  assert(baseM, 'the base #console-root token block declares the default font roles');
-  assertEqual(primary(declIn(baseM[1], 'v2-sans')), 'Open Sans', 'the default (no data-t-type) prose face is Open Sans');
-  assertEqual(primary(declIn(baseM[1], 'v2-mono')), 'Google Sans Mono', 'the default (no data-t-type) data face is Google Sans Mono');
+  assert(baseM, 'the base #console-root token block declares the font roles');
+  assertEqual(primary(declIn(baseM[1], 'v2-sans')), 'Open Sans', 'the prose face is Open Sans');
+  assertEqual(primary(declIn(baseM[1], 'v2-mono')), 'Google Sans Mono', 'the data face is Google Sans Mono');
+  assertEqual(primary(declIn(baseM[1], 'n-font-head')), 'Open Sans', 'the heading face is Open Sans');
+  assertEqual(primary(declIn(baseM[1], 'n-font-paper')), 'Open Sans', 'the paper-title face is Open Sans');
+  for (const tok of ['v2-sans', 'v2-mono', 'n-font-head', 'n-font-paper']) {
+    assertEqual((css.match(new RegExp('--' + tok + '\\s*:', 'g')) || []).length, 1, '--' + tok + ' is declared once');
+  }
+  assert(!/data-t-type/.test(css), 'no rule keys on a typeface attribute');
+  assertEqual(ui.TYPE_OPTIONS, undefined, 'the console holds no typeface option table');
 });
 
-// the brand wordmark pins to a FIXED brand mono, INDEPENDENT of the user's
-// typeface — so its dot stays centred regardless of the selected typeface.
-test('brand mono: --v2-brand-mono is a FIXED monospace, distinct from the swappable --v2-mono token', async () => {
+// the brand wordmark pins to a FIXED brand mono, INDEPENDENT of the interface
+// data face — so its dot stays centred on the advance grid.
+test('brand mono: --v2-brand-mono is a FIXED monospace, distinct from the --v2-mono token', async () => {
   const css = readCss();
   const baseM = css.match(/#console-root\s*\{([^}]*)\}/);
   assert(baseM, 'the base token block exists');
@@ -910,12 +880,10 @@ test('brand mono: --v2-brand-mono is a FIXED monospace, distinct from the swappa
   const brand = (base.match(/--v2-brand-mono\s*:\s*([^;]+);/) || [])[1];
   assert(brand, 'the base block declares a fixed --v2-brand-mono token');
   assert(/monospace\s*$/.test(brand.trim()), 'the brand mono stack ends in the generic monospace keyword');
-  // it is NOT declared inside any per-OPTION block, so it never swaps with the UI.
-  for (const id of ui.TYPE_OPTIONS.map((o) => o.id)) {
-    const m = css.match(new RegExp('#console-root\\[data-t-type="' + id + '"\\]\\s*\\{([^}]*)\\}'));
-    assert(m && !/--v2-brand-mono/.test(m[1]), 'the ' + id + ' typeface block does NOT re-declare the brand mono (it stays fixed)');
-  }
-  // the wordmark <text> pins to the fixed brand mono (not the swappable mono).
+  // it is declared once, so nothing re-points it.
+  assertEqual((css.match(/--v2-brand-mono\s*:/g) || []).length, 1, 'the brand mono is declared once');
+  assert(!/^['"]?Google Sans Mono/.test(brand.trim()), 'the brand mono is not the interface data face');
+  // the wordmark <text> pins to the fixed brand mono (not the interface mono).
   const fsmod = await import('node:fs');
   const src = fsmod.readFileSync(new URL('../js/shell.js', import.meta.url), 'utf8');
   assert(/var\(--v2-brand-mono\)/.test(src), 'the wordmark text font-family is var(--v2-brand-mono)');
@@ -925,11 +893,11 @@ test('brand mono: --v2-brand-mono is a FIXED monospace, distinct from the swappa
 //   * JetBrains Mono stays SELF-HOSTED woff2 declared via @font-face in the
 //     scoped CSS (it backs the fixed brand mono), so it never touches a CDN.
 //     It is the only self-hosted face: every face the stylesheet declares is
-//     one a font token or typeface option names.
-//   * The typeface picker's finalized 12 faces load from the Google-Fonts loader
-//     in console.js (preconnect + a single css2 request, display=swap). Every
-//     family the 12 options reference must be in that request.
-test('fonts: JetBrains Mono stays self-hosted woff2; the 12 finalized faces load via the Google-Fonts loader (preconnect + display=swap)', async () => {
+//     one a font token names.
+//   * The interface faces load from the Google-Fonts loader in console.js
+//     (preconnect + a single css2 request, display=swap). Every family the
+//     font tokens name must be in that request, and no other family is.
+test('fonts: JetBrains Mono stays self-hosted woff2; the interface faces load via the Google-Fonts loader (preconnect + display=swap)', async () => {
   const css = readCss();
   // the self-hosted mono is declared via @font-face from local woff2, and it
   // is the only face declared that way.
@@ -946,19 +914,11 @@ test('fonts: JetBrains Mono stays self-hosted woff2; the 12 finalized faces load
 
   const fs = await import('node:fs');
   const appJs = fs.readFileSync(new URL('../console.js', import.meta.url), 'utf8');
-  // EVERY family the 12 finalized options reference loads from the Google-Fonts
-  // request; the self-hosted monos must NOT be in it.
+  // EXACTLY the families the font tokens name load from the Google-Fonts
+  // request; the self-hosted mono must NOT be in it.
   const loaded = [...appJs.matchAll(/family=([A-Za-z0-9+]+)/g)].map((m) => m[1].replace(/\+/g, ' '));
-  const NEEDED = [
-    'Google Sans Mono', 'Noto Sans Mono', 'Source Sans 3', 'Source Code Pro',
-    'Inconsolata', 'Ubuntu', 'Ubuntu Mono',
-    'Fraunces', 'Bitter', 'Literata', 'Domine',
-    'Archivo Narrow', 'Space Grotesk', 'Hanken Grotesk', 'Barlow Condensed',
-    'Bricolage Grotesque',
-  ];
-  for (const fam of NEEDED) {
-    assert(loaded.includes(fam), 'console.js loads the ' + fam + ' family (display=swap)');
-  }
+  assertEqual(loaded.join(','), 'Open Sans,Google Sans Mono,Noto Sans Mono',
+    'console.js loads the prose face, the data face and its fallback, and no other family');
   assert(!loaded.includes('JetBrains Mono'), 'JetBrains Mono is self-hosted, NOT requested from the CDN');
   assert(/display=swap/.test(appJs), 'CDN fonts are requested with display=swap');
   // a preconnect to the Google-Fonts origins is set up before the stylesheet.

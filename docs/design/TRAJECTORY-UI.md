@@ -196,8 +196,7 @@ the threadpool so the reads never stall the event loop, behind an
 `GET /api/reflection/{reflection_id}/trace/{trace_id}`,
 `GET /api/reflection/{reflection_id}/suggestion/{suggestion_id}/provenance`.
 Exported from `zicato.query.__init__`. The Traces view reads the first two;
-the provenance route has an accessor in `js/data.js`
-(`suggestionProvenance`) but no view calls it, so it serves direct HTTP
+no console view reads the provenance route, so it serves direct HTTP
 callers.
 
 ### 3.1 `build_trace_list(paths, reflection_id) -> dict` — copy verbatim

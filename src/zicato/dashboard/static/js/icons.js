@@ -4,8 +4,8 @@
 // marks, live-feed marks, chevrons, refresh, overflow, execution kinds) is
 // drawn here, never typed as a Unicode character. A typed symbol falls back
 // to whatever system font carries it: the bundled faces lack most of them, so
-// weight, baseline and advance change with the operating system and with the
-// typeface picker, and some symbols render as colour emoji.
+// weight, baseline and advance change with the operating system, and some
+// symbols render as colour emoji.
 //
 // One set, one construction: a 16-unit grid, a 1.5-unit stroke with round
 // caps and joins (the brand mark's line character), `currentColor`, so an

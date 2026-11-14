@@ -10,7 +10,7 @@
 // Design notes that matter:
 //   * THEME-AWARE: the card is mounted INSIDE the console root (#console-root)
 //     so it inherits the per-theme `--v2-*` custom properties — it reads
-//     correctly across all 16 themes (light and dark) with no hardcoded hex.
+//     correctly across every theme (light and dark) with no hardcoded hex.
 //     Its look is entirely in css/console.css (`.dn-hovercard`).
 //   * NOT PART OF THE DIGEST-GATED RENDER: the card is a SINGLETON transient
 //     OVERLAY appended once, OUTSIDE any panel the digest reconciler touches.

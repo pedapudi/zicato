@@ -23,7 +23,6 @@ const fs = await import('node:fs');
 const path = await import('node:path');
 const { readCss, allByClass, freshState, installFetch, mountLiveShell, ui, dag } = await import('./fixtures.mjs');
 const hovercard = await import('../js/hovercard.js');
-const TYPEFACE = await import('../js/typefacedropdown.js');
 
 // ---- stylesheet helpers ------------------------------------------------
 
@@ -160,7 +159,7 @@ const ROUNDED_BOX_ALLOW = new Map([
   ['dn-paper-fig', 'container'], ['dn-hovercard', 'container'], ['dn-xscript-col', 'container'],
   ['dn-instr-turn', 'container'], ['dn-instr-cmcell', 'container'], ['dn-trace-ep', 'container'],
   ['dn-patch-block', 'container'], ['dn-rungprog-strip', 'container'], ['dt-live-hero-panel', 'container'],
-  ['dt-cd-list', 'container'], ['dt-tf-pop', 'container'], ['dn-md-body', 'container (code and pre blocks)'],
+  ['dt-cd-list', 'container'], ['dn-md-body', 'container (code and pre blocks)'],
   ['dn-fleet-card', 'container'], ['dn-racing-affordance', 'container'], ['dn-prop-row', 'container'],
   ['dn-set-kvrow', 'container'], ['dn-set-approw', 'container'], ['dn-set-railitem', 'control'],
   ['dn-instr-span', 'highlight inside prose'],
@@ -169,7 +168,7 @@ const ROUNDED_BOX_ALLOW = new Map([
   ['dn-ovr-confirm', 'control'], ['dn-ovr-cancel', 'control'], ['dn-ovr-reason', 'control'], ['dn-figcap-more', 'control'],
   ['dn-convo-pin', 'control'], ['dn-sxs-xbtn', 'control'], ['dt-cmp-select', 'control'], ['dt-cmp-clear', 'control'],
   ['dt-live-follow', 'control'], ['dn-set-reset', 'control'], ['dt-drawer-x', 'control'], ['dn-instr-apply', 'control'],
-  ['dt-logs-inv', 'control'], ['dt-tf-sizeseg-wrap', 'control'],
+  ['dt-logs-inv', 'control'], ['dn-set-sizeseg-wrap', 'control'],
 ]);
 
 test('no rounded, filled or bordered box wraps a label: every such rule styles a container or a control', () => {
@@ -294,26 +293,15 @@ function stackParts(stack) {
 }
 const MONO_FACES = /mono|inconsolata|code pro|courier|consolas|menlo/i;
 
-test('every typeface option keeps prose and controls in a sans and data in a monospace', () => {
-  const block = (id) => {
-    const m = CSS.match(new RegExp('#console-root\\[data-t-type="' + id + '"\\]\\s*\\{([^}]*)\\}'));
-    assert(m, 'the ' + id + ' block exists');
-    return m[1];
-  };
+test('the typeface keeps prose and controls in a sans and data in a monospace', () => {
   const decl = (b, name) => ((b.match(new RegExp('--' + name + '\\s*:\\s*([^;]+);')) || [])[1] || '').trim();
   const base = CSS.match(/#console-root\s*\{([^}]*--v2-sans[^}]*)\}/)[1];
-  for (const [id, b] of [['(default)', base], ...ui.TYPE_OPTIONS.map((o) => [o.id, block(o.id)])]) {
-    const sans = stackParts(decl(b, 'v2-sans'));
-    assertEqual(sans.generic, 'sans-serif', id + ': --v2-sans ends in sans-serif');
-    assert(!MONO_FACES.test(sans.first), id + ': --v2-sans is not led by a monospace face (' + sans.first + ')');
-    assertEqual(stackParts(decl(b, 'v2-mono')).generic, 'monospace', id + ': --v2-mono ends in monospace');
-    assert(stackParts(decl(b, 'n-font-head')).generic !== 'monospace', id + ': headings are never monospace');
-  }
-  for (const o of ui.TYPE_OPTIONS) {
-    assertEqual(stackParts(o.prose).generic, 'sans-serif', o.id + ': the JS prose stack is a sans');
-    assertEqual(stackParts(o.data).generic, 'monospace', o.id + ': the JS data stack is a monospace');
-    assert(stackParts(o.head).generic !== 'monospace', o.id + ': the JS heading stack is not monospace');
-  }
+  const sans = stackParts(decl(base, 'v2-sans'));
+  assertEqual(sans.generic, 'sans-serif', '--v2-sans ends in sans-serif');
+  assert(!MONO_FACES.test(sans.first), '--v2-sans is not led by a monospace face (' + sans.first + ')');
+  assertEqual(stackParts(decl(base, 'v2-mono')).generic, 'monospace', '--v2-mono ends in monospace');
+  assert(stackParts(decl(base, 'n-font-head')).generic !== 'monospace', 'headings are never monospace');
+  assert(!/\[data-t-type/.test(CSS), 'no rule re-points the font tokens per typeface: the console ships one pairing');
 });
 
 // ---- matrix tables: labels in the sans, ids and numbers in the mono ---------
@@ -394,24 +382,11 @@ test('the breadcrumb never wraps an id: crumbs hold one line and truncate with a
   assert(hovercard.hasHovercard(epochCrumb), 'a long crumb shows its full value on hover');
 });
 
-// ---- the typeface control fits its Settings row ----------------------------
+// ---- an Appearance control fits its Settings row ----------------------------
 
-test('the typeface control stays inside its row: the pairing name wraps between faces, never past the column', () => {
-  const decls = (selector) => RULES.filter((r) => r.selectors.includes(selector)).flatMap((r) => r.decls);
-  const has = (selector, prop, value) => decls(selector).some(([p, v]) => p === prop && v === value);
-  assert(has('.dt-cd.dt-tf', 'max-width', '100%') && has('.dt-cd.dt-tf', 'min-width', '0'), 'the picker is bounded by its column');
-  assert(has('.dt-tf .dt-tf-trigger', 'max-width', '100%') && has('.dt-tf .dt-tf-trigger', 'min-width', '0'), 'the trigger is bounded by the picker');
-  assert(has('.dt-tf .dt-tf-trigger .dt-cd-name', 'white-space', 'normal'), 'the pairing name may wrap');
-  assert(has('.dt-tf .dt-tf-trigger .dt-tf-face', 'white-space', 'nowrap'), 'a face name never breaks inside');
+test('a phone-width Appearance row stacks its label over its control', () => {
   assert(/@media \(max-width: 560px\)\s*\{[^}]*\}[^@]*?\.dn-set-approw\s*\{\s*grid-template-columns:\s*minmax\(0, 1fr\)/.test(CSS)
     || /\.dn-set-approw\s*\{\s*grid-template-columns:\s*minmax\(0, 1fr\)/.test(CSS), 'a phone-width row stacks its label over its control');
-  const { buildTypefaceDropdown } = TYPEFACE;
-  const dd = buildTypefaceDropdown('google-sans-mono', () => {});
-  const faces = allByClass(dd.node, 'dt-tf-face').map((n) => n.textContent);
-  assertEqual(faces.join(' | '), 'Open Sans | Google Sans Mono', 'the trigger name holds one unbreakable span per face');
-  assertEqual(allByClass(dd.node, 'dt-tf-trigger')[0].textContent.includes('Open Sans + Google Sans Mono'), true, 'and reads as the full label');
-  dd.setValue('fraunces');
-  assertEqual(allByClass(dd.node, 'dt-tf-face').map((n) => n.textContent).join(' | '), 'Fraunces', 'a single-face label is one span');
 });
 
 // ---- the link button styles a <button> as well as an <a> -------------------

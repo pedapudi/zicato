@@ -11,7 +11,7 @@ installDom();
 
 const {
   router, svg, data, tree, coreState, rounds,
-  hovercard, live, STRUCT, EPOCH_ID, FIXTURE, installFetch,
+  hovercard, live, livestatus, STRUCT, EPOCH_ID, FIXTURE, installFetch,
   freshState, allByClass, svgsByClass, hasScrollWrapperAncestor, SE_STRUCT, SWISS_STRUCT,
   RACING_STRUCT, structureFixture, recorded, installFixtureMap,
 } = await import('./fixtures.mjs');
@@ -33,9 +33,112 @@ test('structure helpers: label + non-gauntlet detection', () => {
   assertEqual(STRUCT.isNonGauntlet('single_elim'), true);
   assertEqual(STRUCT.isNonGauntlet('swiss'), true);
   assertEqual(STRUCT.isNonGauntlet('racing'), true);
-  assert(STRUCT.structureLabel('swiss', { rounds: 4 }).includes('4 rounds'), 'swiss label names its rounds');
-  assert(STRUCT.structureLabel('single_elim', { seed_order: 'scalar' }).includes('scalar'), 'single-elim label names the seed order');
-  assert(STRUCT.structureLabel('racing', { rungs: [1, 2, 3] }).includes('3 rungs'), 'racing label names its rungs');
+  const { structureLabel } = livestatus;
+  assert(structureLabel('swiss', { rounds: 4 }).includes('4 rounds'), 'swiss label names its rounds');
+  assert(structureLabel('single_elim', { seed_order: 'scalar' }).includes('scalar'), 'single-elim label names the seed order');
+  assert(structureLabel('racing', { rungs: [1, 2, 3] }).includes('3 rungs'), 'racing label names its rungs');
+});
+
+// One function words every structure label; each form is pinned to the exact
+// text its surface shows.
+test('structureLabel: the full, short and pending forms for every structure', () => {
+  const { structureLabel } = livestatus;
+  const full = (s, p) => structureLabel(s, p);
+  assertEqual(full('gauntlet'), 'Gauntlet');
+  assertEqual(full('gauntlet', { replications: 3 }), 'Gauntlet · 3× replications');
+  assertEqual(full('gauntlet', { replications: 1 }), 'Gauntlet', 'one replication adds no detail');
+  assertEqual(full(null), 'Gauntlet', 'an absent structure is the default gauntlet');
+  assertEqual(full('single_elim'), 'Single elimination');
+  assertEqual(full('single_elim', { seed_order: 'scalar' }), 'Single elimination · seed: scalar');
+  assertEqual(full('double_elim'), 'Double elimination');
+  assertEqual(full('double_elim', { grand_final_reset: false }), 'Double elimination · no GF reset');
+  assertEqual(full('swiss'), 'Swiss');
+  assertEqual(full('swiss', { rounds: 4 }), 'Swiss · 4 rounds');
+  assertEqual(full('racing'), 'Racing (successive halving)');
+  assertEqual(full('racing', { rungs: [] }), 'Racing (successive halving)', 'no rungs adds no detail');
+  assertEqual(full('racing', { rungs: [1, 2, 3] }), 'Racing (successive halving) · 3 rungs');
+  assertEqual(full('round_robin', { rounds: 2 }), 'round_robin', 'an unknown structure reads as its own id');
+  assertEqual(full('constructor'), 'constructor', 'an inherited property name is not a structure');
+
+  const short = (s) => structureLabel(s, null, 'short');
+  assertEqual(short('gauntlet'), 'gauntlet');
+  assertEqual(short('single_elim'), 'single elim');
+  assertEqual(short('double_elim'), 'double elim');
+  assertEqual(short('swiss'), 'swiss');
+  assertEqual(short('racing'), 'racing');
+  assertEqual(short('Round_Robin'), 'round robin', 'an unknown structure is lower-cased with spaces');
+  assertEqual(short(null), '', 'an absent structure is the empty string');
+
+  const pending = (s) => structureLabel(s, null, 'pending');
+  assertEqual(pending('racing'), 'racing');
+  assertEqual(pending('swiss'), 'competing');
+  assertEqual(pending('single_elim'), 'in bracket');
+  assertEqual(pending('double_elim'), 'in bracket');
+  assertEqual(pending('gauntlet'), 'at gate');
+  assertEqual(pending('RACING'), 'racing', 'the pending word ignores case');
+  assertEqual(pending('round_robin'), 'awaiting gate');
+  assertEqual(pending(undefined), 'awaiting gate');
+
+  // the live status line reads the short form, with its own word for no structure.
+  assertEqual(livestatus.phaseLabel('', 'double_elim'), 'double elim');
+  assertEqual(livestatus.phaseLabel('tournament', null), 'tournament');
+  assertEqual(livestatus.phaseLabel('tournament', 'single_elim'), 'single elim');
+});
+
+// One table names the figure a structure draws on each surface.
+test('structureFigure: every structure has its builders, elimination shares one set, and an unknown name has none', () => {
+  const fig = STRUCT.structureFigure;
+  for (const s of ['racing', 'swiss', 'single_elim', 'double_elim']) {
+    for (const mode of ['sections', 'hero', 'overview', 'round']) {
+      assertEqual(typeof fig(s, mode), 'function', s + ' has a ' + mode + ' builder');
+    }
+  }
+  assertEqual(typeof fig('gauntlet', 'sections'), 'function', 'the gauntlet has its sections');
+  assertEqual(typeof fig('gauntlet', 'hero'), 'function', 'the gauntlet has a live hero');
+  assertEqual(fig('gauntlet', 'overview'), null, 'the gauntlet has no overview model');
+  assertEqual(fig('gauntlet', 'round'), null, 'the gauntlet has no per-round figure');
+  for (const mode of ['sections', 'hero', 'overview', 'round']) {
+    assertEqual(fig('single_elim', mode), fig('double_elim', mode), 'both eliminations share the ' + mode + ' builder');
+  }
+  for (const s of ['round_robin', '', null, undefined, 'constructor', 'toString']) {
+    assertEqual(fig(s, 'hero'), null, String(s) + ' draws no hero');
+  }
+  assertEqual(fig('racing', 'nonesuch'), null, 'an unknown mode has no builder');
+
+  // each family's hero and round builders draw the figure its surface shows.
+  const noop = { onCompetitor() {} };
+  const figureClass = (node) => node.getAttribute('class') || '';
+  const racing = STRUCT.normalizeStructure(RACING_STRUCT, false);
+  assert(fig('racing', 'hero')(racing, { structure: 'racing', ...noop }).digest.startsWith('racing|'), 'the racing hero digest is keyed by its figure');
+  assert(figureClass(fig('racing', 'round')(fig('racing', 'overview')(racing), noop)).includes('dn-funnel'), 'the racing round figure is the survival funnel');
+  const swiss = STRUCT.normalizeStructure(SWISS_STRUCT, false);
+  assert(fig('swiss', 'hero')(swiss, { structure: 'swiss', ...noop }).digest.startsWith('swiss|'), 'the swiss hero digest is keyed by its figure');
+  assert(fig('swiss', 'overview')(swiss), 'the swiss overview model builds');
+  const elim = STRUCT.normalizeStructure(SE_STRUCT, false);
+  assert(fig('single_elim', 'hero')(elim, { structure: 'single_elim', ...noop }).digest.startsWith('elim|'), 'the elimination hero digest is keyed by its figure');
+  assert(figureClass(fig('single_elim', 'round')(fig('single_elim', 'overview')(elim), { structure: 'single_elim', ...noop })).includes('dn-elimradial'),
+    'the elimination round figure is the radial bracket');
+  // a structure with no topology yet draws no hero and has no overview model.
+  const empty = STRUCT.normalizeStructure({ structure: 'racing', rounds: [], competitors: [] }, true);
+  assertEqual(fig('racing', 'hero')(empty, { structure: 'racing', ...noop }), null, 'no rungs, no hero');
+  assertEqual(fig('racing', 'overview')(empty), null, 'no rungs, no overview model');
+});
+
+// The settled record both the epoch overview and the match-ups page read.
+test('settledTournamentId: the most recent tournament of the structure, else of any non-gauntlet, else of any', () => {
+  const pick = STRUCT.settledTournamentId;
+  const t = (id, structure) => ({ tournament_id: id, structure });
+  assertEqual(pick({ tournaments: [t('a', 'swiss'), t('b', 'racing'), t('c', 'swiss'), t('d', 'gauntlet')] }, 'swiss'), 'c',
+    'the most recent tournament of the asked structure');
+  assertEqual(pick({ tournaments: [t('a', 'racing'), t('b', 'single_elim'), t('c', 'gauntlet')] }, 'swiss'), 'b',
+    'else the most recent non-gauntlet tournament');
+  assertEqual(pick({ tournaments: [t('a', 'gauntlet'), t('b', 'gauntlet')] }, 'swiss'), 'b', 'else the most recent of any');
+  assertEqual(pick({ tournaments: [null, t('a', 'swiss')] }, 'swiss'), 'a', 'a null row is skipped by the structure match');
+  assertEqual(pick({ tournaments: [] }, 'swiss'), null, 'no tournaments, null');
+  assertEqual(pick(null, 'swiss'), null, 'no bracket, null');
+  assertEqual(pick({ tournaments: 'x' }, 'swiss'), null, 'a malformed list, null');
+  assertEqual(pick({ tournaments: [{ structure: 'swiss' }] }, 'swiss'), undefined,
+    'a picked tournament with no id is not "no tournaments": the caller must not fall back');
 });
 
 test('structure: single-elim renders a fit-to-width RADIAL bracket (elimRadial spokes + standings)', async () => {
@@ -209,12 +312,6 @@ test('data.fieldStatus: carries the v6 observability fields (status proposing, a
   assertEqual(fs[1].status, 'proposing', 'the proposing status is recognised (not coerced to rejected)');
   assertEqual(fs[1].attempts, 0, 'a proposing slot with no attempts count defaults to 0');
   assertEqual(fs[2].hypothesis, 'do the thing', 'applied hypothesis preserved');
-  // The summary counts proposing distinctly + does not prematurely flag allRejected.
-  const sum = data.fieldStatusSummary(fs);
-  assertEqual(sum.proposing, 1, 'one proposing slot');
-  assertEqual(sum.applied, 1, 'one applied slot');
-  assertEqual(sum.rejected, 1, 'one rejected slot');
-  assertEqual(sum.allRejected, false, 'not all-rejected while a slot proposes / one applied');
 });
 
 test('proposingDigest: re-stamps on an attempt-count / reason change, stable on a no-op', () => {
@@ -268,7 +365,7 @@ test('structure: a COMPLETED, all-applied field renders NO "Proposed field" sect
   assert(svgsByClass(host, 'dn-swissladder')[0], 'the swiss ladder still renders');
 });
 
-test('data.fieldStatus / fieldStatusSummary: normalize + roll up the proposing field', () => {
+test('data.fieldStatus: normalize the proposing field', () => {
   const raw = {
     field_status: [
       { generation_id: 'v1', status: 'applied', reason: '', seed: 2 },
@@ -283,14 +380,7 @@ test('data.fieldStatus / fieldStatusSummary: normalize + roll up the proposing f
   assertEqual(fs[2].status, 'rejected', 'an unknown status coerces to rejected');
   assertDeep(data.fieldStatus({}), [], 'absent field_status → empty list');
   assertDeep(data.fieldStatus(null), [], 'null payload → empty list');
-  const sum = data.fieldStatusSummary(fs);
-  assertEqual(sum.proposed, 3, 'proposed count');
-  assertEqual(sum.applied, 1, 'applied count');
-  assertEqual(sum.rejected, 2, 'rejected count');
-  assertEqual(sum.allRejected, false, 'not all rejected (one applied)');
-  const allBad = data.fieldStatusSummary([{ generation_id: 'v1', status: 'rejected' }]);
-  assertEqual(allBad.allRejected, true, 'a non-empty zero-applied field is allRejected');
-  assertEqual(data.fieldStatusSummary([]).allRejected, false, 'an empty field is NOT allRejected (idle, not failed)');
+  assertDeep(fs.map((f) => f.status), ['applied', 'rejected', 'rejected'], 'each surviving row keeps or coerces its status');
 });
 
 test('structure: racing renders a fit-to-width survival funnel with cuts + board fractions', async () => {

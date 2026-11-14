@@ -8,7 +8,7 @@
 import { bus } from './bus.js';
 
 // Rolling window the run-log tail keeps in memory.
-export const RUN_LOG_WINDOW = 200;
+const RUN_LOG_WINDOW = 200;
 const MAX_LOG_LINES = 20;
 
 export class AppState {

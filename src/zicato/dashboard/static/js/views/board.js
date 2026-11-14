@@ -23,15 +23,10 @@ import { icon, iconLabel } from '../icons.js';
 import { gatedSwap, section, empty, stat, densityTokens, prText, metricsDigest, scoreFmt, stateLabel, dataTable, deltaCell, fmtDurationMs, ENTRY_KIND_LABEL } from '../ui.js';
 import { splitFrame, captureScroll, restoreScroll } from '../compare.js';
 import * as facets from '../facets.js';
-import { buildTurnNode, dedupConsecutiveTurns, reconcileTurns } from '../turns.js';
+import { reconcileTurns } from '../turns.js';
 import { mountConversationPane } from '../convo.js';
 import { unitLiveness, hasActiveRunFor } from '../unit_liveness.js';
 import { runProgressRatio } from '../tournament_model.js';
-
-// The transcript turn vocabulary now lives in js/turns.js so the live follow
-// pane can share it without importing back through this view. Re-exported
-// because views/traces.js and the board tests already read it from here.
-export { buildTurnNode, dedupConsecutiveTurns };
 
 // In-flight board-units for THIS entry, read from /api/active-runs (folded
 // into AppState by /api/environment). Each carries a generation_id / run_id /

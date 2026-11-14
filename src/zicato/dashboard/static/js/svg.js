@@ -94,7 +94,7 @@ function emptyState(parent, width, height, label) {
 
 export function isNum(v) { return typeof v === 'number' && isFinite(v); }
 
-export function finiteValues(arr) {
+function finiteValues(arr) {
   return (Array.isArray(arr) ? arr : []).filter(isNum);
 }
 
@@ -601,7 +601,7 @@ export function bumps(opts) {
 }
 
 // One-dimensional collision resolver — exported for the test suite.
-export function decollide(items, y, minGap, top, bottom) {
+function decollide(items, y, minGap, top, bottom) {
   const idx = items.map((it, i) => ({ i, pos: isNum(it.v) ? y(it.v) : (top + bottom) / 2 }));
   idx.sort((p, q) => p.pos - q.pos);
   for (let k = 1; k < idx.length; k++) {
@@ -620,7 +620,7 @@ export function decollide(items, y, minGap, top, bottom) {
 }
 
 // Spread coincident node positions a hair apart — exported for the tests.
-export function jitterColumn(ys, step) {
+function jitterColumn(ys, step) {
   const out = ys.slice();
   const groups = new Map();
   ys.forEach((v, i) => {
