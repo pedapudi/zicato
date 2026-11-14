@@ -14,7 +14,12 @@
 > `experimental.standing_rating` and `experimental.resolver`; and the scoring
 > sums the analysis quotes from `src/zicato/scoring/builtins.py` now use
 > `math.fsum` over sorted namespaces, which makes the result independent of
-> summation order. Passages marked "since done" were annotated after the
+> summation order. The file-level containment check the analysis quotes
+> (`crates/supervisor/src/diff_containment.rs` and its Python twin) is absent
+> from the present tree: the supervisor's `--mutation-containment` audit and the opt-in
+> `block_on_containment_violation` block both apply the byte-range rule in
+> `crates/supervisor/src/range_containment.rs` and
+> `zicato.epoch.containment`. Passages marked "since done" were annotated after the
 > analysis date; the disposition below supersedes them.
 >
 > **Disposition of the recommendations, checked against the tree on

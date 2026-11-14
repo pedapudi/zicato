@@ -91,14 +91,16 @@ fn present(value: Option<&str>) -> Option<&str> {
 /// Cross-check the canonical lineage / epoch config against the index for the
 /// current epoch and return the divergence findings.
 ///
-/// Pure-ish: reads the workspace files + the index. `now` and
-/// `stuck_age_seconds` are injected so check (c) is deterministic in tests.
+/// Pure-ish: reads the workspace files + the index. `lineage` is the
+/// integrity tick's shared lineage view. `now` and `stuck_age_seconds` are
+/// injected so check (c) is deterministic in tests.
 /// Read-only and fail-open: a missing/stale index yields the scanned-but-empty
 /// view (nothing to cross-check), never a finding.
 pub fn audit(
     paths: &WorkspacePaths,
     now: chrono::DateTime<chrono::Utc>,
     stuck_age_seconds: i64,
+    lineage: &crate::reader::LineageView,
 ) -> DivergenceView {
     let epoch_id = match crate::reader::read_current_epoch(paths) {
         Some(e) => e,
@@ -172,7 +174,6 @@ pub fn audit(
             .filter_map(|g| g.generation_id.clone().map(|id| (id, g)))
             .collect();
 
-    let lineage = crate::reader::build_lineage_view(paths);
     let mut generations_checked = 0u64;
     for gen in &lineage.generations {
         if gen.epoch_id != epoch_id {
@@ -315,6 +316,11 @@ impl DivergenceFindings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn audit_workspace(p: &WorkspacePaths) -> DivergenceView {
+        let lineage = crate::reader::build_lineage_view(p);
+        audit(p, Utc::now(), DEFAULT_STUCK_AGE_SECONDS, &lineage)
+    }
     use chrono::Utc;
     use rusqlite::Connection;
     use tempfile::TempDir;
@@ -394,7 +400,7 @@ mod tests {
     #[test]
     fn no_index_is_fail_open_empty() {
         let (_t, p) = ws();
-        let view = audit(&p, Utc::now(), DEFAULT_STUCK_AGE_SECONDS);
+        let view = audit_workspace(&p);
         assert!(view.scanned);
         assert!(
             view.findings.is_empty(),
@@ -408,7 +414,7 @@ mod tests {
         write_epoch_config(&p, HASH_A);
         write_canonical_gen(&p, "v1", Some("v0"), "promoted");
         write_index(&p, HASH_A, &[("v1", Some("v0"), 1)]);
-        let view = audit(&p, Utc::now(), DEFAULT_STUCK_AGE_SECONDS);
+        let view = audit_workspace(&p);
         assert!(
             view.findings.is_empty(),
             "agreement → no findings: {view:?}"
@@ -426,7 +432,7 @@ mod tests {
         write_epoch_config(&p, HASH_A);
         write_canonical_gen(&p, "v0", Some(""), "rejected");
         write_index(&p, HASH_A, &[("v0", None, 0)]);
-        let view = audit(&p, Utc::now(), DEFAULT_STUCK_AGE_SECONDS);
+        let view = audit_workspace(&p);
         assert!(
             !view.findings.iter().any(|f| f.code == "parent_divergence"),
             "empty and absent state the same parent: {view:?}"
@@ -442,7 +448,7 @@ mod tests {
         write_epoch_config(&p, HASH_A);
         write_canonical_gen(&p, "v2", Some("v1"), "rejected");
         write_index(&p, HASH_A, &[("v2", Some("v0"), 0)]);
-        let view = audit(&p, Utc::now(), DEFAULT_STUCK_AGE_SECONDS);
+        let view = audit_workspace(&p);
         assert!(view.findings.iter().any(|f| f.code == "parent_divergence"));
     }
 
@@ -455,7 +461,7 @@ mod tests {
         let (_t, p) = ws();
         write_epoch_config(&p, "");
         write_index(&p, HASH_A, &[]);
-        let view = audit(&p, Utc::now(), DEFAULT_STUCK_AGE_SECONDS);
+        let view = audit_workspace(&p);
         assert!(
             !view
                 .findings
@@ -476,7 +482,7 @@ mod tests {
         let (_t, p) = ws();
         write_epoch_config(&p, HASH_A);
         write_index(&p, HASH_B, &[]);
-        let view = audit(&p, Utc::now(), DEFAULT_STUCK_AGE_SECONDS);
+        let view = audit_workspace(&p);
         assert!(view
             .findings
             .iter()
@@ -488,7 +494,7 @@ mod tests {
         let (_t, p) = ws();
         write_epoch_config(&p, "not-a-real-hash");
         write_index(&p, "not-a-real-hash", &[]);
-        let view = audit(&p, Utc::now(), DEFAULT_STUCK_AGE_SECONDS);
+        let view = audit_workspace(&p);
         assert!(view
             .findings
             .iter()
@@ -507,7 +513,7 @@ mod tests {
         // Canonical says promoted; index says not.
         write_canonical_gen(&p, "v1", Some("v0"), "promoted");
         write_index(&p, HASH_A, &[("v1", Some("v0"), 0)]);
-        let view = audit(&p, Utc::now(), DEFAULT_STUCK_AGE_SECONDS);
+        let view = audit_workspace(&p);
         let f = view
             .findings
             .iter()
@@ -523,7 +529,7 @@ mod tests {
         write_canonical_gen(&p, "v1", Some("v0"), "promoted");
         // Index records a different parent.
         write_index(&p, HASH_A, &[("v1", Some("vX"), 1)]);
-        let view = audit(&p, Utc::now(), DEFAULT_STUCK_AGE_SECONDS);
+        let view = audit_workspace(&p);
         assert!(view.findings.iter().any(|f| f.code == "parent_divergence"));
     }
 
@@ -546,7 +552,7 @@ mod tests {
         // Index disagrees on parent — but the generation is in flight, so the
         // (a) join must skip it.
         write_index(&p, HASH_A, &[("v1", Some("vX"), 0)]);
-        let view = audit(&p, Utc::now(), DEFAULT_STUCK_AGE_SECONDS);
+        let view = audit_workspace(&p);
         assert!(
             !view.findings.iter().any(|f| f.code == "parent_divergence"),
             "in-flight generation must not produce a join finding: {view:?}",
@@ -573,7 +579,7 @@ mod tests {
             .to_string(),
         )
         .unwrap();
-        let view = audit(&p, Utc::now(), DEFAULT_STUCK_AGE_SECONDS);
+        let view = audit_workspace(&p);
         let f = view
             .findings
             .iter()
@@ -601,7 +607,7 @@ mod tests {
             .to_string(),
         )
         .unwrap();
-        let view = audit(&p, Utc::now(), DEFAULT_STUCK_AGE_SECONDS);
+        let view = audit_workspace(&p);
         assert!(!view
             .findings
             .iter()
@@ -627,7 +633,7 @@ mod tests {
             .to_string(),
         )
         .unwrap();
-        let view = audit(&p, Utc::now(), DEFAULT_STUCK_AGE_SECONDS);
+        let view = audit_workspace(&p);
         assert!(!view
             .findings
             .iter()

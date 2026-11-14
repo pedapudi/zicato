@@ -390,8 +390,8 @@ async def resolve_field_verdict(
       crowning promote to a holdout reject and the champion stands.  An
       empty holdout — a small board, or the split disabled — means no
       holdout run and no Ladder move.
-    * **Integrity blocking** (default OFF).  Diff containment on the crowned
-      child's snapshot plus a gate-contradiction re-derivation against the
+    * **Integrity blocking** (default OFF).  Mutation containment on the
+      crowned child's byte-range evidence plus a gate-contradiction re-derivation against the
       crowning duel's delta, applied before anything persists and before the
       override claim below, so an explicit force-promote remains the
       operator's recorded prerogative.
@@ -442,9 +442,10 @@ async def resolve_field_verdict(
     if promoted_id is not None:
         block_reason = _integrity_block_reason(
             weights=prepared.weights,
-            parent_snapshot_root=candidates.champion.snapshot_root,
-            child_snapshot_root=candidates.by_id[promoted_id].snapshot_root,
-            mutable_trees=_registered_mutable_trees(prepared.workspace_config),
+            workspace_root=prepared.workspace_root,
+            epoch_id=prepared.epoch_id,
+            parent=candidates.champion,
+            child=candidates.generation(promoted_id),
             delta_scalar=crowning.crowning_delta_scalar,
         )
         if block_reason is not None:
@@ -512,21 +513,13 @@ async def resolve_field_verdict(
     )
 
 
-def _registered_mutable_trees(workspace_config: Any) -> list[str]:
-    """Return the source roots declared by the workspace adapter."""
-    from zicato.core.adapter_config import adapter_declaration
-
-    if workspace_config.get("adapter") is None:
-        return []
-    return list(adapter_declaration(workspace_config).mutable_trees)
-
-
 def _integrity_block_reason(
     *,
     weights: Any,
-    parent_snapshot_root: Path,
-    child_snapshot_root: Path,
-    mutable_trees: list[str],
+    workspace_root: Path,
+    epoch_id: str,
+    parent: Generation,
+    child: Generation,
     delta_scalar: float | None,
 ) -> str | None:
     """The refusal reason when an opt-in integrity block fires, else ``None``.
@@ -537,11 +530,12 @@ def _integrity_block_reason(
     is never routed here (the override is recorded provenance rather than a
     silent flip, and blocking it would disable the control protocol).
 
-    (a) **Diff containment** (``block_on_containment_violation``): every
-        file outside the registered mutable trees must be byte-identical
-        parent↔child (``zicato.evolve.containment`` mirrors
-        ``crates/supervisor/src/diff_containment.rs``). Fail-open: an
-        unreadable snapshot skips the check.
+    (a) **Mutation containment** (``block_on_containment_violation``): the
+        promoted pair's byte-range evidence is verified against both source
+        trees (``zicato.epoch.containment.attest_generation``, the rule
+        ``crates/supervisor/src/range_containment.rs`` checks out of band).
+        A ``violated`` or ``evidence_mismatch`` pair is refused; missing or
+        malformed evidence (``unverified``) does not block.
     (b) **Promotion-gate contradiction** (``block_on_gate_contradiction``):
         re-derive the gate's scalar rule ``delta_scalar <= -promote_margin``
         (``promotion_gate.rs check_row``, applied pre-persist) and refuse
@@ -549,14 +543,21 @@ def _integrity_block_reason(
         evidence) skips the check — check_row's SkippedNoEvidence.
     """
     if weights.block_on_containment_violation:
-        from zicato.evolve.containment import (  # noqa: PLC0415
-            check_containment,
+        from zicato.epoch.containment import (  # noqa: PLC0415
+            attest_generation,
             containment_reason,
         )
 
-        report = check_containment(parent_snapshot_root, child_snapshot_root, mutable_trees)
-        if not report.contained:
-            return containment_reason(report)
+        attestation = attest_generation(
+            workspace_root,
+            epoch_id=epoch_id,
+            parent_generation_id=parent.id,
+            generation_id=child.id,
+            parent_root=parent.snapshot_root,
+            child_root=child.snapshot_root,
+        )
+        if attestation.status in ("violated", "evidence_mismatch"):
+            return containment_reason(attestation)
     if weights.block_on_gate_contradiction and delta_scalar is not None:
         margin = float(weights.promote_margin)
         if not (delta_scalar <= -margin):

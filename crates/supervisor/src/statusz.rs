@@ -117,8 +117,8 @@ pub struct StatuszView {
     pub watchdog_actions: Vec<Action>,
     /// Integrity status of the tamper-evident audit ledger.
     pub audit_ledger: AuditStatus,
-    /// Latest diff-containment scan result (record #2).
-    pub diff_containment: crate::diff_containment::DiffContainmentView,
+    /// Latest mutation-containment scan result (record #2).
+    pub mutation_containment: crate::range_containment::ContainmentView,
     /// Latest promotion-gatekeeping scan result (record #3).
     pub promotion_gate: crate::promotion_gate::PromotionGateView,
     /// Latest index-vs-canonical divergence-audit result (record #4).
@@ -254,7 +254,7 @@ fn heartbeat_status(
 /// watchdog is deciding on. `None` means seq is not being tracked (legacy
 /// heartbeat) and staleness falls back to the timestamp age.
 // A pure assembler: each parameter is one independent, already-computed input
-// surface (identity, thresholds, the two heartbeat ages, the ledger/diff
+// surface (identity, thresholds, the two heartbeat ages, the ledger/containment
 // diagnostics, the action ring). Bundling them into a struct would only move
 // the same fields behind one more name, so the explicit signature is clearer.
 #[allow(clippy::too_many_arguments)]
@@ -265,7 +265,7 @@ pub fn build_statusz(
     seq_age_seconds: Option<u64>,
     action_log: &Arc<WatchdogLog>,
     audit_ledger: AuditStatus,
-    diff_containment: crate::diff_containment::DiffContainmentView,
+    mutation_containment: crate::range_containment::ContainmentView,
     promotion_gate: crate::promotion_gate::PromotionGateView,
     divergence: crate::divergence::DivergenceView,
 ) -> StatuszView {
@@ -313,7 +313,7 @@ pub fn build_statusz(
         summary,
         watchdog_actions: action_log.snapshot(),
         audit_ledger,
-        diff_containment,
+        mutation_containment,
         promotion_gate,
         divergence,
     }
@@ -563,80 +563,76 @@ th{color:#888;font-weight:normal}\
     }
     out.push_str("</table>");
 
-    // Diff-containment: are mutations confined to the mutation sites?
-    let dc = &v.diff_containment;
-    out.push_str("<h2>file containment</h2><table>");
-    if !dc.scanned {
+    // Mutation containment: is each generation's change confined to its spans?
+    let mc = &v.mutation_containment;
+    out.push_str("<h2>mutation containment</h2><table>");
+    if !mc.scanned {
         out.push_str(
             "<tr><th>state</th><td class=\"dim\">not scanned \
-(pass --diff-containment to enable the attestation)</td></tr>",
+(pass --mutation-containment to enable the audit)</td></tr>",
         );
     } else {
-        let quarantined = dc.quarantined.len();
-        let (cls, label) = if quarantined > 0 {
-            ("bad", "OUT-OF-BOUNDS MUTATIONS")
+        let alarms = mc.violated + mc.evidence_mismatch + mc.evidence_withdrawn;
+        let (cls, label) = if alarms > 0 {
+            ("bad", "SOURCE DIFFERS FROM MUTATION EVIDENCE")
+        } else if mc.unverified > 0 {
+            ("dim", "contained where verified")
         } else {
             ("ok", "contained")
         };
         out.push_str(&format!(
             "<tr><th>state</th><td class=\"{cls}\">{label}</td></tr>"
         ));
-        out.push_str(&scanned_at_row(&dc.scanned_at));
-        out.push_str(&format!(
-            "<tr><th>pairs scanned</th><td>{}</td></tr>",
-            dc.pairs_scanned
-        ));
-        if dc.pairs_skipped > 0 {
+        out.push_str(&scanned_at_row(&mc.scanned_at));
+        for (name, count, bad) in [
+            ("contained", mc.contained, false),
+            ("violated", mc.violated, true),
+            ("evidence mismatch", mc.evidence_mismatch, true),
+            ("unverified", mc.unverified, false),
+            ("evidence withdrawn", mc.evidence_withdrawn, true),
+        ] {
+            let cls = if bad && count > 0 { "bad" } else { "" };
             out.push_str(&format!(
-                "<tr><th>pairs skipped</th><td class=\"dim\">{} (fail-open)</td></tr>",
-                dc.pairs_skipped
+                "<tr><th>{name}</th><td class=\"{cls}\">{count}</td></tr>"
             ));
         }
         out.push_str(&format!(
-            "<tr><th>quarantined</th><td class=\"{}\">{}</td></tr>",
-            if quarantined > 0 { "bad" } else { "ok" },
-            quarantined
+            "<tr><th>reused unchanged</th><td class=\"dim\">{}</td></tr>",
+            mc.reused
         ));
     }
     out.push_str("</table>");
-    // The offending generations + files, when any.
-    if dc.scanned {
-        let violations = dc
-            .range_attestations
-            .iter()
-            .filter(|finding| finding.status == crate::range_containment::Status::Violated)
-            .count();
-        out.push_str(&format!(
-            "<h2>mutation containment</h2><table><tr><th>verified pairs</th><td>{}</td></tr>\
-<tr><th>unverified pairs</th><td>{}</td></tr><tr><th>violations</th><td>{}</td></tr></table>",
-            dc.range_pairs_verified, dc.range_pairs_unverified, violations,
-        ));
-        for attestation in &dc.range_attestations {
+    let flagged: Vec<_> = mc
+        .attestations
+        .iter()
+        .filter(|a| a.status != crate::range_containment::Status::Contained)
+        .collect();
+    if !flagged.is_empty() {
+        out.push_str(
+            "<table><tr><th>generation</th><th>parent</th><th>status</th>\
+<th>introduced by</th><th>finding</th></tr>",
+        );
+        for attestation in flagged {
+            let status = serde_json::to_value(attestation.status).unwrap_or_default();
+            let status = match (status.as_str(), attestation.evidence_withdrawn) {
+                (Some(status), true) => format!("{status}, evidence withdrawn"),
+                (status, _) => status.unwrap_or_default().to_string(),
+            };
             for finding in &attestation.findings {
                 out.push_str(&format!(
-                    "<p>{}/{} {}: {} — {}</p>",
+                    "<tr><td>{}/{}</td><td>{}</td><td>{}</td><td>{}</td><td>{} {}: {}</td></tr>",
                     esc(&attestation.epoch_id),
                     esc(&attestation.generation_id),
-                    esc(&finding.path),
+                    esc(&attestation.parent_generation_id),
+                    esc(&status),
+                    esc(attestation
+                        .introduced_by
+                        .as_deref()
+                        .or(attestation.introduced_by_input.as_deref())
+                        .unwrap_or("")),
                     esc(&finding.code),
-                    esc(&finding.detail)
-                ));
-            }
-        }
-    }
-    if !dc.quarantined.is_empty() {
-        out.push_str(
-            "<table><tr><th>generation</th><th>parent</th>\
-<th>file</th><th>diff</th></tr>",
-        );
-        for att in &dc.quarantined {
-            for vio in &att.violations {
-                out.push_str(&format!(
-                    "<tr><td>{}</td><td>{}</td><td class=\"bad\">{}</td><td class=\"bad\">{}</td></tr>",
-                    esc(&att.generation_id),
-                    esc(&att.parent_generation_id),
-                    esc(&vio.path),
-                    vio.kind.as_str(),
+                    esc(&finding.path),
+                    esc(&finding.detail),
                 ));
             }
         }
@@ -915,7 +911,7 @@ mod tests {
                 outcome: Outcome::KilledForcefully,
             }],
             audit_ledger: Default::default(),
-            diff_containment: Default::default(),
+            mutation_containment: Default::default(),
             promotion_gate: Default::default(),
             divergence: Default::default(),
         };
@@ -949,7 +945,7 @@ mod tests {
             summary: "no active runs".into(),
             watchdog_actions: vec![],
             audit_ledger: Default::default(),
-            diff_containment: Default::default(),
+            mutation_containment: Default::default(),
             promotion_gate: Default::default(),
             divergence: Default::default(),
         };

@@ -775,8 +775,7 @@ record), `epoching.py` (contract-hash auto-epoching), `round.py` (the shared
 propose-time seams `build_post_apply_validator` /
 `check_patch_manifest_and_forbidden`),
 `lifecycle_services.py` (heartbeat/harmonograf/meta-loop plumbing),
-`placebo.py`, `containment.py` (diff containment mirroring the
-supervisor's Rust check), and `dashboard_projection.py` (the
+`placebo.py`, and `dashboard_projection.py` (the
 ActiveTournament envelope + durable field-tournament records). Import a
 phase module directly; `zicato.orchestrator` re-exports only the
 loop-level entry points.
@@ -998,7 +997,7 @@ Render discipline follows digest-gated rendering (§4).
 runtime state files (heartbeat, active runs) as its ONLY coupling to the
 Python side; kills wedged or over-deadline worker pids
 (SIGTERM→grace→SIGKILL, `watchdog.rs`, `signal.rs`); runs the alarm-only
-integrity notary scans (`diff_containment.rs`, `promotion_gate.rs`).
+integrity notary scans (`range_containment.rs`, `promotion_gate.rs`).
 Built by `make supervisor`; bundled into the wheel by `hatch_build.py`.
 It is a separate OS process on purpose: it survives a wedged Python event
 loop. Summary in 02-architecture.md §"Where the Rust supervisor sits";

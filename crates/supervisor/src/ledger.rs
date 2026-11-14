@@ -74,7 +74,8 @@ pub enum RecordKind {
     DecisionObserved,
     /// An epoch's contract hash, recorded once.
     ContractChange,
-    /// A diff-containment quarantine finding.
+    /// A mutation-containment alarm. Existing ledgers carry this kind string,
+    /// so it stays fixed for their verification.
     DiffContainmentAlert,
     /// A promotion-gatekeeping contradiction.
     PromotionContradiction,
@@ -800,6 +801,16 @@ impl TransitionObserver {
     }
 }
 
+/// The mutation-containment alarms a ledger records: each pair's latest alarm
+/// (`violated`, `evidence_mismatch`, or `evidence_withdrawn`) keyed by epoch
+/// and generation, and each changed epoch evidence input keyed by epoch and
+/// input name.
+#[derive(Debug, Default)]
+pub struct ContainmentAlarms {
+    pub pairs: HashMap<(String, String), String>,
+    pub inputs: HashSet<(String, String)>,
+}
+
 /// What the ledger already records, loaded when the integrity loop starts
 /// and after a scan panics, so the loop records no decision, contract hash,
 /// alarm or finding a second time.
@@ -809,8 +820,8 @@ pub struct LedgerHistory {
     /// `history_changed` alarm. The first recorded value for each generation
     /// or epoch is the reference later observations are compared against.
     pub observer: TransitionObserver,
-    /// `(epoch_id, generation_id)` of each recorded diff-containment alert.
-    pub diff_alerts: HashSet<(String, String)>,
+    /// The mutation-containment alarms already recorded.
+    pub containment_alarms: ContainmentAlarms,
     /// `(epoch_id, challenger_generation_id)` of each recorded promotion
     /// contradiction.
     pub contradictions: HashSet<(String, String)>,
@@ -846,9 +857,17 @@ impl LedgerHistory {
                         .insert((name, epoch_id, generation_id, observed));
                 }
                 RecordKind::DiffContainmentAlert => {
-                    history
-                        .diff_alerts
-                        .insert(pair("epoch_id", "generation_id"));
+                    let alarms = &mut history.containment_alarms;
+                    match text("alarm") {
+                        Some("epoch_evidence_changed") => {
+                            alarms.inputs.insert(pair("epoch_id", "input"));
+                        }
+                        Some(alarm) => {
+                            let key = pair("epoch_id", "generation_id");
+                            alarms.pairs.insert(key, alarm.to_string());
+                        }
+                        None => {}
+                    }
                 }
                 RecordKind::PromotionContradiction => {
                     let key = pair("epoch_id", "challenger_generation_id");

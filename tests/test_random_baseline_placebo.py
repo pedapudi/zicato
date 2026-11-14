@@ -323,6 +323,8 @@ def test_gauntlet_placebo_always_rejected_and_no_alarm(tmp_path: Path) -> None:
     }
     assert nodes["v1-placebo"]["promoted"] is False
     assert nodes["v1-placebo"]["parent_id"] == "v0"
+    # The placebo publishes byte-range evidence like any challenger.
+    assert _placebo_attestation(workspace, epoch_id, "v1-placebo") == "contained"
 
     # The finding never fires; the report exists for the round.
     report = _round_health(workspace, epoch_id, 1)
@@ -382,7 +384,24 @@ def test_gauntlet_rigged_gate_fires_critical_alarm(
 # ---------------------------------------------------------------------------
 
 
-def _bootstrap_swiss_with_placebo(tmp_path: Path, *, field_size: int) -> tuple[Path, str]:
+def _placebo_attestation(workspace: Path, epoch_id: str, generation_id: str) -> str:
+    """The byte-range containment status of a placebo child against ``v0``."""
+    from zicato.epoch.containment import attest_generation
+
+    generations = workspace / "epochs" / epoch_id / "generations"
+    return attest_generation(
+        workspace,
+        epoch_id=epoch_id,
+        parent_generation_id="v0",
+        generation_id=generation_id,
+        parent_root=generations / "v0" / "snapshot",
+        child_root=generations / generation_id / "snapshot",
+    ).status
+
+
+def _bootstrap_swiss_with_placebo(
+    tmp_path: Path, *, field_size: int, block_on_containment_violation: bool = False
+) -> tuple[Path, str]:
     """A swiss workspace whose contract fields the placebo every round.
 
     Mirrors ``test_orchestrator_multi_challenger._bootstrap_swiss_workspace``
@@ -440,6 +459,7 @@ def _bootstrap_swiss_with_placebo(tmp_path: Path, *, field_size: int) -> tuple[P
                 experimental=ExperimentalConfig(
                     tournament_structures=True, random_baseline_every_n=1
                 ),
+                block_on_containment_violation=block_on_containment_violation,
             )
         ),
         auto_close_previous=False,
@@ -483,6 +503,7 @@ def test_multi_challenger_field_gets_extra_placebo_slot(
     placebo = read_experiment_record(gens / "v3" / "experiment.json")
     assert placebo["hypothesis"]["core_idea"].startswith(PLACEBO_HYPOTHESIS_MARKER)
     assert placebo["outcome"]["tournament_decision"] == "rejected"
+    assert _placebo_attestation(workspace, epoch_id, "v3") == "contained"
 
     # The placebo entered the live envelope as a real competitor slot.
     from zicato.runtime.state import read_active_tournament
@@ -500,3 +521,39 @@ def test_multi_challenger_field_gets_extra_placebo_slot(
         read_experiment_record(gens / gid / "experiment.json") for gid in ("v1", "v2", "v3")
     ]
     assert detect_placebo_promoted(experiments) == []
+
+
+def test_placebo_edited_after_its_evidence_is_refused_in_band(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The placebo scores best, but its source gains a line outside every
+    mutation unit after its evidence is published: with the in-band block on,
+    the crowning is refused with the containment reason."""
+    import zicato.epoch.containment as containment
+
+    workspace, epoch_id = _bootstrap_swiss_with_placebo(
+        tmp_path, field_size=2, block_on_containment_violation=True
+    )
+    install_stub_adapter_factory(monkeypatch)
+    install_telemetry_stubs(
+        monkeypatch,
+        canned_loss_by_gen={"v0": 2.0, "v1": 1.5, "v2": 1.8, "v3": 0.5},
+        canned_pass_by_gen={"v0": True, "v1": True, "v2": True, "v3": True},
+    )
+    publish = containment.write_containment_manifest
+
+    def publish_then_edit_placebo(workspace_root: Path, **kwargs: object) -> object:
+        result = publish(workspace_root, **kwargs)
+        if kwargs["generation_id"] == "v3":
+            source = workspace_root / "epochs" / epoch_id / "generations" / "v3" / "snapshot"
+            agent = source / "agent.py"
+            agent.write_text(agent.read_text() + "ESCAPED = True\n")
+        return result
+
+    monkeypatch.setattr(containment, "write_containment_manifest", publish_then_edit_placebo)
+
+    outcome = run_evolve_once(workspace, epoch_id, evaluation_call_llm)
+
+    assert outcome.tournament_decision == "rejected"
+    assert outcome.rejection_reason.startswith("containment_violation: evidence_mismatch")
+    assert _placebo_attestation(workspace, epoch_id, "v3") == "evidence_mismatch"

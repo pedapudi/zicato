@@ -86,7 +86,7 @@ async fn an_integrity_scan_panic_does_not_stop_later_scans() {
         Duration::from_millis(50),
         Arc::new(WatchdogLog::new()),
         Some(Arc::new(AuditLedger::open(&ledger_dir))),
-        watchdog::DiffContainmentConfig {
+        watchdog::ContainmentConfig {
             enabled: false,
             findings: Default::default(),
         },
