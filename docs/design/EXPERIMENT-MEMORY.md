@@ -342,9 +342,17 @@ Proposed this round, not yet evaluated (diversify away from these):
 ```
 
 An entry from an operator's candidate (queued by `zicato proposer submit`)
-ends its first line with `source:operator` in place of the `prediction:`
-band. The band grades how the proposer's OWN predictions held, so an
-operator's predictions never enter it.
+is one line that ends with `source:operator`, with no `prediction:` band and
+no core idea:
+
+```
+- v7 PROMOTED Δscalar=improved  [coordinator_instruction]  source:operator
+```
+
+An operator can read holdout results, so no text an operator wrote reaches
+the proposer; `PriorExperiment` drops `core_idea` for this source whatever
+its constructor was given. The band grades how the proposer's OWN
+predictions held, so an operator's predictions never enter it.
 
 The framing line reads **"Avoid repeating failures; build on wins."**
 rather than "only do X". The section advises; it does not constrain. The
@@ -562,8 +570,9 @@ The frozen dataclass of §3.2 lives in `zicato.core.experiment` and is
 re-exported from `zicato.core.types`, which lists it in `__all__`. It
 carries ten fields: `generation_id`, `epoch_id`, `core_idea`,
 `modulating`, `decision`, `rejection_reason`, `scalar_score_delta`,
-`same_contract`, `prediction_accuracy` (`None` for an operator entry), and
-`source`, and the six outcome-feedback fields of §3.6. The module-level constant
+`same_contract`, `prediction_accuracy`, and `source` (`core_idea` is empty,
+`prediction_accuracy` is `None` and `predicted_movements` is empty for an
+operator entry), and the six outcome-feedback fields of §3.6. The module-level constant
 `EXPERIMENT_MEMORY_MAX_ENTRIES = 12` sits beside it, so the cap is
 defined once and imported wherever it is applied.
 

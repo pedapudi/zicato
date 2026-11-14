@@ -883,8 +883,10 @@ def _render_prior_experiment_line(
     bracketed targeted mutation-point ids (plus the symbolic rejection
     reason for a rejected entry), and — when the experiment was graded — the
     proposer's hypothesis prediction-accuracy as an advisory ``prediction``
-    calibration band, or ``source:operator`` for an operator's candidate;
-    the second line is the indented core idea. See
+    calibration band; the second line is the indented core idea. An
+    operator's candidate renders as one line that ends ``source:operator``:
+    its core idea is operator-authored text, which the proposer never reads.
+    See
     ``docs/design/EXPERIMENT-MEMORY.md`` §3.5 and
     ``docs/design/FUNCTIONALITY-RECOMMENDATIONS.md`` §4.2.
 
@@ -930,11 +932,12 @@ def _render_prior_experiment_line(
     # Advisory hypothesis prediction-accuracy (diagnostic, never gates) —
     # banded so the proposer reads its own calibration ("did my last
     # predictions hold?") without an exact, climbable number.
-    # An operator's entry is marked, and carries no prediction band: the
-    # band tells the proposer how its OWN predictions held.
+    # An operator's entry is marked, and carries neither a prediction band
+    # (the band tells the proposer how its OWN predictions held) nor a core
+    # idea (an operator can read the holdout, so its text stays out).
     if pe.source == "operator":
-        head = f"{head}  source:operator"
-    elif pe.prediction_accuracy is not None:
+        return f"{head}  source:operator"
+    if pe.prediction_accuracy is not None:
         head = f"{head}  prediction:{_band_prediction_accuracy(pe.prediction_accuracy)}"
     return f"{head}\n    {pe.core_idea}{_render_outcome_feedback(pe, metric_names)}"
 

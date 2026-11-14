@@ -140,7 +140,7 @@ def _journal_section(
     Format:
         ## v{N} — {first line of core_idea}
         **proposed_at**: {ts}
-        **source**: operator {author}, based on {gen}[; takes back ...] (operator only)
+        **source**: operator {author}; holdout access: yes|no (operator only)
         **modulating**: id1, id2, ...
         **core_idea**: {full core_idea — only when it spans >1 line}
         **why**: {full why}
@@ -164,10 +164,8 @@ def _journal_section(
     lines.append("")
     lines.append(f"**proposed_at**: {proposed_at}")
     if operator is not None:
-        source = f"**source**: operator {operator.author}, based on {operator.based_on}"
-        if operator.reverted_points:
-            source += "; takes back the promoted change at " + ", ".join(operator.reverted_points)
-        lines.append(source)
+        access = "yes" if operator.holdout_access else "no"
+        lines.append(f"**source**: operator {operator.author}; holdout access: {access}")
     if hypothesis.modulating:
         lines.append("**modulating**: " + ", ".join(hypothesis.modulating))
     else:
@@ -276,7 +274,7 @@ def _operator_from_dict(d: dict[str, Any] | None) -> OperatorProvenance | None:
         return None
     _complete_fields(d, OperatorProvenance)
     operator = authored_dataclass_from_json(OperatorProvenance, d, path="operator")
-    for key in ("author", "based_on", "queue_id", "submitted_at"):
+    for key in ("author", "queue_id", "submitted_at"):
         if not d[key]:
             raise ValueError(f"operator.{key} must not be empty")
     return operator

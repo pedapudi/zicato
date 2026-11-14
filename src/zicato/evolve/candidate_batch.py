@@ -18,11 +18,7 @@ from zicato.evolve import generation_phase
 from zicato.evolve.generation_phase import PreparedRound
 from zicato.evolve.ingest import _ingest_experiment_into_index, _load_prior_experiments
 from zicato.evolve.lifecycle_services import _now_iso
-from zicato.evolve.operator_slot import (
-    OperatorCandidateRejected,
-    mint_operator_experiment,
-    operator_generations,
-)
+from zicato.evolve.operator_slot import mint_operator_experiment, minted_operator_rounds
 from zicato.evolve.propose_apply import (
     CandidateAttempt,
     _AppliedChallenger,
@@ -33,20 +29,18 @@ from zicato.evolve.propose_apply import (
 )
 from zicato.evolve.round_context import _recombine_pair_for_slot
 from zicato.models_config import load_models_config
+from zicato.proposer.structured import ExperimentParseError
 from zicato.runtime.operator_queue import (
     PendingOperatorRound,
     QueuedCandidate,
-    QueuedRejection,
     QueuedRound,
     consume_operator_round,
     next_operator_round,
-    record_operator_rejections,
 )
 from zicato.util import best_effort
 from zicato.workspace import generation_round_number
 
 if TYPE_CHECKING:
-    from zicato.mutation.policy import MutationPolicy
     from zicato.runtime.resume import ResumePlan
 
 log = logging.getLogger("zicato.orchestrator")
@@ -123,8 +117,9 @@ def _take_operator_round(prepared: PreparedRound, slots: int) -> PendingOperator
         pending = next_operator_round(
             workspace_root,
             epoch_id,
+            champion_id=prepared.parent_generation.id,
             slots=slots,
-            minted=lambda: operator_generations(workspace_root, epoch_id)[0],
+            minted=lambda: minted_operator_rounds(workspace_root, epoch_id),
         )
     except OSError as exc:
         log.warning("operator round queue is unreadable (%s); the round proposes", exc)
@@ -146,29 +141,23 @@ def _mint_operator_slot(
     prepared: PreparedRound,
     queued: QueuedRound,
     candidate: QueuedCandidate,
-    policy: MutationPolicy,
     next_id: str,
     seed: int,
 ) -> Experiment | CandidateRejection:
     """Mint one queued candidate for its slot, or reject it with its findings."""
-    from zicato.epoch.genstore import default_generation_store  # noqa: PLC0415
-
     try:
         return mint_operator_experiment(
-            genstore=default_generation_store(prepared.workspace_root),
             epoch_id=prepared.epoch_id,
             parent_id=prepared.parent_generation.id,
             next_id=next_id,
             round_index=prepared.round_index,
             queued=queued,
             candidate=candidate,
-            policy=policy,
             mutations=prepared.mutations,
             custom_judge_names=prepared.custom_judge_names,
-            adapter=prepared.adapter,
         )
-    except OperatorCandidateRejected as exc:
-        findings = list(exc.findings) or ["the operator candidate cannot be minted"]
+    except ExperimentParseError as exc:
+        findings = [str(exc)]
     log.warning(
         "operator candidate for %s (round %s) cannot enter round %d: %s",
         next_id,
@@ -269,7 +258,7 @@ async def produce_candidate_batch(
         if operator is not None and operator.queued.exclusive
         else requested_size
     )
-    operator_rejections: list[QueuedRejection] = []
+    operator_rejections: list[str] = []
     operator_applied = 0
 
     def _emit_status(record: dict[str, Any]) -> None:
@@ -296,16 +285,10 @@ async def produce_candidate_batch(
         operator_slot: dict[str, Any] = {}
         if operator is not None and offset < len(operator_candidates):
             minted = _mint_operator_slot(
-                prepared, operator.queued, operator_candidates[offset], policy, next_id, offset + 2
+                prepared, operator.queued, operator_candidates[offset], next_id, offset + 2
             )
             if isinstance(minted, CandidateRejection):
-                operator_rejections.append(
-                    QueuedRejection(
-                        candidate=offset,
-                        generation_id=next_id,
-                        reason="; ".join(minted.status["attempt_reasons"]) or minted.reason,
-                    )
-                )
+                operator_rejections.append(f"{next_id}: {minted.reason}")
                 _emit_status(minted.status)
                 field_status.append(minted.status)
                 rejections.append(minted)
@@ -354,14 +337,7 @@ async def produce_candidate_batch(
         challenger = attempt.challenger
         status = attempt.status
         if operator_slot and challenger is None:
-            operator_rejections.append(
-                QueuedRejection(
-                    candidate=offset,
-                    generation_id=next_id,
-                    reason="; ".join(status.get("attempt_reasons") or [])
-                    or str(status.get("reason", "")),
-                )
-            )
+            operator_rejections.append(f"{next_id}: {status.get('reason', '')}")
         if challenger is None:
             field_status.append(status)
             rejections.append(
@@ -468,7 +444,9 @@ async def produce_candidate_batch(
                     rejection_reason="",
                     scalar_score_delta=None,
                     same_contract=True,
-                    source="operator" if operator_slot else "proposer",
+                    # An operator sibling carries no text: PriorExperiment
+                    # drops ``core_idea`` for this source.
+                    source=challenger.experiment.source,
                 )
             )
             sibling_signatures.append(_diversity_signature(challenger.experiment))
@@ -477,23 +455,16 @@ async def produce_candidate_batch(
         field_status.append(status)
         rejections.append(CandidateRejection(next_id, str(status["reason"]), status))
 
-    if operator is not None:
-        # A rejected candidate has no generation and no experiment record, so
-        # its findings go into the queue item; the control log keeps them.
-        with best_effort(
-            "operator round rejections",
-            on_error=lambda exc: log.warning("operator round rejections not recorded: %s", exc),
-        ):
-            record_operator_rejections(workspace_root, operator.queued, operator_rejections)
-        if not operator_applied:
-            # No candidate has a generation, so no settlement will consume the
-            # item: consume it now, with each slot's findings.
-            consume_operator_round(
-                workspace_root,
-                operator.queued.queue_id,
-                reason="rejected before the tournament: "
-                + "; ".join(f"{r.generation_id}: {r.reason}" for r in operator_rejections),
-            )
+    if operator is not None and not operator_applied:
+        # No candidate has a generation, so no settlement will consume the
+        # item: consume it now, with each slot's findings. The round log
+        # keeps the findings of a candidate that a partly applied round
+        # rejected.
+        consume_operator_round(
+            workspace_root,
+            operator.queued.queue_id,
+            reason="rejected before the tournament: " + "; ".join(operator_rejections),
+        )
 
     if diversity_tolerance is not None and diversity_soft_rejected:
         log.info(

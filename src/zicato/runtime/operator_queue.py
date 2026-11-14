@@ -11,9 +11,10 @@ slot; the proposer fills the other slots unless the item is exclusive.
 An item leaves the queue through :func:`~zicato.runtime.control.consume_command`,
 so the control log keeps its full body and the reason:
 
-* the round could not use it (a stale epoch, an unreadable body, more
-  candidates than slots, or no candidate that could be minted) — consumed
-  at once, with the findings;
+* the round could not use it (a stale epoch, a candidate that is not based
+  on the current champion, an unreadable body, more candidates than slots,
+  or no candidate that could be minted) — consumed at once, with the
+  findings;
 * its round settled — consumed by settlement, with the generations;
 * a restarted round found every candidate minted into a settled
   generation — consumed then, because the settlement that should have
@@ -30,7 +31,7 @@ import json
 import logging
 import time
 import uuid
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -40,7 +41,6 @@ from zicato.runtime.control import (
     CMD_CANDIDATE_PREFIX,
     ControlCommand,
     consume_command,
-    list_consumed_commands,
     list_pending_commands,
     write_command,
 )
@@ -119,51 +119,14 @@ class QueuedCandidate:
 
 
 @dataclass(frozen=True, slots=True)
-class QueuedRejection:
-    """A candidate of a queued round that its evolve round could not enter.
-
-    ``candidate`` is the candidate's index in the round (its ``--from``
-    order), ``generation_id`` the slot it would have taken, and ``reason``
-    the findings. The round writes these into the queue item, so the
-    control log keeps them and ``zicato proposer queue`` reports them: a
-    rejected candidate has no generation and no experiment record.
-    """
-
-    candidate: int
-    generation_id: str
-    reason: str
-
-    def body(self) -> dict[str, Any]:
-        return {
-            "candidate": self.candidate,
-            "generation_id": self.generation_id,
-            "reason": self.reason,
-        }
-
-    @classmethod
-    def from_body(cls, body: Any) -> QueuedRejection:
-        if not isinstance(body, dict) or set(body) != {"candidate", "generation_id", "reason"}:
-            raise ValueError("a queued rejection must carry candidate, generation_id and reason")
-        if isinstance(body["candidate"], bool) or not isinstance(body["candidate"], int):
-            raise ValueError("a queued rejection candidate must be an integer")
-        if not isinstance(body["generation_id"], str) or not isinstance(body["reason"], str):
-            raise ValueError("a queued rejection generation_id and reason must be strings")
-        return cls(
-            candidate=body["candidate"],
-            generation_id=body["generation_id"],
-            reason=body["reason"],
-        )
-
-
-@dataclass(frozen=True, slots=True)
 class QueuedRound:
     """One round of operator candidates, as ``zicato proposer submit`` queued it.
 
     The candidates fill the round's first slots in order. ``exclusive`` asks
     the round to run them alone, with no proposal episodes.
     ``holdout_access`` is the author's statement of whether they could read
-    holdout results, or ``None`` when they did not state it. ``rejections``
-    starts empty; the evolve round that takes the item fills it in.
+    holdout results. It is a recorded declaration: nothing reads it to
+    decide anything.
     """
 
     queue_id: str
@@ -171,9 +134,8 @@ class QueuedRound:
     author: str
     submitted_at: str
     candidates: tuple[QueuedCandidate, ...]
+    holdout_access: bool
     exclusive: bool = False
-    holdout_access: bool | None = None
-    rejections: tuple[QueuedRejection, ...] = ()
 
     def body(self) -> dict[str, Any]:
         """The JSON body of the queue file."""
@@ -186,7 +148,6 @@ class QueuedRound:
             "exclusive": self.exclusive,
             "holdout_access": self.holdout_access,
             "candidates": [candidate.body() for candidate in self.candidates],
-            "rejections": [rejection.body() for rejection in self.rejections],
         }
 
     @classmethod
@@ -201,39 +162,29 @@ class QueuedRound:
         for key in ("queue_id", "epoch_id", "author", "submitted_at"):
             if not isinstance(body.get(key), str) or not body[key]:
                 raise ValueError(f"queued round {key} must be a non-empty string")
-        if not isinstance(body.get("exclusive"), bool):
-            raise ValueError("queued round exclusive must be a boolean")
-        holdout_access = body.get("holdout_access")
-        if holdout_access is not None and not isinstance(holdout_access, bool):
-            raise ValueError("queued round holdout_access must be a boolean or null")
+        for key in ("exclusive", "holdout_access"):
+            if not isinstance(body.get(key), bool):
+                raise ValueError(f"queued round {key} must be a boolean")
         candidates = body.get("candidates")
         if not isinstance(candidates, list) or not candidates:
             raise ValueError("a queued round needs a non-empty list of candidates")
-        rejections = body.get("rejections", [])
-        if not isinstance(rejections, list):
-            raise ValueError("queued round rejections must be a list")
         return cls(
             queue_id=body["queue_id"],
             epoch_id=body["epoch_id"],
             author=body["author"],
             submitted_at=body["submitted_at"],
             candidates=tuple(QueuedCandidate.from_body(c) for c in candidates),
+            holdout_access=body["holdout_access"],
             exclusive=body["exclusive"],
-            holdout_access=holdout_access,
-            rejections=tuple(QueuedRejection.from_body(r) for r in rejections),
         )
 
-    def provenance(
-        self, candidate: QueuedCandidate, reverted_points: Sequence[str] = ()
-    ) -> OperatorProvenance:
-        """The provenance that the experiment minted from ``candidate`` records."""
+    def provenance(self) -> OperatorProvenance:
+        """The provenance that every experiment minted from this round records."""
         return OperatorProvenance(
             author=self.author,
-            based_on=candidate.based_on,
             queue_id=self.queue_id,
             submitted_at=self.submitted_at,
             holdout_access=self.holdout_access,
-            reverted_points=tuple(reverted_points),
         )
 
 
@@ -266,24 +217,6 @@ class PendingOperatorRound:
 
     command: ControlCommand
     queued: QueuedRound
-
-
-@dataclass(frozen=True, slots=True)
-class OperatorGeneration:
-    """A generation minted from a queued operator round, with its result so far.
-
-    ``settled`` is whether the generation has an outcome; ``decision`` and
-    ``rejection_reason`` come from that outcome. The round reads ``settled``
-    to decide whether an item can be consumed; ``zicato proposer queue``
-    reports every field.
-    """
-
-    generation_id: str
-    settled: bool
-    based_on: str = ""
-    decision: str | None = None
-    rejection_reason: str = ""
-    reverted_points: tuple[str, ...] = ()
 
 
 def _list_pending(workspace_root: Path) -> list[ControlCommand]:
@@ -329,19 +262,27 @@ def next_operator_round(
     workspace_root: Path,
     epoch_id: str,
     *,
+    champion_id: str,
     slots: int,
-    minted: Callable[[], Mapping[str, Sequence[OperatorGeneration]]],
+    minted: Callable[[], Mapping[str, Mapping[str, bool]]],
 ) -> PendingOperatorRound | None:
     """The oldest queued round that this epoch's next round can take.
 
     Items are read in queue-id order, which is submit order. On the way to
     the first usable item, this consumes the items that can never run: an
-    unreadable body, an item for another epoch, an item with more candidates
-    than the round's ``slots``, and an item whose candidates are all minted
-    into settled generations. It skips, and leaves queued, an item with a
-    candidate minted into a generation that is still pending. ``minted``
-    maps each minted queue id to its generations. It is called only when an
-    item is queued.
+    unreadable body, an item for another epoch, an item whose candidates are
+    all minted into settled generations, an item with a candidate that is
+    not based on ``champion_id``, and an item with more candidates than the
+    round's ``slots``. It skips, and leaves queued, an item with a candidate
+    minted into a generation that is still pending. ``minted`` maps each
+    minted queue id to its generations and whether each has settled. It is
+    called only when an item is queued.
+
+    A candidate is a set of edits to the generation its author copied. Once
+    another generation is the champion, the edits no longer describe a
+    change to it, so the round refuses them and never rebuilds the older
+    tree: that would take back the promoted change at every point the author
+    left alone.
     """
     commands = _pending_candidate_commands(workspace_root)
     if not commands:
@@ -367,13 +308,20 @@ def next_operator_round(
                 f"{epoch_id!r}; check out the current champion again",
             )
             continue
-        items = minted_items.get(queued.queue_id, ())
-        if items and all(item.settled for item in items):
-            generations = ", ".join(item.generation_id for item in items)
-            _consume(cmd, f"operator round already minted as {generations}")
+        items = minted_items.get(queued.queue_id, {})
+        if items and all(items.values()):
+            _consume(cmd, f"operator round already minted as {', '.join(items)}")
             continue
         if items:
             log.info("operator round %s has a pending generation; it stays queued", cmd.arg)
+            continue
+        stale = sorted({c.based_on for c in queued.candidates} - {champion_id})
+        if stale:
+            _consume(
+                cmd,
+                f"operator round edits {', '.join(stale)}, but the champion is now "
+                f"{champion_id}; run `zicato proposer checkout` again and resubmit",
+            )
             continue
         if len(queued.candidates) > slots:
             _consume(
@@ -384,71 +332,6 @@ def next_operator_round(
             continue
         return PendingOperatorRound(command=cmd, queued=queued)
     return None
-
-
-@dataclass(frozen=True, slots=True)
-class OperatorRoundRecord:
-    """One submitted round, as the queue and the control log record it.
-
-    ``queued`` is ``None`` when the body cannot be decoded. ``consumed_at``
-    and ``reason`` are ``None`` while the item is still queued.
-    """
-
-    queue_id: str
-    queued: QueuedRound | None
-    consumed_at: str | None = None
-    reason: str | None = None
-
-
-def _decode(payload: str) -> QueuedRound | None:
-    try:
-        return QueuedRound.from_body(json.loads(payload))
-    except ValueError:
-        return None
-
-
-def operator_round_records(
-    workspace_root: Path, *, queue_id: str | None = None
-) -> list[OperatorRoundRecord]:
-    """The submitted rounds of the workspace, in submit order. Read-only.
-
-    A queued item comes from ``control/candidate/``; a consumed one from its
-    audit record (:func:`~zicato.runtime.control.list_consumed_commands`),
-    which keeps the body and the reason. When both exist, the queue file
-    wins: a crash after the audit write left the item queued, and the next
-    round takes it again. ``queue_id`` reads only that round's records.
-    """
-    records: dict[str, OperatorRoundRecord] = {}
-    for audit in list_consumed_commands(workspace_root, CMD_CANDIDATE_PREFIX, arg=queue_id):
-        if audit.arg:
-            records[audit.arg] = OperatorRoundRecord(
-                queue_id=audit.arg,
-                queued=_decode(audit.payload),
-                consumed_at=audit.consumed_at or None,
-                reason=audit.reason,
-            )
-    for cmd in _pending_candidate_commands(workspace_root):
-        if queue_id is None or cmd.arg == queue_id:
-            records[cmd.arg] = OperatorRoundRecord(queue_id=cmd.arg, queued=_decode(cmd.payload))
-    return [records[key] for key in sorted(records)]
-
-
-def record_operator_rejections(
-    workspace_root: Path, queued: QueuedRound, rejections: Sequence[QueuedRejection]
-) -> None:
-    """Write the round's rejected candidates into the queue item.
-
-    The round calls this under its writer lease, before settlement or a
-    consume copies the item into the control log. It replaces what an earlier,
-    discarded attempt recorded, and writes nothing when the list is unchanged
-    or the item is gone.
-    """
-    current = tuple(rejections)
-    if current == queued.rejections:
-        return
-    if not any(cmd.arg == queued.queue_id for cmd in _list_pending(workspace_root)):
-        return
-    enqueue_operator_round(workspace_root, replace(queued, rejections=current))
 
 
 def consume_operator_round(workspace_root: Path, queue_id: str, *, reason: str) -> bool:
@@ -463,16 +346,11 @@ def consume_operator_round(workspace_root: Path, queue_id: str, *, reason: str) 
 __all__ = [
     "CONSUMER_SOURCE",
     "QUEUED_ROUND_FORMAT",
-    "OperatorGeneration",
-    "OperatorRoundRecord",
     "PendingOperatorRound",
     "QueuedCandidate",
-    "QueuedRejection",
     "QueuedRound",
     "consume_operator_round",
     "enqueue_operator_round",
     "new_queue_id",
     "next_operator_round",
-    "operator_round_records",
-    "record_operator_rejections",
 ]

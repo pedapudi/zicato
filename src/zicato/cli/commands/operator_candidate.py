@@ -1,4 +1,4 @@
-"""``zicato proposer checkout`` / ``submit`` / ``queue`` — queue an operator round.
+"""``zicato proposer checkout`` / ``submit`` — queue an operator round.
 
 An operator, or an agent that works for one, can enter candidates into the
 next evolve round without proposal episodes:
@@ -14,15 +14,21 @@ next evolve round without proposal episodes:
 
 The next round puts the queued candidates in its first slots
 (:mod:`zicato.runtime.operator_queue`); the proposer fills the other slots
-unless the round is exclusive. If a promotion happens first, each operator
-version runs as written against the new champion. ``queue`` reports what
-each submitted round did.
+unless the round is exclusive. A candidate is a change to the champion its
+author copied: if another generation is promoted first, ``submit`` and the
+round both refuse it, and the author checks out again. The round's result
+is in the epoch's ``journal.md`` and each generation's ``experiment.json``;
+``control_log/`` keeps every queued item with the reason it left the queue.
 
-None of the commands takes the workspace writer lock or administers git
-worktrees: ``checkout`` and ``queue`` read, and ``submit`` validates in
-scratch directories and writes one queue file. All can run while
-``zicato evolve`` runs on the same workspace. Each prints one JSON object,
-also when it refuses; a refusal exits 1.
+Nothing an operator writes as free text reaches the proposer or its critic.
+They see that a candidate with the source ``operator`` exists, the mutation
+points it names, and its decision and banded outcome.
+
+Neither command takes the workspace writer lock or administers git
+worktrees: ``checkout`` reads, and ``submit`` validates in scratch
+directories and writes one queue file. Both can run while ``zicato evolve``
+runs on the same workspace. Each prints one JSON object, also when it
+refuses; a refusal exits 1.
 """
 
 from __future__ import annotations
@@ -38,12 +44,7 @@ from typing import Any, NoReturn
 
 import click
 
-from zicato.core.types import MutationPoint, Patch
-from zicato.runtime.operator_queue import (
-    OperatorGeneration,
-    OperatorRoundRecord,
-    operator_round_records,
-)
+from zicato.core.types import MutationPoint
 
 #: The record ``checkout`` writes beside the copy. ``submit`` reads it.
 CHECKOUT_RECORD = "checkout.json"
@@ -64,10 +65,12 @@ _WORKFLOW_EPILOG = (
     "  zicato proposer checkout --into /tmp/b\n"
     "  # edit /tmp/a/source/ and /tmp/b/source/ inside the mutation points\n"
     "  # fill in /tmp/a/hypothesis.json and /tmp/b/hypothesis.json\n"
-    "  zicato proposer submit --from /tmp/a --from /tmp/b --author NAME\n"
+    "  zicato proposer submit --from /tmp/a --from /tmp/b --author NAME \\\n"
+    "      --holdout-access no\n"
     "  zicato evolve --rounds 1      # calls models: needs the operator's go-ahead;\n"
     "                                # or let a running loop take the round\n"
-    "  zicato proposer queue --queue-id ID   # what the round did\n"
+    "  # the result: journal.md and generations/<id>/experiment.json of the epoch;\n"
+    "  # control_log/ keeps the queued item and the reason it left the queue\n"
     "\n"
     "\b\n"
     "Hypothesis fields (the proposer's schema; no other keys):\n"
@@ -80,11 +83,12 @@ _WORKFLOW_EPILOG = (
     "  risks                      optional text\n"
     "\n"
     "\b\n"
-    "The proposer later reads the hypothesis as written: never name holdout\n"
-    "entries or their results in it.\n"
+    "The proposer and its critic never read the hypothesis text. They see only\n"
+    "that an operator candidate exists, its mutation points, and its banded\n"
+    "outcome. A candidate is refused once another generation is the champion.\n"
     "\n"
     "\b\n"
-    "Guide: skills/zicato-submit-candidates/SKILL.md\n"
+    "Guide: skills/zicato-step-loop/SKILL.md\n"
     "Schema: docs/design/EPOCHS-AND-JOURNALING.md section 3.1\n"
 )
 
@@ -376,7 +380,7 @@ class _CheckedCopy:
     directory: Path
     based_on: str
     hypothesis: dict[str, Any]
-    patches: list[Patch] = field(default_factory=list)
+    patches: list[dict[str, Any]] = field(default_factory=list)
     findings: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
@@ -413,9 +417,9 @@ def _check_copy(
 ) -> None:
     """Project one edited copy and validate it as a proposer's output is validated."""
     from zicato.evolve.operator_slot import (  # noqa: PLC0415
-        operator_rationale,
         parse_operator_experiment,
-        patch_document,
+        patch_documents,
+        queued_patch_body,
     )
     from zicato.evolve.round_api import declared_custom_judge_names  # noqa: PLC0415
     from zicato.mutation.policy import MutationPolicy  # noqa: PLC0415
@@ -438,13 +442,14 @@ def _check_copy(
             tree, surface.points, brief.forbidden_ids, enumeration_roots=surface.roots
         )
         try:
-            copy.patches = project_working_copy(policy, copy.directory / SOURCE_DIR)
+            projected = project_working_copy(policy, copy.directory / SOURCE_DIR)
         except EditOutsideMutationPointError as exc:
             copy.findings = list(exc.findings)
             return
-        if not copy.patches:
+        if not projected:
             copy.findings = ["the copy is unchanged; edit a declared mutation point first"]
             return
+        copy.patches = [queued_patch_body(patch) for patch in projected]
         try:
             parse_operator_experiment(
                 copy.hypothesis,
@@ -471,10 +476,9 @@ def _check_copy(
             forbidden_ids=tuple(brief.forbidden_ids),
             mutation_policy=policy,
         )
-        rationale = operator_rationale(copy.hypothesis)
         with bind_proposer_tool_context(context):
             report = json.loads(
-                validate_patches(json.dumps([patch_document(p, rationale) for p in copy.patches]))
+                validate_patches(json.dumps(patch_documents(copy.hypothesis, copy.patches)))
             )
     copy.findings = [str(error) for error in report.get("errors") or ()]
     stages = report.get("stages") or {}
@@ -503,8 +507,10 @@ def _check_copy(
 @click.option(
     "--holdout-access",
     type=click.Choice(["yes", "no"]),
-    default=None,
-    help="Whether the author could read holdout results. Recorded with each candidate.",
+    required=True,
+    help="Whether the author could read holdout results. A declaration only: it is "
+    "recorded with each candidate and printed in the journal, and it changes nothing "
+    "about how the round runs.",
 )
 @click.option(
     "--exclusive",
@@ -522,7 +528,7 @@ def _check_copy(
 def submit_cmd(
     from_dirs: Sequence[str],
     author: str,
-    holdout_access: str | None,
+    holdout_access: str,
     exclusive: bool,
     workspace: str | None,
 ) -> None:
@@ -541,7 +547,7 @@ def submit_cmd(
         lambda: _submit(
             [Path(d).resolve() for d in from_dirs],
             author=author,
-            holdout_access=None if holdout_access is None else holdout_access == "yes",
+            holdout_access=holdout_access == "yes",
             exclusive=exclusive,
             workspace=None if workspace is None else Path(workspace).resolve(),
         )
@@ -552,7 +558,7 @@ def _submit(
     directories: list[Path],
     *,
     author: str,
-    holdout_access: bool | None,
+    holdout_access: bool,
     exclusive: bool,
     workspace: Path | None,
 ) -> dict[str, Any]:
@@ -560,7 +566,7 @@ def _submit(
         driver_import_scope,
         workspace_driver_imports,
     )
-    from zicato.evolve.operator_slot import queued_patch_body  # noqa: PLC0415
+    from zicato.evolve.generation_phase import current_generation  # noqa: PLC0415
     from zicato.runtime.operator_queue import (  # noqa: PLC0415
         QueuedCandidate,
         QueuedRound,
@@ -594,6 +600,17 @@ def _submit(
         _refuse(
             f"The workspace is now in epoch {epoch_id!r}, so these copies are stale: "
             f"{', '.join(stale)}. Check out the current champion again."
+        )
+    champion = current_generation(workspace_root, epoch_id)
+    stale = [
+        f"{d} ({r['based_on']})"
+        for d, r in zip(directories, records, strict=True)
+        if r["based_on"] != champion
+    ]
+    if stale:
+        _refuse(
+            f"The champion is now {champion}, so these copies edit an older generation: "
+            f"{', '.join(stale)}. Run `zicato proposer checkout` again and redo the edit."
         )
     contract = _load_contract(workspace_root, epoch_id)
     slots = _field_size(contract)
@@ -633,12 +650,12 @@ def _submit(
             QueuedCandidate(
                 based_on=copy.based_on,
                 hypothesis=copy.hypothesis,
-                patches=tuple(queued_patch_body(patch) for patch in copy.patches),
+                patches=tuple(copy.patches),
             )
             for copy in copies
         ),
-        exclusive=exclusive,
         holdout_access=holdout_access,
+        exclusive=exclusive,
     )
     path = enqueue_operator_round(workspace_root, queued)
     return {
@@ -649,118 +666,9 @@ def _submit(
         "epoch": epoch_id,
         "slots": slots,
         "exclusive": exclusive,
+        "holdout_access": holdout_access,
         "candidates": [copy.report() for copy in copies],
     }
 
 
-def _round_status(
-    record: OperatorRoundRecord, generations: Sequence[OperatorGeneration]
-) -> dict[str, Any]:
-    """One submitted round's state, read from its records alone.
-
-    The generations decide first: a round with generations is ``settled``
-    once every one has an outcome, else ``running``, also while a crash left
-    its queue file behind. A round with no generation is ``queued`` while its
-    file exists, else ``rejected``.
-    """
-    if generations:
-        state = "settled" if all(g.settled for g in generations) else "running"
-    else:
-        state = "queued" if record.consumed_at is None else "rejected"
-    queued = record.queued
-    return {
-        "queue_id": record.queue_id,
-        "state": state,
-        "epoch": None if queued is None else queued.epoch_id,
-        "author": None if queued is None else queued.author,
-        "submitted_at": None if queued is None else queued.submitted_at,
-        "exclusive": None if queued is None else queued.exclusive,
-        "candidates": None if queued is None else len(queued.candidates),
-        "generations": [
-            {
-                "generation_id": g.generation_id,
-                "based_on": g.based_on,
-                "decision": g.decision,
-                "rejection_reason": g.rejection_reason,
-                "reverted_points": list(g.reverted_points),
-            }
-            for g in generations
-        ],
-        "rejected_candidates": []
-        if queued is None
-        else [rejection.body() for rejection in queued.rejections],
-        "consumed_at": record.consumed_at,
-        "reason": record.reason,
-    }
-
-
-@click.command(
-    name="queue",
-    short_help="Show what happened to submitted operator rounds.",
-    epilog=(
-        "\b\n"
-        "States:\n"
-        "  queued    waiting for an evolve round\n"
-        "  running   minted into a round that has not settled yet\n"
-        "  settled   ran; each generation carries its decision\n"
-        "  rejected  left the queue without running; see reason\n"
-        "\n"
-        "\b\n"
-        "Guide: skills/zicato-submit-candidates/SKILL.md\n"
-    ),
-)
-@click.option(
-    "--workspace",
-    default=".zicato",
-    type=click.Path(),
-    show_default=True,
-    help="Path to the zicato workspace directory.",
-)
-@click.option(
-    "--queue-id",
-    default=None,
-    help="The queue_id that `zicato proposer submit` printed. Omit it to list every round.",
-)
-def queue_cmd(workspace: str, queue_id: str | None) -> None:
-    """Show the state of submitted operator rounds. Read-only; prints JSON.
-
-    Reads the queue, the control log and the experiments that carry each
-    queue id. It takes no lock, so it is safe while `zicato evolve` runs.
-    With --queue-id it prints one round, and exits 1 when no submitted round
-    has that id.
-    """
-    _run_json(lambda: _queue(Path(workspace).resolve(), queue_id))
-
-
-def _queue(workspace_root: Path, queue_id: str | None) -> dict[str, Any]:
-    from zicato.evolve.operator_slot import operator_generations  # noqa: PLC0415
-
-    _workspace_config(workspace_root)
-    records = operator_round_records(workspace_root, queue_id=queue_id)
-    if queue_id is not None and not records:
-        _refuse(f"No submitted round has queue id {queue_id!r} in {workspace_root}.")
-    by_epoch: dict[str, dict[str, list[OperatorGeneration]]] = {}
-    record_errors: list[str] = []
-    rounds = []
-    for record in records:
-        epoch_id = None if record.queued is None else record.queued.epoch_id
-        if epoch_id is not None and epoch_id not in by_epoch:
-            by_epoch[epoch_id], errors = operator_generations(workspace_root, epoch_id)
-            record_errors.extend(errors)
-        generations = by_epoch[epoch_id].get(record.queue_id, []) if epoch_id else []
-        rounds.append(_round_status(record, generations))
-    # An unreadable experiment record hides its generation, so a round that
-    # reads as ``queued`` or ``rejected`` may have run; say so.
-    payload: dict[str, Any] = {
-        "ok": True,
-        "workspace": str(workspace_root),
-        "record_errors": record_errors,
-    }
-    if queue_id is not None:
-        payload["round"] = rounds[0]
-    else:
-        payload["rounds"] = rounds
-    return payload
-
-
-__all__ = ["checkout_cmd", "queue_cmd", "submit_cmd"]
+__all__ = ["checkout_cmd", "submit_cmd"]

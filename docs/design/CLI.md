@@ -38,7 +38,7 @@ board
 epoch
   close | gc | list | new | register | rounds | set-goal | switch
 proposer
-  checkout | propose | queue | scorecard | submit
+  checkout | propose | scorecard | submit
 tournament
   run
 inspect
@@ -59,8 +59,7 @@ for the full flags.
 | Validate setup without model requests | `zicato inspect setup` |
 | Generate one candidate | `zicato proposer propose` |
 | Copy the champion for an operator candidate | `zicato proposer checkout --into DIR` |
-| Queue operator candidates as the next round | `zicato proposer submit --from DIR [--from DIR ...] --author NAME [--exclusive]` |
-| See what happened to a queued round | `zicato proposer queue [--queue-id ID]` |
+| Queue operator candidates as the next round | `zicato proposer submit --from DIR [--from DIR ...] --author NAME --holdout-access yes\|no [--exclusive] [--workspace PATH]` |
 | Run one isolated comparison | `zicato tournament run PARENT CHILD` |
 | Audit mutation points | `zicato inspect mutations` |
 | Read structured logs | `zicato inspect logs` |
@@ -77,12 +76,18 @@ for the full flags.
 
 - `evolve` remains self-orchestrating. The advanced commands are debugging
   and recovery tools, and no setup step requires them.
-- `proposer checkout`, `proposer submit` and `proposer queue` take no workspace lock and
+- `proposer checkout` and `proposer submit` take no workspace lock and
   administer no git worktrees, so they can run while `evolve` runs. `submit`
   only queues a round of candidates, at most one per field slot; the next
-  round mints, measures, and settles them like proposer candidates. Each
-  command prints one JSON object; a refusal exits 1, with the findings. The
-  operator guide is `skills/zicato-submit-candidates`.
+  round mints, measures, confirms on the holdout and settles them like
+  proposer candidates. A candidate must edit the current champion: `submit`
+  and the round refuse one that edits an older generation. `--holdout-access`
+  is required and is a recorded declaration only. The proposer never reads
+  an operator's hypothesis or diff. Each command prints one JSON object; a
+  refusal exits 1, with the findings. The result is in the epoch's
+  `journal.md`, and `runtime/control_log/` keeps each queued item with the
+  reason it left the queue. The operator guide is a section of
+  `skills/zicato-step-loop`.
 - Every `evolve` invocation runs the workspace validators at the public spend
   boundary before auto-epoching or model spend, and refuses to start on any
   finding that would make the round unmeasurable. `--dry-run` runs the same

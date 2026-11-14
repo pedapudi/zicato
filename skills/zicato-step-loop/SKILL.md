@@ -64,11 +64,11 @@ $Z tournament run v3 v4 --replicates 1        # force a replicate count for this
 
 ## Hand-written candidates for the next round
 
-The full guide is `skills/zicato-submit-candidates`. In short: an operator,
-or an agent, can write candidates and queue them as one round.
-The next `evolve` round runs them in its first slots under the normal gate.
-Neither command takes the workspace lock, so both work while `evolve` runs,
-and neither calls a model.
+An operator, or an agent, can write candidates and queue them as one round.
+The next `evolve` round runs them in its first slots, with the same board,
+replicates, gate, holdout confirmation and holdout query budget as a
+proposer candidate. Neither command takes the workspace lock, so both work
+while `evolve` runs, and neither calls a model.
 
 ```sh
 $Z proposer checkout --into /tmp/a            # copies the current champion
@@ -77,22 +77,39 @@ $Z proposer checkout --into /tmp/b            # once for each candidate
 #   fill in each hypothesis.json (the proposer's hypothesis schema)
 $Z proposer submit --from /tmp/a --from /tmp/b --author <who> --holdout-access no
 $Z evolve --rounds 1                          # LLM — gated: runs the round
-$Z proposer queue --queue-id <queue_id>       # queued / running / settled / rejected
 ```
 
-- `submit` prints one JSON object. It exits 1 with `findings` when an edit
-  leaves a mutation point, a hypothesis does not parse, or the round has more
+- `checkout` writes `source/` (the copy to edit), `hypothesis.json` (a
+  template), `evidence/` (the brief, the mutation inventory and the captured
+  proposer inputs: what the proposer may see) and `checkout.json`.
+- `submit` prints one JSON object with the `queue_id`. It exits 1 with
+  `findings` when an edit leaves a mutation point, a hypothesis does not
+  parse, the champion changed since the checkout, or the round has more
   candidates than the field has slots; nothing is queued then.
 - Without `--exclusive`, the proposer fills the other slots of a wide field.
   With it, the round runs only your candidates.
-- If a promotion happens before the round, each candidate runs as written
-  against the new champion, and its record names the points where it takes
-  back the promoted change.
-- Read only `evidence/` and the source when you write a candidate as an
-  agent. The workspace also holds holdout results, and a candidate written
-  from them can fit the holdout. Your hypothesis text reaches the proposer
-  as written, so keep entry ids, task text and holdout results out of it.
-  Say what you read with `--holdout-access`.
+- A candidate is a change to the champion you copied. If another generation
+  is promoted before the round, the round refuses the item and tells you to
+  check out again. It never rebuilds your older tree, which would take back
+  the promoted change at points you did not touch.
+- `--holdout-access yes|no` is required. It is a declaration, recorded with
+  each candidate and printed in the journal; it changes nothing about how
+  the round runs. Say `no` only when the author read nothing but `evidence/`
+  and the source: the workspace also holds holdout results, and a candidate
+  written from them can fit the holdout.
+- The proposer and its critic never read your hypothesis or your diff. They
+  see that a candidate with `source:operator` exists, its mutation points,
+  and its decision and banded outcome.
+- Every candidate that gets a generation is in the journal, also a rejected
+  one, so many small tries against one board show up as the hill-climb by
+  hand that they are.
+
+To read the result, open `journal.md` (each operator section has a
+`**source**: operator <author>; holdout access: <yes|no>` line) and
+`generations/<id>/experiment.json` (the `operator` object). The queued item
+itself moves to `.zicato/runtime/control_log/` with the reason it left the
+queue: `minted as v3, v4; round 2 settled`, `rejected before the tournament:
+…`, or the reason the round could not take it.
 
 `proposer propose` runs the same episode a round runs, but it assembles only
 part of the round's context: the brief and skills, the mutation manifest, the
@@ -128,7 +145,8 @@ All paths are under `.zicato/epochs/<epoch>/`:
 - `proposals/<vN>.json` — experiments written by `proposer propose` only.
 - `.zicato/runtime/control/candidate/<queue_id>` — a queued operator
   round. It leaves the queue, with a record in `runtime/control_log/`, when
-  its round settles or when the round rejects every candidate.
+  its round settles, when the round rejects every candidate, or when the
+  round cannot take it.
 
 Read these between stages rather than re-running. After any hand-edit of a
 canonical file, run `zicato repair index` so `index.db` re-derives (see
