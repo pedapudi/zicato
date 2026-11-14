@@ -93,15 +93,25 @@ def _dimension_weight(name: str, weights: ScoringWeights) -> float:
     metric. This is the weight the proposer's scored targets are ranked by.
     """
     namespace, _, leaf = name.partition(":")
-    if name == "failure:tasks":
-        within = weights.task_failure_weight
-    elif name == "failure:not_completed":
-        within = weights.not_completed_weight
-    elif namespace == "judge":
-        within = weights.per_judge_weights.get(leaf, weights.default_judge_weight)
-    else:
-        within = 1.0
+    within = {
+        "failure:tasks": weights.task_failure_weight,
+        "failure:not_completed": weights.not_completed_weight,
+        f"judge:{leaf}": weights.per_judge_weights.get(leaf, weights.default_judge_weight),
+    }.get(name, 1.0)
     return abs(float(weights.namespace_weights.get(f"{namespace}:", 0.0)) * float(within))
+
+
+def uses_dimension_axes(weights: ScoringWeights) -> bool:
+    """Whether the contract enables a consumer of the record.
+
+    The dimension axes exist for the two opt-in consumers
+    (``experimental.recombine_pool: "frontier"`` and
+    ``experimental.frontier_steering``). Every extra axis is one more chance
+    for a candidate no better than the champion to clear the margin by noise,
+    so a contract with neither consumer keeps the namespace axes alone.
+    """
+    experimental = weights.experimental
+    return experimental.recombine_pool == "frontier" or experimental.frontier_steering
 
 
 def frontier_axes(
@@ -131,11 +141,13 @@ def frontier_axes(
     metrics a board reports. They follow the namespaces, ordered by contract
     weight then name, at most :data:`FRONTIER_DIMENSION_CAP` of them. A
     namespace with one dimension contributes none: that dimension is the
-    namespace axis. With no ``aggregate`` the result is the namespace axes.
+    namespace axis. With no ``aggregate``, or under a contract that enables
+    no consumer of the record (:func:`uses_dimension_axes`), the result is the
+    namespace axes.
     """
     namespaces = tuple(sorted(ns for ns, w in weights.namespace_weights.items() if float(w) != 0.0))
     raw = (aggregate or {}).get(DIMENSION_AGGREGATES_KEY) or {}
-    if not isinstance(raw, Mapping):
+    if not isinstance(raw, Mapping) or not uses_dimension_axes(weights):
         return namespaces
     per_namespace: dict[str, list[str]] = {}
     for name in raw:
@@ -547,12 +559,14 @@ def confirm_member(
     axis, so those draws overstate it, and after a promotion they describe a
     comparison with a champion that has been replaced.
 
-    The member is REFRESHED when the fresh values still beat the champion by
-    ``promote_margin`` on at least one axis and regress no monotonicity
-    namespace: it takes the fresh axis values and scalar, the axes it now
-    wins on, this champion's id, and ``confirmed_round``. Otherwise it is
-    RETIRED with reason ``unconfirmed``. Dominance between members is not
-    re-run: the other members' values come from different draws.
+    The member is REFRESHED when the fresh values beat the champion by
+    ``promote_margin`` on at least one axis it was RECORDED as winning, and
+    regress no monotonicity namespace: it takes the fresh axis values and
+    scalar, every axis it now wins on, this champion's id, and
+    ``confirmed_round``. Otherwise it is RETIRED with reason ``unconfirmed``:
+    a fresh win on some other axis is a new observation and replicates
+    nothing. Dominance between members is not re-run: the other members'
+    values come from different draws.
 
     A generation that is not a member, or a placebo champion, changes
     nothing.
@@ -567,7 +581,9 @@ def confirm_member(
     champion_values = axis_values(champion.aggregate, axes)
     beats = beats_on(values, champion_values, margin=float(weights.promote_margin))
     others = tuple(m for m in frontier.members if m is not current)
-    if not beats or regressed_namespaces(dict(champion.aggregate), dict(member.aggregate), weights):
+    if not set(beats) & set(current.beats_champion_on) or regressed_namespaces(
+        dict(champion.aggregate), dict(member.aggregate), weights
+    ):
         retired = (
             *frontier.retired,
             RetiredMember(member=current, round_retired=round_index, reason=RETIRED_UNCONFIRMED),
@@ -626,9 +642,9 @@ def render_frontier_tradeoffs(frontier: ParetoFrontier) -> str:
         )
         scalar = "n/a" if member.scalar is None else f"{member.scalar:.4f}"
         confirmed = (
-            "no (selection draws)"
+            "unconfirmed (single measurement)"
             if member.confirmed_round is None
-            else f"round {member.confirmed_round}"
+            else f"confirmed (round {member.confirmed_round})"
         )
         rows.append(
             f"| `{member.generation_id}` | {wins or 'none recorded'} | {scalar} "
@@ -641,8 +657,8 @@ def render_frontier_tradeoffs(frontier: ParetoFrontier) -> str:
             f"Rejected candidates of epoch `{frontier.epoch_id}` that beat the champion by at"
             f" least the promote margin ({frontier.margin:g} scalar points) on a scored axis,"
             " lost on the weighted scalar, and are dominated by no other candidate listed. Lower"
-            " is better on every axis and on the scalar. A row that is not confirmed rests on"
-            " the draws that selected it, which favour it.",
+            " is better on every axis and on the scalar. An unconfirmed row rests on the one"
+            " measurement that selected it, which favours it and may be noise.",
             "",
             *rows,
             "",
@@ -815,16 +831,18 @@ def frontier_tradeoffs_section(workspace_root: Path, epoch_id: str) -> str:
     """One epoch's trade-off table read from its canonical record.
 
     What ``analysis.md`` and the epoch-close output print. Empty when the
-    epoch has no members, and when the record is unreadable: a report must
-    still be written beside a record that needs repair.
+    epoch has no members. Total: a record that cannot be read or rendered,
+    for any reason, yields an empty section and one warning, because a
+    report and an epoch close must still complete beside a record that needs
+    repair.
     """
-    import json  # noqa: PLC0415
-
-    from zicato.epoch._storage import RecordFormatError  # noqa: PLC0415
-
     try:
         return render_frontier_tradeoffs(load_frontier(workspace_root, epoch_id))
-    except (OSError, json.JSONDecodeError, RecordFormatError):
+    except Exception as exc:  # noqa: BLE001 — a record must never fail a close
+        import logging  # noqa: PLC0415
+
+        message = "frontier: epoch %s — unreadable record, trade-off table is omitted (%s)"
+        logging.getLogger("zicato.orchestrator").warning(message, epoch_id, exc)
         return ""
 
 
@@ -884,4 +902,5 @@ __all__ = [
     "render_frontier_tradeoffs",
     "save_frontier",
     "update_frontier",
+    "uses_dimension_axes",
 ]

@@ -53,9 +53,12 @@ from zicato.core.types import (
 from zicato.core.workspace import run_id_for_unit
 from zicato.epoch import journal
 from zicato.epoch.pareto import FrontierMember, ParetoFrontier, load_frontier, save_frontier
-from zicato.epoch.recombine import RECOMBINE_CONFIRM_MAX, eligible_parents, rank_pairs
-from zicato.evolve import round_context
-from zicato.evolve.pareto import frontier_confirmer, unimproved_dimensions
+from zicato.epoch.recombine import RECOMBINE_CONFIRM_MAX, rank_pairs
+from zicato.evolve.pareto import (
+    frontier_confirmer,
+    measured_dimensions,
+    unimproved_dimensions,
+)
 from zicato.evolve.round_context import (
     _build_candidate_history,
     _build_frontier_recombination_pair,
@@ -177,11 +180,6 @@ def _select(kwargs: dict[str, Any], confirm: Any) -> Any:
     return asyncio.run(_build_frontier_recombination_pair(**kwargs, confirm=confirm))
 
 
-@pytest.fixture(autouse=True)
-def _forget_logged_epochs() -> None:
-    round_context._NO_FRONTIER_PAIR_LOGGED.clear()
-
-
 # ---------------------------------------------------------------------------
 # The pure selector
 # ---------------------------------------------------------------------------
@@ -192,9 +190,6 @@ def test_without_wins_the_selector_is_the_rejects_selector() -> None:
     a = _candidate("v1", mutation_ids=("m1",), improved=("e1",))
     b = _candidate("v2", mutation_ids=("m2",), improved=("e2",))
     assert rank_pairs([a, b]) == rank_pairs([a, b], wins=None) == (a, b)
-    stale = _candidate("v3", parent="v1", mutation_ids=("m3",))
-    assert eligible_parents([stale], champion_id="v4", manifest_ids=frozenset({"m3"})) == []
-    assert eligible_parents([stale], champion_id=None, manifest_ids=frozenset({"m3"})) == [stale]
 
 
 def test_a_frontier_pair_needs_disjoint_non_empty_wins() -> None:
@@ -274,12 +269,10 @@ def test_the_frontier_pool_never_falls_back_to_the_rejects(tmp_path: Path, caplo
     assert _build_candidate_history(**history)[0] is None
 
     confirm = _Confirm([])
-    with caplog.at_level(logging.INFO, logger="zicato.orchestrator"):
+    with caplog.at_level(logging.DEBUG, logger="zicato.orchestrator"):
         assert _select(kwargs, confirm) is None
-        assert _select(kwargs, confirm) is None
-    notes = [r for r in caplog.records if "no confirmed pair" in r.getMessage()]
-    assert len(notes) == 1  # the second round of the epoch says nothing
-    assert "rejects pool is not used" in notes[0].getMessage()
+    assert "0 member(s)" in caplog.text
+    assert "rejects pool is not used" in caplog.text
     assert confirm.calls == []
 
 
@@ -377,40 +370,62 @@ def test_confirmation_spend_is_capped_per_round(tmp_path: Path, caplog) -> None:
         [_experiment(EPOCH, gid, mutation_id=f"m{gid[1:]}") for gid in gids],
     )
     confirm = _Confirm(members, **dict.fromkeys(gids))
-    with caplog.at_level(logging.INFO, logger="zicato.orchestrator"):
+    with caplog.at_level(logging.DEBUG, logger="zicato.orchestrator"):
         assert _select(kwargs, confirm) is None
     assert len(confirm.calls) == RECOMBINE_CONFIRM_MAX == 4
-    assert f"{RECOMBINE_CONFIRM_MAX} confirmation(s) this round" in caplog.text
+    assert f"{RECOMBINE_CONFIRM_MAX} confirmation(s))" in caplog.text
 
 
-def test_a_member_whose_patch_would_overwrite_a_later_promotion_is_not_pooled(
-    tmp_path: Path,
-) -> None:
-    """v3 was promoted over v0 by editing m1; v1 patches m1 from v0's tree."""
+def test_a_member_from_an_earlier_reign_is_not_a_recombination_parent(tmp_path: Path) -> None:
+    """v3 was promoted over v0. v1 and v2 were proposed against v0.
+
+    Their own trees lack v3's edit, so a win measured on those trees says
+    nothing about the champion's tree with their patch applied. They stay on
+    the record and are never merged; v4 and v5 were proposed against v3.
+    """
     members = [
         _member("v1", "cost:", champion="v3"),
         _member("v2", "rubric:a", champion="v3"),
         _member("v4", "judge:tone", champion="v3"),
         _member("v5", "rubric:b", champion="v3"),
     ]
-    kwargs = _seed(
-        tmp_path,
-        EPOCH,
-        members,
-        [
-            _experiment(EPOCH, "v1", mutation_id="m1"),
-            _experiment(EPOCH, "v2", mutation_id="m2"),
-            _experiment(EPOCH, "v3", mutation_id="m1", decision="promoted"),
-            _experiment(EPOCH, "v4", mutation_id="m4", parent="v3"),
-            # Proposed against a generation that is not on the champion's lineage.
-            _experiment(EPOCH, "v5", mutation_id="m5", parent="v2"),
-        ],
-    )
+    experiments = [
+        _experiment(EPOCH, "v1", mutation_id="m1"),
+        _experiment(EPOCH, "v2", mutation_id="m2"),
+        _experiment(EPOCH, "v3", mutation_id="m3", decision="promoted"),
+        _experiment(EPOCH, "v4", mutation_id="m4", parent="v3"),
+    ]
+    kwargs = _seed(tmp_path, EPOCH, members, experiments)
     kwargs["parent_id"] = "v3"
     confirm = _Confirm(members)
+    assert _select(kwargs, confirm) is None
+    assert confirm.calls == []
+    assert len(load_frontier(tmp_path, EPOCH).members) == 4
+
+    journal.write_experiment(
+        tmp_path, EPOCH, "v5", _experiment(EPOCH, "v5", mutation_id="m5", parent="v3")
+    )
     pair = _select(kwargs, confirm)
-    assert (pair.a_generation_id, pair.b_generation_id) == ("v2", "v4")
-    assert confirm.calls == ["v2", "v4"]
+    assert (pair.a_generation_id, pair.b_generation_id) == ("v4", "v5")
+    assert confirm.calls == ["v4", "v5"]
+
+
+def test_a_pair_whose_mint_was_rejected_is_never_minted_again(tmp_path: Path) -> None:
+    """Predicate #5, from the persisted ``recombined_from`` as for the rejects pool."""
+    members = [_member("v1", "cost:", confirmed=4), _member("v2", "rubric:a", confirmed=4)]
+    experiments = [
+        _experiment(EPOCH, "v1", mutation_id="m1"),
+        _experiment(EPOCH, "v2", mutation_id="m2"),
+    ]
+    kwargs = _seed(tmp_path, EPOCH, members, experiments)
+    assert _select(kwargs, _Confirm(members)) is not None
+    journal.write_experiment(
+        tmp_path,
+        EPOCH,
+        "v3",
+        _experiment(EPOCH, "v3", mutation_id="m1", recombined_from=("v1", "v2")),
+    )
+    assert _select(kwargs, _Confirm(members)) is None
 
 
 # ---------------------------------------------------------------------------
@@ -580,6 +595,47 @@ def test_the_steering_block_names_dimensions_and_nothing_else() -> None:
     assert not any(ch.isdigit() for ch in block)  # no magnitude, count, round or id
 
 
+def test_only_dimensions_the_champion_can_improve_on_are_named() -> None:
+    """Measured, finite, and not already at the floor."""
+
+    def loss(entry: str) -> LossProfile:
+        return LossProfile(
+            run_id=f"r-{entry}",
+            entry_id=entry,
+            generation_id="v0",
+            epoch_id=EPOCH,
+            metric_counts=(
+                MetricCount(name="cost:tokens", severity="info", count=900),
+                MetricCount(name="cost:llm_calls", severity="info", count=0),
+                MetricCount(name="rubric:quality", severity="info", count=0),
+            ),
+            plan_revisions=0,
+            task_failure_ratio=0.0,
+            runtime_ms=100,
+            wall_clock_budget_exceeded=False,
+            expectation_result=None,
+            drift_loss=0.0,
+            pass_fail=True,
+        )
+
+    names = [
+        "judge:tone",  # no run carried this judge
+        "schema:",  # a bare namespace: nothing reported in it
+        "latency:",
+        "failure:not_completed",  # measured, and already zero
+        "failure:tasks",
+        "cost:llm_calls",
+        "cost:tokens",
+        "rubric:quality",  # zero, but higher is better: there is room
+    ]
+    weights = ScoringWeights(promote_margin=_MARGIN)
+    assert measured_dimensions(names, [loss("a"), loss("b")], weights) == [
+        "cost:tokens",
+        "rubric:quality",
+    ]
+    assert measured_dimensions(names, [], weights) == []
+
+
 def _steered_round(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, steering: bool
 ) -> tuple[str, Mock]:
@@ -606,6 +662,11 @@ def _steered_round(
     )
     reader = Mock(wraps=round_entry.unimproved_dimensions)
     monkeypatch.setattr(round_entry, "unimproved_dimensions", reader)
+    monkeypatch.setattr(
+        round_entry,
+        "measured_dimensions",
+        lambda _names, _losses, _weights: ["cost:tokens_spent", "failure:tasks"],
+    )
     seen: list[str] = []
     original = field_module.evolve_field_round
 
@@ -632,3 +693,5 @@ def test_steering_off_leaves_the_prompt_block_untouched_and_reads_nothing(
     assert head == off
     assert steering.startswith(" against the current champion has yet improved: ")
     assert "v7" not in on
+    # The confirmed member wins failure:, so only the cost metric is unimproved.
+    assert steering.startswith(" against the current champion has yet improved: cost:tokens_spent.")

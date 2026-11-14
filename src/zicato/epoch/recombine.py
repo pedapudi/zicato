@@ -109,14 +109,10 @@ class ParentCandidate:
 def eligible_parents(
     candidates: list[ParentCandidate],
     *,
-    champion_id: str | None,
+    champion_id: str,
     manifest_ids: frozenset[str],
 ) -> list[ParentCandidate]:
     """Filter the pool by the 6 per-candidate predicates (#1–#6).
-
-    ``champion_id=None`` skips #2. The frontier pool passes it: a member
-    there is admitted on a fresh measurement against the current champion
-    instead of on its parent pointer (PROPOSER.md §2.6.2).
 
     #1 **rejected** — not deferred: a live evidence loop is not a settled
        negative, so only a decided ``rejected`` challenger is recyclable.
@@ -142,7 +138,7 @@ def eligible_parents(
     for c in candidates:
         if c.decision != "rejected":
             continue
-        if champion_id is not None and c.parent_generation_id != champion_id:
+        if c.parent_generation_id != champion_id:
             continue
         if c.is_placebo:
             continue

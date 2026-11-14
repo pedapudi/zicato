@@ -313,14 +313,15 @@ accepted and inert. Changing it changes the contract.
 - **`rejects`** — the pool of §2.6: the current reign's rejected challengers,
   paired by the train entries each one flipped to passing.
 - **`frontier`** — the pool is the epoch's Pareto frontier members
-  (`docs/design/PARETO-FRONTIER.md` §6.2). The current-reign predicate (#2)
-  is replaced by a fresh train measurement of the member against the current
-  champion, plus a check that no later promotion edited a mutation point the
-  member patches. Complementarity (#8) is read from the record: the two
-  members must beat the champion on disjoint scoring axes, and pairs rank by
-  how many axes they win between them, with the per-entry cross-regression
-  count as the next evidence key. Predicates #1 and #3 through #7 are
-  unchanged.
+  (`docs/design/PARETO-FRONTIER.md` §6.2). Each member of a pair must also
+  hold up in a fresh train measurement against the current champion.
+  Complementarity (#8) is read from the record: the two members must beat
+  the champion on disjoint scoring axes, and pairs rank by how many axes they
+  win between them, with the per-entry cross-regression count as the next
+  evidence key. Predicates #1 through #7 are unchanged, the current-reign
+  predicate (#2) among them: a member proposed against an earlier champion
+  is not a parent, because its measured win belongs to a tree the mint does
+  not build.
 
 The frontier pool sees what the rejects pool cannot. A pair whose halves win
 on cost and on a rubric metric has no pass flips to be complementary on, and

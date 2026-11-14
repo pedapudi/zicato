@@ -24,7 +24,11 @@ from zicato.evolve.lifecycle_services import (
     _now_iso,
     heartbeat_transition_recorder,
 )
-from zicato.evolve.pareto import frontier_confirmer, unimproved_dimensions
+from zicato.evolve.pareto import (
+    frontier_confirmer,
+    measured_dimensions,
+    unimproved_dimensions,
+)
 from zicato.evolve.persist import (
     _skipped_round_outcome,
 )
@@ -620,8 +624,12 @@ async def _evolve_once(
                 workspace_root,
                 resolved_epoch_id,
                 parent_id,
-                [f"judge:{t.name}" for t in metric_priorities.judges]
-                + [t.name for t in metric_priorities.namespace_metrics],
+                measured_dimensions(
+                    [f"judge:{t.name}" for t in metric_priorities.judges]
+                    + [t.name for t in metric_priorities.namespace_metrics],
+                    losses,
+                    weights,
+                ),
             )
         )
         if steering:

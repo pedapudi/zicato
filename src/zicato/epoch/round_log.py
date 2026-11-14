@@ -366,8 +366,8 @@ class FrontierUpdated:
     Emitted ONLY when something moved — a round that admits and retires
     nothing is silent, so the presence of this event means the record has
     news. ``size`` is the member count AFTER the update. The frontier never
-    touches promotion, selection, or the proposer
-    (``docs/design/PARETO-FRONTIER.md``).
+    touches promotion or selection; two opt-in settings let it shape what is
+    proposed (``docs/design/PARETO-FRONTIER.md`` §6.2, §6.3).
 
     A confirmation of one member against the current champion emits the same
     event whatever its result: ``confirmed`` names a member a fresh

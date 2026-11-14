@@ -26,6 +26,7 @@ from tests.test_pareto_frontier import _drive_round
 from zicato.core import BoardEntry, Generation, LossProfile, MetricCount, ScoringWeights
 from zicato.core.loss import JudgeLoss
 from zicato.core.measurement import MeasurementDraw, MeasurementPurpose
+from zicato.core.types import ExperimentalConfig
 from zicato.core.workspace import run_id_for_unit
 from zicato.epoch.pareto import (
     DIMENSION_AGGREGATES_KEY,
@@ -51,6 +52,8 @@ _NAMESPACES = ("cost:", "drift:", "failure:", "judge:", "latency:", "rubric:", "
 
 
 def _weights(**kwargs: Any) -> ScoringWeights:
+    """A contract with a frontier consumer on, which is what enables the dimension axes."""
+    kwargs.setdefault("experimental", ExperimentalConfig(frontier_steering=True))
     return ScoringWeights(promote_margin=_MARGIN, **kwargs)
 
 
@@ -172,6 +175,38 @@ def test_dimension_axes_follow_the_namespaces_by_contract_weight_then_name() -> 
     assert frontier_axes(weights, _agg({})) == _NAMESPACES
 
 
+def test_without_a_frontier_consumer_the_axes_are_the_namespaces_alone() -> None:
+    """More axes admit more noise, so they are used only when something reads them."""
+    champion = _agg({}, {"rubric:a": 0.0, "rubric:b": 0.0, "judge:x": 0.0, "judge:y": 0.0})
+    plain = ScoringWeights(promote_margin=_MARGIN)
+    assert frontier_axes(plain, champion) == _NAMESPACES
+    for experimental in (
+        ExperimentalConfig(frontier_steering=True),
+        ExperimentalConfig(recombine_pool="frontier"),
+    ):
+        consumer = ScoringWeights(promote_margin=_MARGIN, experimental=experimental)
+        assert frontier_axes(consumer, champion) == (
+            *_NAMESPACES,
+            "judge:x",
+            "judge:y",
+            "rubric:a",
+            "rubric:b",
+        )
+    # The trader that only a dimension separates is not admitted by default.
+    update = update_frontier(
+        ParetoFrontier(epoch_id="e0"),
+        champion=FrontierCandidate(
+            "v0", _agg({"rubric:": -1.0}, {"rubric:a": -0.5, "rubric:b": -0.5})
+        ),
+        candidates=[
+            FrontierCandidate("v1", _agg({"rubric:": -1.0}, {"rubric:a": -0.8, "rubric:b": -0.2}))
+        ],
+        weights=plain,
+        round_index=1,
+    )
+    assert update.admitted == ()
+
+
 def test_the_dimension_axes_are_capped() -> None:
     champion = _agg({}, {f"rubric:m{i:02d}": 0.0 for i in range(20)})
     axes = frontier_axes(_weights(), champion)
@@ -241,13 +276,13 @@ def test_a_dimension_win_does_not_excuse_a_namespace_regression() -> None:
     assert update.admitted == ()
 
 
-def test_a_settled_round_records_the_dimension_axes_of_the_default_contract(
+def test_a_settled_round_under_the_default_contract_records_namespace_axes_only(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Through the real settle path: the failure pair joins the namespaces.
+    """Through the real settle path, with no frontier consumer enabled.
 
-    The stub harness reports one ``cost:`` metric, which is the ``cost:`` axis
-    itself, and every run carries both ``failure:`` members.
+    Every run carries both ``failure:`` members, which would be dimension
+    axes under a contract with a consumer; here the record holds neither.
     """
     workspace, epoch_id, _outcome = _drive_round(
         monkeypatch,
@@ -256,10 +291,10 @@ def test_a_settled_round_records_the_dimension_axes_of_the_default_contract(
         tokens_by_gen={"v0": 1000, "v1": 500},
     )
     frontier = load_frontier(workspace, epoch_id)
-    assert frontier.axes == (*_NAMESPACES, "failure:not_completed", "failure:tasks")
+    assert frontier.axes == _NAMESPACES
     member = frontier.members[0]
     assert member.beats_champion_on == ("cost:",)
-    assert member.axis_values["failure:tasks"] == 0.0
+    assert set(member.axis_values) <= set(_NAMESPACES)
     # The score file the gate and the cache read does not carry the dimensions.
     gen_score = workspace / "epochs" / epoch_id / "generations" / "v1" / "gen_score.json"
     assert DIMENSION_AGGREGATES_KEY not in json.loads(gen_score.read_text())
@@ -354,6 +389,25 @@ def test_a_member_that_still_beats_the_current_champion_is_refreshed() -> None:
     assert member.beats_champion_by == pytest.approx({"cost:": 0.3})
     assert member.scalar == pytest.approx(1.6)
     assert update.frontier.updated_round == 7
+
+
+def test_a_fresh_win_on_another_axis_does_not_confirm_the_recorded_one() -> None:
+    """Admitted on ``cost:``; the fresh cost is WORSE and only ``drift:`` wins."""
+    update = _confirm(
+        _agg({"cost:": 1.2, "drift:": 0.5, "rubric:": -1.0}),
+        _agg({"cost:": 0.9, "drift:": 1.0, "rubric:": -1.0}),
+    )
+    assert (update.confirmed, update.retired) == ((), ("v1",))
+    assert update.frontier.retired[0].reason == "unconfirmed"
+
+
+def test_a_replicated_win_keeps_the_other_axes_the_fresh_draw_also_wins() -> None:
+    update = _confirm(
+        _agg({"cost:": 0.6, "drift:": 0.5, "rubric:": -1.0}),
+        _agg({"cost:": 0.9, "drift:": 1.0, "rubric:": -1.0}),
+    )
+    assert update.confirmed == ("v1",)
+    assert update.frontier.members[0].beats_champion_on == ("cost:", "drift:")
 
 
 def test_a_member_that_no_longer_beats_the_champion_is_retired_unconfirmed() -> None:
@@ -633,8 +687,8 @@ def test_the_tradeoff_table_names_each_win_its_size_and_how_to_adopt() -> None:
         replace(_record_with_member(), members=(*_record_with_member().members, confirmed))
     )
     assert "## Trade-off candidates" in table
-    assert "| `v1` | `cost:` (0.5) | 2.5000 | `v0` | no (selection draws) |" in table
-    assert "| `v3` | `cost:` (0.5) | 2.5000 | `v0` | round 6 |" in table
+    assert "| `v1` | `cost:` (0.5) | 2.5000 | `v0` | unconfirmed (single measurement) |" in table
+    assert "| `v3` | `cost:` (0.5) | 2.5000 | `v0` | confirmed (round 6) |" in table
     assert "control/promote/<generation>" in table
     assert "operator_override" in table
     assert render_frontier_tradeoffs(ParetoFrontier(epoch_id="e0")) == ""
@@ -676,3 +730,37 @@ def test_an_unreadable_record_does_not_cost_the_epoch_its_report(
     frontier_path(workspace, epoch_id).write_text(json.dumps({"format_version": 999}))
     analysis = close_epoch(workspace, epoch_id).read_text()
     assert "Trade-off candidates" not in analysis
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"updated_round": "x"},
+        {"retired": 3},
+        {"members": [{"round_admitted": "abc"}]},
+    ],
+)
+def test_a_malformed_record_never_fails_an_epoch_close(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    body: dict[str, Any],
+) -> None:
+    """Well-formed JSON at a supported version whose fields have the wrong types."""
+    from zicato.cli.commands.epoch import epoch_grp
+    from zicato.epoch.lifecycle import load_epoch
+    from zicato.epoch.pareto import frontier_path
+
+    workspace, epoch_id, _outcome = _drive_round(
+        monkeypatch,
+        tmp_path,
+        drift_by_gen={"v0": 1.0, "v1": 3.0},
+        tokens_by_gen={"v0": 1000, "v1": 500},
+    )
+    frontier_path(workspace, epoch_id).write_text(json.dumps({"format_version": 1, **body}))
+    with caplog.at_level("WARNING", logger="zicato.orchestrator"):
+        result = CliRunner().invoke(epoch_grp, ["close", epoch_id, "--workspace", str(workspace)])
+    assert result.exit_code == 0, result.output
+    assert "Trade-off candidates" not in result.output
+    assert load_epoch(workspace, epoch_id).closed
+    assert "trade-off table is omitted" in caplog.text

@@ -31,7 +31,7 @@ and reusing them is what keeps the feature honest:
 | Input | Source | Meaning |
 |---|---|---|
 | the namespace axes | keys of `ScoringWeights.namespace_weights` with a non-zero weight | what the operator declared they are optimizing |
-| the dimension axes | the judges and scored metrics inside those namespaces, ranked by the contract's weights | the scored targets the proposer is shown, so the record separates candidates a namespace total hides |
+| the dimension axes (only with a consumer enabled, §2.1) | the judges and scored metrics inside those namespaces, ranked by the contract's weights | the scored targets the proposer is shown, so the record separates candidates a namespace total hides |
 | the direction | the SIGN of each weight | `rubric:` is negative, so a higher raw rubric is better |
 | the units | `namespace_aggregates`, and the same product split per metric — already weight-multiplied | scalar points, so one threshold serves axes whose raw units differ by orders of magnitude |
 | the threshold | `ScoringWeights.promote_margin` | `tournament/calibration.py` fits it to an A/A noise floor, so "better" means the same thing here as at the gate |
@@ -97,9 +97,19 @@ That is a scoring change, and it rolls the epoch. Registered in §8.
 So the useful default namespace axes are `cost:`, `drift:`, `failure:`,
 `judge:`, `rubric:`, and `schema:`.
 
-**Dimension axes.** Namespaces are coarse. Two rubric metrics that move in
+**Dimension axes — only with a consumer enabled.** Under a contract that
+enables neither consumer of the record (`experimental.recombine_pool:
+"frontier"`, §6.2, or `experimental.frontier_steering`, §6.3), the axis set
+is the namespace axes above and nothing else, and the record holds what it
+held before the dimensions existed. `uses_dimension_axes(weights)` is that
+test. The reason is the noise cost stated at the end of this section: every
+axis is a chance to be admitted by noise, and a finer axis earns that cost
+only when something uses it.
+
+Namespaces are coarse. Two rubric metrics that move in
 opposite directions leave `rubric:` unchanged, and a candidate that fixes one
-judge while another slips looks the same as the champion on `judge:`. So the
+judge while another slips looks the same as the champion on `judge:`. So with
+a consumer enabled the
 axis set also holds the dimensions inside each weighted namespace: one per
 judge (`judge:<name>`) and one per scored metric (`rubric:slide_structure`,
 `cost:tokens_spent`, `failure:tasks`, …).
@@ -136,16 +146,19 @@ kind's share of the scalar is not recoverable from the aggregate. Giving the
 drift kinds axes needs a per-kind decomposition beside
 `builtin_drift_loss`, and it would not hold under a drift plugin (§8).
 
-Under the default contract the dimension axes are, in order,
-`failure:not_completed` (weight 50) and `failure:tasks` (10), which every
-run reports; then the board's `schema:` metrics (5); then its judges and
-`rubric:` metrics (1 each, so by name, judges first); then its `cost:`
+Under the default weights with a consumer enabled, the dimension axes are,
+in order, `failure:not_completed` (weight 50) and `failure:tasks` (10), which
+every run reports; then the board's `schema:` metrics (5); then its judges
+and `rubric:` metrics (1 each, so by name, judges first); then its `cost:`
 metrics (0.001) — each namespace only where it reports two or more, and the
 first eight in all.
 
 More axes mean more chances for a candidate to clear the margin against the
-champion on one of them by noise. The cap bounds that, and §6.1 is the
-control: a member is re-measured before anything uses it.
+champion on one of them by noise. A simulated candidate identical to the
+champion, with independent per-axis noise equal to the margin, was admitted
+25% of the time on the namespace axes and 43.5% with eight dimensions added.
+That is why the dimensions are off without a consumer, why they are capped,
+and why §6.1 re-measures a member before anything uses it.
 
 ### 2.2 Axis values
 
@@ -583,8 +596,14 @@ axis set that champion's aggregate names.
 
 | Fresh result | Effect |
 |---|---|
-| the member beats the champion by `promote_margin` on at least one axis and regresses no monotonicity namespace | **refreshed**: fresh `axis_values` and `scalar`, the axes it now wins on and by how much, `champion_generation_id` set to this champion, `confirmed_round` set |
+| the member beats the champion by `promote_margin` on at least one axis it was RECORDED as winning (`beats_champion_on`), and regresses no monotonicity namespace | **refreshed**: fresh `axis_values` and `scalar`, the axes it now wins on and by how much, `champion_generation_id` set to this champion, `confirmed_round` set |
 | otherwise | **retired** with reason `unconfirmed` |
+
+A fresh win on an axis the member was not recorded as winning does not
+confirm it. A member admitted on `cost:` whose fresh cost is worse and whose
+fresh `judge:` happens to clear the margin has replicated nothing, and is
+retired. Once a recorded win replicates, the refreshed `beats_champion_on`
+lists every axis the fresh measurement wins.
 
 Dominance between members is not re-run on a refresh: the other members'
 values come from different draws.
@@ -609,22 +628,26 @@ existed. At `"frontier"`:
 - **The pool is the epoch's frontier members**, and only them. With fewer
   than two usable members the round mints nothing. It does not fall back to
   the rejects pool: a round that might have used either pool could not be
-  attributed to one in a comparison. The first such round of an epoch says
-  so at INFO.
-- **A member is usable** when it passes the selector's per-candidate
-  predicates other than the current-reign one (rejected, no placebo, not
-  itself a mint, patches inside the current manifest), when no promotion
-  since its parent edited a mutation point it patches, and when
-  `confirm_frontier_member` upholds it against the current champion. The
-  second condition exists because a patch replaces a whole mutation point: a
-  member proposed against an earlier champion would otherwise overwrite a
-  promoted edit that its own measurement never included.
+  attributed to one in a comparison. Such a round says so at DEBUG.
+- **A member is usable** when it passes every per-candidate predicate of the
+  selector (rejected, proposed against the CURRENT champion, no placebo, not
+  itself a mint, patches inside the current manifest) and
+  `confirm_frontier_member` upholds it against that champion.
+- **Members from an earlier reign are not recombination parents.** A
+  member's own tree is its parent's tree plus its patch, and the mint applies
+  that patch to the current champion. For a member proposed against an
+  earlier champion those are different trees: its measured win can come from
+  lacking a later promotion's edit, which the mint would not reproduce. Such
+  members stay on the record and in the operator's table.
 - **A pair** needs disjoint `beats_champion_on` sets, so each parent wins
   where the other does not. Pairs rank by the number of axes the two win
   between them; the selector's remaining keys then break ties unchanged —
   patch overlap, the per-entry cross-regression count from the train loss
   grid, summed rating, generation id. The tried-pair and patch-disjointness
-  predicates hold as they do for the rejects pool.
+  predicates hold as they do for the rejects pool: a pair whose mint was
+  persisted, whatever its outcome, is never minted again, and a mint the
+  screen vetoed before it was persisted may be minted again, exactly as in
+  the rejects pool (`docs/design/PROPOSER.md` §2.6).
 - **Confirmation is spent on the best-ranked pair only.** The builder ranks
   on the record's values, confirms the first unconfirmed member of the best
   pair, takes the refreshed wins or drops a retired member, and ranks again.
@@ -657,15 +680,21 @@ No candidate measured against the current champion has yet improved: schema:x, j
 A change that improves one of these covers ground the search has not.
 ```
 
-`unimproved_dimensions` (`zicato/evolve/pareto.py`) takes the round's scored
-targets — each judge and each scored metric the contract weights, in the
-contract's priority order — and keeps those no member improves. Only members
+`measured_dimensions` (`zicato/evolve/pareto.py`) starts from the round's
+scored targets — each judge and each scored metric the contract weights, in
+the contract's priority order — and keeps those the champion can improve on:
+its train losses carry a finite contribution for the dimension, and that
+contribution is not already at its floor (a positively weighted dimension at
+zero, such as `failure:tasks` on a champion with no failures). A bare
+namespace such as `latency:`, which the scored targets list only when no run
+reported a metric in it, never qualifies. `unimproved_dimensions` then keeps
+those no member improves. Only members
 with a `confirmed_round` whose `champion_generation_id` is the current
 champion count: a member still resting on its selection draws does not. A
 dimension is improved when a member beats the champion on it, or on its
 namespace where that member carries no separate axis for it. With no member
-confirmed against the current champion the block is absent, because nothing
-has been measured that it could report.
+confirmed against the current champion, or no dimension left to name, the
+block is absent.
 
 `render_frontier_steering_block` (`zicato/proposer/prompts.py`) names at most
 eight dimensions and carries nothing else: no generation id, no magnitude, no
@@ -689,20 +718,22 @@ nothing.
 
 | Candidate | Beats the champion on (scalar points gained) | Scalar | Measured against | Confirmed |
 |---|---|---:|---|---|
-| `v5` | `cost:` (0.642), `rubric:tone` (0.04) | 0.5130 | `v7` | round 9 |
-| `v8` | `judge:facts` (0.05) | 0.4710 | `v7` | no (selection draws) |
+| `v5` | `cost:` (0.642), `rubric:tone` (0.04) | 0.5130 | `v7` | confirmed (round 9) |
+| `v8` | `judge:facts` (0.05) | 0.4710 | `v7` | unconfirmed (single measurement) |
 ```
 
 Each row is one member: the axes it beats its reference champion on and the
 scalar points it gains on each, its scalar, the champion those values were
-measured against, and whether a fresh measurement has confirmed them. It is
-printed in three places:
+measured against, and whether a fresh measurement has confirmed them. An
+unconfirmed row rests on the single measurement that selected it and may be
+noise; the table says so. A record that cannot be read or rendered, for any
+reason, yields no table and one warning, and never fails the report or the
+close. The table is printed in two places:
 
 - `analysis.md` carries it as a section after the deterministic results, so
   the living draft shows it from the round a member is admitted, and
   `zicato repair report` regenerates it;
-- `zicato epoch close` prints it after the close message;
-- `zicato evolve` prints it when a contract change rolls the epoch.
+- `zicato epoch close` prints it after the close message.
 
 **Adopting a member.** The text under the table states the one route that
 exists. A promote override (`control/promote/<generation>`, written by the

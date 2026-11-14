@@ -23,6 +23,7 @@ current champion before a caller uses it, and reports what that cost.
 from __future__ import annotations
 
 import logging
+import math
 from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
@@ -152,14 +153,15 @@ def record_round_frontier(
 def frontier_aggregates(result: Any, weights: Any) -> dict[str, dict[str, Any]]:
     """One duel's two aggregates by generation id, each with its dimensions.
 
-    The aggregates are the ones the gate decided on. The per-dimension
-    contributions the frontier's finer axes read are computed from the same
-    train-slice loss profiles and added under ``dimension_aggregates``; they
-    are omitted for a side whose profiles do not cover exactly the entries
-    its aggregate scored, and on any failure, so the namespace axes still
-    stand. ``gen_score.json`` is written from the plain aggregate.
+    The aggregates are the ones the gate decided on. Under a contract that
+    enables a consumer of the record, the per-dimension contributions the
+    frontier's finer axes read are computed from the same train-slice loss
+    profiles and added under ``dimension_aggregates``; they are omitted for a
+    side whose profiles do not cover exactly the entries its aggregate
+    scored, and on any failure, so the namespace axes still stand.
+    ``gen_score.json`` is written from the plain aggregate.
     """
-    from zicato.epoch.pareto import DIMENSION_AGGREGATES_KEY  # noqa: PLC0415
+    from zicato.epoch.pareto import DIMENSION_AGGREGATES_KEY, uses_dimension_axes  # noqa: PLC0415
     from zicato.tournament.scoring import aggregate_dimension_metrics  # noqa: PLC0415
 
     out: dict[str, dict[str, Any]] = {}
@@ -170,6 +172,8 @@ def frontier_aggregates(result: Any, weights: Any) -> dict[str, dict[str, Any]]:
     for index, (generation_id, aggregate) in enumerate(sides):
         out[generation_id] = aggregate
         try:
+            if not uses_dimension_axes(weights):
+                continue
             if set(aggregate.get("per_entry", {})) != set(result.per_entry_losses):
                 continue
             losses = [pair[index] for pair in result.per_entry_losses.values()]
@@ -332,15 +336,30 @@ def frontier_confirmer(
             log.debug("frontier: %s has no source tree to confirm (%s)", generation_id, exc)
             return None
         member = replace(champion, id=generation_id, snapshot_root=snapshot, promoted=False)
-        return await confirm_frontier_member(
-            champion=champion,
-            member=member,
-            workspace_root=workspace_root,
-            epoch_id=epoch_id,
-            **options,
-        )
+        ids: dict[str, Any] = {"workspace_root": workspace_root, "epoch_id": epoch_id}
+        return await confirm_frontier_member(champion=champion, member=member, **ids, **options)
 
     return _confirm
+
+
+def measured_dimensions(names: Sequence[str], losses: list[Any], weights: Any) -> list[str]:
+    """Of ``names``, the dimensions the champion's train losses can improve on.
+
+    A name qualifies when the champion's dimension contributions carry a
+    finite value for it and that value is not already at its floor: a
+    positively weighted dimension at zero has nothing left to lose. A bare
+    namespace, which the scored targets list only when no run reported a
+    metric in it, never qualifies.
+    """
+    from zicato.tournament.scoring import aggregate_dimension_metrics  # noqa: PLC0415
+
+    values = aggregate_dimension_metrics(losses, weights)
+    return [
+        name
+        for name in names
+        if math.isfinite(values.get(name, math.nan))
+        and (values[name] != 0.0 or weights.namespace_weights[name.partition(":")[0] + ":"] < 0)
+    ]
 
 
 def unimproved_dimensions(
@@ -435,6 +454,7 @@ __all__ = [
     "confirm_frontier_member",
     "frontier_aggregates",
     "frontier_confirmer",
+    "measured_dimensions",
     "record_round_frontier",
     "unimproved_dimensions",
 ]

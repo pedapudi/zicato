@@ -356,31 +356,6 @@ def _recombination_pair_value(pair: Any, pool: Sequence[Experiment]) -> Any:
     )
 
 
-#: Epochs already told that their frontier holds no pair to recombine.
-_NO_FRONTIER_PAIR_LOGGED: set[str] = set()
-
-
-def _edits_since(
-    ancestor_id: str | None, champion_id: str, exp_by_gid: dict[str, Experiment]
-) -> frozenset[str] | None:
-    """Mutation ids the champion's lineage patched after ``ancestor_id``.
-
-    ``None`` when ``ancestor_id`` is not on the champion's lineage. A frontier
-    member proposed against an earlier champion replaces whole mutation
-    points, so a point a later promotion edited would be overwritten by the
-    member's patch and lose that promotion.
-    """
-    edited: set[str] = set()
-    gid: str | None = champion_id
-    while gid != ancestor_id:
-        exp = exp_by_gid.get(gid or "")
-        if exp is None:
-            return None
-        edited.update(p.mutation_id for p in exp.patches)
-        gid = exp.parent_generation_id
-    return frozenset(edited)
-
-
 async def _build_frontier_recombination_pair(
     *,
     weights: Any,
@@ -396,12 +371,13 @@ async def _build_frontier_recombination_pair(
     ``None`` unless the contract sets ``experimental.recombine`` with a slate
     and ``recombine_pool: "frontier"``. The pool is then the epoch's frontier
     members, never the rejects pool: with fewer than two usable members the
-    round mints nothing, and says so once per epoch at INFO.
+    round mints nothing.
 
-    A member is usable when its patches apply to the current manifest, no
-    promotion since its parent edited a mutation point it patches, and
-    ``confirm`` — :func:`~zicato.evolve.pareto.confirm_frontier_member` bound
-    to this round — upholds it against the current champion. A pair needs
+    A member is usable when it passes the selector's per-candidate predicates
+    — among them that it was proposed against the CURRENT champion, so its
+    own tree is the champion's plus its patch, which is what the mint applies
+    — and ``confirm`` — :func:`~zicato.evolve.pareto.confirm_frontier_member`
+    bound to this round — upholds it against that champion. A pair needs
     disjoint win axes; pairs rank by the number of axes won between them,
     then by the selector's remaining keys (PROPOSER.md §2.6.2).
 
@@ -428,17 +404,10 @@ async def _build_frontier_recombination_pair(
         experiments, _unreadable = read_epoch_experiments(workspace_root, epoch_id)
         exp_by_gid = dict(experiments)
         members = {m.generation_id: m for m in load_frontier(workspace_root, epoch_id).members}
-        pool: list[Experiment] = []
-        for gid in sorted(members):
-            exp = exp_by_gid.get(gid)
-            if exp is None:
-                continue
-            edited = _edits_since(exp.parent_generation_id, parent_id, exp_by_gid)
-            if edited is not None and edited.isdisjoint(p.mutation_id for p in exp.patches):
-                pool.append(exp)
+        pool = [exp_by_gid[gid] for gid in sorted(members) if gid in exp_by_gid]
         eligible = eligible_parents(
             _parent_candidates(pool, workspace_root, epoch_id, parent_id, train_entry_ids, {}),
-            champion_id=None,
+            champion_id=parent_id,
             manifest_ids=frozenset(str(m.id) for m in mutations),
         )
         wins = {gid: frozenset(m.beats_champion_on) for gid, m in members.items()}
@@ -455,16 +424,10 @@ async def _build_frontier_recombination_pair(
             )
             pending = [c.generation_id for c in pair or () if c.generation_id not in confirmed]
             if pair is None or (pending and spent >= RECOMBINE_CONFIRM_MAX):
-                if epoch_id not in _NO_FRONTIER_PAIR_LOGGED:
-                    _NO_FRONTIER_PAIR_LOGGED.add(epoch_id)
-                    log.info(
-                        "recombine: epoch %s — the Pareto frontier holds no confirmed pair with "
-                        "disjoint wins (%d member(s), %d confirmation(s) this round); minting "
-                        "nothing. The rejects pool is not used while recombine_pool is 'frontier'.",
-                        epoch_id,
-                        len(members),
-                        spent,
-                    )
+                note = "recombine: no confirmed frontier pair (%d member(s), %d confirmation(s))"
+                log.debug(
+                    note + "; minting nothing, the rejects pool is not used", len(members), spent
+                )
                 return None
             if not pending:
                 return _recombination_pair_value(pair, pool)
