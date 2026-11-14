@@ -208,6 +208,10 @@ def close_cmd(epoch_id: str | None, workspace: str) -> None:
     ws = _resolve_workspace(workspace)
     out_path = lifecycle.close_epoch(ws, epoch_id=epoch_id, aux_call_llm=None)
     click.echo(f"Closed. Wrote {out_path}.")
+    from zicato.epoch.pareto import frontier_tradeoffs_section
+
+    if tradeoffs := frontier_tradeoffs_section(ws, out_path.parent.name):
+        click.echo("\n" + tradeoffs)
 
 
 @epoch_grp.command(

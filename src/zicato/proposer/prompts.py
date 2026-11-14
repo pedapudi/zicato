@@ -387,6 +387,30 @@ def render_metric_priorities_block(priorities: MetricPriorities) -> str:
     return "\n\n".join(sections)
 
 
+#: How many dimensions :func:`render_frontier_steering_block` names.
+FRONTIER_STEERING_MAX_DIMENSIONS = 8
+
+
+def render_frontier_steering_block(dimensions: Iterable[str]) -> str:
+    """Name the scored dimensions the search has not yet improved.
+
+    ``dimensions`` are metric names the contract scores, in the contract's
+    priority order, on which no confirmed Pareto frontier member beats the
+    champion. The block carries those names and nothing else: no generation
+    id, no magnitude, no count, and no board entry. At most
+    :data:`FRONTIER_STEERING_MAX_DIMENSIONS` are named. Empty input renders
+    the empty string, which adds nothing to the prompt.
+    """
+    named = list(dimensions)[:FRONTIER_STEERING_MAX_DIMENSIONS]
+    if not named:
+        return ""
+    return (
+        "No candidate measured against the current champion has yet improved: "
+        + ", ".join(named)
+        + ".\nA change that improves one of these covers ground the search has not."
+    )
+
+
 def render_metric_targets_block(
     custom_judge_names: Iterable[str] = (),
     metric_priorities: str = "",

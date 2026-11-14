@@ -365,15 +365,25 @@ class FrontierUpdated:
 
     Emitted ONLY when something moved — a round that admits and retires
     nothing is silent, so the presence of this event means the record has
-    news. ``size`` is the member count AFTER the update. Purely a record of
-    an observation: the frontier never touches promotion, selection, or the
-    proposer (``docs/design/PARETO-FRONTIER.md``).
+    news. ``size`` is the member count AFTER the update. The frontier never
+    touches promotion or selection; two opt-in settings let it shape what is
+    proposed (``docs/design/PARETO-FRONTIER.md`` §6.2, §6.3).
+
+    A confirmation of one member against the current champion emits the same
+    event whatever its result: ``confirmed`` names a member a fresh
+    measurement upheld, ``retired`` one it did not, and an incomplete
+    measurement names neither. ``units_fresh`` / ``units_cached`` are the
+    board units that measurement ran and reused. All three are empty or zero
+    on a settle-time update, which measures nothing.
     """
 
     TYPE: ClassVar[str] = "frontier_updated"
     admitted: tuple[str, ...] = ()
     retired: tuple[str, ...] = ()
     size: int = 0
+    confirmed: tuple[str, ...] = ()
+    units_fresh: int = 0
+    units_cached: int = 0
 
 
 @dataclass(frozen=True, slots=True)

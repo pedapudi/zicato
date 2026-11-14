@@ -740,10 +740,14 @@ that beat the reigning champion on at least one scoring axis and that
 nothing else on the record dominates on every axis. A weighted sum is a
 projection, so a challenger that halves cost for a small loss in rubric
 score loses on the scalar and is otherwise never mentioned again. The
-axes are the non-zero `namespace_weights`; admission reuses the
-promotion gate's namespace-monotonicity rule. The record is written
-after a round's decision is final, enters no decision, and is shown in
-the console. See [PARETO-FRONTIER.md](PARETO-FRONTIER.md).
+axes are the non-zero `namespace_weights` and, when a consumer of the
+record is enabled, the highest-weight judges and scored metrics inside
+them; admission reuses the promotion gate's
+namespace-monotonicity rule. The record is written after a round's
+decision is final and enters no decision. `analysis.md` and the
+epoch-close output print it as a table of trade-off candidates, and a
+member is re-measured against the current champion before anything uses
+it. See [PARETO-FRONTIER.md](PARETO-FRONTIER.md).
 
 ## Patch
 

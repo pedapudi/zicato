@@ -1337,8 +1337,11 @@ def test_the_record_module_never_reaches_into_the_gate_decision() -> None:
     The frontier reads the gate's namespace-monotonicity helper; nothing in
     the decision path — the whole tournament, selection, and proposer trees —
     may read the frontier back. A dependency in that direction is what turns
-    the record into a decision, which is registered as separate, gated work
-    (PARETO-FRONTIER.md §8).
+    the record into a decision.
+
+    The two opt-in consumers (PARETO-FRONTIER.md §6.2, §6.3) keep to this
+    rule: ``evolve/`` reads the record and hands those trees a plain value,
+    a recombination pair or a list of dimension names.
 
     Asserted on the parsed IMPORT GRAPH of every module in those trees, not
     on a substring of the source. A substring scan is wrong in both

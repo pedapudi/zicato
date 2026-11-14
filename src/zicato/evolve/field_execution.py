@@ -39,6 +39,7 @@ from zicato.evolve.field_candidates import CandidateField
 from zicato.evolve.gate import _resolve_round_champion_mode
 from zicato.evolve.generation_phase import FieldRound
 from zicato.evolve.lifecycle_services import _beat
+from zicato.evolve.pareto import frontier_aggregates
 from zicato.evolve.round_api import EvolveRoundOutcome
 from zicato.evolve.round_reporting import (
     _emit_gate_evaluated,
@@ -76,7 +77,9 @@ class RoundTallies:
 
     ``aggregates`` holds the per-generation aggregate the Pareto frontier
     record reads, filled from the same dicts :func:`write_gen_score`
-    persists and only when ``cache_scores`` is set, so an evidence-gate
+    persists, each with its per-dimension contributions added
+    (:func:`~zicato.evolve.pareto.frontier_aggregates`), and only when
+    ``cache_scores`` is set, so an evidence-gate
     replicate duel's single draw can never overwrite the round-scored
     aggregate (docs/design/PARETO-FRONTIER.md §6).  ``raw_results`` keeps
     each duel's full :class:`~zicato.tournament.runner.TournamentResult` for
@@ -225,8 +228,7 @@ async def run_field_matchup(
             result.child_agg,
             round_index=prepared.round_index,
         )
-        tallies.aggregates[matchup.left.generation_id] = result.parent_agg
-        tallies.aggregates[matchup.right.generation_id] = result.child_agg
+        tallies.aggregates.update(frontier_aggregates(result, prepared.weights))
     # Onto the round's durable event log: this matchup's board units and
     # gate verdict, each NAMING its generation — a field round settles
     # several matchups into one log, so unscoped units and gates would be

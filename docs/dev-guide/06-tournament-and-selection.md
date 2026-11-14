@@ -184,7 +184,7 @@ measurement with the same draw number.
 | `calibration` | Repeated champion measurements that estimate evaluation noise |
 | `contract_preflight` | Contract probes, including degraded source variants |
 | `candidate_screen` | Candidate screening and its confirmation before a veto |
-| `evidence_confirmation` | Independent paired evidence after finalist selection |
+| `evidence_confirmation` | Independent paired evidence after finalist selection; draw 0 also re-measures a Pareto frontier member against the current champion (`docs/design/PARETO-FRONTIER.md` §6.1) |
 | `board_reflection` | Evaluation that informs board revision |
 | `eval_synthesis_admission` | Evaluation that decides whether synthesized tasks are admitted |
 

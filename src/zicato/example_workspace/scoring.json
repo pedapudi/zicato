@@ -80,6 +80,8 @@
     "genealogy": 0,
     "calibration_feedback": 0,
     "recombine_merge": "mechanical",
+    "recombine_pool": "rejects",
+    "frontier_steering": false,
     "cross_epoch_memory": false,
     "outcome_feedback": false
   }

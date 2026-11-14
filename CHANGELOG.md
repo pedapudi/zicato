@@ -118,6 +118,63 @@ read the tables directly. `query.reflection_view.entry_candidate_matrix`,
 `query.events_index.find_generation_entry_events` and `query._sqlite._opt_str`
 are removed for the same reason.
 
+### Two opt-in consumers of the Pareto frontier
+
+`experimental.recombine_pool: "frontier"` makes the recombination slot
+draw its two parents from Pareto frontier members instead of the reign's
+rejected challengers. Only members proposed against the current champion
+are parents. Each member of the chosen pair is first re-measured
+against the current champion on the train entries; a member that does not
+hold up is retired and the next pair is tried, with at most four
+confirmations a round. The pair must win on disjoint scoring axes. With
+fewer than two usable members the round mints nothing and does not fall
+back to the rejects pool. The merged child is gated against the champion
+like any other candidate.
+
+`experimental.frontier_steering: true` adds one block to the proposer's
+scored targets naming the dimensions that no confirmed frontier member
+improves over the champion. It names dimensions only, leaves out
+dimensions the champion cannot improve on, and is absent until a member
+has been confirmed.
+
+Both settings default to today's behaviour. They are new contract fields,
+so the contract hash of every contract changes once and the next `zicato
+evolve` opens a new epoch. See `docs/design/PARETO-FRONTIER.md` §6.2 and
+§6.3 and `docs/design/PROPOSER.md` §2.6.2.
+
+### The Pareto frontier gains finer axes, a confirmation step, and an operator table
+
+The frontier record compared candidates on the weighted scoring
+namespaces alone, which tend to move together, and nothing read it.
+Under a contract that enables one of the two consumers above, it also
+compares on up to eight dimensions inside those namespaces — each judge
+and each scored metric, ranked by the contract's weights — in the same
+weight-multiplied scalar points, so the one `promote_margin` threshold
+still applies. Without a consumer the axes are the namespaces, as
+before, because every added axis is another chance to be admitted by
+noise. `drift:` keeps its single axis, because drift
+reaches the scalar as one reduced loss. Admission is unchanged: the
+gate's namespace-monotonicity rule still refuses a candidate that
+regresses a guarded namespace, and records written before this change
+still read.
+
+`confirm_frontier_member` re-measures one member and the current
+champion on the train entries, at draw 0 of the `evidence_confirmation`
+purpose and cache-first, then refreshes the member against that champion
+when a win it was recorded for replicates, or retires it as
+`unconfirmed`. Each generation is measured once per
+epoch at that draw, and the log line and the `frontier_updated`
+round-log event state the board units run and reused. It is the check
+a consumer of the record makes before using a member.
+
+`analysis.md` and `zicato epoch close` print the members as a table of
+trade-off candidates: the axes each one beats the champion on and by
+how much, its scalar, and whether it is confirmed or rests on a single
+measurement. An unreadable record omits the table and never fails the
+close. The promotion gate and the champion pointer do not read the
+record. See
+`docs/design/PARETO-FRONTIER.md`.
+
 ### The dashboard stops serving the routes no console view reads (2026-11-13)
 
 **Breaking for direct HTTP callers.** The dashboard service no longer
