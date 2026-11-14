@@ -2,9 +2,9 @@
 
 | Measurement | Delta |
 |---|---:|
-| Total | -4,694 |
-| Production | -2,809 |
-| Production logic | -2,024 |
+| Total | -4,671 |
+| Production | -2,806 |
+| Production logic | -2,023 |
 
 The analyzer stops writing `analysis.html` and `analysis.fragment.html` and
 stops drawing SVG figures, so `analysis.md` is the one published form of the

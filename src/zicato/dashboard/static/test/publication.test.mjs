@@ -275,4 +275,24 @@ test('publication: a report correction of equal length redraws the report', asyn
   await renderWith(host, revised);
   assert(host.firstChild === updated, 'an unchanged report preserves the article');
 });
+
+test('markdown: a link is emitted only for a scheme that cannot run script', () => {
+  const host = document.createElement('div');
+  host.appendChild(ui.renderMarkdown([
+    '[ok](https://example.com/a) [rel](/api/x) [frag](#top)',
+    '',
+    '[bad](javascript:alert`1`) [worse](JavaScript:alert(1%29) [data](data:text/html,x)',
+    '',
+    '| cell |',
+    '| --- |',
+    '| [cellbad](javascript:alert`1`) |',
+  ].join('\n')));
+  const links = allByClass(host, 'dn-md-link');
+  const hrefs = links.map((a) => a.getAttribute('href'));
+  assertEqual(JSON.stringify(hrefs), JSON.stringify(['https://example.com/a', '/api/x', '#top']),
+    'only http(s), mailto, fragment and root-relative links become anchors');
+  assert(host.textContent.includes('[bad](javascript:alert`1`)'), 'an unsafe link stays literal text');
+  assert(host.textContent.includes('[cellbad](javascript:'), 'an unsafe link in a table cell stays literal text');
+  for (const a of links) assertEqual(a.getAttribute('rel'), 'noopener noreferrer');
+});
 await run();
