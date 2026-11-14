@@ -130,8 +130,8 @@ def test_evolve_carries_accepted_assets_to_spawned_module(
 
     @asynccontextmanager
     async def invocation(*args, **kwargs):
-        async with AsyncExitStack() as resources:
-            yield SimpleNamespace(configuration=accepted, resources=resources)
+        async with AsyncExitStack() as resources, AsyncExitStack() as observers:
+            yield SimpleNamespace(configuration=accepted, resources=resources, observers=observers)
 
     async def no_service(*args, **kwargs):
         return None

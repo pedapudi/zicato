@@ -1067,9 +1067,9 @@ Three properties hold across the runtime layer:
    for the writer's lifetime, with a readable ownership record in
    `runtime/lock.json`.
 
-**Supervisor-binary ownership.** `evolve` spawns the watchdog, which
-supervises processes and serves `/statusz` without serving a UI. `zicato evolve --no-dashboard`
-spawns neither the dashboard service nor the watchdog. The Rust watchdog
+**Supervisor-binary ownership.** `evolve` spawns the watchdog for every
+loop, which supervises processes and serves `/statusz` without serving a
+UI. `zicato evolve --no-dashboard` skips only the dashboard service. The Rust watchdog
 binary splits along
 the library/driver boundary. *Packaging* belongs to the root wheel: the
 hatchling build hook (`hatch_build.py`) compiles the crate and bundles
@@ -1156,6 +1156,7 @@ configured at runtime, so workspaces never cross-talk.
   index-revisions/                 # per-epoch revision markers the index heal compares
   repo/                            # private git repository (default generation-source backend)
   runtime/                         # heartbeat, writer lock, active runs, control files
+  proctor/                         # supervisor's audit ledger; written only by the supervisor
   logs/                            # structured operator-log streams
   epochs/
     {epoch_id}/

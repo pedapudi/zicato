@@ -513,9 +513,9 @@ Options:
   --epoch-name TEXT               Name for an auto-created epoch (default: the
                                   e{N} scheme). Ignored when --epoch is passed
                                   or no new epoch is created.
-  --no-dashboard                  Do not spawn the dashboard service (and the
-                                  watchdog supervisor that guards it). evolve
-                                  still runs the loop.
+  --no-dashboard                  Do not spawn the dashboard service. evolve
+                                  still runs the loop and its watchdog
+                                  supervisor.
   --dashboard-port INTEGER RANGE  Port for the dashboard HTTP server (bound on
                                   127.0.0.1).  [default: 7892; 1<=x<=65535]
   --help                          Show this message and exit.

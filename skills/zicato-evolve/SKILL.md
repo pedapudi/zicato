@@ -75,7 +75,7 @@ before a round spends anything.
 | `--no-auto-epoch` | Strict mode: error out on a drifted contract instead of rolling a fresh epoch. |
 | `--epoch-name TEXT` | Name for an auto-created epoch (default: the `e{N}` scheme). |
 | `--dashboard-port INTEGER` | Dashboard HTTP port, bound on 127.0.0.1 (default 7892). |
-| `--no-dashboard` | Skip the dashboard + watchdog supervisor. Use for the deterministic example smoke / CI; do **not** use for an operator-facing run. |
+| `--no-dashboard` | Skip the dashboard; the watchdog supervisor still runs. Use for the deterministic example smoke / CI; do **not** use for an operator-facing run. |
 
 For an adapter that declares the `goldfive` integration, add `"goldfive": {}`
 to `scoring.json` to select fixed Goldfive defaults. The built-in Google ADK

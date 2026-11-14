@@ -123,11 +123,10 @@ struct Cli {
     /// When set, the supervisor opens (or creates) a persisted, append-only,
     /// hash-chained `audit_ledger.jsonl` under this directory and records its
     /// watchdog actions and observed promote/reject/contract-change
-    /// transitions into it. The directory should live OUTSIDE the
-    /// orchestrator's mutable trees (the supervisor's OWN runtime dir) so the
-    /// orchestrator cannot rewrite the ledger it is being audited against.
-    /// Absent (the default) → no ledger is written and the supervisor behaves
-    /// exactly as before. `/statusz` and `/api/audit/verify` surface the
+    /// transitions into it. When `zicato evolve` enables the ledger it passes
+    /// the workspace's `proctor/` directory, which no zicato Python code
+    /// writes, prunes or deletes. Absent (the default) → no ledger is
+    /// written. `/statusz` and `/api/audit/verify` surface the
     /// chain's integrity when a ledger is configured.
     #[arg(long)]
     ledger_dir: Option<PathBuf>,
@@ -247,7 +246,7 @@ async fn main() -> std::process::ExitCode {
     let gate_enabled = cli.promotion_gate;
     let divergence_enabled = cli.divergence_audit;
     let divergence_stuck_age = cli.divergence_stuck_age_seconds;
-    tokio::spawn(async move {
+    let runs = tokio::spawn(async move {
         watchdog::runs_loop(
             run_paths,
             thresholds,
@@ -296,6 +295,8 @@ async fn main() -> std::process::ExitCode {
             return std::process::ExitCode::FAILURE;
         }
     };
+    // Standard output carries only this line (logs go to standard error), so
+    // `zicato evolve` reads it to learn the address the server bound.
     println!("zicato-supervisor listening on http://{}", handle.addr);
 
     // Wait for signals.
@@ -319,6 +320,11 @@ async fn main() -> std::process::ExitCode {
         _ = sigint.recv() => info!("received SIGINT; shutting down"),
     }
     let _ = shutdown_tx.send(());
+    // The runs loop returns once in-flight escalations finish and the
+    // integrity loop has completed its final scan.
+    if let Err(e) = runs.await {
+        error!(error=%e, "watchdog loop failed during shutdown");
+    }
     // Give the server a moment to drain.
     tokio::time::sleep(Duration::from_millis(200)).await;
     std::process::ExitCode::SUCCESS

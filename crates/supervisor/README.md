@@ -1,9 +1,9 @@
 # zicato-supervisor
 
 Single-binary watchdog for the zicato runtime state files. `zicato
-evolve` spawns it with `--workspace <path>` (and spawns nothing when
-`evolve` itself runs with `--no-dashboard`); it can also be run
-standalone against an existing workspace.
+evolve` spawns it with `--workspace <path>` for every loop, with or
+without the dashboard; it can also be run standalone against an existing
+workspace.
 
 The binary does two things:
 
@@ -53,8 +53,11 @@ directory at the repo root). The release profile uses thin LTO and
 ./target/release/zicato-supervisor --workspace /path/to/.zicato
 ```
 
-The server prints its listening URL to stdout
-(`zicato-supervisor listening on http://127.0.0.1:7920`). Its port range
+The server prints its listening URL to standard output
+(`zicato-supervisor listening on http://127.0.0.1:7920`). That line is
+the only output on standard output; logs go to standard error. `zicato
+evolve` reads the line to report the `/statusz` address and record it in
+`runtime/supervisor.json`. Its port range
 (7920–7930) is disjoint from the Python dashboard's (7892–7902), so the
 two never contend when `evolve` starts both.
 
@@ -79,7 +82,7 @@ two never contend when `evolve` starts both.
 | `--promotion-gate`                    | off         | Re-check each recorded promotion against its recorded scores (alarm only) |
 | `--divergence-audit`                  | off         | Compare the SQLite index against the canonical files (report only) |
 | `--divergence-stuck-age-seconds SECS` | `3600`      | Age past which the divergence audit reports a stuck generation |
-| `--ledger-dir PATH`                   | unset       | Write a hash-chained `audit_ledger.jsonl` of actions, decisions and findings here |
+| `--ledger-dir PATH`                   | unset       | Write a hash-chained `audit_ledger.jsonl` of actions, decisions and findings here (`zicato evolve` passes the workspace's `proctor/` when it enables the audits) |
 | `--log LEVEL`                         | `info`      | Log level (`RUST_LOG` overrides)                               |
 
 ## State file contract
@@ -98,6 +101,10 @@ Files consumed:
 - `.zicato/runtime/control/kill_requests/{run_id}` — kill requests from the Python parent
 - `.zicato/current_epoch` — single-line epoch id marker
 - `.zicato/lineage.json` — `{epochs: [{id, generations[]}]}`
+
+On SIGTERM or SIGINT the supervisor finishes in-flight escalations,
+runs one last integrity scan, and then exits, so the workspace state an
+`evolve` loop leaves behind is audited.
 
 The supervisor removes a kill-request marker once it has acted on it.
 With `--ledger-dir` it also appends to its audit ledger, and with
