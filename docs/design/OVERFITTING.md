@@ -560,6 +560,14 @@ than to how zicato evaluates:
    fine-grained gradient; bucketing it ("improved / flat / regressed")
    leaks less of the board's exact response surface while preserving the
    build-on-wins / avoid-failures value ([`EXPERIMENT-MEMORY.md`](EXPERIMENT-MEMORY.md)).
+   The opt-in `experimental.outcome_feedback` qualifies the bucket by the
+   standard error of the paired training difference and adds banded
+   per-metric results and two training-task counts; it adds no entry
+   identity and no holdout result (EXPERIMENT-MEMORY.md §3.6).
+5. **Reduce rejection reasons to their code.** A stored rejection reason
+   names the entries that regressed and the exact scalars, on the holdout as
+   well as the training slice. The restricted experiment memory renders only
+   the reason's code from a closed vocabulary (EXPERIMENT-MEMORY.md §3.5).
 
 **Verdict.** **BUILD — highest ratio of overfitting-reduction to effort
 (§12, the leakage restrictions).** Restrictions 1–3 are localized edits to `detectors.py` /

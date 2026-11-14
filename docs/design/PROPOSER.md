@@ -538,6 +538,24 @@ is `src/zicato/proposer/calibration.py` (the pure sampler, mirroring
 `src/zicato/evolve/round_context.py` (the once-per-round IO builder, joining the
 reign's durable records with the grader's ledger).
 
+### Per-prediction results in the experiment memory
+
+The calibration channel reports whether a hypothesis held as a single verdict.
+`experimental.outcome_feedback` (default `false`) reports each prediction
+separately, inside the experiment-memory entry of the candidate that made it:
+the predicted direction and magnitude beside the realised ones, with the
+training-task pass changes and a Δscalar band qualified by its standard
+error. The exclusions above apply unchanged. The values are directions,
+`small` / `medium` / `large` magnitudes and whole-candidate counts from the
+training slice; no entry id, per-entry result, metric value, or holdout
+result is rendered. [`EXPERIMENT-MEMORY.md`](EXPERIMENT-MEMORY.md) §3.6
+specifies the computation and the rendering.
+
+Independently of that knob, a restricted experiment memory renders a
+rejection reason as its reason code only
+([`EXPERIMENT-MEMORY.md`](EXPERIMENT-MEMORY.md) §3.5), because a stored
+reason can name board entries and holdout scalars.
+
 ---
 
 ## 2.9 The proposer runtime — one Foe episode per candidate

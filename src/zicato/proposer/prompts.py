@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING
 from zicato.analyzer.outcome_marginals import OutcomeMarginalSummary
 from zicato.analyzer.process_exemplars import ProcessExemplar
 from zicato.core.drift_kinds import GOLDFIVE_DRIFT_KINDS
+from zicato.core.experiment import rejection_reason_code
 from zicato.core.types import MutationPoint, Patch, Pattern, PriorExperiment, ProposerSkill
 from zicato.proposer.calibration import CalibrationSummary
 from zicato.proposer.genealogy import GenealogyItem
@@ -459,7 +460,7 @@ def render_metric_targets_block(
     )
 
 
-def _bucket_scalar_delta(delta: float) -> str:
+def _bucket_scalar_delta(delta: float, se: float | None = None) -> str:
     """Coarsen a fine-grained Δscalar to a memorization-resistant bucket.
 
     The scalar is a LOSS (lower is better), so a *negative* delta is an
@@ -468,13 +469,20 @@ def _bucket_scalar_delta(delta: float) -> str:
     reads as ``flat`` — the proposer keeps the build-on-wins / avoid-
     failures signal without the exact response-surface gradient that lets
     it climb the *board* rather than true quality (OVERFITTING.md §11.4).
+
+    With ``se``, the standard error of the paired training difference
+    (``experimental.outcome_feedback``), the direction is qualified: ``(clear)``
+    when the move is at least two standard errors, ``(within noise)`` when it
+    is outside the flat band without reaching that. A clear move inside the
+    flat band reads as clear, never as ``flat``.
     """
     flat_band = 0.01
-    if delta < -flat_band:
-        return "improved"
-    if delta > flat_band:
-        return "regressed"
-    return "flat"
+    direction = "improved" if delta < 0 else "regressed"
+    if se is not None and delta != 0 and abs(delta) >= 2 * se:
+        return f"{direction} (clear)"
+    if not abs(delta) > flat_band:
+        return "flat"
+    return direction if se is None else f"{direction} (within noise)"
 
 
 #: Band edges for a rate in ``[0, 1]`` (a fraction-of-runs marginal). The
@@ -758,6 +766,48 @@ def _band_prediction_accuracy(accuracy: float) -> str:
     return "high"
 
 
+#: Cap on the outcome-feedback lines of one memory entry, in characters.
+OUTCOME_FEEDBACK_MAX_CHARS = 600
+
+
+def _render_outcome_feedback(pe: PriorExperiment) -> str:
+    """Render one entry's outcome feedback as indented lines, or ``""``.
+
+    Present only under ``experimental.outcome_feedback``, and identical with
+    and without restricted visibility: every value is a direction, a magnitude
+    bucket or a whole-candidate training count. The text is capped at
+    :data:`OUTCOME_FEEDBACK_MAX_CHARS`.
+    """
+    realised = {m.metric_name: m for m in pe.realised_movements}
+    parts: list[str] = []
+    for p in pe.predicted_movements:
+        r = realised.pop(p.metric_name, None)
+        if r is None:
+            parts.append(f"{p.metric_name} predicted {p.direction} {p.magnitude}, unmeasured")
+            continue
+        direction_ok = r.direction in p.direction.split("_or_")
+        parts.append(
+            f"{p.metric_name} predicted {p.direction} {p.magnitude}, "
+            f"actual {r.direction} {r.magnitude} "
+            f"(direction {'ok' if direction_ok else 'wrong'}, "
+            f"size {'ok' if r.magnitude == p.magnitude else 'wrong'})"
+        )
+    lines: list[str] = []
+    if parts:
+        lines.append("predictions: " + "; ".join(parts))
+    if realised:
+        lines.append(
+            "unpredicted: "
+            + "; ".join(f"{r.metric_name} {r.direction} {r.magnitude}" for r in realised.values())
+        )
+    if pe.train_fixed is not None and pe.train_broke is not None:
+        lines.append(f"train tasks: fixed {pe.train_fixed}, broke {pe.train_broke}")
+    text = "".join(f"\n    {line}" for line in lines)
+    if len(text) > OUTCOME_FEEDBACK_MAX_CHARS:
+        text = text[: OUTCOME_FEEDBACK_MAX_CHARS - 1] + "…"
+    return text
+
+
 def _render_prior_experiment_line(pe: PriorExperiment, *, restrict: bool = False) -> str:
     """Render one prior experiment as a two-line compact entry.
 
@@ -778,6 +828,15 @@ def _render_prior_experiment_line(pe: PriorExperiment, *, restrict: bool = False
     prediction-accuracy is ALWAYS banded to ``low``/``medium``/``high``
     regardless of ``restrict`` — it is a calibration meta-signal, never an
     exact board number, so it carries no per-entry surface to leak.
+
+    The rejection reason is likewise reduced under ``restrict`` to its symbolic
+    code (:func:`zicato.core.experiment.rejection_reason_code`): a stored
+    reason can name board entries and exact scalars, holdout ones included.
+
+    An entry carrying outcome feedback (``experimental.outcome_feedback``;
+    EXPERIMENT-MEMORY.md §3.6) qualifies the bucket by the standard error, or
+    appends ``±`` the standard error to the unrestricted number, and adds the
+    :func:`_render_outcome_feedback` lines after the core idea.
     """
     ids = ", ".join(pe.modulating) if pe.modulating else "—"
     verdict = pe.decision.upper().replace("_", "-")
@@ -790,22 +849,22 @@ def _render_prior_experiment_line(pe: PriorExperiment, *, restrict: bool = False
     # has no outcome yet.
     if pe.scalar_score_delta is not None and pe.same_contract:
         if restrict:
-            head = (
-                f"- {gen_label} {verdict} "
-                f"Δscalar={_bucket_scalar_delta(pe.scalar_score_delta)}  [{ids}]"
-            )
+            band = _bucket_scalar_delta(pe.scalar_score_delta, pe.scalar_delta_se)
+            head = f"- {gen_label} {verdict} Δscalar={band}  [{ids}]"
         else:
-            head = f"- {gen_label} {verdict} Δscalar={pe.scalar_score_delta:+.3f}  [{ids}]"
+            se = "" if pe.scalar_delta_se is None else f" ±{pe.scalar_delta_se:.3f}"
+            head = f"- {gen_label} {verdict} Δscalar={pe.scalar_score_delta:+.3f}{se}  [{ids}]"
     else:
         head = f"- {gen_label} {verdict}  [{ids}]"
     if pe.decision == "rejected" and pe.rejection_reason:
-        head = f"{head}  ({pe.rejection_reason})"
+        reason = rejection_reason_code(pe.rejection_reason) if restrict else pe.rejection_reason
+        head = f"{head}  ({reason})"
     # Advisory hypothesis prediction-accuracy (diagnostic, never gates) —
     # banded so the proposer reads its own calibration ("did my last
     # predictions hold?") without an exact, climbable number.
     if pe.prediction_accuracy is not None:
         head = f"{head}  prediction:{_band_prediction_accuracy(pe.prediction_accuracy)}"
-    return f"{head}\n    {pe.core_idea}"
+    return f"{head}\n    {pe.core_idea}{_render_outcome_feedback(pe)}"
 
 
 def render_prior_experiments_block(

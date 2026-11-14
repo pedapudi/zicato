@@ -236,7 +236,7 @@ class PriorExperiment:
     core_idea: str                # one-sentence hypothesis core
     modulating: tuple[str, ...]   # targeted mutation-point ids (from modulating)
     decision: str                 # "promoted" | "rejected" | "deferred" | "in_flight"
-    rejection_reason: str         # symbolic reason, "" when not rejected
+    rejection_reason: str         # the stored reason, "" when not rejected
     scalar_score_delta: float | None   # Δscalar; None when unsettled / unavailable
     same_contract: bool = True    # False for a cross-contract (different-epoch) entry
 ```
@@ -252,6 +252,11 @@ settled experiment's falsifiable predictions
 experiment that made no gradable prediction. It is an advisory
 calibration signal rendered in banded form alongside the rest of the
 digest, and it never gates promotion.
+
+Five further fields hold the outcome feedback of §3.6: `scalar_delta_se`,
+`train_fixed`, `train_broke`, `predicted_movements`, and
+`realised_movements`. They are unset unless the contract enables
+`experimental.outcome_feedback`.
 
 ### 3.3 Which experiments, and in what order
 
@@ -342,11 +347,105 @@ believe something changed, such as a fresh pattern or a different
 champion. The section exists so that such a re-proposal is a considered
 choice rather than an accident.
 
+The example shows the unrestricted rendering. Under
+`overfitting.restrict_proposer_visibility`, the default, each Δscalar renders
+as `improved`, `flat`, or `regressed`, and each rejection reason renders as
+its reason code alone. A stored reason is written for the operator and can
+name board entries and exact scalars, including holdout ones: the gate
+records `holdout_not_confirmed: holdout pass-rate regression on entries:`
+followed by the entry ids. `rejection_reason_code` in `zicato.core.experiment`
+maps the leading text of a stored reason to one of these codes, and maps any
+reason it does not recognise to `rejected`:
+
+`holdout_not_confirmed`, `confirmation_incomplete`,
+`insufficient_improvement`, `challenger_regressed`, `pass_rate_regression`,
+`monotonicity_regression`, `regression_suite_failed`,
+`diff_complexity_ceiling`, `invalid_evidence`, `incomplete_execution`,
+`containment_violation`, `gate_contradiction`, `field_diversity_duplicate`,
+`field_diversity_overlap`, `validation_failed`, `proposer_retries_exhausted`,
+`deferred_infra`, `skip_round`, `wall_clock_budget`, `operator_override`,
+`not_evaluated`, `champion_gate_not_cleared`, `rejected`.
+
+The experiment record keeps the full reason. The best-of-N critic is shown
+the same rendered section, so it sees the same codes.
+
 When no prior experiments exist (the baseline round, or the first
 challenger of a field with no settled history), the helper returns the
 empty string and the section is omitted entirely, in the same way as the
 pattern block. The empty string is the proposer-side
 sentinel for "skip this section".
+
+### 3.6 Outcome feedback (opt-in)
+
+`experimental.outcome_feedback` (default `false`) adds three results to each
+settled same-epoch entry. Each describes the whole candidate and is computed
+from the training slice only. No board-entry id, task text, transcript,
+per-entry result, metric value, or holdout result is recorded for the
+proposer or rendered. Enabling the knob changes the contract hash, so the
+next `zicato evolve` starts a new epoch.
+
+Settlement records the results on the candidate's outcome. The source is the
+candidate's training duel against the champion; where racing ran several,
+the one covering the most entries is used. Field duels run on the training
+slice, and settlement filters the duel's entries against that slice again.
+A candidate that never met the champion records nothing.
+
+- **Predicted and actual movement, per metric.** Settlement fills the
+  outcome's `metric_movements` with the mean per-entry value of every scored
+  metric on each side. Without the knob that field is empty, and every
+  prediction grades as unmeasured. The reader grades each of the
+  hypothesis's own predictions with `_grade_movement` in
+  `zicato.tournament.detail`, the grader behind the prediction-accuracy
+  band. The entry shows the predicted direction and `small`, `medium`, or
+  `large` magnitude beside the realised direction and magnitude, and whether
+  the direction and the size each matched. A prediction the outcome did not
+  measure shows as `unmeasured`. Up to three metrics the hypothesis did not
+  predict are listed when they moved by a medium or large amount, largest
+  first, with direction and magnitude only.
+- **Training tasks fixed and broken.** `train_fixed` counts training entries
+  that failed under the champion and passed under the candidate;
+  `train_broke` counts the reverse. `pass_flips` in
+  `zicato.tournament.scoring` computes both sets, and the recombination
+  pair selector uses the same function. Only the two counts are stored.
+- **Standard error of the scalar difference.** `scalar_score_delta_se` is
+  the standard error of the mean per-entry difference between the
+  candidate's scalar and the champion's, each entry scored alone by
+  `aggregate_generation_score` on its replicate-folded profile. Settlement
+  stores it only when the mean of those differences reproduces the recorded
+  Δscalar. It is therefore absent when the scalar is not a mean over
+  entries: under a pass transform, a scalar plugin, or the edit-complexity
+  term, on a board that mixes scored and unscored entries, with fewer than
+  two entries, or when the recorded Δscalar pairs aggregates from two
+  different duels.
+
+The three outcome fields are optional in the stored record: a record written
+without the knob omits the keys, and the reader accepts their absence. The
+index stores the outcome as JSON, so its schema is unchanged.
+
+With a standard error present, the restricted Δscalar reads `improved (clear)`
+or `regressed (clear)` when the absolute Δscalar is at least two standard
+errors, `flat` when it is within 0.01 and not clear, and otherwise
+`improved (within noise)` or `regressed (within noise)`. A change smaller than
+0.01 that reaches two standard errors therefore reads as clear, never as `flat`.
+The unrestricted
+rendering shows the number followed by `±` and the standard error. An entry
+without a standard error keeps the three-way band.
+
+A restricted entry:
+
+```
+- v7 REJECTED Δscalar=improved (within noise)  [researcher.instruction]  (pass_rate_regression)  prediction:medium
+    Require the researcher to cite a source before asserting a metric.
+    predictions: drift:off_topic predicted decrease medium, actual decrease small (direction ok, size wrong); cost:tokens predicted decrease small, unmeasured
+    unpredicted: judge:brevity increase large
+    train tasks: fixed 9, broke 7
+```
+
+Unrestricted, the first line of that entry reads
+`- v7 REJECTED Δscalar=-0.034 ±0.021  [researcher.instruction]  (pass-rate regression on entries: refund_3, refund_9)  prediction:medium`
+and the remaining lines are the same. The added lines are capped at 600
+characters per entry. Cross-contract entries (§3.4) and in-flight siblings
+carry no outcome feedback.
 
 ## 4. Risks and limits
 
@@ -397,17 +496,18 @@ standalone proposer call is unaffected by this surface.
 
 The frozen dataclass of §3.2 lives in `zicato.core.experiment` and is
 re-exported from `zicato.core.types`, which lists it in `__all__`. It
-carries nine fields: `generation_id`, `epoch_id`, `core_idea`,
+carries the nine fields `generation_id`, `epoch_id`, `core_idea`,
 `modulating`, `decision`, `rejection_reason`, `scalar_score_delta`,
-`same_contract`, and `prediction_accuracy`. The module-level constant
+`same_contract`, and `prediction_accuracy`, and the five outcome-feedback
+fields of §3.6. The module-level constant
 `EXPERIMENT_MEMORY_MAX_ENTRIES = 12` sits beside it, so the cap is
 defined once and imported wherever it is applied.
 
 ### 5.2 The reader — `zicato/index/query.py`
 
 `prior_experiments_for_epoch(db_path, epoch_id, *,
-max_entries=EXPERIMENT_MEMORY_MAX_ENTRIES, cross_epoch=False) ->
-list[PriorExperiment]`:
+max_entries=EXPERIMENT_MEMORY_MAX_ENTRIES, cross_epoch=False,
+outcome_feedback=False) -> list[PriorExperiment]`:
 
 - Reads the epoch's settled experiments through `experiments_for_epoch`,
   which already selects `hypothesis_json`, `tournament_decision`,
@@ -439,6 +539,12 @@ whatever budget the same-epoch entries leave. The operator-facing knob is
 cross-contract entries their own epoch-tagged block after the same-epoch
 blocks.
 
+With `outcome_feedback=True`, `_outcome_feedback_for_row` adds the banded
+feedback of §3.6 to each same-epoch entry from the row's recorded hypothesis
+and outcome. The knob is `experimental.outcome_feedback`, threaded the same
+way. `_train_feedback` in `zicato/evolve/settlement.py` records the outcome
+fields the reader uses.
+
 ### 5.3 Prompt rendering — `zicato/proposer/prompts.py`
 
 - `render_prior_experiments_block(prior, *, restrict=False) -> str`
@@ -450,8 +556,10 @@ blocks.
   proposer-visibility discipline of [`OVERFITTING.md`](OVERFITTING.md)
   §11: it coarsens each Δscalar to `improved`, `flat`, or `regressed`,
   so the block obeys the same leakage restriction as the pattern block.
+  It also reduces each rejection reason to its reason code (§3.5).
   A graded experiment's prediction accuracy always renders as a
-  `low`, `medium`, or `high` band.
+  `low`, `medium`, or `high` band. An entry carrying outcome feedback
+  renders the qualified band and the added lines of §3.6.
 - `ProposalEvidence` carries a
   `prior_experiments: tuple[PriorExperiment, ...] = ()` field. When it is
   non-empty `render_evidence` adds the `## What's already been tried`
@@ -504,8 +612,9 @@ blocks.
 - **The standalone propose command** (`zicato/cli/commands/propose.py`)
   loads the same-epoch digest the same way and renders it under the
   epoch's frozen `restrict_proposer_visibility` setting, so
-  `zicato proposer propose` sees the section the loop sees; it does not
-  apply `experimental.cross_epoch_memory`.
+  `zicato proposer propose` sees the section the loop sees. It applies
+  `experimental.outcome_feedback` and does not apply
+  `experimental.cross_epoch_memory`.
 
 ### 5.6 The tests
 
@@ -523,6 +632,14 @@ blocks.
   evidence; the promoted, rejected, and in-flight groups render as in
   §3.5; `same_contract=False` entries render without a Δscalar and in
   their own separated block; the section lands above the loss summary.
+- **`tests/test_memory_reason_codes.py`** — the restricted rejection
+  reason. A holdout rejection written by the gate renders with no entry id
+  and no scalar, for the proposer and for the critic, and every reason the
+  loop writes maps to a code in the closed vocabulary.
+- **`tests/test_outcome_feedback.py`** — outcome feedback (§3.6): the
+  band, the standard error against an independent calculation, the
+  training-only counts, the optional record fields, the reader, and a
+  rendering that contains no entry id and no metric value.
 - **`tests/test_orchestrator_prior_experiments.py`** — the field loop, read
   end to end off the workspace's durable proposer-input capture. Siblings
   accumulate, so challenger k's task contains the in-flight core ideas of

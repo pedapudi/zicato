@@ -79,6 +79,7 @@ def _load_prior_experiments(
     epoch_id: str,
     *,
     cross_epoch: bool = False,
+    outcome_feedback: bool = False,
     writer: WorkspaceLock | None = None,
 ) -> list[PriorExperiment]:
     """Best-effort read of the epoch's settled experiment-memory digest.
@@ -100,14 +101,19 @@ def _load_prior_experiments(
     ``experimental.cross_epoch_memory`` knob (EXPERIMENT-MEMORY.md §3.4):
     when set, settled experiments from prior epochs under the SAME
     contract hash fill the cap-budget the same-epoch entries leave, as
-    ``same_contract=False`` entries.
+    ``same_contract=False`` entries. ``outcome_feedback`` is the
+    ``experimental.outcome_feedback`` knob (EXPERIMENT-MEMORY.md §3.6): when
+    set, each same-epoch entry also carries its banded outcome feedback.
     """
     try:
         from zicato.index.query import prior_experiments_for_epoch  # noqa: PLC0415
 
         index_preflight(workspace_root, writer=writer)
         return prior_experiments_for_epoch(
-            _index_db_path(workspace_root), epoch_id, cross_epoch=cross_epoch
+            _index_db_path(workspace_root),
+            epoch_id,
+            cross_epoch=cross_epoch,
+            outcome_feedback=outcome_feedback,
         )
     except ImportError:
         log.debug("zicato.index.query unavailable; proposer runs without experiment memory")

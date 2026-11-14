@@ -68,6 +68,7 @@ from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
 
+from zicato.core.experiment import outcome_to_dict
 from zicato.core.loss import has_execution_evidence, validate_loss_identity
 from zicato.core.measurement import (
     UNKNOWN_SEED,
@@ -522,7 +523,7 @@ def _upsert_experiment(conn: sqlite3.Connection, experiment: Experiment) -> None
         scalar_delta: float | None = outcome.scalar_score_delta
         drift_delta: float | None = outcome.drift_loss_delta
         pass_delta: float | None = outcome.pass_rate_delta
-        outcome_json: str | None = json.dumps(asdict(outcome), sort_keys=True)
+        outcome_json: str | None = json.dumps(outcome_to_dict(outcome), sort_keys=True)
     else:
         decision = None
         rejection_reason = None

@@ -26,12 +26,15 @@ the receipt contradicts.
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
 
 from zicato.core.types import (
+    HypothesisSpec,
     MatchOutcome,
+    MetricMovementActual,
     OutcomeRecord,
     TournamentDecision,
 )
@@ -62,7 +65,9 @@ from zicato.evolve.settlement_recovery import (
     record_promotion_hook_delivery,
 )
 from zicato.selection.strategy import SelectionDecision
+from zicato.tournament.detail import _direction_sign_ok
 from zicato.tournament.records import field_tournament_record
+from zicato.tournament.scoring import metric_means, paired_scalar_se, pass_flips
 from zicato.workspace import generation_round_number
 
 if TYPE_CHECKING:
@@ -212,6 +217,77 @@ def _crowning_duel_deltas(raw_crowning: Any, parent_id: str) -> tuple[float, flo
     return pass_rate_delta, challenger_drift - champion_drift
 
 
+def _train_feedback(
+    field_round: FieldRound,
+    execution: FieldExecution,
+    generation_id: str,
+    hypothesis: HypothesisSpec,
+    scalar_delta: float,
+) -> dict[str, Any]:
+    """Outcome-feedback fields for one challenger, or ``{}`` when the knob is off.
+
+    Read from the challenger's training duel against the champion that covers
+    the most entries. Field duels run on the training slice only, and the
+    entries are filtered against it again here, so no holdout result can
+    enter. The fields are whole-candidate: per-metric means on each side, two
+    counts of pass changes, and the standard error of the paired scalar
+    difference. A challenger that never met the champion records nothing.
+    """
+    prepared = field_round.prepared
+    if not prepared.weights.experimental.outcome_feedback:
+        return {}
+    try:
+        champion_id = field_round.parent_id
+        train_ids = {entry.id for entry in prepared.train_board}
+        pairs: list[tuple[Any, Any]] = []
+        for result in execution.raw_results.values():
+            sides = (result.parent_generation_id, result.child_generation_id)
+            if set(sides) != {champion_id, generation_id}:
+                continue
+            candidate = [
+                pair if sides[0] == champion_id else (pair[1], pair[0])
+                for entry_id, pair in result.per_entry_losses.items()
+                if entry_id in train_ids
+                and all(loss.execution_started is not False for loss in pair)
+            ]
+            if len(candidate) > len(pairs):
+                pairs = candidate
+        if not pairs:
+            return {}
+        champion = [before for before, _after in pairs]
+        challenger = [after for _before, after in pairs]
+        fixed, broke = pass_flips(
+            {loss.entry_id: loss.pass_fail for loss in champion},
+            {loss.entry_id: loss.pass_fail for loss in challenger},
+            train_ids,
+        )
+        before, after = metric_means(champion), metric_means(challenger)
+        predicted = {m.metric_name: m.direction for m in hypothesis.expected_metric_movements}
+        movements = tuple(
+            MetricMovementActual(
+                metric_name=name,
+                from_value=before.get(name, 0.0),
+                to_value=after.get(name, 0.0),
+                # The direction verdict; the magnitude is graded when the record is read.
+                hypothesis_match=name in predicted
+                and _direction_sign_ok(
+                    predicted[name], after.get(name, 0.0) - before.get(name, 0.0)
+                ),
+            )
+            for name in sorted(before.keys() | after.keys())
+            if math.isfinite(before.get(name, 0.0)) and math.isfinite(after.get(name, 0.0))
+        )
+        return {
+            "metric_movements": movements,
+            "train_fixed": len(fixed),
+            "train_broke": len(broke),
+            "scalar_score_delta_se": paired_scalar_se(pairs, prepared.weights, scalar_delta),
+        }
+    except Exception as exc:  # noqa: BLE001 — optional feedback cannot stop settlement
+        log.debug("outcome feedback skipped for %s (%s)", generation_id, exc)
+        return {}
+
+
 def _build_field_settlement(
     field_round: FieldRound,
     candidates: CandidateField,
@@ -297,7 +373,6 @@ def _build_field_settlement(
                 challenger=challenger,
                 outcome=OutcomeRecord(
                     ran_at=_now_iso(),
-                    metric_movements=(),
                     pass_rate_delta=pass_rate_delta,
                     drift_loss_delta=drift_loss_delta,
                     scalar_score_delta=gen_scalar - parent_scalar,
@@ -314,6 +389,13 @@ def _build_field_settlement(
                     holdout_loss=gen_fields["holdout_loss"],
                     generalization_gap=gen_fields["generalization_gap"],
                     evidence=execution.gate_evidence if is_crowning_challenger else None,
+                    **_train_feedback(
+                        field_round,
+                        execution,
+                        gid,
+                        challenger.experiment.hypothesis,
+                        gen_scalar - parent_scalar,
+                    ),
                 ),
             )
         )

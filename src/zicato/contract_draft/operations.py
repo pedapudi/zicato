@@ -579,6 +579,7 @@ def set_experimental(
     diff_complexity_weight: float | None = None,
     diff_complexity_ceiling: float | None = None,
     cross_epoch_memory: bool | None = None,
+    outcome_feedback: bool | None = None,
     standing_rating: str | None = None,
     resolver: str | None = None,
 ) -> DraftPatch:

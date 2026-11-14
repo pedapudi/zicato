@@ -83,6 +83,7 @@ _NONDEFAULT_VALUES: dict[str, dict[str, Any]] = {
         "diff_complexity_weight": 0.2,
         "diff_complexity_ceiling": 10.0,
         "cross_epoch_memory": True,
+        "outcome_feedback": True,
         "standing_rating": "bradley_terry",
         "resolver": "ranked_pairs",
     },

@@ -11,6 +11,43 @@
 > formats — are recorded only in the git history. The design documents
 > under [`docs/design/`](docs/design/) describe the current system.
 
+### A restricted experiment memory shows a rejection's code, never its detail
+
+The `## What's already been tried` section rendered a rejected experiment's
+stored reason verbatim, also under `overfitting.restrict_proposer_visibility`.
+A stored reason names the board entries that regressed and the exact scalars,
+on the holdout as well as the training slice
+(`holdout_not_confirmed: holdout pass-rate regression on entries: …`), so the
+proposer and the best-of-N critic could read holdout entry ids. Under
+restriction the section now renders only a reason code from a closed
+vocabulary, with `rejected` for any reason the mapping does not recognise.
+The experiment record keeps the full reason. The unrestricted rendering is
+unchanged. `docs/design/EXPERIMENT-MEMORY.md` §3.5 lists the codes.
+
+### Opt-in outcome feedback in the experiment memory
+
+`experimental.outcome_feedback` (default `false`) adds three results to each
+settled entry of the proposer's experiment memory, all computed from the
+training slice and stated for the whole candidate:
+
+- each predicted metric movement beside the realised direction and
+  `small` / `medium` / `large` magnitude, with whether direction and size
+  matched, and up to three unpredicted metrics that moved by a medium or
+  large amount;
+- how many training tasks the candidate fixed and how many it broke;
+- a Δscalar band qualified by the standard error of the paired training
+  difference: `improved (clear)`, `improved (within noise)`, `flat`,
+  `regressed (within noise)`, `regressed (clear)`. Unrestricted, the number
+  is followed by `±` and its standard error.
+
+With the knob on, settlement records the per-metric movements, the two counts
+and the standard error on the outcome. Before this change no code path
+recorded realised metric movements, so every graded prediction counted as
+missed; with the knob off that is still the case. The three new outcome
+fields are omitted from a record that does not have them. With the knob off,
+prompts and stored records are unchanged. Enabling it changes the contract
+hash. `docs/design/EXPERIMENT-MEMORY.md` §3.6 specifies it.
+
 ### The console ships three themes and one typeface
 
 The console's colour picker offers three themes: `monokai` (dark, the

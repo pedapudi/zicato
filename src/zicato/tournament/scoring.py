@@ -73,6 +73,7 @@ from __future__ import annotations
 import json
 import math
 import os
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -735,6 +736,72 @@ def aggregate_generation_score(
     return agg
 
 
+def pass_flips(
+    parent_pass: Mapping[str, bool | None],
+    child_pass: Mapping[str, bool | None],
+    entry_ids: Iterable[str],
+) -> tuple[frozenset[str], frozenset[str]]:
+    """Entries that went from failing to passing, and from passing to failing.
+
+    Only ``entry_ids`` are considered; callers pass the training slice, so a
+    holdout entry never contributes. An entry without a pass verdict on either
+    side belongs to neither set.
+    """
+    fixed: set[str] = set()
+    broke: set[str] = set()
+    for entry_id in entry_ids:
+        before, after = parent_pass.get(entry_id), child_pass.get(entry_id)
+        if before is False and after is True:
+            fixed.add(entry_id)
+        elif before is True and after is False:
+            broke.add(entry_id)
+    return frozenset(fixed), frozenset(broke)
+
+
+def paired_scalar_se(
+    pairs: Iterable[tuple[LossProfile, LossProfile]],
+    weights: ScoringWeights,
+    scalar_delta: float,
+) -> float | None:
+    """Standard error of the mean per-entry scalar difference, child minus parent.
+
+    Each entry is scored alone by :func:`aggregate_generation_score`, on the
+    replicate-folded profiles the duel already holds. The result is ``None``
+    with fewer than two entries, and whenever the mean of the per-entry
+    differences does not reproduce ``scalar_delta``: the scalar then does not
+    decompose per entry (a pass transform, a scalar plugin, an edit-size term,
+    a board mixing scored and unscored entries, or sides taken from different
+    duels), and its standard error is left unstated.
+    """
+    differences = [
+        float(aggregate_generation_score([child], weights)["scalar"])
+        - float(aggregate_generation_score([parent], weights)["scalar"])
+        for parent, child in pairs
+    ]
+    n = len(differences)
+    if n < 2:
+        return None
+    mean = math.fsum(differences) / n
+    if not math.isclose(mean, scalar_delta, rel_tol=1e-9, abs_tol=1e-9):
+        return None
+    se = math.sqrt(math.fsum((d - mean) ** 2 for d in differences) / (n - 1) / n)
+    return se if math.isfinite(se) else None
+
+
+def metric_means(losses: Iterable[LossProfile]) -> dict[str, float]:
+    """Mean per-entry value of every scored metric, an absent metric counting zero.
+
+    The same per-run-mean model as :func:`aggregate_namespaced_metrics`, before
+    any contract weight, with a metric's severity buckets summed.
+    """
+    profiles = list(losses)
+    terms: dict[str, list[float]] = {}
+    for loss in profiles:
+        for mc in loss.scoring_metrics():
+            terms.setdefault(mc.name, []).append(float(mc.count))
+    return {name: math.fsum(values) / len(profiles) for name, values in terms.items()}
+
+
 __all__ = [
     "GenerationScore",
     "ScoreMeasurement",
@@ -745,6 +812,9 @@ __all__ = [
     "aggregate_generation_score",
     "aggregate_namespaced_metrics",
     "entry_score",
+    "metric_means",
+    "paired_scalar_se",
+    "pass_flips",
     "per_run_drift_loss",
 ]
 

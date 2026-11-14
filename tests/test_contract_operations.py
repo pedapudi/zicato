@@ -1019,6 +1019,15 @@ def test_set_experimental() -> None:
     assert serialized["scoring"]["experimental"]["cross_epoch_memory"] is True
 
 
+def test_set_experimental_outcome_feedback_arg() -> None:
+    draft = TournamentDraft()
+    assert draft.scoring.experimental.outcome_feedback is False
+    patch = ops.set_experimental(draft, outcome_feedback=True)
+    assert draft.scoring.experimental.outcome_feedback is True
+    assert patch.changed["outcome_feedback"] == {"from": False, "to": True}
+    assert ops.set_experimental(draft, outcome_feedback=True).changed == {}
+
+
 def test_set_goldfive_activation_partial_update_and_removal() -> None:
     draft = TournamentDraft()
     activated = ops.set_goldfive(draft, config={})

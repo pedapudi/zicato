@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any, Literal
 
 from zicato.core.mutation import Patch
@@ -62,6 +62,12 @@ class OutcomeRecord:
     Named movements retain their own units and must not be summed across
     unrelated metrics. Holdout and confirmation evidence are optional when
     those measurements did not run.
+
+    ``scalar_score_delta_se``, ``train_fixed`` and ``train_broke`` describe the
+    training comparison against the champion: the standard error of the paired
+    per-task scalar difference, and how many training tasks went from failing
+    to passing and the reverse. Settlement records them only under
+    ``experimental.outcome_feedback``; a record without them omits the keys.
     """
 
     ran_at: str
@@ -85,6 +91,73 @@ class OutcomeRecord:
     operator_override: bool = False
     operator_override_reason: str = ""
     evidence: dict[str, Any] | None = None
+    scalar_score_delta_se: float | None = None
+    train_fixed: int | None = None
+    train_broke: int | None = None
+
+
+#: Outcome fields a stored record may omit; the encoder drops them when unset.
+OUTCOME_OPTIONAL_FIELDS = ("scalar_score_delta_se", "train_fixed", "train_broke")
+
+
+def outcome_to_dict(outcome: OutcomeRecord) -> dict[str, Any]:
+    """Encode an outcome, omitting the optional training fields that are unset."""
+    body = asdict(outcome)
+    for name in OUTCOME_OPTIONAL_FIELDS:
+        if body[name] is None:
+            del body[name]
+    return body
+
+
+#: Reason codes a restricted proposer or critic may see, keyed by the leading
+#: text of the stored rejection reason. The stored reason keeps its detail,
+#: which can name board entries and exact scalars, for the operator.
+_REASON_CODES: tuple[tuple[str, str], ...] = (
+    ("holdout_not_confirmed", "holdout_not_confirmed"),
+    ("holdout confirmation incomplete", "confirmation_incomplete"),
+    ("confirmation incomplete", "confirmation_incomplete"),
+    ("deferred:", "confirmation_incomplete"),
+    ("inconclusive:", "confirmation_incomplete"),
+    ("insufficient improvement", "insufficient_improvement"),
+    ("challenger regressed", "challenger_regressed"),
+    ("pass-rate regression", "pass_rate_regression"),
+    ("monotonicity_regression", "monotonicity_regression"),
+    ("regression suite failed", "regression_suite_failed"),
+    ("diff_complexity_ceiling", "diff_complexity_ceiling"),
+    ("invalid evidence", "invalid_evidence"),
+    ("incomplete execution", "incomplete_execution"),
+    ("containment_violation", "containment_violation"),
+    ("gate_contradiction", "gate_contradiction"),
+    ("field_diversity_duplicate", "field_diversity_duplicate"),
+    ("field_diversity_overlap", "field_diversity_overlap"),
+    ("validation_failed", "validation_failed"),
+    ("proposer_retries_exhausted", "proposer_retries_exhausted"),
+    ("deferred_infra", "deferred_infra"),
+    ("skip_round", "skip_round"),
+    ("wall_clock_budget", "wall_clock_budget"),
+    ("operator override", "operator_override"),
+    ("no challenger duel ran", "not_evaluated"),
+    ("multi-challenger field: no challenger applied", "not_evaluated"),
+    ("no racing survivor cleared", "champion_gate_not_cleared"),
+    ("no finalist cleared", "champion_gate_not_cleared"),
+    ("no grand finalist cleared", "champion_gate_not_cleared"),
+    ("swiss leader did not clear", "champion_gate_not_cleared"),
+)
+
+#: The closed vocabulary :func:`rejection_reason_code` can return.
+REJECTION_REASON_CODES = frozenset(code for _prefix, code in _REASON_CODES) | {"rejected"}
+
+
+def rejection_reason_code(reason: str) -> str:
+    """Reduce a stored rejection reason to its symbolic code.
+
+    An unrecognised reason maps to ``rejected``, so no free text reaches a
+    restricted prompt.
+    """
+    for prefix, code in _REASON_CODES:
+        if reason.startswith(prefix):
+            return code
+    return "rejected"
 
 
 #: Hard cap on the number of settled prior experiments surfaced to the
@@ -161,6 +234,14 @@ class PriorExperiment:
         section (banded, like the rest of the restricted memory); it NEVER
         gates promotion. See ``docs/design/FUNCTIONALITY-RECOMMENDATIONS.md``
         §4.2 and :func:`zicato.tournament.detail.hypothesis_ledger`.
+    scalar_delta_se, train_fixed, train_broke, predicted_movements, realised_movements:
+        Outcome feedback, present only under ``experimental.outcome_feedback``
+        (``docs/design/EXPERIMENT-MEMORY.md`` §3.6). The standard error and the
+        two training-task counts are the recorded outcome fields. The
+        predictions are the hypothesis's own; each realised movement carries
+        a direction and a magnitude bucket for one metric, never its values,
+        and covers the measured predictions plus at most three unpredicted
+        metrics that moved by a medium or large amount.
     """
 
     generation_id: str
@@ -172,6 +253,11 @@ class PriorExperiment:
     scalar_score_delta: float | None
     same_contract: bool = True
     prediction_accuracy: float | None = None
+    scalar_delta_se: float | None = None
+    train_fixed: int | None = None
+    train_broke: int | None = None
+    predicted_movements: tuple[ExpectedMetricMovement, ...] = ()
+    realised_movements: tuple[ExpectedMetricMovement, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

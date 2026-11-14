@@ -173,6 +173,7 @@ frozen contract, so every knob here **rolls the epoch**.
 | `calibration_feedback` | `0` | Maximum graded prediction examples — did its own predictions land — added to each proposal. |
 | `process_exemplars` | `0` | Maximum redacted training-event windows added to each proposal. |
 | `cross_epoch_memory` | `false` | Include prior-epoch experiment history under the same contract identity. |
+| `outcome_feedback` | `false` | Show, per settled candidate, each predicted metric movement beside the realised one, how many training tasks it fixed and broke, and whether its scalar change is clear of noise. Banded, training slice only. |
 
 ### The text roles around the slate
 

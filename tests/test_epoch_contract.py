@@ -656,6 +656,28 @@ def test_hash_changes_when_calibration_feedback_opted_in(tmp_path: Path) -> None
     assert h_default != h_on
 
 
+def test_hash_stable_when_outcome_feedback_at_default(tmp_path: Path) -> None:
+    base = _write_contract(tmp_path)
+    base.scoring_path.write_text(json.dumps({"pass_weight": 1.0}))
+    h_omitted = compute_contract_hash(base)
+    base.scoring_path.write_text(
+        json.dumps({"pass_weight": 1.0, "experimental": {"outcome_feedback": False}})
+    )
+    assert compute_contract_hash(base) == h_omitted
+
+
+def test_hash_changes_when_outcome_feedback_opted_in(tmp_path: Path) -> None:
+    # A proposer shown per-candidate outcome feedback proposes under a
+    # different rule, and settlement records more, so the epoch rolls.
+    base = _write_contract(tmp_path)
+    base.scoring_path.write_text(json.dumps({"pass_weight": 1.0}))
+    h_default = compute_contract_hash(base)
+    base.scoring_path.write_text(
+        json.dumps({"pass_weight": 1.0, "experimental": {"outcome_feedback": True}})
+    )
+    assert compute_contract_hash(base) != h_default
+
+
 def test_hash_changes_on_ladder_knob_edit(tmp_path: Path) -> None:
     # The Ladder sub-config (OVERFITTING.md §12 #2) folds into the scoring
     # contract through OverfittingConfig — bumping a Ladder knob rolls the
