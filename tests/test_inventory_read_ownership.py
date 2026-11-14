@@ -52,16 +52,16 @@ def test_inventory_absence_empty_extensions_and_atomic_refusal(tmp_path: Path, r
 
 @pytest.mark.parametrize("body", ['{"board": 4}', '["board"]', "{"])
 def test_contract_view_refuses_malformed_present_map(tmp_path: Path, body: str) -> None:
-    from zicato.query.events_index import build_contract_diff
+    from zicato.query.events_index import build_meta_loop_ledger
 
     layout = WorkspaceLayout.from_root(tmp_path)
     path = layout.contract_components("e1")
     path.parent.mkdir(parents=True)
     path.write_text(body)
-    view = build_contract_diff(WorkspacePaths(tmp_path), "e1")
-    assert "contract_components.json" in view.get("error", "")
-    assert not any(row["current_hash"] for row in view["components"])
-    assert not view["any_changed"]
+    (row,) = build_meta_loop_ledger(WorkspacePaths(tmp_path))["epochs"]
+    assert "contract_components.json" in row.get("error", "")
+    assert not any(row["changed_components"].values())
+    assert not row["changed_list"]
     assert path.read_text() == body
 
 

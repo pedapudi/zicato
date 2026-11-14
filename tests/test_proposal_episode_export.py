@@ -287,16 +287,6 @@ def test_the_route_serves_the_page_as_html(client: TestClient) -> None:
     assert "episode" in response.text
 
 
-def test_the_availability_route_answers_what_the_panel_branches_on(
-    client: TestClient,
-) -> None:
-    payload = client.get(f"/api/generation/{EPOCH}/{GENERATION}/episode-export").json()
-
-    assert payload["export_available"] is True
-    assert payload["generation_id"] == GENERATION
-    assert payload["slot"] is None
-
-
 def test_a_candidate_with_no_page_is_a_404(tmp_path: Path, static_dir: Path) -> None:
     client = TestClient(
         create_app(_served_workspace(tmp_path, with_page=False), static_dir, read_only=True)

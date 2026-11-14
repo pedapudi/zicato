@@ -3,7 +3,7 @@
 Closes the loop on the prediction-accuracy grader
 (:func:`zicato.tournament.detail.hypothesis_ledger` /
 :func:`~zicato.tournament.detail.grade_hypothesis_predictions`, the
-``/api/hypothesis-accuracy`` dashboard feed): that grader has scored every
+candidate dossier's ``hypothesis_accuracy`` feed): that grader has scored every
 settled hypothesis's predicted-vs-realized movements for the DASHBOARD only —
 the proposer never saw its own calibration. This module renders a redacted
 per-reign calibration summary back INTO the proposer context so the LLM can see

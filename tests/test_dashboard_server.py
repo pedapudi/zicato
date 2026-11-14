@@ -382,7 +382,7 @@ def _build_index(path: Path, epoch_id: str) -> None:
             "2026-05-16T04:30:00Z",
         ),
     )
-    # runs feed the score-trajectory / drift-movements builders; one run
+    # runs feed the score-trajectory builder; one run
     # per loss-profile row.
     conn.executemany(
         (
@@ -450,10 +450,11 @@ def test_health_shape(client: TestClient) -> None:
     assert isinstance(body["uptime_seconds"], int)
 
 
-def test_state_snapshot(client: TestClient) -> None:
-    r = client.get("/api/state")
-    assert r.status_code == 200
-    body = r.json()
+def test_state_snapshot(workspace: Path) -> None:
+    """The snapshot the SSE stream opens every connection with."""
+    from zicato.query import WorkspacePaths, build_snapshot
+
+    body = build_snapshot(WorkspacePaths(workspace))
     for key in (
         "heartbeat",
         "lock",
@@ -1279,47 +1280,11 @@ def test_build_epoch_view_carries_delta_scalar_summary(workspace: Path) -> None:
     assert summary["gross"] == pytest.approx(-1.0)
 
 
-def test_epoch_journal_endpoint(client: TestClient, workspace: Path) -> None:
-    """GET /api/epoch/{id}/journal returns { epoch_id, journal }."""
-    epoch_id = "2026-05-16_e0"
-    epoch_dir = workspace / "epochs" / epoch_id
-    _write_json(
-        epoch_dir / "generations" / "v1" / "experiment.json",
-        experiment_record(
-            "v1",
-            epoch_id=epoch_id,
-            hypothesis={"core_idea": "Keep the entire proposal"},
-        ),
-    )
-
-    r = client.get(f"/api/epoch/{epoch_id}/journal")
-    assert r.status_code == 200
-    body = r.json()
-    assert body["epoch_id"] == epoch_id
-    assert "## v1 — Keep the entire proposal" in body["journal"]
-
-
-def test_epoch_journal_endpoint_absent(client: TestClient) -> None:
-    """Journal endpoint degrades gracefully when journal.md is absent."""
-    r = client.get("/api/epoch/no-experiments/journal")
-    assert r.status_code == 200
-    body = r.json()
-    assert body["epoch_id"] == "no-experiments"
-    assert body["journal"] == ""
-
-
-def test_epoch_journal_endpoint_invalid_id(client: TestClient) -> None:
-    """Journal endpoint rejects unsafe epoch ids."""
-    r = client.get("/api/epoch/../secrets/journal")
-    assert r.status_code in (400, 404)
-
-
 def test_epoch_journal_md_endpoint(client: TestClient, workspace: Path) -> None:
     """GET /api/epoch/{id}/journal.md serves journal.md raw as text/markdown.
 
-    The "View raw journal" link on the merged Experiments section points
-    at this endpoint so a fresh tab renders the human-readable markdown
-    directly — not the JSON envelope ``/journal`` wraps it in.
+    An operator opens this endpoint so a fresh tab renders the
+    human-readable markdown directly.
     """
     epoch_id = "2026-05-16_e0"
     epoch_dir = workspace / "epochs" / epoch_id
@@ -1359,10 +1324,8 @@ def test_epoch_journal_md_endpoint(client: TestClient, workspace: Path) -> None:
 def test_epoch_journal_md_endpoint_absent(client: TestClient) -> None:
     """journal.md endpoint returns 404 when the file is absent.
 
-    Unlike the JSON ``/journal`` endpoint (which degrades to an empty
-    string so the SPA can render a "no journal yet" empty state), the
-    ``.md`` endpoint is opened in a fresh browser tab by the user, so a
-    404 is the right signal — there is nothing to read.
+    The ``.md`` endpoint is opened in a fresh browser tab by the user, so
+    a 404 is the right signal — there is nothing to read.
     """
     r = client.get("/api/epoch/no-experiments/journal.md")
     assert r.status_code == 404
@@ -1462,80 +1425,6 @@ def test_tournaments_bracket(client: TestClient) -> None:
     assert m["challenger"] == "v1"
     assert m["decision"] == "rejected"
     assert m["hypothesis_core_idea"] == "tighten the planner"
-
-
-def test_tournament_detail(client: TestClient) -> None:
-    r = client.get("/api/tournaments/v1")
-    assert r.status_code == 200
-    body = r.json()
-    assert body["generation_id"] == "v1"
-    assert body["champion"] == "v0"
-    assert body["decision"] == "rejected"
-    assert body["hypothesis"]["core_idea"] == "tighten the planner"
-    assert body["hypothesis"]["raw"] == {"k": 1}
-    assert len(body["patches"]) == 1
-    assert len(body["ab_grid"]) == 1
-    cell = body["ab_grid"][0]
-    assert cell["entry_id"] == "waffles_single"
-    # parent 0.5 -> child 0.2: lower drift loss is an improvement.
-    assert cell["verdict"] == "improved"
-
-
-def test_tournament_detail_surfaces_adk_session_ids(workspace: Path) -> None:
-    """``ab_grid`` cells carry ``parent_adk_session_id`` / ``child_adk_session_id``
-    when the ``loss_json`` column stores a matching ``adk_session_id``."""
-    import json as _json
-
-    from zicato.query import WorkspacePaths, build_matchup_detail
-
-    # Patch the index to include real adk_session_id in loss_json.
-    index_path = workspace / "index.db"
-    conn = sqlite3.connect(index_path)
-    parent_lj = _json.dumps({"adk_session_id": "session-parent-aaa"})
-    child_lj = _json.dumps({"adk_session_id": "session-child-bbb"})
-    conn.execute(
-        "UPDATE loss_profiles SET loss_json = ?"
-        " WHERE generation_id = 'v0' AND entry_id = 'waffles_single'",
-        (parent_lj,),
-    )
-    conn.execute(
-        "UPDATE loss_profiles SET loss_json = ?"
-        " WHERE generation_id = 'v1' AND entry_id = 'waffles_single'",
-        (child_lj,),
-    )
-    conn.commit()
-    conn.close()
-
-    paths = WorkspacePaths(workspace)
-    detail = build_matchup_detail(paths, "v1")
-    assert len(detail["ab_grid"]) == 1
-    cell = detail["ab_grid"][0]
-    assert cell.get("parent_adk_session_id") == "session-parent-aaa"
-    assert cell.get("child_adk_session_id") == "session-child-bbb"
-
-
-def test_tournament_detail_ab_grid_omits_absent_adk_session_id(workspace: Path) -> None:
-    """An ``ab_grid`` cell without a valid ``adk_session_id`` in ``loss_json``
-    simply omits the key — the cell is not malformed."""
-    from zicato.query import WorkspacePaths, build_matchup_detail
-
-    # The fixture index has loss_json = '{}' — no adk_session_id.
-    paths = WorkspacePaths(workspace)
-    detail = build_matchup_detail(paths, "v1")
-    assert len(detail["ab_grid"]) == 1
-    cell = detail["ab_grid"][0]
-    assert "parent_adk_session_id" not in cell
-    assert "child_adk_session_id" not in cell
-
-
-def test_tournament_detail_invalid_id(client: TestClient) -> None:
-    # An id the validator rejects (a space) degrades to an empty matchup
-    # rather than erroring.
-    r = client.get("/api/tournaments/bad%20id")
-    assert r.status_code == 200
-    body = r.json()
-    assert body["patches"] == []
-    assert body["ab_grid"] == []
 
 
 def test_health_report(client: TestClient) -> None:
@@ -2404,48 +2293,6 @@ def test_score_trajectory_endpoint(client: TestClient) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Drift-kind movements — champion -> challenger per-kind deltas
-# ---------------------------------------------------------------------------
-
-
-def test_metric_movements_endpoint(client: TestClient) -> None:
-    """``/api/drift-movements/:gen`` reports champion->challenger drift deltas."""
-    r = client.get("/api/drift-movements/v1")
-    assert r.status_code == 200
-    body = r.json()
-    assert body["champion"] == "v0"
-    assert body["challenger"] == "v1"
-    moves = {m["kind"]: m for m in body["movements"]}
-    # off_topic: 1 on the champion, 1 on the challenger — unchanged.
-    assert moves["off_topic"]["champion_count"] == 1
-    assert moves["off_topic"]["challenger_count"] == 1
-    assert moves["off_topic"]["direction"] == "unchanged"
-    # tool_error: absent on the champion, 2 on the challenger — worsened.
-    assert moves["tool_error"]["champion_count"] == 0
-    assert moves["tool_error"]["challenger_count"] == 2
-    assert moves["tool_error"]["delta"] == 2
-    assert moves["tool_error"]["direction"] == "worsened"
-    # Biggest absolute movement first.
-    assert body["movements"][0]["kind"] == "tool_error"
-
-
-def test_metric_movements_unknown_generation(client: TestClient) -> None:
-    """A generation with no tournament degrades to an empty movement list."""
-    r = client.get("/api/drift-movements/v9")
-    assert r.status_code == 200
-    body = r.json()
-    assert body["movements"] == []
-    assert body["champion"] is None
-
-
-def test_metric_movements_invalid_id(client: TestClient) -> None:
-    """A malformed generation id degrades to an empty matchup, no 500."""
-    r = client.get("/api/drift-movements/bad%20id")
-    assert r.status_code == 200
-    assert r.json()["movements"] == []
-
-
-# ---------------------------------------------------------------------------
 # Static serving
 # ---------------------------------------------------------------------------
 
@@ -2602,9 +2449,12 @@ def test_control_resume_forbidden_when_read_only(client: TestClient, workspace: 
 
 
 def test_paused_flag_surfaces_in_runtime_payloads(rw_client: TestClient, workspace: Path) -> None:
-    """Pause-flag presence rides /api/state (top-level) + the heartbeat dict."""
+    """Pause-flag presence rides the snapshot (top-level) + the heartbeat dict."""
+    from zicato.query import WorkspacePaths, build_snapshot
+
+    paths = WorkspacePaths(workspace)
     # Unpaused baseline.
-    snap = rw_client.get("/api/state").json()
+    snap = build_snapshot(paths)
     assert snap["paused"] is False
     assert snap["heartbeat"]["paused"] is False
     hb = rw_client.get("/api/heartbeat").json()
@@ -2612,11 +2462,11 @@ def test_paused_flag_surfaces_in_runtime_payloads(rw_client: TestClient, workspa
 
     # Paused: the flag flips both reads; resume flips them back.
     assert rw_client.post("/api/control/pause").status_code == 202
-    snap = rw_client.get("/api/state").json()
+    snap = build_snapshot(paths)
     assert snap["paused"] is True
     assert snap["heartbeat"]["paused"] is True
     assert rw_client.post("/api/control/resume").status_code == 202
-    assert rw_client.get("/api/state").json()["paused"] is False
+    assert build_snapshot(paths)["paused"] is False
 
 
 def test_control_promote_and_reject(rw_client: TestClient, workspace: Path) -> None:
@@ -2881,11 +2731,11 @@ def _install_stub_transcript(monkeypatch: pytest.MonkeyPatch) -> None:
         return _Transcript(events_path)
 
     # Rebind the name in every module that calls it: the run_id endpoint
-    # calls it directly, the two readers own their own binding.
+    # calls it directly, the reader owns its own binding.
     import zicato.dashboard.endpoints as ep
-    from zicato.query import conversations_view, transcript_view
+    from zicato.query import transcript_view
 
-    for module in (ep, transcript_view, conversations_view):
+    for module in (ep, transcript_view):
         monkeypatch.setattr(module, "reconstruct_transcript", reconstruct_transcript)
 
 
@@ -3141,93 +2991,6 @@ def test_conversation_unknown_run_does_not_borrow_entry_transcript(
         assert r.json() == {"error": "no events for run totally_unknown_run"}
 
 
-def test_matchup_conversations_endpoint(
-    workspace: Path, static_dir: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _install_stub_transcript(monkeypatch)
-    app = create_app(workspace, static_dir, read_only=True)
-    with TestClient(app) as c:
-        r = c.get("/api/matchup/waffles_single/conversations")
-        assert r.status_code == 200
-        body = r.json()
-        assert set(body) == {"champion", "challenger"}
-        # champion = parent generation v0, challenger = child generation v1.
-        assert body["champion"]["generation_id"] == "v0"
-        assert body["challenger"]["generation_id"] == "v1"
-        for side in ("champion", "challenger"):
-            assert "run_id" in body[side]
-            assert "transcript" in body[side]
-            # The result block is part of the contract: present (None
-            # when no sibling loss.json) on every side.
-            assert "result" in body[side]
-        assert body["challenger"]["transcript"]["event_count"] == 3
-
-
-def test_matchup_conversations_carries_loss_json_result_block(
-    workspace: Path, static_dir: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A sibling ``loss.json`` projects into the side's ``result`` block.
-
-    Regression for the "v1 waffles_single timed out at 180s but the
-    dashboard showed an empty in-progress column" bug: the API now
-    carries the loss.json verdict so the frontend can render an honest
-    "timed out" panel for a zero-turn complete run.
-    """
-    _install_stub_transcript(monkeypatch)
-
-    # Drop a loss.json next to the challenger's events.jsonl carrying the
-    # exact projection the dashboard needs.
-    challenger_run_dir = (
-        workspace / "epochs" / "2026-05-16_e0" / "generations" / "v1" / "runs" / "waffles_single"
-    )
-    _write_json(
-        challenger_run_dir / "seed-none" / "loss.tournament.r0.json",
-        {
-            "run_id": "r1",
-            "entry_id": "waffles_single",
-            "generation_id": "v1",
-            "epoch_id": "2026-05-16_e0",
-            "plan_revisions": 1,
-            "task_failure_ratio": 1.0,
-            "runtime_ms": 180000,
-            "wall_clock_budget_exceeded": True,
-            "drift_loss": 60.5,
-            "pass_fail": False,
-            "expectation_result": {
-                "kind": "predicate",
-                "passed": False,
-                "detail": "predicate returned False",
-            },
-            "metric_counts": [
-                {"name": "cost:llm_calls", "severity": "", "count": 8.0},
-                {"name": "output:chars", "severity": "", "count": 7349.0},
-            ],
-        },
-    )
-
-    app = create_app(workspace, static_dir, read_only=True)
-    with TestClient(app) as c:
-        r = c.get("/api/matchup/waffles_single/conversations")
-        assert r.status_code == 200
-        body = r.json()
-
-    result = body["challenger"]["result"]
-    assert result is not None, "the challenger side must carry a result block"
-    assert result["wall_clock_budget_exceeded"] is True
-    assert result["runtime_ms"] == 180000
-    assert result["pass_fail"] is False
-    assert result["expectation_result"]["kind"] == "predicate"
-    assert result["expectation_result"]["passed"] is False
-    assert result["expectation_result"]["detail"] == "predicate returned False"
-
-    metric_names = {m["name"]: m["count"] for m in result["metric_counts"]}
-    assert metric_names == {"cost:llm_calls": 8.0, "output:chars": 7349.0}
-
-    # The champion side has no loss.json — its result must be None
-    # (the frontend then falls back to the existing zero-turn message).
-    assert body["champion"]["result"] is None
-
-
 def test_conversation_endpoint_serves_the_real_reconstruction(
     client: TestClient,
 ) -> None:
@@ -3455,127 +3218,6 @@ def _populate_fast_mode_cached_workspace(
     return ws
 
 
-def test_matchup_conversations_cached_champion_reads_cached_generation(
-    tmp_path: Path,
-    static_dir: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A cached champion side reads events from its cached source generation.
-
-    The on-disk events.jsonl for the cached side lives under its OWN
-    generation directory (the round it ran live). The fetcher must
-    resolve the champion side's generation_id to that directory — not
-    leave the column empty just because the cached side did not run
-    this round.
-    """
-    ws = _populate_fast_mode_cached_workspace(tmp_path)
-    _install_stub_transcript(monkeypatch)
-    app = create_app(ws, tmp_path / "static", read_only=True)
-    (tmp_path / "static").mkdir(exist_ok=True)
-    with TestClient(app) as c:
-        r = c.get("/api/matchup/waffles_single/conversations")
-        assert r.status_code == 200
-        body = r.json()
-        # Cached champion side resolves to the cached generation id.
-        assert body["champion"] is not None
-        assert body["champion"]["generation_id"] == "v1"
-        # The transcript came from the cached gen's persisted events
-        # (the stub reports event_count = number of non-blank lines).
-        assert body["champion"]["transcript"] is not None
-        assert body["champion"]["transcript"]["event_count"] == 2
-        # Sanity: challenger side still resolves to the in-progress gen.
-        assert body["challenger"]["generation_id"] == "v2"
-
-
-def test_matchup_conversations_running_challenger_in_progress_placeholder(
-    tmp_path: Path,
-    static_dir: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A running side with no events yet keeps the in-progress placeholder.
-
-    The fetcher must NOT pretend the run is complete when its events
-    file is missing or empty — the JS rendering path keys "Waiting for
-    the first turn…" off ``turns.length === 0 && !complete``, so the
-    transcript must report empty turns and ``complete: False``.
-    """
-    ws = _populate_fast_mode_cached_workspace(
-        tmp_path,
-        challenger_events=[],  # write an empty events.jsonl
-    )
-    # Use the REAL transcript reconstructor here so the empty / not-
-    # complete state is what the live dashboard would actually see.
-    app = create_app(ws, tmp_path / "static", read_only=True)
-    (tmp_path / "static").mkdir(exist_ok=True)
-    with TestClient(app) as c:
-        r = c.get("/api/matchup/waffles_single/conversations")
-        assert r.status_code == 200
-        body = r.json()
-        # Cached champion still resolves with its real cached events.
-        assert body["champion"] is not None
-        assert body["champion"]["generation_id"] == "v1"
-        # Challenger side resolved to a run path but the events are
-        # empty — transcript reports zero turns and not complete.
-        assert body["challenger"] is not None
-        assert body["challenger"]["generation_id"] == "v2"
-        challenger_transcript = body["challenger"]["transcript"]
-        assert challenger_transcript is not None
-        # The transcript is present but empty — the JS placeholder
-        # ("Waiting for the first turn…") fires off this exact shape.
-        assert challenger_transcript.get("turns") == []
-        assert challenger_transcript.get("complete") is False
-
-
-def test_matchup_conversations_full_mode_both_sides_live(
-    tmp_path: Path,
-    static_dir: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Regression: full-mode (both sides ran live this round) still works.
-
-    The legacy path — both ``parent`` and ``child`` entries with
-    ``status="completed"`` and events under their respective generation
-    directories — must keep resolving via the per-entry generation_id.
-    """
-    ws = _populate_fast_mode_cached_workspace(
-        tmp_path,
-        champion_status="completed",
-        challenger_status="completed",
-        challenger_events=[
-            json.dumps(
-                {
-                    "emittedAt": "2026-05-18T04:25:01Z",
-                    "eventId": "live:0:a",
-                    "runId": "live-run-v2",
-                    "sequence": "0",
-                    "runStarted": {"goalSummary": "Make a deck about waffles."},
-                }
-            ),
-            json.dumps(
-                {
-                    "emittedAt": "2026-05-18T04:25:02Z",
-                    "eventId": "live:1:b",
-                    "runId": "live-run-v2",
-                    "sequence": "1",
-                    "runCompleted": {"outcomeSummary": "deck produced"},
-                }
-            ),
-        ],
-    )
-    _install_stub_transcript(monkeypatch)
-    app = create_app(ws, tmp_path / "static", read_only=True)
-    (tmp_path / "static").mkdir(exist_ok=True)
-    with TestClient(app) as c:
-        r = c.get("/api/matchup/waffles_single/conversations")
-        assert r.status_code == 200
-        body = r.json()
-        assert body["champion"]["generation_id"] == "v1"
-        assert body["challenger"]["generation_id"] == "v2"
-        # Both sides have populated event files.
-        assert body["champion"]["transcript"]["event_count"] == 2
-        assert body["challenger"]["transcript"]["event_count"] == 2
-
-
 def test_active_tournament_entries_carry_generation_id(
     tmp_path: Path,
 ) -> None:
@@ -3616,7 +3258,6 @@ def test_empty_workspace_endpoints_do_not_500(tmp_path: Path, static_dir: Path) 
     with TestClient(app) as c:
         for path in (
             "/api/health",
-            "/api/state",
             "/api/environment",
             "/api/epoch",
             "/api/lineage",
@@ -3624,7 +3265,6 @@ def test_empty_workspace_endpoints_do_not_500(tmp_path: Path, static_dir: Path) 
             "/api/active-runs",
             "/api/active-tournament",
             "/api/tournaments",
-            "/api/tournaments/v1",
             "/api/health-report",
         ):
             assert c.get(path).status_code == 200, path
@@ -3639,8 +3279,8 @@ def _seed_second_epoch(ws: Path) -> str:
     """Add a second epoch directory to the workspace fixture.
 
     Returns the new epoch id. The directory is sorted-AFTER the
-    fixture's ``2026-05-16_e0`` so build_contract_diff resolves it as
-    the successor with ``2026-05-16_e0`` as the predecessor.
+    fixture's ``2026-05-16_e0``, so it reads as the successor with
+    ``2026-05-16_e0`` as the predecessor.
     """
     epoch_id = "2026-05-17_e1"
     epoch_dir = ws / "epochs" / epoch_id
@@ -3701,82 +3341,6 @@ def test_build_workspace_view_closed_flag_reads_config(workspace: Path) -> None:
     assert row["closed"] is True
 
 
-def test_build_contract_diff_no_predecessor(workspace: Path) -> None:
-    """The first epoch on disk reports ``predecessor_epoch_id = None``."""
-    from zicato.query import WorkspacePaths, build_contract_diff
-
-    diff = build_contract_diff(WorkspacePaths(workspace), "2026-05-16_e0")
-    assert diff["epoch_id"] == "2026-05-16_e0"
-    assert diff["predecessor_epoch_id"] is None
-    assert diff["any_changed"] is False
-    # Stable six-row matrix even when no diff is possible.
-    names = [c["name"] for c in diff["components"]]
-    assert names == [
-        "board",
-        "brief",
-        "scoring",
-        "evaluator_revision",
-        "adapter",
-        "mutable_trees",
-    ]
-    for c in diff["components"]:
-        assert c["changed"] is False
-
-
-def test_build_contract_diff_flags_changed_components(workspace: Path) -> None:
-    """Components with differing hashes between epochs are marked changed."""
-    from zicato.query import WorkspacePaths, build_contract_diff
-
-    # Predecessor — the fixture's epoch.
-    pred_dir = workspace / "epochs" / "2026-05-16_e0"
-    _write_json(
-        pred_dir / "contract_components.json",
-        {
-            "board": "boardhash_v0",
-            "brief": "briefhash_v0",
-            "scoring": "scoringhash_v0",
-            "adapter": "adapterhash_v0",
-            "mutable_trees": "treeshash_v0",
-        },
-    )
-    # Successor with only the brief changed.
-    succ_id = _seed_second_epoch(workspace)
-    succ_dir = workspace / "epochs" / succ_id
-    _write_json(
-        succ_dir / "contract_components.json",
-        {
-            "board": "boardhash_v0",
-            "brief": "briefhash_v1",
-            "scoring": "scoringhash_v0",
-            "adapter": "adapterhash_v0",
-            "mutable_trees": "treeshash_v0",
-        },
-    )
-
-    diff = build_contract_diff(WorkspacePaths(workspace), succ_id)
-    assert diff["predecessor_epoch_id"] == "2026-05-16_e0"
-    assert diff["any_changed"] is True
-    changed = {c["name"]: c for c in diff["components"] if c["changed"]}
-    assert set(changed) == {"brief"}
-    assert changed["brief"]["previous_hash"] == "briefhash_v0"
-    assert changed["brief"]["current_hash"] == "briefhash_v1"
-
-
-def test_build_contract_diff_missing_components_file(workspace: Path) -> None:
-    """An absent ``contract_components.json`` does not raise — every row reads ``None``."""
-    from zicato.query import WorkspacePaths, build_contract_diff
-
-    succ_id = _seed_second_epoch(workspace)
-    diff = build_contract_diff(WorkspacePaths(workspace), succ_id)
-    assert diff["predecessor_epoch_id"] == "2026-05-16_e0"
-    # No component hashes anywhere — every row reads (None, None, False).
-    for c in diff["components"]:
-        assert c["previous_hash"] is None
-        assert c["current_hash"] is None
-        assert c["changed"] is False
-    assert diff["any_changed"] is False
-
-
 def test_api_workspace_endpoint_returns_view(client: TestClient) -> None:
     """``GET /api/workspace`` returns the L0 workspace view payload."""
     r = client.get("/api/workspace")
@@ -3785,36 +3349,6 @@ def test_api_workspace_endpoint_returns_view(client: TestClient) -> None:
     assert "current_epoch_id" in body
     assert "epochs" in body and isinstance(body["epochs"], list)
     assert "sparkline" in body and isinstance(body["sparkline"], list)
-
-
-def test_api_contract_diff_endpoint_returns_payload(client: TestClient) -> None:
-    """``GET /api/contract-diff/{epoch_id}`` returns the L1 diff payload."""
-    r = client.get("/api/contract-diff/2026-05-16_e0")
-    assert r.status_code == 200
-    body = r.json()
-    assert body["epoch_id"] == "2026-05-16_e0"
-    assert "components" in body
-    names = [c["name"] for c in body["components"]]
-    assert names == [
-        "board",
-        "brief",
-        "scoring",
-        "evaluator_revision",
-        "adapter",
-        "mutable_trees",
-    ]
-
-
-def test_api_contract_diff_endpoint_rejects_unsafe_id(client: TestClient) -> None:
-    """Malformed epoch ids degrade to an empty diff (no 500)."""
-    r = client.get("/api/contract-diff/../etc/passwd")
-    # The Starlette path regex may reject the slash before reaching our
-    # handler (404), or the handler may return its own empty-diff
-    # JSON 200. Both are acceptable degradation modes.
-    assert r.status_code in (200, 404, 405)
-    if r.status_code == 200:
-        body = r.json()
-        assert body["components"] == []
 
 
 # ---------------------------------------------------------------------------

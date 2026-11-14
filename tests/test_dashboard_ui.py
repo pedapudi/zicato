@@ -511,7 +511,7 @@ def test_bundle_under_size_envelope() -> None:
     # consumption-only surfaces: `buildPredictionScorecard` in the candidate
     # dossier (candidate.js) — the proposer's predicted-vs-realised movements per
     # claim with hit/miss/unresolved/unpredicted glyphs + the calibration fraction,
-    # consuming /api/hypothesis-accuracy/{epoch}/{gen}, with every hover-level
+    # consuming the candidate dossier's hypothesis_accuracy, with every hover-level
     # detail in the hovercard singleton — and `svg.calibrationTrend` in the home
     # meta-loop ledger region (home.js) — the score fraction over the epoch's
     # lineage reusing the sparkline/staircase grammar, consuming

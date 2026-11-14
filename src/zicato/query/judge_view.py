@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from zicato.board.jsonl import load_board_document, load_board_rows
+from zicato.board.jsonl import load_board_document
 from zicato.core.measurement import (
     MeasurementDraw,
     iter_measurement_artifacts,
@@ -17,12 +17,10 @@ from zicato.core.measurement import (
 from zicato.core.workspace import measurement_from_run_id
 from zicato.epoch._storage import RecordError
 from zicato.query._sqlite import (
-    open_index_ro,
     open_index_ro_or_none,
     with_index_not_built_note,
 )
 from zicato.query.epoch_view import (
-    _project_board,
     build_epochs_summary,
 )
 from zicato.query.eval_view import facet_scores_for_generation, facets_by_entry
@@ -32,7 +30,6 @@ from zicato.query.paths import (
     WorkspacePaths,
     _iso,
     _opt_bool,
-    _preview,
     _read_json_value,
     coerce_float,
     finite_float,
@@ -886,211 +883,3 @@ def build_environment(
         "run_log": build_run_log(paths, run_log_limit, active_runs=inputs.active_runs.copy()),
         "generated_at": _iso(inputs.now),
     }
-
-
-# ---------------------------------------------------------------------------
-# Sidebar search — entries / judges / patches / mutations
-# ---------------------------------------------------------------------------
-#
-# The sidebar exposes an always-visible search bar (no per-page navigation
-# away from the current view). ``build_search_results`` walks the live
-# workspace for substring + exact matches across four categories:
-#
-#   * entries   — id substring against the current epoch's ``board.jsonl``
-#   * judges    — name substring against in-board judges + index judge_losses
-#   * patches   — mutation_id / rationale substring against the index
-#   * mutations — mutation_id substring against the index's patches table
-#
-# Each category is independently capped at :data:`SEARCH_LIMIT_PER_CATEGORY`
-# results. Exact matches are sorted before substring matches so a query
-# that names an id outright surfaces it first. Empty / whitespace queries
-# short-circuit to empty result sets so the caller cannot tax the index
-# with a degenerate scan.
-
-#: Per-category cap on the number of results returned. The sidebar UI is
-#: narrow; ten matches per category is enough to surface the obvious
-#: targets without overwhelming the panel.
-SEARCH_LIMIT_PER_CATEGORY = 10
-
-
-def _empty_search_result() -> dict[str, Any]:
-    return {
-        "entries": [],
-        "judges": [],
-        "patches": [],
-        "mutations": [],
-    }
-
-
-def _collect_judge_names(rows: list[dict[str, Any]]) -> set[str]:
-    """Union judge names from accepted board rows."""
-    names: set[str] = set()
-    for obj in rows:
-        judges = obj.get("judges")
-        if not isinstance(judges, list):
-            continue
-        for j in judges:
-            if not isinstance(j, dict):
-                continue
-            name = j.get("name")
-            if isinstance(name, str) and name:
-                names.add(name)
-    return names
-
-
-def _collect_judge_names_from_index(db_path: Path) -> set[str]:
-    """Union of distinct ``judge_name`` values in the analytical index."""
-    names: set[str] = set()
-    try:
-        with open_index_ro(db_path) as conn:
-            cur = conn.execute("SELECT DISTINCT judge_name FROM judge_losses")
-            for row in cur.fetchall():
-                if isinstance(row[0], str) and row[0]:
-                    names.add(row[0])
-    except Exception:  # noqa: BLE001 — best-effort; absent index / missing table is OK
-        return names
-    return names
-
-
-def _sort_by_match_quality(
-    items: list[dict[str, Any]], key: str, q_lower: str
-) -> list[dict[str, Any]]:
-    """Sort exact matches (case-insensitive) before substring matches.
-
-    Each item carries a ``match_kind`` field set to ``"exact"`` when the
-    item's ``key`` equals the query case-insensitively, ``"substring"``
-    otherwise. Ties within a kind are sorted by the matched field.
-    """
-
-    def _rank(item: dict[str, Any]) -> tuple[int, str]:
-        val = str(item.get(key, "") or "")
-        is_exact = val.lower() == q_lower
-        item["match_kind"] = "exact" if is_exact else "substring"
-        return (0 if is_exact else 1, val.lower())
-
-    items.sort(key=_rank)
-    return items
-
-
-def build_search_results(paths: WorkspacePaths, query: str) -> dict[str, Any]:
-    """Search entries / judges / patches / mutations for substring matches.
-
-    Returns a dict keyed by category, each value a list of small match
-    records carrying enough fields to build a navigation link client-side.
-    Every category is independently capped at
-    :data:`SEARCH_LIMIT_PER_CATEGORY`; exact (case-insensitive) matches
-    sort before substring matches.
-
-    The current epoch (as recorded by ``current_epoch``) bounds the entry
-    + judge scans. Patch + mutation scans cover every epoch in the index
-    so an operator can locate a historical mutation across the workspace.
-    A degenerate query (empty / whitespace) short-circuits to empty
-    results so the caller cannot accidentally fan out a wide scan.
-    """
-    q = (query or "").strip()
-    if not q:
-        return _empty_search_result()
-    q_lower = q.lower()
-
-    result = _empty_search_result()
-    epoch_id = read_current_epoch(paths)
-
-    # --- entries: walk the current epoch's board.jsonl ---------------
-    layout = layout_of(paths)
-    entry_hits: list[dict[str, Any]] = []
-    board_rows = None
-    if epoch_id:
-        board_path = layout.board(epoch_id)
-        try:
-            board_rows = load_board_rows(board_path)
-            board = _project_board(board_rows or [])
-        except RecordError as exc:
-            board = None
-            result["unreadable"] = str(exc)
-        if board:
-            for entry in board:
-                eid = entry.get("entry_id")
-                if not isinstance(eid, str) or not eid:
-                    continue
-                if q_lower in eid.lower():
-                    entry_hits.append({"id": eid})
-    entry_hits = _sort_by_match_quality(entry_hits, "id", q_lower)
-    result["entries"] = entry_hits[:SEARCH_LIMIT_PER_CATEGORY]
-
-    # --- judges: board + index union ---------------------------------
-    judge_names: set[str] = set()
-    if board_rows:
-        judge_names |= _collect_judge_names(board_rows)
-    judge_names |= _collect_judge_names_from_index(paths.index_db)
-    judge_hits: list[dict[str, Any]] = [{"name": n} for n in judge_names if q_lower in n.lower()]
-    judge_hits = _sort_by_match_quality(judge_hits, "name", q_lower)
-    result["judges"] = judge_hits[:SEARCH_LIMIT_PER_CATEGORY]
-
-    # --- patches + mutations: index scan ------------------------------
-    # Both share the same patches table; one scan populates both, since
-    # a mutation_id hit also implies the patch is interesting and a
-    # rationale-only hit is a patch-only match.
-    if paths.index_db.is_file():
-        try:
-            with open_index_ro(paths.index_db) as conn:
-                # The LIKE patterns mirror the substring semantics the
-                # frontend describes to operators. SQLite's LIKE is
-                # case-insensitive for ASCII by default — the typical
-                # case for mutation ids + rationale text.
-                like = f"%{q}%"
-                rows = conn.execute(
-                    "SELECT patch_id, epoch_id, generation_id, mutation_id, "
-                    "       op, rationale FROM patches "
-                    "WHERE mutation_id LIKE ? OR rationale LIKE ? "
-                    "ORDER BY epoch_id ASC, generation_id ASC",
-                    (like, like),
-                ).fetchall()
-        except Exception:  # noqa: BLE001 — best-effort
-            rows = []
-
-        patch_hits: list[dict[str, Any]] = []
-        mutation_hits: list[dict[str, Any]] = []
-        seen_mutations: set[tuple[str, str, str]] = set()
-        for row in rows:
-            patch_id = row["patch_id"]
-            ep_id = row["epoch_id"]
-            gen_id = row["generation_id"]
-            mut_id = row["mutation_id"]
-            rationale = row["rationale"] or ""
-            snippet = _preview(rationale) if rationale else ""
-            patch_hits.append(
-                {
-                    "patch_id": patch_id,
-                    "epoch_id": ep_id,
-                    "generation_id": gen_id,
-                    "mutation_id": mut_id,
-                    "rationale_snippet": snippet,
-                }
-            )
-            # A mutation row is interesting only when the substring
-            # actually hits the mutation_id (a rationale-only match
-            # belongs in patches but not in mutations).
-            if isinstance(mut_id, str) and mut_id and q_lower in mut_id.lower():
-                key = (mut_id, ep_id or "", gen_id or "")
-                if key in seen_mutations:
-                    continue
-                seen_mutations.add(key)
-                mutation_hits.append(
-                    {
-                        "mutation_id": mut_id,
-                        "epoch_id": ep_id,
-                        "generation_id": gen_id,
-                        "patch_id": patch_id,
-                    }
-                )
-
-        # Patch records are sorted by mutation_id quality (the most
-        # operator-meaningful field); rationale-only hits fall to
-        # the substring bucket regardless of whether the mutation_id
-        # matches verbatim.
-        patch_hits = _sort_by_match_quality(patch_hits, "mutation_id", q_lower)
-        mutation_hits = _sort_by_match_quality(mutation_hits, "mutation_id", q_lower)
-        result["patches"] = patch_hits[:SEARCH_LIMIT_PER_CATEGORY]
-        result["mutations"] = mutation_hits[:SEARCH_LIMIT_PER_CATEGORY]
-
-    return result

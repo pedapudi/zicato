@@ -192,7 +192,7 @@ def build_hypothesis_accuracy(
     *,
     inputs: EpochInputs | None = None,
 ) -> dict[str, Any]:
-    """``GET /api/hypothesis-accuracy/{epoch}/{gen}`` — per-experiment scorecard.
+    """The candidate dossier's ``hypothesis_accuracy`` — per-experiment scorecard.
 
     Reads ``epochs/{epoch}/generations/{gen}/experiment.json`` and joins the
     proposer's named predictions against the realised metric movements

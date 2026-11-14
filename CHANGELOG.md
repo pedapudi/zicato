@@ -69,6 +69,62 @@ read the tables directly. `query.reflection_view.entry_candidate_matrix`,
 `query.events_index.find_generation_entry_events` and `query._sqlite._opt_str`
 are removed for the same reason.
 
+### The dashboard stops serving the routes no console view reads (2026-11-13)
+
+**Breaking for direct HTTP callers.** The dashboard service no longer
+serves eighteen `GET` routes that no console view fetches and no command,
+skill or tool reads. A request to any of them now falls through to the
+static bundle, which answers `404`. The console is unchanged: it never
+requested them.
+
+Removed, with what serves the same information now:
+
+- `/api/state` — the SSE `snapshot` frame on `/events` carries the same
+  payload; `/api/environment` is the consolidated read.
+- `/api/config` — the `settings` map of `/api/heartbeat`.
+- `/api/search` — nothing; the console has no search.
+- `/api/contract-diff/{epoch_id}` — the `ledger` of `/api/workspace`.
+- `/api/epoch/{epoch_id}/journal` — the `journal` field of `/api/epoch`,
+  or the raw `/api/epoch/{epoch_id}/journal.md`, which stays.
+- `/api/files` and `/api/files/{epoch_id}/{generation_id}/tree` —
+  nothing; `.../content`, `.../patches` and `.../diff` stay.
+- `/api/tournaments/{generation_id}` —
+  `/api/matchup-grid/{epoch_id}/{champion_id}/{challenger_id}` and the
+  candidate dossier.
+- `/api/drift-movements/{generation_id}` — nothing.
+- `/api/matchup/{entry_id}/conversations` —
+  `/api/run/{epoch_id}/{generation_id}/{entry_id}/transcript`, once per
+  side.
+- The granular candidate routes, each now a field of the candidate
+  dossier `/api/epoch/{epoch_id}/candidate/{generation_id}[?entry=]`:
+  `/api/generation/{epoch_id}/{generation_id}/per-judge` (`per_judge`),
+  `/api/round/{epoch_id}/{champion_id}/{challenger_id}/per-judge-comparison`
+  (`gates[].judge_comparison`),
+  `/api/hypothesis-accuracy/{epoch_id}/{generation_id}`
+  (`hypothesis_accuracy`),
+  `/api/generation/{epoch_id}/{generation_id}/episode-export`
+  (`episode_export`; the `.html` page stays),
+  `/api/run/{epoch_id}/{generation_id}/{entry_id}/per-judge`
+  (`drilldown.judges`),
+  `/api/run/{epoch_id}/{generation_id}/{entry_id}/expectations`
+  (`drilldown.expectations`) and
+  `/api/run/{epoch_id}/{generation_id}/{entry_id}/header`
+  (`drilldown.header`).
+- `/api/run/{run_id}/per-judge` — the dossier's `drilldown.judges`,
+  addressed by epoch, generation and entry.
+
+The readers that only those routes reached are deleted from
+`zicato.query`: `build_search_results`, `build_contract_diff`,
+`build_file_index`, `build_generation_tree`, `build_matchup_detail`,
+`build_drift_movements`, `build_matchup_conversations` (and its module,
+`conversations_view`), `read_epoch_journal` and `read_effective_settings`.
+The readers the dossier composes stay in their modules and leave the
+package's `__all__`, which lists what the endpoint table, the SSE
+snapshot and the `logs` command call. `/api/active-runs`,
+`/api/heartbeat` and `/api/epoch/{epoch_id}/journal.md` stay served: no
+console view reads them, and the `zicato-watch-dashboard` and
+`zicato-analyze-epoch` skills do.
+
 ### The builder's knob help is the scoring configuration's documentation
 
 Each help popover in the tournament builder shows the docstring of the

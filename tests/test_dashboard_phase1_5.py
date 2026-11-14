@@ -10,7 +10,7 @@ showing placeholder copy after Phase-1:
   header fields so the L4 run page can display runtime, tokens, output
   chars, turns, plan revisions and the budget-exceeded flag for a
   completed run.
-* Endpoint routes for the two new readers.
+* The candidate dossier's drill-down, which serves both readers.
 """
 
 from __future__ import annotations
@@ -22,11 +22,8 @@ import pytest
 from starlette.testclient import TestClient
 
 from zicato.dashboard.server import create_app
-from zicato.query import (
-    WorkspacePaths,
-    build_expectation_outcomes_for_run,
-    build_run_header,
-)
+from zicato.query import WorkspacePaths
+from zicato.query.judge_view import build_expectation_outcomes_for_run, build_run_header
 
 
 def _write(path: Path, text: str) -> None:
@@ -345,14 +342,20 @@ def test_run_header_skips_nested_loss_fields(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Endpoints
+# The candidate dossier's drill-down carries both readers to the wire
 # ---------------------------------------------------------------------------
 
 
-def test_endpoint_run_expectations(phase15_client: TestClient) -> None:
-    r = phase15_client.get("/api/run/2026-05-20_e0/v3/predicate_fail/expectations")
+def _drilldown(client: TestClient, entry_id: str) -> dict:
+    r = client.get(f"/api/epoch/2026-05-20_e0/candidate/v3?entry={entry_id}")
     assert r.status_code == 200
-    body = r.json()
+    drilldown = r.json()["drilldown"]
+    assert drilldown["entry_id"] == entry_id
+    return drilldown
+
+
+def test_drilldown_run_expectations(phase15_client: TestClient) -> None:
+    body = _drilldown(phase15_client, "predicate_fail")["expectations"]
     assert body["entry_id"] == "predicate_fail"
     assert len(body["outcomes"]) == 1
     o = body["outcomes"][0]
@@ -360,45 +363,19 @@ def test_endpoint_run_expectations(phase15_client: TestClient) -> None:
     assert o["passed"] is False
 
 
-def test_endpoint_run_expectations_rubric(phase15_client: TestClient) -> None:
-    r = phase15_client.get("/api/run/2026-05-20_e0/v3/rubric_pass/expectations")
-    assert r.status_code == 200
-    body = r.json()
-    o = body["outcomes"][0]
+def test_drilldown_run_expectations_rubric(phase15_client: TestClient) -> None:
+    o = _drilldown(phase15_client, "rubric_pass")["expectations"]["outcomes"][0]
     assert o["kind"] == "rubric"
     assert o["judge_name"] == "presentation_quality"
 
 
-def test_endpoint_run_expectations_empty(phase15_client: TestClient) -> None:
-    r = phase15_client.get("/api/run/2026-05-20_e0/v3/no_expectation/expectations")
-    assert r.status_code == 200
-    assert r.json()["outcomes"] == []
+def test_drilldown_run_expectations_empty(phase15_client: TestClient) -> None:
+    assert _drilldown(phase15_client, "no_expectation")["expectations"]["outcomes"] == []
 
 
-def test_endpoint_run_header(phase15_client: TestClient) -> None:
-    r = phase15_client.get("/api/run/2026-05-20_e0/v3/predicate_fail/header")
-    assert r.status_code == 200
-    body = r.json()
+def test_drilldown_run_header(phase15_client: TestClient) -> None:
+    body = _drilldown(phase15_client, "predicate_fail")["header"]
     assert body["runtime_ms"] == 83160
     assert body["tokens_spent"] == 12345
     assert body["plan_revisions"] == 1
     assert body["pass_fail"] is False
-
-
-def test_endpoint_run_header_unsafe_id_degrades(phase15_client: TestClient) -> None:
-    """A path-traversal id degrades to a None-filled header, not a 500."""
-    r = phase15_client.get("/api/run/..%2Fbad/v3/entry/header")
-    assert r.status_code in (200, 404)
-    if r.status_code == 200:
-        body = r.json()
-        assert body["runtime_ms"] is None
-        assert body["run_id"] is None
-
-
-def test_endpoint_run_expectations_unsafe_id_degrades(
-    phase15_client: TestClient,
-) -> None:
-    r = phase15_client.get("/api/run/..%2Fbad/v3/entry/expectations")
-    assert r.status_code in (200, 404)
-    if r.status_code == 200:
-        assert r.json()["outcomes"] == []

@@ -65,14 +65,12 @@ export function invalidateLive() {
       || key.startsWith('/api/score-trajectory')
       || key.startsWith('/api/generation/')
       || key.startsWith('/api/matchup-grid/')
-      || key.startsWith('/api/drift-movements/')
       || key.startsWith('/api/run/')
       || key.startsWith('/api/lineage')
       || key.startsWith('/api/mutations/')
       || key.startsWith('/api/files/')
       || key.startsWith('/api/conversation/')
       || key.startsWith('/api/tournament-structure/')
-      || key.startsWith('/api/hypothesis-accuracy/')
       || key.startsWith('/api/calibration-trend')
       || key.startsWith('/api/reflection')
       || key.startsWith('/api/tournaments')) {
@@ -359,11 +357,10 @@ export function mutationDetail(epochId, mutationId) {
 export function analysis(epochId) {
   return cachedJson(`/api/epoch/${enc(epochId)}/analysis`);
 }
-// (contractDiff() DELETED — the `/api/contract-diff/{epoch}` read is SUPERSEDED
-// by the composed meta-loop LEDGER on `/api/workspace` (`ws.ledger`, rendered by
-// views/home.js), which carries the same per-component contract delta PLUS the
-// proposer + structure levers the contract-diff omits, on a read the home view
-// already makes. The server route stays for curl/operators; no client wants it.)
+// The per-component contract delta between epochs is the composed meta-loop
+// LEDGER on `/api/workspace` (`ws.ledger`, rendered by views/home.js), which
+// also carries the proposer + structure levers, on a read the home view
+// already makes. There is no separate contract-delta read.
 
 // ---- Instrument lens (board reflection) reads -----------------------
 //

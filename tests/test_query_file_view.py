@@ -92,53 +92,6 @@ def client(populated_workspace: Path, tmp_path: Path) -> TestClient:
 
 
 # ---------------------------------------------------------------------------
-# /api/files — the epoch/generation index
-# ---------------------------------------------------------------------------
-
-
-def test_files_index_lists_generations(client: TestClient) -> None:
-    resp = client.get("/api/files")
-    assert resp.status_code == 200
-    body = resp.json()
-    epochs = {e["epoch_id"]: e for e in body["epochs"]}
-    assert "e1" in epochs
-    gens = {g["generation_id"]: g for g in epochs["e1"]["generations"]}
-    assert set(gens) == {"v0", "v1"}
-    # Each generation reports a non-zero file count.
-    assert gens["v0"]["file_count"] >= 2
-    assert gens["v1"]["file_count"] >= 2
-
-
-# ---------------------------------------------------------------------------
-# /api/files/{epoch}/{gen}/tree — the source tree
-# ---------------------------------------------------------------------------
-
-
-def test_files_tree_lists_source(client: TestClient) -> None:
-    resp = client.get("/api/files/e1/v0/tree")
-    assert resp.status_code == 200
-    body = resp.json()
-    paths = {e["path"] for e in body["entries"]}
-    assert all(set(entry) == {"path", "is_dir", "size"} for entry in body["entries"])
-    assert "agent/prompts.py" in paths
-    assert "agent/lib/util.py" in paths
-
-
-def test_files_tree_missing_generation_degrades(client: TestClient) -> None:
-    resp = client.get("/api/files/e1/v99/tree")
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["entries"] == []
-    assert "error" in body
-
-
-def test_files_tree_rejects_unsafe_id(client: TestClient) -> None:
-    resp = client.get("/api/files/e1/..%2f..%2fetc/tree")
-    # The path-param router or the id check rejects it.
-    assert resp.status_code in (400, 404)
-
-
-# ---------------------------------------------------------------------------
 # /api/files/{epoch}/{gen}/content — file content
 # ---------------------------------------------------------------------------
 
@@ -285,41 +238,28 @@ def _record_experiment(ws: Path, generation_id: str, parent_id: str, patch: Patc
     )
 
 
-def test_files_index_flags_a_pruned_tree(populated_workspace: Path, tmp_path: Path) -> None:
-    """``file_count: 0`` alone cannot tell "pruned" from "empty"; ``has_tree`` can."""
-    _record_experiment(populated_workspace, "v1", "v0", _patch("p1", '"""rewritten"""'))
-    _prune_tree(populated_workspace, "e1", "v1")
-    static_dir = tmp_path / "static-pruned"
-    static_dir.mkdir()
-    with TestClient(create_app(populated_workspace, static_dir, read_only=True)) as c:
-        body = c.get("/api/files").json()
-    gens = {g["generation_id"]: g for g in body["epochs"][0]["generations"]}
-    assert gens["v0"]["has_tree"] is True
-    assert gens["v1"]["has_tree"] is False
-    assert gens["v1"]["file_count"] == 0
-    # The patch record is untouched by GC — that is the whole point of it.
-    assert gens["v1"]["patch_count"] == 1
-
-
-def test_files_tree_names_gc_and_points_at_the_records(
+def test_files_diff_names_gc_and_points_at_the_records(
     populated_workspace: Path, tmp_path: Path
 ) -> None:
-    """A collected tree is named as one, with the surviving records listed."""
-    _record_experiment(populated_workspace, "v1", "v0", _patch("p1", '"""rewritten"""'))
+    """A collected tree is named as one, with the surviving records listed.
+
+    The generation recorded no patch, so there is no span to reconstruct and
+    the diff answers with the sentence alone.
+    """
     _prune_tree(populated_workspace, "e1", "v1")
     static_dir = tmp_path / "static-tree"
     static_dir.mkdir()
     with TestClient(create_app(populated_workspace, static_dir, read_only=True)) as c:
-        body = c.get("/api/files/e1/v1/tree").json()
-    assert body["entries"] == []
+        body = c.get("/api/files/e1/v1/diff").json()
+    assert body["files"] == []
     assert "pruned by snapshot GC" in body["error"]
     assert "/api/mutations/e1" in body["error"]
 
 
-def test_files_tree_unknown_generation_is_not_called_pruned(client: TestClient) -> None:
+def test_files_diff_unknown_generation_is_not_called_pruned(client: TestClient) -> None:
     """A coordinate that names nothing must not be blamed on GC."""
-    body = client.get("/api/files/e1/v99/tree").json()
-    assert body["entries"] == []
+    body = client.get("/api/files/e1/v99/diff").json()
+    assert body["files"] == []
     assert body["error"] == "no generation e1/v99 in this workspace"
 
 

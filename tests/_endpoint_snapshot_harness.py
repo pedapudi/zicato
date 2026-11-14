@@ -57,13 +57,11 @@ REJECTED = "bad~id"
 #: coordinate it was asked for, so a diff reads without decoding the URL.
 ROUTE_PROBES: tuple[tuple[str, str], ...] = (
     # -- workspace-wide reads, no coordinate ---------------------------
-    ("state", "/api/state"),
     ("workspace", "/api/workspace"),
     ("health_report", "/api/health-report"),
     ("active_runs", "/api/active-runs"),
     ("active_tournament", "/api/active-tournament"),
     ("heartbeat", "/api/heartbeat"),
-    ("config", "/api/config"),
     ("live_pipeline", "/api/live/pipeline"),
     # -- reads taking the optional ?epoch= scope -----------------------
     ("epoch/current", "/api/epoch"),
@@ -100,10 +98,6 @@ ROUTE_PROBES: tuple[tuple[str, str], ...] = (
     ("round_timeline/rejected", f"/api/epoch/{REJECTED}/round-timeline"),
     ("experiments_ledger", "/api/epoch/e1/experiments-ledger"),
     ("experiments_ledger/rejected", f"/api/epoch/{REJECTED}/experiments-ledger"),
-    ("contract_diff", "/api/contract-diff/e1"),
-    ("contract_diff/rejected", f"/api/contract-diff/{REJECTED}"),
-    ("epoch_journal", "/api/epoch/e1/journal"),
-    ("epoch_journal/rejected", f"/api/epoch/{REJECTED}/journal"),
     ("epoch_analysis", "/api/epoch/e1/analysis"),
     ("epoch_analysis/rejected", f"/api/epoch/{REJECTED}/analysis"),
     ("eval_matrix", "/api/epoch/e1/evals"),
@@ -119,33 +113,15 @@ ROUTE_PROBES: tuple[tuple[str, str], ...] = (
     ("judge_roster", "/api/epoch/e1/judge-roster"),
     ("judge_roster/rejected", f"/api/epoch/{REJECTED}/judge-roster"),
     # -- generation- and run-coordinate reads --------------------------
-    ("per_judge_for_generation", "/api/generation/e1/v0/per-judge"),
-    ("per_judge_for_generation/rejected", f"/api/generation/e1/{REJECTED}/per-judge"),
     ("per_entry_for_generation", "/api/generation/e1/v0/per-entry"),
     ("per_entry_for_generation/rejected", f"/api/generation/e1/{REJECTED}/per-entry"),
-    ("per_judge_comparison", "/api/round/e1/v0/v1/per-judge-comparison"),
-    ("per_judge_comparison/rejected", f"/api/round/e1/v0/{REJECTED}/per-judge-comparison"),
-    ("per_judge_for_run", "/api/run/e1-v0-t1/per-judge"),
-    ("per_judge_for_run/rejected", f"/api/run/{REJECTED}/per-judge"),
-    ("per_judge_for_entry", "/api/run/e1/v0/t1/per-judge"),
-    ("per_judge_for_entry/rejected", f"/api/run/e1/v0/{REJECTED}/per-judge"),
-    ("run_expectations", "/api/run/e1/v0/t1/expectations"),
-    ("run_expectations/rejected", f"/api/run/e1/v0/{REJECTED}/expectations"),
-    ("run_header", "/api/run/e1/v0/t1/header"),
-    ("run_header/rejected", f"/api/run/e1/v0/{REJECTED}/header"),
-    ("hypothesis_accuracy", "/api/hypothesis-accuracy/e1/v0"),
-    ("hypothesis_accuracy/rejected", f"/api/hypothesis-accuracy/e1/{REJECTED}"),
     # -- tournament reads ----------------------------------------------
     ("tournament_structure", "/api/tournament-structure/e1/v1"),
     ("tournament_structure/rejected", f"/api/tournament-structure/e1/{REJECTED}"),
-    ("matchup_detail", "/api/tournaments/v0"),
-    ("matchup_detail/rejected", f"/api/tournaments/{REJECTED}"),
     ("matchup_grid", "/api/matchup-grid/e1/v0/v1"),
     ("matchup_grid/rejected", f"/api/matchup-grid/e1/v0/{REJECTED}"),
     ("gate", "/api/round/e1/v0/v1/gate"),
     ("gate/rejected", f"/api/round/e1/v0/{REJECTED}/gate"),
-    ("metric_movements", "/api/drift-movements/v0"),
-    ("drift_movements/rejected", f"/api/drift-movements/{REJECTED}"),
     # -- reflection reads ------------------------------------------------
     ("reflection_summary", "/api/reflection/r1/summary"),
     ("reflection_summary/rejected", f"/api/reflection/{REJECTED}/summary"),
@@ -162,9 +138,6 @@ ROUTE_PROBES: tuple[tuple[str, str], ...] = (
     ("suggestion_provenance", "/api/reflection/r1/suggestion/s1/provenance"),
     ("suggestion_provenance/rejected", f"/api/reflection/r1/suggestion/{REJECTED}/provenance"),
     # -- generation files and the mutation surface ---------------------
-    ("files_index", "/api/files"),
-    ("files_tree", "/api/files/e1/v0/tree"),
-    ("files_tree/rejected", f"/api/files/e1/{REJECTED}/tree"),
     ("files_content", "/api/files/e1/v0/content?path=agent.py"),
     ("files_content/rejected", f"/api/files/e1/{REJECTED}/content?path=agent.py"),
     ("files_content/no-path", "/api/files/e1/v0/content"),
@@ -215,16 +188,7 @@ def _console_probes() -> tuple[tuple[str, str], ...]:
     for gen in ("v1", "v2"):
         probes += [
             (f"gate/v0/{gen}", f"/api/round/{e}/v0/{gen}/gate"),
-            (f"per_judge_comparison/v0/{gen}", f"/api/round/{e}/v0/{gen}/per-judge-comparison"),
             (f"matchup_grid/v0/{gen}", f"/api/matchup-grid/{e}/v0/{gen}"),
-            (f"hypothesis_accuracy/{gen}", f"/api/hypothesis-accuracy/{e}/{gen}"),
-            (f"episode_export/{gen}", f"/api/generation/{e}/{gen}/episode-export"),
-        ]
-    for gen, entry in (("v1", "waffles_single"), ("v0", "waffles_single")):
-        probes += [
-            (f"run_header/{gen}/{entry}", f"/api/run/{e}/{gen}/{entry}/header"),
-            (f"run_expectations/{gen}/{entry}", f"/api/run/{e}/{gen}/{entry}/expectations"),
-            (f"per_judge_for_entry/{gen}/{entry}", f"/api/run/{e}/{gen}/{entry}/per-judge"),
         ]
     probes += list(_dossier_probes(e, "v0", "v1", "v2"))
     probes.append(

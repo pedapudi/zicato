@@ -427,8 +427,8 @@ proposer into an IN-CONTEXT view of ITS OWN PREDICTION CALIBRATION — how the
 falsifiable movement predictions it wrote in past hypotheses actually landed
 against realized outcomes. The prediction-accuracy grader
 (`hypothesis_ledger` / `grade_hypothesis_predictions` in
-`src/zicato/tournament/detail.py`, surfaced by the `/api/hypothesis-accuracy`
-dashboard feed) scores every settled hypothesis's predicted-vs-realized
+`src/zicato/tournament/detail.py`, surfaced by the candidate dossier's
+`hypothesis_accuracy` field) scores every settled hypothesis's predicted-vs-realized
 movements. Without this channel that score reaches only the dashboard. The
 channel routes it back to the proposer, so that a proposer shown its own miss
 pattern hypothesizes more honestly: it stops writing confident, un-earned

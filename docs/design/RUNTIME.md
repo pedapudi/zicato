@@ -1403,7 +1403,7 @@ by `--log` / `RUST_LOG`; inherited from `evolve`) and exposes its own state on
 | Surface | What it shows | Ships? |
 |---|---|---|
 | watchdog `/statusz` | The watchdog's own view: heartbeat age, per-run staleness, recent escalations. | yes |
-| dashboard `GET /api/state` | Composite live snapshot — heartbeat, active tournament, active runs, lineage — plus the rest of the API in [DASHBOARD.md](DASHBOARD.md) §6. | yes |
+| dashboard `GET /api/environment` | The consolidated live read — heartbeat, active tournament, active runs, lineage — plus the rest of the API in [DASHBOARD.md](DASHBOARD.md) §6. | yes |
 | `zicato status` one-shot CLI | A filesystem-only snapshot that needs no running supervisor. | **unbuilt** — no such command in the CLI |
 
 The dashboard's `GET /api/*` endpoints read the state files directly,

@@ -60,35 +60,35 @@ controls layout and interaction.
 
 | File | What lives there | Lines |
 |---|---|---|
-| `src/zicato/query/__init__.py` | the package face — re-exports the readers production code calls (the endpoint table, the SSE snapshot builder, the `logs` command); `__all__` is the supported surface | 215 |
+| `src/zicato/query/__init__.py` | the package face — re-exports the readers production code calls (the endpoint table, the SSE snapshot builder, the `logs` command); `__all__` is the supported surface | 175 |
 | `src/zicato/query/paths.py` | `WorkspacePaths` (the `.zicato/` layout), `read_current_epoch`, `list_epoch_ids`, `layout_of`, the coercers `coerce_float` / `finite_float` / `_opt_bool`, `_resolve_epoch_id` (the traversal guard) | 252 |
 | `src/zicato/query/decisions.py` | the one decision projection: `experiment_decision`, `canonical_decision`, `promoted_tristate`, `decision_surface`, `stamp_experiment_decision`, all validated against `core.tournament.TournamentDecision` | 44 |
-| `src/zicato/query/contracts.py` | typed envelopes and the exhaustive JSON endpoint registry `ENDPOINT_PAYLOADS` | 187 |
-| `src/zicato/query/_sqlite.py` | `open_index_ro` / `open_index_ro_or_none` (read-only `mode=ro` through `index.query.open_index`), `_query` (swallow-to-`[]`), `_opt_json`, `_IndexAbsent`, `INDEX_NOT_BUILT_NOTE` | 101 |
+| `src/zicato/query/contracts.py` | typed envelopes and the exhaustive JSON endpoint registry `ENDPOINT_PAYLOADS` | 150 |
+| `src/zicato/query/_sqlite.py` | `open_index_ro` / `open_index_ro_or_none` (read-only `mode=ro` through `index.query.open_index`), `_query` (swallow-to-`[]`), `_IndexAbsent`, `INDEX_NOT_BUILT_NOTE` | 91 |
 | `src/zicato/query/inputs.py` | `EpochInputs` / `GenerationInputs` — the per-response captured inputs (§ "Inputs shared within a response") | 97 |
-| `src/zicato/query/runtime_view.py` | `build_snapshot`, `derive_liveness`, `read_heartbeat_dict` (the `ts` int-ms stamp), `read_effective_settings`, `normalize_entry_status` (the four-bucket canon), `read_active_runs_view`, `read_paused` | 831 |
+| `src/zicato/query/runtime_view.py` | `build_snapshot`, `derive_liveness`, `read_heartbeat_dict` (the `ts` int-ms stamp), `normalize_entry_status` (the four-bucket canon), `read_active_runs_view`, `read_paused` | 774 |
 | `src/zicato/query/loop_view.py` | `build_optimization_trajectory` (the uncertainty-honest verdict), `build_tournament_cost`, `build_round_pipeline` + `PIPELINE_STEPS` (the server-owned stepper projection) | 545 |
 | `src/zicato/query/racing_view.py` | `build_racing_field` — the most recent recorded racing field tournament of an epoch, served from its record | 39 |
 | `src/zicato/query/rounds_view.py` | `build_round_timeline` — the recorded rounds, the in-flight field and the loss-floor waterfall | 356 |
 | `src/zicato/query/promoted_head.py` | `current_champion`, `champion_history`, `read_recorded_heads`, `head_of_round` — the champion each committed round names | 71 |
-| `src/zicato/query/file_view.py` | `build_file_index`, `build_generation_tree`, `read_generation_file`, `build_generation_patches`, `build_generation_diff` — a generation's source tree, one file of it, its patch set, and its diff against its parent, read through the `GenerationStore` protocol; when a tree is gone the diff carries the patched spans reconstructed from records, with `provenance` saying so | 515 |
+| `src/zicato/query/file_view.py` | `read_generation_file`, `build_generation_patches`, `build_generation_diff` — one file of a generation's source tree, its patch set, and its diff against its parent, read through the `GenerationStore` protocol; when a tree is gone the diff carries the patched spans reconstructed from records, with `provenance` saying so | 398 |
 | `src/zicato/query/mutation_view.py` | `build_mutation_index`, `build_mutation_detail`, `reconstructed_spans` — an epoch's mutation surface from the `v0` tree or, when the tree is gone, from the frozen `mutations.json`, and one site's content in every generation whose patch touched it | 786 |
 | `src/zicato/query/reflection_view.py` | `list_reflections`, `build_reflection_summary` (four-pillar bill of health), `build_judge_scorecards`, `build_practice_review`, `build_adjudication_xray` (transcript + judge verdict + meta-judge record) — the Instrument-lens feed. Index-first, file-fallback; the x-ray reads `result.json` / `judge_io` rather than re-running the adjudicator's events-preview reconstruction | 530 |
 | `src/zicato/query/trace_view.py` | the trajectory-bootstrap traces of a reflection: `build_trace_list`, `build_trace_detail`, `build_suggestion_provenance` | 809 |
 | `src/zicato/query/epoch_view.py` | `build_epoch_view`, `build_epochs_summary`, `compute_board_split`, `build_epoch_analysis`, `read_epoch_analysis_html` | 793 |
-| `src/zicato/query/gate_view.py` | `build_gate_breakdown` (+ `deciding_rule`), `build_score_trajectory`, `build_health_report`, `build_rating_view`, `build_drift_movements` | 1052 |
-| `src/zicato/query/tournament_view.py` | `build_bracket`, `build_tournament_structure`, `build_matchup_detail`, `build_matchup_grid` | 991 |
+| `src/zicato/query/gate_view.py` | `build_gate_breakdown` (+ `deciding_rule`), `build_score_trajectory`, `build_health_report`, `build_rating_view` | 910 |
+| `src/zicato/query/tournament_view.py` | `build_bracket`, `build_tournament_structure`, `build_matchup_grid` | 812 |
 | `src/zicato/query/candidate_view.py` | `build_candidate_dossier` — the candidate page's one composed read | 457 |
 | `src/zicato/query/eval_view.py` | the board-as-instrument reads: `build_eval_matrix`, `build_eval_dossier`, `build_eval_health`, `facet_scores_for_generation` | 1527 |
 | `src/zicato/query/live_execution_plan.py` | `build_live_pipeline` — the running epoch's stepper verdict, with the endpoint's degrade | 34 |
-| `src/zicato/query/{judge,hypothesis,lineage,ledger,transcript,conversations,journal,proposer}_view.py`, `events_index.py`, `run_log.py`, `log_stream.py`, `judge_roster.py`, `replicate_scores.py`, `ratings.py`, `board_scan.py` | per-judge matrices and `build_environment` (`judge_view`), hypothesis/calibration accuracy, the lineage feed, the experiments ledger, run transcripts and episode exports, matchup conversations, the served journal, the proposer scorecard, run and events lookup plus `build_workspace_view` / `build_meta_loop_ledger` (`events_index`), the run-log tail, the operator log view, the armed judge roster, replicate measurements, rating triples, and board-row projections. `judge_view.build_per_entry_for_generation` serves the dossier; its `facet_scores` block comes from `eval_view.facet_scores_for_generation` | — |
+| `src/zicato/query/{judge,hypothesis,lineage,ledger,transcript,journal,proposer}_view.py`, `events_index.py`, `run_log.py`, `log_stream.py`, `judge_roster.py`, `replicate_scores.py`, `ratings.py`, `board_scan.py` | per-judge matrices and `build_environment` (`judge_view`), hypothesis/calibration accuracy, the lineage feed, the experiments ledger, run transcripts and episode exports, matchup conversations, the served journal, the proposer scorecard, run and events lookup plus `build_workspace_view` / `build_meta_loop_ledger` (`events_index`), the run-log tail, the operator log view, the armed judge roster, replicate measurements, rating triples, and board-row projections. `judge_view.build_per_entry_for_generation` serves the dossier; its `facet_scores` block comes from `eval_view.facet_scores_for_generation` | — |
 | `src/zicato/query/transcript_reconstruction.py` | `reconstruct_transcript` — one goldfive `events.jsonl` or one Foe `episode.jsonl` → an ordered `Transcript` | 921 |
 | `src/zicato/query/foe_episode.py` | Reads proposal episode events and their conversation contributions; request messages remain recorded facts | 192 |
 | `src/zicato/board/jsonl.py` | `load_board_document` owns whole-file board acceptance; query projections share its accepted entries and source rows. | — |
 | `src/zicato/mutation/inventory.py` | `read_mutation_inventory` accepts the recorded seven-field enumeration and preserves extensions; malformed present inventories carry a refusal into query views and prevent report publication. | — |
 | `src/zicato/epoch/contract.py` | `read_component_hashes` accepts one string-to-string mapping for checks, epoch rollover and query projections; future component names remain recorded. | — |
-| `src/zicato/dashboard/server.py` | `create_app` (routes + `read_only`), `run` (port walk + harmonograf + `read_only=False`), static serving with ETag revalidation | 546 |
-| `src/zicato/dashboard/endpoints.py` | `READ_ENDPOINTS` (the read-route table), `make_endpoints` (the table plus the hand-written factories), `_is_safe_id` / `COORDINATE_GUARDS`, the control POST handlers | 1488 |
+| `src/zicato/dashboard/server.py` | `create_app` (routes + `read_only`), `run` (port walk + harmonograf + `read_only=False`), static serving with ETag revalidation | 531 |
+| `src/zicato/dashboard/endpoints.py` | `READ_ENDPOINTS` (the read-route table), `make_endpoints` (the table plus the hand-written factories), `_is_safe_id` / `COORDINATE_GUARDS`, the control POST handlers | 1271 |
 | `src/zicato/dashboard/settings_api.py` | `settings_routes` — the secret-safe `GET /settings/models` read of the model-engine configuration | 56 |
 | `src/zicato/dashboard/sse.py` | `ChangeBroker` (coalescing file watcher), `sse_event_stream`, `_classify`, `_progress_signal` | 430 |
 | `src/zicato/dashboard/static_assets.py` | `resolve_static_dir` — the bundle-resolution seam | 50 |
@@ -790,8 +790,8 @@ defaults to write mode and contends with the ingest writer.
 Two readers coalesce the whole environment so the client fetches once, not
 six times:
 
-- **`build_snapshot(paths)`** — the `/api/state` snapshot AND the opening
-  SSE `snapshot` frame. It captures the runtime inputs once
+- **`build_snapshot(paths)`** — the opening SSE `snapshot` frame. It
+  captures the runtime inputs once
   (`RuntimeInputs`) and composes heartbeat + liveness + lock + active runs +
   active tournament + lineage + epoch view + `paused` from that one capture:
 
@@ -838,9 +838,8 @@ chapter leans on:
 | `build_racing_field` | `/api/epoch/{id}/racing-field` | the field-tournament record (`tournament_id`, `state`, `structure`, `structure_params`, `competitors`, `rounds[]`, `standings`, `champion_generation_id`, `promoted_generation_id`, `decision`, …) plus `present`, `source`, `champion_lineage` | `{epoch_id, present: false}`, plus `unreadable` for a malformed record (§9.2.5) |
 | `build_round_timeline` | `/api/epoch/{id}/round-timeline` | `{rounds[], waterfall[]}` | empty rounds list |
 | `build_per_entry_for_generation` | `/api/generation/{e}/{g}/per-entry` | `{tournament_id, mean_score, facet_scores, entries[]}`; `facet_scores` is `{facets: {name: {scalar, mean_score, scored_count, entry_count, ran_count}}, overall}` — the candidate re-aggregated per `facet:` board tag at the epoch's frozen weights, so a facet scalar is comparable to the `overall` row | `{facets: {}, overall: null}` (always present) |
-| `build_snapshot` | `/api/state`, SSE `snapshot` | see above | each field independently `None` |
+| `build_snapshot` | SSE `snapshot` | see above | each field independently `None` |
 | `read_active_runs_view` | `/api/active-runs` | `[{run_id, progress, elapsed_seconds, budget_seconds, last_progress_ts, fresh, …}]`; `fresh` is the server's per-row in-flight verdict — both of `fresh_run_count`'s gates, so the tally is the count of `fresh` rows | `[]` |
-| `read_effective_settings` | `/api/config` | `{recorded_at, pid, instance_id, settings}` where `settings` is the OPEN map `{name: {value, source}}` keyed by each knob's dotted configuration name, `source` naming the tier that set it (the dataclass default, the workspace `config.json`, a pinned CLI flag, the host's CPU count; for `tournament.replicates`, the frozen contract, the measured noise floor, or the structure default). Read off the heartbeat record the loop stamped it on, so the served value is the one in force rather than a second reading of the same files | `null` when the workspace holds no run record; a record written before the map existed serves it empty |
 | `list_reflections` (`query/reflection_view.py`) | `/api/reflections[?epoch=]` | `{reflections:[{reflection_id, epoch_id, created_at, mode, executed, noise_floor_max_abs_delta, decision_flip_p, n_findings, n_judges}]}` | `{reflections: []}` |
 | `build_reflection_summary` | `/api/reflection/{id}/summary` | `{found, pillars:{reliability, discrimination, validity, calibration}, findings[], fidelity_tiers}` | `found: false` same-shape empty |
 | `build_judge_scorecards` | `/api/reflection/{id}/scorecards` | `{judges:[{judge_name, tp/fp/fn/tn, ambiguous, precision, recall, f1, disagreement_rate, self_consistency_kappa, exercised, redundant_with}]}` | `{judges: []}` |
@@ -1033,7 +1032,7 @@ A dashboard read route is almost always the same handler: reject an unsafe
 coordinate, call one `query` reader, wrap the result in a `JSONResponse`.
 Such routes differ only in their path, their coordinates, the reader, and
 the canned shape a rejected coordinate gets, so each is one row of one table,
-`READ_ENDPOINTS` (56 rows), built by one factory:
+`READ_ENDPOINTS` (41 rows), built by one factory:
 
 ```python
     ReadEndpoint(
@@ -1108,10 +1107,9 @@ existed — a recorded response per route over the standard fixture workspace,
 for a coordinate the fixture holds and for a coordinate the guard rejects.
 
 Payload assembly belongs to the readers, including for the hand-written
-routes: matchup conversations (`build_matchup_conversations`), the
-conversation and run-transcript reads, and the journal documents live in
-`query` readers — `conversations_view.py`, `transcript_view.py`,
-`journal_view.py` — each with a best-effort degrade-and-shape test, and all
+routes: the conversation and run-transcript reads and the journal document
+live in `query` readers — `transcript_view.py`, `journal_view.py` — each
+with a best-effort degrade-and-shape test, and all
 of them share the ONE `open_index_ro` connection discipline
 (`query/_sqlite.py`; §9.3).
 
@@ -2236,9 +2234,9 @@ event file into an ordered `Transcript` (turns + margin annotations). It
 is pure (the only I/O is the file the caller hands in) and tolerant — a
 malformed/truncated line is skipped, a missing file yields an empty
 transcript, mirroring the reducer's plain-JSON fallback and the supervisor's
-run-log tailer that parse the same growing file. It is library code: the two
-query readers that serve the conversation surfaces (`transcript_view`,
-`conversations_view`) import it directly, as does the run_id endpoint.
+run-log tailer that parse the same growing file. It is library code: the
+query reader that serves the conversation surfaces (`transcript_view`)
+imports it directly, as does the run_id endpoint.
 
 The file's first line selects the reader. A goldfive `events.jsonl` takes the
 ADK path, which handles both envelope shapes (camelCase persistence-sink keys
@@ -2263,14 +2261,14 @@ status, and the causality figure — and
 settles, writing the page as `episode.html` beside the log. The render is best
 effort and bounded: a binary that cannot be run, a non-zero exit, empty output,
 a timeout, or an unwritable directory each leave the log alone and the round
-unaffected. Two routes carry it to the dossier. The first,
-`/api/generation/{epoch}/{gen}/episode-export`, answers
+unaffected. Two reads carry it to the candidate page. The dossier's
+`episode_export` field is
 `transcript_view.build_proposal_episode_export` — whether the candidate has a
 page and, when it does not, the log's path and the command that renders one.
-The second, `/api/generation/{epoch}/{gen}/episode-export.html`, serves the
+The route `/api/generation/{epoch}/{gen}/episode-export.html` serves the
 page itself, resolved from the same coordinates rather than from any path a
-caller supplies. The candidate view's proposal header links the first answer or
-captions the second, so an operator reaches Foe's depth from the summary zicato
+caller supplies. The candidate view's proposal header links the page or
+captions its absence, so an operator reaches Foe's depth from the summary zicato
 reads out of the same episode.
 
 The transcript reader also owns the conversation execution outline. Turns carry

@@ -193,7 +193,7 @@ responses, and filesystem paths must not be placed in session metadata.
 
 ## 4. State plumbing — how the ids reach the frontend
 
-`/api/state` (the merged heartbeat) carries:
+The `heartbeat` of `/api/environment` (the merged heartbeat) carries:
 
 | field | source | meaning |
 |---|---|---|

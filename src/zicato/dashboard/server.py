@@ -57,7 +57,7 @@ _PLACEHOLDER_HTML = """<!doctype html>
 JSON endpoints under <code>/api/</code> and the <code>/events</code>
 SSE stream are available.</p>
 <ul>
-  <li><a href="/api/state">/api/state</a></li>
+  <li><a href="/api/environment">/api/environment</a></li>
   <li><a href="/api/health">/api/health</a></li>
 </ul>
 </body></html>
@@ -284,7 +284,6 @@ def create_app(
         # The reads whose query parameters shape the response.
         Route("/api/health", handlers["api_health"]),
         Route("/api/environment", handlers["api_environment"]),
-        Route("/api/search", handlers["api_search"]),
         Route("/api/logs", handlers["api_logs"]),
         Route("/api/run-log", handlers["api_run_log"]),
         # The two epoch documents served as themselves rather than as JSON.
@@ -296,22 +295,13 @@ def create_app(
             "/api/epoch/{epoch_id}/analysis.html",
             handlers["api_epoch_analysis_html"],
         ),
-        # Foe's static page for one proposal episode: the availability the
-        # proposer panel captions from, and the page itself.
-        Route(
-            "/api/generation/{epoch_id}/{generation_id}/episode-export",
-            handlers["api_proposal_episode_export"],
-        ),
+        # Foe's static page for one proposal episode.
         Route(
             "/api/generation/{epoch_id}/{generation_id}/episode-export.html",
             handlers["api_proposal_episode_export_html"],
         ),
         # The transcript surface.
         Route("/api/conversation/{run_id}", handlers["api_conversation"]),
-        Route(
-            "/api/matchup/{entry_id}/conversations",
-            handlers["api_matchup_conversations"],
-        ),
         Route(
             "/api/run/{epoch_id}/{generation_id}/{entry_id}/transcript",
             handlers["api_run_transcript"],

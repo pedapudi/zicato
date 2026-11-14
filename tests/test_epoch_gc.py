@@ -275,32 +275,14 @@ def test_git_backend_removes_tag_and_worktree(tmp_path: Path) -> None:
 def test_dashboard_views_degrade_gracefully_for_pruned_generation(workspace: Path) -> None:
     from zicato.query import WorkspacePaths
     from zicato.query.file_view import (
-        build_file_index,
         build_generation_diff,
         build_generation_patches,
-        build_generation_tree,
         read_generation_file,
     )
 
     _seed_lineage(workspace)
     prune_generations(workspace, EPOCH, keep_promoted_only=True, dry_run=False)
     paths = WorkspacePaths(workspace)
-
-    # The index never raises, and every recorded generation remains visible
-    # even when Git pruning removes the rejected generation's source tag.
-    index = build_file_index(paths)
-    listed = {
-        g["generation_id"]
-        for e in index["epochs"]
-        if e["epoch_id"] == EPOCH
-        for g in e["generations"]
-    }
-    assert listed == {"v0", "v1", "v2", "v3", "v4"}
-
-    # Tree view: explicit error + empty entries, not a raise.
-    tree = build_generation_tree(paths, EPOCH, "v1")
-    assert tree["entries"] == []
-    assert "error" in tree
 
     # File content: explicit error, not a raise.
     content = read_generation_file(paths, EPOCH, "v1", "agent/prompts.py")

@@ -42,8 +42,6 @@ from zicato.dashboard.endpoints import (
     READ_ENDPOINTS,
     SCOPE_IGNORE_MALFORMED_EPOCH,
     ReadEndpoint,
-    _degrade_drift_movements,
-    _degrade_matchup_detail,
     route_name,
 )
 from zicato.dashboard.server import create_app
@@ -63,10 +61,6 @@ _PROBES_GOLDEN = Path(__file__).parent / "data" / "endpoint_route_probes.json"
 #: never reaches a workspace — the degrade is the response a rejected
 #: coordinate gets, so nothing is read to produce it.
 _SAMPLE_COORDINATE = "sample"
-
-#: The two degrades that name the workspace's current epoch, and so cannot be
-#: rendered without one. The response snapshot is what pins their shape.
-_WORKSPACE_READING_DEGRADES = (_degrade_drift_movements, _degrade_matchup_detail)
 
 
 def _routes(tmp_path: Path, static_dir: Path) -> list[Route]:
@@ -212,11 +206,7 @@ def _fits(annotation: Any, value: Any) -> bool:
 
 @pytest.mark.parametrize(
     "entry",
-    [
-        entry
-        for entry in READ_ENDPOINTS
-        if entry.degrade is not None and entry.degrade not in _WORKSPACE_READING_DEGRADES
-    ],
+    [entry for entry in READ_ENDPOINTS if entry.degrade is not None],
     ids=lambda entry: entry.path,
 )
 def test_each_degrade_satisfies_its_payload_contract(entry: ReadEndpoint) -> None:
@@ -261,15 +251,12 @@ HAND_WRITTEN_GET_ROUTES = frozenset(
         "/api/environment",
         "/api/epoch/{epoch_id}/analysis.html",
         "/api/epoch/{epoch_id}/journal.md",
-        "/api/generation/{epoch_id}/{generation_id}/episode-export",
         "/api/generation/{epoch_id}/{generation_id}/episode-export.html",
         "/api/health",
         "/api/logs",
-        "/api/matchup/{entry_id}/conversations",
         "/api/run-log",
         "/api/run/{epoch_id}/{generation_id}/{entry_id}/transcript",
         "/api/run/{epoch_id}/{generation_id}/{entry_id}/transcript/delta",
-        "/api/search",
     }
 )
 

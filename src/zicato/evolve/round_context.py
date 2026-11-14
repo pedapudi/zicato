@@ -350,7 +350,7 @@ def _build_calibration_summary(
       flag;
     * the prediction-accuracy grader
       (:func:`zicato.tournament.detail.hypothesis_ledger`) for each hypothesis's
-      ``(matches, predictions)`` COUNTS — the EXISTING ``/api/hypothesis-accuracy``
+      ``(matches, predictions)`` COUNTS — the candidate dossier's ``hypothesis_accuracy``
       feed, reused. An absent / unbuildable index default-fills every claim to
       ``predictions == 0`` (unresolved), so the sampler returns ``None`` (no
       graded history) and the round stays byte-identical.

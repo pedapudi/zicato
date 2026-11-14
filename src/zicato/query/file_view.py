@@ -1,8 +1,8 @@
 """Readers of a generation's source tree, file content, patch set and diff.
 
-These readers serve the console's **Files** view: a tree of every
-generation's source, every generation's applied patch set, with a
-file-content browser. They read through the
+These readers serve the console's diff and mutation views: one file of a
+generation's source, a generation's applied patch set, and the files it
+changed. They read through the
 :class:`~zicato.epoch.genstore.GenerationStore` seam — so it works
 **unchanged** for both storage backends. For a directory-snapshot
 workspace it browses the ``generations/vN/snapshot/`` trees; for a
@@ -20,10 +20,6 @@ dashboard backend-agnostic by construction.
 
 Routes (rows of :data:`zicato.dashboard.endpoints.READ_ENDPOINTS`)
 ------------------------------------------------------------------
-* ``GET /api/files`` → :func:`build_file_index` — every epoch and its
-  generations, each generation's tree node count and patch count.
-* ``GET /api/files/{epoch}/{generation}/tree`` →
-  :func:`build_generation_tree` — the full source tree.
 * ``GET /api/files/{epoch}/{generation}/content?path=...`` →
   :func:`read_generation_file` — one file's content.
 * ``GET /api/files/{epoch}/{generation}/patches`` →
@@ -38,7 +34,7 @@ When a tree is gone
 Snapshot GC prunes generation source trees and keeps every record
 (:mod:`zicato.epoch.gc`), so these views must answer for a generation
 they cannot walk. Whole-tree browsing is the one thing records cannot
-rebuild — the tree view and the content view say exactly that and point
+rebuild — the content view says exactly that and points
 at what survives — while the DIFF's real subject, the spans the
 generation's patches touched, is reconstructible and is reconstructed
 (issue #194 §6). Every response says which it is: ``provenance`` plus
@@ -57,14 +53,13 @@ from zicato.query.mutation_view import (
     FROM_SNAPSHOT,
     SPANS_CAPTION,
     SPANS_UNREACHABLE_CAPTION,
-    _has_tree,
     _resolve_store,
     reconstructed_spans,
     recorded_generation_ids,
 )
-from zicato.query.paths import WorkspacePaths, list_epoch_ids
+from zicato.query.paths import WorkspacePaths
 from zicato.storage import workspace_backend
-from zicato.workspace import generation_round_number, natural_key
+from zicato.workspace import generation_round_number
 
 #: Files larger than this are not inlined into the content response —
 #: the browser gets a truncation marker instead. The dashboard is a
@@ -132,116 +127,6 @@ def _missing_tree_error(
         else _UNKNOWN_GENERATION_ERROR
     )
     return template.format(epoch_id=epoch_id, generation_id=generation_id)
-
-
-def build_file_index(paths: WorkspacePaths) -> dict[str, Any]:
-    """Return the top-level Files-view index: epochs → generations.
-
-    Each generation entry carries enough for the tree's collapsed view —
-    a file count and a patch count — without shipping the whole tree.
-    The dashboard lazy-loads a generation's full tree on expansion via
-    :func:`build_generation_tree`.
-
-    ``has_tree`` separates the two readings of ``file_count: 0``: a
-    generation whose source tree snapshot GC collected (records intact,
-    tree gone forever) from one the store genuinely found empty.
-
-    A workspace with no generation store at all — a ``config.json``
-    missing ``generation_source_backend``, or naming a backend the source
-    data contradicts — still lists every epoch and every RECORDED
-    generation, each with ``has_tree: false``, and carries a top-level
-    ``error`` naming the configuration. Reporting that as pruned data
-    would be a fabricated retention fact.
-    """
-    store, store_error = _resolve_store(paths)
-    records = workspace_backend(paths.root, start=True)
-    epochs: list[dict[str, Any]] = []
-    # Epoch enumeration + ordering routes through the single authority
-    # (timestamp-first), the same one every other epoch-list response uses.
-    # The git backend only changes where generation *source trees* live, not
-    # the per-epoch record directories this walks.
-    for epoch_id in list_epoch_ids(paths):
-        generations: list[dict[str, Any]] = []
-        try:
-            source_generation_ids = [] if store is None else store.list_generations(epoch_id)
-        except (FileNotFoundError, OSError, ValueError):
-            source_generation_ids = []
-        generation_ids = sorted(
-            set(source_generation_ids) | set(recorded_generation_ids(paths, epoch_id)),
-            key=natural_key,
-        )
-        for generation_id in generation_ids:
-            try:
-                tree = [] if store is None else store.list_tree(epoch_id, generation_id)
-                file_count = sum(1 for e in tree if not e.is_dir)
-            except (FileNotFoundError, OSError, ValueError):
-                file_count = 0
-            try:
-                patch_count = len(read_generation_patches(records, epoch_id, generation_id).patches)
-            except (FileNotFoundError, OSError, RecordError, ValueError):
-                patch_count = 0
-            generations.append(
-                {
-                    "generation_id": generation_id,
-                    "file_count": file_count,
-                    "patch_count": patch_count,
-                    "has_tree": _has_tree(store, epoch_id, generation_id),
-                }
-            )
-        epochs.append({"epoch_id": epoch_id, "generations": generations})
-    index: dict[str, Any] = {"epochs": epochs}
-    if store_error:
-        # Every generation reads ``has_tree: false`` on this path. Say why,
-        # so the view cannot present a configuration failure as retention.
-        index["error"] = store_error
-    return index
-
-
-def build_generation_tree(
-    paths: WorkspacePaths, epoch_id: str, generation_id: str
-) -> dict[str, Any]:
-    """Return one generation's full source tree as a flat entry list.
-
-    The shape is a flat list of ``{path, is_dir, size}`` — the frontend
-    builds the nested tree from the ``/``-separated paths. A flat list
-    keeps the wire format trivial and the same for both backends.
-
-    On a missing generation the response carries ``"error"`` and an
-    empty ``entries`` list rather than raising, so the dashboard
-    degrades to an empty tree instead of a 500. The error NAMES what
-    happened and where the surviving records are: a pruned tree is the
-    one thing in this module records cannot rebuild, so the honest move
-    is to say so and point at what they can (issue #194 §6).
-    """
-    store, store_error = _resolve_store(paths)
-    if store is None:
-        return {
-            "epoch_id": epoch_id,
-            "generation_id": generation_id,
-            "entries": [],
-            "error": _missing_tree_error(paths, epoch_id, generation_id, store_error),
-        }
-    try:
-        entries = store.list_tree(epoch_id, generation_id)
-    except FileNotFoundError:
-        return {
-            "epoch_id": epoch_id,
-            "generation_id": generation_id,
-            "entries": [],
-            "error": _missing_tree_error(paths, epoch_id, generation_id),
-        }
-    except (OSError, ValueError) as exc:
-        return {
-            "epoch_id": epoch_id,
-            "generation_id": generation_id,
-            "entries": [],
-            "error": str(exc),
-        }
-    return {
-        "epoch_id": epoch_id,
-        "generation_id": generation_id,
-        "entries": [{"path": e.path, "is_dir": e.is_dir, "size": e.size} for e in entries],
-    }
 
 
 def read_generation_file(
@@ -507,8 +392,6 @@ def build_generation_diff(
 
 
 __all__ = [
-    "build_file_index",
-    "build_generation_tree",
     "read_generation_file",
     "build_generation_patches",
     "build_generation_diff",

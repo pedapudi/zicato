@@ -31,27 +31,22 @@ from tests._workspace_support import (
     write_json,
     write_jsonl,
     write_run,
-    write_tournament,
 )
 from zicato.core import run_id_for_unit
 from zicato.core.measurement import MeasurementDraw, MeasurementPurpose
 from zicato.query import (
     WorkspacePaths,
     build_epoch_analysis,
-    build_matchup_conversations,
-    build_per_judge_for_entry,
     build_per_judge_trend,
     build_run_transcript,
     build_run_transcript_delta,
-    conversations_view,
-    read_epoch_journal,
     read_epoch_journal_md,
     resolve_conversation,
     transcript_view,
 )
 from zicato.query._sqlite import _IndexAbsent, open_index_ro, open_index_ro_or_none
 from zicato.query.events_index import read_run_result
-from zicato.query.judge_view import resolve_run_id_for_entry
+from zicato.query.judge_view import build_per_judge_for_entry, resolve_run_id_for_entry
 from zicato.workspace import WorkspaceLayout
 
 EPOCH = "2026-06-01_e0"
@@ -75,9 +70,8 @@ class _FakeTranscript:
 
 
 def _install_reconstruct(monkeypatch: pytest.MonkeyPatch, fn: object) -> None:
-    """Rebind the reconstructor both transcript readers call."""
+    """Rebind the reconstructor the transcript reader calls."""
     monkeypatch.setattr(transcript_view, "reconstruct_transcript", fn)
-    monkeypatch.setattr(conversations_view, "reconstruct_transcript", fn)
 
 
 def _install_fake_reconstruct(monkeypatch: pytest.MonkeyPatch, payload: dict) -> None:
@@ -155,33 +149,8 @@ def test_per_judge_trend_never_creates_index_db(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# journal_view — read_epoch_journal / read_epoch_journal_md
+# journal_view — read_epoch_journal_md
 # ---------------------------------------------------------------------------
-
-
-def test_read_epoch_journal_degrades_to_empty_string(tmp_path: Path) -> None:
-    paths = WorkspacePaths(_base_workspace(tmp_path).root)
-    out = read_epoch_journal(paths, EPOCH)
-    assert out == {"epoch_id": EPOCH, "journal": ""}
-
-
-def test_read_epoch_journal_shape(tmp_path: Path) -> None:
-    layout = _base_workspace(tmp_path)
-    write_json(
-        layout.experiment(EPOCH, "v1"),
-        experiment_record(
-            "v1",
-            epoch_id=EPOCH,
-            hypothesis={
-                "core_idea": "Reduce redundant instructions",
-                "why": "Preserve all task requirements.",
-            },
-        ),
-    )
-    out = read_epoch_journal(WorkspacePaths(layout.root), EPOCH)
-    assert out["epoch_id"] == EPOCH
-    assert "## v1 — Reduce redundant instructions" in out["journal"]
-    assert "**why**: Preserve all task requirements." in out["journal"]
 
 
 def test_read_epoch_journal_md_none_vs_text(tmp_path: Path) -> None:
@@ -193,10 +162,15 @@ def test_read_epoch_journal_md_none_vs_text(tmp_path: Path) -> None:
         experiment_record(
             "v1",
             epoch_id=EPOCH,
-            hypothesis={"core_idea": "Preserve the proposal text"},
+            hypothesis={
+                "core_idea": "Preserve the proposal text",
+                "why": "Preserve all task requirements.",
+            },
         ),
     )
-    assert "## v1 — Preserve the proposal text" in read_epoch_journal_md(paths, EPOCH)
+    journal = read_epoch_journal_md(paths, EPOCH)
+    assert "## v1 — Preserve the proposal text" in journal
+    assert "**why**: Preserve all task requirements." in journal
 
 
 # ---------------------------------------------------------------------------
@@ -552,74 +526,3 @@ def test_build_run_transcript_settled_run_matches_direct_reconstruct(tmp_path: P
     assert out["annotations"] == direct["annotations"]
     assert out["complete"] == direct["complete"]
     assert out["event_count"] == direct["event_count"]
-
-
-# ---------------------------------------------------------------------------
-# conversations_view — build_matchup_conversations
-# ---------------------------------------------------------------------------
-
-
-def test_matchup_conversations_degrade_without_tournament(tmp_path: Path) -> None:
-    paths = WorkspacePaths(_base_workspace(tmp_path).root)
-    assert build_matchup_conversations(paths, ENTRY) == {"champion": None, "challenger": None}
-
-
-def test_matchup_conversations_shape_both_sides(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    layout = _base_workspace(tmp_path)
-    write_tournament(
-        layout.root,
-        {
-            "tournament_id": "t1",
-            "parent_generation_id": "v0",
-            "child_generation_id": GEN,
-            "entries": [
-                {"entry_id": ENTRY, "side": "parent", "status": "cached"},
-                {"entry_id": ENTRY, "side": "child", "status": "completed"},
-            ],
-        },
-    )
-    for gen in ("v0", GEN):
-        write_run(
-            layout,
-            EPOCH,
-            gen,
-            ENTRY,
-            events=[{"runId": "r"}],
-            loss={"drift_loss": 0.1, "pass_fail": True},
-        )
-    _install_fake_reconstruct(monkeypatch, {"turns": []})
-    out = build_matchup_conversations(WorkspacePaths(layout.root), ENTRY)
-    for side, gen in (("champion", "v0"), ("challenger", GEN)):
-        record = out[side]
-        assert record is not None
-        assert record["generation_id"] == gen
-        assert record["run_id"] == ENTRY
-        assert record["transcript"] == {"turns": []}
-        assert record["result"]["pass_fail"] is True
-
-
-def test_matchup_conversations_failed_reconstruction_still_serves_results(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """DQ3: a failed reconstruction degrades that transcript, not the payload."""
-    layout = _base_workspace(tmp_path)
-    write_tournament(
-        layout.root,
-        {
-            "tournament_id": "t1",
-            "parent_generation_id": "v0",
-            "child_generation_id": GEN,
-            "entries": [],
-        },
-    )
-    write_run(layout, EPOCH, GEN, ENTRY, events=[{"runId": "r"}])
-
-    def boom(events_path: Path, *, partial_ok: bool = False) -> None:
-        raise RuntimeError("torn read")
-
-    _install_reconstruct(monkeypatch, boom)
-    out = build_matchup_conversations(WorkspacePaths(layout.root), ENTRY)
-    assert out["challenger"]["transcript"] == {"error": "transcript failed: torn read"}
-    assert out["challenger"]["generation_id"] == GEN
