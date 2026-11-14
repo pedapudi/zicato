@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._index_rows import index_rows
 from zicato.core.measurement import TOURNAMENT_DRAW
 from zicato.core.types import Generation, ScoringWeights
 from zicato.core.workspace import loss_profile_path, run_id_for_unit
@@ -19,9 +20,6 @@ from zicato.index.ingest import (
 )
 from zicato.index.query import (
     all_epochs,
-    epoch_ancestry,
-    loss_profiles_for_tournament,
-    runs_for_tournament,
 )
 from zicato.index.schema import (
     apply_schema,
@@ -50,7 +48,7 @@ def _build_two_epoch_workspace(tmp_path: Path) -> tuple[Path, str, str]:
 
     Returns ``(workspace_root, first_epoch_id, second_epoch_id)``. The
     second epoch's ``v0_parent`` points at the first epoch — that
-    cross-epoch edge is what ``epoch_ancestry`` walks.
+    cross-epoch edge is what the index records as ``parent_epoch_id``.
 
     Each epoch carries a ``v1`` whose experiment.json challenges its
     ``v0``, with a resolved ``promoted`` outcome and one synthetic
@@ -157,7 +155,7 @@ def test_rebuild_index_populates_tournament_id_on_runs(tmp_path: Path) -> None:
     ws, eid_a, _ = _build_two_epoch_workspace(tmp_path)
     db = rebuild_index(ws)
     tournament_id = f"{eid_a}:v0->v1"
-    runs = runs_for_tournament(db, tournament_id)
+    runs = index_rows(db, "runs", tournament_id=tournament_id)
     assert len(runs) == 1
     assert runs[0]["run_id"] == run_id_for_unit("v1", "e1", epoch_id=eid_a)
     assert runs[0]["tournament_id"] == tournament_id
@@ -168,7 +166,7 @@ def test_rebuild_index_populates_tournament_id_on_loss_profiles(tmp_path: Path) 
     ws, eid_a, _ = _build_two_epoch_workspace(tmp_path)
     db = rebuild_index(ws)
     tournament_id = f"{eid_a}:v0->v1"
-    losses = loss_profiles_for_tournament(db, tournament_id)
+    losses = index_rows(db, "loss_profiles", tournament_id=tournament_id)
     assert len(losses) == 1
     assert losses[0]["run_id"] == run_id_for_unit("v1", "e1", epoch_id=eid_a)
     assert losses[0]["tournament_id"] == tournament_id
@@ -191,7 +189,7 @@ def test_ingest_run_populates_tournament_id(tmp_path: Path) -> None:
     db = ws / "index.db"
     assert not db.exists()
     ingest_run(ws, None, eid_a, "v1", "e1")
-    runs = runs_for_tournament(db, f"{eid_a}:v0->v1")
+    runs = index_rows(db, "runs", tournament_id=f"{eid_a}:v0->v1")
     assert len(runs) == 1
     assert runs[0]["tournament_id"] == f"{eid_a}:v0->v1"
 
@@ -227,59 +225,18 @@ def test_v0_seed_run_has_null_tournament_id(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Query helpers
+# Tournament ids across epochs
 # ---------------------------------------------------------------------------
 
 
-def test_runs_for_tournament_returns_only_matching_runs(tmp_path: Path) -> None:
-    """``runs_for_tournament`` is scoped strictly to one tournament id."""
+def test_each_tournament_id_names_only_its_own_epoch_s_runs(tmp_path: Path) -> None:
+    """A tournament id stamped on a run is scoped to one epoch."""
     ws, eid_a, eid_b = _build_two_epoch_workspace(tmp_path)
     db = rebuild_index(ws)
-    a_runs = runs_for_tournament(db, f"{eid_a}:v0->v1")
-    b_runs = runs_for_tournament(db, f"{eid_b}:v0->v1")
+    a_runs = index_rows(db, "runs", tournament_id=f"{eid_a}:v0->v1")
+    b_runs = index_rows(db, "runs", tournament_id=f"{eid_b}:v0->v1")
     assert {r["run_id"] for r in a_runs} == {run_id_for_unit("v1", "e1", epoch_id=eid_a)}
     assert {r["run_id"] for r in b_runs} == {run_id_for_unit("v1", "e1", epoch_id=eid_b)}
-
-
-def test_runs_for_tournament_empty_for_unknown_id(tmp_path: Path) -> None:
-    """An unknown tournament id collapses to the empty list, not an error."""
-    ws, _, _ = _build_two_epoch_workspace(tmp_path)
-    db = rebuild_index(ws)
-    assert runs_for_tournament(db, "no_such_epoch:v0->v1") == []
-
-
-def test_epoch_ancestry_walks_back_to_root(tmp_path: Path) -> None:
-    """``epoch_ancestry`` yields the chain newest-first, root last."""
-    ws, eid_a, eid_b = _build_two_epoch_workspace(tmp_path)
-    db = rebuild_index(ws)
-    chain = epoch_ancestry(db, eid_b)
-    ids = [r["epoch_id"] for r in chain]
-    assert ids == [eid_b, eid_a]
-    # The root row has parent_epoch_id NULL.
-    assert chain[-1]["parent_epoch_id"] is None
-
-
-def test_epoch_ancestry_root_returns_single_row(tmp_path: Path) -> None:
-    """The workspace's first epoch yields a one-row chain (itself)."""
-    ws, eid_a, _ = _build_two_epoch_workspace(tmp_path)
-    db = rebuild_index(ws)
-    chain = epoch_ancestry(db, eid_a)
-    ids = [r["epoch_id"] for r in chain]
-    assert ids == [eid_a]
-    assert chain[0]["parent_epoch_id"] is None
-
-
-def test_epoch_ancestry_unknown_epoch_returns_empty(tmp_path: Path) -> None:
-    """An unknown epoch id collapses to the empty list."""
-    ws, _, _ = _build_two_epoch_workspace(tmp_path)
-    db = rebuild_index(ws)
-    assert epoch_ancestry(db, "does_not_exist") == []
-
-
-def test_epoch_ancestry_handles_missing_index(tmp_path: Path) -> None:
-    """``epoch_ancestry`` against a never-indexed workspace returns ``[]``."""
-    # No rebuild_index call; the file does not exist.
-    assert epoch_ancestry(tmp_path / "no_such.db", "anything") == []
 
 
 # ---------------------------------------------------------------------------
@@ -293,7 +250,7 @@ def test_incremental_ingest_carries_tournament_id_after_reingest(tmp_path: Path)
     ingest_run(ws, None, eid_a, "v1", "e1")
     ingest_run(ws, None, eid_a, "v1", "e1")
     db = ws / "index.db"
-    runs = runs_for_tournament(db, f"{eid_a}:v0->v1")
+    runs = index_rows(db, "runs", tournament_id=f"{eid_a}:v0->v1")
     assert len(runs) == 1
     assert runs[0]["tournament_id"] == f"{eid_a}:v0->v1"
 

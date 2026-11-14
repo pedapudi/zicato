@@ -26,7 +26,7 @@ from zicato.core.workspace import (
     reflection_scorecards_path,
     run_id_for_unit,
 )
-from zicato.index.ingest import ingest_reflection, rebuild_index
+from zicato.index.ingest import ingest_reflection
 from zicato.judge_runtime.io_capture import JudgeIOFileSink, judge_io_path_for_loss
 from zicato.query import reflection_view as rv
 from zicato.query.paths import WorkspacePaths
@@ -387,48 +387,3 @@ def test_adjudication_xray_degrades_on_unknown(tmp_path: Path) -> None:
     assert xray["transcript"] == {"fidelity": "unavailable", "turns": []}
     assert xray["judge_verdict"] is None
     assert xray["adjudication"] is None
-
-
-# ---------------------------------------------------------------------------
-# entry_candidate_matrix — reflection-independent, parity with hand-computed
-# ---------------------------------------------------------------------------
-
-
-def test_entry_candidate_matrix_parity(tmp_path: Path) -> None:
-    workspace = tmp_path / ".zicato"
-    _epoch_config(workspace)
-    # Two candidates × two entries. The reflection-INDEPENDENT matrix reads the
-    # index loss_profiles (one canonical run per (gen, entry)) — replicate slots
-    # are NOT in the index, so each cell is that run's drift_loss.
-    _write_loss(workspace, "v0", "entryA", drift=2.0, replicate=0)
-    _write_loss(workspace, "v0", "entryB", drift=1.0, replicate=0)
-    _write_loss(workspace, "v1", "entryA", drift=6.0, replicate=0)
-    # v1/entryB intentionally absent -> a None cell.
-    # Register the generations in lineage so the index walk sees them.
-    write_lineage(
-        WorkspaceLayout(workspace),
-        {
-            "epochs": [
-                {
-                    "id": EPOCH,
-                    "generations": [
-                        {"id": "v0", "parent_id": None, "promoted": True, "created_at": "1"},
-                        {"id": "v1", "parent_id": "v0", "promoted": False, "created_at": "2"},
-                    ],
-                }
-            ]
-        },
-    )
-    rebuild_index(workspace)
-
-    out = rv.entry_candidate_matrix(_paths(workspace), EPOCH)
-    assert out["entries"] == ["entryA", "entryB"]
-    assert out["candidates"] == ["v0", "v1"]
-    # entryA: v0 = 2.0, v1 = 6.0 ; entryB: v0 = 1.0, v1 = None (absent cell).
-    assert out["matrix"] == [[2.0, 6.0], [1.0, None]]
-
-
-def test_entry_candidate_matrix_empty_without_index(tmp_path: Path) -> None:
-    workspace = tmp_path / ".zicato"
-    out = rv.entry_candidate_matrix(_paths(workspace), EPOCH)
-    assert out == {"epoch_id": EPOCH, "entries": [], "candidates": [], "matrix": []}

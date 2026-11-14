@@ -17,8 +17,7 @@ that definition:
 
 The consumers are the analysis-report gatherer
 (:mod:`zicato.analyzer.report_data`) and the query readers that open the same
-canonical files (:mod:`zicato.query.eval_view`,
-:mod:`zicato.query.judge_view`, :mod:`zicato.query.execution_plan`). The
+canonical files (:mod:`zicato.query.eval_view`, :mod:`zicato.query.judge_view`). The
 query readers that answer from ``index.db`` compute different quantities over
 a derived store and do not consume this module: the per-generation per-judge
 table (:func:`zicato.query.judge_view.build_per_judge_for_generation`) and
@@ -38,14 +37,13 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from zicato.workspace.layout import WorkspaceLayout
 from zicato.workspace.reads import read_generation_losses, round_indices
 
 if TYPE_CHECKING:  # pragma: no cover — imported for annotations only
-    from zicato.epoch.round_log import RoundLogEnvelope, RoundRecord
+    from zicato.epoch.round_log import RoundRecord
 
 
 @dataclass(frozen=True, slots=True)
@@ -204,44 +202,23 @@ def cumulative_scalars(
     return out
 
 
-def read_round_log(
-    workspace_root: Path, epoch_id: str, round_index: int
-) -> tuple[list[RoundLogEnvelope], bool]:
-    """One evolve round's logged events, and whether the log read cleanly.
-
-    A torn tail is dropped by the log reader itself and the round still
-    reads cleanly. Interior corruption violates the log's append-only
-    invariant and raises there; it arrives here as ``([], False)``, which
-    tells the caller the round has events it could not reach rather than no
-    events at all.
-    """
-    from zicato.epoch.round_log import RoundLog  # noqa: PLC0415
-
-    try:
-        return RoundLog(workspace_root, epoch_id, round_index).read(), True
-    except Exception:  # noqa: BLE001 — best-effort, like every reader here
-        return [], False
-
-
 def read_round_records(layout: WorkspaceLayout, epoch_id: str) -> tuple[RoundRecord, ...]:
     """Every settled evolve round of one epoch, folded into a record.
 
     Rounds come back in ascending round order
     (:func:`zicato.workspace.reads.round_indices`). A round whose log cannot
     be read to its end, or whose events will not fold, is skipped rather than
-    failing the whole read. An epoch with no round yet — nothing has settled
-    — yields the empty tuple, which is the honest report that the round-level
-    quantities have nothing to say.
+    failing the whole read: the log reader drops a torn tail itself, and
+    interior corruption raises there. An epoch with no round yet — nothing
+    has settled — yields the empty tuple, which is the honest report that the
+    round-level quantities have nothing to say.
     """
-    from zicato.epoch.round_log import fold_round_record  # noqa: PLC0415
+    from zicato.epoch.round_log import RoundLog, fold_round_record  # noqa: PLC0415
 
     records: list[RoundRecord] = []
     for round_index in round_indices(layout, epoch_id):
-        events, readable = read_round_log(layout.root, epoch_id, round_index)
-        if not readable:
-            continue
         try:
-            records.append(fold_round_record(events))
+            records.append(fold_round_record(RoundLog(layout.root, epoch_id, round_index).read()))
         except Exception:  # noqa: BLE001 — one bad round never sinks the read
             continue
     return tuple(records)

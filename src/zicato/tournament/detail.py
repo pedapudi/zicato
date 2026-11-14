@@ -1,7 +1,7 @@
 """Tournament-detail query layer over the SQLite analytical index.
 
-This module computes the rich tournament/bracket analytics the supervisor
-and CLI render. Every function here is a *read* against ``.zicato/index.db``
+This module computes the hypothesis ledger, the optimization trajectory, and
+the tournament cost. Every function here is a *read* against ``.zicato/index.db``
 — the analytical index built by the ingester. None of these functions write.
 
 Design rules encoded here:
@@ -25,13 +25,12 @@ The SQLite contract (tables ``epochs``, ``generations``, ``experiments``,
 ``tournaments``) is owned by the index ingester. This module only reads
 it. Connections require the supported schema; nullable values remain unknown.
 
-The bracket model
+The lineage model
 -----------------
 A tournament epoch is a *gauntlet*: ``v0`` is the seed champion, and each
 subsequent generation challenges the current champion. A ``promoted``
-challenger becomes the new champion (and joins the *winners spine*); a
-``rejected`` challenger is discarded but hung under the champion it
-failed to beat. :func:`assemble_bracket` reconstructs that structure.
+challenger becomes the new champion and joins the *winners spine*, which
+:func:`optimization_trajectory` walks.
 """
 
 from __future__ import annotations
@@ -89,133 +88,6 @@ class IndexUnavailableError(RuntimeError):
 # ---------------------------------------------------------------------------
 # Return dataclasses
 # ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True, slots=True)
-class Matchup:
-    """One champion-vs-challenger contest within a bracket.
-
-    Fields
-    ------
-    epoch_id:
-        The epoch this matchup belongs to.
-    champion_generation_id:
-        The generation that held the lineage head when the challenger ran.
-    challenger_generation_id:
-        The challenging generation.
-    decision:
-        The tournament decision for the challenger: ``"promoted"``,
-        ``"rejected"``, ``"deferred"`` or ``""`` when no outcome is
-        recorded yet.
-    rejection_reason:
-        Symbolic rejection reason when ``decision == "rejected"``; empty
-        otherwise.
-    scalar_score_delta:
-        Change in the combined tournament scalar (child minus parent), or
-        ``None`` when no outcome is recorded.
-    """
-
-    epoch_id: str
-    champion_generation_id: str
-    challenger_generation_id: str
-    decision: str
-    rejection_reason: str = ""
-    scalar_score_delta: float | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class Bracket:
-    """The gauntlet structure for one epoch.
-
-    Fields
-    ------
-    epoch_id:
-        The epoch.
-    champion_spine:
-        Ordered list of generation ids on the winners spine — the seed
-        ``v0`` followed by every promoted challenger, in promotion order.
-    matchups:
-        Every champion-vs-challenger contest. Promoted matchups advance
-        the spine; rejected/deferred matchups hang their challenger under
-        the champion it failed to beat.
-    """
-
-    epoch_id: str
-    champion_spine: tuple[str, ...]
-    matchups: tuple[Matchup, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class EntryComparison:
-    """Board entry x {parent, child} loss comparison.
-
-    Fields
-    ------
-    entry_id:
-        The board entry id.
-    parent_drift_loss / child_drift_loss:
-        Per-entry drift loss for each side, or ``None`` when that side has
-        no loss-profile row for this entry.
-    parent_pass_fail / child_pass_fail:
-        Per-entry pass/fail for each side, ``None`` when no expectation
-        fired (or no row).
-    verdict:
-        ``"improved"`` (child loss strictly lower), ``"regressed"`` (child
-        loss strictly higher), ``"flat"`` (equal, or insufficient data to
-        compare).
-    """
-
-    entry_id: str
-    parent_drift_loss: float | None
-    child_drift_loss: float | None
-    parent_pass_fail: bool | None
-    child_pass_fail: bool | None
-    verdict: str
-
-
-@dataclass(frozen=True, slots=True)
-class GateVerdict:
-    """The tournament gate's decision and reasoning for one matchup."""
-
-    decision: str
-    rejection_reason: str
-    scalar_score_delta: float | None
-    drift_loss_delta: float | None
-    pass_rate_delta: float | None
-    reasoning: str
-
-
-@dataclass(frozen=True, slots=True)
-class PatchSummary:
-    """A single patch as recorded in the index."""
-
-    patch_id: str
-    mutation_id: str
-    op: str
-    rationale: str
-
-
-@dataclass(frozen=True, slots=True)
-class HypothesisSummary:
-    """The challenger's structured hypothesis, flattened for rendering."""
-
-    core_idea: str
-    why: str
-    modulating: tuple[str, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class MatchupDetail:
-    """Full detail for one champion-vs-challenger matchup."""
-
-    epoch_id: str
-    champion_generation_id: str
-    challenger_generation_id: str
-    hypothesis: HypothesisSummary
-    patches: tuple[PatchSummary, ...]
-    entry_grid: tuple[EntryComparison, ...]
-    scalar_breakdown: dict[str, Any]
-    gate_verdict: GateVerdict
 
 
 @dataclass(frozen=True, slots=True)
@@ -293,17 +165,6 @@ class Trajectory:
     #: Challengers a tournament has decided (promoted / rejected /
     #: deferred). See the class docstring — the rest are still racing.
     settled_count: int = 0
-
-
-@dataclass(frozen=True, slots=True)
-class MutationStat:
-    """Per-mutation-point win-correlation statistics."""
-
-    mutation_id: str
-    times_patched: int
-    promoted: int
-    rejected: int
-    win_rate: float
 
 
 # ---------------------------------------------------------------------------
@@ -417,222 +278,6 @@ def _promoted_spine(conn: sqlite3.Connection, epoch_id: str) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def assemble_bracket(db_path: str | Path, epoch_id: str) -> Bracket:
-    """Reconstruct the gauntlet structure for one epoch.
-
-    The champion spine is the seed generation followed by every promoted
-    challenger. Each non-seed generation is a matchup: it challenges the
-    champion that held the head when it ran (its ``parent_generation_id``,
-    falling back to the most-recent spine member before it). A rejected /
-    deferred challenger is hung under that champion; a promoted challenger
-    advances the spine.
-
-    Tolerates an epoch with no generations (returns an empty bracket) and
-    challengers with no recorded outcome (decision ``""``).
-    """
-    conn = _open(db_path)
-    try:
-        gens = _generations(conn, epoch_id)
-        spine = _promoted_spine(conn, epoch_id)
-        experiments = {
-            str(_row_get(r, "generation_id", "")): r
-            for r in _query(
-                conn,
-                "SELECT * FROM experiments WHERE epoch_id = ?",
-                (epoch_id,),
-            )
-        }
-        seed = spine[0] if spine else None
-        matchups: list[Matchup] = []
-        last_champion = seed
-        for row in gens:
-            gid = str(_row_get(row, "generation_id", ""))
-            if gid == seed:
-                continue
-            parent = _row_get(row, "parent_generation_id")
-            champion = str(parent) if parent not in (None, "", "null") else (last_champion or "")
-            exp = experiments.get(gid)
-            decision = str(_row_get(exp, "tournament_decision", "")) if exp is not None else ""
-            rejection = str(_row_get(exp, "rejection_reason", "")) if exp is not None else ""
-            delta = _as_float(_row_get(exp, "scalar_score_delta")) if exp is not None else None
-            matchups.append(
-                Matchup(
-                    epoch_id=epoch_id,
-                    champion_generation_id=champion,
-                    challenger_generation_id=gid,
-                    decision=decision,
-                    rejection_reason=rejection,
-                    scalar_score_delta=delta,
-                )
-            )
-            if bool(_row_get(row, "promoted", 0)):
-                last_champion = gid
-        return Bracket(
-            epoch_id=epoch_id,
-            champion_spine=tuple(spine),
-            matchups=tuple(matchups),
-        )
-    finally:
-        conn.close()
-
-
-def assemble_lineage(db_path: str | Path) -> tuple[Bracket, ...]:
-    """Walk every epoch and link each epoch's seed to the prior promoted head.
-
-    Returns one :class:`Bracket` per epoch in epoch order. The cross-epoch
-    link is expressed implicitly: epoch *N*'s seed generation is the
-    continuation of epoch *N-1*'s final spine member. Callers that want
-    the explicit edge can pair ``brackets[i].champion_spine[0]`` with
-    ``brackets[i - 1].champion_spine[-1]``.
-
-    Tolerates a database with no epochs (returns an empty tuple).
-    """
-    conn = _open(db_path)
-    try:
-        epoch_rows = _query(conn, "SELECT * FROM epochs")
-        epoch_ids = [str(_row_get(r, "epoch_id", "")) for r in epoch_rows]
-        if not epoch_ids:
-            # Fall back to whatever epoch ids the generations table knows.
-            gen_rows = _query(conn, "SELECT DISTINCT epoch_id FROM generations")
-            epoch_ids = sorted({str(_row_get(r, "epoch_id", "")) for r in gen_rows})
-    finally:
-        conn.close()
-    return tuple(assemble_bracket(db_path, eid) for eid in epoch_ids if eid)
-
-
-def per_entry_grid(
-    db_path: str | Path,
-    epoch_id: str,
-    parent_gen: str,
-    child_gen: str,
-) -> list[EntryComparison]:
-    """Build the per-board-entry A/B comparison grid for one matchup.
-
-    For every board entry that ran under *either* side, projects the
-    parent and child ``drift_loss`` + ``pass_fail`` and assigns a verdict:
-
-    * ``"improved"`` — child drift loss strictly below parent's.
-    * ``"regressed"`` — child drift loss strictly above parent's.
-    * ``"flat"`` — equal losses, or one side is missing a loss-profile
-      row so no comparison can be made.
-
-    A missing ``loss_profiles`` row on either side leaves that side's
-    fields ``None`` and forces a ``"flat"`` verdict — never raises.
-    """
-    conn = _open(db_path)
-    try:
-        parent_rows = _loss_rows_by_entry(conn, epoch_id, parent_gen)
-        child_rows = _loss_rows_by_entry(conn, epoch_id, child_gen)
-        entry_ids = sorted(set(parent_rows) | set(child_rows))
-        grid: list[EntryComparison] = []
-        for entry_id in entry_ids:
-            p = parent_rows.get(entry_id)
-            c = child_rows.get(entry_id)
-            p_loss = _as_float(_row_get(p, "drift_loss")) if p is not None else None
-            c_loss = _as_float(_row_get(c, "drift_loss")) if c is not None else None
-            p_pf = _coerce_pass_fail(_row_get(p, "pass_fail")) if p is not None else None
-            c_pf = _coerce_pass_fail(_row_get(c, "pass_fail")) if c is not None else None
-            grid.append(
-                EntryComparison(
-                    entry_id=entry_id,
-                    parent_drift_loss=p_loss,
-                    child_drift_loss=c_loss,
-                    parent_pass_fail=p_pf,
-                    child_pass_fail=c_pf,
-                    verdict=_entry_verdict(p_loss, c_loss),
-                )
-            )
-        return grid
-    finally:
-        conn.close()
-
-
-def _loss_rows_by_entry(
-    conn: sqlite3.Connection, epoch_id: str, generation_id: str
-) -> dict[str, sqlite3.Row]:
-    """Index this generation's ``loss_profiles`` rows by ``entry_id``."""
-    rows = _query(
-        conn,
-        "SELECT * FROM loss_profiles WHERE epoch_id = ? AND generation_id = ?",
-        (epoch_id, generation_id),
-    )
-    return {str(_row_get(r, "entry_id", "")): r for r in rows}
-
-
-def _coerce_pass_fail(value: Any) -> bool | None:
-    """Coerce a SQLite ``pass_fail`` cell to ``bool | None``."""
-    if value is None:
-        return None
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, int | float):
-        return bool(value)
-    text = str(value).strip().lower()
-    if text in ("", "null", "none"):
-        return None
-    if text in ("1", "true", "pass", "passed", "yes"):
-        return True
-    if text in ("0", "false", "fail", "failed", "no"):
-        return False
-    return None
-
-
-def _entry_verdict(parent_loss: float | None, child_loss: float | None) -> str:
-    """Verdict for a per-entry drift-loss comparison (lower is better)."""
-    if parent_loss is None or child_loss is None:
-        return "flat"
-    if child_loss < parent_loss:
-        return "improved"
-    if child_loss > parent_loss:
-        return "regressed"
-    return "flat"
-
-
-def scalar_breakdown(db_path: str | Path, epoch_id: str, generation_id: str) -> dict[str, Any]:
-    """Read indexed matchup scalars, deltas, and observed namespace means.
-
-    Absolute values come only from the tournament row. An absent row or
-    null scalar remains unknown. Namespace means use the indexed measured
-    counts; they do not reconstruct weighted scalar components.
-    """
-    conn = _open(db_path)
-    try:
-        exp = _experiment_row(conn, epoch_id, generation_id)
-        parent_gen = _parent_of(conn, epoch_id, generation_id)
-        tournament = _tournament_row(conn, epoch_id, generation_id)
-
-        return {
-            "epoch_id": epoch_id,
-            "generation_id": generation_id,
-            "parent_generation_id": parent_gen,
-            "scalar_score_delta": (
-                _as_float(_row_get(exp, "scalar_score_delta")) if exp is not None else None
-            ),
-            "drift_loss_delta": (
-                _as_float(_row_get(exp, "drift_loss_delta")) if exp is not None else None
-            ),
-            "pass_rate_delta": (
-                _as_float(_row_get(exp, "pass_rate_delta")) if exp is not None else None
-            ),
-            "child": {
-                "scalar": _as_float(tournament["child_scalar"]) if tournament is not None else None,
-            },
-            "parent": {
-                "scalar": _as_float(tournament["parent_scalar"])
-                if tournament is not None
-                else None,
-            },
-            "child_namespace_metric_means": _namespace_metric_means(conn, epoch_id, generation_id),
-            "parent_namespace_metric_means": (
-                _namespace_metric_means(conn, epoch_id, parent_gen)
-                if parent_gen is not None
-                else {}
-            ),
-        }
-    finally:
-        conn.close()
-
-
 def _namespace_metric_means(
     conn: sqlite3.Connection, epoch_id: str, generation_id: str
 ) -> dict[str, float]:
@@ -671,58 +316,6 @@ def _namespace_metric_means(
     return {ns: sums[ns] / counts[ns] for ns in sums if counts[ns]}
 
 
-def matchup_detail(db_path: str | Path, epoch_id: str, generation_id: str) -> MatchupDetail:
-    """Assemble the full detail view for one champion-vs-challenger matchup.
-
-    Combines the challenger's hypothesis, its patches, the per-entry A/B
-    grid against its parent champion, the scalar breakdown, and the gate
-    verdict. Tolerates a challenger with no outcome (empty hypothesis,
-    empty patch list, gate decision ``""``) and a challenger whose parent
-    cannot be resolved (grid built against an empty parent).
-    """
-    conn = _open(db_path)
-    try:
-        exp = _experiment_row(conn, epoch_id, generation_id)
-        parent_gen = _parent_of(conn, epoch_id, generation_id)
-        hypothesis = _hypothesis_summary(exp)
-        patches = _patch_summaries(conn, epoch_id, generation_id)
-        gate = _gate_verdict(exp)
-    finally:
-        conn.close()
-
-    # The grid + breakdown helpers manage their own connections so this
-    # function stays a thin orchestration layer.
-    grid = (
-        tuple(per_entry_grid(db_path, epoch_id, parent_gen, generation_id))
-        if parent_gen is not None
-        else tuple(per_entry_grid(db_path, epoch_id, "", generation_id))
-    )
-    breakdown = scalar_breakdown(db_path, epoch_id, generation_id)
-
-    return MatchupDetail(
-        epoch_id=epoch_id,
-        champion_generation_id=parent_gen or "",
-        challenger_generation_id=generation_id,
-        hypothesis=hypothesis,
-        patches=patches,
-        entry_grid=grid,
-        scalar_breakdown=breakdown,
-        gate_verdict=gate,
-    )
-
-
-def _experiment_row(
-    conn: sqlite3.Connection, epoch_id: str, generation_id: str
-) -> sqlite3.Row | None:
-    """Fetch the ``experiments`` row for one challenger, or ``None``."""
-    rows = _query(
-        conn,
-        "SELECT * FROM experiments WHERE epoch_id = ? AND generation_id = ?",
-        (epoch_id, generation_id),
-    )
-    return rows[0] if rows else None
-
-
 def _tournament_row(conn: sqlite3.Connection, epoch_id: str, child_gen: str) -> sqlite3.Row | None:
     """Fetch the ``tournaments`` row for one challenger, or ``None``."""
     rows = _query(
@@ -731,121 +324,6 @@ def _tournament_row(conn: sqlite3.Connection, epoch_id: str, child_gen: str) -> 
         (epoch_id, child_gen),
     )
     return rows[0] if rows else None
-
-
-def _parent_of(conn: sqlite3.Connection, epoch_id: str, generation_id: str) -> str | None:
-    """Resolve a generation's parent (champion) id, or ``None``."""
-    rows = _query(
-        conn,
-        "SELECT parent_generation_id FROM generations WHERE epoch_id = ? AND generation_id = ?",
-        (epoch_id, generation_id),
-    )
-    if rows:
-        parent = _row_get(rows[0], "parent_generation_id")
-        if parent not in (None, "", "null"):
-            return str(parent)
-    # Fall back to the tournaments table when the generations row is thin.
-    trow = _tournament_row(conn, epoch_id, generation_id)
-    if trow is not None:
-        parent = _row_get(trow, "parent_generation_id")
-        if parent not in (None, "", "null"):
-            return str(parent)
-    return None
-
-
-def _hypothesis_summary(exp: sqlite3.Row | None) -> HypothesisSummary:
-    """Project an experiment row's hypothesis fields into a summary."""
-    if exp is None:
-        return HypothesisSummary(core_idea="", why="", modulating=())
-    core = str(_row_get(exp, "hypothesis_core_idea", ""))
-    why = str(_row_get(exp, "hypothesis_why", ""))
-    hjson = _loads(_row_get(exp, "hypothesis_json"))
-    raw_mod = hjson.get("modulating")
-    modulating: tuple[str, ...]
-    if isinstance(raw_mod, list | tuple):
-        modulating = tuple(str(m) for m in raw_mod)
-    else:
-        modulating = ()
-    # Prefer the JSON's own core_idea/why when the flat columns are blank.
-    if not core:
-        core = str(hjson.get("core_idea", ""))
-    if not why:
-        why = str(hjson.get("why", ""))
-    return HypothesisSummary(core_idea=core, why=why, modulating=modulating)
-
-
-def _patch_summaries(
-    conn: sqlite3.Connection, epoch_id: str, generation_id: str
-) -> tuple[PatchSummary, ...]:
-    """Project this generation's ``patches`` rows into summaries."""
-    rows = _query(
-        conn,
-        "SELECT * FROM patches WHERE epoch_id = ? AND generation_id = ?",
-        (epoch_id, generation_id),
-    )
-    return tuple(
-        PatchSummary(
-            patch_id=str(_row_get(r, "patch_id", "")),
-            mutation_id=str(_row_get(r, "mutation_id", "")),
-            op=str(_row_get(r, "op", "")),
-            rationale=str(_row_get(r, "rationale", "")),
-        )
-        for r in rows
-    )
-
-
-def _gate_verdict(exp: sqlite3.Row | None) -> GateVerdict:
-    """Build the gate verdict + reasoning string from an experiment row."""
-    if exp is None:
-        return GateVerdict(
-            decision="",
-            rejection_reason="",
-            scalar_score_delta=None,
-            drift_loss_delta=None,
-            pass_rate_delta=None,
-            reasoning="no experiment outcome recorded for this generation",
-        )
-    decision = str(_row_get(exp, "tournament_decision", ""))
-    rejection = str(_row_get(exp, "rejection_reason", ""))
-    scalar_delta = _as_float(_row_get(exp, "scalar_score_delta"))
-    drift_delta = _as_float(_row_get(exp, "drift_loss_delta"))
-    pass_delta = _as_float(_row_get(exp, "pass_rate_delta"))
-    reasoning = _gate_reasoning(decision, rejection, scalar_delta, drift_delta, pass_delta)
-    return GateVerdict(
-        decision=decision,
-        rejection_reason=rejection,
-        scalar_score_delta=scalar_delta,
-        drift_loss_delta=drift_delta,
-        pass_rate_delta=pass_delta,
-        reasoning=reasoning,
-    )
-
-
-def _gate_reasoning(
-    decision: str,
-    rejection: str,
-    scalar_delta: float | None,
-    drift_delta: float | None,
-    pass_delta: float | None,
-) -> str:
-    """Render a human-readable explanation of a gate decision."""
-    if not decision:
-        return "no tournament decision recorded yet"
-    parts: list[str] = []
-    if scalar_delta is not None:
-        verb = "improved" if scalar_delta < 0 else "regressed" if scalar_delta > 0 else "flat"
-        parts.append(f"scalar {verb} by {abs(scalar_delta):.4g}")
-    if pass_delta is not None and pass_delta != 0:
-        parts.append(f"pass rate moved {pass_delta:+.4g}")
-    if drift_delta is not None and drift_delta != 0:
-        parts.append(f"drift loss moved {drift_delta:+.4g}")
-    detail = "; ".join(parts) if parts else "no metric deltas recorded"
-    if decision == "promoted":
-        return f"promoted — {detail}"
-    if decision == "rejected":
-        reason = rejection or "scoring gate"
-        return f"rejected ({reason}) — {detail}"
-    return f"{decision} — {detail}"
 
 
 def hypothesis_ledger(db_path: str | Path, epoch_id: str) -> list[HypothesisGrade]:
@@ -871,8 +349,7 @@ def hypothesis_ledger(db_path: str | Path, epoch_id: str) -> list[HypothesisGrad
     A movement *matches* iff both hold. Per-challenger accuracy is
     ``matches / predictions`` (``0.0`` when the challenger made no
     predictions). The overall proposer calibration rate is the pooled
-    ``total matches / total predictions`` across the whole ledger — call
-    :func:`proposer_calibration_rate` on the returned list to get it.
+    ``total matches / total predictions`` across the whole ledger.
     Challengers with a ``NULL`` outcome contribute zero matches but still
     appear in the ledger.
     """
@@ -915,18 +392,6 @@ def hypothesis_ledger(db_path: str | Path, epoch_id: str) -> list[HypothesisGrad
         return grades
     finally:
         conn.close()
-
-
-def proposer_calibration_rate(grades: list[HypothesisGrade]) -> float:
-    """Overall proposer calibration: total matches / total predictions.
-
-    Pooled across every challenger so a proposer that made one prediction
-    on a hard generation does not weigh the same as one that made ten on
-    an easy one. Returns ``0.0`` when no predictions were made anywhere.
-    """
-    total_pred = sum(g.predictions for g in grades)
-    total_match = sum(g.matches for g in grades)
-    return total_match / total_pred if total_pred else 0.0
 
 
 def _expected_movements(hjson: dict[str, Any]) -> dict[str, tuple[str, str]]:
@@ -1231,67 +696,6 @@ def _is_plateaued(points: list[TrajectoryPoint]) -> bool:
     return True
 
 
-def mutation_heat_map(db_path: str | Path, epoch_id: str) -> list[MutationStat]:
-    """Per-mutation-point win-correlation statistics for an epoch.
-
-    For every ``mutation_id`` patched during the epoch, counts how often a
-    challenger that patched it was promoted vs rejected. The ``win_rate``
-    is ``promoted / (promoted + rejected)`` over *resolved* challengers
-    (deferred / unresolved challengers count toward ``times_patched`` but
-    not the win-rate denominator).
-
-    Returns one :class:`MutationStat` per mutation id, sorted by
-    descending ``win_rate`` then descending ``times_patched`` so the
-    hottest, most-successful mutation points surface first. Tolerates
-    challengers with no recorded outcome.
-    """
-    conn = _open(db_path)
-    try:
-        patch_rows = _query(
-            conn,
-            "SELECT mutation_id, generation_id FROM patches WHERE epoch_id = ?",
-            (epoch_id,),
-        )
-        decisions = {
-            str(_row_get(r, "generation_id", "")): str(_row_get(r, "tournament_decision", ""))
-            for r in _query(
-                conn,
-                "SELECT generation_id, tournament_decision FROM experiments WHERE epoch_id = ?",
-                (epoch_id,),
-            )
-        }
-        # A mutation id may be patched more than once by the same
-        # generation; the heat map counts the generation once per
-        # mutation id so a multi-patch generation does not double-weight.
-        per_mutation: dict[str, set[str]] = {}
-        for row in patch_rows:
-            mid = str(_row_get(row, "mutation_id", ""))
-            gid = str(_row_get(row, "generation_id", ""))
-            if not mid:
-                continue
-            per_mutation.setdefault(mid, set()).add(gid)
-
-        stats: list[MutationStat] = []
-        for mid, gids in per_mutation.items():
-            promoted = sum(1 for g in gids if decisions.get(g, "") == "promoted")
-            rejected = sum(1 for g in gids if decisions.get(g, "") == "rejected")
-            resolved = promoted + rejected
-            win_rate = promoted / resolved if resolved else 0.0
-            stats.append(
-                MutationStat(
-                    mutation_id=mid,
-                    times_patched=len(gids),
-                    promoted=promoted,
-                    rejected=rejected,
-                    win_rate=win_rate,
-                )
-            )
-        stats.sort(key=lambda s: (-s.win_rate, -s.times_patched, s.mutation_id))
-        return stats
-    finally:
-        conn.close()
-
-
 def tournament_cost(db_path: str | Path, epoch_id: str) -> dict[str, Any]:
     """Wall-clock + run-count cost accounting for an epoch's tournament.
 
@@ -1368,27 +772,12 @@ __all__ = [
     "MAGNITUDE_LARGE_MIN",
     "PLATEAU_WINDOW",
     "PLATEAU_EPSILON",
-    "Matchup",
-    "Bracket",
-    "EntryComparison",
-    "GateVerdict",
-    "PatchSummary",
-    "HypothesisSummary",
-    "MatchupDetail",
     "MovementGrade",
     "HypothesisGrade",
     "TrajectoryPoint",
     "Trajectory",
-    "MutationStat",
-    "assemble_bracket",
-    "assemble_lineage",
-    "matchup_detail",
-    "per_entry_grid",
-    "scalar_breakdown",
     "hypothesis_ledger",
     "grade_hypothesis_predictions",
-    "proposer_calibration_rate",
     "optimization_trajectory",
-    "mutation_heat_map",
     "tournament_cost",
 ]

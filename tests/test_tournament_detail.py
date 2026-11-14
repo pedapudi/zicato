@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from dataclasses import asdict
 from pathlib import Path
 
 import pytest
@@ -22,15 +21,8 @@ import pytest
 from zicato.index.schema import apply_schema
 from zicato.tournament.detail import (
     IndexUnavailableError,
-    assemble_bracket,
-    assemble_lineage,
     hypothesis_ledger,
-    matchup_detail,
-    mutation_heat_map,
     optimization_trajectory,
-    per_entry_grid,
-    proposer_calibration_rate,
-    scalar_breakdown,
     tournament_cost,
 )
 
@@ -253,138 +245,14 @@ def index_db(tmp_path: Path) -> Path:
 
 
 # ---------------------------------------------------------------------------
-# assemble_bracket / assemble_lineage
+# Missing database
 # ---------------------------------------------------------------------------
 
 
-def test_assemble_bracket_spine_and_challengers(index_db: Path) -> None:
-    """The champion spine is v0 -> v2; v1 and v3 are discarded challengers."""
-    bracket = assemble_bracket(index_db, EPOCH)
-    assert bracket.epoch_id == EPOCH
-    assert bracket.champion_spine == ("v0", "v2")
-
-    matchups = {m.challenger_generation_id: m for m in bracket.matchups}
-    assert set(matchups) == {"v1", "v2", "v3"}
-
-    # v1 challenged v0 and lost.
-    assert matchups["v1"].champion_generation_id == "v0"
-    assert matchups["v1"].decision == "rejected"
-    assert matchups["v1"].rejection_reason == "scalar_regression"
-
-    # v2 challenged v0 and won.
-    assert matchups["v2"].champion_generation_id == "v0"
-    assert matchups["v2"].decision == "promoted"
-
-    # v3 challenged the new champion v2 and lost.
-    assert matchups["v3"].champion_generation_id == "v2"
-    assert matchups["v3"].decision == "rejected"
-
-    # JSON-serialisable.
-    assert json.dumps(asdict(bracket))
-
-
-def test_assemble_lineage_links_epochs(index_db: Path) -> None:
-    """assemble_lineage returns one bracket per epoch."""
-    lineage = assemble_lineage(index_db)
-    assert len(lineage) == 1
-    assert lineage[0].epoch_id == EPOCH
-    assert lineage[0].champion_spine == ("v0", "v2")
-
-
-def test_assemble_bracket_missing_db_raises() -> None:
+def test_missing_db_raises() -> None:
     """A missing database raises a clear, operator-actionable error."""
     with pytest.raises(IndexUnavailableError, match="zicato repair index"):
-        assemble_bracket("/nonexistent/path/index.db", EPOCH)
-
-
-# ---------------------------------------------------------------------------
-# per_entry_grid
-# ---------------------------------------------------------------------------
-
-
-def test_per_entry_grid_verdicts(index_db: Path) -> None:
-    """Per-entry grid classifies improved / regressed / flat correctly."""
-    grid = {ec.entry_id: ec for ec in per_entry_grid(index_db, EPOCH, "v0", "v2")}
-    assert set(grid) == {"e1", "e2"}
-
-    # e1: v0=2.0 -> v2=0.5 -> improved.
-    assert grid["e1"].parent_drift_loss == 2.0
-    assert grid["e1"].child_drift_loss == 0.5
-    assert grid["e1"].verdict == "improved"
-
-    # e2: v0=1.0 -> v2=3.0 -> regressed.
-    assert grid["e2"].parent_drift_loss == 1.0
-    assert grid["e2"].child_drift_loss == 3.0
-    assert grid["e2"].verdict == "regressed"
-
-
-def test_per_entry_grid_missing_side_is_flat(index_db: Path) -> None:
-    """A challenger with no loss rows yields flat verdicts, never raises."""
-    # v3 has no loss_profiles rows -> every entry flat with None child loss.
-    grid = per_entry_grid(index_db, EPOCH, "v0", "v3")
-    assert grid  # entries from v0's side still appear
-    for ec in grid:
-        assert ec.child_drift_loss is None
-        assert ec.verdict == "flat"
-
-
-# ---------------------------------------------------------------------------
-# matchup_detail
-# ---------------------------------------------------------------------------
-
-
-def test_matchup_detail_full(index_db: Path) -> None:
-    """matchup_detail assembles hypothesis, patches, grid, gate verdict."""
-    detail = matchup_detail(index_db, EPOCH, "v2")
-    assert detail.challenger_generation_id == "v2"
-    assert detail.champion_generation_id == "v0"
-    assert detail.hypothesis.core_idea == "add a planning step"
-    assert detail.hypothesis.modulating == ("mp_a",)
-    assert [p.mutation_id for p in detail.patches] == ["mp_a"]
-    assert detail.gate_verdict.decision == "promoted"
-    assert "promoted" in detail.gate_verdict.reasoning
-    assert {ec.entry_id for ec in detail.entry_grid} == {"e1", "e2"}
-    assert json.dumps(asdict(detail))
-
-
-def test_matchup_detail_null_outcome_graceful(index_db: Path) -> None:
-    """A generation with a NULL outcome degrades, never raises."""
-    detail = matchup_detail(index_db, EPOCH, "v3")
-    assert detail.challenger_generation_id == "v3"
-    assert detail.gate_verdict.decision == "rejected"
-    # Absolute scalars remain available when no outcome was recorded.
-    assert detail.scalar_breakdown["child"]["scalar"] == 0.60
-
-
-# ---------------------------------------------------------------------------
-# scalar_breakdown
-# ---------------------------------------------------------------------------
-
-
-def test_scalar_breakdown_uses_indexed_measurements(index_db: Path) -> None:
-    """Only indexed tournament measurements supply absolute scalars."""
-    breakdown = scalar_breakdown(index_db, EPOCH, "v2")
-    assert breakdown["child"] == {"scalar": 0.60}
-    assert breakdown["parent"] == {"scalar": 1.0}
-    assert breakdown["scalar_score_delta"] == -0.40
-    assert json.dumps(breakdown)
-
-    with sqlite3.connect(index_db) as conn:
-        conn.execute(
-            "UPDATE experiments SET outcome_json=? WHERE epoch_id=? AND generation_id=?",
-            (json.dumps({"child": {"scalar": 99.0}, "parent_scalar": 88.0}), EPOCH, "v2"),
-        )
-    assert scalar_breakdown(index_db, EPOCH, "v2") == breakdown
-
-    with sqlite3.connect(index_db) as conn:
-        conn.execute(
-            "UPDATE tournaments SET child_scalar=NULL, parent_scalar=NULL "
-            "WHERE epoch_id=? AND child_generation_id=?",
-            (EPOCH, "v2"),
-        )
-    missing = scalar_breakdown(index_db, EPOCH, "v2")
-    assert missing["child"] == {"scalar": None}
-    assert missing["parent"] == {"scalar": None}
+        hypothesis_ledger("/nonexistent/path/index.db", EPOCH)
 
 
 # ---------------------------------------------------------------------------
@@ -441,39 +309,6 @@ def test_hypothesis_ledger_null_outcome_graceful(index_db: Path) -> None:
     assert v3.predictions == 0
     assert v3.matches == 0
     assert v3.accuracy == 0.0
-
-
-def test_proposer_calibration_rate_pooled(index_db: Path) -> None:
-    """Overall calibration pools matches / predictions across challengers."""
-    grades = hypothesis_ledger(index_db, EPOCH)
-    # v1: 1/2, v2: 0/1, v3: 0/0 -> pooled 1/3.
-    rate = proposer_calibration_rate(grades)
-    assert rate == pytest.approx(1.0 / 3.0)
-
-
-# ---------------------------------------------------------------------------
-# mutation_heat_map
-# ---------------------------------------------------------------------------
-
-
-def test_mutation_heat_map_win_correlation(index_db: Path) -> None:
-    """Win-correlation counts per mutation id are correct."""
-    stats = {s.mutation_id: s for s in mutation_heat_map(index_db, EPOCH)}
-    assert set(stats) == {"mp_a", "mp_b"}
-
-    # mp_a patched by v1 (rejected) and v2 (promoted).
-    mp_a = stats["mp_a"]
-    assert mp_a.times_patched == 2
-    assert mp_a.promoted == 1
-    assert mp_a.rejected == 1
-    assert mp_a.win_rate == 0.5
-
-    # mp_b patched by v3 only (rejected).
-    mp_b = stats["mp_b"]
-    assert mp_b.times_patched == 1
-    assert mp_b.promoted == 0
-    assert mp_b.rejected == 1
-    assert mp_b.win_rate == 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -637,11 +472,7 @@ def test_empty_epoch_graceful(tmp_path: Path) -> None:
     finally:
         conn.close()
 
-    bracket = assemble_bracket(path, "ghost")
-    assert bracket.champion_spine == ()
-    assert bracket.matchups == ()
     assert hypothesis_ledger(path, "ghost") == []
-    assert mutation_heat_map(path, "ghost") == []
     traj = optimization_trajectory(path, "ghost")
     assert traj.points == ()
     assert traj.plateaued is False

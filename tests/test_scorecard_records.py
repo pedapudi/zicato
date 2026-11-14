@@ -5,11 +5,11 @@ from dataclasses import replace
 
 import pytest
 
+from tests._index_rows import index_rows
 from tests._reflection_support import scorecard_body
 from tests.test_reflection_index import EPOCH, REFL, _write_reflection_files
 from zicato.core.workspace import reflection_scorecards_path
 from zicato.epoch._storage import RecordError
-from zicato.index import query as iq
 from zicato.index.ingest import ingest_reflection
 from zicato.query.paths import WorkspacePaths
 from zicato.query.reflection_view import build_judge_scorecards
@@ -74,7 +74,7 @@ def test_absent_empty_and_corrupt_scorecards_cannot_reuse_index(tmp_path):
     _write_reflection_files(tmp_path, scorecards=[{"judge_name": "j", "tp": 2}])
     ingest_reflection(tmp_path, None, EPOCH, REFL)
     paths = WorkspacePaths(tmp_path)
-    assert iq.judge_scorecards_for_reflection(paths.index_db, REFL)
+    assert index_rows(paths.index_db, "judge_scorecards", reflection_id=REFL)
     path = reflection_scorecards_path(tmp_path, EPOCH, REFL)
     for body in ({"reflection_id": REFL, "scorecards": []}, None):
         path.write_text(json.dumps(body))
@@ -84,7 +84,7 @@ def test_absent_empty_and_corrupt_scorecards_cannot_reuse_index(tmp_path):
             assert "unreadable" in view
             with pytest.raises(RecordError):
                 ingest_reflection(tmp_path, None, EPOCH, REFL)
-    assert iq.judge_scorecards_for_reflection(paths.index_db, REFL)
+    assert index_rows(paths.index_db, "judge_scorecards", reflection_id=REFL)
     # The canonical replacement and indexed row are retained before absence is tested.
     prior = path.read_bytes()
     assert prior == b"null"

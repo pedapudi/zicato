@@ -69,13 +69,8 @@ async def _regenerate_epoch_report(
 # ---------------------------------------------------------------------------
 
 
-#: Wire token -> the execution plan's lifecycle step. The values are exactly
-#: the step keys :data:`zicato.query.execution_plan.ROUND_STEPS` defines: a
-#: step this table invents is one the plan cannot place a node under, so the
-#: coordinate would name a position no reader can resolve. Kept as a literal
-#: table here rather than imported, so ``evolve`` does not depend on
-#: ``query``; a correspondence test holds the two sides equal
-#: (``test_round_log_emission.py``).
+#: Wire token -> the round's lifecycle step (propose, apply, run, gate,
+#: decide), recorded as the ``step`` coordinate of the event's scope.
 _ROUND_LOG_STEP: dict[str, str] = {
     "proposal_attempted": "propose",
     "proposal_episode_settled": "propose",

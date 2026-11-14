@@ -12,7 +12,7 @@ from zicato.core.workspace import run_id_for_unit
 from zicato.index.ingest import _ingest_run_into
 from zicato.index.schema import apply_schema
 from zicato.query.paths import WorkspacePaths
-from zicato.query.replicate_scores import cell_replicate_draws, measurement_band_draws_indexed
+from zicato.query.replicate_scores import cell_replicate_draws
 from zicato.telemetry.reducer import write_loss_profile
 from zicato.testing.fixtures import make_loss_profile
 from zicato.tournament.scoring import aggregate_generation_score, write_gen_score
@@ -64,8 +64,6 @@ def test_filename_alias_cannot_replace_the_canonical_draw(tmp_path: Path, index,
     assert cached is not None and cached.score == 0.8
     draws = cell_replicate_draws(WorkspacePaths(tmp_path), "e0", "v0", "entry")
     assert [draw.score for draw in draws] == [0.8]
-    audit = measurement_band_draws_indexed(WorkspacePaths(tmp_path), "e0", "v0", "entry")
-    assert audit == []
     assert own_code_board_draws(layout.run_dir("e0", "v0", "entry")) == [(index, canonical)]
     with sqlite3.connect(":memory:") as connection:
         apply_schema(connection)

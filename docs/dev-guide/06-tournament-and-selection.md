@@ -90,9 +90,8 @@ helpers are not re-exported through the runner for test convenience.
 `evolve_field_round` is a facade. It expands `PreparedRound` into a `FieldRound`
 — the round's coordinates, contract inputs, and runtime seams under the names
 its phases use — and then calls four phase functions in order. The phase names
-follow the lifecycle steps the execution plan serves
-(`zicato.query.execution_plan.ROUND_STEPS`: propose, apply, run, gate, decide),
-so a round's code and a round's served tree name the same steps.
+follow the lifecycle steps the round log records (propose, apply, run, gate,
+decide), so a round's code and a round's log name the same steps.
 
 ```
 evolve_once (evolve/round_entry.py)

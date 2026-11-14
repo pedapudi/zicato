@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._index_rows import index_rows
 from tests._workspace_support import write_tournament
 from zicato.core import ScoringWeights
 from zicato.core.measurement import (
@@ -19,7 +20,6 @@ from zicato.core.measurement import (
 )
 from zicato.core.workspace import run_id_for_unit
 from zicato.query.events_index import find_run_events_path, resolve_transcript_events
-from zicato.query.execution_plan import _unit_nodes
 from zicato.query.judge_view import resolve_run_id_for_entry
 from zicato.query.paths import WorkspacePaths
 from zicato.query.replicate_scores import cell_replicate_draws, cell_replicate_draws_indexed
@@ -56,15 +56,13 @@ def _write(
     return path
 
 
-def test_seed_variants_have_distinct_query_nodes_and_reflection_decisions(tmp_path: Path) -> None:
+def test_seed_variants_have_distinct_draws_and_reflection_decisions(tmp_path: Path) -> None:
     seeds = [None, 17, 23]
     for seed in seeds:
         _write(tmp_path, seed)
     paths = WorkspacePaths(tmp_path)
     draws = cell_replicate_draws_indexed(paths, "e0", "v0", "entry")
     assert {profile.measurement.base_seed for _, profile in draws} == set(seeds)
-    nodes = _unit_nodes(paths, "e0", "v0", "entry", "sweep")
-    assert len({node.id for node in nodes}) == 3
     corpus = ingest_lineage(
         workspace_root=tmp_path,
         epoch_id="e0",
@@ -121,7 +119,7 @@ def test_exact_seed_resolution_survives_incomplete_alternate_publication(tmp_pat
 
 def test_index_audits_all_seeds_and_projects_only_selected_seed(tmp_path: Path) -> None:
     from zicato.index.ingest import ensure_index, ingest_run
-    from zicato.index.query import loss_profiles_for_generation, runs_for_generation
+    from zicato.index.query import loss_profiles_for_generation
 
     for seed in (None, 17, 23):
         _write(tmp_path, seed)
@@ -130,7 +128,7 @@ def test_index_audits_all_seeds_and_projects_only_selected_seed(tmp_path: Path) 
     write_gen_score(tmp_path, "e0", "v0", {"base_seed": 17, "generation_id": "v0", "scalar": 0.0})
     database = tmp_path / "index.db"
     ingest_run(tmp_path, database, "e0", "v0", "entry")
-    assert len(runs_for_generation(database, "e0", "v0")) == 3
+    assert len(index_rows(database, "runs", epoch_id="e0", generation_id="v0")) == 3
     selected_id = run_id_for_unit("v0", "entry", base_seed=17, epoch_id="e0")
     assert [row["run_id"] for row in loss_profiles_for_generation(database, "e0", "v0")] == [
         selected_id
@@ -146,7 +144,7 @@ def test_index_audits_all_seeds_and_projects_only_selected_seed(tmp_path: Path) 
     assert [row["run_id"] for row in loss_profiles_for_generation(database, "e0", "v0")] == [
         run_id_for_unit("v0", "entry", base_seed=None, epoch_id="e0")
     ]
-    assert len(runs_for_generation(database, "e0", "v0")) == 3
+    assert len(index_rows(database, "runs", epoch_id="e0", generation_id="v0")) == 3
 
     actions: list[str] = []
     ensure_index(tmp_path, database, action_out=actions)
@@ -160,7 +158,7 @@ def test_index_audits_all_seeds_and_projects_only_selected_seed(tmp_path: Path) 
         ingest_run(tmp_path, database, "e0", "v0", "entry")
         assert loss_profiles_for_generation(database, "e0", "v0") == []
         assert cell_replicate_draws(paths, "e0", "v0", "entry") == []
-        assert len(runs_for_generation(database, "e0", "v0")) == 3
+        assert len(index_rows(database, "runs", epoch_id="e0", generation_id="v0")) == 3
 
 
 @pytest.mark.parametrize("conflict", ["base_seed", "run_id"])
@@ -208,11 +206,6 @@ def test_interrupted_replacement_keeps_archive_visible_without_an_extra_draw(
     assert len(cell_replicate_draws_indexed(paths, "e0", "v0", "entry")) == 1
 
     _write(tmp_path, 17)
-    nodes = _unit_nodes(paths, "e0", "v0", "entry", "sweep")
-    assert len(nodes) == 2
-    seeded = next(node for node in nodes if node.coordinates.get("base_seed") == 17)
-    assert len(seeded.children) == 1
-    assert seeded.children[0].kind == "board_entry_attempt"
     assert len(cell_replicate_draws_indexed(paths, "e0", "v0", "entry")) == 2
 
 
@@ -233,31 +226,23 @@ def test_duplicate_physical_spelling_never_adds_an_independent_draw(tmp_path: Pa
     )
     assert len(corpus) == 1
     ingest_run(tmp_path, None, "e0", "v0", "entry")
-    from zicato.query.replicate_scores import measurement_band_draws_indexed
-
-    audit = measurement_band_draws_indexed(paths, "e0", "v0", "entry")
-    assert audit == []
     assert path.with_name("loss.tournament.r0.json").read_bytes() == path.read_bytes()
 
 
 def test_wrong_coordinates_remain_auditable_without_becoming_cell_evidence(tmp_path: Path) -> None:
-    from zicato.query.replicate_scores import measurement_band_draws_indexed
-
     path = _write(tmp_path, 17)
     raw = json.loads(path.read_text())
     raw["entry_id"] = "different-entry"
     path.write_text(json.dumps(raw))
     paths = WorkspacePaths(tmp_path)
     assert not cell_replicate_draws_indexed(paths, "e0", "v0", "entry")
-    audit = measurement_band_draws_indexed(paths, "e0", "v0", "entry")
-    assert len(audit) == 1 and audit[0][1].key == "ambiguous"
     assert read_loss(WorkspaceLayout.from_root(tmp_path), "e0", "v0", "entry", base_seed=17) is None
 
 
 @pytest.mark.parametrize("seed", [None, 17])
 def test_selected_conversation_uses_its_seed(tmp_path: Path, seed: int | None) -> None:
     from zicato.query.conversations_view import build_matchup_conversations
-    from zicato.query.events_index import find_generation_entry_events, find_generation_run
+    from zicato.query.events_index import find_generation_run
 
     _write(tmp_path, 31)
     selected = _write(tmp_path, seed)
@@ -269,9 +254,6 @@ def test_selected_conversation_uses_its_seed(tmp_path: Path, seed: int | None) -
     assert find_generation_run(paths, "v0", "entry") == (
         run_id,
         selected.with_name("events.tournament.r0.jsonl"),
-    )
-    assert find_generation_entry_events(paths, "v0", "entry") == selected.with_name(
-        "events.tournament.r0.jsonl"
     )
     assert build_matchup_conversations(paths, "entry")["champion"]["run_id"] == run_id
     from zicato.query.transcript_view import resolve_conversation
@@ -303,7 +285,7 @@ def test_missing_exact_seed_has_no_outer_historical_fallback(tmp_path: Path) -> 
 def test_missing_or_invalid_selected_conversation_cannot_borrow_history(
     tmp_path: Path, selection: dict
 ) -> None:
-    from zicato.query.events_index import find_generation_entry_events, find_generation_run
+    from zicato.query.events_index import find_generation_run
 
     _write(tmp_path, 31)
     _write(tmp_path, 17)
@@ -311,7 +293,6 @@ def test_missing_or_invalid_selected_conversation_cannot_borrow_history(
     layout.gen_score("e0", "v0").write_text(json.dumps({"generation_id": "v0", **selection}))
     paths = WorkspacePaths(tmp_path)
     assert find_generation_run(paths, "v0", "entry") is None
-    assert find_generation_entry_events(paths, "v0", "entry") is None
     assert find_generation_run(paths, "v0", "absent") is None
 
 

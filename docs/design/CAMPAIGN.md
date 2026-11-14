@@ -1411,7 +1411,7 @@ field from the shipped surface below — no ad-hoc file walks:
 | `promotions` | `tournament/detail.optimization_trajectory(db_path, epoch_id)` → `Trajectory.promoted_count` |
 | `board_runs` | `contract_draft/operations.estimate_cost.board_runs_per_round` × `rounds_completed` — deterministic given the structure (the board-runs cost, §5) |
 | `wall_clock_s` | `tournament/detail.tournament_cost` → `total_runtime_ms`, **milliseconds** — divide by 1000, since the wire field is named in seconds (this is the wall-clock cost endpoint, which already reads the `_ms` name) |
-| `calibration_fraction` | `proposer/calibration.sample_calibration.calibration_fraction` / `tournament/detail.proposer_calibration_rate` |
+| `calibration_fraction` | `proposer/calibration.sample_calibration.calibration_fraction` |
 | `holdout_confirms`, `holdout_rejects` | RoundLog fold — `HoldoutReleased` events |
 | `placebo_events` | `health/diagnostics.detect_placebo_promoted` count |
 | `gate_margin_summary` | RoundLog fold — `GateEvaluated.margin_required` over settled rounds, reduced to `{median, max}` |

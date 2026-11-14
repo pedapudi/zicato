@@ -1393,11 +1393,7 @@ def _capture_index(ws: Path, snap: dict[str, Any]) -> None:
         snap[f"zicato.index.experiments_for_epoch::{epoch_id}"] = iq.experiments_for_epoch(
             db_path, epoch_id
         )
-        snap[f"zicato.index.tournaments_for_epoch::{epoch_id}"] = iq.tournaments_for_epoch(
-            db_path, epoch_id
-        )
         snap[f"zicato.index.elo_for_epoch::{epoch_id}"] = iq.elo_for_epoch(db_path, epoch_id)
-        snap[f"zicato.index.epoch_ancestry::{epoch_id}"] = iq.epoch_ancestry(db_path, epoch_id)
         snap[f"zicato.index.reflections_for_epoch::{epoch_id}"] = iq.reflections_for_epoch(
             db_path, epoch_id
         )
@@ -1407,9 +1403,6 @@ def _capture_index(ws: Path, snap: dict[str, Any]) -> None:
 
     epoch_id = RICH_EPOCH_ID
     for generation_id in ("v0", "v2", "v10"):
-        snap[f"zicato.index.runs_for_generation::{generation_id}"] = iq.runs_for_generation(
-            db_path, epoch_id, generation_id
-        )
         snap[f"zicato.index.loss_profiles_for_generation::{generation_id}"] = (
             iq.loss_profiles_for_generation(db_path, epoch_id, generation_id)
         )
@@ -1418,12 +1411,6 @@ def _capture_index(ws: Path, snap: dict[str, Any]) -> None:
         )
     snap["zicato.index.judge_loss_trend::tone_guard"] = iq.judge_loss_trend(
         db_path, epoch_id, "tone_guard"
-    )
-    snap["zicato.index.runs_for_tournament::field-v4"] = iq.runs_for_tournament(
-        db_path, f"{epoch_id}:field:v4"
-    )
-    snap["zicato.index.judge_scorecards_for_reflection::r-10"] = iq.judge_scorecards_for_reflection(
-        db_path, "r-10"
     )
     snap["zicato.index.reflection_row::r-10"] = iq.reflection_row(db_path, "r-10")
     snap["zicato.index.mutation_point_track_record"] = iq.mutation_point_track_record(
@@ -1494,7 +1481,6 @@ ORDER_ENFORCED: dict[str, str | int | None] = {
     "zicato.reflection.mine_episodes": "summary",
     # Per-run enumeration order within a generation.
     "zicato.reflection.ingest_lineage": "loss_ref",
-    "zicato.index.runs_for_generation::v0": "run_id",
     "zicato.index.loss_profiles_for_generation::v0": "run_id",
 }
 

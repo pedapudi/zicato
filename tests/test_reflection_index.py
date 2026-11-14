@@ -6,6 +6,7 @@ import json
 import sqlite3
 from pathlib import Path
 
+from tests._index_rows import index_rows
 from tests._reflection_support import finding_body, scorecard_body
 from tests._workspace_support import write_epoch, write_lineage
 from zicato.core.workspace import (
@@ -147,7 +148,7 @@ def test_ingest_reflection_round_trip(tmp_path: Path) -> None:
     epoch_rows = iq.reflections_for_epoch(db, EPOCH)
     assert [r["reflection_id"] for r in epoch_rows] == [REFL]
 
-    cards = iq.judge_scorecards_for_reflection(db, REFL)
+    cards = index_rows(db, "judge_scorecards", order_by="judge_name", reflection_id=REFL)
     assert [c["judge_name"] for c in cards] == ["j1", "j2"]
     assert cards[0]["tp"] == 2
     assert abs(cards[0]["kappa"] - 0.9) < 1e-9
@@ -159,12 +160,12 @@ def test_scorecards_upsert_is_delete_then_insert(tmp_path: Path) -> None:
     _write_reflection_files(workspace, scorecards=[_card("j1"), _card("j2")])
     ingest_reflection(workspace, None, EPOCH, REFL)
     db = workspace / "index.db"
-    assert len(iq.judge_scorecards_for_reflection(db, REFL)) == 2
+    assert len(index_rows(db, "judge_scorecards", reflection_id=REFL)) == 2
 
     # Shrink the scorecard set on disk and re-ingest — no stale row survives.
     _write_reflection_files(workspace, scorecards=[_card("j1")])
     ingest_reflection(workspace, None, EPOCH, REFL)
-    cards = iq.judge_scorecards_for_reflection(db, REFL)
+    cards = index_rows(db, "judge_scorecards", order_by="judge_name", reflection_id=REFL)
     assert [c["judge_name"] for c in cards] == ["j1"]
 
 
@@ -177,7 +178,7 @@ def test_passive_reflection_no_scorecards_still_projects_a_row(tmp_path: Path) -
     assert row is not None
     assert row["mode"] == "passive"
     assert row["n_judges"] == 0
-    assert iq.judge_scorecards_for_reflection(db, REFL) == []
+    assert index_rows(db, "judge_scorecards", reflection_id=REFL) == []
 
 
 # ---------------------------------------------------------------------------
@@ -205,7 +206,8 @@ def test_reindex_discovers_reflection_dir(tmp_path: Path) -> None:
     row = iq.reflection_row(db, REFL)
     assert row is not None
     assert row["n_findings"] == 1
-    assert [c["judge_name"] for c in iq.judge_scorecards_for_reflection(db, REFL)] == ["j1"]
+    cards = index_rows(db, "judge_scorecards", reflection_id=REFL)
+    assert [c["judge_name"] for c in cards] == ["j1"]
 
 
 # ---------------------------------------------------------------------------
@@ -217,7 +219,6 @@ def test_readers_tolerate_missing_index(tmp_path: Path) -> None:
     missing = tmp_path / "nope" / "index.db"
     assert iq.reflections_for_epoch(missing, EPOCH) == []
     assert iq.reflection_row(missing, REFL) is None
-    assert iq.judge_scorecards_for_reflection(missing, REFL) == []
 
 
 def test_readers_refuse_an_incompatible_reflection_index(tmp_path: Path) -> None:
@@ -231,4 +232,3 @@ def test_readers_refuse_an_incompatible_reflection_index(tmp_path: Path) -> None
     conn.close()
     assert iq.reflections_for_epoch(db, EPOCH) == []
     assert iq.reflection_row(db, REFL) is None
-    assert iq.judge_scorecards_for_reflection(db, REFL) == []

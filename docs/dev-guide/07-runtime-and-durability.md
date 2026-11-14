@@ -1367,12 +1367,11 @@ through the name it later acquires. `attributes` holds COORDINATES ONLY,
 never content: board text, prompts, and transcripts must never travel in a
 scope.
 
-`step` is the plan's own vocabulary — `propose`, `apply`, `run`, `gate`,
-`decide`, exactly the keys of `ROUND_STEPS` in `query/execution_plan.py`. A
-step the emitter invented would name a position the plan has no node for.
-`evolve` keeps its `_ROUND_LOG_STEP` table as a literal rather than importing
-`query` (the layering forbids that dependency), so a correspondence test in
-`tests/test_round_log_emission.py` holds the two sides equal.
+`step` is the round's lifecycle step — `propose`, `apply`, `run`, `gate`, or
+`decide`. The emitter fills it from its `_ROUND_LOG_STEP` table
+(`evolve/round_reporting.py`), and a test in
+`tests/test_round_log_emission.py` requires every event token to be either
+stepped or declared stepless.
 
 Three rules keep the envelope honest:
 

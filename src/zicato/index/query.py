@@ -111,17 +111,6 @@ def generations_for_epoch(db_path: Path, epoch_id: str) -> list[sqlite3.Row]:
     )
 
 
-def runs_for_generation(db_path: Path, epoch_id: str, generation_id: str) -> list[sqlite3.Row]:
-    """Return every run row under one generation, ordered by entry id."""
-    return _select(
-        db_path,
-        "SELECT run_id, epoch_id, generation_id, entry_id, started_at, ended_at, aborted, "
-        "runtime_ms, tournament_id, match_id FROM runs WHERE epoch_id = ? AND generation_id = "
-        "? ORDER BY entry_id, run_id",
-        (epoch_id, generation_id),
-    )
-
-
 def loss_profiles_for_generation(
     db_path: Path, epoch_id: str, generation_id: str
 ) -> list[sqlite3.Row]:
@@ -133,76 +122,6 @@ def loss_profiles_for_generation(
         " source_run FROM loss_profiles WHERE epoch_id = ? AND generation_id = ? ORDER BY "
         "entry_id, run_id",
         (epoch_id, generation_id),
-    )
-
-
-def runs_for_tournament(db_path: Path, tournament_id: str) -> list[sqlite3.Row]:
-    """Return run rows belonging to one tournament round, ordered by entry id."""
-    return _select(
-        db_path,
-        "SELECT run_id, epoch_id, generation_id, entry_id, started_at, ended_at, aborted, "
-        "runtime_ms, tournament_id, match_id FROM runs WHERE tournament_id = ? ORDER BY "
-        "entry_id, run_id",
-        (tournament_id,),
-    )
-
-
-def loss_profiles_for_tournament(db_path: Path, tournament_id: str) -> list[sqlite3.Row]:
-    """Return every ``loss_profiles`` row that belongs to one tournament round."""
-    return _select(
-        db_path,
-        "SELECT run_id, epoch_id, generation_id, entry_id, drift_loss, pass_fail, runtime_ms, "
-        "wall_clock_budget_exceeded, loss_json, tournament_id, match_id, cached, source_epoch,"
-        " source_run FROM loss_profiles WHERE tournament_id = ? ORDER BY entry_id, run_id",
-        (tournament_id,),
-    )
-
-
-def epoch_ancestry(db_path: Path, epoch_id: str) -> list[sqlite3.Row]:
-    """Return the chain from ``epoch_id`` back to the workspace's first epoch.
-
-    Walks ``parent_epoch_id`` one hop at a time,
-    starting from the row for ``epoch_id`` and following each row's
-    parent until ``parent_epoch_id IS NULL`` (the workspace's first
-    epoch) or a cycle is detected (a safety guard — the lineage DAG
-    is acyclic by construction).
-
-    The returned list starts at ``epoch_id`` and ends at the root,
-    oldest last. A workspace that has never been indexed (or whose
-    ``epoch_id`` is unknown) yields an empty list.
-    """
-    try:
-        conn = open_index(db_path)
-    except (IndexNotBuiltError, IndexSchemaError):
-        return []
-    try:
-        chain: list[sqlite3.Row] = []
-        seen: set[str] = set()
-        cur_id: str | None = epoch_id
-        while cur_id is not None and cur_id not in seen:
-            seen.add(cur_id)
-            row = conn.execute(
-                "SELECT epoch_id, contract_hash, created_at, closed, parent_epoch_id "
-                "FROM epochs WHERE epoch_id = ?",
-                (cur_id,),
-            ).fetchone()
-            if row is None:
-                break
-            chain.append(row)
-            next_id = row["parent_epoch_id"]
-            cur_id = next_id if isinstance(next_id, str) and next_id else None
-        return chain
-    finally:
-        conn.close()
-
-
-def metric_counts_for_run(db_path: Path, run_id: str) -> list[sqlite3.Row]:
-    """Return every metric-count row recorded for one run."""
-    return _select(
-        db_path,
-        "SELECT run_id, namespace, name, severity, count FROM metric_counts "
-        "WHERE run_id = ? ORDER BY name, severity",
-        (run_id,),
     )
 
 
@@ -763,18 +682,6 @@ def mutation_point_track_record(
     return out
 
 
-def tournaments_for_epoch(db_path: Path, epoch_id: str) -> list[sqlite3.Row]:
-    """Return resolved tournament rows and champion evaluation provenance."""
-    return _select(
-        db_path,
-        "SELECT tournament_id, epoch_id, parent_generation_id, child_generation_id, decision, "
-        "parent_scalar, child_scalar, delta_scalar, rejection_reason, ran_at, "
-        "champion_eval_mode, champion_run_ref FROM tournaments WHERE epoch_id = ? ORDER BY "
-        "ran_at, tournament_id",
-        (epoch_id,),
-    )
-
-
 def elo_for_epoch(db_path: Path, epoch_id: str) -> list[sqlite3.Row]:
     """Return descriptive ratings and settled-game counts, oldest first.
 
@@ -813,18 +720,6 @@ def reflection_row(db_path: Path, reflection_id: str) -> sqlite3.Row | None:
         (reflection_id,),
     )
     return rows[0] if rows else None
-
-
-def judge_scorecards_for_reflection(db_path: Path, reflection_id: str) -> list[sqlite3.Row]:
-    """Return indexed judge scorecards by name, or no rows when unavailable."""
-    return _select(
-        db_path,
-        "SELECT reflection_id, judge_name, tp, fp, fn, tn, ambiguous, "
-        "precision, recall, f1, severity_accuracy, disagreement_rate, kappa, "
-        "exercised, redundant_with_json FROM judge_scorecards "
-        "WHERE reflection_id = ? ORDER BY judge_name",
-        (reflection_id,),
-    )
 
 
 def index_counts(db_path: Path) -> dict[str, int]:
@@ -868,22 +763,15 @@ __all__ = [
     "index_schema_version",
     "all_epochs",
     "generations_for_epoch",
-    "runs_for_generation",
     "loss_profiles_for_generation",
-    "runs_for_tournament",
-    "loss_profiles_for_tournament",
-    "epoch_ancestry",
-    "metric_counts_for_run",
     "judge_losses_for_run",
     "judge_losses_for_generation",
     "judge_loss_trend",
     "experiments_for_epoch",
     "mutation_point_track_record",
     "prior_experiments_for_epoch",
-    "tournaments_for_epoch",
     "elo_for_epoch",
     "reflections_for_epoch",
     "reflection_row",
-    "judge_scorecards_for_reflection",
     "index_counts",
 ]
