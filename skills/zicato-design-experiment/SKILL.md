@@ -135,6 +135,12 @@ one proposal episode on its own and writes the result to
 `epochs/<epoch>/proposals/`, without minting a generation — see
 `zicato-step-loop`. Both spend budget: get the operator's go-ahead first.
 
+To test candidates that you write yourself, use `zicato proposer checkout`
+and `zicato proposer submit` (see `zicato-step-loop`). Each `hypothesis.json`
+uses the schema above, and `submit` rejects it with the proposer's own
+message when it does not parse. The hypothesis is for you and the journal:
+the proposer never reads an operator's text.
+
 ## See also
 
 - `docs/design/EPOCHS-AND-JOURNALING.md` §3 — full hypothesis/experiment schema.

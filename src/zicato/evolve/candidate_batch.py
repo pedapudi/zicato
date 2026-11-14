@@ -7,11 +7,18 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
-from zicato.core.types import Generation, OutcomeRecord, PriorExperiment, TournamentDecision
+from zicato.core.types import (
+    Experiment,
+    Generation,
+    OutcomeRecord,
+    PriorExperiment,
+    TournamentDecision,
+)
 from zicato.evolve import generation_phase
 from zicato.evolve.generation_phase import PreparedRound
 from zicato.evolve.ingest import _ingest_experiment_into_index, _load_prior_experiments
 from zicato.evolve.lifecycle_services import _now_iso
+from zicato.evolve.operator_slot import mint_operator_experiment, minted_operator_rounds
 from zicato.evolve.propose_apply import (
     CandidateAttempt,
     _AppliedChallenger,
@@ -22,6 +29,14 @@ from zicato.evolve.propose_apply import (
 )
 from zicato.evolve.round_context import _recombine_pair_for_slot
 from zicato.models_config import load_models_config
+from zicato.proposer.structured import ExperimentParseError
+from zicato.runtime.operator_queue import (
+    PendingOperatorRound,
+    QueuedCandidate,
+    QueuedRound,
+    consume_operator_round,
+    next_operator_round,
+)
 from zicato.util import best_effort
 from zicato.workspace import generation_round_number
 
@@ -94,6 +109,79 @@ def _persist_soft_reject(
     )
 
 
+def _take_operator_round(prepared: PreparedRound, slots: int) -> PendingOperatorRound | None:
+    """The queued operator round this round takes, or ``None``."""
+    workspace_root = prepared.workspace_root
+    epoch_id = prepared.epoch_id
+    try:
+        pending = next_operator_round(
+            workspace_root,
+            epoch_id,
+            champion_id=prepared.parent_generation.id,
+            slots=slots,
+            minted=lambda: minted_operator_rounds(workspace_root, epoch_id),
+        )
+    except OSError as exc:
+        log.warning("operator round queue is unreadable (%s); the round proposes", exc)
+        return None
+    if pending is not None:
+        queued = pending.queued
+        log.info(
+            "round %d takes operator round %s by %s: %d candidate(s)%s",
+            prepared.round_index,
+            queued.queue_id,
+            queued.author,
+            len(queued.candidates),
+            " (exclusive)" if queued.exclusive else "",
+        )
+    return pending
+
+
+def _mint_operator_slot(
+    prepared: PreparedRound,
+    queued: QueuedRound,
+    candidate: QueuedCandidate,
+    next_id: str,
+    seed: int,
+) -> Experiment | CandidateRejection:
+    """Mint one queued candidate for its slot, or reject it with its findings."""
+    try:
+        return mint_operator_experiment(
+            epoch_id=prepared.epoch_id,
+            parent_id=prepared.parent_generation.id,
+            next_id=next_id,
+            round_index=prepared.round_index,
+            queued=queued,
+            candidate=candidate,
+            mutations=prepared.mutations,
+            custom_judge_names=prepared.custom_judge_names,
+        )
+    except ExperimentParseError as exc:
+        findings = [str(exc)]
+    log.warning(
+        "operator candidate for %s (round %s) cannot enter round %d: %s",
+        next_id,
+        queued.queue_id,
+        prepared.round_index,
+        "; ".join(findings),
+    )
+    if prepared.round_log is not None:
+        prepared.round_log.emit(
+            "proposal_attempted", {"errors": tuple(findings)}, {"generation_id": next_id}
+        )
+    reason = _trim_reason(findings[-1], limit=160)
+    status = {
+        "generation_id": next_id,
+        "status": "rejected",
+        "reason": reason,
+        "attempts": 1,
+        "attempt_reasons": [_trim_reason(finding) for finding in findings],
+        "hypothesis": _trim_reason(str(candidate.hypothesis.get("core_idea", ""))),
+        "seed": seed,
+    }
+    return CandidateRejection(generation_id=next_id, reason=reason, status=status)
+
+
 async def produce_candidate_batch(
     prepared: PreparedRound,
     requested_size: int,
@@ -107,6 +195,13 @@ async def produce_candidate_batch(
     Proposal sampling inside best-of-N remains owned by the proposer.  This
     function owns tournament field width: a gauntlet requests one candidate,
     while field strategies request their declared number of candidates.
+
+    The oldest queued operator round, if any, fills the first slots with its
+    candidates in place of proposal episodes
+    (:mod:`zicato.runtime.operator_queue`). An exclusive round has no other
+    slots, so it runs no proposal episode. The field-diversity soft-reject
+    never compares two operator candidates: the operator chose them on
+    purpose. A round that resumes a candidate in place takes no queued round.
     """
 
     if requested_size < 1:
@@ -155,6 +250,16 @@ async def produce_candidate_batch(
     rejections: list[CandidateRejection] = []
     field_status: list[dict[str, Any]] = []
     resumed_ids: set[str] = set()
+    resumes_in_place = resume_plan is not None and resume_plan.resumes_in_place
+    operator = None if resumes_in_place else _take_operator_round(prepared, requested_size)
+    operator_candidates = operator.queued.candidates if operator is not None else ()
+    slot_count = (
+        len(operator_candidates)
+        if operator is not None and operator.queued.exclusive
+        else requested_size
+    )
+    operator_rejections: list[str] = []
+    operator_applied = 0
 
     def _emit_status(record: dict[str, Any]) -> None:
         if on_status is None:
@@ -165,7 +270,7 @@ async def produce_candidate_batch(
         ):
             on_status(record)
 
-    for offset in range(requested_size):
+    for offset in range(slot_count):
         next_id = f"v{base_n + offset}" if base_n is not None else base_id
         resume_experiment = None
         if (
@@ -176,6 +281,19 @@ async def produce_candidate_batch(
             and resume_plan.resume_generation_id == next_id
         ):
             resume_experiment = resume_plan.resume_experiment
+
+        operator_slot: dict[str, Any] = {}
+        if operator is not None and offset < len(operator_candidates):
+            minted = _mint_operator_slot(
+                prepared, operator.queued, operator_candidates[offset], next_id, offset + 2
+            )
+            if isinstance(minted, CandidateRejection):
+                operator_rejections.append(f"{next_id}: {minted.reason}")
+                _emit_status(minted.status)
+                field_status.append(minted.status)
+                rejections.append(minted)
+                continue
+            operator_slot["operator_experiment"] = minted
 
         attempt: CandidateAttempt = await produce_one(
             writer=prepared.writer,
@@ -214,9 +332,12 @@ async def produce_candidate_batch(
             screen_candidates=prepared.screen_candidates,
             recombine_pair=_recombine_pair_for_slot(prepared.recombine_pair, offset),
             resume_experiment=resume_experiment,
+            **operator_slot,
         )
         challenger = attempt.challenger
         status = attempt.status
+        if operator_slot and challenger is None:
+            operator_rejections.append(f"{next_id}: {status.get('reason', '')}")
         if challenger is None:
             field_status.append(status)
             rejections.append(
@@ -229,13 +350,17 @@ async def produce_candidate_batch(
             )
             continue
 
-        mint = _mint_challenger_field(
-            challenger.experiment,
-            sibling_signatures,
-            accepted_mutation_sets,
-            diversity_tolerance,
+        mint = (
+            None
+            if operator_slot
+            else _mint_challenger_field(
+                challenger.experiment,
+                sibling_signatures,
+                accepted_mutation_sets,
+                diversity_tolerance,
+            )
         )
-        if mint.action == "reject_duplicate":
+        if mint is not None and mint.action == "reject_duplicate":
             hyp = challenger.experiment.hypothesis
             status = {
                 "generation_id": next_id,
@@ -260,7 +385,7 @@ async def produce_candidate_batch(
                 "field_diversity_duplicate",
                 "duplicates an in-flight sibling (same mutation ids + core idea)",
             )
-        elif mint.action == "reject_overlap":
+        elif mint is not None and mint.action == "reject_overlap":
             assert diversity_tolerance is not None
             peer_id = (
                 applied[mint.overlap_peer_index].generation_id
@@ -303,6 +428,8 @@ async def produce_candidate_batch(
                 }
             field_status.append(status)
             applied.append(challenger)
+            if operator_slot:
+                operator_applied += 1
             if attempt.resumed:
                 resumed_ids.add(next_id)
             hyp = challenger.experiment.hypothesis
@@ -317,6 +444,9 @@ async def produce_candidate_batch(
                     rejection_reason="",
                     scalar_score_delta=None,
                     same_contract=True,
+                    # An operator sibling carries no text: PriorExperiment
+                    # drops ``core_idea`` for this source.
+                    source=challenger.experiment.source,
                 )
             )
             sibling_signatures.append(_diversity_signature(challenger.experiment))
@@ -324,6 +454,17 @@ async def produce_candidate_batch(
 
         field_status.append(status)
         rejections.append(CandidateRejection(next_id, str(status["reason"]), status))
+
+    if operator is not None and not operator_applied:
+        # No candidate has a generation, so no settlement will consume the
+        # item: consume it now, with each slot's findings. The round log
+        # keeps the findings of a candidate that a partly applied round
+        # rejected.
+        consume_operator_round(
+            workspace_root,
+            operator.queued.queue_id,
+            reason="rejected before the tournament: " + "; ".join(operator_rejections),
+        )
 
     if diversity_tolerance is not None and diversity_soft_rejected:
         log.info(

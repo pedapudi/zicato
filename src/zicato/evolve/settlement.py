@@ -72,6 +72,7 @@ from zicato.selection.strategy import SelectionDecision
 from zicato.tournament.detail import _grade_movement
 from zicato.tournament.records import field_tournament_record
 from zicato.tournament.scoring import metric_means, paired_scalar_se, pass_flips
+from zicato.util import best_effort
 from zicato.workspace import generation_round_number
 
 if TYPE_CHECKING:
@@ -838,6 +839,38 @@ async def _close_field_round(
     )
 
 
+def _consume_settled_operator_candidates(
+    field_round: FieldRound, candidates: CandidateField
+) -> None:
+    """Take each queued operator round of this field off the queue.
+
+    Runs after the settlement commit, so the outcomes are durable. A failure
+    here leaves the item queued, and the next round consumes it as already
+    minted (:func:`zicato.runtime.operator_queue.next_operator_round`).
+    """
+    from zicato.runtime.operator_queue import consume_operator_round  # noqa: PLC0415
+
+    prepared = field_round.prepared
+    minted: dict[str, list[str]] = {}
+    for challenger in candidates.challengers:
+        operator = challenger.experiment.operator
+        if operator is not None:
+            minted.setdefault(operator.queue_id, []).append(challenger.generation_id)
+    for queue_id, generation_ids in minted.items():
+        with best_effort(
+            "operator round settlement",
+            on_error=lambda exc: log.warning("operator queue item left queued: %s", exc),
+        ):
+            consume_operator_round(
+                prepared.workspace_root,
+                queue_id,
+                reason=(
+                    f"minted as {', '.join(generation_ids)}; "
+                    f"round {prepared.round_index} settled"
+                ),
+            )
+
+
 async def settle_field_round(
     field_round: FieldRound,
     candidates: CandidateField,
@@ -854,6 +887,7 @@ async def settle_field_round(
     on_promote_failure = await _commit_field_settlement(
         field_round, candidates, execution, verdict, settlement
     )
+    _consume_settled_operator_candidates(field_round, candidates)
     _publish_field_observations(field_round, candidates, execution, verdict)
     return await _close_field_round(
         field_round, candidates, execution, verdict, settlement, on_promote_failure

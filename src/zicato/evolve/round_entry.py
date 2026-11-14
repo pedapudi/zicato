@@ -64,7 +64,7 @@ from zicato.evolve.decision_support import (
     build_metric_priorities,
     parent_training_evidence,
 )
-from zicato.evolve.round_api import EvolveRoundOutcome, _declared_custom_judge_names
+from zicato.evolve.round_api import EvolveRoundOutcome, declared_custom_judge_names
 from zicato.evolve.round_baseline import (
     _ensure_baseline_snapshot,
 )
@@ -224,7 +224,7 @@ async def _evolve_once(
     # Custom judges declared on the board / per_judge_weights are valid
     # ``drift:<judge_name>`` metric targets in a proposer hypothesis even
     # though they are not built-in goldfive drift kinds.
-    custom_judge_names = _declared_custom_judge_names(board, weights)
+    custom_judge_names = declared_custom_judge_names(board, weights)
     # The per-epoch tournament structure lives on the frozen ScoringWeights;
     # reading it from the loaded weights keeps execution in lockstep with the
     # contract hash.

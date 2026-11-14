@@ -19,6 +19,7 @@ from zicato.evolve import generation_phase
 from zicato.evolve.ingest import _ingest_experiment_into_index, _load_mutation_track_records
 from zicato.evolve.lifecycle_services import _beat, _now_iso
 from zicato.evolve.round import (
+    BadPatchSetError,
     build_post_apply_validator,
     build_scratch_validator_factory,
     check_patch_manifest_and_forbidden,
@@ -280,6 +281,7 @@ async def _propose_and_apply_challenger(
     resume_experiment: Experiment | None = None,
     writer: WorkspaceLock,
     mutation_policy: MutationPolicy | None = None,
+    operator_experiment: Experiment | None = None,
 ) -> CandidateAttempt:
     """Propose + apply ONE challenger child of the champion.
 
@@ -316,6 +318,13 @@ async def _propose_and_apply_challenger(
     Each challenger is proposed through it, so a configured proposer's
     skills shape every challenger in the field exactly as they shape the
     gauntlet's single challenger.
+
+    ``operator_experiment`` is a queued operator candidate that the batch
+    producer already minted against this champion
+    (:mod:`zicato.evolve.operator_slot`). The slot then runs no proposal
+    episode. The same manifest check and post-apply validator run on it, and
+    a failure rejects the slot: it never falls back to the proposer, because
+    the operator asked for this candidate.
     """
     from zicato.epoch import append_to_lineage, write_experiment  # noqa: PLC0415
     from zicato.epoch.genstore import default_generation_store  # noqa: PLC0415
@@ -399,7 +408,33 @@ async def _propose_and_apply_challenger(
 
     experiment: Experiment | None = None
     resumed = False
-    if resume_experiment is not None:
+    if operator_experiment is not None:
+        try:
+            check_patch_manifest_and_forbidden(operator_experiment, mutations, brief.forbidden_ids)
+        except BadPatchSetError as exc:
+            operator_errors = [str(exc)]
+        else:
+            operator_errors = await _validate(operator_experiment)
+        scope = {"generation_id": next_id}
+        if operator_errors:
+            if round_emitter is not None:
+                round_emitter.emit("proposal_attempted", {"errors": tuple(operator_errors)}, scope)
+            rejected = {
+                "generation_id": next_id,
+                "status": "rejected",
+                "reason": _short_reject_reason(operator_errors),
+                "attempts": 1,
+                "attempt_reasons": [_trim_reason(error) for error in operator_errors],
+                "hypothesis": _trim_reason(operator_experiment.hypothesis.core_idea),
+                "seed": seed,
+            }
+            _emit_status(rejected)
+            return CandidateAttempt(None, rejected)
+        experiment = operator_experiment
+        if round_emitter is not None:
+            round_emitter.emit("experiment_minted", {"experiment_id": experiment.id}, scope)
+            round_emitter.emit("patches_applied", {"generation_id": next_id}, scope)
+    elif resume_experiment is not None:
         candidate = replace(resume_experiment, round_index=round_index)
         resume_errors = await _validate(candidate)
         if resume_errors:
@@ -476,7 +511,10 @@ async def _propose_and_apply_challenger(
         return CandidateAttempt(None, rejected, proposer_error=exc)
 
     assert experiment is not None
-    check_patch_manifest_and_forbidden(experiment, mutations, brief.forbidden_ids)
+    if operator_experiment is None:
+        # The operator path ran this check above and turned a violation into
+        # a slot rejection.
+        check_patch_manifest_and_forbidden(experiment, mutations, brief.forbidden_ids)
 
     child_snapshot = last_child_snapshot["path"]
     # ``_propose_child`` already stamped the EVOLVE round onto the

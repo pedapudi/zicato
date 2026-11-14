@@ -105,6 +105,14 @@ ENVIRONMENT_BOUNDARIES = (
         "and the configured target passthrough names.",
     ),
     EnvironmentBoundary(
+        "zicato/epoch/git_genstore.py",
+        ("GitGenerationStore.export_snapshot",),
+        ("GIT_INDEX_FILE",),
+        "child-process",
+        "Pass the inherited environment to git and point GIT_INDEX_FILE at a private index, so "
+        "a generation export never reads or writes the repository's own index.",
+    ),
+    EnvironmentBoundary(
         "zicato/runtime/spawn_permit.py",
         ("permit_dir",),
         ("XDG_RUNTIME_DIR",),

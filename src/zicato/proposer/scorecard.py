@@ -439,6 +439,8 @@ def _mutation_sites(
                 experiment = read_experiment(workspace_root, epoch_id, generation_id)
             except (OSError, RecordError, ValueError, KeyError, FileNotFoundError):
                 continue
+            if experiment.source == "operator":
+                continue  # the card grades the proposer's own proposals
             for mutation_id in {p.mutation_id for p in experiment.patches}:
                 proposed[mutation_id] = proposed.get(mutation_id, 0) + 1
                 if generation_id == winner:

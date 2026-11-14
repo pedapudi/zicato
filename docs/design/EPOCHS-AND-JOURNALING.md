@@ -303,6 +303,13 @@ The schema is enforced when the episode's result is parsed (a JSON
 Schema pass plus a cross-check pass in `zicato.proposer.structured`).
 A recombined candidate's body also carries `recombined_from`, the ids of
 the two rejected parents it combines; the key is absent otherwise.
+An operator candidate (queued by `zicato proposer submit`) also carries
+`operator`: `{author, queue_id, submitted_at, holdout_access}`.
+`holdout_access` is the author's declaration of whether they could read
+holdout results; the journal prints it on the section's `**source**` line,
+and nothing else reads it. The candidate's parent is the champion its author
+copied: a round refuses one that edits any other generation. The key is
+absent for a proposer candidate.
 
 ### 3.2 Patch storage (per-patch files)
 

@@ -188,6 +188,31 @@ def test_seed_generation_materialises_tree(store: GenerationStore, tmp_path: Pat
     assert store.list_generations("e1") == ["v0"]
 
 
+def test_export_snapshot_copies_the_tree_with_its_modes(
+    store: GenerationStore, tmp_path: Path
+) -> None:
+    """The export reproduces source and executable bits, and changes no store state.
+
+    For the git backend, no worktree may be added: worktree admin from a
+    second process races the loop's own (12-bug-casebook.md Case 2).
+    """
+    tree = mutable_tree(tmp_path / "registered", instr="exported")
+    script = tree / "run.sh"
+    script.write_text("#!/bin/sh\n", encoding="utf-8")
+    script.chmod(0o755)
+    store.seed_generation("e1", "v0", [tree])
+    before = sorted(str(p) for p in tmp_path.rglob("*"))
+
+    exported = store.export_snapshot("e1", "v0", tmp_path / "export")
+    after = sorted(str(p) for p in tmp_path.rglob("*") if not p.is_relative_to(exported))
+
+    assert "exported" in (exported / "agent" / "prompts.py").read_text()
+    assert (exported / "agent" / "run.sh").stat().st_mode & 0o111
+    assert after == before, "the export must not touch the store"
+    with pytest.raises(FileNotFoundError):
+        store.export_snapshot("e1", "v9", tmp_path / "missing")
+
+
 def test_seed_generation_raises_for_missing_source(store: GenerationStore, tmp_path: Path) -> None:
     # The directory backend pins the message text; other backends share only
     # the exception type.

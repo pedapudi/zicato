@@ -5767,6 +5767,7 @@
           "why": ""
         },
         "id": "",
+        "operator": null,
         "outcome": null,
         "parent_generation_id": null,
         "patches": [],
@@ -5802,6 +5803,7 @@
           "why": "Plan thrash dominates the drift profile."
         },
         "id": "exp-e10-v1",
+        "operator": null,
         "outcome": {
           "champion_eval_mode": "full",
           "drift_loss_delta": -0.02,
@@ -5875,6 +5877,7 @@
           "why": ""
         },
         "id": "",
+        "operator": null,
         "outcome": null,
         "parent_generation_id": null,
         "patches": [],
@@ -5910,6 +5913,7 @@
           "why": "Plan thrash dominates the drift profile."
         },
         "id": "exp-e2-v1",
+        "operator": null,
         "outcome": {
           "champion_eval_mode": "full",
           "drift_loss_delta": -0.02,
@@ -5994,6 +5998,7 @@
           "why": "Plan thrash dominates the drift profile."
         },
         "id": "exp-e2-v2",
+        "operator": null,
         "outcome": {
           "champion_eval_mode": "full",
           "drift_loss_delta": -0.04,
@@ -6078,6 +6083,7 @@
           "why": "Plan thrash dominates the drift profile."
         },
         "id": "exp-e2-v3",
+        "operator": null,
         "outcome": {
           "champion_eval_mode": "full",
           "drift_loss_delta": -0.06,
@@ -6162,6 +6168,7 @@
           "why": "Plan thrash dominates the drift profile."
         },
         "id": "exp-e2-v4",
+        "operator": null,
         "outcome": {
           "champion_eval_mode": "full",
           "drift_loss_delta": -0.08,
@@ -6246,6 +6253,7 @@
           "why": "Plan thrash dominates the drift profile."
         },
         "id": "exp-e2-v5",
+        "operator": null,
         "outcome": {
           "champion_eval_mode": "full",
           "drift_loss_delta": -0.1,
@@ -6330,6 +6338,7 @@
           "why": "Plan thrash dominates the drift profile."
         },
         "id": "exp-e2-v6",
+        "operator": null,
         "outcome": {
           "champion_eval_mode": "full",
           "drift_loss_delta": -0.12,
@@ -6414,6 +6423,7 @@
           "why": "Plan thrash dominates the drift profile."
         },
         "id": "exp-e2-v7",
+        "operator": null,
         "outcome": {
           "champion_eval_mode": "full",
           "drift_loss_delta": -0.14,
@@ -6498,6 +6508,7 @@
           "why": "Plan thrash dominates the drift profile."
         },
         "id": "exp-e2-v8",
+        "operator": null,
         "outcome": {
           "champion_eval_mode": "full",
           "drift_loss_delta": -0.16,
@@ -6582,6 +6593,7 @@
           "why": "Plan thrash dominates the drift profile."
         },
         "id": "exp-e2-v9",
+        "operator": null,
         "outcome": {
           "champion_eval_mode": "full",
           "drift_loss_delta": -0.18,
@@ -6666,6 +6678,7 @@
           "why": "Plan thrash dominates the drift profile."
         },
         "id": "exp-e2-v10",
+        "operator": null,
         "outcome": {
           "champion_eval_mode": "full",
           "drift_loss_delta": -0.2,
@@ -6736,6 +6749,7 @@
       "why": ""
     },
     "id": "",
+    "operator": null,
     "outcome": null,
     "parent_generation_id": null,
     "patches": [],
@@ -6768,6 +6782,7 @@
       "why": "Plan thrash dominates the drift profile."
     },
     "id": "exp-e2-v10",
+    "operator": null,
     "outcome": {
       "champion_eval_mode": "full",
       "drift_loss_delta": -0.2,
@@ -6849,6 +6864,7 @@
       "why": "Plan thrash dominates the drift profile."
     },
     "id": "exp-e2-v2",
+    "operator": null,
     "outcome": {
       "champion_eval_mode": "full",
       "drift_loss_delta": -0.04,
@@ -7148,6 +7164,7 @@
   ],
   "zicato.index.experiments_for_epoch::e10": [
     {
+      "author": null,
       "drift_loss_delta": null,
       "epoch_id": "e10",
       "generation_id": "v0",
@@ -7158,9 +7175,11 @@
       "pass_rate_delta": null,
       "rejection_reason": null,
       "scalar_score_delta": null,
+      "source": null,
       "tournament_decision": null
     },
     {
+      "author": null,
       "drift_loss_delta": -0.02,
       "epoch_id": "e10",
       "generation_id": "v1",
@@ -7171,11 +7190,13 @@
       "pass_rate_delta": 0.01,
       "rejection_reason": "",
       "scalar_score_delta": -0.02,
+      "source": "proposer",
       "tournament_decision": "promoted"
     }
   ],
   "zicato.index.experiments_for_epoch::e2": [
     {
+      "author": null,
       "drift_loss_delta": null,
       "epoch_id": "e2",
       "generation_id": "v0",
@@ -7186,9 +7207,11 @@
       "pass_rate_delta": null,
       "rejection_reason": null,
       "scalar_score_delta": null,
+      "source": null,
       "tournament_decision": null
     },
     {
+      "author": null,
       "drift_loss_delta": -0.02,
       "epoch_id": "e2",
       "generation_id": "v1",
@@ -7199,9 +7222,11 @@
       "pass_rate_delta": 0.01,
       "rejection_reason": "",
       "scalar_score_delta": -0.02,
+      "source": "proposer",
       "tournament_decision": "promoted"
     },
     {
+      "author": null,
       "drift_loss_delta": -0.2,
       "epoch_id": "e2",
       "generation_id": "v10",
@@ -7212,9 +7237,11 @@
       "pass_rate_delta": 0.1,
       "rejection_reason": "",
       "scalar_score_delta": -0.02,
+      "source": "proposer",
       "tournament_decision": "promoted"
     },
     {
+      "author": null,
       "drift_loss_delta": -0.04,
       "epoch_id": "e2",
       "generation_id": "v2",
@@ -7225,9 +7252,11 @@
       "pass_rate_delta": 0.02,
       "rejection_reason": "below promote margin",
       "scalar_score_delta": 0.005,
+      "source": "proposer",
       "tournament_decision": "rejected"
     },
     {
+      "author": null,
       "drift_loss_delta": -0.06,
       "epoch_id": "e2",
       "generation_id": "v3",
@@ -7238,9 +7267,11 @@
       "pass_rate_delta": 0.03,
       "rejection_reason": "below promote margin",
       "scalar_score_delta": 0.005,
+      "source": "proposer",
       "tournament_decision": "rejected"
     },
     {
+      "author": null,
       "drift_loss_delta": -0.08,
       "epoch_id": "e2",
       "generation_id": "v4",
@@ -7251,9 +7282,11 @@
       "pass_rate_delta": 0.04,
       "rejection_reason": "",
       "scalar_score_delta": -0.02,
+      "source": "proposer",
       "tournament_decision": "promoted"
     },
     {
+      "author": null,
       "drift_loss_delta": -0.1,
       "epoch_id": "e2",
       "generation_id": "v5",
@@ -7264,9 +7297,11 @@
       "pass_rate_delta": 0.05,
       "rejection_reason": "below promote margin",
       "scalar_score_delta": 0.005,
+      "source": "proposer",
       "tournament_decision": "rejected"
     },
     {
+      "author": null,
       "drift_loss_delta": -0.12,
       "epoch_id": "e2",
       "generation_id": "v6",
@@ -7277,9 +7312,11 @@
       "pass_rate_delta": 0.06,
       "rejection_reason": "below promote margin",
       "scalar_score_delta": 0.005,
+      "source": "proposer",
       "tournament_decision": "deferred"
     },
     {
+      "author": null,
       "drift_loss_delta": -0.14,
       "epoch_id": "e2",
       "generation_id": "v7",
@@ -7290,9 +7327,11 @@
       "pass_rate_delta": 0.07,
       "rejection_reason": "",
       "scalar_score_delta": -0.02,
+      "source": "proposer",
       "tournament_decision": "promoted"
     },
     {
+      "author": null,
       "drift_loss_delta": -0.16,
       "epoch_id": "e2",
       "generation_id": "v8",
@@ -7303,9 +7342,11 @@
       "pass_rate_delta": 0.08,
       "rejection_reason": "below promote margin",
       "scalar_score_delta": 0.005,
+      "source": "proposer",
       "tournament_decision": "rejected"
     },
     {
+      "author": null,
       "drift_loss_delta": -0.18,
       "epoch_id": "e2",
       "generation_id": "v9",
@@ -7316,6 +7357,7 @@
       "pass_rate_delta": 0.09,
       "rejection_reason": "below promote margin",
       "scalar_score_delta": 0.005,
+      "source": "proposer",
       "tournament_decision": "rejected"
     }
   ],
@@ -7763,6 +7805,7 @@
       "same_contract": true,
       "scalar_delta_se": null,
       "scalar_score_delta": -0.02,
+      "source": "proposer",
       "train_broke": null,
       "train_entries": null,
       "train_fixed": null
@@ -7784,6 +7827,7 @@
       "same_contract": true,
       "scalar_delta_se": null,
       "scalar_score_delta": -0.02,
+      "source": "proposer",
       "train_broke": null,
       "train_entries": null,
       "train_fixed": null
@@ -7803,6 +7847,7 @@
       "same_contract": true,
       "scalar_delta_se": null,
       "scalar_score_delta": -0.02,
+      "source": "proposer",
       "train_broke": null,
       "train_entries": null,
       "train_fixed": null
@@ -7822,6 +7867,7 @@
       "same_contract": true,
       "scalar_delta_se": null,
       "scalar_score_delta": -0.02,
+      "source": "proposer",
       "train_broke": null,
       "train_entries": null,
       "train_fixed": null
@@ -7841,6 +7887,7 @@
       "same_contract": true,
       "scalar_delta_se": null,
       "scalar_score_delta": -0.02,
+      "source": "proposer",
       "train_broke": null,
       "train_entries": null,
       "train_fixed": null
@@ -7860,6 +7907,7 @@
       "same_contract": true,
       "scalar_delta_se": null,
       "scalar_score_delta": 0.005,
+      "source": "proposer",
       "train_broke": null,
       "train_entries": null,
       "train_fixed": null
@@ -7879,6 +7927,7 @@
       "same_contract": true,
       "scalar_delta_se": null,
       "scalar_score_delta": 0.005,
+      "source": "proposer",
       "train_broke": null,
       "train_entries": null,
       "train_fixed": null
@@ -7898,6 +7947,7 @@
       "same_contract": true,
       "scalar_delta_se": null,
       "scalar_score_delta": 0.005,
+      "source": "proposer",
       "train_broke": null,
       "train_entries": null,
       "train_fixed": null
@@ -7917,6 +7967,7 @@
       "same_contract": true,
       "scalar_delta_se": null,
       "scalar_score_delta": 0.005,
+      "source": "proposer",
       "train_broke": null,
       "train_entries": null,
       "train_fixed": null
@@ -7936,6 +7987,7 @@
       "same_contract": true,
       "scalar_delta_se": null,
       "scalar_score_delta": 0.005,
+      "source": "proposer",
       "train_broke": null,
       "train_entries": null,
       "train_fixed": null
@@ -7955,6 +8007,7 @@
       "same_contract": true,
       "scalar_delta_se": null,
       "scalar_score_delta": 0.005,
+      "source": "proposer",
       "train_broke": null,
       "train_entries": null,
       "train_fixed": null

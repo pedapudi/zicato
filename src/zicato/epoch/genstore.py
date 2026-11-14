@@ -387,6 +387,16 @@ class GenerationStore(Protocol):
         """
         ...
 
+    def export_snapshot(self, epoch_id: str, generation_id: str, destination: Path) -> Path:
+        """Copy a generation's source tree to ``destination`` and return it.
+
+        A read that changes no shared store state, so another process can
+        call it while an evolve loop holds the writer lock. ``destination``
+        must not exist. Raises :class:`FileNotFoundError` when the
+        generation does not exist.
+        """
+        ...
+
     def has_generation(self, epoch_id: str, generation_id: str) -> bool:
         """Return ``True`` iff source state exists and can be materialized."""
         ...
@@ -652,6 +662,12 @@ class DirectoryGenerationStore:
                 f"generation {epoch_id}/{generation_id} has no source tree at {path}"
             )
         return path
+
+    def export_snapshot(self, epoch_id: str, generation_id: str, destination: Path) -> Path:
+        """Copy the generation's ``snapshot/`` directory to ``destination``."""
+        source = self.materialize_snapshot(epoch_id, generation_id)
+        shutil.copytree(source, destination, symlinks=True, ignore=copytree_ignore())
+        return destination
 
     def has_generation(self, epoch_id: str, generation_id: str) -> bool:
         """Return ``True`` iff the generation's ``snapshot/`` directory exists."""

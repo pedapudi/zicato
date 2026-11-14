@@ -19,6 +19,12 @@ The invariants, mirroring the process-exemplar / recombination precedents:
   per-entry result, an exact Δscalar, or anything holdout-derived — there
   is no per-entry read here at all, so there is no per-entry slice to leak
   (PROPOSER.md §2.7; OVERFITTING.md §11).
+* **No operator text.** An operator can read the holdout, so an operator
+  candidate's core idea and diff text are not proposer-authored and never
+  ride an item. A promoted one stays on the champion spine, marked
+  :data:`OPERATOR_TEXT_WITHHELD`, with its mutation ids and banded outcome;
+  a rejected one is never an inspiration, because an item with no idea and
+  no diff gives nothing to re-frame.
 * **Banded, reusing the existing vocabulary.** The whole-candidate outcome
   is coarsened through :func:`zicato.proposer.prompts._bucket_scalar_delta`
   — the same ``improved`` / ``flat`` / ``regressed`` three-band vocabulary
@@ -38,7 +44,7 @@ The invariants, mirroring the process-exemplar / recombination precedents:
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from zicato.selection.diversity import jaccard
 
@@ -66,6 +72,9 @@ _DIFF_EXCERPT_MAX = 200
 #: head-only-plus-elision discipline so a pathologically long hypothesis line
 #: cannot balloon the prompt (the process-exemplar cap style; PROPOSER.md §2.7).
 _CORE_IDEA_MAX = 240
+
+#: What an item shows in place of an operator candidate's core idea.
+OPERATOR_TEXT_WITHHELD = "(source: operator; hypothesis and diff withheld)"
 
 #: Size-band edges over the total patch-diff length (chars). A COARSE label —
 #: the proposer reads "how big an edit was this" qualitatively, never the
@@ -114,6 +123,10 @@ class GenealogyRecord:
     is_placebo:
         ``True`` for a random-baseline calibration arm (never a genealogy
         item — it is not a real idea to build on or diverge from).
+    source:
+        ``"operator"`` for a candidate an operator submitted
+        (:attr:`zicato.core.experiment.Experiment.source`). Its
+        ``core_idea`` and ``patch_text`` never reach an item.
     """
 
     generation_id: str
@@ -126,6 +139,7 @@ class GenealogyRecord:
     patch_text: str
     scalar_score_delta: float | None
     is_placebo: bool = False
+    source: str = "proposer"
 
 
 @dataclass(frozen=True, slots=True)
@@ -228,6 +242,8 @@ def _summarize_patch(record: GenealogyRecord) -> PatchSummary:
 
 
 def _make_item(record: GenealogyRecord, kind: str, rationale: str) -> GenealogyItem:
+    if record.source == "operator":
+        record = replace(record, core_idea=OPERATOR_TEXT_WITHHELD, patch_text="")
     return GenealogyItem(
         kind=kind,
         generation_id=record.generation_id,
@@ -361,6 +377,7 @@ def sample_genealogy(
         r
         for r in live
         if r.decision == "rejected"
+        and r.source != "operator"
         and r.generation_id not in parent_ids
         and (champion_id is None or r.parent_generation_id == champion_id)
     ]
@@ -397,6 +414,7 @@ __all__ = [
     "GENEALOGY_POOL_MAX",
     "GenealogyItem",
     "GenealogyRecord",
+    "OPERATOR_TEXT_WITHHELD",
     "PatchSummary",
     "sample_genealogy",
 ]

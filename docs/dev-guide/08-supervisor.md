@@ -639,7 +639,7 @@ repair index` + live dual-writes); the supervisor never writes a byte of it.
 ```
 — `crates/supervisor/src/index_db.rs`
 
-A database whose `user_version` ≠ `EXPECTED_SCHEMA_VERSION` (`15`)
+A database whose `user_version` ≠ `EXPECTED_SCHEMA_VERSION` (`16`)
 returns `IndexError::StaleSchema` instead of risking rows decoded against
 the wrong schema generation. The cross-language pin has teeth on both sides:
 a cargo test asserts the constant equals the Python value, and a Python-side
@@ -1301,7 +1301,7 @@ pin, verbatim:
 /// ... Opening a database whose `user_version` does not
 /// match this constant returns [`IndexError::StaleSchema`] rather than
 /// risking a row decoded against the wrong schema.
-pub const EXPECTED_SCHEMA_VERSION: i64 = 15;
+pub const EXPECTED_SCHEMA_VERSION: i64 = 16;
 ```
 — `crates/supervisor/src/index_db.rs`
 
@@ -1328,7 +1328,7 @@ check, fail-open":
 This is the read-only version-pinned index rule and the null-degradation
 contract (§8.9) meeting at the scan layer: a
 stale or absent index degrades the notary to "scanned, no contradiction", never a
-false alarm and never a crash. `EXPECTED_SCHEMA_VERSION = 15` is the cross-
+false alarm and never a crash. `EXPECTED_SCHEMA_VERSION = 16` is the cross-
 language pin — bump it in lockstep with the Python `SCHEMA_VERSION`
 (07-runtime-and-durability.md §7.1.2), and a cargo test in this module reds if
 they drift (§8.12's canonical "Python change requires Rust parity" example).

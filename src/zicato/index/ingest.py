@@ -545,6 +545,11 @@ def _upsert_experiment(conn: sqlite3.Connection, experiment: Experiment) -> None
         drift_loss_delta=drift_delta,
         pass_rate_delta=pass_delta,
         outcome_json=outcome_json,
+        # The candidate's source: "operator" for a candidate that
+        # ``zicato proposer submit`` queued, with its author; "proposer" for a
+        # proposed one; NULL for the seed, which neither wrote.
+        source=None if experiment.parent_generation_id is None else experiment.source,
+        author=None if experiment.operator is None else experiment.operator.author,
     )
 
     for patch in experiment.patches:

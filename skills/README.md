@@ -96,7 +96,7 @@ compound entry. This invariant applies throughout the catalog.
 ### Manual control and forensics
 | Skill | What it does |
 |---|---|
-| `zicato-step-loop` | Drive individual loop stages for debugging: `zicato inspect telemetry` for the decision analysis, `zicato proposer propose` to run one proposal episode without a tournament, `zicato tournament run PARENT CHILD` to re-score an existing pair. (`evolve` orchestrates these internally; there is no standalone `run`/`patch apply`.) |
+| `zicato-step-loop` | Drive individual loop stages for debugging: `zicato inspect telemetry` for the decision analysis, `zicato proposer propose` to run one proposal episode without a tournament, `zicato tournament run PARENT CHILD` to re-score an existing pair, `zicato proposer checkout` / `submit` to queue hand-written candidates as the next round. (`evolve` orchestrates these internally; there is no standalone `run`/`patch apply`.) |
 | `zicato-index-ops` | Rebuild the SQLite analytical index (`zicato repair index`, `zicato repair generations`) and run cross-run read-only SQL against `.zicato/index.db` — the schema table-by-table, including which measurements each table projects. |
 
 ### Strategy

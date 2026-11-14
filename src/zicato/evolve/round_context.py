@@ -177,6 +177,7 @@ def _build_candidate_history(
                     patch_text=patch_text,
                     scalar_score_delta=exp.outcome.scalar_score_delta,
                     is_placebo=hyp.core_idea.startswith(PLACEBO_HYPOTHESIS_MARKER),
+                    source=exp.source,
                 )
             )
         if not records:
@@ -231,6 +232,11 @@ def _build_recombination_pair(
             if gid == parent_id or len(exp.recombined_from) == 2:
                 continue
             if exp.outcome is None or exp.outcome.tournament_decision != "rejected":
+                continue
+            if exp.source == "operator":
+                # A merge copies both parents' patches and core ideas into a
+                # candidate the proposer and its critic read, so an operator's
+                # candidate is never a parent.
                 continue
             if len(pool) < RECOMBINE_POOL_MAX:
                 pool.append(exp)
@@ -513,8 +519,10 @@ def _build_calibration_summary(
             except Exception as exc:  # noqa: BLE001 — unreadable record: skip
                 log.debug("calibration: record %s/%s unreadable (%s)", epoch_id, gid, exc)
                 continue
-            if exp.outcome is None:
-                continue  # only settled hypotheses can be graded
+            if exp.outcome is None or exp.source == "operator":
+                # Only settled hypotheses can be graded, and the record grades
+                # the proposer's own predictions.
+                continue
             matches, predictions = grades_by_gid.get(exp.generation_id, (0, 0))
             hyp = exp.hypothesis
             claims.append(

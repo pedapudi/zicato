@@ -195,6 +195,34 @@ EXPERIMENT_MEMORY_MAX_ENTRIES = 12
 PLACEBO_HYPOTHESIS_MARKER = "[placebo:random-baseline]"
 
 
+ExperimentSource = Literal["proposer", "operator"]
+
+
+@dataclass(frozen=True, slots=True)
+class OperatorProvenance:
+    """Who submitted an operator candidate.
+
+    An operator candidate enters a round through ``zicato proposer submit``
+    instead of a proposal episode. Its parent is the champion its author
+    copied: a round refuses a candidate that edits any other generation.
+    ``holdout_access`` is the author's own statement of whether they could
+    read holdout results. It is a recorded declaration, and nothing reads it
+    to decide anything. ``queue_id`` names the queued round, so a restarted
+    round can see that the item was already minted.
+
+    An operator can read what the proposer may not: holdout results, board
+    entry ids, task text. So nothing an operator wrote as free text reaches
+    the proposer or its critic. :attr:`Experiment.source` is the one
+    predicate every consumer of experiments reads to tell the two sources
+    apart.
+    """
+
+    author: str
+    queue_id: str
+    submitted_at: str
+    holdout_access: bool
+
+
 @dataclass(frozen=True, slots=True)
 class PriorExperiment:
     """One prior experiment as surfaced to the proposer's memory section.
@@ -256,6 +284,14 @@ class PriorExperiment:
         a direction and a magnitude bucket for one metric, never its values,
         and covers the measured predictions plus at most three unpredicted
         metrics that moved by a medium or large amount.
+    source:
+        ``"operator"`` for a candidate that ``zicato proposer submit``
+        queued, else ``"proposer"``. The memory section marks an operator
+        entry, so the proposer can tell its own history from an operator's.
+        An operator entry never carries ``core_idea`` or
+        ``prediction_accuracy``, whatever its constructor was given: the
+        text is operator-authored, and the band grades the proposer's own
+        predictions.
     """
 
     generation_id: str
@@ -273,6 +309,13 @@ class PriorExperiment:
     train_entries: int | None = None
     predicted_movements: tuple[ExpectedMetricMovement, ...] = ()
     realised_movements: tuple[ExpectedMetricMovement, ...] = ()
+    source: ExperimentSource = "proposer"
+
+    def __post_init__(self) -> None:
+        if self.source == "operator":
+            object.__setattr__(self, "core_idea", "")
+            object.__setattr__(self, "prediction_accuracy", None)
+            object.__setattr__(self, "predicted_movements", ())
 
 
 @dataclass(frozen=True, slots=True)
@@ -333,3 +376,12 @@ class Experiment:
     #: parse the ``[recombined]`` display prefix on ``hypothesis.core_idea``.
     #: An on-disk record without the key reads back as ``()``.
     recombined_from: tuple[str, ...] = ()
+    #: Provenance of an operator candidate, or ``None`` for a proposer
+    #: candidate. The journal writer omits the key when it is ``None``, so a
+    #: proposer ``experiment.json`` carries no operator key at all.
+    operator: OperatorProvenance | None = None
+
+    @property
+    def source(self) -> ExperimentSource:
+        """Who wrote the candidate: the proposer, or an operator."""
+        return "proposer" if self.operator is None else "operator"

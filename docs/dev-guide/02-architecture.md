@@ -441,7 +441,7 @@ judge_only)` — the board-level meta rides everywhere the board goes — and
 frozen contract view.
 
 One subtlety computed right here and threaded far:
-`_declared_custom_judge_names(board, weights)` — the union of every
+`declared_custom_judge_names(board, weights)` — the union of every
 `JudgeSpec.name` on every entry plus every `per_judge_weights` key. A
 custom judge emits under the single `"custom"` drift kind on the
 goldfive side, but a proposer hypothesis may still target it as a
@@ -730,7 +730,7 @@ envelope argument written down. The fields as `_propose_child` populates them
 | `process_exemplars` | `_render_process_exemplars_block` | opt-in; mechanically redacted; `""` = omit |
 | `prior_experiments` | `_load_prior_experiments` (+ in-flight siblings on the field path) | banded Δscalar under restriction; capped at 12 |
 | `mutation_track_records` | `_load_mutation_track_records` (index; best-effort `{}`) | per-mutation-point fertility counts — no entries |
-| `custom_judge_names` | `_declared_custom_judge_names` | names only |
+| `custom_judge_names` | `declared_custom_judge_names` | names only |
 | `metric_priorities` | `build_metric_priorities` + `render_metric_priorities_block` | banded priorities; raw weights never cross |
 | `genealogy`, `recombine_pair` | `_build_candidate_history` (opt-in) | lineage summaries and a parent pair — no entries |
 | `calibration` | `_build_calibration_summary` (opt-in) | banded, aggregate counts of the proposer's own past predictions |

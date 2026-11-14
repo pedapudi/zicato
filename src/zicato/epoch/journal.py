@@ -27,6 +27,7 @@ from zicato.core.types import (
     HypothesisSpec,
     MatchOutcome,
     MetricMovementActual,
+    OperatorProvenance,
     OutcomeRecord,
     Patch,
 )
@@ -123,6 +124,7 @@ def render_journal_section(body: dict[str, Any]) -> str:
         body["proposed_at"],
         _hypothesis_from_dict(body["hypothesis"]),
         _outcome_from_dict(body["outcome"]),
+        _operator_from_dict(body.get("operator")),
     )
 
 
@@ -131,12 +133,14 @@ def _journal_section(
     proposed_at: str,
     hypothesis: HypothesisSpec,
     outcome: OutcomeRecord | None,
+    operator: OperatorProvenance | None = None,
 ) -> str:
     """Render one journal section in canonical markdown form.
 
     Format:
         ## v{N} — {first line of core_idea}
         **proposed_at**: {ts}
+        **source**: operator {author}; holdout access: yes|no (operator only)
         **modulating**: id1, id2, ...
         **core_idea**: {full core_idea — only when it spans >1 line}
         **why**: {full why}
@@ -159,6 +163,9 @@ def _journal_section(
     lines.append(f"## {label} — {heading}")
     lines.append("")
     lines.append(f"**proposed_at**: {proposed_at}")
+    if operator is not None:
+        access = "yes" if operator.holdout_access else "no"
+        lines.append(f"**source**: operator {operator.author}; holdout access: {access}")
     if hypothesis.modulating:
         lines.append("**modulating**: " + ", ".join(hypothesis.modulating))
     else:
@@ -184,6 +191,7 @@ def render_journal(experiments: Iterable[Experiment]) -> str:
             experiment.proposed_at,
             experiment.hypothesis,
             experiment.outcome,
+            experiment.operator,
         )
         for experiment in experiments
         if experiment.generation_id != "v0"
@@ -258,6 +266,18 @@ def _hypothesis_from_dict(d: dict[str, Any]) -> HypothesisSpec:
         if not m["metric_name"]:
             raise ValueError("prediction must name a metric")
     return hypothesis
+
+
+def _operator_from_dict(d: dict[str, Any] | None) -> OperatorProvenance | None:
+    """Decode operator provenance; an absent key means a proposer candidate."""
+    if d is None:
+        return None
+    _complete_fields(d, OperatorProvenance)
+    operator = authored_dataclass_from_json(OperatorProvenance, d, path="operator")
+    for key in ("author", "queue_id", "submitted_at"):
+        if not d[key]:
+            raise ValueError(f"operator.{key} must not be empty")
+    return operator
 
 
 def _outcome_from_dict(d: dict[str, Any] | None) -> OutcomeRecord | None:
@@ -388,6 +408,10 @@ def experiment_body(experiment: Experiment) -> dict[str, Any]:
     # of its two rejected parents; the reader defaults absent → ().
     if experiment.recombined_from:
         body["recombined_from"] = list(experiment.recombined_from)
+    # Operator provenance: a conditional key too, emitted only for a candidate
+    # that ``zicato proposer submit`` queued. A proposer record is unchanged.
+    if experiment.operator is not None:
+        body["operator"] = asdict(experiment.operator)
     return body
 
 
@@ -572,6 +596,9 @@ def _accepted_body(
             or any(not isinstance(x, str) for x in body["recombined_from"])
         ):
             raise ValueError("recombined_from must be a list of generation identifiers")
+        if "operator" in body and not isinstance(body["operator"], dict):
+            raise ValueError("operator must be an object")
+        _operator_from_dict(body.get("operator"))
         _hypothesis_from_dict(body["hypothesis"])
         _outcome_from_dict(body["outcome"])
     except (AttributeError, KeyError, TypeError, ValueError) as exc:
@@ -656,6 +683,7 @@ def _experiment_from_body(
         outcome=_outcome_from_dict(body["outcome"]),
         round_index=body["round_index"],
         recombined_from=tuple(body.get("recombined_from", ())),
+        operator=_operator_from_dict(body.get("operator")),
     )
 
 
