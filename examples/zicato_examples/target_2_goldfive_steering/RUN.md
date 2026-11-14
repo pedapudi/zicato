@@ -288,11 +288,11 @@ python -m zicato.cli epoch close --workspace .zicato
 This writes:
 
 * `.zicato/epochs/{epoch}/analysis.md` — a markdown narrative of the
-  epoch. When no evaluation model runs the analysis pass, the close
-  step writes a short stub that can be regenerated later.
-* `.zicato/epochs/{epoch}/analysis.html` — self-contained HTML report
-  with a lineage SVG (v0 -> v1 -> v2 boxes connected by colored
-  edges), a score-trajectory chart, and per-experiment cards.
+  epoch, with the lineage, the score trajectory, and each generation's
+  hypothesis and patches as tables. When no evaluation model runs the
+  analysis pass, the close step writes a short stub that can be
+  regenerated later. The dashboard's Publication view renders it beside
+  interactive figures.
 
 ## 7. Running against real models
 

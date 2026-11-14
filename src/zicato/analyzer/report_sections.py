@@ -18,16 +18,14 @@ here too.
 The renderers are pure: identical inputs yield byte-identical output,
 which keeps the report diffable round-to-round and the tests stable.
 
-Section numbers and table / figure numbers are NOT written here:
-headings emit only their textual title, table captions use the
-``Caption:`` marker and figures use the ``<!-- FIGURE:name -->``
-anchor. The HTML renderer (:mod:`zicato.analyzer.report`) auto-numbers
-``h2 / h3 / h4``, tables, and figures so a section's number is always
-its absolute position in the assembled document.
+The output is plain Markdown with pipe tables. Headings carry only their
+textual title and a table is introduced by a ``Caption:`` line, so nothing
+here depends on the section's position in the assembled document.
 """
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from zicato.analyzer.report_data import (
@@ -58,30 +56,20 @@ def _fmt_num(value: float) -> str:
 
 
 def render_title_block(data: EpochReportData) -> str:
-    """Render the report title plus the paper-style masthead block.
+    """Render the report title plus its masthead.
 
-    The masthead reads like an academic-paper cover: a small-caps eyebrow
-    naming the artifact, the epoch as the title, a thin rule, then a
-    structured metadata row covering the contract coordinates (epoch id,
-    contract hash, generation span, status, attempt counts). The HTML
-    renderer turns the structured metadata into a multi-column block
-    beneath the title via the ``<!-- META -->`` marker; each labelled
-    pair becomes one stacked label/value cell so the cover reads as a
-    real paper masthead rather than a flat sentence.
+    The masthead reads like an academic-paper cover: a line naming the
+    artifact, the epoch as the title, then a list of labelled metadata
+    covering the contract coordinates (epoch id, contract hash, generation
+    span, status, attempt counts).
     """
     lines: list[str] = []
-    # The eyebrow marker tells the HTML renderer to emit a small-caps
-    # label above the title. Invisible in the markdown source.
-    lines.append("<!-- EYEBROW -->")
     lines.append("Zicato improvement campaign · epoch analysis report")
     lines.append("")
     lines.append(f"# {data.epoch_name}")
     lines.append("")
     status = "closed" if data.closed else "in progress"
-    # The masthead metadata is rendered as labelled cells (one per
-    # entry). Each entry is written as a ``**Label**: value`` pair on
-    # its own line — the renderer splits these into stacked
-    # label-over-value cells inside a CSS-grid metadata block.
+    # Each masthead entry is a ``**Label**: value`` pair, one list item each.
     meta_bits: list[str] = [
         f"**Epoch id**: `{data.epoch_id}`",
         f"**Status**: {status}",
@@ -121,11 +109,7 @@ def render_title_block(data: EpochReportData) -> str:
         meta_bits.append(f"**Generation span**: {data.span_start}")
     if data.closed and data.closed_at:
         meta_bits.append(f"**Closed**: {data.closed_at}")
-    # The ``<!-- META -->`` marker tells the HTML renderer to wrap the
-    # following paragraph in a paper-style masthead block instead of an
-    # ordinary ``<p>``. The marker is invisible in the markdown source.
-    lines.append("<!-- META -->")
-    lines.append("  \n".join(meta_bits))
+    lines.extend(f"- {bit}" for bit in meta_bits)
     # The operator-supplied goal sits directly under the masthead so
     # the *why* of the epoch is the first thing a reader sees. Empty
     # goals are rendered as "(no goal recorded)" so the report shape
@@ -289,9 +273,8 @@ def render_methodology_section(data: EpochReportData) -> str:
     fixed text describing zicato's champion-vs-challenger contract,
     parameterised only by the recorded promotion margin.
 
-    Section numbers are not emitted here — the HTML renderer
-    auto-numbers ``h2 / h3`` so the report reads as one consistently
-    numbered document regardless of which sections happen to be present.
+    Section numbers are not emitted here, so the report reads the same
+    regardless of which sections happen to be present.
     """
     parts: list[str] = []
     parts.append("## Methodology")
@@ -375,13 +358,62 @@ def _render_mutation_surface_table(surface: tuple[dict[str, object], ...]) -> st
     if not surface:
         return "_No mutation-surface snapshot was recorded for this epoch._"
     lines: list[str] = []
-    lines.append("| mutation id | kind | file |")
-    lines.append("| --- | --- | --- |")
+    lines.append("| mutation id | kind | file | lines |")
+    lines.append("| --- | --- | --- | --- |")
     for m in surface:
         mid = _esc_cell(str(m.get("id", "")))
         kind = _esc_cell(str(m.get("kind", "")))
         mfile = _esc_cell(str(m.get("file", "")))
-        lines.append(f"| `{mid}` | {kind} | `{mfile}` |")
+        start, end = m.get("line_start") or m.get("lineno"), m.get("line_end")
+        span = f"{start}-{end}" if start and end else (str(start) if start else "")
+        lines.append(f"| `{mid}` | {kind} | `{mfile}` | {span} |")
+    return "\n".join(lines)
+
+
+def _decision_word(g: GenerationView) -> str:
+    """The generation's outcome as one word; an undecided one reads ``pending``."""
+    return "baseline" if g.is_baseline else (g.decision or "pending")
+
+
+def _table_head(header: list[str]) -> list[str]:
+    """The header and delimiter rows of a pipe table."""
+    return ["| " + " | ".join(header) + " |", "| " + " | ".join("---" for _ in header) + " |"]
+
+
+def render_mutation_impact_table(data: EpochReportData) -> str:
+    """Render mutation site x challenger generation, marking each patched site.
+
+    Rows are the sites at least one challenger patched, in first-touched
+    order; columns are the challengers in lineage order, headed by their
+    outcome. A site no challenger touched is dropped.
+    """
+    challengers = [g for g in data.generations if not g.is_baseline]
+    if not challengers:
+        return "_No challengers yet — the mutation-impact matrix is empty._"
+    touched = [
+        {str(p.get("mutation_id", "")) for p in g.patches if p.get("mutation_id")}
+        for g in challengers
+    ]
+    sites = list(dict.fromkeys(mid for ids in touched for mid in sorted(ids)))
+    if not sites:
+        return "_No patches touched the mutation surface yet._"
+    lines = _table_head(
+        ["mutation id", *[f"{g.generation_id} ({_decision_word(g)})" for g in challengers]]
+    )
+    for mid in sites:
+        cells = [f"`{_esc_cell(mid)}`", *["patched" if mid in ids else "" for ids in touched]]
+        lines.append("| " + " | ".join(cells) + " |")
+    return "\n".join(lines)
+
+
+def render_lineage_table(data: EpochReportData) -> str:
+    """Render each generation beside its parent and its outcome."""
+    if not data.generations:
+        return "_No generations have been recorded for this epoch._"
+    lines = _table_head(["gen", "parent", "decision"])
+    for g in data.generations:
+        parent = "—" if g.is_baseline or not g.parent_generation_id else g.parent_generation_id
+        lines.append(f"| `{g.generation_id}` | {parent} | {_decision_word(g)} |")
     return "\n".join(lines)
 
 
@@ -391,9 +423,7 @@ def render_approach_section(data: EpochReportData) -> str:
     Covers the mutation surface (the editable points the proposer was
     offered) and a per-generation log of the proposer's hypothesis and
     the patch it applied. The interpretive prose is left to the LLM
-    layer; this is the factual record. The HTML renderer auto-numbers
-    sections and figures, so this writer only emits the textual heading
-    plus the figure / table anchors.
+    layer; this is the factual record.
     """
     parts: list[str] = []
     parts.append("## Approach & Implementation")
@@ -409,10 +439,6 @@ def render_approach_section(data: EpochReportData) -> str:
         "an id drawn from this surface."
     )
     parts.append("")
-    parts.append("Caption: Editable mutation points the proposer was offered this round.")
-    parts.append("")
-    parts.append("<!-- FIGURE:mutation-surface -->")
-    parts.append("")
     parts.append("Caption: Mutation surface — full enumeration.")
     parts.append("")
     parts.append(_render_mutation_surface_table(data.mutation_surface))
@@ -424,8 +450,8 @@ def render_approach_section(data: EpochReportData) -> str:
         "touched and the tournament outcome of that round. Rows are "
         "mutation sites the campaign has actually addressed (untouched "
         "sites are dropped); columns are challenger generations in lineage "
-        "order. A filled cell marks a patch at that site; the cell colour "
-        "is the round's outcome — promoted, rejected, or incomplete."
+        "order, each headed by its round's outcome. A `patched` cell marks "
+        "a patch at that site."
     )
     parts.append("")
     parts.append(
@@ -433,19 +459,19 @@ def render_approach_section(data: EpochReportData) -> str:
         "campaign, by site × generation × outcome."
     )
     parts.append("")
-    parts.append("<!-- FIGURE:mutation-impact-matrix -->")
+    parts.append(render_mutation_impact_table(data))
     parts.append("")
-    parts.append("### Lineage diagram")
+    parts.append("### Lineage")
     parts.append("")
     parts.append(
-        "The lineage diagram tracks one champion-vs-challenger lineage. "
-        "The promoted spine runs across the centerline; rejected and "
-        "deferred branches sit below."
+        "The lineage tracks one champion-vs-challenger line of descent. "
+        "Baseline and promoted generations form the spine; rejected and "
+        "deferred generations branch off the parent they challenged."
     )
     parts.append("")
-    parts.append("Caption: Lineage diagram — promoted spine, rejected and deferred branches.")
+    parts.append("Caption: Lineage — each generation, its parent, and its outcome.")
     parts.append("")
-    parts.append("<!-- FIGURE:lineage -->")
+    parts.append(render_lineage_table(data))
     parts.append("")
     parts.append("### Per-generation hypotheses and patches")
     parts.append("")
@@ -618,9 +644,7 @@ def render_drift_movement_table(data: EpochReportData) -> str:
         rows.append((kind, seq, net))
     rows.sort(key=lambda r: (-abs(r[2]), r[0]))
     header = ["drift kind", *[g.generation_id for g in chain], "net change"]
-    lines: list[str] = []
-    lines.append("| " + " | ".join(header) + " |")
-    lines.append("| " + " | ".join("---" for _ in header) + " |")
+    lines = _table_head(header)
     for kind, seq, net in rows:
         cells = [f"`{_esc_cell(kind)}`"]
         cells.extend("" if v is None else _fmt_num(v) for v in seq)
@@ -673,9 +697,7 @@ def render_per_judge_attribution_table(data: EpochReportData) -> str:
     sorted_names = sorted(judge_names, key=lambda n: (-row_totals[n], n))
 
     header = ["judge", *[g.generation_id for g in gens], "total"]
-    lines: list[str] = []
-    lines.append("| " + " | ".join(header) + " |")
-    lines.append("| " + " | ".join("---" for _ in header) + " |")
+    lines = _table_head(header)
     for name in sorted_names:
         cells: list[str] = [f"`{_esc_cell(name)}`"]
         for i in range(len(gens)):
@@ -717,9 +739,7 @@ def render_per_board_outcomes(data: EpochReportData) -> str:
     if not present:
         return "_Cached generation scores carry no recognised aggregate keys._"
     header = ["aggregate", *[g.generation_id for g in scored]]
-    lines: list[str] = []
-    lines.append("| " + " | ".join(header) + " |")
-    lines.append("| " + " | ".join("---" for _ in header) + " |")
+    lines = _table_head(header)
     for key in present:
         cells = [f"`{key}`"]
         for g in scored:
@@ -729,14 +749,226 @@ def render_per_board_outcomes(data: EpochReportData) -> str:
     return "\n".join(lines)
 
 
+# Magnitude words a hypothesis attaches to an expected drift movement,
+# projected onto the rate axis the realised drift-loss Δ is read on. The
+# values are coarse: the prediction is a category rather than a measurement.
+_MAGNITUDE_MAP = {"small": 0.05, "medium": 0.10, "large": 0.20}
+_DIRECTION_SIGN = {
+    "decrease": -1,
+    "decrease_or_neutral": -1,
+    "increase": 1,
+    "increase_or_neutral": 1,
+}
+
+
+def _parse_expected_pass_rate_delta(text: str) -> float | None:
+    """Coerce a textual ``expected_pass_rate_delta`` to a midpoint float.
+
+    The proposer writes free-form predictions like ``"+0.05 to +0.15"`` or
+    ``"-0.10"``. A single signed number is returned as is, a range as its
+    midpoint, and text carrying no number as ``None``.
+    """
+    if not text or not isinstance(text, str):
+        return None
+    values = [float(n) for n in re.findall(r"[+-]?\d+\.\d+|[+-]?\d+", text)]
+    if not values:
+        return None
+    return (values[0] + values[1]) / 2.0 if len(values) >= 2 else values[0]
+
+
+def _predicted_drift_delta_sum(g: GenerationView) -> float | None:
+    """Project the proposer's expected drift movements to a single Δ scalar.
+
+    Sums the signed magnitude of every expected drift movement: a
+    "decrease / medium" contributes -0.10, an "increase / small" +0.05.
+    Returns ``None`` when the hypothesis predicted no directional drift
+    movement, so the table can say "no prediction" rather than zero.
+    """
+    total = 0.0
+    seen = False
+    for mv in g.expected_metric_movements:
+        if not mv["metric_name"].startswith("drift:"):
+            continue
+        amount = _MAGNITUDE_MAP[mv["magnitude"]]
+        sign = _DIRECTION_SIGN.get(mv["direction"], 0)
+        if sign == 0:
+            continue
+        total += sign * amount
+        seen = True
+    return total if seen else None
+
+
+def _hit_or_miss(pred: float | None, act: float | None) -> str:
+    """``hit`` when prediction and outcome agree in direction, else ``miss``.
+
+    Two values that are both about zero agree. Empty when there is no
+    prediction to score.
+    """
+    if pred is None or act is None:
+        return ""
+    if abs(pred) < 1e-6 and abs(act) < 1e-6:
+        return "hit"
+    return "hit" if (pred >= 0) == (act >= 0) else "miss"
+
+
+def render_hypothesis_outcome_table(data: EpochReportData) -> str:
+    """Render each decided challenger's predicted Δ beside its actual Δ.
+
+    Rejected and deferred rounds are included: the prediction was made, so
+    the pair is reported. A missing prediction reads as a dash.
+    """
+    rounds = [
+        g for g in data.generations if not g.is_baseline and g.decision not in ("pending", "")
+    ]
+    if not rounds:
+        return "_No scored challengers to compare against predictions._"
+    lines = _table_head(
+        [
+            "gen",
+            "decision",
+            "predicted Δpass_rate",
+            "actual Δpass_rate",
+            "pass-rate call",
+            "predicted Δdrift_loss",
+            "actual Δdrift_loss",
+            "drift call",
+        ]
+    )
+    for g in rounds:
+        cells = [f"`{g.generation_id}`", g.decision]
+        for pred, act in (
+            (_parse_expected_pass_rate_delta(g.expected_pass_rate_delta), g.pass_rate_delta),
+            (_predicted_drift_delta_sum(g), g.drift_loss_delta),
+        ):
+            cells.append("—" if pred is None else _fmt_delta(pred))
+            cells.append(_fmt_delta(act))
+            cells.append(_hit_or_miss(pred, act) or "—")
+        lines.append("| " + " | ".join(cells) + " |")
+    return "\n".join(lines)
+
+
+def _opt_float(value: object) -> float | None:
+    """Coerce ``value`` to ``float``, preserving absence as ``None``."""
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
+def render_challenger_drift_table(data: EpochReportData) -> str:
+    """Render every challenger's drift-kind movements, whatever its outcome.
+
+    One row per (challenger, drift kind) with the from-rate, the to-rate
+    and the signed Δ. Unlike :func:`render_drift_movement_table` this
+    includes rejected and deferred challengers.
+    """
+    lines = _table_head(["gen", "decision", "drift kind", "from", "to", "Δ"])
+    for g in data.generations:
+        if g.is_baseline:
+            continue
+        for mv in g.metric_movements:
+            kind = str(mv.get("metric_name", "")).strip()
+            if not kind.startswith("drift:"):
+                continue
+            fr, to = _opt_float(mv.get("from_value")), _opt_float(mv.get("to_value"))
+            lines.append(
+                f"| `{g.generation_id}` | {g.decision} "
+                f"| `{_esc_cell(kind.removeprefix('drift:'))}` "
+                f"| {'—' if fr is None else _fmt_num(fr)} "
+                f"| {'—' if to is None else _fmt_num(to)} "
+                f"| {'—' if fr is None or to is None else _fmt_delta(to - fr)} |"
+            )
+    if len(lines) == 2:
+        return "_No drift movements recorded yet._"
+    return "\n".join(lines)
+
+
+_ENTRY_DELTA_KEYS = ("scalar_delta", "delta", "scalar_score_delta")
+_ENTRY_LOSS_KEYS = ("drift_loss", "loss", "loss_mean")
+
+
+def _entry_records(g: GenerationView, entry_id: str) -> list[dict[str, Any]]:
+    """One board entry's cached records, under ``entries`` then ``per_entry``.
+
+    The tournament runner has cached per-entry results under several
+    shapes: ``entries`` keyed by id, and ``per_entry`` either keyed by id
+    or as a list of rows naming their ``entry_id``.
+    """
+    records: list[Any] = []
+    for key in ("entries", "per_entry"):
+        block = g.gen_score.get(key)
+        if isinstance(block, dict):
+            records.append(block.get(entry_id))
+        elif isinstance(block, list) and key == "per_entry":
+            records.extend(
+                r for r in block if isinstance(r, dict) and str(r.get("entry_id", "")) == entry_id
+            )
+    return [r for r in records if isinstance(r, dict)]
+
+
+def _first_float(records: list[dict[str, Any]], keys: tuple[str, ...]) -> float | None:
+    """The first of ``keys`` any record carries as a number, record by record."""
+    for record in records:
+        for key in keys:
+            value = _opt_float(record[key]) if key in record else None
+            if value is not None:
+                return value
+    return None
+
+
+def _per_entry_delta_against(
+    g: GenerationView, parent: GenerationView | None, entry_id: str
+) -> float | None:
+    """Resolve one challenger x board-entry Δ scalar.
+
+    A cached per-entry delta is used when present. Otherwise the cell is
+    the challenger's absolute per-entry drift loss minus the parent
+    champion's, which is the shape the orchestrator currently caches.
+    ``None`` means neither reading is available, so the cell is reported
+    as having no data rather than as zero.
+    """
+    cached = _first_float(_entry_records(g, entry_id), _ENTRY_DELTA_KEYS)
+    if cached is not None or parent is None:
+        return cached
+    chal = _first_float(_entry_records(g, entry_id)[::-1], _ENTRY_LOSS_KEYS)
+    champ = _first_float(_entry_records(parent, entry_id)[::-1], _ENTRY_LOSS_KEYS)
+    return None if chal is None or champ is None else chal - champ
+
+
+def render_per_board_delta_table(data: EpochReportData) -> str:
+    """Render board entry x challenger generation per-entry Δ scalar.
+
+    Rows are board entries in board order and columns are challengers in
+    lineage order. A column whose round reused a cached champion
+    evaluation is headed ``(cached)``.
+    """
+    challengers = [g for g in data.generations if not g.is_baseline]
+    if not data.board_entries or not challengers:
+        return "_No per-board outcomes recorded yet._"
+    by_id = {g.generation_id: g for g in data.generations}
+    header = ["board entry"]
+    for g in challengers:
+        cached = any(g.gen_score.get(k) for k in ("champion_cached", "cached", "champion_reused"))
+        header.append(f"{g.generation_id} (cached)" if cached else g.generation_id)
+    lines = _table_head(header)
+    for e in data.board_entries:
+        cells = [f"`{_esc_cell(e.id)}`"]
+        for g in challengers:
+            value = _per_entry_delta_against(g, by_id.get(g.parent_generation_id), e.id)
+            cells.append("—" if value is None else _fmt_delta(value))
+        lines.append("| " + " | ".join(cells) + " |")
+    return "\n".join(lines)
+
+
 def render_results_section(data: EpochReportData) -> str:
     """Render the full ``## Experimental Results`` section.
 
-    Entirely deterministic — every table and figure is templated from
-    the structured workspace data. Sub-sections: the scalar trajectory
-    (figure + table), the per-generation drift-kind movements (figure +
-    table), the per-board outcomes heatmap, and the cached aggregate
-    generation scores. The HTML renderer auto-numbers everything.
+    Entirely deterministic — every table is templated from the
+    structured workspace data. Sub-sections: the scalar trajectory, the
+    proposer's predictions beside the outcomes, the drift-kind movements
+    per challenger and along the promoted lineage, the per-judge
+    attribution, the per-board-entry outcomes, and the cached aggregate
+    generation scores.
     """
     parts: list[str] = []
     parts.append("## Experimental Results")
@@ -749,14 +981,6 @@ def render_results_section(data: EpochReportData) -> str:
         "generation's `Δscalar`. A negative `Δscalar` is an "
         "improvement (lower loss)."
     )
-    parts.append("")
-    parts.append(
-        "Caption: Scalar (loss — lower is better) across generations. "
-        "Promoted points connect along the promoted spine; rejected "
-        "points sit off-spine."
-    )
-    parts.append("")
-    parts.append("<!-- FIGURE:score-trajectory -->")
     parts.append("")
     parts.append("Caption: Per-generation scalar deltas with proposer's one-line idea.")
     parts.append("")
@@ -771,41 +995,38 @@ def render_results_section(data: EpochReportData) -> str:
     parts.append("### Hypothesis vs outcome")
     parts.append("")
     parts.append(
-        "For every completed challenger, the figure pairs the proposer's "
-        "PREDICTED Δ (outlined, dashed) with the tournament's ACTUAL Δ "
-        "(filled, decision-coloured) on both pass rate and drift loss. "
+        "For every completed challenger, the table pairs the proposer's "
+        "PREDICTED Δ with the tournament's ACTUAL Δ on both pass rate and "
+        "drift loss. "
         "Predictions are projected onto the same axis the realised Δ "
         "occupies: a textual `expected_pass_rate_delta` like "
         '`"+0.05 to +0.15"` becomes its midpoint; an '
         "`expected_metric_movements` entry's direction and magnitude bucket "
         '(e.g. "decrease / moderate") becomes a signed magnitude on the '
-        "drift axis. The proposer's hit rate is the share of pairs that "
-        "point the same direction with comparable magnitude."
+        "drift axis. A pair is a `hit` when prediction and outcome point "
+        "the same direction (or both are zero) and a `miss` when they "
+        "disagree."
     )
     parts.append("")
     parts.append(
         "Caption: Proposer hypothesis vs tournament outcome — pass-rate "
-        "and drift-loss Δ, predicted (outlined) vs actual (filled)."
+        "and drift-loss Δ, predicted vs actual."
     )
     parts.append("")
-    parts.append("<!-- FIGURE:hypothesis-vs-outcome -->")
+    parts.append(render_hypothesis_outcome_table(data))
     parts.append("")
     parts.append("### Drift-kind movements")
     parts.append("")
     parts.append(
         "For every challenger round that produced drift movements, the "
-        "figure pairs the from-rate (top, light) with the to-rate "
-        "(bottom, solid) for each drift kind and labels the signed "
-        "rate Δ. The accompanying table threads the per-kind rates "
-        "along the promoted lineage."
+        "first table pairs the from-rate with the to-rate for each drift "
+        "kind and states the signed rate Δ. The second table threads the "
+        "per-kind rates along the promoted lineage."
     )
     parts.append("")
-    parts.append(
-        "Caption: Per-generation drift-kind rate movements. "
-        "Each panel pairs from-rate vs. to-rate for one challenger."
-    )
+    parts.append("Caption: Per-challenger drift-kind rate movements, from-rate vs to-rate.")
     parts.append("")
-    parts.append("<!-- FIGURE:drift-movements -->")
+    parts.append(render_challenger_drift_table(data))
     parts.append("")
     parts.append("Caption: Per-drift-kind rate movements along the promoted lineage.")
     parts.append("")
@@ -834,18 +1055,18 @@ def render_results_section(data: EpochReportData) -> str:
     parts.append("### Per-board outcomes")
     parts.append("")
     parts.append(
-        "Each cell encodes the per-entry Δ scalar of the challenger "
-        "against the round's champion (red = worse, grey = ~flat, "
-        "green = better). Columns marked 'cached' reused the previous "
+        "Each cell is the per-entry Δ scalar of the challenger against "
+        "the round's champion; a positive value is worse and a negative "
+        "one better. Columns marked 'cached' reused the previous "
         "champion's evaluation rather than re-running it."
     )
     parts.append("")
     parts.append(
         "Caption: Per-board entry Δ scalar across challenger generations. "
-        "Hatched cells mark entries with no per-entry breakdown recorded."
+        "A dash marks an entry with no per-entry breakdown recorded."
     )
     parts.append("")
-    parts.append("<!-- FIGURE:per-board-heatmap -->")
+    parts.append(render_per_board_delta_table(data))
     parts.append("")
     parts.append("### Aggregate generation scores")
     parts.append("")
@@ -869,8 +1090,7 @@ def _render_campaign_callout(data: EpochReportData) -> str:
     The callout sits in the Experimental Results section after the score
     trajectory and highlights the headline number the operator cares
     about: the cumulative scalar so far, and the promoted/attempted
-    ratio. It uses the ``<!-- CALLOUT:LABEL -->`` marker the HTML
-    renderer turns into a sidenote-style block.
+    ratio. It opens with a bold ``KEY OBSERVATION`` label.
 
     The number is :attr:`~EpochReportData.final_scalar`, which is
     champion-anchored — so an epoch that promoted nothing is headlined
@@ -885,14 +1105,13 @@ def _render_campaign_callout(data: EpochReportData) -> str:
         return ""
     final = data.final_scalar
     direction = "improved" if final < 0 else ("regressed" if final > 0 else "held")
-    bits: list[str] = []
-    bits.append("<!-- CALLOUT:KEY OBSERVATION -->")
     sentence = (
+        "**KEY OBSERVATION.** "
         f"The promoted lineage's cumulative scalar has {direction} to "
         f"`{final:+.3f}` after {data.attempted} challenger "
         f"{'generation' if data.attempted == 1 else 'generations'} "
         f"({data.promoted} promoted, {data.rejected} rejected). "
-        f"A lower scalar is better; the trajectory figure plots the path."
+        f"A lower scalar is better; the trajectory table lists the path."
     )
     counterfactual = data.latest_rejected_scalar
     if data.promoted == 0 and counterfactual is not None:
@@ -903,8 +1122,7 @@ def _render_campaign_callout(data: EpochReportData) -> str:
             f" The most recent rejected challenger measured `{counterfactual:+.3f}`"
             f" — a path not taken."
         )
-    bits.append(sentence)
-    return "\n".join(bits)
+    return sentence
 
 
 # ---------------------------------------------------------------------------
@@ -946,9 +1164,8 @@ def render_statistical_integrity_section(data: EpochReportData) -> str:
             if getattr(r, "decision", "") == "promoted":
                 placebo_promoted += 1
     if placebo_promoted:
-        parts.append("<!-- CALLOUT:CRITICAL -->")
         parts.append(
-            f"A PLACEBO arm was PROMOTED in {placebo_promoted} "
+            f"**CRITICAL.** A PLACEBO arm was PROMOTED in {placebo_promoted} "
             f"{'round' if placebo_promoted == 1 else 'rounds'}. A placebo carries "
             "no real change, so a promotion means the gate crowned noise — treat "
             "every promotion this epoch as suspect until the floor is re-measured."
@@ -1042,12 +1259,8 @@ def _hypothesis_calibration(data: EpochReportData) -> tuple[int, int]:
     contributes one comparison; it is a HIT when the predicted direction
     matches the realised ``pass_rate_delta`` sign (a flat prediction hits a
     flat outcome). This is the same projection the hypothesis-vs-outcome
-    figure uses, reduced to a scalar calibration fraction.
+    table uses, reduced to a scalar calibration fraction.
     """
-    from zicato.analyzer.svg.hypothesis import (  # noqa: PLC0415
-        _parse_expected_pass_rate_delta,
-    )
-
     hits = 0
     total = 0
     for g in data.generations:
@@ -1130,8 +1343,7 @@ def render_threats_section(data: EpochReportData) -> str:
 
     Parameterised by the epoch's measurable scale — board size,
     generation count, judge coverage — so the caveats reflect the
-    actual run rather than boilerplate. Section numbers are added by
-    the HTML renderer's auto-numbering pass.
+    actual run rather than boilerplate.
     """
     n_entries = len(data.board_entries)
     n_judged = sum(1 for e in data.board_entries if e.judges)

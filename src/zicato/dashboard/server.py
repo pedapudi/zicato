@@ -286,14 +286,10 @@ def create_app(
         Route("/api/environment", handlers["api_environment"]),
         Route("/api/logs", handlers["api_logs"]),
         Route("/api/run-log", handlers["api_run_log"]),
-        # The two epoch documents served as themselves rather than as JSON.
+        # The epoch journal served as itself rather than as JSON.
         Route(
             "/api/epoch/{epoch_id}/journal.md",
             handlers["api_epoch_journal_md"],
-        ),
-        Route(
-            "/api/epoch/{epoch_id}/analysis.html",
-            handlers["api_epoch_analysis_html"],
         ),
         # Foe's static page for one proposal episode.
         Route(

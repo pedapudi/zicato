@@ -339,9 +339,9 @@ Before scheduling each round, in this order
    for all subsequent rounds.
 
 After each round, best-effort: the epoch-report refresh
-(`regenerate_in_progress_html`, which delegates to the analyzer's
-deterministic regeneration) so file:// readers see the latest lineage
-without the dashboard.
+(`regenerate_in_progress_report`, which delegates to the analyzer's
+deterministic regeneration) so readers of `analysis.md` see the latest
+lineage without the dashboard.
 
 ### 2.5 Teardown — the invocation's resource stack
 
@@ -1623,7 +1623,7 @@ policy carries defect tokens; the scripted proposal's first policy
    `round_closed` complete the log — 18 events, `seq` 1..18.
 6. **Epilogue.** `health/round_0.json` written (no CRITICAL findings —
    the planted defects differentiate, so `degenerate_scoring` stays
-   silent); `analysis.html` regenerates; the loop's reject streak
+   silent); `analysis.md` regenerates; the loop's reject streak
    resets; round 2 begins against champion `v1`.
 
 Round 2 is the negative control: the scripted proposer ADDS a token,

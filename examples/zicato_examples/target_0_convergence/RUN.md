@@ -144,7 +144,7 @@ $PY -m zicato.cli inspect mutations --workspace .zicato
 #    Dashboard: http://127.0.0.1:7892) — watch the bracket live.
 $PY -m zicato.cli evolve --workspace .zicato --rounds 3 --mode full
 
-# 6. Close the epoch to produce analysis.md / analysis.html.
+# 6. Close the epoch to produce analysis.md.
 $PY -m zicato.cli epoch close --workspace .zicato
 ```
 

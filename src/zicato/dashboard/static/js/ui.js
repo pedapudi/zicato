@@ -803,8 +803,11 @@ function inline(s) {
     else if (tok.startsWith('*')) out.push(el('em', { text: tok.slice(1, -1) }));
     else {
       const lm = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(tok);
-      if (lm) out.push(el('a', { class: 'dn-md-link', href: lm[2], text: lm[1] }));
-      else out.push(tok);
+      // Report and brief text can come from a model, so a link is emitted
+      // only for a scheme that cannot run script; anything else stays text.
+      if (lm && /^(https?:|mailto:|#|\/)/i.test(lm[2].trim())) {
+        out.push(el('a', { class: 'dn-md-link', href: lm[2].trim(), rel: 'noopener noreferrer', text: lm[1] }));
+      } else out.push(tok);
     }
     last = m.index + tok.length;
   }

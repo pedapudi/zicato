@@ -177,7 +177,6 @@ directory.
         round_{N}.json               # loop-health report, one per round (LOOP-HEALTH.md)
       analysis.md                    # epoch report; refreshed each round, prose added at close
       analysis.prose.json            # model-written report sections, preserved across refreshes
-      analysis.html                  # deterministic render of analysis.md
     {date}_epoch_after_board_edit/
       board.jsonl
       brief.md
@@ -190,7 +189,6 @@ directory.
         v1/
           ...
       analysis.md
-      analysis.html
 ```
 
 `snapshot/` exists only under the directory generation store. The default
@@ -528,10 +526,10 @@ The operator closes an epoch with `zicato epoch close [EPOCH_ID]`
 2. Runs the analysis pass (best-effort — only if an evaluation model is
    configured; otherwise publishes the deterministic report described in
    §5 above).
-3. Writes `analysis.md` and re-renders `analysis.html`.
+3. Writes `analysis.md`.
 
 To re-render an existing epoch's report against the current on-disk
-data, use `zicato repair report` (deterministic figures/tables
+data, use `zicato repair report` (deterministic tables
 always; `--no-llm` skips the prose pass). `zicato inspect telemetry`
 (re)runs the decision-telemetry analyzer for an epoch out of band.
 
@@ -545,64 +543,60 @@ WARNING: auto-closing previous epoch '2026-04-01_initial'
 
 The auto-close runs the same close path as `zicato epoch close`.
 
-### 5.2 The epoch report and its HTML companion
+### 5.2 The epoch report
 
-Each epoch directory holds one report in two forms: `analysis.md`, the
-markdown source, and `analysis.html`, a self-contained document with no
-external CSS, JavaScript, or images, so it renders the same over `file://`
-as it does through the dashboard.
+Each epoch directory holds one report, `analysis.md`: plain Markdown whose
+measured views are pipe tables, so it reads the same in an editor, in a
+Markdown viewer, and in the dashboard's Publication view, which renders it.
 
-Both are refreshed after every settled round, deterministically and with
+It is refreshed after every settled round, deterministically and with
 no LLM call: the data-bearing sections are re-templated from the current
 workspace data while any prose the evaluation LLM has already written is
 preserved verbatim, and mid-epoch the masthead carries a `LIVING DRAFT —
 through round N` stamp. The refresh is digest-gated — a round that moved
-no data rewrites neither file. At close the prose pass runs (§5 above),
+no data does not rewrite the file. At close the prose pass runs (§5 above),
 the full document is written, and the draft stamp goes away.
 
-`analysis.html` is `render_report_html` (`src/zicato/analyzer/report.py`)
-applied to the `analysis.md` beside it, whichever pass wrote that
-markdown. One renderer serves every lifecycle phase, so the document an
-operator has open does not change shape when the epoch closes, and the
-HTML cannot disagree with the markdown it accompanies. The figures —
-lineage, score trajectory, hypothesis against outcome, drift-kind
-movements, per-board outcomes — are inline SVG drawn from the same
-structured view the tables are templated from, so a chart and the table
-beside it cannot disagree either.
+One assembler (`src/zicato/analyzer/report.py`) writes the file in every
+lifecycle phase, so the document an operator has open does not change shape
+when the epoch closes. The measured views — lineage, score trajectory,
+hypothesis against outcome, drift-kind movements, per-board outcomes — are
+tables templated from one structured view. The analyzer draws no chart: the
+dashboard draws every chart of an epoch from the query layer.
 
 This gives the operator a current archival snapshot of the epoch at any
 moment, even mid-flight:
 
-| Property | `analysis.md` | `analysis.html` |
-|---|---|---|
-| Cadence | refreshed after every settled round; full render at close | re-rendered from `analysis.md` on every refresh |
-| Requires LLM? | for the prose sections, at close | no |
-| Persisted across `evolve` exits? | yes | yes |
-| Carries the closing-pass narrative? | after close | after close |
-| Suitable for `file://` opening mid-epoch? | yes | yes |
+| Property | `analysis.md` |
+|---|---|
+| Cadence | refreshed after every settled round; full render at close |
+| Requires LLM? | for the prose sections, at close |
+| Persisted across `evolve` exits? | yes |
+| Carries the closing-pass narrative? | after close |
+| Readable as a file mid-epoch? | yes |
 
 #### Relationship to the live dashboard
 
 The dashboard ([DASHBOARD.md](DASHBOARD.md)) is the **live view**
-of the in-flight epoch. `analysis.html` is the **archival
+of the in-flight epoch. `analysis.md` is the **archival
 snapshot** that persists across `evolve` exits.
 
 The two coexist intentionally:
 
 - During an `evolve`, the operator opens the dashboard URL for
-  the live view; `analysis.html` exists as the current snapshot
-  but the dashboard supersedes it.
+  the live view; its Publication view renders the current `analysis.md`
+  beside interactive figures.
 - Between `evolve` invocations (or after the epoch closes), the
   dashboard URL does not answer, because the supervisor has exited;
-  `analysis.html` is opened directly via `file://` for the
-  same data.
-- For sharing — sending a link to a teammate, attaching to a
-  ticket, archiving with the project — `analysis.html` is the
+  `analysis.md` is opened directly as a file, or `zicato dashboard`
+  re-serves the workspace.
+- For sharing — sending to a teammate, attaching to a
+  ticket, archiving with the project — `analysis.md` is the
   shareable artifact. The dashboard is local-only by default.
 
 The dashboard reads the live runtime state under `.zicato/runtime/`
-together with the epoch records; `analysis.html` is regenerated from
-`.zicato/epochs/{id}/` alone. Both show the same lineage and score
+together with the epoch records; `analysis.md` is regenerated from
+`.zicato/epochs/{id}/` alone. Both state the same lineage and score
 trajectory.
 
 ### 5.3 Why the LLM analysis runs at close rather than continuously
@@ -610,8 +604,7 @@ trajectory.
 The model-written retrospective inside `analysis.md` costs a
 multi-thousand-token model call, and its output is most useful when the
 epoch is done. Within an epoch, the journal, the live dashboard, and the
-deterministically generated `analysis.md` and `analysis.html` carry the
-measured results.
+deterministically generated `analysis.md` carry the measured results.
 
 ## 6. Lineage
 
@@ -1125,8 +1118,8 @@ unchanged. They are the manual escape hatches:
 | Per-epoch tournament structure: config block, persisted record, API, UI | [TOURNAMENT-DATA-MODEL.md](TOURNAMENT-DATA-MODEL.md) |
 | The proposer as a contract input: runtime, skills, epoch roll | [PROPOSER.md](PROPOSER.md), `skills/zicato-design-proposer/SKILL.md` |
 | CLI commands for `epoch new` / `close` / `list` | [CLI.md](CLI.md) |
-| Atomic-rename helper used by `analysis.html` writes | [RUNTIME.md](RUNTIME.md) §6 |
-| Live dashboard that supersedes `analysis.html` during an `evolve` | [DASHBOARD.md](DASHBOARD.md) |
+| Atomic-rename helper used by `analysis.md` writes | [RUNTIME.md](RUNTIME.md) §6 |
+| Live dashboard that renders `analysis.md` during an `evolve` | [DASHBOARD.md](DASHBOARD.md) |
 | Git-backed storage that moves generation directories into a private repo | [STORAGE.md](STORAGE.md) |
 | Why mandatory structured hypothesis up front | [RATIONALE.md](RATIONALE.md) |
 | The experiment record fed back to the proposer (experiment memory) | [EXPERIMENT-MEMORY.md](EXPERIMENT-MEMORY.md) |

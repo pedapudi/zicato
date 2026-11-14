@@ -50,8 +50,7 @@ Hard rules:
 - Do not write section headings — the caller supplies them. Do not
   write Methodology, Results, or Threats prose; those are not yours.
 - Do NOT prefix anything you write with a section number (e.g. "1.",
-  "1.1"). The renderer auto-numbers sections, tables, and figures; an
-  explicit number from you would double-number.
+  "1.1"). The report's headings carry no numbers.
 
 Return EXACTLY four blocks, each fenced like this and in this order:
 

@@ -222,8 +222,7 @@ def test_statistical_integrity_lights_up_with_round_log(tmp_path: Path) -> None:
     assert len(data.round_records) == 2
     md = render_statistical_integrity_section(data)
     # The promoted placebo is a CRITICAL callout.
-    assert "<!-- CALLOUT:CRITICAL -->" in md
-    assert "PLACEBO arm was PROMOTED" in md
+    assert "**CRITICAL.** A PLACEBO arm was PROMOTED" in md
     # Real screen / evidence / holdout counts surface.
     assert "2 slate candidates were screened; 1 vetoed" in md
     assert "1 replicate refit" in md

@@ -181,23 +181,14 @@ def test_read_epoch_journal_md_none_vs_text(tmp_path: Path) -> None:
 def test_build_epoch_analysis_degrades_same_shape(tmp_path: Path) -> None:
     paths = WorkspacePaths(_base_workspace(tmp_path).root)
     out = build_epoch_analysis(paths, EPOCH)
-    assert out == {
-        "epoch_id": EPOCH,
-        "analysis_md": "",
-        "analysis_html_inline": "",
-        "analysis_html_available": False,
-    }
+    assert out == {"epoch_id": EPOCH, "analysis_md": ""}
 
 
 def test_build_epoch_analysis_shape_with_report(tmp_path: Path) -> None:
     layout = _base_workspace(tmp_path)
     layout.analysis_md(EPOCH).write_text("# report", encoding="utf-8")
-    layout.analysis_html(EPOCH).write_text("<html></html>", encoding="utf-8")
     out = build_epoch_analysis(WorkspacePaths(layout.root), EPOCH)
-    assert out["epoch_id"] == EPOCH
-    assert out["analysis_md"] == "# report"
-    assert out["analysis_html_available"] is True
-    assert isinstance(out["analysis_html_inline"], str)  # best-effort fragment
+    assert out == {"epoch_id": EPOCH, "analysis_md": "# report"}
 
 
 # ---------------------------------------------------------------------------

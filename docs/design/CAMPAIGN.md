@@ -1294,7 +1294,7 @@ zicato evolve --workspace .zicato --rounds 3
 zicato epoch rounds --workspace .zicato --verify
 
 # After the loop settles AND the cell is accepted:
-zicato epoch close   --workspace .zicato          # → analysis.md / analysis.html
+zicato epoch close   --workspace .zicato          # → analysis.md
 zicato inspect reflection run   --workspace .zicato          # MSA pass over the eval contract
 ```
 
@@ -1712,7 +1712,7 @@ their re-runs, endpoint throttling, anything that departed from the plan.>
 - runs.jsonl (<n> records)
 - floor.json
 - campaign_summary.json
-- per-run analysis.md / analysis.html paths
+- per-run analysis.md paths
 ```
 
 ### 7.2 The final message back to the coordinator (verbatim contract)

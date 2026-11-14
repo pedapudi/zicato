@@ -7,7 +7,7 @@ tail — serves the operator's single question, whether this challenger
 should replace the reigning champion. [SELECTION.md](SELECTION.md)
 carries the decision theory behind that question; the dashboard makes
 the decision inspectable while it is still in flight. It is the live
-counterpart to `analysis.html`, the archival snapshot persisted for
+counterpart to `analysis.md`, the archival report persisted for
 each epoch.
 
 The dashboard is served by a standalone Python (Starlette) service
@@ -63,11 +63,11 @@ The full treatment of the split is in
 |---|---|---|---|
 | harmonograf | execution | one goldfive run | within one run |
 | **zicato dashboard** | **decision** | **one zicato epoch** | **across the promote/reject decisions in the epoch** |
-| `analysis.html` | decision (snapshot) | one zicato epoch | regenerated each round; persisted at close |
+| `analysis.md` | decision (snapshot) | one zicato epoch | regenerated each round; persisted at close |
 
 An operator may hold all three open at once: harmonograf on the run
 under inspection, the zicato dashboard on the decision in flight, and
-`analysis.html` from a closed epoch in a third tab for comparison.
+the Publication view of a closed epoch in a third tab for comparison.
 
 ## 2. Auto-spawn from `zicato evolve`
 
@@ -222,10 +222,6 @@ with a matching `If-None-Match` returns a bodyless `304` and is not
 re-downloaded; an edited file gets a new ETag and the browser fetches a
 fresh `200`. So an edit always reaches the browser, and an unchanged
 page reload pays for revalidation rather than a re-transfer.
-
-The dashboard's decision colours (promoted, rejected, baseline,
-deferred) restate the analyzer's palette, which `analysis.html` draws
-with; `tests/test_dashboard_ui.py` holds the two sides together.
 
 ### 3.3 SSE event format
 
@@ -937,7 +933,7 @@ with the route's degraded shape rather than a `500`.
 | `GET /api/epoch/{epoch_id}/eval-health` | The instrument-quality panel. |
 | `GET /api/epoch/{epoch_id}/judge-roster` | What is armed to judge a run on the epoch's board. |
 | `GET /api/epoch/{epoch_id}/journal.md` | The journal as the raw markdown file. |
-| `GET /api/epoch/{epoch_id}/analysis` and `.../analysis.html` | Analysis as data or as the rendered HTML page. |
+| `GET /api/epoch/{epoch_id}/analysis` | The epoch report's Markdown, as `{epoch_id, analysis_md}`. |
 
 **Candidates, decisions, and runs**
 
@@ -1180,24 +1176,25 @@ carries no separate confirmation step for a gate override.
 | `500` | `resume` could not remove the pause flag. |
 | `403` | The dashboard is in `read_only` mode; the control endpoint refuses. |
 
-## 7. `analysis.html` and the dashboard
+## 7. `analysis.md` and the dashboard
 
-`analysis.html` is re-rendered after every settled round
+`analysis.md` is regenerated after every settled round
 (see [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) §5.2).
 It is the **persisted archival snapshot**; the dashboard is the
-live view.
+live view, and its Publication view renders the same file.
 
-| Property | dashboard | `analysis.html` |
+| Property | dashboard | `analysis.md` |
 |---|---|---|
 | Updates | live (SSE) | regenerated each round |
 | Source | `.zicato/runtime/` + `index.db` + `epochs/` | `epochs/` only |
 | Process | the Python dashboard service | orchestrator (Python) |
 | Reachable while orchestrator is paused | partially (heartbeat shows phase) | yes (it is a file) |
 | Reachable after `evolve` exits | no (the auto-spawned service exits with evolve — but `zicato dashboard` can re-serve the workspace) | yes (the file persists) |
-| Includes a language-model narrative | no | yes (at epoch close) |
+| Includes a language-model narrative | only in the Publication view, which renders the file | yes (at epoch close) |
+| Carries charts | yes (drawn from the query layer) | no (measured views are tables) |
 
 The two overlap by design. The dashboard is for watching a decision
-form; `analysis.html` is a single file that can be sent to a colleague.
+form; `analysis.md` is a single file that can be sent to a colleague.
 Either stands alone.
 
 ## 8. What ships and what is not built
@@ -1237,6 +1234,6 @@ Either stands alone.
 | The analytical index — derived, refreshed at generation boundaries, read only for resolved decisions (see §3.4) | [ANALYTICAL-INDEX.md](ANALYTICAL-INDEX.md) |
 | The dual-write discipline behind the files-canonical / index-derived rule | [ANALYTICAL-INDEX.md §2.3](ANALYTICAL-INDEX.md#23-the-orchestrator-dual-writes-live) |
 | The `experiment.json` shape shown in the generation level's hypothesis-to-outcome panel | [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) §3 |
-| `analysis.html` generation | [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) §5.2 |
+| `analysis.md` generation | [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) §5.2 |
 | The defense layers backing the supervisor | [ROBUSTNESS.md](ROBUSTNESS.md) |
 | CLI surface (`zicato evolve --no-dashboard`, `zicato dashboard`) | [CLI.md](CLI.md) |

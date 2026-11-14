@@ -581,9 +581,6 @@ def build_epoch_view(
       no experiment of the relevant kind carries a finite delta.
     * ``journal`` — ``journal.md`` text (empty string when absent).
     * ``analysis_md`` — ``analysis.md`` text (empty string when absent).
-    * ``analysis_html_available`` — ``True`` when ``analysis.html``
-      exists on disk; the frontend can link directly to
-      ``/api/epoch/{id}/analysis.html``.
     """
     epoch_id = _resolve_epoch_id(paths, epoch_id)
     if epoch_id is None:
@@ -757,37 +754,14 @@ def build_epoch_view(
     # Analysis: the post-epoch analysis report.
     analysis_md = _read_text_best_effort(epoch_dir / "analysis.md")
     view["analysis_md"] = analysis_md
-    view["analysis_html_available"] = (epoch_dir / "analysis.html").is_file()
 
     return view
 
 
-def read_epoch_analysis_html(paths: WorkspacePaths, epoch_id: str) -> str | None:
-    """Return the raw HTML of the analysis report, or ``None`` when absent.
-
-    Used by the ``GET /api/epoch/{id}/analysis.html`` endpoint so the
-    dashboard can embed or link the self-contained analysis report.
-    """
-    path = layout_of(paths).analysis_html(epoch_id)
-    try:
-        return path.read_text(encoding="utf-8")
-    except (FileNotFoundError, OSError):
-        return None
-
-
 def build_epoch_analysis(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any]:
-    """Serve the published report without re-reading measurements or rendering figures."""
-    directory = paths.epochs / epoch_id
-
-    def text(name: str) -> str:
-        try:
-            return (directory / name).read_text(encoding="utf-8")
-        except FileNotFoundError:
-            return ""
-
-    return {
-        "epoch_id": epoch_id,
-        "analysis_md": text("analysis.md"),
-        "analysis_html_inline": text("analysis.fragment.html"),
-        "analysis_html_available": (directory / "analysis.html").is_file(),
-    }
+    """Serve the published report's Markdown without re-reading measurements."""
+    try:
+        analysis_md = (paths.epochs / epoch_id / "analysis.md").read_text(encoding="utf-8")
+    except FileNotFoundError:
+        analysis_md = ""
+    return {"epoch_id": epoch_id, "analysis_md": analysis_md}

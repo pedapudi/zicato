@@ -553,8 +553,8 @@ from one function, `structureLabel(structure, params, form)` in
   bracketed.
 - **mutations** — the mutation surface as a site-by-generation matrix,
   with the selected cell's patch diffed side by side.
-- **publication** — the epoch write-up, typeset with live figures
-  spliced in at the `<!-- FIGURE:NAME -->` markers.
+- **publication** — the epoch write-up, rendered from its Markdown with
+  `renderMarkdown`, followed by live figures.
 - **settings** — read-only contract and model-engine configuration,
   plus editable appearance preferences (theme, text size, scale).
 - **logs** — the operator-log pane: one structured stream per `evolve`

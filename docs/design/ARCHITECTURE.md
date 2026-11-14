@@ -998,7 +998,7 @@ automatically.
 | `zicato repair index` / `zicato repair generations` | Rebuild (or reconcile just the `generations` table of) the `.zicato/index.db` analytical index. |
 | `zicato health` | Report whether the evolve loop has real optimization signal (loop-health diagnostics). |
 | `zicato inspect telemetry` | (Re)run the decision-telemetry analyzer for an epoch. |
-| `zicato repair report` | Re-render an epoch's `analysis.md` / `analysis.html` from on-disk data. |
+| `zicato repair report` | Re-render an epoch's `analysis.md` from on-disk data. |
 | `zicato dashboard` | Serve the dashboard for an existing workspace (evolve auto-spawns it; this is the standalone form). |
 | `zicato repair v0-baseline` / `zicato repair generation-source-backend` | Backfill the synthetic `v0` experiment marker; record which generation-source backend wrote an existing workspace. |
 

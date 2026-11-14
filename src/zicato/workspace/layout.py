@@ -290,10 +290,6 @@ class WorkspaceLayout:
         """One epoch's at-close analysis markdown (``analysis.md``)."""
         return self.epoch_dir(epoch_id) / "analysis.md"
 
-    def analysis_html(self, epoch_id: str) -> Path:
-        """One epoch's rendered analysis page (``analysis.html``)."""
-        return self.epoch_dir(epoch_id) / "analysis.html"
-
     def mutation_policy(self, epoch_id: str, parent_generation_id: str, digest: str) -> Path:
         """Immutable mutation permissions for one parent and selected contract."""
         return (

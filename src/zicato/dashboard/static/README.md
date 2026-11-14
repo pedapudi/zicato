@@ -26,8 +26,7 @@ in `js/CONTRACTS.md`.
 - `index.html` — single-page shell hosting `#console-root`. Links
   `style.css` and loads `console.js` as a module.
 - `style.css` — the document shell outside `#console-root`: the page
-  ground, the skip link, and the bare-element and SVG-text defaults the
-  analyzer's server-rendered publication fragment needs.
+  ground, the skip link, and the bare-element defaults.
 - `console.js` — the entry point. Injects the Google Fonts link and the
   `css/console.css` stylesheet, then mounts the console shell
   (`js/shell.js`) into `#console-root`.

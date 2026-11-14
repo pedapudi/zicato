@@ -89,7 +89,7 @@ compound entry. This invariant applies throughout the catalog.
 ### Understand outcomes
 | Skill | What it does |
 |---|---|
-| `zicato-analyze-epoch` | Close an epoch (`zicato epoch close`) and read its analysis: `analysis.md` / `analysis.html` on disk, the journal rendered from the records, the hypothesis-vs-outcome ledger; re-render with `zicato repair report` / `zicato inspect telemetry`. |
+| `zicato-analyze-epoch` | Close an epoch (`zicato epoch close`) and read its analysis: `analysis.md` on disk, the journal rendered from the records, the hypothesis-vs-outcome ledger; re-render with `zicato repair report` / `zicato inspect telemetry`. |
 | `zicato-tournament-forensics` | Explain a single promote/reject (`zicato tournament run PARENT CHILD`): verdict transparency, the per-entry A/B grid, the mutation heatmap, the score trajectory, and cost. |
 | `zicato-lineage` | Read lineage across epochs and generations (`zicato epoch list` / the resolved `lineage.json`); compare champion vs challenger; drive the side-by-side conversation diff for a board entry. |
 

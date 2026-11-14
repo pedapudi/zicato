@@ -1030,16 +1030,12 @@ def test_epoch_view_includes_experiments_journal_analysis(workspace: Path) -> No
     # Analysis.
     assert "analysis_md" in view
     assert "Two experiments" in view["analysis_md"]
-    assert "analysis_html_available" in view
-    assert view["analysis_html_available"] is True
-    assert "analysis_html_inline" not in view
 
-    # The dedicated analysis response renders the same markdown.
+    # The dedicated analysis response serves the same markdown and nothing else.
     from zicato.query import build_epoch_analysis  # noqa: PLC0415
 
     analysis = build_epoch_analysis(WorkspacePaths(workspace), view["epoch_id"])
-    assert "paper paper-card" in analysis["analysis_html_inline"]
-    assert analysis["analysis_md"] == view["analysis_md"]
+    assert analysis == {"epoch_id": view["epoch_id"], "analysis_md": view["analysis_md"]}
 
 
 def test_epoch_view_experiments_empty_without_gens(workspace: Path) -> None:
@@ -1058,19 +1054,6 @@ def test_epoch_view_experiments_empty_without_gens(workspace: Path) -> None:
     assert view["experiments"] == []
     assert view["journal"] == ""
     assert view["analysis_md"] == ""
-    assert view["analysis_html_available"] is False
-    assert "analysis_html_inline" not in view
-
-
-def test_epoch_view_analysis_html_available_flag(workspace: Path) -> None:
-    """analysis_html_available is True when the HTML file exists."""
-    from zicato.query import WorkspacePaths, build_epoch_view
-
-    epoch_dir = workspace / "epochs" / "2026-05-16_e0"
-    _write(epoch_dir / "analysis.html", "<html><body>report</body></html>")
-
-    view = build_epoch_view(WorkspacePaths(workspace))
-    assert view["analysis_html_available"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -1338,7 +1321,7 @@ def test_epoch_journal_md_endpoint_invalid_id(client: TestClient) -> None:
 
 
 def test_epoch_analysis_endpoint(client: TestClient, workspace: Path) -> None:
-    """The dedicated analysis endpoint renders the publication fragment."""
+    """The dedicated analysis endpoint serves the report's Markdown."""
     epoch_id = "2026-05-16_e0"
     epoch_dir = workspace / "epochs" / epoch_id
     from zicato.analyzer.report import regenerate_epoch_report_deterministic
@@ -1352,46 +1335,18 @@ def test_epoch_analysis_endpoint(client: TestClient, workspace: Path) -> None:
     body = r.json()
     assert body["epoch_id"] == epoch_id
     assert "Two experiments" in body["analysis_md"]
-    assert "analysis_html_available" in body
-    assert body["analysis_html_available"] is True
-    # The publication view reads the rendered fragment from this endpoint.
-    assert "analysis_html_inline" in body
-    assert "paper paper-card" in body["analysis_html_inline"]
-    # Inline fragment must be a fragment (no DOCTYPE), self-contained
-    # (carries its own scoped CSS) and free of external resources.
-    inline = body["analysis_html_inline"]
-    assert not inline.startswith("<!DOCTYPE")
-    assert "<style>" in inline
-    assert 'href="http' not in inline
-    assert 'src="http' not in inline
-
-    epoch_response = client.get("/api/epoch")
-    assert epoch_response.status_code == 200
-    assert "analysis_html_inline" not in epoch_response.json()
+    # The publication view renders this Markdown; the payload carries no HTML.
+    assert set(body) == {"epoch_id", "analysis_md"}
 
 
-def test_epoch_analysis_html_endpoint_present(client: TestClient, workspace: Path) -> None:
-    """GET /api/epoch/{id}/analysis.html serves the HTML when present."""
+def test_epoch_analysis_html_route_is_gone(client: TestClient, workspace: Path) -> None:
+    """No route serves a rendered report, even when a stale file is on disk."""
     epoch_id = "2026-05-16_e0"
-    epoch_dir = workspace / "epochs" / epoch_id
-    _write(epoch_dir / "analysis.html", "<html><body>report</body></html>")
+    _write(workspace / "epochs" / epoch_id / "analysis.html", "<html><body>stale</body></html>")
 
     r = client.get(f"/api/epoch/{epoch_id}/analysis.html")
-    assert r.status_code == 200
-    assert "report" in r.text
-    assert "text/html" in r.headers["content-type"]
-
-
-def test_epoch_analysis_html_endpoint_absent(client: TestClient) -> None:
-    """GET /api/epoch/{id}/analysis.html returns 404 when absent."""
-    r = client.get("/api/epoch/2026-05-16_e0/analysis.html")
     assert r.status_code == 404
-
-
-def test_epoch_analysis_html_endpoint_invalid_id(client: TestClient) -> None:
-    """Analysis HTML endpoint rejects unsafe epoch ids."""
-    r = client.get("/api/epoch/../secrets/analysis.html")
-    assert r.status_code in (400, 404)
+    assert "stale" not in r.text
 
 
 def test_epoch_view_carries_experiments_journal_and_analysis(
@@ -1410,7 +1365,6 @@ def test_epoch_view_carries_experiments_journal_and_analysis(
     assert isinstance(epoch["experiments"], list)
     assert "journal" in epoch, "epoch must include journal text"
     assert "Analysis" in epoch.get("analysis_md", "")
-    assert "analysis_html_available" in epoch
 
 
 def test_tournaments_bracket(client: TestClient) -> None:

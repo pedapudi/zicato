@@ -716,10 +716,7 @@ def close_epoch(
 
     # Generate analysis.md. If no aux callable was provided we still
     # leave a placeholder so callers see a non-empty file — the analysis
-    # pass is rerunnable. Either path also writes the sibling
-    # ``analysis.html`` so the HTML report stays available when
-    # operators close an epoch without an evaluation LLM (e.g. the smoke
-    # test).
+    # pass is rerunnable.
     if aux_call_llm is not None:
         from zicato.epoch import analysis as _analysis
 

@@ -961,17 +961,17 @@ Usage: zicato repair report [OPTIONS]
   rendered empty even though the per-generation files were on disk).
 
   The command is idempotent and read-only against everything except
-  `analysis.md` / `analysis.html`. Pass `--no-llm` to skip the prose
-  regeneration entirely; the deterministic figures + tables (the parts repaired
-  by this backfill) are re-rendered regardless.
+  `analysis.md` and its prose record `analysis.prose.json`. Pass `--no-llm` to
+  skip the prose regeneration entirely; the deterministic tables (the parts
+  repaired by this backfill) are re-rendered regardless.
 
 Options:
   --workspace PATH  Path to the zicato workspace root (either the project dir or
                     the .zicato/ dir).  [default: .zicato]
   --epoch TEXT      Epoch id. Defaults to the workspace's current_epoch marker.
   --no-llm          Skip the evaluation-LLM prose pass and substitute
-                    placeholders. The deterministic data sections (figures,
-                    tables, scores) are still re-rendered.
+                    placeholders. The deterministic data sections (tables,
+                    scores) are still re-rendered.
   --help            Show this message and exit.
 
 ===== zicato repair v0-baseline --help =====

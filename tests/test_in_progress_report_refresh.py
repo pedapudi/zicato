@@ -1,8 +1,8 @@
-"""Tests for ``regenerate_in_progress_html``, the evolve loop's per-round refresh.
+"""Tests for ``regenerate_in_progress_report``, the evolve loop's per-round refresh.
 
 The refresh is deterministic (no LLM): it delegates to the analyzer's
 deterministic report regeneration, which re-templates ``analysis.md`` from
-the epoch's on-disk generations and renders the HTML companion beside it.
+the epoch's on-disk generations.
 These tests pin the loop-facing contract — an epoch with no generation
 yields no file, one experiment writes the document, a later experiment
 appears on the next call. The renderer's own edge cases are exercised by
@@ -15,7 +15,7 @@ import json
 from pathlib import Path
 
 from zicato.core.workspace import analysis_path
-from zicato.epoch.analysis import regenerate_in_progress_html
+from zicato.epoch.analysis import regenerate_in_progress_report
 
 
 def _write_experiment(
@@ -57,38 +57,36 @@ def _write_experiment(
 
 def test_regenerate_returns_none_when_no_experiments(tmp_path: Path) -> None:
     """An epoch with no generations yields ``None`` and no file."""
-    out = regenerate_in_progress_html(tmp_path, "epoch_a")
+    out = regenerate_in_progress_report(tmp_path, "epoch_a")
     assert out is None
-    assert not analysis_path(tmp_path, "epoch_a").with_suffix(".html").exists()
+    assert not analysis_path(tmp_path, "epoch_a").exists()
 
 
-def test_regenerate_writes_html_after_one_round(tmp_path: Path) -> None:
-    """One promoted experiment → an analysis.html naming that generation."""
+def test_regenerate_writes_the_report_after_one_round(tmp_path: Path) -> None:
+    """One promoted experiment → an analysis.md naming that generation."""
     _write_experiment(tmp_path, "epoch_a", "v1", "v0", "promoted")
 
-    out = regenerate_in_progress_html(tmp_path, "epoch_a")
-    assert out is not None
-    assert out.exists()
+    out = regenerate_in_progress_report(tmp_path, "epoch_a")
+    assert out == analysis_path(tmp_path, "epoch_a")
     text = out.read_text()
-    # A standalone document from the analyzer's renderer, carrying the epoch
-    # and the generation it now knows about.
-    assert text.startswith("<!DOCTYPE html>")
-    assert '<article class="paper">' in text
-    assert "epoch_a" in text
+    # The analyzer's report, carrying the epoch and the generation it now
+    # knows about.
+    assert text.startswith("Zicato improvement campaign · epoch analysis report\n")
+    assert "- **Epoch id**: `epoch_a`" in text
     assert "v1" in text
 
 
 def test_regenerate_rewrites_on_subsequent_round(tmp_path: Path) -> None:
     """A second call after a new experiment lands updates the file."""
     _write_experiment(tmp_path, "epoch_a", "v1", "v0", "promoted")
-    first = regenerate_in_progress_html(tmp_path, "epoch_a")
+    first = regenerate_in_progress_report(tmp_path, "epoch_a")
     assert first is not None
     first_text = first.read_text()
     # The first render only knows about v1, so it cannot mention v2.
     assert "v2" not in first_text
 
     _write_experiment(tmp_path, "epoch_a", "v2", "v1", "rejected")
-    second = regenerate_in_progress_html(tmp_path, "epoch_a")
+    second = regenerate_in_progress_report(tmp_path, "epoch_a")
     assert second == first
     second_text = second.read_text()
     assert "v2" in second_text

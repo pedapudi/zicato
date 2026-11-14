@@ -75,7 +75,7 @@ controls layout and interaction.
 | `src/zicato/query/mutation_view.py` | `build_mutation_index`, `build_mutation_detail`, `reconstructed_spans` — an epoch's mutation surface from the `v0` tree or, when the tree is gone, from the frozen `mutations.json`, and one site's content in every generation whose patch touched it | 786 |
 | `src/zicato/query/reflection_view.py` | `list_reflections`, `build_reflection_summary` (four-pillar bill of health), `build_judge_scorecards`, `build_practice_review`, `build_adjudication_xray` (transcript + judge verdict + meta-judge record) — the Instrument-lens feed. Index-first, file-fallback; the x-ray reads `result.json` / `judge_io` rather than re-running the adjudicator's events-preview reconstruction | 530 |
 | `src/zicato/query/trace_view.py` | the trajectory-bootstrap traces of a reflection: `build_trace_list`, `build_trace_detail`, `build_suggestion_provenance` | 809 |
-| `src/zicato/query/epoch_view.py` | `build_epoch_view`, `build_epochs_summary`, `compute_board_split`, `build_epoch_analysis`, `read_epoch_analysis_html` | 793 |
+| `src/zicato/query/epoch_view.py` | `build_epoch_view`, `build_epochs_summary`, `compute_board_split`, `build_epoch_analysis` | 767 |
 | `src/zicato/query/gate_view.py` | `build_gate_breakdown` (+ `deciding_rule`), `build_score_trajectory`, `build_health_report`, `build_rating_view` | 910 |
 | `src/zicato/query/tournament_view.py` | `build_bracket`, `build_tournament_structure`, `build_matchup_grid` | 812 |
 | `src/zicato/query/candidate_view.py` | `build_candidate_dossier` — the candidate page's one composed read | 457 |
@@ -210,15 +210,15 @@ encoded once as immutable JSON and decoded separately for each consumer.
 Captures retain absence and read errors for the response lifetime. They are neither a
 cross-file transaction nor a process cache; the next request reads again.
 
-The polled epoch response carries report Markdown and standalone HTML
-availability. The publication view fetches `/api/epoch/{epoch_id}/analysis`,
-whose `analysis_html_inline` field reads the saved `analysis.fragment.html`.
-The query performs no report assembly, measurement gathering, or figure rendering.
+The polled epoch response carries report Markdown. The publication view
+fetches `/api/epoch/{epoch_id}/analysis`, whose `analysis_md` field reads the
+saved `analysis.md`. The query performs no report assembly or measurement
+gathering.
 
 The report writer combines measured data with authored sections stored in
-`analysis.prose.json`, then publishes Markdown and both HTML forms. The browser
-displays the saved fragment and adds interactive tournament figures and
-per-matchup tables. An absent fragment produces an unpublished notice while
+`analysis.prose.json`, then publishes `analysis.md`. The browser renders that
+Markdown with `renderMarkdown` and adds interactive tournament figures and
+per-matchup tables. An absent report produces an unpublished notice while
 available tournament figures remain visible. The redraw digest includes the
 full text and figure inputs, so equal-length corrections update the display.
 
@@ -1069,7 +1069,7 @@ reader cannot drift apart.
 
 `make_endpoints(paths, *, read_only, started)` composes the table with the
 five hand-written surfaces — the reads whose query parameters shape the
-response, the two epoch documents served as markdown and HTML, the proposal
+response, the epoch journal served as markdown, the proposal
 episode export, the transcripts, and the control POSTs:
 
 ```python

@@ -675,15 +675,6 @@ def render_metric_movement_table(
     return "\n".join(lines)
 
 
-# Figure markers naming a builder in :mod:`zicato.analyzer.report_figures`.
-# They are invisible in the markdown and substituted for the inline SVG when
-# the document is rendered to HTML (:func:`write_html_companion`), so each
-# table in this section is accompanied by the chart drawn from the same data.
-_FIGURE_LINEAGE = "<!-- FIGURE:lineage -->"
-_FIGURE_SCORE_TRAJECTORY = "<!-- FIGURE:score-trajectory -->"
-_FIGURE_DRIFT_MOVEMENTS = "<!-- FIGURE:drift-movements -->"
-
-
 def render_tournament_outcomes_section(
     generations: list[Generation],
     experiments: list[Experiment],
@@ -691,8 +682,7 @@ def render_tournament_outcomes_section(
     """Compose the full ``## Tournament outcomes`` markdown section.
 
     Stitches together the mermaid lineage graph, the trajectory table,
-    the ASCII sparkline, and the per-metric movement tables, each
-    followed by the marker for the figure that draws the same data. The
+    the ASCII sparkline, and the per-metric movement tables. The
     drift table renders in its historical position with the historical
     heading (``### Drift-kind movements across the promoted lineage``);
     if any non-drift metric movements are present, a separate
@@ -709,13 +699,9 @@ def render_tournament_outcomes_section(
     parts.append("")
     parts.append(render_mermaid_lineage(generations, experiments))
     parts.append("")
-    parts.append(_FIGURE_LINEAGE)
-    parts.append("")
     parts.append("### Scalar trajectory")
     parts.append("")
     parts.append(render_trajectory_table(generations, experiments))
-    parts.append("")
-    parts.append(_FIGURE_SCORE_TRAJECTORY)
     parts.append("")
     parts.append("### Score sparkline")
     parts.append("")
@@ -726,8 +712,6 @@ def render_tournament_outcomes_section(
         parts.append("### Drift-kind movements across the promoted lineage")
         parts.append("")
         parts.append(drift_table)
-        parts.append("")
-        parts.append(_FIGURE_DRIFT_MOVEMENTS)
     # Render a separate table for every non-drift metric movement so
     # the section surfaces cost / rubric / latency / schema /
     # output / ... signal without disturbing the drift table's shape.
@@ -962,13 +946,13 @@ async def generate_analysis(
     return analysis_path(workspace_root, epoch_id)
 
 
-def regenerate_in_progress_html(workspace_root: Path, epoch_id: str) -> Path | None:
+def regenerate_in_progress_report(workspace_root: Path, epoch_id: str) -> Path | None:
     """Refresh the epoch report without an evaluation call.
 
     The shared assembler reads stored narrative and measured results, then
-    publishes Markdown and both HTML forms. Unchanged bytes do not trigger
-    replacement. Return the standalone HTML path when it exists, or ``None``
-    before the epoch has an experiment record.
+    publishes ``analysis.md``. Unchanged bytes do not trigger replacement.
+    Return the report's path, or ``None`` before the epoch has an experiment
+    record.
     """
     from zicato.analyzer.report import regenerate_epoch_report_deterministic
 
@@ -979,14 +963,13 @@ def regenerate_in_progress_html(workspace_root: Path, epoch_id: str) -> Path | N
     ):
         return None
     regenerate_epoch_report_deterministic(workspace_root, epoch_id)
-    html_path = analysis_path(workspace_root, epoch_id).with_suffix(".html")
-    return html_path if html_path.exists() else None
+    return analysis_path(workspace_root, epoch_id)
 
 
 __all__ = [
     "REQUIRED_SECTIONS",
     "generate_analysis",
-    "regenerate_in_progress_html",
+    "regenerate_in_progress_report",
     "render_mermaid_lineage",
     "render_metric_movement_table",
     "render_score_sparkline",

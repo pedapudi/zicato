@@ -798,9 +798,9 @@ async def _evolve_n_rounds(
                 phase=f"after_round_{epoch_round_index}:{outcome.tournament_decision}",
             )
             beater.bump_now()
-            # Best-effort epoch-report refresh so file:// readers (and the
-            # dashboard's static fallback) see the latest lineage
-            # immediately after each round, including the rounds that end
+            # Best-effort epoch-report refresh so readers of ``analysis.md``
+            # (the console's Publication view among them) see the latest
+            # lineage immediately after each round, including the rounds that end
             # before the round epilogue's own refresh. Deterministic and
             # digest-gated: a round that moved no data rewrites nothing.
             with best_effort(
@@ -808,13 +808,13 @@ async def _evolve_n_rounds(
                 on_error=lambda exc: log.debug("in-progress epoch report refresh skipped: %s", exc),
             ):
                 from zicato.epoch.analysis import (  # noqa: PLC0415
-                    regenerate_in_progress_html,
+                    regenerate_in_progress_report,
                 )
                 from zicato.epoch.lifecycle import current_epoch_id  # noqa: PLC0415
 
                 eid = epoch_id or current_epoch_id(workspace_root)
                 if eid:
-                    regenerate_in_progress_html(workspace_root, eid)
+                    regenerate_in_progress_report(workspace_root, eid)
             if outcome.tournament_decision == DEFERRED_INFRA_DECISION:
                 # Endpoint-outage deferral: the round burned NO experiment — it
                 # persists un-outcomed on disk. Back off (exponential, capped)
