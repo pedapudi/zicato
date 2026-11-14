@@ -80,6 +80,7 @@
     "genealogy": 0,
     "calibration_feedback": 0,
     "recombine_merge": "mechanical",
-    "cross_epoch_memory": false
+    "cross_epoch_memory": false,
+    "outcome_feedback": false
   }
 }

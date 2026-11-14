@@ -323,6 +323,10 @@ class ExperimentalConfig:
         Reject edits above this complexity. Zero disables it.
     cross_epoch_memory:
         Include prior-epoch experiment history under the same contract identity.
+    outcome_feedback:
+        Record each settled candidate's per-metric movements, training-task
+        pass changes and scalar standard error, and show them banded in the
+        proposer's experiment memory. Training slice only.
     standing_rating:
         Fit candidate standings with Bradley–Terry, or retain ordinary standings.
     resolver:
@@ -388,6 +392,10 @@ class ExperimentalConfig:
         ),
     )
     cross_epoch_memory: bool = field(
+        default=False,
+        metadata=_knob(),
+    )
+    outcome_feedback: bool = field(
         default=False,
         metadata=_knob(),
     )

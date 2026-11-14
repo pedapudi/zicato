@@ -703,6 +703,7 @@
         "diff_complexity_weight": 0.0,
         "genealogy": 0,
         "max_generations_per_contract": null,
+        "outcome_feedback": false,
         "process_exemplars": 0,
         "random_baseline_every_n": 0,
         "recombine": false,
@@ -2147,6 +2148,7 @@
         "diff_complexity_weight": 0.0,
         "genealogy": 0,
         "max_generations_per_contract": null,
+        "outcome_feedback": false,
         "process_exemplars": 0,
         "random_baseline_every_n": 0,
         "recombine": false,
@@ -5828,8 +5830,12 @@
           "ran_at": "2026-01-02T06:00:00Z",
           "rejection_reason": "",
           "scalar_score_delta": -0.02,
+          "scalar_score_delta_se": null,
           "structure": "gauntlet",
           "tournament_decision": "promoted",
+          "train_broke": null,
+          "train_entries": null,
+          "train_fixed": null,
           "train_loss": null
         },
         "parent_generation_id": "v0",
@@ -5932,8 +5938,12 @@
           "ran_at": "2026-01-02T06:00:00Z",
           "rejection_reason": "",
           "scalar_score_delta": -0.02,
+          "scalar_score_delta_se": null,
           "structure": "gauntlet",
           "tournament_decision": "promoted",
+          "train_broke": null,
+          "train_entries": null,
+          "train_fixed": null,
           "train_loss": null
         },
         "parent_generation_id": "v0",
@@ -6012,8 +6022,12 @@
           "ran_at": "2026-01-03T06:00:00Z",
           "rejection_reason": "below promote margin",
           "scalar_score_delta": 0.005,
+          "scalar_score_delta_se": null,
           "structure": "gauntlet",
           "tournament_decision": "rejected",
+          "train_broke": null,
+          "train_entries": null,
+          "train_fixed": null,
           "train_loss": null
         },
         "parent_generation_id": "v1",
@@ -6092,8 +6106,12 @@
           "ran_at": "2026-01-04T06:00:00Z",
           "rejection_reason": "below promote margin",
           "scalar_score_delta": 0.005,
+          "scalar_score_delta_se": null,
           "structure": "gauntlet",
           "tournament_decision": "rejected",
+          "train_broke": null,
+          "train_entries": null,
+          "train_fixed": null,
           "train_loss": null
         },
         "parent_generation_id": "v2",
@@ -6172,8 +6190,12 @@
           "ran_at": "2026-01-05T06:00:00Z",
           "rejection_reason": "",
           "scalar_score_delta": -0.02,
+          "scalar_score_delta_se": null,
           "structure": "gauntlet",
           "tournament_decision": "promoted",
+          "train_broke": null,
+          "train_entries": null,
+          "train_fixed": null,
           "train_loss": null
         },
         "parent_generation_id": "v3",
@@ -6252,8 +6274,12 @@
           "ran_at": "2026-01-06T06:00:00Z",
           "rejection_reason": "below promote margin",
           "scalar_score_delta": 0.005,
+          "scalar_score_delta_se": null,
           "structure": "gauntlet",
           "tournament_decision": "rejected",
+          "train_broke": null,
+          "train_entries": null,
+          "train_fixed": null,
           "train_loss": null
         },
         "parent_generation_id": "v4",
@@ -6332,8 +6358,12 @@
           "ran_at": "2026-01-07T06:00:00Z",
           "rejection_reason": "below promote margin",
           "scalar_score_delta": 0.005,
+          "scalar_score_delta_se": null,
           "structure": "gauntlet",
           "tournament_decision": "deferred",
+          "train_broke": null,
+          "train_entries": null,
+          "train_fixed": null,
           "train_loss": null
         },
         "parent_generation_id": "v5",
@@ -6412,8 +6442,12 @@
           "ran_at": "2026-01-08T06:00:00Z",
           "rejection_reason": "",
           "scalar_score_delta": -0.02,
+          "scalar_score_delta_se": null,
           "structure": "gauntlet",
           "tournament_decision": "promoted",
+          "train_broke": null,
+          "train_entries": null,
+          "train_fixed": null,
           "train_loss": null
         },
         "parent_generation_id": "v6",
@@ -6492,8 +6526,12 @@
           "ran_at": "2026-01-09T06:00:00Z",
           "rejection_reason": "below promote margin",
           "scalar_score_delta": 0.005,
+          "scalar_score_delta_se": null,
           "structure": "gauntlet",
           "tournament_decision": "rejected",
+          "train_broke": null,
+          "train_entries": null,
+          "train_fixed": null,
           "train_loss": null
         },
         "parent_generation_id": "v7",
@@ -6572,8 +6610,12 @@
           "ran_at": "2026-01-10T06:00:00Z",
           "rejection_reason": "below promote margin",
           "scalar_score_delta": 0.005,
+          "scalar_score_delta_se": null,
           "structure": "gauntlet",
           "tournament_decision": "rejected",
+          "train_broke": null,
+          "train_entries": null,
+          "train_fixed": null,
           "train_loss": null
         },
         "parent_generation_id": "v8",
@@ -6652,8 +6694,12 @@
           "ran_at": "2026-01-11T06:00:00Z",
           "rejection_reason": "",
           "scalar_score_delta": -0.02,
+          "scalar_score_delta_se": null,
           "structure": "gauntlet",
           "tournament_decision": "promoted",
+          "train_broke": null,
+          "train_entries": null,
+          "train_fixed": null,
           "train_loss": null
         },
         "parent_generation_id": "v9",
@@ -6750,8 +6796,12 @@
       "ran_at": "2026-01-11T06:00:00Z",
       "rejection_reason": "",
       "scalar_score_delta": -0.02,
+      "scalar_score_delta_se": null,
       "structure": "gauntlet",
       "tournament_decision": "promoted",
+      "train_broke": null,
+      "train_entries": null,
+      "train_fixed": null,
       "train_loss": null
     },
     "parent_generation_id": "v9",
@@ -6827,8 +6877,12 @@
       "ran_at": "2026-01-03T06:00:00Z",
       "rejection_reason": "below promote margin",
       "scalar_score_delta": 0.005,
+      "scalar_score_delta_se": null,
       "structure": "gauntlet",
       "tournament_decision": "rejected",
+      "train_broke": null,
+      "train_entries": null,
+      "train_fixed": null,
       "train_loss": null
     },
     "parent_generation_id": "v1",
@@ -7698,10 +7752,16 @@
       "modulating": [
         "prompt.planner"
       ],
+      "predicted_movements": [],
       "prediction_accuracy": 0.5,
+      "realised_movements": [],
       "rejection_reason": "",
       "same_contract": true,
-      "scalar_score_delta": -0.02
+      "scalar_delta_se": null,
+      "scalar_score_delta": -0.02,
+      "train_broke": null,
+      "train_entries": null,
+      "train_fixed": null
     }
   ],
   "zicato.index.prior_experiments_for_epoch::e2": [
@@ -7713,10 +7773,16 @@
       "modulating": [
         "prompt.planner"
       ],
+      "predicted_movements": [],
       "prediction_accuracy": 1.0,
+      "realised_movements": [],
       "rejection_reason": "",
       "same_contract": true,
-      "scalar_score_delta": -0.02
+      "scalar_delta_se": null,
+      "scalar_score_delta": -0.02,
+      "train_broke": null,
+      "train_entries": null,
+      "train_fixed": null
     },
     {
       "core_idea": "Rewrite the planner instruction block for round 4.",
@@ -7726,10 +7792,16 @@
       "modulating": [
         "prompt.planner"
       ],
+      "predicted_movements": [],
       "prediction_accuracy": 1.0,
+      "realised_movements": [],
       "rejection_reason": "",
       "same_contract": true,
-      "scalar_score_delta": -0.02
+      "scalar_delta_se": null,
+      "scalar_score_delta": -0.02,
+      "train_broke": null,
+      "train_entries": null,
+      "train_fixed": null
     },
     {
       "core_idea": "Rewrite the planner instruction block for round 10.",
@@ -7739,10 +7811,16 @@
       "modulating": [
         "prompt.planner"
       ],
+      "predicted_movements": [],
       "prediction_accuracy": 1.0,
+      "realised_movements": [],
       "rejection_reason": "",
       "same_contract": true,
-      "scalar_score_delta": -0.02
+      "scalar_delta_se": null,
+      "scalar_score_delta": -0.02,
+      "train_broke": null,
+      "train_entries": null,
+      "train_fixed": null
     },
     {
       "core_idea": "Rewrite the planner instruction block for round 1.",
@@ -7752,10 +7830,16 @@
       "modulating": [
         "prompt.planner"
       ],
+      "predicted_movements": [],
       "prediction_accuracy": 1.0,
+      "realised_movements": [],
       "rejection_reason": "",
       "same_contract": true,
-      "scalar_score_delta": -0.02
+      "scalar_delta_se": null,
+      "scalar_score_delta": -0.02,
+      "train_broke": null,
+      "train_entries": null,
+      "train_fixed": null
     },
     {
       "core_idea": "Rewrite the planner instruction block for round 9.",
@@ -7765,10 +7849,16 @@
       "modulating": [
         "prompt.planner"
       ],
+      "predicted_movements": [],
       "prediction_accuracy": 1.0,
+      "realised_movements": [],
       "rejection_reason": "below promote margin",
       "same_contract": true,
-      "scalar_score_delta": 0.005
+      "scalar_delta_se": null,
+      "scalar_score_delta": 0.005,
+      "train_broke": null,
+      "train_entries": null,
+      "train_fixed": null
     },
     {
       "core_idea": "Rewrite the planner instruction block for round 8.",
@@ -7778,10 +7868,16 @@
       "modulating": [
         "prompt.planner"
       ],
+      "predicted_movements": [],
       "prediction_accuracy": 1.0,
+      "realised_movements": [],
       "rejection_reason": "below promote margin",
       "same_contract": true,
-      "scalar_score_delta": 0.005
+      "scalar_delta_se": null,
+      "scalar_score_delta": 0.005,
+      "train_broke": null,
+      "train_entries": null,
+      "train_fixed": null
     },
     {
       "core_idea": "Rewrite the planner instruction block for round 5.",
@@ -7791,10 +7887,16 @@
       "modulating": [
         "prompt.planner"
       ],
+      "predicted_movements": [],
       "prediction_accuracy": 1.0,
+      "realised_movements": [],
       "rejection_reason": "below promote margin",
       "same_contract": true,
-      "scalar_score_delta": 0.005
+      "scalar_delta_se": null,
+      "scalar_score_delta": 0.005,
+      "train_broke": null,
+      "train_entries": null,
+      "train_fixed": null
     },
     {
       "core_idea": "Rewrite the planner instruction block for round 3.",
@@ -7804,10 +7906,16 @@
       "modulating": [
         "prompt.planner"
       ],
+      "predicted_movements": [],
       "prediction_accuracy": 1.0,
+      "realised_movements": [],
       "rejection_reason": "below promote margin",
       "same_contract": true,
-      "scalar_score_delta": 0.005
+      "scalar_delta_se": null,
+      "scalar_score_delta": 0.005,
+      "train_broke": null,
+      "train_entries": null,
+      "train_fixed": null
     },
     {
       "core_idea": "Rewrite the planner instruction block for round 2.",
@@ -7817,10 +7925,16 @@
       "modulating": [
         "prompt.planner"
       ],
+      "predicted_movements": [],
       "prediction_accuracy": 1.0,
+      "realised_movements": [],
       "rejection_reason": "below promote margin",
       "same_contract": true,
-      "scalar_score_delta": 0.005
+      "scalar_delta_se": null,
+      "scalar_score_delta": 0.005,
+      "train_broke": null,
+      "train_entries": null,
+      "train_fixed": null
     },
     {
       "core_idea": "Rewrite the planner instruction block for round 6.",
@@ -7830,10 +7944,16 @@
       "modulating": [
         "prompt.planner"
       ],
+      "predicted_movements": [],
       "prediction_accuracy": 1.0,
+      "realised_movements": [],
       "rejection_reason": "below promote margin",
       "same_contract": true,
-      "scalar_score_delta": 0.005
+      "scalar_delta_se": null,
+      "scalar_score_delta": 0.005,
+      "train_broke": null,
+      "train_entries": null,
+      "train_fixed": null
     }
   ],
   "zicato.index.reflection_row::r-10": {
@@ -9849,6 +9969,7 @@
         "diff_complexity_weight": 0.0,
         "genealogy": 0,
         "max_generations_per_contract": null,
+        "outcome_feedback": false,
         "process_exemplars": 0,
         "random_baseline_every_n": 0,
         "recombine": false,
@@ -9963,6 +10084,7 @@
         "diff_complexity_weight": 0.0,
         "genealogy": 0,
         "max_generations_per_contract": null,
+        "outcome_feedback": false,
         "process_exemplars": 0,
         "random_baseline_every_n": 0,
         "recombine": false,

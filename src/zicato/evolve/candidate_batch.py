@@ -131,6 +131,8 @@ async def produce_candidate_batch(
             workspace_root,
             epoch_id,
             cross_epoch=prepared.weights.experimental.cross_epoch_memory,
+            outcome_feedback=prepared.weights.experimental.outcome_feedback,
+            train_entry_ids=frozenset(entry.id for entry in prepared.train_board),
             writer=prepared.writer,
         )
     )

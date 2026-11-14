@@ -306,7 +306,9 @@ def render_evidence(evidence: ProposalEvidence) -> str:
             f"{calibration.strip()}"
         )
     prior = render_prior_experiments_block(
-        evidence.prior_experiments, restrict=evidence.restrict_visibility
+        evidence.prior_experiments,
+        restrict=evidence.restrict_visibility,
+        judge_names=evidence.custom_judge_names,
     )
     if prior.strip():
         blocks.append(

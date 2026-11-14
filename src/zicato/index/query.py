@@ -19,9 +19,14 @@ import statistics
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
-from zicato.core.types import EXPERIMENT_MEMORY_MAX_ENTRIES, PriorExperiment
+from zicato.core.experiment import SINGLE_ENTRY_NOTE
+from zicato.core.types import (
+    EXPERIMENT_MEMORY_MAX_ENTRIES,
+    ExpectedMetricMovement,
+    PriorExperiment,
+)
 from zicato.index.schema import IndexSchemaError, read_schema_version, require_schema
 
 
@@ -232,7 +237,9 @@ def _modulating_from_hypothesis_json(raw: Any) -> tuple[str, ...]:
     return tuple(str(m) for m in mod)
 
 
-def _metric_ranges_for_epoch(db_path: Path, epoch_id: str) -> dict[str, float]:
+def _metric_ranges_for_epoch(
+    db_path: Path, epoch_id: str, entry_ids: frozenset[str] | None = None
+) -> dict[str, float]:
     """Observed per-metric value range across an epoch, for magnitude buckets.
 
     Mirrors :func:`zicato.tournament.detail._metric_ranges` (the max absolute
@@ -243,17 +250,21 @@ def _metric_ranges_for_epoch(db_path: Path, epoch_id: str) -> dict[str, float]:
     a hypothesis's prediction accuracy; an empty mapping degrades the bucketer
     to the raw absolute movement, which is fine for the advisory, banded
     experiment-memory signal.
+
+    ``entry_ids`` limits the range to runs of those board entries. Outcome
+    feedback passes the training slice, so a holdout run cannot move a
+    magnitude bucket boundary.
     """
     rows = _select(
         db_path,
-        "SELECT mc.name AS name, mc.count AS count FROM metric_counts mc "
-        "JOIN runs r ON r.run_id = mc.run_id WHERE r.epoch_id = ?",
+        "SELECT mc.name AS name, mc.count AS count, r.entry_id AS entry_id "
+        "FROM metric_counts mc JOIN runs r ON r.run_id = mc.run_id WHERE r.epoch_id = ?",
         (epoch_id,),
     )
     ranges: dict[str, float] = {}
     for row in rows:
         name = str(row["name"] or "")
-        if not name:
+        if not name or (entry_ids is not None and row["entry_id"] not in entry_ids):
             continue
         try:
             value = abs(float(row["count"]))
@@ -295,6 +306,85 @@ def _prediction_accuracy_for_row(row: sqlite3.Row, ranges: Mapping[str, float]) 
     if predictions <= 0:
         return None
     return matches / predictions
+
+
+def _outcome_feedback_for_row(row: sqlite3.Row, ranges: Mapping[str, float]) -> dict[str, Any]:
+    """Banded outcome feedback for one settled row, as ``PriorExperiment`` fields.
+
+    The ``experimental.outcome_feedback`` half of the experiment-memory reader
+    (EXPERIMENT-MEMORY.md §3.6). The standard error and the two training-task
+    counts are copied from the recorded outcome. Each prediction the outcome
+    measured gains a realised direction and magnitude bucket from the shared
+    grader, and at most three unpredicted metrics that moved by a medium or
+    large amount are added, largest first. A movement settlement marked as
+    measured on fewer than two training entries is one entry's result and is
+    left out of both. No metric value leaves this function. Any decode
+    failure yields ``{}``.
+    """
+    from zicato.tournament import detail  # noqa: PLC0415
+
+    hypothesis = _loads_json_obj(_row_value(row, "hypothesis_json"))
+    outcome = _loads_json_obj(_row_value(row, "outcome_json"))
+    if hypothesis is None or outcome is None:
+        return {}
+    try:
+        expected = detail._expected_movements(hypothesis)
+        single = {
+            mv["metric_name"]
+            for mv in outcome["metric_movements"]
+            if mv.get("note") == SINGLE_ENTRY_NOTE
+        }
+        actual = {
+            name: values
+            for name, values in detail._actual_movements(outcome).items()
+            if name not in single
+        }
+        range_map = dict(ranges)
+        movement: Any = ExpectedMetricMovement  # the labels are checked by the grader
+
+        def realised(metric: str, bucket: str) -> ExpectedMetricMovement:
+            delta = actual[metric][1] - actual[metric][0]
+            direction = next(
+                (d for d in ("decrease", "increase") if detail._direction_sign_ok(d, delta)),
+                "neutral",
+            )
+            return cast(ExpectedMetricMovement, movement(metric, direction, bucket))
+
+        measured = [
+            realised(metric, grade.actual_magnitude)
+            for metric, (direction, magnitude) in expected.items()
+            if (
+                grade := detail._grade_movement(
+                    metric, direction, magnitude, actual.get(metric), range_map
+                )
+            ).actual_magnitude
+        ]
+        unpredicted = [
+            realised(metric, bucket)
+            for metric, (before, after) in sorted(actual.items())
+            if metric not in expected
+            and (
+                bucket := detail._magnitude_bucket(abs(after - before), range_map.get(metric, 0.0))
+            )
+            != "small"
+        ]
+        unpredicted.sort(key=lambda movement: movement.magnitude != "large")
+        se = outcome.get("scalar_score_delta_se")
+        fixed, broke = outcome.get("train_fixed"), outcome.get("train_broke")
+        entries = outcome.get("train_entries")
+        return {
+            "train_entries": None if entries is None else int(entries),
+            "scalar_delta_se": None if se is None else float(se),
+            "train_fixed": None if fixed is None else int(fixed),
+            "train_broke": None if broke is None else int(broke),
+            "predicted_movements": tuple(
+                movement(metric, direction, magnitude)
+                for metric, (direction, magnitude) in expected.items()
+            ),
+            "realised_movements": tuple(measured + unpredicted[:3]),
+        }
+    except Exception:  # noqa: BLE001 — advisory feedback, never fatal
+        return {}
 
 
 def _loads_json_obj(raw: Any) -> dict[str, Any] | None:
@@ -406,6 +496,8 @@ def prior_experiments_for_epoch(
     *,
     max_entries: int = EXPERIMENT_MEMORY_MAX_ENTRIES,
     cross_epoch: bool = False,
+    outcome_feedback: bool = False,
+    train_entry_ids: frozenset[str] | None = None,
 ) -> list[PriorExperiment]:
     """Return a curated digest of ``epoch_id``'s SETTLED prior experiments.
 
@@ -435,6 +527,12 @@ def prior_experiments_for_epoch(
       entries with ``scalar_score_delta=None`` (the number does not
       transfer). The default (``False``) is byte-identical to the
       same-epoch-only reader.
+    * **Opt-in outcome feedback** (``outcome_feedback=True`` — the
+      ``experimental.outcome_feedback`` contract knob; EXPERIMENT-MEMORY.md
+      §3.6): each same-epoch entry also carries its banded per-metric
+      movements, training-task pass changes and scalar standard error. A
+      cross-contract entry never does. ``train_entry_ids`` limits the metric
+      ranges behind those magnitude buckets to training-slice runs.
 
     Tolerates a missing index the same way every selector here does: a
     never-indexed workspace yields ``[]`` rather than raising
@@ -450,6 +548,9 @@ def prior_experiments_for_epoch(
     # ONCE here (best-effort — an empty mapping just degrades the bucketer to
     # the raw absolute movement). DIAGNOSTIC only; never gates promotion.
     ranges = _metric_ranges_for_epoch(db_path, epoch_id)
+    feedback_ranges = (
+        _metric_ranges_for_epoch(db_path, epoch_id, train_entry_ids) if outcome_feedback else {}
+    )
 
     promoted: list[PriorExperiment] = []
     rejected: list[PriorExperiment] = []
@@ -472,6 +573,7 @@ def prior_experiments_for_epoch(
             scalar_score_delta=None if delta is None else float(delta),
             same_contract=True,
             prediction_accuracy=_prediction_accuracy_for_row(row, ranges),
+            **(_outcome_feedback_for_row(row, feedback_ranges) if outcome_feedback else {}),
         )
         if decision == "promoted":
             promoted.append(entry)

@@ -493,7 +493,9 @@ async def _propose(
         # prompt section is omitted.
         from zicato.evolve.ingest import _load_prior_experiments  # noqa: PLC0415
 
-        prior = _load_prior_experiments(workspace_dir, epoch_id)
+        prior = _load_prior_experiments(
+            workspace_dir, epoch_id, outcome_feedback=weights.experimental.outcome_feedback
+        )
 
         # The most recent round's telemetry insight, read as the round reads
         # it: only a training-slice analysis is delivered, bounded in length.

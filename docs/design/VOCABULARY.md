@@ -435,7 +435,7 @@ block, which rolls the epoch. Its members are
 [placebo arm](#placebo-arm)), `process_exemplars`, `recombine`,
 `recombine_merge`, `genealogy`, `calibration_feedback`,
 `diff_complexity_weight`, `diff_complexity_ceiling`,
-`cross_epoch_memory`, `standing_rating`, and `resolver`. Like every
+`cross_epoch_memory`, `outcome_feedback`, `standing_rating`, and `resolver`. Like every
 scoring field, the block is serialized in full into the contract hash,
 so turning any member on rolls the epoch. See
 `src/zicato/core/scoring_config.py` (`ExperimentalConfig`).

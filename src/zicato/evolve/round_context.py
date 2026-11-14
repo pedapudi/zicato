@@ -220,6 +220,7 @@ def _build_recombination_pair(
             rank_pairs,
         )
         from zicato.proposer.recombine import RecombinationPair  # noqa: PLC0415
+        from zicato.tournament.scoring import pass_flips  # noqa: PLC0415
         from zicato.workspace.reads import read_generation_losses  # noqa: PLC0415
 
         layout = WorkspaceLayout.from_root(workspace_root)
@@ -246,15 +247,11 @@ def _build_recombination_pair(
         candidates: list[ParentCandidate] = []
         for exp in pool:
             child_losses = read_generation_losses(layout, epoch_id, exp.generation_id)
-            improved: set[str] = set()
-            regressed: set[str] = set()
-            for entry_id in train_entry_ids:
-                parent_pass = parent_losses.get(entry_id, {}).get("pass_fail")
-                child_pass = child_losses.get(entry_id, {}).get("pass_fail")
-                if parent_pass is False and child_pass is True:
-                    improved.add(entry_id)
-                elif parent_pass is True and child_pass is False:
-                    regressed.add(entry_id)
+            improved, regressed = pass_flips(
+                {e: row.get("pass_fail") for e, row in parent_losses.items()},
+                {e: row.get("pass_fail") for e, row in child_losses.items()},
+                train_entry_ids,
+            )
             hyp = exp.hypothesis
             candidates.append(
                 ParentCandidate(
@@ -264,8 +261,8 @@ def _build_recombination_pair(
                     is_placebo=hyp.core_idea.startswith(PLACEBO_HYPOTHESIS_MARKER),
                     is_recombined=bool(exp.recombined_from),
                     patch_mutation_ids=frozenset(p.mutation_id for p in exp.patches),
-                    improved_entry_ids=frozenset(improved),
-                    regressed_entry_ids=frozenset(regressed),
+                    improved_entry_ids=improved,
+                    regressed_entry_ids=regressed,
                     elo=elo_by_gid.get(exp.generation_id),
                     patches=exp.patches,
                     core_idea=hyp.core_idea,

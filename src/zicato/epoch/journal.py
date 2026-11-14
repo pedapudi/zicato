@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 from zicato.core.configuration import authored_dataclass_from_json
+from zicato.core.experiment import OUTCOME_OPTIONAL_FIELDS, outcome_to_dict
 from zicato.core.types import (
     ExpectedMetricMovement,
     Experiment,
@@ -263,6 +264,9 @@ def _outcome_from_dict(d: dict[str, Any] | None) -> OutcomeRecord | None:
     """Decode a completed outcome; null means execution has no outcome yet."""
     if d is None:
         return None
+    if isinstance(d, dict):
+        # A record settled without outcome feedback omits these fields.
+        d = {**dict.fromkeys(OUTCOME_OPTIONAL_FIELDS), **d}
     _complete_fields(d, OutcomeRecord)
     outcome = authored_dataclass_from_json(OutcomeRecord, d, path="outcome")
     for m in d["metric_movements"]:
@@ -372,7 +376,9 @@ def experiment_body(experiment: Experiment) -> dict[str, Any]:
         "hypothesis": _coerce_paths(asdict(experiment.hypothesis)),
         "patch_ids": [patch.id for patch in experiment.patches],
         "outcome": (
-            _coerce_paths(asdict(experiment.outcome)) if experiment.outcome is not None else None
+            _coerce_paths(outcome_to_dict(experiment.outcome))
+            if experiment.outcome is not None
+            else None
         ),
     }
     # Recombination provenance — CONDITIONAL key: emitted only when

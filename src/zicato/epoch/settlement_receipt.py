@@ -14,6 +14,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
+from zicato.core.experiment import outcome_to_dict
 from zicato.core.types import Experiment, OutcomeRecord
 from zicato.epoch._storage import (
     RecordError,
@@ -74,7 +75,7 @@ class SettlementCandidate:
             created_at,
             parent_scalar,
             child_scalar,
-            json.dumps(asdict(outcome), allow_nan=False),
+            json.dumps(outcome_to_dict(outcome), allow_nan=False),
         )
 
     def to_dict(self) -> dict[str, Any]:
