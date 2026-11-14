@@ -543,7 +543,10 @@ the findings. A changed epoch input appends one record with alarm
 A standing alarm is reported once: `LedgerHistory::load` restores each pair's
 latest recorded alarm and each recorded input change when the integrity loop
 starts or restarts after a panic, and without a ledger the pair's health file
-restores it. A pair that clears and recurs alarms again.
+restores it. With a ledger the health file never marks an alarm as reported:
+it sits in the workspace the orchestrator writes, so a file placed there
+before the first scan must not silence the alert. A pair that clears and
+recurs alarms again.
 
 **Cost.** A finished pair (one with a recorded promote or reject decision)
 reuses its earlier result while one digest is unchanged. The digest covers the

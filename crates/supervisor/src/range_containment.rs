@@ -1143,7 +1143,9 @@ impl Alarm {
 ///
 /// A pair first seen in this process takes its prior result from its health
 /// file, so evidence withdrawn while the supervisor was stopped is still
-/// detected.
+/// detected. The health file restores a standing alarm only when no ledger is
+/// configured: the audited orchestrator can write that file, so with a ledger
+/// the ledger's own records are the only ones that mark an alarm as reported.
 #[derive(Default)]
 pub struct ContainmentAudit {
     reusable: HashMap<Pair, (String, Attestation)>,
@@ -1151,6 +1153,8 @@ pub struct ContainmentAudit {
     alarms: HashMap<(String, String), Alarm>,
     /// Epoch evidence inputs reported as changed, keyed by epoch and input.
     input_alarms: BTreeSet<(String, String)>,
+    /// Whether the scan in progress records its alarms in a ledger.
+    ledgered: bool,
 }
 
 impl ContainmentAudit {
@@ -1180,6 +1184,7 @@ impl ContainmentAudit {
         lineage: &LineageView,
         ledger: Option<&crate::ledger::AuditLedger>,
     ) -> ContainmentView {
+        self.ledgered = ledger.is_some();
         let view = self.scan(paths, lineage);
         for attestation in &view.attestations {
             write_finding(paths, attestation);
@@ -1250,10 +1255,15 @@ impl ContainmentAudit {
             }
             let coordinates = (epoch.to_string(), child.to_string());
             let prior = self.priors.get(&coordinates).cloned().or_else(|| {
-                // First sight in this process: the health file seeds the
-                // standing alarms the ledger did not record, so a restart
-                // without a ledger does not repeat them either.
+                // First sight in this process. Without a ledger the health
+                // file seeds the standing alarms, so a restart does not
+                // repeat them. With one, the ledger alone restores them: a
+                // health file written into the workspace must not make an
+                // alarm read as already reported.
                 let prior = read_prior(paths, epoch, child)?;
+                if self.ledgered {
+                    return Some(prior);
+                }
                 if let Some(alarm) = prior.alarm() {
                     self.alarms.entry(coordinates.clone()).or_insert(alarm);
                 }
@@ -1309,7 +1319,8 @@ impl ContainmentAudit {
     /// The alarms are `violated`, `evidence_mismatch`, and `evidence_withdrawn`
     /// (an unverified pair whose evidence verified on an earlier scan). A pair
     /// alarms when it enters one or moves between two; a standing alarm is
-    /// reported once, including across a restart through the health file. A
+    /// reported once, including across a restart through the ledger or,
+    /// without one, the health file. A
     /// pair whose finding is attributed to an ancestor stays silent: the
     /// ancestor alarms.
     fn alert(&mut self, view: &ContainmentView, ledger: Option<&crate::ledger::AuditLedger>) {

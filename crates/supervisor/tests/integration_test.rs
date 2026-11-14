@@ -1555,12 +1555,15 @@ fn mutation_containment_reports_a_changed_epoch_input_once() {
     assert_eq!(alerts[1]["alarm"], "evidence_mismatch");
     assert_eq!(alerts[1]["generation_id"], "v1");
 
-    // A restarted audit seeds both standing alarms from the health files.
-    ContainmentAudit::new().tick(&paths, &reader::build_lineage_view(&paths), Some(&ledger));
+    // An audit loaded from the ledger, as the integrity loop loads it on
+    // start and after a panic, repeats neither, with or without health files.
+    let history = zicato_supervisor::ledger::LedgerHistory::load(&ledger);
+    ContainmentAudit::from_alarms(history.containment_alarms).tick(
+        &paths,
+        &reader::build_lineage_view(&paths),
+        Some(&ledger),
+    );
     assert_eq!(containment_alerts(&ledger_dir).len(), 2);
-
-    // With the health files gone, an audit loaded from the ledger, as the
-    // integrity loop loads it on start and after a panic, repeats neither.
     std::fs::remove_dir_all(paths.epoch_health_dir("epoch")).unwrap();
     let history = zicato_supervisor::ledger::LedgerHistory::load(&ledger);
     ContainmentAudit::from_alarms(history.containment_alarms).tick(
@@ -1569,8 +1572,8 @@ fn mutation_containment_reports_a_changed_epoch_input_once() {
         Some(&ledger),
     );
     assert_eq!(containment_alerts(&ledger_dir).len(), 2);
-    // Without either record, both alarms are reported again.
-    std::fs::remove_dir_all(paths.epoch_health_dir("epoch")).unwrap();
+    // Without the ledger's record, both alarms are reported again: the
+    // health files the previous scan wrote do not stand in for it.
     ContainmentAudit::new().tick(&paths, &reader::build_lineage_view(&paths), Some(&ledger));
     assert_eq!(containment_alerts(&ledger_dir).len(), 4);
 }
@@ -1597,6 +1600,43 @@ fn mutation_containment_detects_withdrawal_across_a_restart() {
     let alerts = containment_alerts(&ledger_dir);
     assert_eq!(alerts.len(), 1, "{alerts:?}");
     assert_eq!(alerts[0]["alarm"], "evidence_withdrawn");
+}
+
+/// Pre-write `forged` as the health file of a violated pair, optionally
+/// change the frozen brief, scan once with a ledger, and return the alerts.
+fn alerts_despite_forged_health_file(forged: &str, change_brief: bool) -> Vec<Value> {
+    use zicato_supervisor::range_containment::ContainmentAudit;
+    let (_t, paths) = containment_workspace(&containment_case("adjacent-expression"), Some(true));
+    if change_brief {
+        std::fs::write(paths.epochs.join("epoch/brief.md"), b"changed\n").unwrap();
+    }
+    let health = paths.epoch_health_dir("epoch");
+    std::fs::create_dir_all(&health).unwrap();
+    std::fs::write(health.join("mutation_containment_v1.json"), forged).unwrap();
+    let ledger_dir = paths.workspace.join("ledger");
+    let ledger = zicato_supervisor::ledger::AuditLedger::open(&ledger_dir);
+    let lineage = reader::build_lineage_view(&paths);
+    ContainmentAudit::new().tick(&paths, &lineage, Some(&ledger));
+    containment_alerts(&ledger_dir)
+}
+
+/// The health files sit in the workspace the audited orchestrator writes, so
+/// with a ledger they must not stand in for a recorded alarm.
+#[test]
+fn mutation_containment_alerts_on_a_violation_despite_a_forged_health_file() {
+    let alerts = alerts_despite_forged_health_file(r#"{"status":"violated"}"#, false);
+    assert_eq!(alerts.len(), 1, "{alerts:?}");
+    assert_eq!(alerts[0]["alarm"], "violated");
+    assert_eq!(alerts[0]["generation_id"], "v1");
+}
+
+#[test]
+fn mutation_containment_reports_a_changed_input_despite_a_forged_health_file() {
+    let forged = r#"{"status":"unverified","introduced_by_input":"brief.md"}"#;
+    let alerts = alerts_despite_forged_health_file(forged, true);
+    assert_eq!(alerts.len(), 1, "{alerts:?}");
+    assert_eq!(alerts[0]["alarm"], "epoch_evidence_changed");
+    assert_eq!(alerts[0]["input"], "brief.md");
 }
 
 #[test]
