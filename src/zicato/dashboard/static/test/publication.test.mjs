@@ -17,17 +17,15 @@ const publication = await import('../js/views/publication.js');
 const EPOCH = '2026-07-12_pub';
 const LONG_HASH = 'feedfacecafebabe0123456789abcdef0123456789abcdefdeadbeefc0ffee00';
 
-// A publication markdown with a WIDE table, a figure marker, and a long
-// contract hash in the masthead metadata — the three overflow risks.
+// A publication markdown with a WIDE table and a long contract hash in the
+// masthead metadata — the overflow risks.
 const ANALYSIS_MD = [
-  '<!-- EYEBROW -->',
   'Zicato improvement campaign · epoch analysis report',
   '',
   '# Publication Fixture',
   '',
-  '<!-- META -->',
-  '**Epoch id**: `' + EPOCH + '`  ',
-  '**Contract hash**: `' + LONG_HASH + '`',
+  '- **Epoch id**: `' + EPOCH + '`',
+  '- **Contract hash**: `' + LONG_HASH + '`',
   '',
   '## Abstract',
   '',
@@ -39,21 +37,14 @@ const ANALYSIS_MD = [
   '| --- | --- | --- |',
   '| `sys_prompt` | prompt_text | `/very/long/absolute/path/agent/prompt.txt` |',
   '',
-  '<!-- FIGURE:lineage -->',
-  '',
   '## Conclusion & Next Directions',
   '',
   'Keep the clause.',
   '',
 ].join('\n');
 
-const SERVED_HTML = '<style>.paper{color:red}</style>'
-  + '<article class="paper paper-card" data-epoch="' + EPOCH + '">'
-  + '<div class="paper-article"><h1>Served Paper Title</h1>'
-  + '<p>Rendered by the server report renderer.</p></div></article>';
-
 const F = {
-  [`/api/epoch/${EPOCH}/analysis`]: { analysis_md: ANALYSIS_MD, analysis_html_inline: SERVED_HTML },
+  [`/api/epoch/${EPOCH}/analysis`]: { analysis_md: ANALYSIS_MD },
   [`/api/lineage?epoch=${EPOCH}`]: {
     generations: [
       { generation_id: 'v0', epoch_id: EPOCH, parent_generation_id: '', promoted: true },
@@ -68,11 +59,6 @@ const F = {
 
 const ctx = { navigate() {}, href: router.href };
 
-function hasClass(node, cls) {
-  const c = (node && node.getAttribute && node.getAttribute('class')) || '';
-  return c.split(/\s+/).includes(cls);
-}
-
 async function renderInto(host) {
   data.invalidate();
   installFixtureMap(F);
@@ -80,12 +66,21 @@ async function renderInto(host) {
 }
 
 // ---- (1) a wide markdown table scrolls inside its OWN dn-table-scroll -----
-
-// ---- (2) a figure marker splices a contained dn-paper-fig ------------------
-test('publication: a FIGURE marker splices a dn-paper-fig figure', async () => {
+test('publication: a wide report table scrolls in its OWN container (never the page)', async () => {
   const host = document.createElement('div');
   await renderInto(host);
-  assert(allByClass(host, 'dn-paper-fig').length >= 1, 'the lineage figure marker rendered a dn-paper-fig');
+  const body = allByClass(host, 'dn-md-body')[0];
+  assert(body, 'the report Markdown is mounted');
+  const scroll = allByClass(body, 'dn-table-scroll')[0];
+  assert(scroll, 'the report table sits in a dn-table-scroll box so it scrolls inside itself');
+  assert(allByClass(scroll, 'dn-md-table').length === 1, 'the scroll box holds the table');
+});
+
+// ---- (2) the live figures follow the report --------------------------------
+test('publication: the live figures are appended as contained dn-paper-fig figures', async () => {
+  const host = document.createElement('div');
+  await renderInto(host);
+  assert(allByClass(host, 'dn-paper-fig').length >= 1, 'the lineage figure rendered a dn-paper-fig');
 });
 
 // ---- (3) the digest gate: an identical re-render rebuilds ZERO DOM ---------
@@ -115,17 +110,12 @@ test('publication: the CSS pins the never-overflow guards', () => {
 });
 
 // ---------------------------------------------------------------------------
-// The publication view displays the saved HTML fragment.
+// The publication view renders the report's Markdown.
 // ---------------------------------------------------------------------------
 
-
-
-function withServedHtml(extra) {
+function withAnalysis(extra) {
   return Object.assign({}, F, {
-    [`/api/epoch/${EPOCH}/analysis`]: Object.assign(
-      { analysis_md: ANALYSIS_MD, analysis_html_inline: SERVED_HTML },
-      extra || {},
-    ),
+    [`/api/epoch/${EPOCH}/analysis`]: Object.assign({ analysis_md: ANALYSIS_MD }, extra || {}),
   });
 }
 
@@ -135,10 +125,10 @@ async function renderWith(host, fixtures) {
   await publication.render(host, ctx, { epochId: EPOCH });
 }
 
-test('publication: fetches the rendered paper from the dedicated analysis endpoint', async () => {
+test('publication: fetches the report from the dedicated analysis endpoint', async () => {
   const host = document.createElement('div');
   data.invalidate();
-  installFixtureMap({ ...withServedHtml(), '/api/epoch': { epoch_id: EPOCH } });
+  installFixtureMap({ ...withAnalysis(), '/api/epoch': { epoch_id: EPOCH } });
   const requests = [];
   const fetch = globalThis.fetch;
   globalThis.fetch = (...args) => {
@@ -152,54 +142,41 @@ test('publication: fetches the rendered paper from the dedicated analysis endpoi
   }
   assert(requests.includes('/api/epoch'), 'the epoch response resolves the publication epoch');
   assert(requests.includes(`/api/epoch/${EPOCH}/analysis`), 'the dedicated endpoint supplies the paper');
-  const served = allByClass(host, 'dn-paper-served')[0];
-  assert(served, 'the server fragment is mounted');
-  // the harness does not parse innerHTML (it flags the write instead), so the
-  // proof the SERVER html is what painted is that exactly one innerHTML write
-  // landed on the fragment host — el({html}) is the only path that writes it.
-  assertEqual(served.innerHTMLWriteCount(), 1, 'the served HTML fragment was written into its host');
-  // the client-side markdown masthead must NOT also render (no double paper).
-  assertEqual(allByClass(host, 'dn-paper-masthead').length, 0,
-    'the client markdown masthead is not painted when the server render exists');
-  // the LIVE figures still ride along — they are what the static fragment cannot carry.
+  const bodies = allByClass(host, 'dn-md-body');
+  assertEqual(bodies.length, 1, 'the report is mounted exactly once');
+  assert(bodies[0].textContent.includes('Publication Fixture'), 'the report Markdown is what painted');
+  // the report is built as DOM nodes: the Markdown is never written as HTML.
+  assertEqual(host.innerHTMLWriteCount(), 0, 'no innerHTML write landed anywhere in the view');
+  // the LIVE figures still ride along — they are what the report text cannot carry.
   assert(allByClass(host, 'dn-paper-fig').length >= 1, 'the live interactive figures are still appended');
-});
-
-test('publication (A8): the served fragment scrolls in its OWN container (never the page)', async () => {
-  const host = document.createElement('div');
-  await renderWith(host, withServedHtml());
-  const served = allByClass(host, 'dn-paper-served')[0];
-  assert(hasClass(served, 'dn-table-scroll'),
-    'the fragment host carries dn-table-scroll so a wide server table scrolls inside itself');
 });
 
 test('publication: an unpublished report retains interactive figures', async () => {
   const host = document.createElement('div');
-  await renderWith(host, withServedHtml({ analysis_html_inline: '   ' }));
-  assertEqual(allByClass(host, 'dn-paper-served').length, 0, 'no served fragment when the server produced none');
+  await renderWith(host, withAnalysis({ analysis_md: '   ' }));
+  assertEqual(allByClass(host, 'dn-md-body').length, 0, 'no report body when the server produced none');
   assert(host.textContent.includes('has not been published'), 'the missing report is explicit');
   assert(allByClass(host, 'dn-paper-fig').length >= 1, 'interactive figures remain available');
 });
 
-test('publication (A8): analysis_html_inline is FOLDED into the digest (a re-render of the paper repaints)', async () => {
+test('publication (A8): analysis_md is FOLDED into the digest (a regenerated report repaints)', async () => {
   const host = document.createElement('div');
-  await renderWith(host, withServedHtml());
+  await renderWith(host, withAnalysis());
   const first = host.getAttribute('data-t-digest');
   const firstNode = host.firstChild;
 
   // a no-op: identical payload → zero DOM.
-  await renderWith(host, withServedHtml());
-  assertEqual(host.getAttribute('data-t-digest'), first, 'an identical served render is a digest no-op');
+  await renderWith(host, withAnalysis());
+  assertEqual(host.getAttribute('data-t-digest'), first, 'an identical report is a digest no-op');
   assert(host.firstChild === firstNode, 'the article node survives a no-op re-render');
 
-  // the SAME markdown, a DIFFERENT server render — the exact case a digest
-  // blind to analysis_html_inline would refuse to repaint.
-  await renderWith(host, withServedHtml({
-    analysis_html_inline: SERVED_HTML.replace('Served Paper Title', 'Edited Paper Title'),
+  // a regenerated report with different text must repaint.
+  await renderWith(host, withAnalysis({
+    analysis_md: ANALYSIS_MD.replace('Publication Fixture', 'Edited Fixture Title'),
   }));
-  assert(host.getAttribute('data-t-digest') !== first,
-    'a re-rendered server paper (same markdown) flips the digest');
-  assert(host.firstChild !== firstNode, 'the article was rebuilt (the new server paper painted)');
+  assert(host.getAttribute('data-t-digest') !== first, 'a regenerated report flips the digest');
+  assert(host.firstChild !== firstNode, 'the article was rebuilt (the new report painted)');
+  assert(host.textContent.includes('Edited Fixture Title'), 'the regenerated report is what painted');
 });
 
 // ---------------------------------------------------------------------------
@@ -285,17 +262,17 @@ test('publication (A10): the score / metrics / won_by / session fields are FOLDE
   assert(host2.getAttribute('data-t-digest') !== base2, 'won_by changing hands flips the digest');
 });
 
-test('publication: an HTML correction of equal length redraws the report', async () => {
+test('publication: a report correction of equal length redraws the report', async () => {
   const host = document.createElement('div');
   await renderWith(host, F);
   const first = host.firstChild;
-  const corrected = SERVED_HTML.replace('Served Paper Title', 'Edited Paper Title');
-  assertEqual(corrected.length, SERVED_HTML.length, 'the correction preserves text length');
-  const revised = {...F, [`/api/epoch/${EPOCH}/analysis`]: {analysis_md: ANALYSIS_MD, analysis_html_inline: corrected}};
+  const corrected = ANALYSIS_MD.replace('Keep the clause.', 'Drop the clause.');
+  assertEqual(corrected.length, ANALYSIS_MD.length, 'the correction preserves text length');
+  const revised = {...F, [`/api/epoch/${EPOCH}/analysis`]: {analysis_md: corrected}};
   await renderWith(host, revised);
-  assert(host.firstChild !== first, 'changed report HTML redraws the article');
+  assert(host.firstChild !== first, 'a changed report redraws the article');
   const updated = host.firstChild;
   await renderWith(host, revised);
-  assert(host.firstChild === updated, 'unchanged HTML preserves the article');
+  assert(host.firstChild === updated, 'an unchanged report preserves the article');
 });
 await run();

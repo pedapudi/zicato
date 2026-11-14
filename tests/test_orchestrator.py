@@ -150,13 +150,11 @@ def test_evolve_once_promotes_on_improvement(
     # The analysis includes the round hypothesis and generation.
     epoch_dir = workspace / "epochs" / epoch_id
     md = epoch_dir / "analysis.md"
-    html = epoch_dir / "analysis.html"
     assert md.is_file()
-    assert html.is_file()
+    assert not list(epoch_dir.glob("analysis*.html"))
 
     md_text = md.read_text()
-    assert "epoch analysis report" in md_text.lower()
-    assert "<!-- EYEBROW -->" in md_text
+    assert md_text.startswith("Zicato improvement campaign · epoch analysis report\n")
     for section in (
         "## Abstract",
         "## Introduction",
@@ -167,7 +165,6 @@ def test_evolve_once_promotes_on_improvement(
         assert section in md_text, section
     assert "Tag the greeting literal for candidate v1." in md_text
     assert "v1" in md_text
-    assert html.read_text().startswith("<!DOCTYPE html>")
 
     # Insights are also published for the round.
     insights = epoch_dir / "insights"

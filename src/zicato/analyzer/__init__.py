@@ -12,8 +12,8 @@ The analyzer has two outputs, both regenerated as the evolve loop runs:
 
 * **The epoch analysis report** — a comprehensive, academic-paper-style
   narrative of the whole improvement campaign, regenerated after every
-  generation and persisted as ``epochs/{epoch}/analysis.md`` plus a
-  rendered ``analysis.html``. Its data-bearing sections are templated
+  generation and persisted as ``epochs/{epoch}/analysis.md``, which the
+  console renders. Its data-bearing sections are templated
   exactly from the structured workspace; its prose sections are written
   by one bounded evaluation-LLM call.
 
@@ -26,7 +26,7 @@ Public surface:
 * :func:`load_latest_insight` — the most recent round's insight, for
   the next round's proposal evidence.
 * :func:`generate_epoch_report` — regenerate the comprehensive epoch
-  analysis report (``analysis.md`` + ``analysis.html``).
+  analysis report (``analysis.md``).
 * :class:`EpochReportData` / :func:`gather_epoch_report_data` — the
   deterministic structured view the report is templated from.
 """

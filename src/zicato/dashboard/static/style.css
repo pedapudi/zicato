@@ -3,31 +3,23 @@
  * The console paints the entire UI into `#console-root` and loads its own
  * stylesheet, `css/console.css`, whose every rule is scoped under
  * `#console-root`. This sheet holds only what lives OUTSIDE that scope, which
- * is four things:
+ * is three things:
  *
  *   1. The page ground — the colour tokens, the box-sizing reset, and the
  *      `html, body` paint the console renders on top of.
  *   2. The skip link, which `index.html` declares before any script runs.
- *   3. Bare element defaults (`main`, `section`, `h2`-`h4`, `code`) that reach
- *      the analyzer's publication fragment: server-rendered HTML embedded into
- *      the Publication view, carrying plain elements rather than the console's
- *      prefixed classes, so it is styled from here.
- *   4. The two SVG text classes the analyzer's figures carry (`svg-label`,
- *      `svg-axis`), and the harmonograf link treatments.
+ *   3. Bare element defaults (`main`, `section`, `h2`-`h4`, `code`) and the
+ *      harmonograf link treatments.
  *
- * `index.html` is the only page that links this file. The dashboard's other
- * two HTML documents are self-contained: the bundle-missing placeholder in
- * `server.py` styles itself inline, and the analyzer's standalone
- * `analysis.html` carries its own `<style>`.
+ * `index.html` is the only page that links this file. The bundle-missing
+ * placeholder in `server.py` styles itself inline.
  */
 
 /* ---- palette -------------------------------------------------------
  *
- * The decision colours (promoted / rejected / baseline / deferred) restate
- * the canonical values in `zicato.analyzer.svg.palette`, which the report
- * figures draw with; `tests/test_dashboard_ui.py` holds the two sides
- * together so a re-tint cannot split them. The console does not read these
- * tokens — it has its own `--v2-*` set, per theme, in console.css.
+ * The decision colours (promoted / rejected / baseline / deferred) belong to
+ * the document shell. The console does not read these tokens — it has its
+ * own `--v2-*` set, per theme, in console.css.
  */
 :root {
   --bg: #ffffff;
@@ -97,16 +89,7 @@ html, body {
   z-index: 1000;
 }
 
-/* ---- the analyzer's publication fragment -----------------------------
- *
- * `/api/epoch/{id}/analysis` serves a paper-styled HTML fragment that the
- * Publication view embeds. `zicato.analyzer.report` renders it, not the
- * console's builders, so it carries bare elements and the `svg-*` figure
- * classes rather than `dn-*`. Its own inline <style> owns the paper palette
- * (see issue #367); these rules supply the element defaults it does not set.
- * Its markdown renderer emits headings down to h5, so h2-h4 all reach real
- * content.
- */
+/* ---- bare element defaults ------------------------------------------- */
 code, .mono {
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   font-size: 0.92em;
@@ -140,16 +123,6 @@ h4 {
   text-transform: uppercase;
   letter-spacing: 0.05em;
   font-weight: 600;
-}
-.svg-label {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  font-size: 11px;
-  fill: var(--text);
-}
-.svg-axis {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  font-size: 10px;
-  fill: var(--text-muted);
 }
 
 /* ---- harmonograf links ----------------------------------------------

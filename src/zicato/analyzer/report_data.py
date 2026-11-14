@@ -436,7 +436,7 @@ def _cumulate_scalar(generations: list[GenerationView]) -> list[GenerationView]:
     ``0.0``, every subsequent generation adds its ``scalar_score_delta`` to
     its parent's cumulative scalar, and a generation whose parent is unknown
     inherits ``0.0``. The result is deterministic and matches the trajectory
-    the renderers plot.
+    the section renderers list.
     """
     from dataclasses import replace as _replace  # noqa: PLC0415
 
@@ -469,7 +469,7 @@ def gather_epoch_report_data(
     """Walk one epoch's workspace tree into a frozen :class:`EpochReportData`.
 
     An epoch-close caller supplies the experiment records already read for its
-    narrative, so HTML generation uses the same experiment observations.
+    narrative, so the report uses the same experiment observations.
 
     Missing artifacts retain their empty/default representation. A present
     corrupt board or unreadable brief raises RecordError before publication;

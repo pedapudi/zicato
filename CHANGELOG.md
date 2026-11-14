@@ -124,6 +124,28 @@ snapshot and the `logs` command call. `/api/active-runs`,
 `/api/heartbeat` and `/api/epoch/{epoch_id}/journal.md` stay served: no
 console view reads them, and the `zicato-watch-dashboard` and
 `zicato-analyze-epoch` skills do.
+### The epoch report is Markdown alone, and the console renders it
+
+The analyzer writes one report per epoch, `analysis.md`. It no longer
+writes `analysis.html` or `analysis.fragment.html` and draws no SVG
+figure. Each view a figure carried is a table in the report: the
+mutation-impact matrix, the lineage with each generation's parent, the
+proposer's predictions beside the outcomes, every challenger's drift-kind
+movements, and the per-board-entry Δ scalar. The mutation-surface table
+gains a `lines` column. The masthead metadata is a list, and the campaign
+summary and the promoted-placebo warning open with a bold
+`KEY OBSERVATION` or `CRITICAL` label. The report carries no HTML comment
+marker.
+
+The console's Publication view renders that Markdown with its own
+restricted renderer and keeps its interactive figures and per-match-up
+tables. `GET /api/epoch/{epoch_id}/analysis` serves
+`{epoch_id, analysis_md}`; the `analysis_html_inline` and
+`analysis_html_available` fields are gone from it and from `GET /api/epoch`,
+and the route `GET /api/epoch/{epoch_id}/analysis.html` is removed.
+`zicato repair report` rewrites `analysis.md` and its prose record. A
+workspace written by an earlier version keeps its HTML files on disk;
+nothing reads them.
 
 ### The builder's knob help is the scoring configuration's documentation
 

@@ -249,7 +249,6 @@ HAND_WRITTEN_GET_ROUTES = frozenset(
     {
         "/api/conversation/{run_id}",
         "/api/environment",
-        "/api/epoch/{epoch_id}/analysis.html",
         "/api/epoch/{epoch_id}/journal.md",
         "/api/generation/{epoch_id}/{generation_id}/episode-export.html",
         "/api/health",

@@ -298,25 +298,6 @@ def test_dark_mode_branch_exists(style_css: str) -> None:
     assert "prefers-color-scheme: dark" in style_css
 
 
-def test_palette_matches_the_report_figures(style_css: str) -> None:
-    """The dashboard CSS carries the same decision colours the figures draw.
-
-    The analysis report's SVG figures own the decision palette
-    (``zicato.analyzer.svg.palette``); the dashboard restates it in CSS.
-    Asserting against the module constants keeps a re-tint on one side from
-    silently splitting the two surfaces.
-    """
-    from zicato.analyzer.svg.palette import (
-        BASELINE_COLOR,
-        DEFERRED_COLOR,
-        PROMOTED_COLOR,
-        REJECTED_COLOR,
-    )
-
-    for color in (PROMOTED_COLOR, REJECTED_COLOR, BASELINE_COLOR, DEFERRED_COLOR):
-        assert color in style_css, f"palette missing canonical color {color}"
-
-
 # ---------------------------------------------------------------------------
 # Bundle size envelope
 # ---------------------------------------------------------------------------

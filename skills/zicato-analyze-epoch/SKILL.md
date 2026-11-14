@@ -24,7 +24,6 @@ launch a live `evolve` (it spends LLM budget).
   epochs/{epoch_id}/
     analysis.md     # re-rendered after every round; mid-epoch its masthead
                     #   carries `LIVING DRAFT — through round N`
-    analysis.html   # the rendered companion, written alongside analysis.md
     generations/{vN}/experiment.json      # the hypothesis, written before the run
     rounds/{round}/field_settlement.json  # each candidate's recorded outcome
     rounds/{round}/round_log.jsonl        # the round's typed event log
@@ -100,7 +99,7 @@ artifacts are frozen — that is what makes its matchups comparable. Re-opening 
 re-running it is not a supported operation; start a fresh epoch instead (a new
 epoch's `v0` baselines off the closed epoch's final champion). You *can* still
 re-render its reports (steps 3-4) — that reads the frozen data and only rewrites
-`analysis.md` / `analysis.html`.
+`analysis.md` and its prose record `analysis.prose.json`.
 
 ## 2. Read the journal and the analysis
 
@@ -110,9 +109,6 @@ report files directly, and the journal through the dashboard:
 ```sh
 # the retrospective publication (present mid-epoch too, stamped LIVING DRAFT)
 $EDITOR .zicato/epochs/<epoch_id>/analysis.md
-
-# the archival HTML snapshot — openable mid-epoch via file://
-xdg-open .zicato/epochs/<epoch_id>/analysis.html
 
 # the journal, rendered from the records (needs a running `zicato dashboard`)
 curl -s http://127.0.0.1:7892/api/epoch/<epoch_id>/journal.md
@@ -133,11 +129,11 @@ jq '.candidates[] | {generation_id, outcome}' \
 .venv/bin/zicato repair report --workspace .zicato [--epoch <id>] [--no-llm]
 ```
 
-Re-renders `analysis.md` / `analysis.html` from the current on-disk files.
-Idempotent and read-only against everything except those two files. Use it to
+Re-renders `analysis.md` from the current on-disk files. Idempotent and
+read-only against everything except that file and `analysis.prose.json`. Use it to
 repair an epoch whose report was written by a buggy older orchestrator (e.g. the
 data sections rendered empty). `--no-llm` skips the prose pass and substitutes
-placeholders — the **deterministic** figures, tables, and scores are re-rendered
+placeholders — the **deterministic** tables and scores are re-rendered
 regardless, so `--no-llm` is the safe, budget-free repair.
 
 ## 4. (Re)run the decision-telemetry analyzer
@@ -160,8 +156,8 @@ runs only. The next round's proposal evidence carries the highest-numbered
 - Do **not** start a live `evolve`/`tournament` to "freshen" an epoch — that
   spends budget. Closing and report regeneration are the read-side tools.
 - Only `analysis.md`'s **prose** sections need the evaluation LLM; its data
-  sections and `analysis.html` are deterministic. Prefer `--no-llm` when you
-  only need the figures/tables back — without it, `zicato repair report`
+  sections are deterministic. Prefer `--no-llm` when you
+  only need the tables back — without it, `zicato repair report`
   resolves the evaluation callable from config and spends a call.
 - A closed epoch is frozen — treat `epochs/{id}/` as read-only.
 

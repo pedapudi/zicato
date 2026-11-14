@@ -661,7 +661,6 @@
     }
   },
   "epoch_view::e0": {
-    "analysis_html_available": false,
     "analysis_md": "",
     "board": [
       {
@@ -797,7 +796,6 @@
     }
   },
   "epoch_view::e1": {
-    "analysis_html_available": false,
     "analysis_md": "",
     "board": [
       {
@@ -976,7 +974,6 @@
     }
   },
   "epoch_view::e2": {
-    "analysis_html_available": false,
     "analysis_md": "",
     "board": [
       {
@@ -1591,7 +1588,6 @@
     "active_runs": [],
     "active_tournament": null,
     "epoch": {
-      "analysis_html_available": false,
       "analysis_md": "",
       "board": [
         {

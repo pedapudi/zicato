@@ -498,7 +498,7 @@ READ_ENDPOINTS: Final[tuple[ReadEndpoint, ...]] = (
     ReadEndpoint(
         path="/api/epoch/{epoch_id}/analysis",
         reader=query.build_epoch_analysis,
-        serves="One epoch's analysis report payload; the reader owns its rendering semantics.",
+        serves="One epoch's analysis report, as ``{epoch_id, analysis_md}``.",
         params=("epoch_id",),
         degrade=_fixed(error="invalid epoch id"),
         degrade_status=400,
@@ -887,26 +887,7 @@ def _make_epoch_document_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
             media_type="text/markdown; charset=utf-8",
         )
 
-    async def api_epoch_analysis_html(request: Request) -> Response:
-        """Serve the raw ``analysis.html`` for an epoch.
-
-        Returns the self-contained HTML document so the frontend can
-        open it in a new tab or embed it. Returns 404 when absent.
-        """
-        from starlette.responses import HTMLResponse
-
-        epoch_id = request.path_params["epoch_id"]
-        if not _is_safe_id(epoch_id):
-            return PlainTextResponse("invalid epoch id", status_code=400)
-        html = await run_in_threadpool(query.read_epoch_analysis_html, paths, epoch_id)
-        if html is None:
-            return PlainTextResponse("analysis.html not found for this epoch", status_code=404)
-        return HTMLResponse(html)
-
-    return {
-        "api_epoch_journal_md": api_epoch_journal_md,
-        "api_epoch_analysis_html": api_epoch_analysis_html,
-    }
+    return {"api_epoch_journal_md": api_epoch_journal_md}
 
 
 def _make_proposal_episode_endpoints(paths: WorkspacePaths) -> dict[str, Any]:

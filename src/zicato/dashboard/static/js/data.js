@@ -352,8 +352,7 @@ export function fileContent(epochId, genId, path) {
 export function mutationDetail(epochId, mutationId) {
   return cachedJson(`/api/mutations/${enc(epochId)}/${enc(mutationId)}`);
 }
-// The epoch's ACM publication — the server-rendered paper fragment
-// (`analysis_html_inline`) with the raw markdown (`analysis_md`) behind it.
+// The epoch's publication — the report's Markdown (`analysis_md`).
 export function analysis(epochId) {
   return cachedJson(`/api/epoch/${enc(epochId)}/analysis`);
 }

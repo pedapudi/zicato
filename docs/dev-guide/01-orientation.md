@@ -672,7 +672,7 @@ shape, as `WorkspaceLayout` (`src/zicato/workspace/layout.py`) declares it:
         mutations.json           # the enumerated mutation surface
         ladder_state.json        # the holdout-query budget
         proposer_inputs.jsonl    # what each proposal was shown
-        analysis.md / .html      # the (re)generated epoch report
+        analysis.md              # the (re)generated epoch report
         health/round_{N}.json    # per-round loop-health reports
         insights/round_{NNNN}.md # analyzer output the proposer reads back
         episodes/{vN}[-{slot}]/  # one proposal episode log per candidate
@@ -784,8 +784,8 @@ loop-level entry points.
 load + the frozen-contract writes), `contract.py` (the hash),
 `execution.py` (captured execution inputs), `publication.py` and `baseline.py`
 (recoverable publication), `journal.py`, `lineage.py`, `analysis.py`
-(the at-close retrospective; its HTML
-companion is rendered by `analyzer/report.py`), `round_log.py`, `screen.py`, `preflight.py`,
+(the at-close retrospective, which `analyzer/report.py` assembles into
+`analysis.md`), `round_log.py`, `screen.py`, `preflight.py`,
 `genstore.py` + `git_genstore.py` (the generation-tree seam), `gc.py`,
 `settlement_receipt.py` (the committed round record and the champion it
 names), `round_integrity.py` (per-round completeness read from the round
@@ -897,7 +897,7 @@ and never its verdict.
 **`analyzer/`** — decision-telemetry insights (`insights/round_{N}.md`,
 computed over the training slice's runs; the most recent file is read into
 the next round's proposal evidence), the epoch analysis report
-(`analysis.md`/`analysis.html`), outcome marginals, and the
+(`analysis.md`), outcome marginals, and the
 process-exemplar extractor.
 
 **`reflection/`** — board reflection: measurement-system analysis of the

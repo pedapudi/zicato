@@ -85,7 +85,7 @@ outcome is present; the shape may differ from the plan's wording.
 | 3a orchestrator → `evolve/` | shipped | `orchestrator.py` is a 14-line re-export; the round runs through one pipeline for every structure ([ROUND-PIPELINE.md](ROUND-PIPELINE.md)) |
 | 3b split `tournament/runner.py` | shipped | `worker_transport.py`, `worker_execution.py`, `scheduling.py`, `unit_cache.py`, `governance.py`; no `api.py` |
 | 3c split the dashboard state reader | shipped, relocated | the readers live in `src/zicato/query/` (with `query/_sqlite.py`), not `dashboard/readers/` |
-| 3d analyzer figures | partly | `analyzer/svg/` (`primitives.py`, `palette.py`, one module per figure family); no `report/markdown.py` |
+| 3d analyzer figures | superseded | the analyzer's figures and its markdown→HTML engine are removed; `analysis.md` is the report and the console renders it |
 | 3e `adapters/adk.py` | not done | no `judge_runtime/judge_only.py`; `adapters/adk.py` is 1,841 lines |
 | 3f proposer split | not done | no `render.py`, `visibility.py` or `salvage.py` |
 | 3g mutation and index split | not done | no `mutation/literal_surgery.py`; `synthetic/manifest_bridge.py` stays; `index/ingest.py` is one 2,192-line module |
@@ -310,10 +310,11 @@ public, breaking the mutation↔synthetic circular lazy-import. `index/ingest.py
 
 Lower-frequency, higher-judgment items; do after the structure is clean.
 
-- **One HTML report generator** — built. `analyzer/report.py` renders
-  `analysis.html` at every epoch lifecycle phase, from the `analysis.md`
-  beside it; the second generator that rendered an overlapping epoch view
-  under `epoch/` is deleted, and the palette hard-copy it forced with it.
+- **One HTML report generator** — superseded. The second generator that
+  rendered an overlapping epoch view under `epoch/` was deleted first; the
+  analyzer's own HTML writer and figures followed, so `analyzer/report.py`
+  writes `analysis.md` alone at every epoch lifecycle phase and the console
+  renders that Markdown.
 - **Fix the synthetic-kind dispatch boundary**: today `adapters/adk.py` handles
   `single_turn`/`multi_turn_*` but `_tournament_worker.py:348` routes
   `synthetic_*` around the adapter. Pick one — all kinds through

@@ -25,7 +25,6 @@ from zicato.query.candidate_view import build_candidate_dossier
 from zicato.query.epoch_view import (
     build_epoch_analysis,
     build_epoch_view,
-    read_epoch_analysis_html,
 )
 from zicato.query.eval_view import (
     build_eval_dossier,
@@ -166,7 +165,6 @@ __all__ = [
     "read_active_runs_view",
     "read_active_tournament_dict",
     "read_current_epoch",
-    "read_epoch_analysis_html",
     "read_epoch_journal_md",
     "read_generation_file",
     "read_heartbeat_dict",

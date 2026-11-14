@@ -324,8 +324,7 @@
       },
       "journal": "",
       "goal": "Name sorts first, created last — the bug mirror.",
-      "analysis_md": "",
-      "analysis_html_available": false
+      "analysis_md": ""
     }
   },
   "epoch/scoped": {
@@ -506,8 +505,7 @@
       },
       "journal": "## v1 — hyp e1 v1\n\n**proposed_at**: 2026-01-01T00:00:00Z\n**modulating**: (none)\n**outcome**: rejected (Δscalar=+0.020, Δdrift_loss=+0.000, Δpass_rate=+0.000)\n",
       "goal": "First epoch chronologically.",
-      "analysis_md": "",
-      "analysis_html_available": false
+      "analysis_md": ""
     }
   },
   "epoch/rejected-scope": {
@@ -1808,9 +1806,7 @@
     "status": 200,
     "body": {
       "epoch_id": "e1",
-      "analysis_md": "",
-      "analysis_html_inline": "",
-      "analysis_html_available": false
+      "analysis_md": ""
     }
   },
   "epoch_analysis/rejected": {
@@ -3434,8 +3430,7 @@
       },
       "journal": "## v1 — Enforce explicit slide-structure output.\n\n**proposed_at**: 2026-05-30T00:30:00Z\n**modulating**: coordinator_prompt, oversight_policy\n**why**: The coordinator's outline omits the slide structure the brief asks for.\n**outcome**: rejected (Δscalar=+75.710, Δdrift_loss=+75.710, Δpass_rate=+0.000)\n## v2 — Tighten coordinator oversight.\n\n**proposed_at**: 2026-05-30T01:30:00Z\n**modulating**: oversight_policy\n**why**: The oversight policy lets a drifting draft through.\n**outcome**: rejected (Δscalar=+1.510, Δdrift_loss=+1.510, Δpass_rate=+0.000)\n",
       "goal": "Make the presentation agent crisper.",
-      "analysis_md": "",
-      "analysis_html_available": false
+      "analysis_md": ""
     }
   },
   "console/lineage": {
@@ -7840,8 +7835,7 @@
       },
       "journal": "## v2 — Name the audience up front and demand a slide outline before prose\n\n**proposed_at**: 2026-08-01T00:30:00Z\n**modulating**: prompt.system, agent.temperature\n**why**: The judge flags narrative drift whenever the agent starts writing paragraphs first.\n**outcome**: rejected (Δscalar=-0.030, Δdrift_loss=-0.030, Δpass_rate=-0.250)\n**rejection_reason**: pass_rate_regressed\n",
       "goal": "Identity.",
-      "analysis_md": "",
-      "analysis_html_available": false
+      "analysis_md": ""
     }
   },
   "identity/lineage": {
@@ -8941,8 +8935,7 @@
       },
       "journal": "## v1 — Idea v1.\n\n**proposed_at**: 2026-06-01T00:10:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: rejected (Δscalar=+0.000, Δdrift_loss=+0.000, Δpass_rate=+0.000)\n## v2 — Idea v2.\n\n**proposed_at**: 2026-06-01T00:20:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: rejected (Δscalar=+0.000, Δdrift_loss=+0.000, Δpass_rate=+0.000)\n## v3 — Idea v3.\n\n**proposed_at**: 2026-06-01T00:30:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: promoted (Δscalar=+0.000, Δdrift_loss=+0.000, Δpass_rate=+0.000)\n## v4 — Idea v4.\n\n**proposed_at**: 2026-06-01T00:40:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: rejected (Δscalar=+0.000, Δdrift_loss=+0.000, Δpass_rate=+0.000)\n",
       "goal": "g",
-      "analysis_md": "",
-      "analysis_html_available": false
+      "analysis_md": ""
     }
   },
   "racing_ladder/lineage": {
@@ -10256,8 +10249,7 @@
       },
       "journal": "## v1 — Idea v1.\n\n**proposed_at**: 2026-06-01T00:10:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: rejected (Δscalar=+0.000, Δdrift_loss=+0.000, Δpass_rate=+0.000)\n",
       "goal": "g",
-      "analysis_md": "",
-      "analysis_html_available": false
+      "analysis_md": ""
     }
   },
   "racing_no_records/lineage": {
@@ -12093,8 +12085,7 @@
       },
       "journal": "## v1 — Idea v1.\n\n**proposed_at**: 2026-06-02T00:10:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n## v2 — Idea v2.\n\n**proposed_at**: 2026-06-02T00:20:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n",
       "goal": "g",
-      "analysis_md": "",
-      "analysis_html_available": false
+      "analysis_md": ""
     }
   },
   "two_epochs/lineage": {
@@ -12576,8 +12567,7 @@
       },
       "journal": "## v1 — Idea v1.\n\n**proposed_at**: 2026-06-01T00:10:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: rejected (Δscalar=+0.000, Δdrift_loss=+0.000, Δpass_rate=+0.000)\n## v2 — Idea v2.\n\n**proposed_at**: 2026-06-01T00:20:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: rejected (Δscalar=+0.000, Δdrift_loss=+0.000, Δpass_rate=+0.000)\n## v3 — Idea v3.\n\n**proposed_at**: 2026-06-01T00:30:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: rejected (Δscalar=+0.000, Δdrift_loss=+0.000, Δpass_rate=+0.000)\n## v4 — Idea v4.\n\n**proposed_at**: 2026-06-01T00:40:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: promoted (Δscalar=+0.000, Δdrift_loss=+0.000, Δpass_rate=+0.000)\n",
       "goal": "g",
-      "analysis_md": "",
-      "analysis_html_available": false
+      "analysis_md": ""
     }
   },
   "two_epochs/older/lineage": {
@@ -13308,8 +13298,7 @@
       },
       "journal": "## v1 — Idea v1.\n\n**proposed_at**: 2026-06-02T00:10:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n## v2 — Idea v2.\n\n**proposed_at**: 2026-06-02T00:20:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n",
       "goal": "g",
-      "analysis_md": "",
-      "analysis_html_available": false
+      "analysis_md": ""
     }
   },
   "two_epochs/newer/lineage": {
@@ -13744,8 +13733,7 @@
       },
       "journal": "## v1 — Idea v1.\n\n**proposed_at**: 2026-05-30T00:10:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: promoted (Δscalar=+0.000, Δdrift_loss=+0.000, Δpass_rate=+0.000)\n## v2 — Idea v2.\n\n**proposed_at**: 2026-05-30T00:20:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: rejected (Δscalar=+0.000, Δdrift_loss=+0.000, Δpass_rate=+0.000)\n## v3 — Idea v3.\n\n**proposed_at**: 2026-05-30T00:30:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: rejected (Δscalar=+0.000, Δdrift_loss=+0.000, Δpass_rate=+0.000)\n",
       "goal": "g",
-      "analysis_md": "",
-      "analysis_html_available": false
+      "analysis_md": ""
     }
   },
   "racing_round_settled/lineage": {
@@ -15232,8 +15220,7 @@
       },
       "journal": "## v1 — Idea v1.\n\n**proposed_at**: 2026-05-30T00:10:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n## v2 — Idea v2.\n\n**proposed_at**: 2026-05-30T00:20:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n## v3 — Idea v3.\n\n**proposed_at**: 2026-05-30T00:30:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n",
       "goal": "g",
-      "analysis_md": "",
-      "analysis_html_available": false
+      "analysis_md": ""
     }
   },
   "racing_round_live/lineage": {
@@ -16007,8 +15994,7 @@
       },
       "journal": "## v1 — Idea v1.\n\n**proposed_at**: 2026-05-30T00:10:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: promoted (Δscalar=-0.120, Δdrift_loss=-0.120, Δpass_rate=+0.000)\n## v2 — Idea v2.\n\n**proposed_at**: 2026-05-30T00:20:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: rejected (Δscalar=+0.050, Δdrift_loss=+0.050, Δpass_rate=+0.000)\n## v3 — Idea v3.\n\n**proposed_at**: 2026-05-30T00:30:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: rejected (Δscalar=+0.050, Δdrift_loss=+0.050, Δpass_rate=+0.000)\n",
       "goal": "g",
-      "analysis_md": "",
-      "analysis_html_available": false
+      "analysis_md": ""
     }
   },
   "single_elim/lineage": {
@@ -17555,8 +17541,7 @@
       },
       "journal": "## v1 — Idea v1.\n\n**proposed_at**: 2026-05-30T00:10:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: promoted (Δscalar=-0.120, Δdrift_loss=-0.120, Δpass_rate=+0.000)\n## v2 — Idea v2.\n\n**proposed_at**: 2026-05-30T00:20:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: rejected (Δscalar=+0.050, Δdrift_loss=+0.050, Δpass_rate=+0.000)\n",
       "goal": "g",
-      "analysis_md": "",
-      "analysis_html_available": false
+      "analysis_md": ""
     }
   },
   "swiss/lineage": {
@@ -18813,8 +18798,7 @@
       },
       "journal": "## v1 — Idea v1.\n\n**proposed_at**: 2026-05-30T00:10:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: promoted (Δscalar=-0.120, Δdrift_loss=-0.120, Δpass_rate=+0.000)\n## v2 — Idea v2.\n\n**proposed_at**: 2026-05-30T00:20:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: rejected (Δscalar=+0.050, Δdrift_loss=+0.050, Δpass_rate=+0.000)\n## v3 — Idea v3.\n\n**proposed_at**: 2026-05-30T00:30:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: rejected (Δscalar=+0.050, Δdrift_loss=+0.050, Δpass_rate=+0.000)\n",
       "goal": "g",
-      "analysis_md": "",
-      "analysis_html_available": false
+      "analysis_md": ""
     }
   },
   "double_elim/lineage": {
@@ -20439,8 +20423,7 @@
       },
       "journal": "## v1 — Idea v1.\n\n**proposed_at**: 2026-05-30T00:10:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: promoted (Δscalar=+0.000, Δdrift_loss=+0.000, Δpass_rate=+0.000)\n## v3 — Idea v3.\n\n**proposed_at**: 2026-05-30T00:30:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: rejected (Δscalar=+0.000, Δdrift_loss=+0.000, Δpass_rate=+0.000)\n",
       "goal": "g",
-      "analysis_md": "",
-      "analysis_html_available": false
+      "analysis_md": ""
     }
   },
   "swiss_proposing/lineage": {
@@ -21088,8 +21071,7 @@
       },
       "journal": "",
       "goal": "g",
-      "analysis_md": "",
-      "analysis_html_available": false
+      "analysis_md": ""
     }
   },
   "swiss_all_rejected/lineage": {
@@ -21634,8 +21616,7 @@
       },
       "journal": "## v1 — Idea v1.\n\n**proposed_at**: 2026-05-30T00:10:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: promoted (Δscalar=+0.000, Δdrift_loss=+0.000, Δpass_rate=+0.000)\n## v2 — Idea v2.\n\n**proposed_at**: 2026-05-30T00:20:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: rejected (Δscalar=+0.000, Δdrift_loss=+0.000, Δpass_rate=+0.000)\n",
       "goal": "g",
-      "analysis_md": "",
-      "analysis_html_available": false
+      "analysis_md": ""
     }
   },
   "swiss_all_applied/lineage": {
@@ -22509,8 +22490,7 @@
       },
       "journal": "## v1 — Idea v1.\n\n**proposed_at**: 2026-05-30T00:10:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: promoted (Δscalar=-0.120, Δdrift_loss=-0.120, Δpass_rate=+0.000)\n## v2 — Idea v2.\n\n**proposed_at**: 2026-05-30T00:20:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: rejected (Δscalar=+0.050, Δdrift_loss=+0.050, Δpass_rate=+0.000)\n## v3 — Idea v3.\n\n**proposed_at**: 2026-05-30T00:30:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: rejected (Δscalar=+0.050, Δdrift_loss=+0.050, Δpass_rate=+0.000)\n## v4 — Idea v4.\n\n**proposed_at**: 2026-05-30T00:40:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: rejected (Δscalar=+0.050, Δdrift_loss=+0.050, Δpass_rate=+0.000)\n## v5 — Idea v5.\n\n**proposed_at**: 2026-05-30T00:50:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n",
       "goal": "g",
-      "analysis_md": "",
-      "analysis_html_available": false
+      "analysis_md": ""
     }
   },
   "swiss_rated/lineage": {
@@ -23590,8 +23570,7 @@
       },
       "journal": "## v1 — Idea v1.\n\n**proposed_at**: 2026-05-30T00:10:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: promoted (Δscalar=-0.120, Δdrift_loss=-0.120, Δpass_rate=+0.000)\n## v2 — Idea v2.\n\n**proposed_at**: 2026-05-30T00:20:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: rejected (Δscalar=+0.050, Δdrift_loss=+0.050, Δpass_rate=+0.000)\n## v3 — Idea v3.\n\n**proposed_at**: 2026-05-30T00:30:00Z\n**modulating**: site\n**why**: The prior round's losses point at this site.\n**outcome**: rejected (Δscalar=+0.050, Δdrift_loss=+0.050, Δpass_rate=+0.000)\n",
       "goal": "g",
-      "analysis_md": "",
-      "analysis_html_available": false
+      "analysis_md": ""
     }
   },
   "racing_field/lineage": {
@@ -25472,8 +25451,7 @@
       },
       "journal": "",
       "goal": "g",
-      "analysis_md": "",
-      "analysis_html_available": false
+      "analysis_md": ""
     }
   },
   "swiss_empty/lineage": {

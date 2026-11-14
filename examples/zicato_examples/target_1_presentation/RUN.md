@@ -133,7 +133,7 @@ $PY -m zicato.cli inspect mutations --workspace .zicato
 $PY -m zicato.cli evolve --workspace .zicato \
     --rounds 2 --mode full
 
-# 7. Close the epoch to produce analysis.md and analysis.html.
+# 7. Close the epoch to produce analysis.md.
 $PY -m zicato.cli epoch close --workspace .zicato
 ```
 
@@ -360,7 +360,6 @@ workspace, and the workspace holds one directory per epoch:
         scoring.json                # frozen per-epoch copy of the scoring
         config.json                 # the epoch's configuration
         analysis.md                 # closing analysis
-        analysis.html               # self-contained HTML companion
         rounds/{n}/round_log.jsonl  # one durable event log per round
         episodes/                   # one directory per proposal episode
         health/round_{n}.json       # loop-health report per round
@@ -396,9 +395,9 @@ Useful spot checks:
   experiment with its `hypothesis` and `outcome.tournament_decision`.
 * `cat .zicato/epochs/*/generations/v1/patches/*.json` — the lifted
   `Patch` record: its `mutation_id`, `op`, and `new_content`.
-* Open `analysis.html` in a browser — the page is self-contained
-  (inline CSS, no external requests) and renders the lineage / scalar
-  trajectory.
+* Read `analysis.md` — the report states the lineage and the scalar
+  trajectory as tables; the dashboard's Publication view renders it beside
+  interactive figures.
 
 ## Swapping in real models
 

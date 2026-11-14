@@ -6,7 +6,7 @@ import * as D from '../data.js';
 import * as svg from '../svg.js';
 import { iconLabel } from '../icons.js';
 import { harmonografIsLive, harmonografMini } from '../core/harmonograf.js';
-import { gatedSwap, empty, subhead, densityTokens, dataTable, deltaCell } from '../ui.js';
+import { gatedSwap, empty, subhead, densityTokens, dataTable, deltaCell, renderMarkdown } from '../ui.js';
 import { epochIsLive } from '../livestatus.js';
 
 export async function render(host, ctx, params) {
@@ -27,9 +27,6 @@ export async function render(host, ctx, params) {
     D.analysis(epochId), D.generationsForEpoch(epochId), D.scoreTrajectory(epochId), D.bracket(epochId),
   ]);
   const md = (analysis && typeof analysis.analysis_md === 'string') ? analysis.analysis_md : '';
-  // Display the published fragment. An empty string means no report is available.
-  const inlineHtml = (analysis && typeof analysis.analysis_html_inline === 'string')
-    ? analysis.analysis_html_inline : '';
 
   const gens = rows.length
     ? rows.map((g) => ({ id: g.generation_id, parent: g.parent_generation_id || null, promoted: g.promoted == null ? null : !!g.promoted, decision: g.decision, decisionLabel: g.decision_label })) : [];
@@ -49,14 +46,15 @@ export async function render(host, ctx, params) {
 
   // Compare the complete display inputs so equal-length corrections redraw.
   const digest = JSON.stringify({
-    epochId, md, inlineHtml, gens, scalars: [...scalarByGen], matchups, grids,
+    epochId, md, gens, scalars: [...scalarByGen], matchups, grids,
     hgLive: harmonografIsLive(), epochLive,
   });
 
   gatedSwap(host, digest, () => {
     const article = el('article', { class: 'dn-paper' });
-    if (inlineHtml.trim()) {
-      article.appendChild(el('div', { class: 'dn-paper-served dn-table-scroll', html: inlineHtml }));
+    // An empty report means none has been published.
+    if (md.trim()) {
+      article.appendChild(renderMarkdown(md));
     } else {
       article.appendChild(el('h1', { class: 'dn-paper-title', text: `Epoch ${epochId}` }));
       article.appendChild(el('p', { class: 'dn-faint', text: 'The report has not been published yet. Tournament figures are available below.' }));

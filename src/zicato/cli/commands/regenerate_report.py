@@ -1,9 +1,8 @@
 """``zicato repair report`` — re-render one epoch's ``analysis.md``.
 
 ADVANCED / DEBUGGING — off the happy path. ``zicato evolve`` regenerates
-the comprehensive analysis report (``epochs/{id}/analysis.md`` and its
-HTML companion) after every round, so the happy-path operator never has
-to invoke this by hand.
+the comprehensive analysis report (``epochs/{id}/analysis.md``) after
+every round, so the happy-path operator never has to invoke this by hand.
 
 Run this when an existing epoch's report needs to be rebuilt against
 the current on-disk data. The most common case is a path-resolution bug
@@ -78,7 +77,7 @@ def _maybe_resolve_aux_llm(
     LLM — they are templated from on-disk data. The LLM only writes the
     prose blocks. When no callable is configured, return ``None`` and
     let :func:`generate_epoch_report` substitute placeholder prose; the
-    deterministic figures + tables are still re-written from the correct
+    deterministic tables are still re-written from the correct
     workspace path, which is the point of the backfill.
     """
 
@@ -127,7 +126,7 @@ async def _placeholder_aux(_system: str, _user: str, _model: str) -> str:
     default=False,
     help=(
         "Skip the evaluation-LLM prose pass and substitute placeholders. "
-        "The deterministic data sections (figures, tables, scores) are still "
+        "The deterministic data sections (tables, scores) are still "
         "re-rendered."
     ),
 )
@@ -141,13 +140,12 @@ def regenerate_report_cmd(workspace: str, epoch: str | None, no_llm: bool) -> No
     the per-generation files were on disk).
 
     The command is idempotent and read-only against everything except
-    `analysis.md` / `analysis.html`. Pass `--no-llm` to skip the prose
-    regeneration entirely; the deterministic figures + tables (the parts
-    repaired by this backfill) are re-rendered regardless.
+    `analysis.md` and its prose record `analysis.prose.json`. Pass
+    `--no-llm` to skip the prose regeneration entirely; the deterministic
+    tables (the parts repaired by this backfill) are re-rendered regardless.
     """
 
-    # Lazy import — the analyzer pulls in the matplotlib-style figure
-    # renderers and we want `zicato --help` to stay snappy.
+    # Lazy import — keeps the analyzer off the `zicato --help` path.
     from zicato.analyzer.report import generate_epoch_report  # noqa: PLC0415
 
     workspace_dir = Path(workspace).resolve()
