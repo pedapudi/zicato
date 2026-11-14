@@ -12,28 +12,19 @@
 import * as svg from './svg.js';
 import { overrideDigest, pendingOverrideDigest, ratingTripleDigest } from './ui.js';
 
-// A friendly label + key params for a structure.
-export function structureLabel(structure, params) {
-  const s = String(structure || 'gauntlet');
-  const p = (params && typeof params === 'object') ? params : {};
-  switch (s) {
-    case 'gauntlet': {
-      const reps = p.replications;
-      return 'Gauntlet' + (svg.isNum(reps) && reps > 1 ? ` · ${reps}× replications` : '');
-    }
-    case 'single_elim':
-      return 'Single elimination' + (p.seed_order ? ` · seed: ${p.seed_order}` : '');
-    case 'double_elim':
-      return 'Double elimination' + (p.grand_final_reset === false ? ' · no GF reset' : '');
-    case 'swiss':
-      return 'Swiss' + (svg.isNum(p.rounds) ? ` · ${p.rounds} rounds` : '');
-    case 'racing': {
-      const rungs = Array.isArray(p.rungs) ? p.rungs.length : null;
-      return 'Racing (successive halving)' + (rungs ? ` · ${rungs} rungs` : '');
-    }
-    default:
-      return s;
-  }
+// The tournament whose record stands for a settled epoch of `structure`: the
+// most recent tournament of that structure, else the most recent non-gauntlet
+// one, else the most recent of any. Null when the bracket lists no tournament.
+export function settledTournamentId(bracket, structure) {
+  const tournaments = (bracket && Array.isArray(bracket.tournaments)) ? bracket.tournaments : [];
+  const pool = [
+    tournaments.filter((t) => t && t.structure === structure),
+    tournaments.filter((t) => t && t.structure && t.structure !== 'gauntlet'),
+    tournaments,
+  ].find((list) => list.length);
+  if (!pool) return null;
+  const id = pool[pool.length - 1].tournament_id;
+  return id == null ? undefined : id;
 }
 
 // Is this a structure the dedicated renderers below handle (i.e. NOT the
@@ -677,7 +668,7 @@ export function swissOverviewModel(st) {
 // the live_progress lane keys, in stable order) and `liveProgress` is the
 // authoritative per-lane map lifted off the rung (the union across every match —
 // `matches[0]` carries the full one, the rest are empty). PURE.
-export function rungFullField(round, championIds) {
+function rungFullField(round, championIds) {
   const champ = championIds instanceof Set ? championIds : new Set(championIds || []);
   const matches = (round && Array.isArray(round.matches)) ? round.matches : [];
   // ids the SETTLED rung itself names — always lanes (the champion can survive a

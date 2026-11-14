@@ -1,8 +1,8 @@
 # zicato typeface study
 
-> **Status: a dated design study (2026-06-07), kept as a record.** Its
-> picker and its twelve finalist faces ship in Settings → Appearance; the
-> default is Google Sans Mono. For the typography as it stands, read
+> **Status: a dated design study (2026-06-07), kept as a record.** The
+> console ships one of its twelve finalist pairings, Open Sans with Google
+> Sans Mono, and carries no typeface picker. For the typography as it stands, read
 > [DESIGN-LANGUAGE.md §3](../DESIGN-LANGUAGE.md#3-typography).
 
 A standalone, self-contained, theme-adaptive study page (`index.html` — open it

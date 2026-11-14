@@ -211,7 +211,7 @@ disk from `src/zicato/dashboard/static/` (`index.html`, `console.js`,
 them). The launching command resolves the static directory and hands it
 to the server; an unknown asset 404s, and a missing bundle falls back to
 a placeholder page. No node_modules at runtime; the one external request
-is the Google Fonts stylesheet for the typeface picker's faces.
+is the Google Fonts stylesheet for the two interface faces.
 
 Static assets are served `Cache-Control: no-cache` **plus an `ETag`**
 derived from the file's identity (`mtime-ns` + size — `server.py`). The

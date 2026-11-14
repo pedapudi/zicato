@@ -67,7 +67,7 @@ export function treeDigest(model, route, toggles, live) {
 
 // The set of node-keys the route implies must be OPEN (so the active node is
 // always visible regardless of manual toggles).
-export function routeOpenKeys(route) {
+function routeOpenKeys(route) {
   const p = (route && route.params) || {};
   const keys = new Set();
   if (!p.epochId) return keys;

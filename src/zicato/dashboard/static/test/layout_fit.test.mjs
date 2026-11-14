@@ -63,9 +63,7 @@ test('the settings drawer stacks above the top bar and every popover in it', () 
   const z = (sel) => Number(decls(sel)['z-index']);
   const drawer = z('.dt-drawer');
   assert(drawer > z('.dt-topbar'), 'the drawer is above the top bar');
-  for (const sel of ['.dt-cd-list', '.dt-tf .dt-tf-pop']) {
-    assert(drawer > z(sel), 'the drawer is above ' + sel);
-  }
+  assert(drawer > z('.dt-cd-list'), 'the drawer is above .dt-cd-list');
 });
 
 test('the settings drawer panel paints an opaque background in every theme', () => {

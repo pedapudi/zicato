@@ -418,7 +418,7 @@ test('lifecycle DAG (normalized): the seed is NOT laid out with a divergent vert
 test('lifecycle BOARD column: the multiplicity badge style + raced disc marker are themed in the scoped stylesheet', () => {
   const css = readCss();
   assert(/\.ezn-board-mult\s*\{/.test(css), '.ezn-board-mult is styled (themed via CSS vars)');
-  assert(/\.ezn-board-mult[^}]*var\(--v2-/.test(css), '.ezn-board-mult uses a theme variable (theme-aware across the 13 themes)');
+  assert(/\.ezn-board-mult[^}]*var\(--v2-/.test(css), '.ezn-board-mult uses a theme variable (theme-aware across every theme)');
   assert(/\.ezn-board-raced\s+\.ezn-board-disc\s*\{/.test(css), 'a raced node’s disc carries a distinct marker style');
 });
 
@@ -623,8 +623,8 @@ test('survival funnel: a GAUNTLET epoch renders the round timeline with NO embed
   assertEqual(svgsByClass(host, 'dn-funnel').length, 0, 'NO survival funnel for a gauntlet epoch (racing-specific)');
 });
 
-// (f) the funnel marks are themed via CSS tokens (legible across all 13 themes).
-test('survival funnel: marks are token-themed in the scoped stylesheet (legible across the 13 themes)', () => {
+// (f) the funnel marks are themed via CSS tokens (legible across every theme).
+test('survival funnel: marks are token-themed in the scoped stylesheet (legible across every theme)', () => {
   const css = readCss();
   assert(/\.dn-funnel-dot\s*\{/.test(css), '.dn-funnel-dot is styled');
   assert(/\.dn-funnel-dot[^}]*var\(--v2-/.test(css), 'the ladder dot reads a --v2-* token (theme-aware)');
@@ -635,7 +635,7 @@ test('survival funnel: marks are token-themed in the scoped stylesheet (legible 
   assert(/\.dn-funnel-pending[^}]*var\(--v2-rule/.test(css), 'a pending (live) stage uses a neutral rule token');
 });
 
-// (f2) the swiss-ladder + elim-FLOW marks are token-themed (all 16 themes)
+// (f2) the swiss-ladder + elim-FLOW marks are token-themed (every theme)
 // with NO hardcoded hex — and the live transitions are reduced-motion gated.
 test('swiss ladder + elim flow: token-themed in the scoped stylesheet, no hardcoded hex, reduced-motion gated', () => {
   const css = readCss();
@@ -1150,7 +1150,7 @@ test('lifecycle RUNG-PROGRESSION strip: a racing candidate page renders the stri
   for (const g of gnodes) assert(!(g.getAttribute('class') || '').includes('ezn-board-expandable'), 'a gauntlet board node is not expandable');
 });
 
-test('lifecycle per-run stack + progression strip are themed in the scoped stylesheet (theme-aware across the 13 themes)', () => {
+test('lifecycle per-run stack + progression strip are themed in the scoped stylesheet (theme-aware across every theme)', () => {
   const css = readCss();
   assert(/\.ezn-board-runs-box\s*\{/.test(css), '.ezn-board-runs-box is styled');
   assert(/\.ezn-board-runs-box[^}]*var\(--v2-/.test(css), 'the per-run panel uses a theme variable');

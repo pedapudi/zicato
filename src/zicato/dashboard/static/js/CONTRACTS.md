@@ -25,7 +25,7 @@ static/
     router.js           — hash routing + deep links
     shell.js            — chrome, sidebar-to-detail host, page-scale apply path
     icons.js            — the one drawn icon set every mark uses
-    ui.js               — gatedSwap, state labels, tables, themes, typefaces
+    ui.js               — gatedSwap, state labels, tables, themes
     svg.js, dag.js      — the figure builders
     tournament_model.js — the tournament-structure models the figures draw
     matrix.js           — the dn-mtx table-grid primitives
@@ -503,8 +503,8 @@ mark. The console types none of these as a Unicode symbol.
   code, ids, hashes, key names and the numbers in tables and figures take
   `--v2-mono`, through a data class. A figure's captions, axis titles,
   legends and sentences stay sans, as does a value led by a word
-  (`valueFace(value)` in `ui.js` adds `.dn-wordval`). Every typeface option pairs a sans
-  prose face with a monospace data face.
+  (`valueFace(value)` in `ui.js` adds `.dn-wordval`). The one typeface pairing sets a sans
+  prose face beside a monospace data face.
 - **Selection.** A selected item renders its name in `--v2-accent`; no rule
   or inline style draws a coloured left edge on a container or a selection.
 - **States.** A state is plain text in its tone colour, led by an icon from
@@ -528,9 +528,15 @@ with no route of its own, is a panel. `js/panels/evals_health.js` is one:
 the evals page imports it and mounts it into two hosts it owns. Three
 panels still sit under `js/views/` beside the views that mount them:
 `structure.js` (the per-structure sections the epoch and rounds pages
-mount, drawn from the models in `js/tournament_model.js`, which the live
-band in `live.js` also reads), `boardstatus.js` and `ledger.js` (both
-mounted by the epoch page).
+mount, drawn from the models in `js/tournament_model.js`), `boardstatus.js`
+and `ledger.js` (both mounted by the epoch page). `structure.js` also
+exports `structureFigure(structure, mode)`, the one table naming the builder
+each tournament structure draws with on each surface: the match-ups
+`sections`, the live band's `hero` (read by `live.js`), and the epoch page's
+`overview` model and per-`round` figure. No other module switches on the
+structure name to pick a figure. The words a structure is named by come
+from one function, `structureLabel(structure, params, form)` in
+`livestatus.js`.
 
 - **home** — the workspace as a fleet: a cross-epoch overview strip, one
   compact card per epoch carrying its loss trendline, the composed
@@ -572,7 +578,7 @@ mounted by the epoch page).
 - **publication** — the epoch write-up, typeset with live figures
   spliced in at the `<!-- FIGURE:NAME -->` markers.
 - **settings** — read-only contract and model-engine configuration,
-  plus editable appearance preferences (theme, typeface, scale).
+  plus editable appearance preferences (theme, text size, scale).
 - **logs** — the operator-log pane: one structured stream per `evolve`
   or `reflect` invocation, tailed through the query layer. It sits at
   workspace level rather than inside an epoch, because the streams are
@@ -655,10 +661,10 @@ and `#/e/<epochId>/report` resolve to the same publication view as
 Built from the invocation's selected service URL, recorded on the heartbeat as
 `harmonograf_url`. Exports `harmonografBase()`, `harmonografRunUrl(rec)`,
 `harmonografLink(run, label)`, `harmonografMini(target, label, aria)`,
-`harmonografGenLink(genId)`, `harmonografSessionId(rec)`,
+`harmonografSessionId(rec)`,
 `harmonografFilterUrl(metadata)`, `harmonografTournamentLink(id)`,
-`harmonografUiAvailable()`, and the **zicato-level** builders `harmonografMetaSession()`,
-`harmonografMetaUrl()`, `harmonografMetaLink(label, aria)`.
+`harmonografUiAvailable()`, and the **zicato-level** builders `harmonografMetaSession()`
+and `harmonografMetaUrl()`.
 
 **Liveness gate.** Links resolve only against a REACHABLE server.
 `harmonografIsLive()` is true when EITHER (a) a run is in flight (an

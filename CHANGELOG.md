@@ -3,12 +3,46 @@
 > **Status:** historical record. Each entry describes a change as it
 > stood when the entry was written; later entries and later changes may
 > supersede it. The entries above `[Unreleased]` are undated and newest
-> first, and the log ends at the change that served the builder's knob
-> help from the scoring configuration (2026-09-05). Later changes — among
-> them the removal of the tournament builder, the source editors and the
-> terminal UI, and the removal of obsolete record formats — are recorded
-> only in the git history. The design documents under
-> [`docs/design/`](docs/design/) describe the current system.
+> first. The log has a gap: the changes between the one that served the
+> builder's knob help from the scoring configuration (2026-09-05) and the
+> one that reduced the console to three themes and one typeface
+> (2026-11-13) — among them the removal of the tournament builder, the
+> source editors and the terminal UI, and the removal of obsolete record
+> formats — are recorded only in the git history. The design documents
+> under [`docs/design/`](docs/design/) describe the current system.
+
+### The console ships three themes and one typeface
+
+The console's colour picker offers three themes: `monokai` (dark, the
+default), `solarized-dark` and `solarized-light`. The thirteen palettes
+adapted from the Gogh terminal schemes are removed with their token
+blocks. The typeface picker is removed with its eleven alternative
+pairings; the console is set in Open Sans with Google Sans Mono, and the
+Google Fonts request names those two faces and the Noto Sans Mono
+fallback. The S/M/L text-size control, which sat in the typeface
+popover, is its own row in Settings → Appearance. A browser whose stored
+preference names a removed theme opens in `monokai`, and a stored
+typeface preference is ignored. The six colour roles and the digest-gated
+render rule are unchanged. Restoring a theme takes one `COLOR_THEMES`
+tuple in `js/ui.js` and one `[data-t-theme]` token block in
+`css/console.css`.
+
+One table, `structureFigure(structure, mode)` in `js/views/structure.js`,
+names the figure each tournament structure draws on each surface: the
+match-ups sections, the live band's hero, and the epoch page's overview
+model and per-round figure. It replaces a switch on the structure name at
+each of those sites, and every structure draws the figure it drew before.
+One function, `structureLabel(structure, params, form)` in
+`js/livestatus.js`, words a structure for the three places that held
+their own label switch, and `settledTournamentId` in
+`js/tournament_model.js` picks the completed tournament record for the
+epoch and match-ups pages.
+
+Exports that nothing mounted are deleted: `harmonografGenLink`,
+`harmonografMetaLink`, `data.suggestionProvenance`,
+`data.fieldStatusSummary`, `renderEvalHealth`, `shell.THEMES` and the
+transcript-turn re-export in `views/board.js`. Twelve names read only by
+their own module lose their `export`.
 
 ### Readers that no served surface called are removed
 

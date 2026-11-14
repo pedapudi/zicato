@@ -17,8 +17,7 @@
 // digest-gated. A failed or empty read degrades to honest-empty hosts (the
 // matrix renders fine with nothing extra). The lower-level `evalHealthModel` /
 // `evalHealthDigest` / `renderEvalHealthStrip` / `renderEvalHealthSection`
-// exports are pure and unit-tested; a caller wanting a single combined node
-// uses `renderEvalHealth`.
+// exports are pure and unit-tested.
 //
 // The panel derives every field DEFENSIVELY from the build_eval_health reader,
 // degrades to honest empties (never a fabricated number — §4), and is
@@ -406,14 +405,6 @@ export function renderEvalHealthSection(model, opts) {
   card.appendChild(redundancyPanel(m.redundancy, o));
 
   return section('Instrument health · the board as a measuring device', card);
-}
-
-// The combined strip + section as ONE node — for a single-host mount / the tests.
-export function renderEvalHealth(model, opts) {
-  const wrap = el('div', { class: 'dn-evalhealth-wrap' });
-  wrap.appendChild(renderEvalHealthStrip(model, opts));
-  wrap.appendChild(renderEvalHealthSection(model, opts));
-  return wrap;
 }
 
 // ---- mount (the WS-MATRIX seam) -------------------------------------

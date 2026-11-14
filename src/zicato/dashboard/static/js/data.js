@@ -257,27 +257,6 @@ export function fieldStatus(payload) {
   return out;
 }
 
-// Roll a field_status list into the tracker's headline counts:
-// {proposed, applied, rejected, proposing, allRejected}. `proposing` is the
-// count of in-flight slots (the proposer is mid-attempt). allRejected is
-// true only when a non-empty, FULLY-SETTLED field (no slot still proposing)
-// minted zero applied challengers — the "0 applied — all rejected" state the
-// live hero must not mistake for idle, and must not declare prematurely
-// while a slot is still being attempted.
-export function fieldStatusSummary(fs) {
-  const list = Array.isArray(fs) ? fs : [];
-  const applied = list.filter((f) => f && f.status === 'applied').length;
-  const proposing = list.filter((f) => f && f.status === 'proposing').length;
-  const rejected = list.length - applied - proposing;
-  return {
-    proposed: list.length,
-    applied,
-    rejected,
-    proposing,
-    allRejected: list.length > 0 && applied === 0 && proposing === 0,
-  };
-}
-
 // The SETTLED round timeline for one epoch — the champion-spine rounds + the
 // loss-floor waterfall, JOINED SERVER-SIDE (build_round_timeline). The old
 // four-endpoint client join is deleted; a null read (the endpoint absent or
@@ -441,17 +420,6 @@ export function traces(reflectionId) {
 export function trace(reflectionId, traceId) {
   return cachedJson(`/api/reflection/${enc(reflectionId)}/trace/${enc(traceId)}`);
 }
-// The provenance chain for ONE bootstrap suggestion (TRAJECTORY-UI.md §3.3):
-// the foreign-source block, the render-ready `admission_viz` marks, and the
-// motivating episode(s) each carrying a `segment_strip_model` (the trace →
-// episode → suggestion chain, for the inbox card's mini-strip). A completed
-// reflection is IMMUTABLE, so the read is cacheable; a pre-feature server (no
-// such endpoint) or an unknown suggestion degrades server-side to a found:false
-// payload (a null here means a transport failure only).
-export function suggestionProvenance(reflectionId, suggestionId) {
-  return cachedJson(`/api/reflection/${enc(reflectionId)}/suggestion/${enc(suggestionId)}/provenance`);
-}
-
 // The per-entry EVAL DOSSIER (EVAL-VIEW.md §3.2) — the board-as-instrument lens
 // for ONE board entry across every candidate: its A/A flip rate, discrimination,
 // runtime cost, the champion-spine trajectory, first-passed / regressed

@@ -72,7 +72,7 @@ export function buildExecutionOutline(execution, rootIds) {
 }
 
 // `seen` bounds malformed cycles while preserving their known prefix.
-export function buildExecutionNode(node, byId, children, seen) {
+function buildExecutionNode(node, byId, children, seen) {
   if (!node || !node.node_id) return null;
   const visited = seen || new Set();
   if (visited.has(node.node_id)) return null;
@@ -144,7 +144,7 @@ function isDuplicateTurn(a, b) {
 }
 
 // Fold every field that changes a turn's rendered content (G10).
-export function turnSig(t, annBySeq, execution) {
+function turnSig(t, annBySeq, execution) {
   const na = annBySeq && annBySeq.get(t.seq);
   const ids = Array.isArray(t.activity_ids) ? t.activity_ids : [];
   const index = executionIndex(execution);
@@ -186,7 +186,7 @@ export function nearBottom(scroller) {
   return (sh - st - ch) <= 8;
 }
 
-export function annotationsBySeq(annotations) {
+function annotationsBySeq(annotations) {
   const map = new Map();
   for (const a of (Array.isArray(annotations) ? annotations : [])) {
     const k = a.anchor_seq;

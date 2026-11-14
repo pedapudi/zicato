@@ -23,7 +23,7 @@ conventions); it links back here for the shared tokens, typography and figure
 grammar.
 
 > **Design-inspiration note.** Citations to public design authorities (Tufte,
-> the Gogh terminal palettes, the chess/tournament metaphor) appear in the
+> the chess/tournament metaphor) appear in the
 > documentation and never in source code.
 
 ---
@@ -46,9 +46,9 @@ rather than a consumer report. Five principles:
    non-foreground colour, the green plucked-note (`--zicato-accent`); everything
    else is ink on a quiet paper. The good/bad signal colours are earned by data
    direction, never spent as decoration.
-4. **Theme-adaptive by construction.** Sixteen colour themes and three typeface
-   modes swap by a single attribute on the root; every mark reads its colour and
-   face from tokens, so a theme switch is a pure re-skin with **no re-render**.
+4. **Theme-adaptive by construction.** Three colour themes swap by a single
+   attribute on the root; every mark reads its colour and face from tokens, so
+   a theme switch is a pure re-skin with **no re-render**.
 5. **Fit-to-width, never flashing.** Figures scale to their pane (no pan/zoom, no
    horizontal scroll), and the DOM is never rebuilt on a no-op heartbeat
    (digest-gating, §7) — a live run animates *values*, never repaint-loops.
@@ -63,7 +63,7 @@ Every theme is a CSS custom-property set scoped under
 `#console-root[data-t-theme="<id>"]`, swapped by the
 `[data-t-theme]` attribute. There is **no hardcoded hex in the marks** — every
 figure reads its colour from the active theme's tokens. The contract is a small
-set of semantic roles whose meaning is **fixed across all sixteen themes**:
+set of semantic roles whose meaning is **fixed across every theme**:
 
 | token | role | the rule it enforces |
 | --- | --- | --- |
@@ -100,9 +100,11 @@ The mark strokes with `currentColor` (so it flips dark/light with the theme) and
 fills the plucked-note dot with `var(--zicato-accent)`. See §8 and
 [docs/brand/README.md](../brand/README.md).
 
-### 2.2 The sixteen themes
+### 2.2 The three themes
 
-`monokai` is the default. The colour picker is a **swatch dropdown**
+The console ships three themes: `monokai` (dark), `solarized-dark` and
+`solarized-light`. `monokai` is the default, and a stored preference naming
+any other theme falls back to it. The colour picker is a **swatch dropdown**
 (`.dt-cd-trigger` / `.dt-cd-list`); each option shows a 6-swatch preview strip
 (*ground · surface · ink · improve · regress · accent*) plus the theme name. The
 JS preview tuples live in `ui.js` `COLOR_THEMES` as
@@ -126,40 +128,13 @@ Every value below is lifted verbatim from `console.css`.
 #### The full set — ground, improve, regress, accent
 The six-role contract holds in every theme; this table indexes them all (use the
 `COLOR_THEMES` tuples in `ui.js` / the per-theme block in `console.css`
-for the complete secondary palette). `lineage` = where the palette came from.
+for the complete secondary palette).
 
-| id | ground | `--v2-paper` | `--v2-ink` | `--v2-good` | `--v2-bad` | `--v2-accent` | lineage |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `monokai` | dark | `#1e1f1c` | `#f8f8f2` | `#a6e22e` | `#f92672` | `#66d9ef` | original |
-| `solarized-dark` | dark | `#04222B` | `#93A1A1` | `#8BB80E` | `#E0483C` | `#2AA198` | original |
-| `solarized-light` | light | `#FDF6E3` | `#586E75` | `#6B9B0B` | `#DC322F` | `#268BD2` | original |
-| `google-light` | light | `#FFFFFF` | `#474A4E` | `#34A853` | `#EA4335` | `#1B9CB8` | Gogh |
-| `google-dark` | dark | `#202124` | `#FFFFFF` | `#34A853` | `#EA4335` | `#24C1E0` | Gogh |
-| `lunaria-light` | light | `#EBE4E1` | `#363434` | `#497D46` | `#783C1F` | `#3778A9` | Gogh |
-| `lunaria-eclipse` | dark | `#323F46` | `#DFE2ED` | `#BEDBC1` | `#BA9088` | `#C8429F`* | Gogh |
-| `belafonte-day` | light | `#D5CCBA` | `#34292D` | `#6E6A4E` | `#BE100E` | `#426A79` | Gogh |
-| `belafonte-night` | dark | `#20111B` | `#D5CCBA` | `#A6A07A` | `#D6403E` | `#6F8E97` | Gogh |
-| `paper` | light | `#F2EEDE` | `#1A1A1A` | `#216609` | `#CC3E28` | `#1E6FCC` | Gogh |
-| `zenburn` | dark | `#3A3A3A` | `#DCDCCC` | `#8FB28F` | `#CC9393` | `#8CD0D3` | Gogh |
-| `selenized-black` | dark | `#181818` | `#DEDEDE` | `#83C746` | `#FF5E56` | `#56D8C9` | Gogh |
-| `relaxed` | dark | `#353A44` | `#F7F7F7` | `#A0AC77` | `#BC5653` | `#7EAAC7` | Gogh |
-| `espresso` | dark | `#323232` | `#FFFFFF` | `#A5C261` | `#D25252` | `#6C99BB` | Gogh |
-| `dracula` | dark | `#282A36` | `#F8F8F2` | `#50FA7B` | `#FF5555` | `#BD93F9` | Gogh |
-| `ubuntu` | dark | `#300A24` | `#EEEEEC` | `#8AE234` | `#CC0000` | `#34E2E2` | Gogh |
-
-\* `lunaria-eclipse`'s **preview** swatch substitutes a distinct magenta
-(`#C8429F`) because its true `--v2-accent` (`#BEDBC1`, a pale blue-green) is
-near-indistinguishable from its pale ink in a 6-swatch strip. The **live**
-`--v2-accent` token is unchanged.
-
-The thirteen Gogh palettes are adapted from the terminal colour schemes at
-gogh-co.github.io/Gogh. One principled rule maps each onto the role contract:
-`paper ← background`, `panel ← background nudged toward the foreground`,
-`ink ← bright-white/host`, `ink-soft ← foreground`, `good ← green`, `bad ← red`,
-`caution ← yellow`, and `accent ← cyan`. Where a palette's cyan is a
-low-contrast neutral, `accent` takes its blue instead, as in Belafonte and
-Paper. A few accents and cautions sit off
-the source palette for contrast; see the per-theme comments in `console.css`.
+| id | ground | `--v2-paper` | `--v2-ink` | `--v2-good` | `--v2-bad` | `--v2-accent` |
+| --- | --- | --- | --- | --- | --- | --- |
+| `monokai` | dark | `#1e1f1c` | `#f8f8f2` | `#a6e22e` | `#f92672` | `#66d9ef` |
+| `solarized-dark` | dark | `#04222B` | `#93A1A1` | `#8BB80E` | `#E0483C` | `#2AA198` |
+| `solarized-light` | light | `#FDF6E3` | `#586E75` | `#6B9B0B` | `#DC322F` | `#268BD2` |
 
 ### 2.3 Derived colours
 
@@ -177,10 +152,10 @@ component — derive it from a token.
 ### 2.4 Contrast guidance
 
 - Body ink on ground targets WCAG AA (4.5:1); secondary/faint inks step down for
-  hierarchy but stay legible. The Gogh adjustments (Paper keys `ink` off
-  near-black rather than its low-contrast palette white) exist to hold this.
+  hierarchy but stay legible.
 - The good/bad/accent signal must read on *every* ground — verify a new figure in
-  both a light theme (`paper`) and a dark one (`monokai`) before shipping.
+  both the light theme (`solarized-light`) and a dark one (`monokai`) before
+  shipping.
 - Focus rings are a solid `2px` `--v2-accent` outline with a small offset (§9).
 
 ---
@@ -205,65 +180,42 @@ deltas, candidate and entry ids take the mono. A displayed value led by a word
 (`open`, `provisional · 1 game`, `single-turn`) is prose and takes the sans
 through `ui.valueFace`, which adds `.dn-wordval`.
 
-A typeface picker stamps one of twelve option ids on the root as
-`[data-t-type]`; the default is `google-sans-mono`.
+The console ships one typeface pairing and no typeface picker.
 
-### 3.1 The three modes
+### 3.1 The pairing
 
-The picker groups its twelve pairings under three **modes**, four each
-(`TYPE_OPTIONS` in `ui.js`). Each option sets a heading face, a prose face and
-a data face, and every option keeps the rule true: the prose face is always a
-sans, the data face is always a monospace, and the heading face is never a
-monospace. `test/interface_rules.test.mjs` checks all twelve.
-
-| mode | heading face | prose face | data face |
-| --- | --- | --- | --- |
-| `technical` **(default)** | Open Sans · Source Sans 3 · Open Sans · Ubuntu | the same as the heading | **Google Sans Mono** (default) · Source Code Pro · Inconsolata · Ubuntu Mono |
-| `editorial` | Fraunces · Bitter · Literata · Domine (serif) | Open Sans | JetBrains Mono |
-| `display` | Archivo Narrow · Hanken Grotesk · Barlow Condensed · Bricolage Grotesque | Space Grotesk · Hanken Grotesk · Space Grotesk · Bricolage Grotesque | JetBrains Mono |
-
-An option's id names the face it is chosen for: the heading face, or for the
-two monospace faces (Google Sans Mono, Inconsolata) the data face. A
-monospace face therefore sets data only and is paired with Open Sans for prose
-and headings. An editorial option sets headings and the publication title in
-its serif; a display option sets headings in its display face.
+Open Sans sets headings, prose and controls; Google Sans Mono sets data. The
+pairing keeps the rule true: the prose face is a sans, the data face is a
+monospace, and the heading face is not a monospace.
+`test/interface_rules.test.mjs` checks it.
 
 ### 3.2 The token map
 
-Each `[data-t-type]` rule in `console.css` sets all four tokens to literal
-font stacks. The unconditional default on `#console-root` is the
-`google-sans-mono` pairing, so a root with no `data-t-type` still lands on the
-default:
+One rule on `#console-root` in `console.css` sets the four tokens to literal
+font stacks:
 
 ```css
 #console-root {
-  /* the brand wordmark pins to a FIXED mono, independent of the user's choice */
+  /* the brand wordmark pins to a FIXED mono, independent of the interface faces */
   --v2-brand-mono: "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
 
-  /* DEFAULT (Open Sans + Google Sans Mono) */
+  /* Open Sans + Google Sans Mono */
   --v2-sans:      'Open Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
   --v2-mono:      'Google Sans Mono', 'Noto Sans Mono', ui-monospace, monospace;
   --n-font-head:  'Open Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
   --n-font-paper: 'Open Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
 }
-/* an editorial option: a serif heading and paper-title voice */
-#console-root[data-t-type="fraunces"] {
-  --v2-sans:      'Open Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-  --v2-mono:      'JetBrains Mono', ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
-  --n-font-head:  'Fraunces', Georgia, serif;
-  --n-font-paper: 'Fraunces', Georgia, serif;
-}
 ```
 
-| token | set from the option's | which surface |
+| token | face | which surface |
 | --- | --- | --- |
-| `--v2-sans` | prose face | prose, controls, chrome |
-| `--v2-mono` | data face | data, ids, code, key names, table and figure numbers |
-| `--n-font-head` | heading face | `.dn-h1`, big numerals |
-| `--n-font-paper` | heading face (editorial) or prose face | the publication title |
+| `--v2-sans` | Open Sans | prose, controls, chrome |
+| `--v2-mono` | Google Sans Mono | data, ids, code, key names, table and figure numbers |
+| `--n-font-head` | Open Sans | `.dn-h1`, big numerals |
+| `--n-font-paper` | Open Sans | the publication title |
 
-The faces come from the [typeface study](typeface-study/README.md); the
-pairings put each face in the role the interface rule allows.
+The [typeface study](typeface-study/README.md) records the faces considered
+beside it.
 
 ### 3.3 Self-hosted vs loaded
 
@@ -271,15 +223,14 @@ pairings put each face in the role the interface rule allows.
   `JetBrainsMono-Regular/Bold.woff2` under
   `src/zicato/dashboard/static/fonts/`, declared with `@font-face` +
   `font-display: swap` at the top of `console.css`. It backs the fixed brand
-  mono (`--v2-brand-mono`) and is the data face of the editorial and display
-  options. Its SIL Open Font License 1.1 text and copyright notice ship beside
+  mono (`--v2-brand-mono`). Its SIL Open Font License 1.1 text and copyright notice ship beside
   the font files as `JetBrainsMono-OFL.txt`.
-- **The other picker faces load from Google Fonts** — the only external
+- **The interface faces load from Google Fonts** — the only external
   dependency — injected by `console.js` `ensureFonts()` with `display=swap`
   and a preconnect to the font origins. Every stack lists a system fallback,
   so a slow or blocked font never breaks layout; with the network blocked, the
-  default prose face falls back to the system sans (`-apple-system`,
-  `Segoe UI`, `system-ui`) and the default data face to Noto Sans Mono or the
+  prose face falls back to the system sans (`-apple-system`,
+  `Segoe UI`, `system-ui`) and the data face to Noto Sans Mono or the
   system monospace. The fallbacks are the same in light and dark themes.
 
 ### 3.4 Type scale and weights
@@ -309,7 +260,7 @@ column or animate, so digits do not jitter.
 ### 3.5 The dotless-ı wordmark rule
 
 The wordmark is **`zıcato`** — set in `--v2-brand-mono` (a *fixed* mono,
-independent of the user's typeface choice so the mark never reflows) with a
+independent of the interface faces so the mark never reflows) with a
 **dotless ı** (U+0131). The green accent circle **is** the i's dot, which ties
 the wordmark back to the plucked note. In the dashboard the wordmark is an
 inline SVG, so the dot can be pinned geometrically over the stem and the
@@ -392,9 +343,8 @@ Left → right:
 6. **`.dt-nav-logs`** — a `log` entry (list icon) into the operator-log pane (`#/logs`).
 7. **`.dt-nav-build`** — a `settings` entry (gear icon; opens read-only contract and model
    configuration plus editable appearance preferences).
-8. **Colour swatch dropdown** (`.dt-cd`, §6.8). The typeface picker, the text
-   size, the page scale and the side-panel width live in Settings →
-   Appearance.
+8. **Colour swatch dropdown** (`.dt-cd`, §6.8). The text size, the page scale
+   and the side-panel width live in Settings → Appearance.
 9. **`.dt-loopctl`** — the pause/resume and skip-round controls, rendered only
    while the loop is live and the workspace is writable.
 10. **`.dt-status`** — the status line (§4.5).
@@ -755,25 +705,21 @@ stays: the execution outline's tree connectors, the side-by-side diff's column
 divider, the settings drawer's edge. `test/interface_rules.test.mjs` fails on
 any other left edge, in the stylesheet or in an inline style.
 
-### 6.8 The swatch / typeface pickers
+### 6.8 The colour and text-size controls
 
-- **Colour** — `.dt-cd` swatch dropdown: a `.dt-cd-trigger` (current name + a
-  six-swatch `.dt-swatch-strip` preview + a `.dt-cd-caret`) opens a
-  `.dt-cd-list` listbox (`role` listbox; options `.dt-cd-option` with
-  `aria-selected`; selected name in `--v2-accent`).
-- **Typeface** — a **grouped popover** (`typefacedropdown.js`): a trigger
-  (current pairing + a micro-specimen) opens a listbox grouped under three mode
-  headers (Technical · Editorial · Display), each over four pairings (twelve
-  total, §3.1), every option a true type specimen of its heading, prose and
-  data faces. The popover also carries an **S/M/L** font-size segmented control
-  (`FONTSIZE_OPTIONS`), orthogonal to the page scale; the selected size reads
-  in the accent colour. It lives in Settings → Appearance; the colour dropdown appears
-  both there and in the top bar.
+- **Colour** — `.dt-cd` swatch dropdown (`swatchdropdown.js`): a
+  `.dt-cd-trigger` (current name + a six-swatch `.dt-swatch-strip` preview + a
+  `.dt-cd-caret`) opens a `.dt-cd-list` listbox (`role` listbox; options
+  `.dt-cd-option` with `aria-selected`; selected name in `--v2-accent`). It
+  appears in the top bar and in Settings → Appearance.
+- **Text size** — an **S/M/L** segmented control (`.dn-set-sizeseg-wrap`,
+  `FONTSIZE_OPTIONS`) in Settings → Appearance, orthogonal to the page scale;
+  the selected size reads in the accent colour.
 
-The theme + typeface persist to `localStorage` (`zicato.console.theme`,
-`zicato.console.typeface`; the size as `zicato.console.fontsize`) and drive the same
-`applyTheme` / `applyTypeface` / `applyFontSize` the Settings → Appearance
-section uses — one source of truth, synced across every live picker.
+The theme and the text size persist to `localStorage`
+(`zicato.console.theme`, `zicato.console.fontsize`) and apply through
+`applyTheme` / `applyFontSize` in `shell.js` — one source of truth, synced
+across every live colour picker.
 
 ---
 
@@ -865,7 +811,7 @@ The discipline in full:
   marks, chevrons, refresh, overflow, execution kinds and link arrows. The
   console never types these as Unicode symbols. The bundled faces carry few of
   them, so a browser would substitute a system font, whose weight, baseline and
-  advance change with the operating system and the typeface choice, and would
+  advance change with the operating system, and would
   render some as colour emoji. Each icon follows the brand mark's line
   character on a smaller grid:
   - a `0 0 16 16` viewBox, a `1.5`-unit stroke with round caps and joins, and
@@ -894,9 +840,8 @@ See [docs/brand/README.md](../brand/README.md) for the asset table and usage.
 
 ## 9. Accessibility
 
-- **Contrast.** Body ink targets WCAG AA (4.5:1) on every ground; the Gogh
-  ink/accent nudges exist to hold it (§2.4). Verify a new surface in both a light
-  and a dark theme.
+- **Contrast.** Body ink targets WCAG AA (4.5:1) on every ground (§2.4). Verify
+  a new surface in both a light and a dark theme.
 - **Focus rings.** A consistent solid `2px solid var(--v2-accent)` outline with a
   small `outline-offset` on interactive controls (`:focus-visible`):
   `.dt-cd-trigger`, `.dn-set-range`, `.dt-rail-handle`, and focusable SVG marks
@@ -912,7 +857,7 @@ See [docs/brand/README.md](../brand/README.md) for the asset table and usage.
 - **`prefers-color-scheme`** — the brand assets adapt automatically: the mark
   strokes `currentColor` (dark-on-light / light-on-dark) and READMEs use
   `<picture>` with light/dark sources. The dashboard's theme is an explicit
-  user choice (sixteen themes), but the brand never needs recolouring.
+  user choice (three themes), but the brand never needs recolouring.
 - **Roles & labels.** Figures are `role="img"` with an `aria-label`; the
   hovercard is `role="tooltip"` wired via `aria-describedby`; the run-state
   pill is `aria-live="polite"`; interactive marks are keyboard-activatable
@@ -981,12 +926,12 @@ No gridframe, no 3-D, hairline ticks, `rx:3` bars at reduced `fill-opacity` that
 lift on hover, the one accent for "now" — Tufte data-ink throughout.
 
 **4 — Hover detail.** Each bar calls `hov(bar, tip)` — the singleton hovercard
-inherits the live theme tokens and reads correctly across all sixteen themes; it
+inherits the live theme tokens and reads correctly in every theme; it
 is `pointer-events:none` and outside the gated render, so it never repaints the
 figure.
 
 **5 — Theme-adaptive.** Because every value above is a `--v2-*` token, switching
-from `monokai` to `paper` (or any of the sixteen) re-skins the whole timeline
+from `monokai` to `solarized-light` (or `solarized-dark`) re-skins the whole timeline
 with **no re-render** — a pure CSS swap. No hardcoded hex anywhere.
 
 **6 — Digest-gated & live.** The view computes a digest over the *structural*

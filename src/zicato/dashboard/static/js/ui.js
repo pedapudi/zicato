@@ -3,7 +3,7 @@
 // Small, pure builders every view composes:
 // the digest-gated content swap (the no-flash guarantee), section headers,
 // verdict labels, a GFM-capable tiny-markdown renderer (TABLES render — fix #3),
-// honest empty / loading states, and the colour + typeface theme tables. No
+// honest empty / loading states, and the colour theme table. No
 // data fetching, no state mutation.
 
 import { el, clearChildren } from './core/dom.js';
@@ -94,8 +94,8 @@ export function gatedSwap(host, digest, build) {
 
 // ---- persisted appearance preferences -------------------------------
 //
-// Five operator preferences — colour theme, typeface, page scale, text size,
-// rail width — are each a single stored value read on boot and written on
+// Four operator preferences — colour theme, page scale, text size, rail
+// width — are each a single stored value read on boot and written on
 // change. core/prefs.js owns the key namespace and the guarded storage access
 // (including the throw a private-mode browser raises); these two helpers add
 // the normalisation, because an appearance preference is never worth aborting
@@ -133,37 +133,17 @@ function clampToStop(v, { def, min, max, step }) {
 
 // ---- colour themes (monokai is the default) -------------------------
 //
-// SIXTEEN themes now: the three originals plus thirteen Gogh palettes
-// (https://gogh-co.github.io/Gogh/), each mapped to T's `--v2-*` token
-// contract in console.css. Because there are many, the colour picker is a
-// SWATCH DROPDOWN (not inline buttons): each option shows a 6-swatch strip
-// (ground · surface · ink · improve · regress · accent) as a legibility preview
-// hint, plus the theme name. The swatch tuples below FEED that preview — they
-// mirror the [paper, panel, ink, good, bad, accent] tokens each theme defines
-// in the CSS. The 6th element is the theme's signature accent (`--v2-accent`).
-//
-// NOTE: lunaria-eclipse's true --v2-accent (#BCDBFF, a pale blue) is visually
-// near-identical to its pale ink (#DFE2ED) — they would read as one swatch in
-// the 6-strip preview. So for THE PREVIEW ONLY we substitute a more distinct
-// hue from the Lunaria Eclipse Gogh palette (its magenta #C8429F). The live
-// --v2-accent token in console.css is unchanged.
+// THREE themes: monokai (dark, the default), solarized-dark and
+// solarized-light. The colour picker is a SWATCH DROPDOWN: each option shows a
+// 6-swatch strip (ground · surface · ink · improve · regress · accent) as a
+// legibility preview, plus the theme name. The swatch tuples below FEED that
+// preview — they mirror the [paper, panel, ink, good, bad, accent] tokens each
+// theme defines in console.css. A stored preference naming any other theme
+// normalises to the default.
 export const COLOR_THEMES = [
   ['monokai',         'monokai',          ['#1e1f1c', '#272822', '#f8f8f2', '#a6e22e', '#f92672', '#66d9ef']],
   ['solarized-dark',  'solarized dark',   ['#04222B', '#0A2D38', '#93A1A1', '#8BB80E', '#E0483C', '#2AA198']],
   ['solarized-light', 'solarized light',  ['#FDF6E3', '#FBF1D6', '#586E75', '#6B9B0B', '#DC322F', '#268BD2']],
-  ['google-light',    'google light',     ['#FFFFFF', '#F4F4F4', '#474A4E', '#34A853', '#EA4335', '#1B9CB8']],
-  ['google-dark',     'google dark',      ['#202124', '#2C2D30', '#FFFFFF', '#34A853', '#EA4335', '#24C1E0']],
-  ['lunaria-light',   'lunaria light',    ['#EBE4E1', '#E2DCD9', '#363434', '#497D46', '#783C1F', '#3778A9']],
-  ['lunaria-eclipse', 'lunaria eclipse',  ['#323F46', '#3B484F', '#DFE2ED', '#BEDBC1', '#BA9088', '#C8429F']],
-  ['belafonte-day',   'belafonte day',    ['#D5CCBA', '#CCC3B2', '#34292D', '#6e6a4e', '#BE100E', '#426A79']],
-  ['belafonte-night', 'belafonte night',  ['#20111B', '#271821', '#D5CCBA', '#a6a07a', '#d6403e', '#6F8E97']],
-  ['paper',           'paper',            ['#F2EEDE', '#E6E2D3', '#1A1A1A', '#216609', '#CC3E28', '#1E6FCC']],
-  ['zenburn',         'zenburn',          ['#3A3A3A', '#424241', '#DCDCCC', '#8FB28F', '#CC9393', '#8CD0D3']],
-  ['selenized-black', 'selenized black',  ['#181818', '#202020', '#DEDEDE', '#83C746', '#FF5E56', '#56D8C9']],
-  ['relaxed',         'relaxed',          ['#353A44', '#3D424B', '#F7F7F7', '#A0AC77', '#BC5653', '#7EAAC7']],
-  ['espresso',        'espresso',         ['#323232', '#3A3A3A', '#FFFFFF', '#A5C261', '#D25252', '#6C99BB']],
-  ['dracula',         'dracula',          ['#282A36', '#343746', '#F8F8F2', '#50FA7B', '#FF5555', '#BD93F9']],
-  ['ubuntu',          'ubuntu',           ['#300A24', '#3D1530', '#EEEEEC', '#8AE234', '#CC0000', '#34E2E2']],
 ];
 const COLOR_IDS = COLOR_THEMES.map((t) => t[0]);
 export const DEFAULT_COLOR = 'monokai';
@@ -173,101 +153,9 @@ export function normaliseColor(t) { return COLOR_IDS.includes(t) ? t : DEFAULT_C
 export function readColor() { return readPref(COLOR_PREF, normaliseColor); }
 export function persistColor(t) { return persistPref(COLOR_PREF, normaliseColor, t); }
 
-// ---- typeface OPTIONS (12 faces) ------------------------------------
-//
-// The typeface picker is a GROUPED POPOVER offering TWELVE pairings — FOUR per
-// mode across THREE modes (Technical · Editorial · Display). Each option
-// carries its id (the `[data-t-type]` value the stylesheet keys on), its mode
-// group, a human label, and the font-role stacks the dashboard tokens map to:
-//   head  → --n-font-head   (headings / big numerals)
-//   prose → --v2-sans       (prose, controls and chrome)
-//   data  → --v2-mono       (data, code, ids and key names)
-//   code  → --v2-mono as well; the role stays separate so a stylesheet can
-//            split code from data without reshaping an option
-//
-// Every option keeps the interface rule "sans for prose and controls, mono for
-// data": `prose` is always a sans-serif stack, `data` and `code` are always
-// monospace stacks, and `head` is never monospace. An option whose face is a
-// monospace (Google Sans Mono, Inconsolata) therefore sets that face as the
-// data face and pairs it with Open Sans; the Editorial and Display options set
-// their serif or display face for headings and pair it with a sans for prose
-// and JetBrains Mono for data.
-//
-// Selecting an option stamps `data-t-type="<id>"` on the root and the per-id
-// CSS rule in console.css swaps the font-role vars to the matching stacks. The
-// micro-preview in each row renders in that option's REAL faces, so the
-// popover reads as a true type specimen. The self-hosted JetBrains Mono is
-// declared in console.css; the Google-Fonts families these reference are
-// loaded by console.js's ensureFonts().
-const TF = {
-  OPENS: "'Open Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif",
-  JBM: "'JetBrains Mono', ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace",
-  GSMONO: "'Google Sans Mono', 'Noto Sans Mono', ui-monospace, monospace",
-  SRCS: "'Source Sans 3', system-ui, sans-serif",
-  SRCC: "'Source Code Pro', ui-monospace, monospace",
-  INCON: "'Inconsolata', ui-monospace, monospace",
-  UBUNTU: "'Ubuntu', system-ui, sans-serif",
-  UBUM: "'Ubuntu Mono', ui-monospace, monospace",
-  FRAUN: "'Fraunces', Georgia, serif",
-  BITTER: "'Bitter', Georgia, serif",
-  LITER: "'Literata', Georgia, serif",
-  DOMINE: "'Domine', Georgia, serif",
-  AN: "'Archivo Narrow', 'Space Grotesk', system-ui, sans-serif",
-  SG: "'Space Grotesk', system-ui, sans-serif",
-  HANKEN: "'Hanken Grotesk', system-ui, sans-serif",
-  BARLOWC: "'Barlow Condensed', 'Archivo Narrow', system-ui, sans-serif",
-  BRICO: "'Bricolage Grotesque', system-ui, sans-serif",
-};
-
-// The mode groups, in display order. Each option: {id, mode, label, head,
-// prose, data, code}. FOUR options per mode = TWELVE total.
-//
-// An option's id is the kebab-case name of the face the option is chosen for:
-// the heading face, or for the two monospace faces the data face. The label
-// spells out any pairing with a face from another family. Stored ids persist
-// in the viewer's preferences, so an id never changes when its pairing does.
-export const TYPE_MODE_ORDER = ['technical', 'editorial', 'display'];
-export const TYPE_MODE_LABEL = { technical: 'Technical', editorial: 'Editorial', display: 'Display' };
-
-export const TYPE_OPTIONS = [
-  // Technical
-  { id: 'google-sans-mono',    mode: 'technical', label: 'Open Sans + Google Sans Mono',    head: TF.OPENS,  prose: TF.OPENS,  data: TF.GSMONO, code: TF.GSMONO },
-  { id: 'source-sans-3',       mode: 'technical', label: 'Source Sans 3 + Source Code Pro', head: TF.SRCS,   prose: TF.SRCS,   data: TF.SRCC,   code: TF.SRCC  },
-  { id: 'inconsolata',         mode: 'technical', label: 'Open Sans + Inconsolata',         head: TF.OPENS,  prose: TF.OPENS,  data: TF.INCON,  code: TF.INCON },
-  { id: 'ubuntu',              mode: 'technical', label: 'Ubuntu + Ubuntu Mono',            head: TF.UBUNTU, prose: TF.UBUNTU, data: TF.UBUM,   code: TF.UBUM  },
-  // Editorial
-  { id: 'fraunces',            mode: 'editorial', label: 'Fraunces',                        head: TF.FRAUN,  prose: TF.OPENS,  data: TF.JBM,    code: TF.JBM },
-  { id: 'bitter',              mode: 'editorial', label: 'Bitter',                          head: TF.BITTER, prose: TF.OPENS,  data: TF.JBM,    code: TF.JBM },
-  { id: 'literata',            mode: 'editorial', label: 'Literata',                        head: TF.LITER,  prose: TF.OPENS,  data: TF.JBM,    code: TF.JBM },
-  { id: 'domine',              mode: 'editorial', label: 'Domine',                          head: TF.DOMINE, prose: TF.OPENS,  data: TF.JBM,    code: TF.JBM },
-  // Display
-  { id: 'archivo-narrow',      mode: 'display',   label: 'Archivo Narrow + Space Grotesk',  head: TF.AN,     prose: TF.SG,     data: TF.JBM,    code: TF.JBM },
-  { id: 'hanken-grotesk',      mode: 'display',   label: 'Hanken Grotesk',                  head: TF.HANKEN, prose: TF.HANKEN, data: TF.JBM,    code: TF.JBM },
-  { id: 'barlow-condensed',    mode: 'display',   label: 'Barlow Condensed + Space Grotesk', head: TF.BARLOWC, prose: TF.SG,   data: TF.JBM,    code: TF.JBM },
-  { id: 'bricolage-grotesque', mode: 'display',   label: 'Bricolage Grotesque',             head: TF.BRICO,  prose: TF.BRICO,  data: TF.JBM,    code: TF.JBM },
-];
-
-const TYPE_IDS = TYPE_OPTIONS.map((o) => o.id);
-const TYPE_BY_ID = new Map(TYPE_OPTIONS.map((o) => [o.id, o]));
-
-// The options as `[id, label]` pairs, the shape shell.js's `TYPEFACES` and any
-// other tuple consumer reads.
-export const TYPE_THEMES = TYPE_OPTIONS.map((o) => [o.id, o.label]);
-
-// The DEFAULT is Open Sans with Google Sans Mono, the first Technical option.
-export const DEFAULT_TYPE = 'google-sans-mono';
-const TYPE_PREF = 'typeface';
-
-// Unsupported stored values resolve to the default typeface.
-export function normaliseType(t) {
-  if (TYPE_IDS.includes(t)) return t;
-  return DEFAULT_TYPE;
-}
-// Resolve a value to its full option object (real font stacks). Useful for the
-// picker's micro-previews and for any caller that wants the resolved faces.
-export function typeOption(t) { return TYPE_BY_ID.get(normaliseType(t)) || TYPE_BY_ID.get(DEFAULT_TYPE); }
-export function readType() { return readPref(TYPE_PREF, normaliseType); }
-export function persistType(t) { return persistPref(TYPE_PREF, normaliseType, t); }
+// The console ships ONE typeface pairing — Open Sans for prose and controls,
+// Google Sans Mono for data — set by the font tokens in console.css. There is
+// no typeface preference, and a stored `typeface` key is never read.
 
 // ---- density: REMOVED — COZY is the permanent baseline --------------
 //
@@ -304,22 +192,21 @@ export function normaliseScale(v) {
 export function readScale() { return readPref(SCALE_PREF, normaliseScale, DEFAULT_SCALE); }
 export function persistScale(v) { return persistPref(SCALE_PREF, normaliseScale, v); }
 
-// ---- GLOBAL TEXT FONT-SIZE (the S/M/L control in the typeface picker) ----
+// ---- GLOBAL TEXT FONT-SIZE (the S/M/L control in Settings → Appearance) ----
 //
 // DISTINCT from the page-scale slider: the page scale `zoom`s the WHOLE page
 // (text AND figures); this is a TEXT-ONLY multiplier — it scales the HTML text
 // (every `font-size` in console.css is `calc(Npx * var(--dt-font-scale,1))`)
 // WITHOUT touching the SVG figures (their text is sized by svg.js / the `font:`
-// shorthand rather than those rules). Some pairings — the Ubuntu one and the
-// Inconsolata one — read small at the baseline, so this lets the operator step
-// the text up a notch or two.
+// shorthand rather than those rules), so the operator can step the text up a
+// notch or two.
 //
 // THREE stops — small / medium / large — each mapping to a `--dt-font-scale`
-// number. The raw literal-px baseline (scale 1.0) read too small for the low-
-// x-height faces, so the ladder starts ABOVE it: small 1.15 (the comfortable
+// number. The raw literal-px baseline (scale 1.0) read too small, so the
+// ladder starts ABOVE it: small 1.15 (the comfortable
 // floor + the default), medium 1.3, large 1.45 — even 0.15 steps. applyFontSize
 // (shell.js) stamps the var + a `data-t-fontsize` attribute on the app root and
-// persists; the picker's segmented control reads/sets it.
+// persists; the Settings segmented control reads/sets it.
 export const FONTSIZE_OPTIONS = [
   { id: 'small',  label: 'S', title: 'Small text',  scale: 1.15 },
   { id: 'medium', label: 'M', title: 'Medium text', scale: 1.3 },
@@ -547,7 +434,7 @@ export function verdictLabel(decision, opts) {
 // `drained` (queued but the round resolved without it — forward-compat).
 // Direction earns the colour (promote good / reject bad / queued caution /
 // drained faint) — never a new hue, never recoloring the verdict beside it.
-export function normaliseOverride(prov) {
+function normaliseOverride(prov) {
   if (!prov || typeof prov !== 'object') return null;
   // gate.override carries an explicit `present` flag; absent → nothing.
   if ('present' in prov && !prov.present) return null;

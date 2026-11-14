@@ -147,7 +147,7 @@ test('page scale: ui exposes a 70–150% range (5% steps) with a 100% default an
 
 // ---- (b) the control lives in SETTINGS and drives a PAGE-WIDE scale ----
 //
-// The scale control lives in Settings → Appearance beside the typeface picker,
+// The scale control lives in Settings → Appearance beside the text-size control,
 // rather than as a pill in the top-bar chrome. It is a set-once appearance
 // preference and the widest control on a bar that has to make room for the run
 // state. It uses the same store and the same applyScale/resetScale path.
@@ -233,17 +233,17 @@ test('page scale: the control is keyboard-accessible — a focusable native rang
 
 // ---- (d) scale survives the other appearance axes ----
 
-test('page scale: persists across re-applies and survives a colour/typeface change (the sole sizing axis)', () => {
+test('page scale: persists across re-applies and survives a colour/text-size change', () => {
   try { globalThis.window.localStorage.clear(); } catch (e) { /* ignore */ }
   const root = mountLiveShell('#/');
 
-  // set a non-default scale, then change colour + typeface (the other axes).
+  // set a non-default scale, then change colour + text size (the other axes).
   shell.applyScale(85, root);
   assertEqual(root.getAttribute('data-t-scale'), '85', 'page scale set to 85%');
   shell.applyTheme('solarized-dark', root);
-  shell.applyTypeface('display', root);
-  // the scale is UNCHANGED by a colour/typeface switch (separate axes).
-  assertEqual(root.getAttribute('data-t-scale'), '85', 'switching colour/typeface left the page scale untouched');
+  shell.applyFontSize('large', root);
+  // the scale is UNCHANGED by a colour/text-size switch (separate axes).
+  assertEqual(root.getAttribute('data-t-scale'), '85', 'switching colour/text size left the page scale untouched');
   assertEqual(ui.readScale(), 85, 'the page scale is still persisted at 85%');
 
   // re-apply a new scale — it lands.
@@ -283,149 +283,46 @@ test('page scale RESET: a keyboard-accessible reset button snaps the scale back 
   assertEqual(root.getAttribute('data-t-scale'), '100', 'resetScale() also returns to 100%');
 });
 
-// ---- CHANGE 5 + 6: sixteen themes + the colour SWATCH DROPDOWN ----
+// ---- the three themes + the colour SWATCH DROPDOWN ----
 
-test('colour themes: all SIXTEEN are registered, each defines the full --v2 token contract, and selecting each applies it', () => {
+test('colour themes: all THREE are registered, each defines the full --v2 token contract, and selecting each applies it', () => {
   freshState();
   const ids = ui.COLOR_THEMES.map((t) => t[0]);
-  const expected = ['monokai', 'solarized-dark', 'solarized-light',
-    'google-light', 'google-dark', 'lunaria-light', 'lunaria-eclipse',
-    'belafonte-day', 'belafonte-night',
-    'paper', 'zenburn', 'selenized-black', 'relaxed',
-    'espresso', 'dracula', 'ubuntu'];
-  assertEqual(ids.length, 16, 'sixteen colour themes registered');
-  assertDeep(ids, expected, 'the sixteen ids are the three originals + thirteen Gogh palettes');
+  assertDeep(ids, ['monokai', 'solarized-dark', 'solarized-light'], 'the three theme ids, the default first');
   assertEqual(ui.DEFAULT_COLOR, 'monokai', 'monokai stays the default');
 
-  // every theme defines the FULL --v2 token contract in the scoped CSS.
+  // every theme defines the FULL --v2 token contract in the scoped CSS, and
+  // the stylesheet holds a token block for no other theme.
   const css = readCss();
   const contract = ['paper', 'panel', 'ink', 'ink-soft', 'ink-faint', 'rule', 'rule-soft',
     'good', 'good-soft', 'bad', 'bad-soft', 'caution', 'accent', 'flat', 'cell-empty'];
+  const grounds = new Set();
   for (const id of ids) {
-    if (id === 'monokai') continue; // monokai shares the bare-root default block
     const re = new RegExp('\\[data-t-theme="' + id + '"\\]\\s*\\{([^}]*)\\}');
     const m = re.exec(css.replace(/\n/g, ' '));
     assert(m, 'theme ' + id + ' has a CSS block');
     for (const tok of contract) {
       assert(m[1].includes('--v2-' + tok + ':'), 'theme ' + id + ' defines --v2-' + tok);
     }
+    grounds.add(/--v2-paper:\s*([^;]+);/.exec(m[1])[1].trim().toLowerCase());
   }
+  assertEqual(grounds.size, ids.length, 'each theme has its own ground');
+  const styled = new Set([...css.matchAll(/\[data-t-theme="([^"]+)"\]/g)].map((m) => m[1]));
+  assertDeep([...styled].sort(), [...ids].sort(), 'the stylesheet names exactly the registered themes');
 
-  // selecting EACH theme applies it to the root + persists (incl. all ten Gogh).
+  // selecting EACH theme applies it to the root + persists.
   const root = document.createElement('div');
   for (const id of ids) {
     shell.applyTheme(id, root);
     assertEqual(root.getAttribute('data-t-theme'), id, id + ' applied to the root');
     assertEqual(ui.readColor(), id, id + ' persisted');
   }
-});
 
-// ---- ROUND 9: the four NEW Gogh themes (Paper/Zenburn/Selenized Black/Relaxed) ----
-
-test('new themes: Paper/Zenburn/Selenized Black/Relaxed are registered with swatch strips, define the full token contract, and selecting each changes the root attribute + tokens', () => {
-  freshState();
-  const css = readCss();
-  const byId = new Map(ui.COLOR_THEMES.map((t) => [t[0], t]));
-  const NEW = ['paper', 'zenburn', 'selenized-black', 'relaxed'];
-  const contract = ['paper', 'panel', 'ink', 'ink-soft', 'ink-faint', 'rule', 'rule-soft',
-    'good', 'good-soft', 'bad', 'bad-soft', 'caution', 'accent', 'flat', 'cell-empty'];
-
-  // (a) each new theme is registered with a name + a 4–6-colour preview strip.
-  for (const id of NEW) {
-    const t = byId.get(id);
-    assert(t, id + ' is registered in COLOR_THEMES');
-    assert(typeof t[1] === 'string' && t[1].length > 0, id + ' has a display name');
-    assert(Array.isArray(t[2]) && t[2].length >= 4 && t[2].length <= 6, id + ' has a 4–6-colour swatch strip (got ' + t[2].length + ')');
-    for (const c of t[2]) assert(/^#[0-9a-fA-F]{6}$/.test(c), id + ' swatch ' + c + ' is an inlined hex (no network)');
-  }
-
-  // (b) each new theme defines the full --v2 token contract in the scoped CSS,
-  //     and its token block differs from monokai's (the default) — tokens differ.
-  const monokaiBlock = /\[data-t-theme="monokai"\]\s*\{([^}]*)\}/.exec(css.replace(/\n/g, ' '))[1];
-  for (const id of NEW) {
-    const m = new RegExp('\\[data-t-theme="' + id + '"\\]\\s*\\{([^}]*)\\}').exec(css.replace(/\n/g, ' '));
-    assert(m, id + ' has a scoped CSS token block');
-    for (const tok of contract) assert(m[1].includes('--v2-' + tok + ':'), id + ' defines --v2-' + tok);
-    const paperVal = /--v2-paper:\s*([^;]+);/.exec(m[1])[1].trim();
-    const monokaiPaper = /--v2-paper:\s*([^;]+);/.exec(monokaiBlock)[1].trim();
-    assert(paperVal.toLowerCase() !== monokaiPaper.toLowerCase(), id + ' ground differs from monokai (tokens differ)');
-  }
-
-  // (c) selecting each NEW theme applies it to the root attribute + persists.
-  const root = document.createElement('div');
-  shell.applyTheme('monokai', root);
-  let prev = root.getAttribute('data-t-theme');
-  for (const id of NEW) {
-    shell.applyTheme(id, root);
-    assertEqual(root.getAttribute('data-t-theme'), id, id + ' applied to the root (attribute changed)');
-    assert(prev !== id, 'the root theme attribute changed selecting ' + id);
-    assertEqual(ui.readColor(), id, id + ' persisted');
-    prev = id;
-  }
-});
-
-// ---- ROUND 10: the three NEW Gogh themes (Espresso/Dracula/Ubuntu) ----
-
-test('new themes: Espresso/Dracula/Ubuntu are registered with swatch strips, define the full token contract, and selecting each changes the root attribute + tokens', () => {
-  freshState();
-  const css = readCss();
-  const byId = new Map(ui.COLOR_THEMES.map((t) => [t[0], t]));
-  const NEW = ['espresso', 'dracula', 'ubuntu'];
-  const contract = ['paper', 'panel', 'ink', 'ink-soft', 'ink-faint', 'rule', 'rule-soft',
-    'good', 'good-soft', 'bad', 'bad-soft', 'caution', 'accent', 'flat', 'cell-empty'];
-
-  // (a) each new theme is registered with a name + a 4–6-colour preview strip.
-  for (const id of NEW) {
-    const t = byId.get(id);
-    assert(t, id + ' is registered in COLOR_THEMES');
-    assert(typeof t[1] === 'string' && t[1].length > 0, id + ' has a display name');
-    assert(Array.isArray(t[2]) && t[2].length >= 4 && t[2].length <= 6, id + ' has a 4–6-colour swatch strip (got ' + t[2].length + ')');
-    for (const c of t[2]) assert(/^#[0-9a-fA-F]{6}$/.test(c), id + ' swatch ' + c + ' is an inlined hex (no network)');
-  }
-
-  // (b) each new theme defines the full --v2 token contract in the scoped CSS,
-  //     and its token block differs from monokai's (the default) — tokens differ.
-  const monokaiBlock = /\[data-t-theme="monokai"\]\s*\{([^}]*)\}/.exec(css.replace(/\n/g, ' '))[1];
-  for (const id of NEW) {
-    const m = new RegExp('\\[data-t-theme="' + id + '"\\]\\s*\\{([^}]*)\\}').exec(css.replace(/\n/g, ' '));
-    assert(m, id + ' has a scoped CSS token block');
-    for (const tok of contract) assert(m[1].includes('--v2-' + tok + ':'), id + ' defines --v2-' + tok);
-    const paperVal = /--v2-paper:\s*([^;]+);/.exec(m[1])[1].trim();
-    const monokaiPaper = /--v2-paper:\s*([^;]+);/.exec(monokaiBlock)[1].trim();
-    assert(paperVal.toLowerCase() !== monokaiPaper.toLowerCase(), id + ' ground differs from monokai (tokens differ)');
-  }
-
-  // (c) the signature palette grounds are mapped faithfully.
-  const espressoBlock = new RegExp('\\[data-t-theme="espresso"\\]\\s*\\{([^}]*)\\}').exec(css.replace(/\n/g, ' '))[1];
-  const draculaBlock = new RegExp('\\[data-t-theme="dracula"\\]\\s*\\{([^}]*)\\}').exec(css.replace(/\n/g, ' '))[1];
-  const ubuntuBlock = new RegExp('\\[data-t-theme="ubuntu"\\]\\s*\\{([^}]*)\\}').exec(css.replace(/\n/g, ' '))[1];
-  assert(/--v2-paper:\s*#323232/i.test(espressoBlock), 'espresso ground is the palette background #323232');
-  assert(/--v2-paper:\s*#282A36/i.test(draculaBlock), 'dracula ground is the palette background #282A36');
-  assert(/--v2-paper:\s*#300A24/i.test(ubuntuBlock), 'ubuntu ground is the signature aubergine #300A24');
-
-  // (c.1) Dracula maps to the CANONICAL palette with its SIGNATURE PURPLE as the
-  // accent (drives the LIVE pill / highlights / active state) — NOT cyan.
-  assert(/--v2-accent:\s*#BD93F9/i.test(draculaBlock), 'dracula accent is the signature purple #BD93F9 (not cyan)');
-  assert(!/--v2-accent:\s*#8BE9FD/i.test(draculaBlock), 'dracula accent is NOT the cyan #8BE9FD');
-  assert(/--v2-ink:\s*#F8F8F2/i.test(draculaBlock), 'dracula foreground is the palette fg #F8F8F2');
-  assert(/--v2-good:\s*#50FA7B/i.test(draculaBlock), 'dracula good keys off the palette green #50FA7B');
-  assert(/--v2-bad:\s*#FF5555/i.test(draculaBlock), 'dracula bad keys off the palette red #FF5555');
-  assert(/--v2-caution:\s*#F1FA8C/i.test(draculaBlock), 'dracula caution keys off the palette yellow #F1FA8C');
-  assert(/--v2-flat:\s*#6272A4/i.test(draculaBlock), 'dracula flat keys off the comment grey #6272A4');
-  for (const tok of contract) {
-    assert(draculaBlock.includes('--v2-' + tok + ':'), 'dracula defines --v2-' + tok);
-  }
-
-  // (d) selecting each NEW theme applies it to the root attribute + persists.
-  const root = document.createElement('div');
-  shell.applyTheme('monokai', root);
-  let prev = root.getAttribute('data-t-theme');
-  for (const id of NEW) {
-    shell.applyTheme(id, root);
-    assertEqual(root.getAttribute('data-t-theme'), id, id + ' applied to the root (attribute changed)');
-    assert(prev !== id, 'the root theme attribute changed selecting ' + id);
-    assertEqual(ui.readColor(), id, id + ' persisted');
-    prev = id;
+  // a theme the console does not ship (a stored preference may still name
+  // one) lands on the default instead of an unstyled root.
+  for (const gone of ['dracula', 'google-dark', 'paper', 'nonesuch', null]) {
+    assertEqual(shell.applyTheme(gone, root), 'monokai', String(gone) + ' normalises to the default');
+    assertEqual(root.getAttribute('data-t-theme'), 'monokai', 'the root carries the default theme');
   }
 });
 
@@ -448,9 +345,8 @@ test('colour picker is a SWATCH DROPDOWN: a closed trigger with the current swat
 
   // the listbox has one OPTION per theme, each with a swatch strip (≥4 swatches) + name.
   const options = allByClass(root, 'dt-cd-option');
-  assertEqual(options.length, 16, 'one dropdown option per theme (sixteen)');
-  // the four round-9 + three round-10 themes each surface as a listed option.
-  for (const id of ['paper', 'zenburn', 'selenized-black', 'relaxed', 'espresso', 'dracula', 'ubuntu']) {
+  assertEqual(options.length, 3, 'one dropdown option per theme (three)');
+  for (const id of ['monokai', 'solarized-dark', 'solarized-light']) {
     assert(options.filter((o) => o.getAttribute('data-theme') === id).length === 1, id + ' is a listed dropdown option');
   }
   for (const opt of options) {
@@ -463,11 +359,11 @@ test('colour picker is a SWATCH DROPDOWN: a closed trigger with the current swat
   }
 
   // clicking an option applies + persists that theme, and the trigger updates.
-  const opt = options.filter((o) => o.getAttribute('data-theme') === 'belafonte-night')[0];
+  const opt = options.filter((o) => o.getAttribute('data-theme') === 'solarized-light')[0];
   opt.dispatchEvent({ type: 'click' });
-  assertEqual(root.getAttribute('data-t-theme'), 'belafonte-night', 'clicking the option applied the theme');
-  assertEqual(ui.readColor(), 'belafonte-night', 'the chosen theme persisted');
-  assert(allByClass(root, 'dt-cd-trigger')[0].textContent.includes('belafonte night'), 'the closed trigger now shows the chosen theme');
+  assertEqual(root.getAttribute('data-t-theme'), 'solarized-light', 'clicking the option applied the theme');
+  assertEqual(ui.readColor(), 'solarized-light', 'the chosen theme persisted');
+  assert(allByClass(root, 'dt-cd-trigger')[0].textContent.includes('solarized light'), 'the closed trigger now shows the chosen theme');
 
   // keyboard: ArrowDown on the trigger opens; Enter on the open list selects.
   const triggerKb = allByClass(root, 'dt-cd-trigger')[0];
@@ -484,7 +380,7 @@ test('colour picker is a SWATCH DROPDOWN: a closed trigger with the current swat
 // ---- 6-SWATCH PREVIEW: every theme's strip shows SIX colours (adds accent) ----
 
 test('colour themes: every COLOR_THEMES tuple carries SIX valid-hex preview colours (ground · surface · ink · good · bad · accent)', () => {
-  assertEqual(ui.COLOR_THEMES.length, 16, 'theme count stays sixteen');
+  assertEqual(ui.COLOR_THEMES.length, 3, 'three themes');
   for (const [id, , swatches] of ui.COLOR_THEMES) {
     assert(Array.isArray(swatches), id + ' has a swatch tuple');
     assertEqual(swatches.length, 6, id + ' preview tuple has exactly six colours (got ' + swatches.length + ')');
@@ -492,9 +388,9 @@ test('colour themes: every COLOR_THEMES tuple carries SIX valid-hex preview colo
       assert(/^#[0-9a-fA-F]{6}$/.test(c), id + ' swatch ' + c + ' is a valid 6-digit hex');
     }
   }
-  // dracula's 6th swatch (accent) is the signature purple.
-  const dracula = ui.COLOR_THEMES.find((t) => t[0] === 'dracula');
-  assertEqual(dracula[2][5].toUpperCase(), '#BD93F9', 'dracula 6th swatch is the signature purple #BD93F9');
+  // a tuple's 6th swatch is the theme's accent.
+  const monokai = ui.COLOR_THEMES.find((t) => t[0] === 'monokai');
+  assertEqual(monokai[2][5].toLowerCase(), '#66d9ef', 'monokai 6th swatch is its cyan accent');
 });
 
 test('colour picker renders SIX swatches per option (the 6-swatch strip) and SIX on the closed trigger', () => {
@@ -511,7 +407,7 @@ test('colour picker renders SIX swatches per option (the 6-swatch strip) and SIX
   // every option's strip shows exactly six swatches, matching its tuple.
   const byId = new Map(ui.COLOR_THEMES.map((t) => [t[0], t]));
   const options = allByClass(root, 'dt-cd-option');
-  assertEqual(options.length, 16, 'one option per theme (sixteen)');
+  assertEqual(options.length, 3, 'one option per theme (three)');
   for (const opt of options) {
     const id = opt.getAttribute('data-theme');
     const strip = opt.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').includes('dt-swatch-strip'))[0];

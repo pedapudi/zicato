@@ -6,7 +6,12 @@
 > `7f9152af`, 2026-09-07) change what some passages refer to: the builder
 > view with its `/builder/` routes and the `zicato.builder` package (§3.5),
 > and the terminal console under `src/zicato/tui/` (§1, §2.3) are
-> removed, so the console is the only reader of the routes. For the console
+> removed, so the console is the only reader of the routes. A change of
+> 2026-11-13 reduces the 16 themes and 12 typefaces of §1, §2.4 and §5 to
+> three themes and one typeface pairing, removes `typefacedropdown.js`,
+> folds `dropdown.js` into `swatchdropdown.js`, deletes `fieldStatusSummary`
+> (§2.3), and ends the export of `finiteValues`, `decollide` and
+> `jitterColumn` (§2.2). For the console
 > as it stands, read [CONSOLE-DESIGN-LANGUAGE.md](CONSOLE-DESIGN-LANGUAGE.md)
 > and [`js/CONTRACTS.md`](../../src/zicato/dashboard/static/js/CONTRACTS.md).
 

@@ -165,25 +165,22 @@ test('settings: the Appearance section is EDITABLE and shares the top-bar theme 
     assert(strip, 'option ' + opt.getAttribute('data-theme') + ' shows a colour swatch strip');
     assert(byClass(strip, 'dt-swatch').length >= 4, 'the strip renders representative colour swatches');
   }
-  // the TYPEFACE picker is now the SHARED grouped popover (dt-tf, reusing the
-  // dt-cd idiom): a trigger + 3 mode-group headers + 12 option rows. The old
-  // 3-button group is gone.
-  const tf = firstClass(body, 'dt-tf');
-  assert(tf, 'the typeface picker is the shared grouped popover (dt-tf)');
-  assert(byClass(body, 'dn-set-typebtn').length === 0, 'the old 3-button typeface group is gone');
-  assertEqual(byClass(tf, 'dt-cd-group').length, 3, 'three mode-group headers in the typeface popover');
-  assertEqual(byClass(tf, 'dt-tf-option').length, 12, 'twelve typeface option rows');
+  // There is no typeface picker: the console ships one pairing.
+  assertEqual(byClass(body, 'dt-tf').length, 0, 'no typeface picker in Appearance');
+  assertEqual(byClass(body, 'dt-cd').length, 1, 'the colour picker is the only dropdown');
+  const rowLabels = byClass(body, 'dn-set-k').map((n) => n.textContent);
+  assertEqual(rowLabels.join(' | '), 'Colour theme | Text size | Page scale | Side-panel width', 'the four appearance rows');
   assertEqual(byClass(body, 'dn-set-range').length, 2, 'page-scale + side-panel-width ranges render');
 
   // choosing a swatch option drives the SHARED store (applyTheme persists it to
   // the same localStorage key the top-bar dropdown reads — one source).
   const ui = await import('../js/ui.js');
-  const dracula = byClass(body, 'dt-cd-option').find((o) => o.getAttribute('data-theme') === 'dracula');
-  assert(dracula, 'the dropdown has a dracula option');
-  dracula.dispatchEvent(makeEvent('click'));
-  assertEqual(ui.readColor(), 'dracula', 'the swatch dropdown persisted via the shared theme store');
+  const light = byClass(body, 'dt-cd-option').find((o) => o.getAttribute('data-theme') === 'solarized-light');
+  assert(light, 'the dropdown has a solarized-light option');
+  light.dispatchEvent(makeEvent('click'));
+  assertEqual(ui.readColor(), 'solarized-light', 'the swatch dropdown persisted via the shared theme store');
   // the closed trigger now reflects the chosen theme name.
-  assert(firstClass(body, 'dt-cd-trigger').textContent.toLowerCase().includes('dracula'),
+  assert(firstClass(body, 'dt-cd-trigger').textContent.toLowerCase().includes('solarized light'),
     'the closed trigger shows the chosen theme');
 
   // changing the page-scale range drives the SHARED scale store likewise.
@@ -199,46 +196,18 @@ test('settings: editing appearance updates the SAME store the top-bar reads (rou
   installFetch();
   globalThis.window.localStorage.clear();
   const ui = await import('../js/ui.js');
-  // a value set the "top-bar way" (persistType) is reflected by the settings
-  // picker's initial selected option — one source of truth, both directions.
-  ui.persistType('literata');
+  // a value set the "top-bar way" (persistColor) is reflected by the settings
+  // picker's selected option — one source of truth, both directions.
+  ui.persistColor('solarized-dark');
   const host = globalThis.document.createElement('div');
   await settings.render(host, ctx, { section: 'appearance' });
   await tick();
   const body = firstClass(host, 'dn-set-body');
-  const tf = firstClass(body, 'dt-tf');
-  assert(tf, 'the typeface grouped popover renders in Appearance');
-  const onOpt = byClass(tf, 'dt-tf-option').find((o) => o.getAttribute('aria-selected') === 'true');
-  assert(onOpt && onOpt.getAttribute('data-type') === 'literata', 'the popover reflects the shared typeface store');
-  ui.persistType('display');
-  assertEqual(ui.readType(), ui.DEFAULT_TYPE, 'a retired typeface alias uses the existing default');
-});
-
-// The typeface picker now lives ONLY in Settings (removed from the top bar).
-// Choosing a face there must still APPLY live (stamp the app root via the shared
-// applyTypeface store) AND PERSIST — so this is the sole live picker now.
-test('settings: the Settings typeface picker still APPLIES + PERSISTS (the sole live picker)', async () => {
-  installFetch();
-  globalThis.window.localStorage.clear();
-  const ui = await import('../js/ui.js');
-  // a stable app root the picker's applyTypeface can stamp (applyTypeface falls
-  // back to the shell's `_root` when no root is passed — mountShell sets it, but
-  // here we drive the picker directly and assert via the persisted store).
-  const host = globalThis.document.createElement('div');
-  await settings.render(host, ctx, { section: 'appearance' });
-  await tick();
-  const body = firstClass(host, 'dn-set-body');
-  const tf = firstClass(body, 'dt-tf');
-  assert(tf, 'the typeface grouped popover renders in Settings → Appearance');
-  // pick the Inconsolata option — it must apply via the shared store and persist.
-  const inconsolata = byClass(tf, 'dt-tf-option').find((o) => o.getAttribute('data-type') === 'inconsolata');
-  assert(inconsolata, 'the popover has the Inconsolata option');
-  inconsolata.dispatchEvent(makeEvent('click'));
-  assertEqual(ui.readType(), 'inconsolata', 'choosing Inconsolata in Settings persisted via the shared typeface store');
-  // and the closed trigger now reflects the chosen face (the live picker synced).
-  const trigger = firstClass(tf, 'dt-cd-trigger');
-  assert(trigger, 'the typeface popover has a closed trigger');
-  assert((trigger.textContent || '').length > 0, 'the trigger shows the chosen face label');
+  const onOpt = byClass(body, 'dt-cd-option').find((o) => o.getAttribute('aria-selected') === 'true');
+  assert(onOpt && onOpt.getAttribute('data-theme') === 'solarized-dark', 'the picker reflects the shared theme store');
+  // a stored theme the console does not ship reads as the default.
+  globalThis.window.localStorage.setItem('zicato.console.theme', 'dracula');
+  assertEqual(ui.readColor(), ui.DEFAULT_COLOR, 'a removed theme uses the default');
 });
 
 // The old accent-tinted, pulsing "light-up rail card" research-preview banner is
@@ -326,11 +295,11 @@ test('settings: the Models section shows the api_key_env NAME + set/unset flag, 
 
 
 
-// ── S/M/L FONT-SIZE control (text-only multiplier in the typeface picker) ──
+// ── S/M/L FONT-SIZE control (text-only multiplier in Settings → Appearance) ──
 //
 // DISTINCT from the page-scale pill (whole-page `zoom`): this scales the HTML
 // text via `--dt-font-scale` WITHOUT touching the SVG figures. The ladder
-// starts above the raw literal-px baseline (too small for low-x-height faces):
+// starts above the raw literal-px baseline:
 // small 1.15 (the default floor), medium 1.3, large 1.45.
 
 test('ui: font-size model — normalise + read/persist round-trip + scale values', async () => {
@@ -367,8 +336,8 @@ test('ui: font-size model — normalise + read/persist round-trip + scale values
 //
 // Every value below is one the preference accepts today, so each assertion
 // turns on the key spelling alone. What a stored VALUE may say is a separate
-// question each preference answers for itself: the typeface's retired option
-// ids are pinned in candidate_surfaces.test.mjs.
+// question each preference answers for itself: a removed theme id is pinned
+// in preferences.test.mjs.
 
 test('shell: applyFontSize stamps --dt-font-scale + data-t-fontsize per size + persists', async () => {
   const ui = await import('../js/ui.js');
@@ -389,7 +358,7 @@ test('shell: applyFontSize stamps --dt-font-scale + data-t-fontsize per size + p
   assertEqual(root.style._props['--dt-font-scale'], '1.15', 'small stamps scale 1.15 (default floor)');
 });
 
-test('settings: the typeface popover carries the S/M/L text-size control + applies via the shared store', async () => {
+test('settings: Appearance carries the S/M/L text-size control + applies via the shared store', async () => {
   installFetch();
   globalThis.window.localStorage.clear();
   const ui = await import('../js/ui.js');
@@ -397,11 +366,9 @@ test('settings: the typeface popover carries the S/M/L text-size control + appli
   await settings.render(host, ctx, { section: 'appearance' });
   await tick();
   const body = firstClass(host, 'dn-set-body');
-  const tf = firstClass(body, 'dt-tf');
-  assert(tf, 'the typeface grouped popover renders in Appearance');
-  // the S/M/L segmented control rides in the popover footer — three segments.
-  const segs = byClass(tf, 'dt-tf-sizeseg');
-  assertEqual(segs.length, 3, 'three text-size segments (S · M · L) in the popover footer');
+  // the S/M/L segmented control has its own Appearance row — three segments.
+  const segs = byClass(body, 'dn-set-sizeseg');
+  assertEqual(segs.length, 3, 'three text-size segments (S · M · L)');
   const ids = segs.map((b) => b.getAttribute('data-fontsize'));
   assert(ids.includes('small') && ids.includes('medium') && ids.includes('large'),
     'the segments are small / medium / large');
@@ -412,9 +379,22 @@ test('settings: the typeface popover carries the S/M/L text-size control + appli
   const large = segs.find((b) => b.getAttribute('data-fontsize') === 'large');
   large.dispatchEvent(makeEvent('click'));
   assertEqual(ui.readFontSize(), 'large', 'choosing large persisted via the shared font-size store');
-  // the segment sync flipped aria-checked: large on, small off (cross-instance).
+  // the choice flipped aria-checked: large on, small off.
   assertEqual(large.getAttribute('aria-checked'), 'true', 'the large segment is now checked');
   assertEqual(small.getAttribute('aria-checked'), 'false', 'the small segment is no longer checked');
+  // ArrowLeft steps back one size and applies it; ArrowLeft from the first wraps.
+  large.dispatchEvent(makeEvent('keydown', { key: 'ArrowLeft' }));
+  assertEqual(ui.readFontSize(), 'medium', 'ArrowLeft from large chooses medium');
+  small.dispatchEvent(makeEvent('keydown', { key: 'ArrowLeft' }));
+  assertEqual(ui.readFontSize(), 'large', 'ArrowLeft from the first segment wraps to the last');
+  assertEqual(large.getAttribute('aria-checked'), 'true', 'the wrapped-to segment is checked');
+  // a repaint re-reads the store, so the control follows a size set elsewhere.
+  ui.persistFontSize('medium');
+  await settings.render(host, ctx, { section: 'appearance' });
+  await tick();
+  const medium = segs.find((b) => b.getAttribute('data-fontsize') === 'medium');
+  assertEqual(medium.getAttribute('aria-checked'), 'true', 'a repaint re-checks the stored size');
+  assertEqual(large.getAttribute('aria-checked'), 'false', 'and unchecks the others');
 });
 
 for (const failure of ['http', 'network']) {

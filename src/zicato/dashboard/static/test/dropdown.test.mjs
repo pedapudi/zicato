@@ -1,20 +1,13 @@
-// test/dropdown.test.mjs — the interaction the colour-swatch and typeface
-// pickers share (js/dropdown.js), exercised through both pickers.
-//
-// The two pickers build different specimens over one behaviour: open/close,
-// active-row tracking with wrap-around, the keyboard map, closing on an
-// outside click, and the registry that keeps every mounted copy of a picker
-// showing the same selection. Because both read the same wiring, an assertion
-// here covers both — and a change to the wiring cannot silently break one of
-// them.
+// test/dropdown.test.mjs — the colour-swatch picker's interaction
+// (js/swatchdropdown.js): open/close, active-row tracking with wrap-around,
+// the keyboard map, closing on an outside click, and the fan-out that keeps
+// every mounted copy of the picker showing the same selection.
 
 import { installDom, makeEvent, test, run, assert, assertEqual } from './harness.mjs';
 
 installDom();
 
-const { DEFAULT_TYPE } = await import('../js/ui.js');
 const { buildSwatchDropdown, syncSwatchDropdowns } = await import('../js/swatchdropdown.js');
-const { buildTypefaceDropdown, syncTypefaceDropdowns, syncFontSizeSegments } = await import('../js/typefacedropdown.js');
 
 const cls = (n) => (n._attrs && n._attrs.class) || '';
 const fire = (node, type, props) => {
@@ -37,13 +30,11 @@ const selected = (picker, attr) => picker.node.querySelectorAll('[role="option"]
   .map((o) => o.getAttribute(attr));
 const activeIndex = (options) => options.findIndex((o) => cls(o).includes('dt-cd-active'));
 
-// Both pickers, so every assertion below runs against each. `other` is a legal
-// value distinct from the initial one; `attr` is where a row carries its value.
+// `other` is a legal value distinct from the initial one; `attr` is where a
+// row carries its value.
 const PICKERS = [
-  { name: 'swatch', attr: 'data-theme', initial: 'monokai', other: 'dracula',
+  { name: 'swatch', attr: 'data-theme', initial: 'monokai', other: 'solarized-light',
     build: (onChoose) => buildSwatchDropdown('monokai', onChoose) },
-  { name: 'typeface', attr: 'data-type', initial: 'google-sans-mono', other: 'fraunces',
-    build: (onChoose) => buildTypefaceDropdown('google-sans-mono', onChoose) },
 ];
 
 for (const p of PICKERS) {
@@ -115,38 +106,16 @@ for (const p of PICKERS) {
 test('a colour choice reaches every mounted swatch picker', () => {
   const a = buildSwatchDropdown('monokai', () => {});
   const b = buildSwatchDropdown('monokai', () => {});
-  syncSwatchDropdowns('paper');
-  assertEqual(selected(a, 'data-theme').join(','), 'paper', 'the first picker follows the fan-out');
-  assertEqual(selected(b, 'data-theme').join(','), 'paper', 'so does the second');
+  syncSwatchDropdowns('solarized-dark');
+  assertEqual(selected(a, 'data-theme').join(','), 'solarized-dark', 'the first picker follows the fan-out');
+  assertEqual(selected(b, 'data-theme').join(','), 'solarized-dark', 'so does the second');
   // The fan-out normalises, so an unknown id lands on the default rather than
   // leaving the pickers showing nothing.
   syncSwatchDropdowns('nonesuch');
   assertEqual(selected(b, 'data-theme').join(','), 'monokai', 'an unknown theme normalises to the default');
-});
-
-test('a typeface choice reaches every mounted picker, and retired aliases use the default', () => {
-  const a = buildTypefaceDropdown('google-sans-mono', () => {});
-  const b = buildTypefaceDropdown('google-sans-mono', () => {});
-  syncTypefaceDropdowns('archivo-narrow');
-  assertEqual(selected(a, 'data-type').join(','), 'archivo-narrow', 'the first picker follows the fan-out');
-  assertEqual(selected(b, 'data-type').join(','), 'archivo-narrow', 'so does the second');
-  syncTypefaceDropdowns('editorial');
-  assertEqual(selected(a, 'data-type').join(','), DEFAULT_TYPE, 'the first picker uses the default for a retired alias');
-  assertEqual(selected(b, 'data-type').join(','), DEFAULT_TYPE, 'the second picker uses the same default');
-});
-
-test('the text-size segment in the typeface popover chooses and syncs', () => {
-  let size = null;
-  const picker = buildTypefaceDropdown('google-sans-mono', () => {}, { size: 'small', onSizeChoose: (id) => { size = id; } });
-  const segs = picker.node.querySelectorAll('[data-fontsize]');
-  assertEqual(segs.length, 3, 'three size segments');
-  assertEqual(segs.filter((s) => s.getAttribute('aria-checked') === 'true').map((s) => s.getAttribute('data-fontsize')).join(','),
-    'small', 'the initial size is checked');
-  fire(segs[2], 'click');
-  assertEqual(size, 'large', 'clicking a segment reports that size');
-  syncFontSizeSegments('medium');
-  assertEqual(segs.filter((s) => s.getAttribute('aria-checked') === 'true').map((s) => s.getAttribute('data-fontsize')).join(','),
-    'medium', 'the fan-out moves the checked segment');
+  syncSwatchDropdowns('solarized-dark');
+  syncSwatchDropdowns('dracula');
+  assertEqual(selected(a, 'data-theme').join(','), 'monokai', 'a theme the console no longer ships normalises to the default');
 });
 
 await run();

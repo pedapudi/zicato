@@ -30,7 +30,7 @@ import * as svg from '../svg.js';
 import { icon, iconLabel } from '../icons.js';
 import { gatedSwap, section, empty, verdictLabel, decisionOf, dataTable, deltaCell, ratingCellEl, ratingTripleDigest, coreIdeaLine } from '../ui.js';
 import { renderStructure, structurePill } from './structure.js';
-import { structureDigest, isNonGauntlet, normalizeStructure, resolveNonGauntletSt } from '../tournament_model.js';
+import { structureDigest, isNonGauntlet, normalizeStructure, resolveNonGauntletSt, settledTournamentId } from '../tournament_model.js';
 // `epochIsLive` composes the clock and the epoch scope, and every present-tense
 // claim in this view consumes it: the projected scalars, the PROJ marks and
 // progress bars, the in-flight round and its "racing" / "deciding…" labels, and
@@ -411,13 +411,8 @@ async function renderConfiguredStructure(host, ctx, id, ep, bracket, structure, 
     completedRecord = normalizeStructure(await D.racingField(id), false);
     if (completedRecord) tournamentId = 'racing:served';
   } else {
-    const tournaments = (bracket && Array.isArray(bracket.tournaments)) ? bracket.tournaments : [];
-    const matchStruct = tournaments.filter((t) => t && t.structure === structure);
-    const nonGaunt = tournaments.filter((t) => t && t.structure && t.structure !== 'gauntlet');
-    if (matchStruct.length) tournamentId = matchStruct[matchStruct.length - 1].tournament_id;
-    else if (nonGaunt.length) tournamentId = nonGaunt[nonGaunt.length - 1].tournament_id;
-    else if (tournaments.length) tournamentId = tournaments[tournaments.length - 1].tournament_id;
-    else {
+    tournamentId = settledTournamentId(bracket, structure);
+    if (tournamentId === null) {
       const matchups = (bracket && Array.isArray(bracket.matchups)) ? bracket.matchups : [];
       const last = matchups[matchups.length - 1];
       if (last && last.challenger) tournamentId = `${id}:${last.champion || ''}->${last.challenger}`;
@@ -472,7 +467,7 @@ async function renderConfiguredStructure(host, ctx, id, ep, bracket, structure, 
 // (`hypothesis_core_idea`, joined by the bracket reader); the epoch's own
 // experiment records fill in a generation that never reached a matchup — the
 // seed, or a challenger minted but not yet raced. PURE (node-testable).
-export function coreIdeaMap(matchups, experiments) {
+function coreIdeaMap(matchups, experiments) {
   const by = new Map();
   for (const x of (Array.isArray(experiments) ? experiments : [])) {
     const gid = x && x.generation_id;
