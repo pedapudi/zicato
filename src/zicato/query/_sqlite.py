@@ -85,12 +85,6 @@ def open_index_ro_or_none(path: Path) -> Iterator[sqlite3.Connection | None]:
         conn.close()
 
 
-def _opt_str(row: Any, key: str) -> str | None:
-    """A nonempty string column, or None for a null or empty value."""
-    value = row[key]
-    return value if isinstance(value, str) and value else None
-
-
 def _query(conn: sqlite3.Connection, sql: str, params: tuple[Any, ...]) -> list[sqlite3.Row]:
     try:
         return list(conn.execute(sql, params))

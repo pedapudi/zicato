@@ -17,7 +17,6 @@ from zicato.judge_runtime.io_capture import (
     judge_io_path_for_loss,
     read_judge_io,
 )
-from zicato.query.execution_plan import _run_result
 from zicato.query.reflection_view import _transcript_from_judge_io, _transcript_from_result
 from zicato.reflection.adjudicator import _result_context, _verbatim_context
 from zicato.reflection.corpus import _read_sidecars
@@ -102,7 +101,6 @@ def test_capture_fidelity_requires_complete_paired_identity(
         ):
             with pytest.raises(RecordError):
                 read()
-        assert "unreadable" in _run_result(loss_path, loss)
         return
 
     available = change == "match"
@@ -113,4 +111,3 @@ def test_capture_fidelity_requires_complete_paired_identity(
     result_present, judge_records = _read_sidecars(loss_path, loss)
     assert result_present is available
     assert bool(judge_records) is available
-    assert bool(_run_result(loss_path, loss)) is available

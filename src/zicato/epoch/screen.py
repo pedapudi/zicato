@@ -45,7 +45,6 @@ widens the proposer's restricted visibility envelope (OVERFITTING.md §11).
 from __future__ import annotations
 
 import logging
-import re
 import shutil
 import tempfile
 from dataclasses import dataclass
@@ -75,25 +74,6 @@ log = logging.getLogger("zicato.epoch.screen")
 #: generation id, and the entry-time sweep removes any directory carrying
 #: this marker (crash self-heal).
 _SCREEN_ID_MARKER: str = "-screen-"
-
-#: The round + candidate a screen generation id names, parsed back out of it.
-#: Built from :data:`_SCREEN_ID_MARKER` so the writer and the reader of the id
-#: cannot drift apart.
-_SCREEN_ID_RE = re.compile(re.escape(_SCREEN_ID_MARKER) + r"r(\d+)c(\d+)$")
-
-
-def screen_generation_round(generation_id: str) -> int | None:
-    """The round index a screen generation id names, else ``None``.
-
-    An ephemeral screen snapshot is normally removed the moment its candidate
-    settles, so a ``generations/{parent}-screen-r{round}c{i}`` directory only
-    survives a crash. Its NAME is then the one thing on disk that states which
-    round the draws inside it served — a reader that must place them has an
-    anchor rather than a guess. ``None`` for every id that is not a screen id,
-    including a real ``v<n>`` generation.
-    """
-    match = _SCREEN_ID_RE.search(generation_id)
-    return int(match.group(1)) if match else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -478,7 +458,6 @@ def _summarize(
 __all__ = [
     "ScreenPanel",
     "run_candidate_screen",
-    "screen_generation_round",
     "select_screen_entries",
     "sweep_stale_screen_dirs",
 ]

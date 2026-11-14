@@ -195,10 +195,7 @@ def test_historical_zero_runtime_budget_records_require_execution_evidence(
         measurement=MeasurementDraw(MeasurementPurpose.TOURNAMENT, 0),
     )
     from zicato.query.paths import WorkspacePaths
-    from zicato.query.replicate_scores import (
-        cell_replicate_draws_indexed,
-        measurement_band_draws_indexed,
-    )
+    from zicato.query.replicate_scores import cell_replicate_draws_indexed
     from zicato.tournament.unit_cache import own_code_board_draws
     from zicato.workspace.layout import WorkspaceLayout
     from zicato.workspace.reads import read_loss
@@ -211,8 +208,6 @@ def test_historical_zero_runtime_budget_records_require_execution_evidence(
     ) == eligible
     assert bool(own_code_board_draws(path.parent.parent)) == eligible
     assert bool(cell_replicate_draws_indexed(paths, "e0", "v0", "entry")) == eligible
-    bands = measurement_band_draws_indexed(paths, "e0", "v0", "entry")
-    assert [band.key for _, band, _ in bands] == ([] if eligible else ["ambiguous"])
     assert path.read_bytes() == original
     if evidence == "missing":
         assert "ambiguous historical budget record" in caplog.text

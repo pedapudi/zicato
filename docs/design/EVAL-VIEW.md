@@ -51,12 +51,11 @@ they invent no new persistence.
   `src/zicato/dashboard/endpoints.py`). A single
   matchup's two-candidate slice of the matrix.
 - **The passive entry×candidate matrix** —
-  `zicato.query.reflection_view.entry_candidate_matrix`
-  (`src/zicato/query/reflection_view.py`) already folds mean `drift_loss`
-  per (entry, candidate) straight off the index. `build_eval_matrix` computes
-  the same fold and adds evidence, pass-ratio, holdout flagging, and
-  calibration (§3). `entry_candidate_matrix` stays in place — the Instrument
-  lens' passive tier imports it — and the richer reader sits beside it.
+  `zicato.reflection.analysis.entry_candidate_matrix`
+  (`src/zicato/reflection/analysis.py`) folds the mean scalar per
+  (entry, candidate) over a reflection's corpus. `build_eval_matrix` folds
+  mean `drift_loss` per cell from the index and adds evidence, pass-ratio,
+  holdout flagging, and calibration (§3).
 - **Board-status / rotation surface** —
   `zicato.query.epoch_view.compute_board_split`
   (`src/zicato/query/epoch_view.py`) + the board-status view
@@ -102,8 +101,7 @@ records (§2.3), which preserve the comparisons the tournament actually made.
 The matrix is an **indexed query** over this table for the axes and cell
 membership; it adds no store. Read helpers already exist
 (`src/zicato/index/query.py`): `loss_profiles_for_generation`,
-`loss_profiles_for_tournament`, `generations_for_epoch` (carries
-`round_index` / `elo` / `elo_se`), `tournaments_for_epoch`, and
+`generations_for_epoch` (carries `round_index` / `elo` / `elo_se`), and
 `elo_for_epoch`. All are missing-index-tolerant (return `[]`). The
 per-cell EVIDENCE and DISCRIMINATION quantities read the durable **files**
 (`generations/<gen>/runs/<entry>/loss*.json`) — index-free by design.

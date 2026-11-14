@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from tests._index_rows import index_rows
 from tests._runtime_builders import seed_promoted_lineage
 from zicato.core.measurement import TOURNAMENT_DRAW
 from zicato.core.types import (
@@ -30,10 +31,7 @@ from zicato.index.query import (
     generations_for_epoch,
     index_counts,
     loss_profiles_for_generation,
-    metric_counts_for_run,
     prior_experiments_for_epoch,
-    runs_for_generation,
-    tournaments_for_epoch,
 )
 from zicato.telemetry.reducer import read_loss_profile, write_loss_profile
 from zicato.testing.fixtures import (
@@ -194,7 +192,7 @@ def test_rebuild_index_records_experiment_outcome(tmp_path: Path) -> None:
 def test_rebuild_index_records_tournament(tmp_path: Path) -> None:
     ws, eid = _build_workspace(tmp_path)
     db = rebuild_index(ws)
-    tournaments = tournaments_for_epoch(db, eid)
+    tournaments = index_rows(db, "tournaments", epoch_id=eid)
     assert len(tournaments) == 1
     t = tournaments[0]
     assert t["parent_generation_id"] == "v0"
@@ -234,7 +232,7 @@ def test_rebuild_index_tournament_records_fast_champion_eval_mode(tmp_path: Path
     write_experiment(ws, eid, "v1", exp)
 
     db = rebuild_index(ws)
-    tournaments = tournaments_for_epoch(db, eid)
+    tournaments = index_rows(db, "tournaments", epoch_id=eid)
     assert len(tournaments) == 1
     t = tournaments[0]
     assert t["champion_eval_mode"] == "fast"
@@ -277,7 +275,7 @@ def test_rebuild_index_metric_counts_are_pure_projection_of_loss_json(
     )
 
     db = rebuild_index(ws)
-    rows = metric_counts_for_run(db, run_id_for_unit("v0", "e1", epoch_id=eid))
+    rows = index_rows(db, "metric_counts", run_id=run_id_for_unit("v0", "e1", epoch_id=eid))
 
     # The indexed metric_counts equal exactly the loss.json drift surface.
     expected = {
@@ -305,7 +303,7 @@ def test_rebuild_index_no_metric_surface_yields_no_metric_counts(
     ws, eid = _build_workspace(tmp_path)
     db = rebuild_index(ws)
     run_id = run_id_for_unit("v0", "e1", epoch_id=eid)
-    assert sorted(row["name"] for row in metric_counts_for_run(db, run_id)) == [
+    assert sorted(row["name"] for row in index_rows(db, "metric_counts", run_id=run_id)) == [
         "failure:not_completed",
         "failure:tasks",
         "runtime:seconds",
@@ -357,7 +355,8 @@ def test_rebuild_index_metric_counts_from_loss_profile_surface(
     write_loss_profile(profile, loss_profile_path(ws, eid, "v0", "e1"))
     db = rebuild_index(ws)
     metrics = {
-        m["name"]: m for m in metric_counts_for_run(db, run_id_for_unit("v0", "e1", epoch_id=eid))
+        m["name"]: m
+        for m in index_rows(db, "metric_counts", run_id=run_id_for_unit("v0", "e1", epoch_id=eid))
     }
     assert metrics["drift:tool_error"]["count"] == pytest.approx(1.0)
     assert metrics["drift:tool_error"]["namespace"] == "drift"
@@ -381,7 +380,7 @@ def test_rebuild_index_loss_profile_round_trips(tmp_path: Path) -> None:
 def test_rebuild_index_run_rows_carry_lineage(tmp_path: Path) -> None:
     ws, eid = _build_workspace(tmp_path)
     db = rebuild_index(ws)
-    runs = runs_for_generation(db, eid, "v0")
+    runs = index_rows(db, "runs", epoch_id=eid, generation_id="v0")
     assert len(runs) == 2
     for r in runs:
         assert r["epoch_id"] == eid
@@ -629,7 +628,7 @@ def test_ingest_experiment_without_decision_writes_null_decision(tmp_path: Path)
 
     (row,) = experiments_for_epoch(db, eid)
     assert row["tournament_decision"] is None
-    (tournament,) = tournaments_for_epoch(db, eid)
+    (tournament,) = index_rows(db, "tournaments", epoch_id=eid)
     assert tournament["decision"] is None
     # Settled-only: the experiment-memory digest carries no entry for it.
     assert prior_experiments_for_epoch(db, eid) == []
@@ -1002,7 +1001,12 @@ def test_live_settlement_projection_matches_clean_rebuild(
         return {
             "generations": generations,
             "experiments": [_row_dict(row) for row in experiments_for_epoch(db_path, eid)],
-            "tournaments": [_row_dict(row) for row in tournaments_for_epoch(db_path, eid)],
+            "tournaments": [
+                _row_dict(row)
+                for row in index_rows(
+                    db_path, "tournaments", order_by="ran_at, tournament_id", epoch_id=eid
+                )
+            ],
         }
 
     assert semantic_rows(ws / "index.db") == semantic_rows(rebuilt_db)

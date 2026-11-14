@@ -1,7 +1,7 @@
 """Evaluate and durably settle one strategy-driven evolve round.
 
 The round runs as a fixed sequence of named phases, one per lifecycle step
-the execution plan serves (``zicato.query.execution_plan.ROUND_STEPS``):
+the round log records (propose, apply, run, gate, decide):
 
 * propose and apply — :mod:`zicato.evolve.field_candidates`;
 * run — :mod:`zicato.evolve.field_execution`;

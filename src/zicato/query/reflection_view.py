@@ -27,8 +27,6 @@ Readers
 * :func:`build_adjudication_xray` — the transcript + judge verdict + the
   meta-judge adjudication record for one decision — what an operator opens to
   see why one judgement went the way it did.
-* :func:`entry_candidate_matrix` — the reflection-INDEPENDENT entry×candidate
-  matrix straight off the index loss tables (the continuous passive tier).
 """
 
 from __future__ import annotations
@@ -501,63 +499,6 @@ def build_adjudication_xray(
 
 
 # ---------------------------------------------------------------------------
-# entry_candidate_matrix — reflection-INDEPENDENT (the continuous passive tier)
-# ---------------------------------------------------------------------------
-
-
-def entry_candidate_matrix(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any]:
-    """The entry×candidate mean-drift matrix straight off the index loss tables.
-
-    The reflection-INDEPENDENT discrimination feed (BOARD-REFLECTION.md verdict
-    5): the continuous passive tier and the dashboard get the entry×candidate
-    spread without running a reflection. For every generation under ``epoch_id``
-    and every board-entry run, the cell is the mean ``drift_loss`` across that
-    unit's persisted loss rows. Axes are sorted; a missing cell is ``None``. A
-    never-indexed workspace yields empty axes and an empty matrix, on the same
-    same-shape degrade.
-    """
-    from zicato.index import query as iq  # noqa: PLC0415
-
-    try:
-        gens = iq.generations_for_epoch(paths.index_db, epoch_id)
-    except Exception:  # noqa: BLE001 — best-effort
-        gens = []
-    candidates = [g["generation_id"] for g in gens if isinstance(g["generation_id"], str)]
-
-    # (entry_id, candidate) -> [drift_loss draws]
-    cell: dict[tuple[str, str], list[float]] = {}
-    entry_set: set[str] = set()
-    for candidate in candidates:
-        try:
-            rows = iq.loss_profiles_for_generation(paths.index_db, epoch_id, candidate)
-        except Exception:  # noqa: BLE001 — best-effort
-            rows = []
-        for r in rows:
-            entry_id = r["entry_id"]
-            drift = _opt_num(r["drift_loss"])
-            if not isinstance(entry_id, str) or drift is None:
-                continue
-            entry_set.add(entry_id)
-            cell.setdefault((entry_id, candidate), []).append(drift)
-
-    entries = sorted(entry_set)
-    matrix: list[list[float | None]] = []
-    for entry in entries:
-        row: list[float | None] = []
-        for candidate in candidates:
-            draws = cell.get((entry, candidate))
-            row.append(sum(draws) / len(draws) if draws else None)
-        matrix.append(row)
-
-    return {
-        "epoch_id": epoch_id,
-        "entries": entries,
-        "candidates": candidates,
-        "matrix": matrix,
-    }
-
-
-# ---------------------------------------------------------------------------
 # small coercions
 # ---------------------------------------------------------------------------
 
@@ -585,6 +526,5 @@ __all__ = [
     "build_judge_scorecards",
     "build_practice_review",
     "build_reflection_summary",
-    "entry_candidate_matrix",
     "list_reflections",
 ]

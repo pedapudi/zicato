@@ -238,18 +238,6 @@ def find_run_events_path(paths: WorkspacePaths, run_id: str, *, epoch_id: str = 
     return indexed if indexed is not None and indexed.exists() else None
 
 
-def find_generation_entry_events(
-    paths: WorkspacePaths, generation_id: str, entry_id: str
-) -> Path | None:
-    """Resolve the selected draw, strictly within the requested board entry.
-
-    Historical generations without selection provenance retain unqualified
-    events. A missing selected-seed capture cannot borrow another seed's events.
-    """
-    found = find_generation_run(paths, generation_id, entry_id)
-    return found[1] if found is not None else None
-
-
 def resolve_transcript_events(
     paths: WorkspacePaths,
     epoch_id: str,

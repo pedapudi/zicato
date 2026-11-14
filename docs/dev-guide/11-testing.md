@@ -1754,7 +1754,7 @@ The readers outside the query layer walk the same tree from six packages, and
 they do not all order it the same way. The second harness pins each of them
 under a `<package>.<function>` label, with the coordinate the reader was
 called on appended after `::` where one reader is captured several times
-(`zicato.index.runs_for_generation::v0`).
+(`zicato.index.loss_profiles_for_generation::v0`).
 
 Its fixture is built around the orderings those readers disagree about:
 

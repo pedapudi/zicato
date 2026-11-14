@@ -37,7 +37,6 @@ from zicato.query.events_index import (
     build_contract_diff,
     build_workspace_view,
 )
-from zicato.query.execution_plan import build_execution_plan
 from zicato.query.file_view import (
     build_file_index,
     build_generation_diff,
@@ -74,10 +73,7 @@ from zicato.query.judge_view import (
 )
 from zicato.query.ledger_view import build_experiments_ledger
 from zicato.query.lineage_view import build_lineage_view
-from zicato.query.live_execution_plan import (
-    build_live_execution_plan,
-    build_live_pipeline,
-)
+from zicato.query.live_execution_plan import build_live_pipeline
 from zicato.query.log_stream import (
     build_log_view,
     clamp_log_limit,
@@ -149,7 +145,6 @@ __all__ = [
     "build_eval_dossier",
     "build_eval_health",
     "build_eval_matrix",
-    "build_execution_plan",
     "build_expectation_outcomes_for_run",
     "build_experiments_ledger",
     "build_file_index",
@@ -162,7 +157,6 @@ __all__ = [
     "build_judge_roster",
     "build_judge_scorecards",
     "build_lineage_view",
-    "build_live_execution_plan",
     "build_live_pipeline",
     "build_log_view",
     "build_matchup_conversations",

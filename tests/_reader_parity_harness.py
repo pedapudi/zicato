@@ -255,13 +255,6 @@ def capture_snapshot(ws: Path) -> dict[str, Any]:
     snap["environment"] = sr.build_environment(paths)
     snap["search_empty"] = sr.build_search_results(paths, "")
     snap["search_hello"] = sr.build_search_results(paths, "hello")
-    # The LIVE execution plan takes no coordinate — it resolves the current
-    # epoch itself — and is served by the Python service alone, so the Rust
-    # supervisor answers its standard empty shape until it grows the route
-    # (DQ8). The fixture workspace has no runtime state, so what is pinned
-    # here is the not-live path: the durable plan, the served liveness
-    # verdict, and an overlay withheld rather than populated from files.
-    snap["live_execution_plan"] = sr.build_live_execution_plan(paths)
 
     # --- per-epoch scoped ---------------------------------------------------
     for eid in CANONICAL_EPOCH_ORDER:
@@ -272,12 +265,6 @@ def capture_snapshot(ws: Path) -> dict[str, Any]:
         snap[f"score_trajectory::{eid}"] = sr.build_score_trajectory(paths, eid)
         snap[f"calibration_trend::{eid}"] = sr.build_calibration_trend(paths, eid)
         snap[f"per_judge_trend::{eid}"] = sr.build_per_judge_trend(paths, eid)
-        # The execution plan is served by the Python service alone; the
-        # Rust supervisor answers its standard empty shape until it grows
-        # the route (DQ8). Pinning the plan here — including for the EMPTY
-        # fixture epoch, which is the shape a client paints in that case —
-        # is what keeps the two servers' answers from skewing silently.
-        snap[f"execution_plan::{eid}"] = sr.build_execution_plan(paths, eid)
 
     # --- per-generation scoped ---------------------------------------------
     # (champion v0, challenger v1) is the matchup the e1 epoch carries; the

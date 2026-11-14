@@ -2,15 +2,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
-
-from zicato.board.jsonl import load_board_rows
-
-
-def iter_board_rows(path: Path) -> list[dict[str, Any]]:
-    """Return accepted entry rows, preserving source fields and extensions."""
-    return [row for row in load_board_rows(path) or [] if row.get("board_meta") is not True]
 
 
 def board_entry_id(row: dict[str, Any]) -> str | None:
