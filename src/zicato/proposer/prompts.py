@@ -242,10 +242,10 @@ class MetricPriorities:
         Built-in goldfive drift kinds at ``per_kind_weights.get(kind, 1.0)``
         times ``namespace_weights["drift:"]``.
     pass_rate_weight:
-        ``pass_weight``. Named as a real target: once zero-weight entries are
-        dropped, a pass-rate-only contract has an empty target vocabulary but
-        still owes a mandatory movement, and the validator accepts
-        ``pass_rate`` only because it accepts any unprefixed string.
+        ``pass_weight``. Named as scored, and forecast in the hypothesis's
+        ``expected_pass_rate_delta`` field rather than as a movement: the
+        validator refuses a ``metric_name`` with no namespace, ``pass_rate``
+        included.
     namespace_metrics:
         The remaining scored metric namespaces — ``failure:``, ``runtime:``,
         ``cost:``, ``rubric:``, ... — at ``namespace_weights[namespace]``.
@@ -370,9 +370,10 @@ def render_metric_priorities_block(priorities: MetricPriorities) -> str:
         )
     if priorities.pass_rate_weight:
         sections.append(
-            "Board outcome — reference by its bare name:\n"
-            "  pass_rate                    scored (the fraction of board entries\n"
-            "                               whose expectation is met; higher is better)"
+            "Board outcome — pass_rate is scored (the fraction of board entries whose\n"
+            "expectation is met; higher is better). Forecast it in the hypothesis's\n"
+            '"expected_pass_rate_delta" field, NOT in "expected_metric_movements": a\n'
+            'movement named "pass_rate" has no namespace and is rejected.'
         )
     if priorities.namespace_metrics:
         sections.append(
