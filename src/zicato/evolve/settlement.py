@@ -27,10 +27,12 @@ from __future__ import annotations
 
 import logging
 import math
+from collections import Counter
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
 
+from zicato.core.experiment import SINGLE_ENTRY_NOTE
 from zicato.core.types import (
     HypothesisSpec,
     MatchOutcome,
@@ -52,6 +54,7 @@ from zicato.evolve.field_candidates import CandidateField
 from zicato.evolve.field_execution import FieldExecution
 from zicato.evolve.gate import FieldVerdict, _first_aggregate_for
 from zicato.evolve.generation_phase import FieldRound
+from zicato.evolve.ingest import _index_db_path
 from zicato.evolve.lifecycle_services import _beat, _now_iso
 from zicato.evolve.pareto import record_round_frontier
 from zicato.evolve.persist import _round_epilogue
@@ -64,8 +67,9 @@ from zicato.evolve.settlement_recovery import (
     commit_field_settlement,
     record_promotion_hook_delivery,
 )
+from zicato.index.query import _metric_ranges_for_epoch
 from zicato.selection.strategy import SelectionDecision
-from zicato.tournament.detail import _direction_sign_ok
+from zicato.tournament.detail import _grade_movement
 from zicato.tournament.records import field_tournament_record
 from zicato.tournament.scoring import metric_means, paired_scalar_se, pass_flips
 from zicato.workspace import generation_round_number
@@ -230,8 +234,10 @@ def _train_feedback(
     the most entries. Field duels run on the training slice only, and the
     entries are filtered against it again here, so no holdout result can
     enter. The fields are whole-candidate: per-metric means on each side, two
-    counts of pass changes, and the standard error of the paired scalar
-    difference. A challenger that never met the champion records nothing.
+    counts of pass changes, the number of entries compared, and the standard
+    error of the paired scalar difference. A metric carried by fewer than two
+    compared entries is marked, because its movement is one entry's result. A
+    challenger that never met the champion records nothing.
     """
     prepared = field_round.prepared
     if not prepared.weights.experimental.outcome_feedback:
@@ -262,17 +268,31 @@ def _train_feedback(
             train_ids,
         )
         before, after = metric_means(champion), metric_means(challenger)
-        predicted = {m.metric_name: m.direction for m in hypothesis.expected_metric_movements}
+        # How many compared entries carry each metric, on either side.
+        measured_on = Counter(
+            name
+            for pair in pairs
+            for name in {mc.name for loss in pair for mc in loss.scoring_metrics()}
+        )
+        predicted = {
+            m.metric_name: (m.direction, m.magnitude) for m in hypothesis.expected_metric_movements
+        }
+        # The grader and training-slice ranges the experiment memory reads with,
+        # so the stored verdict and the proposer's prediction band agree. The
+        # ranges are those indexed at settlement; later runs can widen them.
+        ranges = _metric_ranges_for_epoch(
+            _index_db_path(prepared.workspace_root), prepared.epoch_id, frozenset(train_ids)
+        )
         movements = tuple(
             MetricMovementActual(
                 metric_name=name,
                 from_value=before.get(name, 0.0),
                 to_value=after.get(name, 0.0),
-                # The direction verdict; the magnitude is graded when the record is read.
                 hypothesis_match=name in predicted
-                and _direction_sign_ok(
-                    predicted[name], after.get(name, 0.0) - before.get(name, 0.0)
-                ),
+                and _grade_movement(
+                    name, *predicted[name], (before.get(name, 0.0), after.get(name, 0.0)), ranges
+                ).matched,
+                note=SINGLE_ENTRY_NOTE if measured_on[name] < 2 else "",
             )
             for name in sorted(before.keys() | after.keys())
             if math.isfinite(before.get(name, 0.0)) and math.isfinite(after.get(name, 0.0))
@@ -281,6 +301,7 @@ def _train_feedback(
             "metric_movements": movements,
             "train_fixed": len(fixed),
             "train_broke": len(broke),
+            "train_entries": len(pairs),
             "scalar_score_delta_se": paired_scalar_se(pairs, prepared.weights, scalar_delta),
         }
     except Exception as exc:  # noqa: BLE001 — optional feedback cannot stop settlement

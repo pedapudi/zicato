@@ -1756,7 +1756,7 @@ enforcing code, and the test that pins it.
 | Channel | Reaches the prompt as | Transformation | Enforcing code | Test |
 |---|---|---|---|---|
 | Detector **patterns** | declared kind, severity, measurements, known metric labels, affected **mutation** ids | typed numeric projection; summaries constructed from permitted fields; diagnostic ids and text omitted; entries counted; findings sorted by rendered content | `render_pattern_block(restrict=True)` → `PatternFeedback.from_pattern` (`src/zicato/proposer/pattern_feedback.py`) | `tests/test_proposer_prompts.py`, `tests/test_proposer_best_of_n.py`; real outputs from every built-in detector |
-| **Experiment memory** | per-experiment verdict + bucketed Δscalar + targeted ids + core idea + rejection reason code; with `experimental.outcome_feedback`, banded per-metric results and two training-task counts | `Δscalar=improved/flat/regressed` under restrict; the rejection reason reduced to a code from a closed vocabulary under restrict; cross-contract entries carry NO delta at all | `_render_prior_experiment_line(restrict=…)`, `_bucket_scalar_delta`, `rejection_reason_code` (`src/zicato/core/experiment.py`) | `tests/test_proposer_prior_experiments_block.py`, `tests/test_memory_reason_codes.py`, `tests/test_outcome_feedback.py` |
+| **Experiment memory** | per-experiment verdict + bucketed Δscalar + targeted ids + core idea + rejection reason code; with `experimental.outcome_feedback`, banded per-metric results and two banded training-task counts | `Δscalar=improved/flat/regressed` under restrict; the rejection reason reduced to a code from a closed vocabulary under restrict; outcome-feedback metric names limited to `safe_metric_names` under restrict; cross-contract entries carry NO delta at all | `_render_prior_experiment_line(restrict=…)`, `_bucket_scalar_delta`, `rejection_reason_code` (`src/zicato/core/experiment.py`) | `tests/test_proposer_prior_experiments_block.py`, `tests/test_memory_reason_codes.py`, `tests/test_outcome_feedback.py` |
 | **Failure-mode profile** | banded recall/precision decomposition, banded failure-mode rates, banded pass-rate/score | every number through `band_rate` / `_band_quality`; summary object carries marginal rates only (no id/question/output token) | `render_failure_mode_profile` + `aggregate_outcome_marginals` (`src/zicato/analyzer/outcome_marginals.py`) | `tests/test_outcome_marginals.py`, `tests/test_proposer_prompts.py` |
 | **Operator outcome-marginals hook** | extra named banded rates (`- <name>: ~N% of runs`) | `run_operator_summarizer` sanitizes: numeric-only values, names filtered — the operator hook's output "cannot leak" | `src/zicato/analyzer/outcome_marginals.py::run_operator_summarizer` | `tests/test_outcome_marginals.py` |
 | **Process exemplars** (opt-in) | redacted event windows: relative offsets, case names, allowlisted fields, `task-N` tokens | the four redaction rules (§5.8.3) | `src/zicato/analyzer/process_exemplars.py` | `tests/test_process_exemplars.py` (per-rule adversarial fixtures), `tests/test_process_exemplars_e2e.py` |
@@ -1839,7 +1839,7 @@ degrade). The split mechanics are `zicato.board.split`
 
 | Function | Input | Output vocabulary | Notes |
 |---|---|---|---|
-| `_bucket_scalar_delta` | experiment-level Δscalar (loss; negative = improvement), optionally its standard error | `improved` / `flat` / `regressed`; with a standard error, `improved (clear)` / `improved (within noise)` / `flat` / `regressed (within noise)` / `regressed (clear)` | flat band `±0.01` = the default promote margin, so a within-noise move reads `flat`; `(clear)` means at least two standard errors, and overrides the flat band |
+| `_bucket_scalar_delta` | experiment-level Δscalar (loss; negative = improvement), optionally its standard error | `improved` / `flat` / `regressed`; with a standard error, `improved (clear)` / `improved (within noise)` / `flat` / `regressed (within noise)` / `regressed (clear)` | flat band `±0.01` = the default promote margin, so a within-noise move reads `flat`; the qualifier needs at least six paired training entries and a positive standard error; `(clear)` means significant in a two-sided paired t-test at 0.05, and overrides the flat band |
 | `band_rate` | fraction of runs `[0,1]` | `none` / `~10%` … `~90%` / `~all` | nearest-10% rounding; a tiny-but-nonzero rate clamps UP to `~10%` so "rarely" never reads "never" |
 | `_band_quality` | quality mean `[0,1]` | `low (~0.3)` / `medium (~0.6)` / `high (~0.9)` | thirds split |
 | `_band_prediction_accuracy` | accuracy `[0,1]` | `low` / `medium` / `high` | ALWAYS applied, restrict or not |
@@ -2129,14 +2129,16 @@ four places:
 
 | Step | Code |
 |---|---|
-| settlement records `metric_movements`, `train_fixed`, `train_broke`, `scalar_score_delta_se` from the candidate's training duel against the champion | `_train_feedback` in `src/zicato/evolve/settlement.py`, using `metric_means`, `pass_flips`, `paired_scalar_se` in `src/zicato/tournament/scoring.py` |
-| the three new outcome fields are omitted from a stored record when unset and accepted as absent on read | `outcome_to_dict` in `src/zicato/core/experiment.py`; `_outcome_from_dict` in `src/zicato/epoch/journal.py` |
+| settlement records `metric_movements`, `train_fixed`, `train_broke`, `train_entries`, `scalar_score_delta_se` from the candidate's training duel against the champion | `_train_feedback` in `src/zicato/evolve/settlement.py`, using `metric_means`, `pass_flips`, `paired_scalar_se` in `src/zicato/tournament/scoring.py` |
+| the four new outcome fields are omitted from a stored record when unset and accepted as absent on read | `outcome_to_dict` in `src/zicato/core/experiment.py`; `_outcome_from_dict` in `src/zicato/epoch/journal.py` |
 | the reader bands the recorded values | `_outcome_feedback_for_row` in `src/zicato/index/query.py`, grading with `_grade_movement` |
-| the renderer prints bands and counts | `_render_outcome_feedback` and `_bucket_scalar_delta` in `src/zicato/proposer/prompts.py` |
+| the renderer prints bands and counts, and under restrict only metric names in the closed set | `_render_outcome_feedback` and `_bucket_scalar_delta` in `src/zicato/proposer/prompts.py`; `safe_metric_names` in `src/zicato/proposer/pattern_feedback.py` |
 
 A change to any step must keep two properties, both tested in
 `tests/test_outcome_feedback.py`: the values come from training entries
-only, and no entry id or metric value reaches `PriorExperiment`.
+only, and no entry id or metric value reaches `PriorExperiment`. A metric
+name does reach it, so the renderer's closed set is what keeps emitter text
+out of a restricted prompt.
 
 ---
 
@@ -2337,7 +2339,7 @@ the proposer's default is 0).
 `scalar_score_delta` (`None` for in-flight and cross-contract),
 `same_contract`, `prediction_accuracy` (`None` when ungraded), and the
 outcome-feedback fields `scalar_delta_se`, `train_fixed`, `train_broke`,
-`predicted_movements`, `realised_movements` (unset without
+`train_entries`, `predicted_movements`, `realised_movements` (unset without
 `experimental.outcome_feedback`).
 
 ---

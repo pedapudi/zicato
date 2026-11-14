@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 from zicato.core.drift_kinds import GOLDFIVE_DRIFT_KINDS, DriftSeverity
@@ -39,6 +40,18 @@ _FIELDS = {
 _METRIC_NAMES = frozenset(f"drift:{kind}" for kind in GOLDFIVE_DRIFT_KINDS) | {
     "cost:tokens_spent",
 }
+#: Channels every loss profile derives; their names are fixed by the scorer.
+_DERIVED_METRIC_NAMES = frozenset({"failure:tasks", "failure:not_completed", "runtime:seconds"})
+
+
+def safe_metric_names(judge_names: Iterable[str] = ()) -> frozenset[str]:
+    """Metric names a restricted request may print.
+
+    The built-in vocabulary, the channels the scorer derives for every run,
+    and ``judge:<name>`` for each judge the contract declares. A name an
+    emitter invented can carry task text and is absent.
+    """
+    return _METRIC_NAMES | _DERIVED_METRIC_NAMES | {f"judge:{name}" for name in judge_names}
 
 
 @dataclass(frozen=True, slots=True)

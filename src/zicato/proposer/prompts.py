@@ -39,8 +39,9 @@ from zicato.core.experiment import rejection_reason_code
 from zicato.core.types import MutationPoint, Patch, Pattern, PriorExperiment, ProposerSkill
 from zicato.proposer.calibration import CalibrationSummary
 from zicato.proposer.genealogy import GenealogyItem
-from zicato.proposer.pattern_feedback import PatternFeedback
+from zicato.proposer.pattern_feedback import PatternFeedback, safe_metric_names
 from zicato.proposer.recombine import RecombinationPair
+from zicato.tournament.detectable_effect import students_t_upper_quantile
 
 if TYPE_CHECKING:  # pragma: no cover - typing-only import
     from zicato.index.query import MutationTrackRecord
@@ -460,7 +461,7 @@ def render_metric_targets_block(
     )
 
 
-def _bucket_scalar_delta(delta: float, se: float | None = None) -> str:
+def _bucket_scalar_delta(delta: float, se: float | None = None, n: int | None = None) -> str:
     """Coarsen a fine-grained Δscalar to a memorization-resistant bucket.
 
     The scalar is a LOSS (lower is better), so a *negative* delta is an
@@ -470,19 +471,44 @@ def _bucket_scalar_delta(delta: float, se: float | None = None) -> str:
     failures signal without the exact response-surface gradient that lets
     it climb the *board* rather than true quality (OVERFITTING.md §11.4).
 
-    With ``se``, the standard error of the paired training difference
-    (``experimental.outcome_feedback``), the direction is qualified: ``(clear)``
-    when the move is at least two standard errors, ``(within noise)`` when it
-    is outside the flat band without reaching that. A clear move inside the
-    flat band reads as clear, never as ``flat``.
+    With ``se``, the standard error of the paired difference over ``n``
+    training entries (``experimental.outcome_feedback``), the direction is
+    qualified: ``(clear)`` when the move is significant in a two-sided paired
+    t-test at 0.05, ``(within noise)`` when it is outside the flat band without
+    reaching that. A clear move inside the flat band reads as clear, never as
+    ``flat``. The qualifier needs at least :data:`QUALIFIER_MIN_ENTRIES` entries
+    and a positive standard error; otherwise the three-way band is returned.
     """
     flat_band = 0.01
     direction = "improved" if delta < 0 else "regressed"
-    if se is not None and delta != 0 and abs(delta) >= 2 * se:
+    threshold = _clear_threshold(se, n)
+    if threshold is not None and abs(delta) >= threshold:
         return f"{direction} (clear)"
     if not abs(delta) > flat_band:
         return "flat"
-    return direction if se is None else f"{direction} (within noise)"
+    return direction if threshold is None else f"{direction} (within noise)"
+
+
+#: Fewest paired training entries for which the Δscalar qualifier is rendered.
+QUALIFIER_MIN_ENTRIES = 6
+
+
+def _clear_threshold(se: float | None, n: int | None) -> float | None:
+    """The smallest absolute Δscalar that reads ``(clear)``, or ``None``.
+
+    The two-sided 0.05 critical value of Student's t with ``n - 1`` degrees of
+    freedom, times the standard error. ``None`` when the qualifier is not
+    supported: no standard error, a zero one, or fewer than
+    :data:`QUALIFIER_MIN_ENTRIES` entries.
+    """
+    if se is None or n is None or not se > 0 or n < QUALIFIER_MIN_ENTRIES:
+        return None
+    return students_t_upper_quantile(0.025, n - 1) * se
+
+
+def _band_count(count: int) -> str:
+    """Coarsen a count of training tasks to ``0``, ``1``, ``2-3`` or ``4+``."""
+    return str(count) if count < 2 else "2-3" if count < 4 else "4+"
 
 
 #: Band edges for a rate in ``[0, 1]`` (a fraction-of-runs marginal). The
@@ -770,17 +796,35 @@ def _band_prediction_accuracy(accuracy: float) -> str:
 OUTCOME_FEEDBACK_MAX_CHARS = 600
 
 
-def _render_outcome_feedback(pe: PriorExperiment) -> str:
+def _render_outcome_feedback(pe: PriorExperiment, metric_names: frozenset[str] | None) -> str:
     """Render one entry's outcome feedback as indented lines, or ``""``.
 
-    Present only under ``experimental.outcome_feedback``, and identical with
-    and without restricted visibility: every value is a direction, a magnitude
-    bucket or a whole-candidate training count. The text is capped at
-    :data:`OUTCOME_FEEDBACK_MAX_CHARS`.
+    Present only under ``experimental.outcome_feedback``. Every value is a
+    direction, a magnitude bucket or a whole-candidate training count. The
+    counts come first so the :data:`OUTCOME_FEEDBACK_MAX_CHARS` cap never
+    removes them.
+
+    ``metric_names`` is the restricted rendering's closed set of printable
+    metric names (:func:`~zicato.proposer.pattern_feedback.safe_metric_names`);
+    a movement of any other metric is omitted, and the two counts are banded.
+    ``None``, the unrestricted rendering, prints every name and exact counts.
     """
-    realised = {m.metric_name: m for m in pe.realised_movements}
+    shown = [
+        m for m in pe.realised_movements if metric_names is None or m.metric_name in metric_names
+    ]
+    realised = {m.metric_name: m for m in shown}
+    lines: list[str] = []
+    if pe.train_fixed is not None and pe.train_broke is not None:
+        fixed, broke = (
+            (str(pe.train_fixed), str(pe.train_broke))
+            if metric_names is None
+            else (_band_count(pe.train_fixed), _band_count(pe.train_broke))
+        )
+        lines.append(f"train tasks: fixed {fixed}, broke {broke}")
     parts: list[str] = []
     for p in pe.predicted_movements:
+        if metric_names is not None and p.metric_name not in metric_names:
+            continue
         r = realised.pop(p.metric_name, None)
         if r is None:
             parts.append(f"{p.metric_name} predicted {p.direction} {p.magnitude}, unmeasured")
@@ -792,7 +836,6 @@ def _render_outcome_feedback(pe: PriorExperiment) -> str:
             f"(direction {'ok' if direction_ok else 'wrong'}, "
             f"size {'ok' if r.magnitude == p.magnitude else 'wrong'})"
         )
-    lines: list[str] = []
     if parts:
         lines.append("predictions: " + "; ".join(parts))
     if realised:
@@ -800,15 +843,15 @@ def _render_outcome_feedback(pe: PriorExperiment) -> str:
             "unpredicted: "
             + "; ".join(f"{r.metric_name} {r.direction} {r.magnitude}" for r in realised.values())
         )
-    if pe.train_fixed is not None and pe.train_broke is not None:
-        lines.append(f"train tasks: fixed {pe.train_fixed}, broke {pe.train_broke}")
     text = "".join(f"\n    {line}" for line in lines)
     if len(text) > OUTCOME_FEEDBACK_MAX_CHARS:
         text = text[: OUTCOME_FEEDBACK_MAX_CHARS - 1] + "…"
     return text
 
 
-def _render_prior_experiment_line(pe: PriorExperiment, *, restrict: bool = False) -> str:
+def _render_prior_experiment_line(
+    pe: PriorExperiment, *, restrict: bool = False, metric_names: frozenset[str] | None = None
+) -> str:
     """Render one prior experiment as a two-line compact entry.
 
     The first line carries the verdict, Δscalar (omitted for an in-flight
@@ -849,7 +892,7 @@ def _render_prior_experiment_line(pe: PriorExperiment, *, restrict: bool = False
     # has no outcome yet.
     if pe.scalar_score_delta is not None and pe.same_contract:
         if restrict:
-            band = _bucket_scalar_delta(pe.scalar_score_delta, pe.scalar_delta_se)
+            band = _bucket_scalar_delta(pe.scalar_score_delta, pe.scalar_delta_se, pe.train_entries)
             head = f"- {gen_label} {verdict} Δscalar={band}  [{ids}]"
         else:
             se = "" if pe.scalar_delta_se is None else f" ±{pe.scalar_delta_se:.3f}"
@@ -864,11 +907,14 @@ def _render_prior_experiment_line(pe: PriorExperiment, *, restrict: bool = False
     # predictions hold?") without an exact, climbable number.
     if pe.prediction_accuracy is not None:
         head = f"{head}  prediction:{_band_prediction_accuracy(pe.prediction_accuracy)}"
-    return f"{head}\n    {pe.core_idea}{_render_outcome_feedback(pe)}"
+    return f"{head}\n    {pe.core_idea}{_render_outcome_feedback(pe, metric_names)}"
 
 
 def render_prior_experiments_block(
-    prior: Iterable[PriorExperiment], *, restrict: bool = False
+    prior: Iterable[PriorExperiment],
+    *,
+    restrict: bool = False,
+    judge_names: Iterable[str] = (),
 ) -> str:
     """Render the experiment-memory section body, or ``""`` when empty.
 
@@ -905,25 +951,49 @@ def render_prior_experiments_block(
     in_flight = [pe for pe in same if pe.decision == "in_flight"]
     deferred = [pe for pe in same if pe.decision == "deferred"]
 
+    # Restricted, outcome feedback names only built-in metrics and the
+    # contract's declared judges, given as ``judge_names``.
+    names = safe_metric_names(judge_names) if restrict else None
     blocks: list[str] = []
+    if restrict and any(
+        _clear_threshold(pe.scalar_delta_se, pe.train_entries) is not None for pe in same
+    ):
+        blocks.append(
+            "(clear) and (within noise) compare a change with the spread of "
+            "per-task differences across train tasks."
+        )
     if promoted:
-        body = "\n".join(_render_prior_experiment_line(pe, restrict=restrict) for pe in promoted)
+        body = "\n".join(
+            _render_prior_experiment_line(pe, restrict=restrict, metric_names=names)
+            for pe in promoted
+        )
         blocks.append(f"Already promoted (build on these — the direction worked):\n{body}")
     if rejected:
-        body = "\n".join(_render_prior_experiment_line(pe, restrict=restrict) for pe in rejected)
+        body = "\n".join(
+            _render_prior_experiment_line(pe, restrict=restrict, metric_names=names)
+            for pe in rejected
+        )
         blocks.append(
             f"Already rejected (do NOT re-propose these unless something changed):\n{body}"
         )
     if deferred:
-        body = "\n".join(_render_prior_experiment_line(pe, restrict=restrict) for pe in deferred)
+        body = "\n".join(
+            _render_prior_experiment_line(pe, restrict=restrict, metric_names=names)
+            for pe in deferred
+        )
         blocks.append(f"Deferred (neither won decisively — weak signal):\n{body}")
     if in_flight:
-        body = "\n".join(_render_prior_experiment_line(pe, restrict=restrict) for pe in in_flight)
+        body = "\n".join(
+            _render_prior_experiment_line(pe, restrict=restrict, metric_names=names)
+            for pe in in_flight
+        )
         blocks.append(
             f"Proposed this round, not yet evaluated (diversify away from these):\n{body}"
         )
     if cross:
-        body = "\n".join(_render_prior_experiment_line(pe, restrict=restrict) for pe in cross)
+        body = "\n".join(
+            _render_prior_experiment_line(pe, restrict=restrict, metric_names=names) for pe in cross
+        )
         blocks.append(
             "From PRIOR epochs under the same contract (cross-epoch memory — "
             f"directions only, deltas do not transfer):\n{body}"

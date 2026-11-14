@@ -34,19 +34,31 @@ training slice and stated for the whole candidate:
   `small` / `medium` / `large` magnitude, with whether direction and size
   matched, and up to three unpredicted metrics that moved by a medium or
   large amount;
-- how many training tasks the candidate fixed and how many it broke;
-- a Δscalar band qualified by the standard error of the paired training
-  difference: `improved (clear)`, `improved (within noise)`, `flat`,
-  `regressed (within noise)`, `regressed (clear)`. Unrestricted, the number
-  is followed by `±` and its standard error.
+- how many training tasks the candidate fixed and how many it broke,
+  rendered as `0`, `1`, `2-3` or `4+` under restricted visibility;
+- a Δscalar band qualified by a paired t-test on the per-task training
+  differences: `improved (clear)`, `improved (within noise)`, `flat`,
+  `regressed (within noise)`, `regressed (clear)`. The qualifier renders
+  only when at least six training tasks were compared and their differences
+  vary. Unrestricted, the number is followed by `±` and its standard error.
 
-With the knob on, settlement records the per-metric movements, the two counts
-and the standard error on the outcome. Before this change no code path
-recorded realised metric movements, so every graded prediction counted as
-missed; with the knob off that is still the case. The three new outcome
-fields are omitted from a record that does not have them. With the knob off,
-prompts and stored records are unchanged. Enabling it changes the contract
-hash. `docs/design/EXPERIMENT-MEMORY.md` §3.6 specifies it.
+Under restricted visibility a metric is named only when it is built in or a
+judge the contract declares, and a metric measured on fewer than two training
+tasks is never reported.
+
+With the knob on, settlement records the per-metric movements, the two
+counts, the number of tasks compared and the standard error on the outcome.
+Before this change no code path recorded realised metric movements, so every
+graded prediction counted as missed; with the knob off that is still the
+case. Recording them has effects beyond the memory section in a knob-on
+epoch: the prediction-accuracy band and the `calibration_feedback` block
+report real hits; the best-of-N heuristic and critic can reach the accuracy
+bar at which they prefer candidates that state expected movements; and
+reflection mining, the analyzer's movement tables and the dashboard's
+hypothesis view show recorded movements. The four new outcome fields are
+omitted from a record that does not have them. With the knob off, prompts and
+stored records are unchanged. Enabling it changes the contract hash.
+`docs/design/EXPERIMENT-MEMORY.md` §3.6 specifies it.
 
 ### The console ships three themes and one typeface
 

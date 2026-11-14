@@ -63,10 +63,11 @@ class OutcomeRecord:
     unrelated metrics. Holdout and confirmation evidence are optional when
     those measurements did not run.
 
-    ``scalar_score_delta_se``, ``train_fixed`` and ``train_broke`` describe the
-    training comparison against the champion: the standard error of the paired
-    per-task scalar difference, and how many training tasks went from failing
-    to passing and the reverse. Settlement records them only under
+    ``scalar_score_delta_se``, ``train_fixed``, ``train_broke`` and
+    ``train_entries`` describe the training comparison against the champion:
+    the standard error of the paired per-task scalar difference, how many
+    training tasks went from failing to passing and the reverse, and how many
+    training tasks were compared. Settlement records them only under
     ``experimental.outcome_feedback``; a record without them omits the keys.
     """
 
@@ -94,10 +95,21 @@ class OutcomeRecord:
     scalar_score_delta_se: float | None = None
     train_fixed: int | None = None
     train_broke: int | None = None
+    train_entries: int | None = None
 
 
 #: Outcome fields a stored record may omit; the encoder drops them when unset.
-OUTCOME_OPTIONAL_FIELDS = ("scalar_score_delta_se", "train_fixed", "train_broke")
+OUTCOME_OPTIONAL_FIELDS = (
+    "scalar_score_delta_se",
+    "train_fixed",
+    "train_broke",
+    "train_entries",
+)
+
+#: The ``note`` settlement stamps on a movement measured on fewer than two
+#: training entries. Such a movement is one entry's result, so the
+#: experiment-memory reader withholds it from the proposer.
+SINGLE_ENTRY_NOTE = "measured on fewer than two training entries"
 
 
 def outcome_to_dict(outcome: OutcomeRecord) -> dict[str, Any]:
@@ -234,10 +246,12 @@ class PriorExperiment:
         section (banded, like the rest of the restricted memory); it NEVER
         gates promotion. See ``docs/design/FUNCTIONALITY-RECOMMENDATIONS.md``
         §4.2 and :func:`zicato.tournament.detail.hypothesis_ledger`.
-    scalar_delta_se, train_fixed, train_broke, predicted_movements, realised_movements:
+    scalar_delta_se, train_fixed, train_broke, train_entries, predicted_movements,
+    realised_movements:
         Outcome feedback, present only under ``experimental.outcome_feedback``
-        (``docs/design/EXPERIMENT-MEMORY.md`` §3.6). The standard error and the
-        two training-task counts are the recorded outcome fields. The
+        (``docs/design/EXPERIMENT-MEMORY.md`` §3.6). The standard error, the
+        two training-task counts and the number of training tasks compared
+        are the recorded outcome fields. The
         predictions are the hypothesis's own; each realised movement carries
         a direction and a magnitude bucket for one metric, never its values,
         and covers the measured predictions plus at most three unpredicted
@@ -256,6 +270,7 @@ class PriorExperiment:
     scalar_delta_se: float | None = None
     train_fixed: int | None = None
     train_broke: int | None = None
+    train_entries: int | None = None
     predicted_movements: tuple[ExpectedMetricMovement, ...] = ()
     realised_movements: tuple[ExpectedMetricMovement, ...] = ()
 

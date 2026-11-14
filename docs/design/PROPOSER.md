@@ -546,10 +546,21 @@ separately, inside the experiment-memory entry of the candidate that made it:
 the predicted direction and magnitude beside the realised ones, with the
 training-task pass changes and a Δscalar band qualified by its standard
 error. The exclusions above apply unchanged. The values are directions,
-`small` / `medium` / `large` magnitudes and whole-candidate counts from the
-training slice; no entry id, per-entry result, metric value, or holdout
-result is rendered. [`EXPERIMENT-MEMORY.md`](EXPERIMENT-MEMORY.md) §3.6
-specifies the computation and the rendering.
+`small` / `medium` / `large` magnitudes and banded whole-candidate counts
+from the training slice; no entry id, per-entry result, metric value, or
+holdout result is rendered, and a metric is named only when it is built in
+or a judge the contract declares.
+[`EXPERIMENT-MEMORY.md`](EXPERIMENT-MEMORY.md) §3.6 specifies the
+computation and the rendering.
+
+The knob also makes settlement record realised metric movements, which no
+epoch without it has. That changes three things in this document for such an
+epoch. The prediction-accuracy band and the calibration channel above grade
+against real movements instead of counting every prediction as missed. The
+best-of-N heuristic can reach its 0.6 accuracy bar and then prefers a
+candidate that states expected movements. The critic's request then carries
+a note reporting that accuracy. EXPERIMENT-MEMORY.md §3.6 lists the effects
+outside the proposer.
 
 Independently of that knob, a restricted experiment memory renders a
 rejection reason as its reason code only

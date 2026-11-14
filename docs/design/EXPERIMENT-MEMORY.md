@@ -253,8 +253,8 @@ experiment that made no gradable prediction. It is an advisory
 calibration signal rendered in banded form alongside the rest of the
 digest, and it never gates promotion.
 
-Five further fields hold the outcome feedback of §3.6: `scalar_delta_se`,
-`train_fixed`, `train_broke`, `predicted_movements`, and
+Six further fields hold the outcome feedback of §3.6: `scalar_delta_se`,
+`train_fixed`, `train_broke`, `train_entries`, `predicted_movements`, and
 `realised_movements`. They are unset unless the contract enables
 `experimental.outcome_feedback`.
 
@@ -410,42 +410,100 @@ A candidate that never met the champion records nothing.
 - **Standard error of the scalar difference.** `scalar_score_delta_se` is
   the standard error of the mean per-entry difference between the
   candidate's scalar and the champion's, each entry scored alone by
-  `aggregate_generation_score` on its replicate-folded profile. Settlement
-  stores it only when the mean of those differences reproduces the recorded
-  Δscalar. It is therefore absent when the scalar is not a mean over
-  entries: under a pass transform, a scalar plugin, or the edit-complexity
-  term, on a board that mixes scored and unscored entries, with fewer than
-  two entries, or when the recorded Δscalar pairs aggregates from two
-  different duels.
+  `aggregate_generation_score` on its replicate-folded profile.
+  `train_entries` is the number of entries compared. Settlement stores the
+  standard error only when the mean of those differences reproduces the
+  recorded Δscalar. It is therefore absent when the scalar is not a mean
+  over entries: under a pass transform, a scalar plugin, or the
+  edit-complexity term, on a board that mixes scored and unscored entries,
+  with fewer than two entries, or when the recorded Δscalar pairs
+  aggregates from two different duels.
 
-The three outcome fields are optional in the stored record: a record written
+The four outcome fields `scalar_score_delta_se`, `train_fixed`, `train_broke`
+and `train_entries` are optional in the stored record: a record written
 without the knob omits the keys, and the reader accepts their absence. The
 index stores the outcome as JSON, so its schema is unchanged.
 
-With a standard error present, the restricted Δscalar reads `improved (clear)`
-or `regressed (clear)` when the absolute Δscalar is at least two standard
-errors, `flat` when it is within 0.01 and not clear, and otherwise
-`improved (within noise)` or `regressed (within noise)`. A change smaller than
-0.01 that reaches two standard errors therefore reads as clear, never as `flat`.
-The unrestricted
-rendering shows the number followed by `±` and the standard error. An entry
-without a standard error keeps the three-way band.
+**Which metrics a movement may name.** A metric name comes from a loss
+profile, and an emitter can put any text in one, including an entry id or
+task text. Three rules keep that text and single-entry results out of the
+prompt:
+
+- Under `restrict_proposer_visibility` a movement is rendered only when its
+  metric name is in a closed set: the built-in drift kinds and
+  `cost:tokens_spent` (the set restricted pattern feedback already uses), the
+  channels the scorer derives for every run (`failure:tasks`,
+  `failure:not_completed`, `runtime:seconds`), and `judge:<name>` for each
+  judge the contract declares. `safe_metric_names` in
+  `zicato.proposer.pattern_feedback` builds the set. A movement of any other
+  metric is omitted from the `unpredicted:` line, and a prediction that named
+  such a metric is omitted from the `predictions:` line.
+- A metric carried by fewer than two of the compared training entries is one
+  entry's result. Board judges are declared per entry, so a judge on a single
+  entry is the common case. Settlement marks such a movement in its `note`,
+  and the reader leaves it out of the `unpredicted:` line and reports a
+  prediction of it as `unmeasured`, with or without restriction.
+- The magnitude buckets are scaled by each metric's range over the epoch's
+  training-slice runs only, so a holdout run cannot move a bucket boundary.
+  The standalone `zicato proposer propose` command does not know the slice
+  and scales by every run of the epoch.
+
+**The Δscalar qualifier.** The restricted Δscalar gains `(clear)` or
+`(within noise)` only when at least six training entries were compared and
+the standard error is positive. It reads `improved (clear)` or
+`regressed (clear)` when the absolute Δscalar is at least the standard error
+times the two-sided 0.05 critical value of Student's t with one fewer degrees
+of freedom than the number of entries (2.57 for six entries, 2.26 for ten).
+Otherwise it reads `flat` when the absolute Δscalar is within 0.01, and
+`improved (within noise)` or `regressed (within noise)` beyond that. With
+fewer entries, a zero standard error, or no standard error, the three-way
+band of §3.5 renders. When any entry carries the qualifier, the section
+opens with one line stating that the qualifier compares a change with the
+spread of per-task differences across train tasks. The unrestricted
+rendering shows the number followed by `±` and the standard error.
+
+**The counts.** Restricted, each of the two counts renders as `0`, `1`, `2-3`
+or `4+`, because an exact count for a narrowly targeted edit would show how
+many tasks the edit touches. Unrestricted, the exact integers render. The
+record stores exact integers.
 
 A restricted entry:
 
 ```
 - v7 REJECTED Δscalar=improved (within noise)  [researcher.instruction]  (pass_rate_regression)  prediction:medium
     Require the researcher to cite a source before asserting a metric.
-    predictions: drift:off_topic predicted decrease medium, actual decrease small (direction ok, size wrong); cost:tokens predicted decrease small, unmeasured
+    train tasks: fixed 4+, broke 4+
+    predictions: drift:off_topic predicted decrease medium, actual decrease small (direction ok, size wrong); cost:tokens_spent predicted decrease small, unmeasured
     unpredicted: judge:brevity increase large
-    train tasks: fixed 9, broke 7
 ```
 
 Unrestricted, the first line of that entry reads
 `- v7 REJECTED Δscalar=-0.034 ±0.021  [researcher.instruction]  (pass-rate regression on entries: refund_3, refund_9)  prediction:medium`
-and the remaining lines are the same. The added lines are capped at 600
-characters per entry. Cross-contract entries (§3.4) and in-flight siblings
-carry no outcome feedback.
+and the counts line reads `train tasks: fixed 9, broke 7`. The added lines
+are capped at 600 characters per entry; the counts line comes first, so the
+cap shortens the metric lines. Cross-contract entries (§3.4) and in-flight
+siblings carry no outcome feedback.
+
+**What recording the movements also changes.** `metric_movements` is read by
+code outside the experiment memory. In an epoch with the knob on, these
+behave differently from an epoch without it, where every prediction grades
+as missed:
+
+- The `prediction:` band on each memory entry reflects the realised
+  movements. The knob-on mean of those accuracies can reach the 0.6 bar in
+  `zicato.proposer.best_of_n`, at which the best-of-N heuristic prefers a
+  candidate that states expected movements and the critic's request gains a
+  note reporting the accuracy.
+- The `experimental.calibration_feedback` block, when that knob is also on,
+  reports hits as well as misses.
+- Reflection mining of unresolved claims, the analyzer's metric-movement
+  tables, and the dashboard's hypothesis view show recorded movements.
+
+Each movement's stored `hypothesis_match` is the verdict of `_grade_movement`
+on direction and magnitude, with the training-slice ranges indexed when the
+round settled. The dashboard's hypothesis view reads that stored verdict. The
+experiment memory grades again when it is read, so the two can differ for an
+old experiment once later runs have widened a metric's range.
 
 ## 4. Risks and limits
 
@@ -498,7 +556,7 @@ The frozen dataclass of §3.2 lives in `zicato.core.experiment` and is
 re-exported from `zicato.core.types`, which lists it in `__all__`. It
 carries the nine fields `generation_id`, `epoch_id`, `core_idea`,
 `modulating`, `decision`, `rejection_reason`, `scalar_score_delta`,
-`same_contract`, and `prediction_accuracy`, and the five outcome-feedback
+`same_contract`, and `prediction_accuracy`, and the six outcome-feedback
 fields of §3.6. The module-level constant
 `EXPERIMENT_MEMORY_MAX_ENTRIES = 12` sits beside it, so the cap is
 defined once and imported wherever it is applied.
@@ -507,7 +565,7 @@ defined once and imported wherever it is applied.
 
 `prior_experiments_for_epoch(db_path, epoch_id, *,
 max_entries=EXPERIMENT_MEMORY_MAX_ENTRIES, cross_epoch=False,
-outcome_feedback=False) -> list[PriorExperiment]`:
+outcome_feedback=False, train_entry_ids=None) -> list[PriorExperiment]`:
 
 - Reads the epoch's settled experiments through `experiments_for_epoch`,
   which already selects `hypothesis_json`, `tournament_decision`,
@@ -547,7 +605,8 @@ fields the reader uses.
 
 ### 5.3 Prompt rendering — `zicato/proposer/prompts.py`
 
-- `render_prior_experiments_block(prior, *, restrict=False) -> str`
+- `render_prior_experiments_block(prior, *, restrict=False,
+  judge_names=()) -> str`
   produces the compact render of §3.5 and returns `""` when `prior` is
   empty. It groups by `decision` into up to five blocks in this order:
   promoted, rejected, deferred, in-flight, and cross-epoch entries. It
@@ -637,9 +696,11 @@ fields the reader uses.
   and no scalar, for the proposer and for the critic, and every reason the
   loop writes maps to a code in the closed vocabulary.
 - **`tests/test_outcome_feedback.py`** — outcome feedback (§3.6): the
-  band, the standard error against an independent calculation, the
-  training-only counts, the optional record fields, the reader, and a
-  rendering that contains no entry id and no metric value.
+  band and its entry-count and t-test conditions, the standard error
+  against an independent calculation, the training-only counts and ranges,
+  the stored verdict, the optional record fields, the reader, and a
+  restricted rendering that contains no entry id, no metric value, and no
+  metric name outside the closed set.
 - **`tests/test_orchestrator_prior_experiments.py`** — the field loop, read
   end to end off the workspace's durable proposer-input capture. Siblings
   accumulate, so challenger k's task contains the in-flight core ideas of
