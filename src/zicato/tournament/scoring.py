@@ -84,6 +84,7 @@ from zicato.core import (
     MetricCount,
     MetricSeverity,
     ScoringWeights,
+    is_infra_abort_cause,
 )
 from zicato.epoch._storage import RECORD_FORMAT_VERSION, RecordError, check_record_format
 from zicato.scoring import ScalarContext, builtin_scalar, resolve_scalar
@@ -974,8 +975,9 @@ def average_replicate_losses(
     the individual replicates, so EVERY scalar-bearing field must be
     aggregated here or the replicates buy nothing. The rule this function
     holds to is: **a field the scalar or the gate reads is aggregated; a
-    field neither reads carries the representative replicate (replicate
-    ``0``) and is named below with the reason it may.**
+    field neither reads carries the representative replicate (see
+    "Representative pass-through" below) and is named below with the reason
+    it may.**
 
     Aggregated
     ----------
@@ -1042,8 +1044,16 @@ def average_replicate_losses(
         ``False`` and ``score`` ``0.4``); that is the binary and continuous
         views of the same duel rather than an inconsistency.
 
-    Replicate-0 pass-through, and why each may be
-    ---------------------------------------------
+    Representative pass-through, and why each may be
+    ------------------------------------------------
+    The representative is the first replicate in slot order with an infra
+    abort (:func:`~zicato.core.loss.is_infra_abort_cause`). When no
+    replicate has an infra abort, the representative is replicate ``0``.
+    All fields below come from this one replicate, so ``abort_cause``,
+    ``not_completed_reason`` and ``run_id`` always describe the same run.
+    An infra abort in a later replicate thus stays visible on the folded
+    profile.
+
     ``run_id``, ``expectation_result``
         Raw provenance of the representative replicate, deliberately NOT
         synthesised: the fold is not a run and has no matcher verdict of
@@ -1064,9 +1074,12 @@ def average_replicate_losses(
         report the representative replicate. A folded span in particular
         would be a fiction: N replicates are N disjoint spans, and a reader
         wanting the true extent reads the per-replicate ``loss.r{n}.json``
-        files the fold left untouched. Consumers that count per-round infra
-        aborts across a duel therefore see replicate 0's provenance only —
-        see the follow-up note on ``_count_infra_aborted_runs``.
+        files the fold left untouched. The folded ``abort_cause`` names
+        only one cause. The causes of the other replicates stay in those
+        files. Do not count infra aborts from folded profiles: the fold
+        gives one profile for each entry, whatever its number of runs. Use
+        :func:`count_infra_aborted_runs` on the replicate maps before the
+        fold.
 
     ``dataclasses.replace`` keeps the profile shape intact, so a field
     added to :class:`LossProfile` later defaults to pass-through and this
@@ -1090,8 +1103,11 @@ def average_replicate_losses(
             majority_pass: bool | None = true_count * 2 > len(pass_votes)
         else:
             majority_pass = None
+        representative = next(
+            (p for p in profiles if is_infra_abort_cause(p.abort_cause)), profiles[0]
+        )
         out[entry_id] = _replace(
-            profiles[0],
+            representative,
             measurement=profiles[0].measurement if n == 1 else None,
             source_measurements=tuple(
                 draw
@@ -1126,16 +1142,28 @@ def average_replicate_losses(
     return out
 
 
+def count_infra_aborted_runs(runs: list[dict[str, LossProfile]]) -> int:
+    """Count the runs with an infra abort in replicate loss maps.
+
+    Give this function the maps BEFORE the fold. A folded profile stands for
+    all replicates of one entry, so a count of folded profiles counts each
+    entry once, whatever its number of aborted runs.
+    """
+    return sum(
+        1 for run in runs for profile in run.values() if is_infra_abort_cause(profile.abort_cause)
+    )
+
+
 def fold_matchup_replicates(
     runs: list[tuple[dict[str, LossProfile], dict[str, LossProfile]]],
 ) -> tuple[dict[str, LossProfile], dict[str, LossProfile]]:
     """Fold a matchup's per-slot loss maps into one pair of maps.
 
     ``runs`` is SLOT-major — replicate 0 first — because
-    :func:`~zicato.tournament.scoring.average_replicate_losses` carries the
-    fields it cannot fold from the first map it is given, and that
-    representative has to be replicate 0 rather than whichever slot
-    happened to settle first. A single slot returns its maps unfolded.
+    :func:`~zicato.tournament.scoring.average_replicate_losses` selects its
+    representative replicate in the order of the maps it is given. That
+    order has to be slot order rather than the order in which the slots
+    happened to settle. A single slot returns its maps unfolded.
     """
     if len(runs) == 1:
         return runs[0][0], runs[0][1]

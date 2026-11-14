@@ -1243,7 +1243,9 @@ Aggregated:
   and `score` `0.4`). Those are the binary and the continuous view of one duel
   rather than an inconsistency.
 
-Pass-through from the first requested replicate, and why each may be: `run_id` /
+Pass-through from the representative replicate — the first one in slot order
+with an infra abort (`is_infra_abort_cause`), else the first requested one —
+and why each may be: `run_id` /
 `expectation_result` (raw provenance of the representative replicate — the fold
 is not a run and has no matcher verdict of its own);
 `abort_cause` / cache provenance and friends (they describe ONE execution and

@@ -1524,7 +1524,20 @@ run (empty/`None` cause) is never one.
 (`src/zicato/evolve/field_execution.py`) adds
 `_count_infra_aborted_runs(result)` to the round's running tally and raises
 `_InfrastructureRoundDeferred` once the tally reaches the threshold.
-`execute_field_tournament` catches it, clears the live tournament, and settles
+
+**The count is per run.** With replicates, `scheduling._run_replicated`
+counts the infra-aborted runs on the replicate maps BEFORE the fold
+(`count_infra_aborted_runs`, `src/zicato/tournament/scoring.py`), and
+`run_matchup` records the count in `TournamentResult.infra_aborted_runs`.
+`_count_infra_aborted_runs` reads that field. A folded profile stands for
+every replicate of one board entry, so the folded profiles are only the
+fallback for a result without the field. The fold also takes its
+pass-through fields, such as `abort_cause`, `not_completed_reason` and
+`run_id`, from one representative replicate: the first one with an infra
+abort, else replicate 0. Thus an infra abort in a later replicate stays visible on the folded
+profile.
+
+`execute_field_tournament` catches `_InfrastructureRoundDeferred`, clears the live tournament, and settles
 the round through `_defer_round_infra_outage`
 (`src/zicato/evolve/decision_support.py`) with decision
 `DEFERRED_INFRA_DECISION` (`"deferred_infra"`).

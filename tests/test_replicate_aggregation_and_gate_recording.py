@@ -695,3 +695,86 @@ def test_gate_evaluated_regressions_round_trip_through_json() -> None:
     )
     assert isinstance(decoded, GateEvaluated)
     assert decoded.attributable_regressions == ("e0", "e7")
+
+
+def _abort(run_id: str, abort_cause: str) -> LossProfile:
+    """A worst-case aborted profile, as the worker transport synthesises it."""
+    from zicato.core.board import BoardEntry, Expectation, ExpectationKind
+    from zicato.tournament.worker_transport import _aborted_loss_profile
+
+    entry = BoardEntry(
+        id="e",
+        kind="single_turn",
+        wall_clock_budget_seconds=60,
+        input="hi",
+        expectation=Expectation(kind=ExpectationKind.PREDICATE, spec="contains:x"),
+    )
+    return _aborted_loss_profile(
+        run_id=run_id,
+        entry=entry,
+        generation_id="v1",
+        epoch_id="e0",
+        runtime_ms=0,
+        abort_cause=abort_cause,
+    )
+
+
+def test_an_infra_abort_in_any_replicate_survives_the_fold() -> None:
+    """The folded profile shows an infra abort from any replicate.
+
+    The representative replicate is the first one with an infra abort, so the
+    abort cause, its reason and its run id come from the same run.
+    """
+    from dataclasses import replace  # noqa: PLC0415
+
+    clean = _loss(entry_id="e", drift_loss=0.0, pass_fail=True, score=1.0)
+    r0, r1 = replace(clean, run_id="run-r0"), replace(clean, run_id="run-r1")
+    kill = _abort("run-r2", "parent_kill")
+    oom = _abort("run-r3", "nonzero_exit:137")
+    budget = _abort("run-r0", "budget_exhausted")
+
+    folded = _average_losses([{"e": r0}, {"e": r1}, {"e": kill}, {"e": oom}])["e"]
+    assert folded.abort_cause == "parent_kill"
+    assert folded.not_completed_reason == "parent_kill"
+    assert folded.run_id == "run-r2"
+    assert folded.wall_clock_budget_exceeded is True
+    # The fold still charges the abort: not_completed is ORed across replicates.
+    assert folded.not_completed is True
+
+    # A budget exhaustion is not an infra abort, so replicate 0 stays the
+    # representative.
+    assert _average_losses([{"e": budget}, {"e": r1}])["e"].abort_cause == "budget_exhausted"
+    assert _average_losses([{"e": r0}, {"e": budget}])["e"].abort_cause is None
+    assert _average_losses([{"e": r0}, {"e": budget}])["e"].run_id == "run-r0"
+    # An infra abort in a later replicate wins over a budget abort in replicate 0.
+    assert _average_losses([{"e": budget}, {"e": kill}])["e"].run_id == "run-r2"
+
+
+def test_infra_aborted_runs_are_counted_per_run() -> None:
+    """The count reads the replicate maps, so each aborted run counts once."""
+    from zicato.tournament.scoring import count_infra_aborted_runs  # noqa: PLC0415
+
+    clean = _loss(entry_id="e", drift_loss=0.0, pass_fail=True, score=1.0)
+    kill = _abort("run-kill", "parent_kill")
+    budget = _abort("run-budget", "budget_exhausted")
+
+    runs = [{"e": kill}, {"e": kill}, {"e": budget}, {"e": clean}]
+    assert count_infra_aborted_runs(runs) == 2
+    # The folded map has one profile for the entry, so it cannot give this count.
+    assert len(_average_losses(runs)) == 1
+
+
+def test_the_outage_counter_reads_the_per_run_count() -> None:
+    """The round's outage counter prefers the duel's per-run count."""
+    from types import SimpleNamespace  # noqa: PLC0415
+
+    from zicato.evolve.decision_support import _count_infra_aborted_runs  # noqa: PLC0415
+
+    kill = _abort("run-kill", "parent_kill")
+    per_entry = {"e": (kill, kill)}
+
+    counted = SimpleNamespace(infra_aborted_runs=6, per_entry_losses=per_entry)
+    assert _count_infra_aborted_runs(counted) == 6
+    # A result without the count falls back to one count for each folded profile.
+    uncounted = SimpleNamespace(infra_aborted_runs=None, per_entry_losses=per_entry)
+    assert _count_infra_aborted_runs(uncounted) == 2

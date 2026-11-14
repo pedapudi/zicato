@@ -55,10 +55,12 @@ def _field_failure_summary(field_status: list[dict[str, Any]]) -> str:
 def _count_infra_aborted_runs(tournament_result: Any) -> int:
     """Count THIS duel's INFRA-aborted runs across both sides.
 
-    Reads the settled result's ``per_entry_losses`` — one
-    ``(parent, child)`` :class:`~zicato.core.LossProfile` pair per board
-    entry — and counts every profile whose ``abort_cause`` names a
-    non-cacheable infra abort
+    Reads the settled result's ``infra_aborted_runs``. The matchup runner
+    counts it on the replicate maps before the fold, so with replicates
+    each run counts once. When the result has no such count, this function
+    reads ``per_entry_losses`` — one ``(parent, child)``
+    :class:`~zicato.core.LossProfile` pair per board entry — and counts
+    every profile whose ``abort_cause`` names a non-cacheable infra abort
     (:func:`~zicato.core.loss.is_infra_abort_cause`: a worker crash, a
     parent/supervisor kill, an unreadable result — never the genuine
     ``budget_exhausted`` wall-clock exhaustion). Cache-reused units can
@@ -68,6 +70,9 @@ def _count_infra_aborted_runs(tournament_result: Any) -> int:
     """
     from zicato.core.loss import is_infra_abort_cause  # noqa: PLC0415
 
+    counted = getattr(tournament_result, "infra_aborted_runs", None)
+    if counted is not None:
+        return int(counted)
     per_entry = getattr(tournament_result, "per_entry_losses", None) or {}
     count = 0
     for pair in per_entry.values():
@@ -241,8 +246,9 @@ def _load_parent_losses(
     1. Read a complete tournament draw-zero measurement at the selected seed.
     2. Otherwise fold the champion's usable calibration draws at that seed
        into one profile. Calibration can supply a baseline before the first
-       tournament. Folding preserves one profile per entry and retains the
-       first draw's matchup provenance.
+       tournament. Folding preserves one profile per entry and takes its
+       provenance from the representative draw (see
+       :func:`~zicato.tournament.scoring.average_replicate_losses`).
     3. If neither source supplies a profile, skip the entry.
 
     Discovery validates measurement paths and selects calibration by purpose.
@@ -289,7 +295,7 @@ def _load_parent_losses(
             canonical[entry.id] = profile
 
     # Build one board map per calibration measurement before folding.
-    # The fold keeps the first draw's provenance and one profile per entry.
+    # The fold keeps one profile per entry, with the representative draw's provenance.
 
     draws: dict[MeasurementDraw, dict[str, Any]] = {}
     for entry in uncovered:

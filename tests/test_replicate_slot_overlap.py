@@ -21,9 +21,11 @@ What these pin:
   stop-launching decision is made;
 * the overlapped slots share ONE incremental scorer, projecting over
   ``board × replicates`` units;
-* the per-slot maps come back in SLOT order, so the fold's
-  representative replicate is replicate 0 rather than whichever entry
-  chain settled first.
+* the per-slot maps come back in SLOT order, so the fold selects its
+  representative replicate in slot order rather than in the order in which
+  the entry chains settled;
+* the matchup counts infra-aborted runs before the fold, so each aborted
+  replicate counts once.
 """
 
 from __future__ import annotations
@@ -211,7 +213,7 @@ async def _run_replicated(
 ) -> tuple[dict[str, LossProfile], dict[str, LossProfile]]:
     from zicato.tournament import scheduling as sched
 
-    left, right, _mode, _provenance = await sched._run_replicated(
+    left, right, _mode, _provenance, _infra_aborted = await sched._run_replicated(
         writer=writer,
         adapter=None,
         left_gen=_generation("v0"),
@@ -356,11 +358,11 @@ async def test_overlapped_slots_share_one_scorer_over_every_replicate_unit(
 async def test_slot_maps_come_back_in_slot_order(
     writer: WorkspaceLock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The fold's representative replicate must be replicate 0.
+    """The per-slot maps come back in slot order.
 
-    ``_average_losses`` carries the fields it cannot fold from the FIRST
-    map it is handed, so the transpose back out of the entry chains has to
-    restore slot order — not the order the chains settled in. The held
+    ``_average_losses`` selects its representative replicate in the order of
+    the maps it is given, so the transpose back out of the entry chains has
+    to restore slot order — not the order the chains settled in. The held
     entry makes the chains settle out of order.
     """
     from zicato.tournament import scheduling as sched
@@ -528,3 +530,44 @@ async def test_fast_round_keeps_the_barrier_under_a_token_ledger(
 ) -> None:
     used = await _run_fast_mode(monkeypatch, tmp_path, token_ledger=RoundTokenLedger(10**9))
     assert used == ["sequential", "sequential", "sequential"]
+
+
+async def test_infra_aborts_are_counted_per_run_before_the_fold(
+    writer: WorkspaceLock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The outage count reads every run before the fold.
+
+    The child crashes in two replicates of ``entry_0`` and in one replicate
+    of ``entry_1``. The fold gives one profile for each entry, so a count of
+    folded profiles gives 2. The matchup must report the 3 aborted runs.
+    """
+    from zicato.tournament import scheduling as sched
+
+    crashes = {("entry_0", 1), ("entry_0", 2), ("entry_1", 2)}
+
+    async def _fake_unit(
+        *, entry: BoardEntry, measurement: MeasurementDraw, **_kw: Any
+    ) -> tuple[LossProfile, LossProfile]:
+        child = _loss(entry.id, measurement.draw)
+        if (entry.id, measurement.draw) in crashes:
+            child = replace(child, abort_cause="parent_kill", not_completed=True)
+        return _loss(entry.id, measurement.draw), child
+
+    monkeypatch.setattr(sched, "_run_full_board_unit", _fake_unit)
+
+    _left, right, _mode, _provenance, infra_aborted = await sched._run_replicated(
+        writer=writer,
+        adapter=None,
+        left_gen=_generation("v0"),
+        right_gen=_generation("v1"),
+        board=_board(3),
+        weights=deterministic_weights(),
+        config=_config(parallelism=2),
+        workspace_root=writer.workspace_root,
+        epoch_id="e1",
+        fast=True,
+        replicates=3,
+    )
+
+    assert infra_aborted == 3
+    assert sum(1 for loss in right.values() if loss.abort_cause == "parent_kill") == 2

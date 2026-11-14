@@ -108,12 +108,19 @@ def _set_runtime_block(workspace: Path, runtime: dict[str, Any]) -> None:
 
 
 def _rig_outage_workspace(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, threshold: int | None
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    threshold: int | None,
+    replicates: int = 1,
 ) -> tuple[Path, str]:
     workspace, epoch_id = bootstrap_workspace(
         tmp_path,
         weights=deterministic_weights(
-            promote_margin=0.01, tournament_structure=TournamentStructure(structure="gauntlet")
+            promote_margin=0.01,
+            tournament_structure=TournamentStructure(
+                structure="gauntlet", params={"replicates": replicates}
+            ),
         ),
     )
     install_stub_adapter_factory(monkeypatch)
@@ -166,6 +173,25 @@ def test_all_infra_aborted_round_defers_un_outcomed(
     # Both sides of the single-entry duel aborted; threshold was 1.
     assert outage["detail"]["infra_aborted_runs"] == 2
     assert outage["detail"]["infra_abort_round_threshold"] == 1
+
+
+def test_replicated_duel_counts_every_aborted_run_toward_the_threshold(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """With replicates, the circuit counts runs (issue #572).
+
+    One entry, two replicates, both sides abort every run: 4 aborted runs. A
+    count of the folded profiles gives 2, one for each side's entry. Only the
+    per-run count reaches the threshold of 3, so the round must defer.
+    """
+    workspace, epoch_id = _rig_outage_workspace(monkeypatch, tmp_path, threshold=3, replicates=2)
+
+    outcome = run_evolve_once(workspace, epoch_id, evaluation_call_llm)
+
+    assert outcome.tournament_decision == DEFERRED_INFRA_DECISION
+    report = json.loads((workspace / "epochs" / epoch_id / "health" / "round_1.json").read_text())
+    outage = next(f for f in report["findings"] if f["code"] == "infra_outage")
+    assert outage["detail"]["infra_aborted_runs"] == 4
 
 
 def test_field_infrastructure_threshold_accumulates_across_matchups(

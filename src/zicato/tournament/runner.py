@@ -161,6 +161,13 @@ class TournamentResult:
     #: (OVERFITTING.md §12 #5). Decoupled from the Ladder's release semantics
     #: so the generalization gap is always measurable when a holdout exists.
     holdout_child_scalar: float | None = None
+    #: The number of runs in THIS duel, on both sides, with an infra abort
+    #: (:func:`~zicato.core.loss.is_infra_abort_cause`). The matchup runner
+    #: counts the replicate maps before the fold, so each run counts once.
+    #: ``None`` when the path that made the result did not count. Then a
+    #: reader can only count the folded ``per_entry_losses``, which gives one
+    #: count for each board entry, whatever its number of aborted runs.
+    infra_aborted_runs: int | None = None
 
 
 async def _gate_with_regression(
@@ -958,6 +965,7 @@ async def run_matchup(
             right_losses,
             champion_eval_mode,
             unit_provenance,
+            infra_aborted_runs,
         ) = await scheduling._run_replicated(
             writer=writer,
             adapter=adapter,
@@ -1010,6 +1018,7 @@ async def run_matchup(
             per_entry_losses=per_entry_losses,
             champion_eval_mode=champion_eval_mode,
             unit_provenance=unit_provenance,
+            infra_aborted_runs=infra_aborted_runs,
         )
 
 
